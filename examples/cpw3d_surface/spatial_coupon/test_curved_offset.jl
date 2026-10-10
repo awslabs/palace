@@ -45,6 +45,21 @@ guard_message(f) =
 
 distance_to_circle(p, center, r) = abs(hypot(p[1] - center[1], p[2] - center[2]) - r)
 
+point_distance(p, q) = hypot(p[1] - q[1], p[2] - q[2])
+
+# The mesher's turn of the metal at the junction of two offset items (curved_offset_loop).
+junction_turn(offset, junction) =
+    offset.metal_side * atan(
+        cross2d(
+            offset.items[junction.before].tangent_stop,
+            offset.items[junction.after].tangent_start
+        ),
+        offset.items[junction.before].tangent_stop[1] *
+        offset.items[junction.after].tangent_start[1] +
+        offset.items[junction.before].tangent_stop[2] *
+        offset.items[junction.after].tangent_start[2]
+    )
+
 # The reference (pre-decision-246) straight implementations, verbatim, for the
 # bitwise straight-coupon comparison.
 function reference_offset_loop_points(loop, distance, tolerance)
@@ -270,8 +285,17 @@ end
             after = offset.items[junction.after]
             line = before.kind == :line ? before : after
             arc = before.kind == :arc ? before : after
-            # The junction point lies on the shifted line exactly and on the offset
-            # circle to the tangency noise squared.
+            # The junction point is the SNAPPED tangent joint (decisions 661 / 668): the
+            # midpoint of the two shifted ends, within |d| |turn| / 2 of both, off the
+            # shifted line by the midpoint's half of |d| (1 - cos turn) = |d| turn^2 / 4 (the
+            # first arc's perturbation is the identification's tangency noise), and on the
+            # offset circle to the tangency noise squared.
+            turn = junction_turn(offset, junction)
+            @test junction.tangent
+            @test point_distance(junction.point, before.shifted_stop) <=
+                  5.7 * abs(turn) / 2 + 1.0e-12
+            @test point_distance(junction.point, after.shifted_start) <=
+                  5.7 * abs(turn) / 2 + 1.0e-12
             u = unit2d(line.direction)
             @test abs(
                 cross2d(
@@ -281,7 +305,7 @@ end
                         junction.point[2] - line.shifted_start[2]
                     )
                 )
-            ) <= 1.0e-12
+            ) <= 5.7 * turn^2 / 4 + 1.0e-12
             @test distance_to_circle(junction.point, arc.center, arc.radius) <= 1.0e-9
             @test !junction.convex
             @test hypot(
@@ -1312,4 +1336,176 @@ end
             x = (0.5h):h:20.0, y = (0.5h):h:20.0
         ) * h^2
     @test abs(collar_area - sampled) <= 0.06 * sampled
+end
+
+@testset "round4/collarunion (decisions 661 / 667 / 668): a Physical line-arc joint whose offsets are tangent within the arc-fit tolerance is a SNAPPED tangent joint (the midpoint of the shifted ends, guarded by the tangency window); a Continuation (box-face) joint keeps the foot" begin
+    collar = 5.7
+    production = 1.9e-7                   # the arrangement tolerance 1e-7 x R at R 1.9
+    rotate2d(v, angle) =
+        (cos(angle) * v[1] - sin(angle) * v[2], sin(angle) * v[1] + cos(angle) * v[2])
+    # (a) The a596f5a4c303 loop-3 vertex-7 class: a 15 x 20 island whose west side carries a
+    # concave arc of radius 1500 (the metal OUTSIDE the circle, bulging east to x = 2; eight
+    # ~1-um chords, travelling south) leaving into a Physical side that turns CONVEXLY by `turn`
+    # from the arc's end tangent, the side entering the arc continuing its tangent exactly, and
+    # a radius-2 semicircular bite on the east side that the collar collapses (the union path).
+    # At turn 2.5e-4 (above JUNCTION_TANGENT_ANGLE) the shifted side misses tangency with the
+    # offset circle by r_off (1 - cos turn) = 47 pm < the slack 2e-7 r_off = 299 pm: main built
+    # a miter kite on the FOOT of the centre (r_off x turn = 0.37 um behind the two shifted
+    # ends, 1.4 nm apart) - a needle 0.37 um x |d| turn^2 / 2 = 0.18 pm that the arrangement
+    # reads as a self-touch (ScopeGuard[FootprintTopology] here, "union on both sides" on a596).
+    function window_island(turn; rho=1500.0, chords=8)
+        cx = 2.0 - rho
+        arc = [(cx + sqrt(rho^2 - (y - 10.0)^2), y) for y in range(14.0, 6.0; length=chords + 1)]
+        tangent(p) = (-1.0) .* perp2d((p[1] - cx, p[2] - 10.0)) ./ rho
+        north = arc[1] .- 6.0 .* tangent(arc[1])
+        south_direction = rotate2d(tangent(arc[end]), turn)
+        south = arc[end] .+ (6.0 / abs(south_direction[2])) .* south_direction
+        bite = [(15.0 - 2.0 * sin(a), 10.0 + 2.0 * cos(a)) for a in range(pi, 0.0; length=9)]
+        return exterior(vcat([north], arc, [south, (15.0, 0.0)], bite, [(15.0, 20.0)]))
+    end
+    island_box = ([-10.0, -10.0], [25.0, 30.0])
+    for turn in (2.5e-4, 5.0e-5)
+        loop = window_island(turn)
+        runs = loop_arc_runs(loop, production)
+        @test length(runs) == 2 && isapprox(maximum(r.radius for r in runs), 1500.0; atol=1.0e-6)
+        offset = curved_offset_loop(loop, -collar, runs, production; box=island_box)
+        @test offset.bridged && count(j -> j.deferred, offset.junctions) == 0
+        junction = only(
+            j for j in offset.junctions if
+            offset.items[j.before].kind == :arc && offset.items[j.after].kind == :line
+        )
+        arc, line = offset.items[junction.before], offset.items[junction.after]
+        @test isapprox(junction_turn(offset, junction), turn; atol=1.0e-12)
+        @test (turn > JUNCTION_TANGENT_ANGLE) == (turn == 2.5e-4)
+        slack = arc_fit_tolerance(arc.radius, production)
+        gap = point_distance(arc.shifted_stop, line.shifted_start)
+        # the tangency verdict and the guard's reading of it
+        @test arc.radius * (1.0 - cos(turn)) <= slack
+        @test isapprox(gap, collar * turn; rtol=1.0e-6) &&
+              gap <= SNAP_GUARD_MARGIN * collar * acos(1.0 - slack / arc.radius)
+        # snapped: tangent whatever the turn reads, no kite; the midpoint of the shifted ends
+        @test junction.tangent && !junction.convex
+        @test point_distance(junction.point, arc.shifted_stop) <= collar * turn / 2 + 1.0e-12
+        @test point_distance(junction.point, line.shifted_start) <= collar * turn / 2 + 1.0e-12
+        u = unit2d(line.direction)
+        @test abs(
+            cross2d(
+                u,
+                (
+                    junction.point[1] - line.shifted_start[1],
+                    junction.point[2] - line.shifted_start[2]
+                )
+            )
+        ) <= collar * turn^2 / 4 + 1.0e-12
+        # off the offset circle by the same |d| turn^2 / 4 (x R / r_off: the line's shifted end
+        # lies |d| R (1 - cos turn) / r_off outside the shrunk circle) - 89 pm at a596's turn, not
+        # the tangency-noise regime's 1e-9 - below the 190-pm arrangement tolerance
+        @test distance_to_circle(junction.point, arc.center, arc.radius) <=
+              collar * turn^2 / 4 * (arc.original_radius / arc.radius) + 1.0e-12
+        union, construction, _ = collar_loop_points(loop, -collar, island_box, production)
+        @test construction == "CollarUnion" && polygon_is_simple(union, production)
+        @test any(point_distance(v, junction.point) <= 1.0e-9 for v in union)
+        angles = [
+            begin
+                a = union[mod1(i - 1, length(union))]
+                b = union[i]
+                c = union[mod1(i + 1, length(union))]
+                p = (a[1] - b[1], a[2] - b[2])
+                q = (c[1] - b[1], c[2] - b[2])
+                abs(atan(cross2d(p, q), p[1] * q[1] + p[2] * q[2]))
+            end for i in eachindex(union)
+        ]
+        @test minimum(angles) > 1.5          # no needle: every corner near a right angle
+    end
+    # (b) The guard bound (decision 668): offset_junction on a tangent Physical line-arc pair
+    # whose shifted ends are 0.9 x / 1.1 x the guard's gap bound 2 |d| acos(1 - slack / r)
+    # apart (a shared vertex gives at most 0.5 x: the 1.1 x pair is an inconsistent junction the
+    # tangency verdict does not describe) snaps / keeps the foot; a Continuation line (shift 0)
+    # keeps the foot even within the bound.
+    r_off = 1000.0
+    slack = arc_fit_tolerance(r_off, TOLERANCE)
+    bound = SNAP_GUARD_MARGIN * collar * acos(1.0 - slack / r_off)
+    @test isapprox(bound, 2 * collar * sqrt(2 * slack / r_off); rtol=1.0e-7)
+    foot = (0.0, -r_off)
+    for (ratio, snaps) in ((0.9, true), (1.1, false))
+        psi = ratio * bound / r_off
+        arc_item = (kind=:arc, center=(0.0, 0.0), radius=r_off,
+                    shifted_stop=(r_off * sin(psi), -r_off * cos(psi)))
+        line_item = (kind=:line, shifted_start=foot, direction=(1.0, 0.0), shift=(0.0, -collar))
+        gap = point_distance(arc_item.shifted_stop, line_item.shifted_start)
+        @test isapprox(gap / bound, ratio; atol=1.0e-9)
+        point, snapped = offset_junction(arc_item, line_item, -collar, TOLERANCE)
+        @test snapped == snaps
+        expected = snaps ? 0.5 .* (arc_item.shifted_stop .+ foot) : foot
+        @test point_distance(point, expected) <= 1.0e-12
+        # the mirrored order (the line before the arc) reads the same
+        line_before = (kind=:line, shifted_start=(-10.0, -r_off), shifted_stop=foot,
+                       direction=(1.0, 0.0), shift=(0.0, -collar))
+        arc_after = (kind=:arc, center=(0.0, 0.0), radius=r_off,
+                     shifted_start=(-r_off * sin(psi), -r_off * cos(psi)))
+        point, snapped = offset_junction(line_before, arc_after, -collar, TOLERANCE)
+        @test snapped == snaps &&
+              point_distance(point, snaps ? 0.5 .* (arc_after.shifted_start .+ foot) : foot) <=
+              1.0e-12
+        continuation = (kind=:line, shifted_start=foot, direction=(1.0, 0.0), shift=(0.0, 0.0))
+        point, snapped = offset_junction(arc_item, continuation, -collar, TOLERANCE)
+        @test !snapped && point_distance(point, foot) <= 1.0e-12
+    end
+    # (c) The Continuation knife-edge (the 5B / 5A fixture): the slab above the face y = 0 with
+    # the concave bite of radius 10 whose shrunk circle (4.3) is TANGENT to the face within the
+    # slack 8.6e-7 - the arc leaving the box by 5e-7 less / more than the collar. The two
+    # box-face junctions keep the FOOT (0, 0) (main's point bitwise: the ends are |d| = 5.7
+    # apart, the guard refuses), a corner (turn 1.13 rad); the unguarded midpoint would have been
+    # (-6.46, -1.23), 1.2 um below the face. With the box the collar is the slab when the circle
+    # stays outside; 5e-7 inside, main's pre-existing ScopeGuard[FootprintTopology] (the circle's
+    # sub-um sliver in the box) is unchanged.
+    rho = 10.0
+    function bitten(c; chords=12)
+        half = sqrt(rho^2 - c^2)
+        a0 = atan(c, -half)
+        a1 = atan(c, half)
+        arc = [(rho * cos(a), -c + rho * sin(a)) for a in range(a0, a1; length=chords + 1)]
+        arc[1] = (-half, 0.0)
+        arc[end] = (half, 0.0)
+        points = vcat([(-20.0, 0.0)], arc, [(20.0, 0.0), (20.0, 20.0), (-20.0, 20.0)])
+        n = length(points)
+        classes = [i == 1 || i >= n - 3 ? "Continuation" : "Physical" for i = 1:n]
+        return exterior(points; classes=classes)
+    end
+    slab_box = ([-20.0, 0.0], [20.0, 20.0])
+    for c in (rho - collar + 5.0e-7, rho - collar - 5.0e-7)
+        loop = bitten(c)
+        runs = circular_arc_runs(loop.points, TOLERANCE)
+        offset = curved_offset_loop(loop, -collar, runs, TOLERANCE; box=slab_box)
+        shrunk = only(item for item in offset.items if item.kind == :arc)
+        @test isapprox(shrunk.radius, rho - collar; atol=1.0e-9) &&
+              abs(shrunk.radius - c) <= arc_fit_tolerance(shrunk.radius, TOLERANCE)
+        face_junctions = [
+            j for j in offset.junctions if
+            offset.items[j.before].kind == :arc || offset.items[j.after].kind == :arc
+        ]
+        @test length(face_junctions) == 2 && !offset.bridged
+        for j in face_junctions
+            @test j.point !== nothing && point_distance(j.point, (0.0, 0.0)) <= 1.0e-9
+            @test !j.tangent && j.convex && !j.deferred
+            @test isapprox(
+                point_distance(
+                    offset.items[j.before].shifted_stop,
+                    offset.items[j.after].shifted_start
+                ),
+                collar;
+                atol=1.0e-9
+            )
+        end
+        if c > rho - collar
+            union, construction, _ = collar_loop_points(loop, -collar, slab_box, TOLERANCE)
+            @test construction == "CollarUnion" && length(union) == 4 + 2 &&
+                  isapprox(0.5 * polygon_area2(union), 40.0 * 20.0; atol=1.0e-6)
+        else
+            @test occursin(
+                "ScopeGuard[FootprintTopology]",
+                guard_message(() -> collar_loop_points(loop, -collar, slab_box, TOLERANCE))
+            )
+        end
+    end
 end

@@ -1580,10 +1580,14 @@ end
 # sub-size/high-condition cells the collapse removes (measured on EL1c: the
 # descent moved face vertices to 0.013-0.24 nm of a row or ridge node, 43-56
 # cells above condition 1000; supervisor decision 34). Returns (achieved true
-# value, accepted moves).
+# value, accepted moves). `record` (a Dict, F5T R-1, supervisor decision 674 (1)) receives
+# the descent's StopReason ("goal" / "no improving move" / "sweep limit"), Sweeps,
+# BestAchieved (the best true value seen after an accepted move, with its sweep and move),
+# StartAchieved and EndAchieved - information only, the arithmetic and every accepted move
+# are those of the call without a record.
 function optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors, bounds,
                               targets, objective::Symbol, goal; ceilings=nothing,
-                              condition_ceilings=nothing, edge_floors=nothing)
+                              condition_ceilings=nothing, edge_floors=nothing, record=nothing)
     function cell_xyz(cell)
         return [points[:, i] for i in cell]
     end
@@ -1611,8 +1615,16 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
     filter!(pair -> size(pair[2], 2) > 0, movable)
     current = value()
     moves = 0
+    recording = record !== nothing
+    start_achieved = recording ? achieved() : NaN
+    best_achieved, best_sweep, best_move = start_achieved, 0, 0
+    sweeps = 0
+    stop_reason = "sweep limit"
     for _ in 1:60
-        (minimizing ? achieved() <= goal : achieved() >= goal) && break
+        if (minimizing ? achieved() <= goal : achieved() >= goal)
+            stop_reason = "goal"
+            break
+        end
         improved = false
         for (vertex, basis) in movable
             cells = incident[vertex]
@@ -1653,6 +1665,12 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
                             current = candidate
                             improved = true
                             moves += 1
+                            if recording
+                                now = achieved()
+                                if minimizing ? now < best_achieved : now > best_achieved
+                                    best_achieved, best_sweep, best_move = now, sweeps + 1, moves
+                                end
+                            end
                             break
                         end
                     end
@@ -1661,9 +1679,80 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
                 end
             end
         end
-        improved || break
+        sweeps += 1
+        if !improved
+            stop_reason = "no improving move"
+            break
+        end
     end
-    return achieved(), moves
+    final_achieved = achieved()
+    if recording
+        record["Objective"] = String(objective)
+        record["Goal"] = goal
+        record["StopReason"] = stop_reason
+        record["Sweeps"] = sweeps
+        record["SweepLimit"] = 60
+        record["Moves"] = moves
+        record["StartAchieved"] = start_achieved
+        record["EndAchieved"] = final_achieved
+        record["BestAchieved"] = best_achieved
+        record["BestSweep"] = best_sweep
+        record["BestMove"] = best_move
+    end
+    return final_achieved, moves
+end
+
+# ---------------------------------------------------------------------------
+# F5T R-7, the FAIL-PATH legacy verdict (supervisor decisions 674 (2) / 675; the diagnosis of
+# record round4/thincornerF5/DIAGNOSIS.md 3.1 O-E / 4 R-7). Entered ONLY when a LEGACY
+# corner's stored-order VertexFrameCondition exceeds MaximumCornerAspect after its descent
+# (today's fail-closed point for that build) and the build carries --corner-shape-gate: the
+# corner is re-judged by the order-INVARIANT verdict of record for invariant corners (F5-A,
+# decision 363) - a kappa_reg descent to INVARIANT_CORNER_TARGET from the legacy end state
+# under the production guards (the scaled-Jacobian floors, the condition ceilings, the edge
+# floors, the displacement bounds), then kappa_reg <= CornerShapeGate. Every passing build
+# is identical by construction (the branch is never entered); no threshold, target or floor
+# value changes; the rule text is recorded only where it fired (decision 670 discipline).
+const FAIL_PATH_LEGACY_VERDICT_RULE =
+    "On the FAIL PATH only (a Legacy semantic corner whose stored-order VertexFrameCondition " *
+    "exceeds MaximumCornerAspect after its descent, in a build carrying --corner-shape-gate), " *
+    "the corner is re-judged by the order-invariant verdict of record for invariant corners " *
+    "(decision 363 F5-A): its corner-incident seed cells are descended on kappa_reg to the " *
+    "fixed goal INVARIANT_CORNER_TARGET from the legacy end state, under the same guards as " *
+    "every seed descent (the scaled-Jacobian floors, the Jacobian condition ceilings, the edge " *
+    "floors, the displacement bounds), and the corner passes iff the maximum kappa_reg over " *
+    "those cells is at most CornerShapeGate; every other gate (the required-region scaled-" *
+    "Jacobian and condition gates, the tube and cap gates) still applies to the re-descended " *
+    "state; the corner row keeps Kind Legacy and its stored-order readings and records the " *
+    "FailPathMeasure (RegularCondition before and after the descent, the VertexFrameCondition " *
+    "after it, the descent record); the legacy measure is an order-dependent frame the solver " *
+    "re-orders at load (supervisor decisions 353 / 363 / 674 (2) / 675)"
+
+# The fail-path re-judgement of one legacy corner: the kappa_reg descent from the current
+# (legacy end) state over `targets`, then the verdict against `gate` (CornerShapeGate).
+# Returns the FailPathMeasure record; `points` holds the re-descended state.
+function fail_path_legacy_verdict!(points, original, tetrahedra, incident, bases, floors, bounds,
+                                   targets, gate; ceilings=nothing, condition_ceilings=nothing,
+                                   edge_floors=nothing)
+    isfinite(gate) && gate > 1.0 ||
+        error("The fail-path legacy verdict needs CornerShapeGate above 1 (--corner-shape-gate)")
+    kappa_reg_of(k) = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
+    kappa_v0_of(k) = tetrahedron_aspect([points[:, i] for i in tetrahedra[k]])
+    before = maximum(kappa_reg_of(k) for k in targets)
+    vertex_frame_before = maximum(kappa_v0_of(k) for k in targets)
+    descent = Dict{String, Any}()
+    after, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors,
+                                        bounds, targets, :regular_condition,
+                                        INVARIANT_CORNER_TARGET; ceilings=ceilings,
+                                        condition_ceilings=condition_ceilings,
+                                        edge_floors=edge_floors, record=descent)
+    return Dict{String, Any}(
+        "Measure" => "RegularCondition", "Rule" => FAIL_PATH_LEGACY_VERDICT_RULE,
+        "Before" => before, "After" => after, "Target" => INVARIANT_CORNER_TARGET,
+        "Gate" => gate, "Moves" => moves, "Passed" => after <= gate,
+        "VertexFrameConditionBefore" => vertex_frame_before,
+        "VertexFrameConditionAfter" => maximum(kappa_v0_of(k) for k in targets),
+        "Descent" => descent)
 end
 
 # ---------------------------------------------------------------------------
@@ -1685,7 +1774,10 @@ end
 # cell's scaled-Jacobian floor (min(its original value, 2 x MinimumScaledJacobian)) and
 # its Jacobian-condition ceiling (max(its original value, JacobianConditionTarget));
 # then the descent runs again. Boundary triangles are never flipped; the moves of the
-# descent stay bounded as before. Recorded CornerReconnections per corner.
+# descent stay bounded as before. Recorded CornerReconnections per corner. The third sliver
+# remedy, the WedgeSplit cavity insertion (WEDGE_SPLIT_RULE below; decisions 649 (2) / 669 (4)
+# / 670), completes this pass at the exit of its rounds for the wedge-SPANNING sliver neither
+# operation can cure; the rule text here, a census leaf of every build, is unchanged by it.
 const CORNER_RECONNECTION_RULE =
     "a bridging-sliver candidate above CornerShapeGate after the kappa_reg descent (a " *
     "corner-incident cell with its four vertices on the two sidewalls, one strictly on each, " *
@@ -1823,6 +1915,470 @@ function best_edge_removal(points, tetrahedra, incident, surface_edges, cell_ent
         end
     end
     return best
+end
+
+# ---------------------------------------------------------------------------
+# "WedgeSplit" (supervisor decisions 644 (1) / 648 (3) / 649 (2) / 651 S-1 / 669 (4) / 670; the design
+# of record round4/wedgesplit/DESIGN.md sections 3, 3.7): the third classical sliver remedy
+# beside F5-B's flip and edge removal, completing CORNER_RECONNECTION_RULE (whose census
+# leaf is unchanged: WEDGE_SPLIT_RULE is recorded only where the operation fired, decision
+# 670). The 7fd4 class: a bridging sliver {O, c, a, b} SPANNING the wedge at a fabricated
+# obtuse corner (its two faces at the corner-line edge O-c ARE the sidewalls, so its dihedral
+# there is the wedge angle theta and kappa_reg >= the dihedral floor f(theta) for every
+# position of its vertices: 5.506 at 151.19 degrees > the gate 5.0), which no descent, no
+# surface remap and no legal F5-B move can exit (at 7fd4 the only edge removal is refused by
+# the improvement guard). The exit is a change of the connectivity at O-c that puts a vertex
+# INSIDE the wedge: ONE interior vertex s is inserted on the wedge's bisector plane and its
+# cavity re-fanned to s. Entered ONLY at the exit of the reconnection rounds with a spanning
+# trigger still above the gate = today's fail-closed path at that corner (RETRY-ON-FAIL in
+# its in-pass form; a corner that passes today runs no new code and every passing build is
+# byte-identical by construction). Decision 363 is kept (a post-3-D cavity insertion inside
+# ONE volume entity: no surface triangle is crossed, no surface node created, moved or
+# reconnected); decision 34 is kept (s is a descent vertex with the edge floor, the corner
+# law's bound and its insertion point as `original`; every new edge >= the floor is a validity
+# clause). Decision 670 (the design-text erratum): the 3.7 sentence lives in WEDGE_SPLIT_RULE.
+const WEDGE_SPLIT_RULE =
+    "When the reconnection rounds leave a wedge-SPANNING bridging sliver above CornerShapeGate (a " *
+    "cell owning an edge of the vertical corner line with one vertex strictly on each sidewall, so " *
+    "that its dihedral at that edge is the wedge angle and kappa_reg >= the dihedral floor " *
+    "f(theta)), ONE vertex is inserted on the wedge's bisector plane (r = j / 8 x CornerSize from " *
+    "the corner line, j = 1..8; z = i / 8 of the corner-line edge, i = 1..7) and its cavity (the " *
+    "Bowyer-Watson cavity of the point inside the cell's volume entity, or the smallest star-shaped " *
+    "cavity holding the containing cell and the sliver; a surface triangle is never crossed) is " *
+    "re-fanned to the vertex, each new cell being its parent with the vertex opposite the boundary " *
+    "face replaced; a candidate is valid when every new cell has its parent's sign, the volumes " *
+    "sum to the cavity's, no cavity cell is one the sub-size collapse remapped (erratum S-1), every " *
+    "new cell keeps the sliver's scaled-Jacobian floor and condition ceiling, every new edge is at " *
+    "or above the sub-size collapse threshold, and the corner's maximum kappa_reg improves; among " *
+    "the valid candidates the one with the smallest maximum kappa_reg over the corner-incident and " *
+    "the new cells AFTER a trial run of the descent is applied, the descent then runs on those " *
+    "cells, and the reconnection rounds may run once more; up to WedgeSplitRounds (2) per corner; " *
+    "boundary triangles are never flipped and no surface node is created or moved (decisions 34 / " *
+    "363 / 365 / 644 / 649 / 651 / 670)"
+const WEDGE_SPLIT_ROUNDS = 2
+# The candidate grid (DESIGN 3.2): r = j / WEDGE_SPLIT_RADIUS_STEPS x CornerSize (j = 1..8) from
+# the corner line, z = i / WEDGE_SPLIT_Z_STEPS (i = 1..7) of the corner-line edge from its upper
+# end; the two cavity forms; a fixed order (delaunay then minimal, r then z ascending).
+const WEDGE_SPLIT_RADIUS_STEPS = 8
+const WEDGE_SPLIT_Z_STEPS = 8
+const WEDGE_SPLIT_FORMS = (:delaunay, :minimal)
+# The visibility walk locating the cell containing s stops after this many cells.
+const WEDGE_SPLIT_WALK_STEPS = 256
+
+# The wedge-spanning form of a bridging sliver (DESIGN 3.2): an edge of the vertical corner
+# line (two vertices on both walls, mask 0x03) with the other two vertices one strictly on
+# each wall (0x01 / 0x02). Returns (line=(upper, lower), walls=(on wall 1, on wall 2)) or
+# nothing; the masks are sidewall_vertex_masks'.
+function wedge_spanning_cell(points, cell, masks)
+    line = [v for v in cell if get(masks, v, 0x00) == 0x03]
+    length(line) == 2 || return nothing
+    wall_1 = [v for v in cell if get(masks, v, 0x00) == 0x01]
+    wall_2 = [v for v in cell if get(masks, v, 0x00) == 0x02]
+    length(wall_1) == 1 && length(wall_2) == 1 || return nothing
+    upper, lower = points[3, line[1]] >= points[3, line[2]] ? (line[1], line[2]) : (line[2], line[1])
+    return (line=(upper, lower), walls=(wall_1[1], wall_2[1]))
+end
+
+# The interior dihedral angle (radians) of a tetrahedron at its edge (l1, l2) between the
+# faces through a and b.
+function tetrahedron_edge_dihedral(points, l1, l2, a, b)
+    edge = points[:, l2] .- points[:, l1]
+    normal_a = cross(edge, points[:, a] .- points[:, l1])
+    normal_b = cross(edge, points[:, b] .- points[:, l1])
+    return acos(clamp(dot(normal_a, normal_b) / (norm(normal_a) * norm(normal_b)), -1.0, 1.0))
+end
+
+function tetrahedron_signed_volume(points, cell)
+    xyz = [points[:, i] for i in cell]
+    return dot(xyz[2] .- xyz[1], cross(xyz[3] .- xyz[1], xyz[4] .- xyz[1])) / 6.0
+end
+
+# Circumsphere (centre, radius) of a cell; (nothing, Inf) for a flat one.
+function tetrahedron_circumsphere(points, cell)
+    a, b, c, d = (points[:, i] for i in cell)
+    m = vcat((b .- a)', (c .- a)', (d .- a)')
+    rhs = 0.5 .* [dot(b, b) - dot(a, a), dot(c, c) - dot(a, a), dot(d, d) - dot(a, a)]
+    det(m) == 0.0 && return nothing, Inf
+    centre = m \ rhs
+    return centre, norm(centre .- a)
+end
+
+# Barycentric coordinates of x in a cell (nothing for a flat cell).
+function tetrahedron_barycentric(points, cell, x)
+    a, b, c, d = (points[:, i] for i in cell)
+    t = hcat(b .- a, c .- a, d .- a)
+    det(t) == 0.0 && return nothing
+    lam = t \ (x .- a)
+    return vcat(1.0 - sum(lam), lam)
+end
+
+# The face of a cell opposite its vertex `opposite`, as a sorted triple.
+cell_face(cell, opposite) = Tuple(sort!([cell[i] for i in 1:4 if i != opposite]))
+
+# The cells other than k sharing a face with it (at most one in a conforming mesh).
+face_neighbour_cells(tetrahedra, incident, k, face) =
+    [j for j in incident[face[1]] if j != k && all(v in tetrahedra[j] for v in face)]
+
+# Barycentric location of s among the cells of one volume entity (DESIGN 3.2): a visibility
+# walk from `start` across the face opposite the most negative barycentric coordinate,
+# never across a surface face or into another entity; 0 when the walk leaves the entity,
+# cycles or exceeds WEDGE_SPLIT_WALK_STEPS (s then lies in no cell of the entity).
+function locate_containing_cell(points, tetrahedra, incident, surface_faces, cell_entity, start, s)
+    visited = Set{Int}()
+    k = start
+    for _ in 1:WEDGE_SPLIT_WALK_STEPS
+        cell = tetrahedra[k]
+        lam = tetrahedron_barycentric(points, cell, s)
+        lam === nothing && return 0
+        all(lam .>= -1.0e-9) && return k
+        push!(visited, k)
+        next = 0
+        for opposite in sortperm(lam)
+            lam[opposite] >= -1.0e-9 && break
+            face = cell_face(cell, opposite)
+            face in surface_faces && continue
+            beyond = [j for j in face_neighbour_cells(tetrahedra, incident, k, face)
+                      if cell_entity(j) == cell_entity(k) && !(j in visited)]
+            isempty(beyond) && continue
+            next = beyond[1]
+            break
+        end
+        next == 0 && return 0
+        k = next
+    end
+    return 0
+end
+
+# The cavity of s (vertex index s_index, its position already in `points`) for the trigger
+# cell k_t (DESIGN 3.2), inside the trigger's volume entity, never crossing a surface
+# triangle:
+#   :delaunay - the cell containing s grown by face adjacency over the cells whose
+#     circumsphere contains s (the Bowyer-Watson cavity); the trigger must be in it; then
+#     the star-shape repair drops a cavity cell whose boundary face is not visible from s
+#     (never the trigger: rejected instead) until every boundary face is visible; the
+#     containing cell must survive;
+#   :minimal - the containing cell and the trigger, grown ONLY across a boundary face not
+#     visible from s (a surface face or the entity's end there: rejected) until star-shaped.
+# The re-fan: every boundary face gives one new cell = its parent (the cavity cell owning
+# the face) with the vertex opposite the face replaced by s, the parent's vertex order kept
+# (so the child's sign is its parent's iff s is on the parent's side of the face = the
+# visibility test). Returns (new cells, their parents, the sorted cavity, reason); new cells
+# `nothing` with the reason when rejected.
+function wedge_split_cavity(points, s_index, tetrahedra, incident, surface_faces, cell_entity, k_t,
+                            form::Symbol)
+    s = points[:, s_index]
+    entity = cell_entity(k_t)
+    containing = locate_containing_cell(points, tetrahedra, incident, surface_faces, cell_entity, k_t, s)
+    containing == 0 && return nothing, Int[], Int[], "s lies in no cell of the trigger's entity"
+    cavity = Set([containing])
+    child(k, opposite) = ntuple(i -> i == opposite ? s_index : tetrahedra[k][i], 4)
+    parent_sign(k) = sign(tetrahedron_signed_volume(points, tetrahedra[k]))
+    function visible(k, opposite)
+        volume = tetrahedron_signed_volume(points, child(k, opposite))
+        return volume != 0.0 && sign(volume) == parent_sign(k)
+    end
+    # The boundary faces of the cavity: (owner, opposite vertex, face) for every face whose
+    # other owner is not a cavity cell (a surface face and an inter-entity face included).
+    function boundary(cells)
+        faces = Tuple{Int, Int, NTuple{3, Int}}[]
+        for k in sort!(collect(cells)), opposite in 1:4
+            face = cell_face(tetrahedra[k], opposite)
+            any(j -> j in cells, face_neighbour_cells(tetrahedra, incident, k, face)) && continue
+            push!(faces, (k, opposite, face))
+        end
+        return faces
+    end
+    sorted(cells) = sort!(collect(cells))
+    if form === :delaunay
+        frontier = [containing]
+        while !isempty(frontier)
+            k = pop!(frontier)
+            for opposite in 1:4
+                face = cell_face(tetrahedra[k], opposite)
+                face in surface_faces && continue
+                for j in face_neighbour_cells(tetrahedra, incident, k, face)
+                    (j in cavity || cell_entity(j) != entity) && continue
+                    centre, radius = tetrahedron_circumsphere(points, tetrahedra[j])
+                    centre !== nothing && norm(s .- centre) < radius * (1.0 - 1.0e-12) || continue
+                    push!(cavity, j); push!(frontier, j)
+                end
+            end
+        end
+        k_t in cavity || return nothing, Int[], sorted(cavity), "the trigger cell is not in the Delaunay cavity of s"
+        while true
+            bad = 0
+            for (k, opposite, _) in boundary(cavity)
+                visible(k, opposite) || (bad = k; break)
+            end
+            bad == 0 && break
+            bad == k_t && return nothing, Int[], sorted(cavity), "the trigger's own boundary face is not visible from s"
+            delete!(cavity, bad)
+        end
+        containing in cavity ||
+            return nothing, Int[], sorted(cavity), "the visibility repair removed the cell containing s"
+    elseif form === :minimal
+        push!(cavity, k_t)
+        while true
+            bad = nothing
+            for (k, opposite, face) in boundary(cavity)
+                visible(k, opposite) || (bad = (k, opposite, face); break)
+            end
+            bad === nothing && break
+            k, _, face = bad
+            face in surface_faces &&
+                return nothing, Int[], sorted(cavity), "a surface face of cell $(k) is not visible from s"
+            beyond = [j for j in face_neighbour_cells(tetrahedra, incident, k, face) if cell_entity(j) == entity]
+            isempty(beyond) &&
+                return nothing, Int[], sorted(cavity), "a boundary face of cell $(k) (the entity's end) is not visible from s"
+            push!(cavity, beyond[1])
+        end
+    else
+        error("Unknown wedge-split cavity form $(form)")
+    end
+    faces = boundary(cavity)
+    new_cells = [child(k, opposite) for (k, opposite, _) in faces]
+    parents = [k for (k, _, _) in faces]
+    return new_cells, parents, sorted(cavity), ""
+end
+
+# Replace the cavity cells by the new cells with F5-B's slot bookkeeping (the new cells take
+# the replaced slots, extra slots die, extra cells append; `origin` 0, the trigger's entity,
+# floors min(scaled Jacobian, scaled_target), ceilings Inf, condition ceilings max(condition,
+# condition_target), `incident` / `reconnection_replaced` / `reconnection_added` / `dead`
+# updated). `mesh` bundles those per-cell arrays. Returns the new cells' slots and the undo
+# data a trial restores with undo_wedge_split_cavity!.
+function apply_wedge_split_cavity!(points, mesh, cavity, new_cells, entity, scaled_target, condition_target)
+    tetrahedra = mesh.tetrahedra
+    saved_cells = [(p, tetrahedra[p], mesh.floors[p], mesh.ceilings[p], mesh.condition_ceilings[p],
+                    mesh.origin[p], mesh.entity_of[p], get(mesh.reconnection_added, p, nothing))
+                   for p in cavity]
+    touched = unique(vcat([i for p in cavity for i in tetrahedra[p]], [i for cell in new_cells for i in cell]))
+    saved_incident = Dict(i => copy(mesh.incident[i]) for i in touched)
+    saved_length = length(tetrahedra)
+    saved_replaced = length(mesh.reconnection_replaced)
+    saved_dead = copy(mesh.dead)
+    for p in cavity
+        for i in tetrahedra[p]
+            filter!(!=(p), mesh.incident[i])
+        end
+        mesh.origin[p] > 0 && push!(mesh.reconnection_replaced, mesh.origin[p])
+        mesh.origin[p] = 0
+        delete!(mesh.reconnection_added, p)
+    end
+    slots = Int[]
+    for (index, new_cell) in enumerate(new_cells)
+        scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
+        condition_new = tetrahedron_aspect([points[:, i] for i in new_cell])
+        if index <= length(cavity)
+            p = cavity[index]
+            tetrahedra[p] = new_cell
+            mesh.floors[p] = min(scaled_new, scaled_target); mesh.ceilings[p] = Inf
+            mesh.condition_ceilings[p] = max(condition_new, condition_target)
+        else
+            push!(tetrahedra, new_cell)
+            p = length(tetrahedra)
+            push!(mesh.origin, 0); push!(mesh.entity_of, entity)
+            push!(mesh.floors, min(scaled_new, scaled_target)); push!(mesh.ceilings, Inf)
+            push!(mesh.condition_ceilings, max(condition_new, condition_target))
+        end
+        push!(slots, p)
+        mesh.reconnection_added[p] = (entity, new_cell)
+        for i in new_cell
+            push!(mesh.incident[i], p)
+        end
+    end
+    for p in cavity[(length(new_cells) + 1):end]
+        push!(mesh.dead, p)
+    end
+    undo = (cells=saved_cells, incident=saved_incident, length=saved_length, replaced=saved_replaced,
+            dead=saved_dead, slots=slots)
+    return slots, undo
+end
+
+function undo_wedge_split_cavity!(mesh, undo)
+    tetrahedra = mesh.tetrahedra
+    for p in undo.slots
+        delete!(mesh.reconnection_added, p)
+    end
+    for array in (tetrahedra, mesh.floors, mesh.ceilings, mesh.condition_ceilings, mesh.origin, mesh.entity_of)
+        resize!(array, undo.length)
+    end
+    for (p, cell, floor, ceiling, condition_ceiling, origin, entity, added) in undo.cells
+        tetrahedra[p] = cell
+        mesh.floors[p] = floor; mesh.ceilings[p] = ceiling; mesh.condition_ceilings[p] = condition_ceiling
+        mesh.origin[p] = origin; mesh.entity_of[p] = entity
+        added === nothing || (mesh.reconnection_added[p] = added)
+    end
+    for (i, list) in undo.incident
+        empty!(mesh.incident[i]); append!(mesh.incident[i], list)
+    end
+    resize!(mesh.reconnection_replaced, undo.replaced)
+    empty!(mesh.dead); union!(mesh.dead, undo.dead)
+    return nothing
+end
+
+# ONE wedge-split insertion pass at a corner (DESIGN 3.2-3.4, 3.6; erratum S-1): the
+# spanning cells of `trigger` (the bridging slivers above the gate at the reconnection
+# rounds' exit), the candidate grid on the bisector plane of each, both cavity forms, the
+# validity clauses (i)-(vii) judged before any descent, a TRIAL re-descent (the production
+# optimize_seed_cells!, objective kappa_reg, goal `goal`, on the corner-incident cells UNION
+# the new cells) per valid candidate whose positions are restored afterwards, the selection
+# of the smallest score (the first in the fixed order on a tie to 1e-12) and its real
+# application + descent. `points` / `original` already hold the spare column s_index,
+# `bounds` / `edge_floors` the spare entry (set here per candidate: the corner law's bound
+# at the insertion point through `bound_of`, the collapse threshold `edge_floor`); `mesh`
+# bundles the per-cell arrays (apply_wedge_split_cavity!). Returns (record, applied,
+# after, moves): `after` the descent's maximum kappa_reg over its targets (the value the
+# gate judges, as after an F5-B round), `moves` its accepted moves; nothing is changed when
+# no candidate is valid (applied false; the caller drops the spare column).
+function wedge_split_corner!(points, original, s_index, mesh, bases, bounds, edge_floors, bound_of,
+                             remapped_by_collapse, surface_faces, center, sides, masks, trigger,
+                             corner_incident, gate, goal, scaled_target, condition_target, grid_size,
+                             edge_floor, tolerance)
+    tetrahedra = mesh.tetrahedra; incident = mesh.incident
+    cell_entity(k) = mesh.entity_of[k]
+    kappa_of(cell) = tetrahedron_regular_condition([points[:, i] for i in cell])
+    scaled_of(cell) = tetrahedron_scaled_jacobian([points[:, i] for i in cell])
+    condition_of(cell) = tetrahedron_aspect([points[:, i] for i in cell])
+    # (3.2) the spanning triggers; a trigger the collapse remapped is skipped as F5-B skips it.
+    triggers = NamedTuple[]
+    for k in trigger
+        k in mesh.dead && continue
+        mesh.origin[k] in remapped_by_collapse && continue
+        span = wedge_spanning_cell(points, tetrahedra[k], masks)
+        span === nothing && continue
+        kappa = kappa_of(tetrahedra[k])
+        dihedral = tetrahedron_edge_dihedral(points, span.line..., span.walls...)
+        push!(triggers, (cell=k, line=span.line, walls=span.walls, kappa=kappa, dihedral=dihedral,
+                         floor=kappa_reg_dihedral_floor(dihedral)))
+    end
+    record = Dict{String, Any}(
+        "TriggerCells" => [Dict{String, Any}(
+            "KappaReg" => t.kappa, "DihedralDegrees" => rad2deg(t.dihedral), "DihedralFloor" => t.floor,
+            "Masks" => [Int(get(masks, i, 0x00)) for i in tetrahedra[t.cell]],
+            "CornerLineEdge" => collect(t.line), "WallVertices" => collect(t.walls)) for t in triggers],
+        "Candidates" => 0, "Valid" => 0, "Rejections" => Dict{String, Int}(), "Selected" => nothing)
+    isempty(triggers) && return record, false, NaN, 0
+    bisector = sides.walls[1] .+ sides.walls[2]
+    norm(bisector) > 1.0e-9 || return record, false, NaN, 0
+    bisector = vcat(bisector ./ norm(bisector), 0.0)
+    reject(reason) = (record["Rejections"][reason] = get(record["Rejections"], reason, 0) + 1)
+    corner_before = corner_incident(center)
+    corner_vertices = Set(i for k in corner_before for i in tetrahedra[k] if norm(points[:, i] .- center) <= tolerance)
+    best = nothing
+    # The validity clauses on a candidate (3.4 / S-1) and, when valid, its trial descent.
+    function evaluate(t, form, j, i; apply::Bool)
+        l1, l2 = t.line
+        s = points[:, l1] .+ (i / WEDGE_SPLIT_Z_STEPS) .* (points[:, l2] .- points[:, l1]) .+
+            (j / WEDGE_SPLIT_RADIUS_STEPS * grid_size) .* bisector
+        points[:, s_index] = s; original[:, s_index] = s
+        bounds[s_index] = bound_of(s); edge_floors[s_index] = edge_floor
+        new_cells, parents, cavity, reason = wedge_split_cavity(points, s_index, tetrahedra, incident,
+                                                               surface_faces, cell_entity, t.cell, form)
+        new_cells === nothing && return nothing, reason
+        entity = cell_entity(t.cell)
+        # (vii) erratum S-1: a collapse-remapped cell has a fresh Gmsh element the write-back
+        # cannot remove by its original tag; such a cavity would overlap it.
+        any(mesh.origin[k] in remapped_by_collapse for k in cavity) &&
+            return nothing, "a cavity cell the sub-size collapse remapped (erratum S-1 (vii))"
+        # (i) conformity: every cavity vertex stays in the mesh (a vertex of a cavity cell on
+        # no boundary face would be orphaned); the volumes sum to the cavity's.
+        cavity_vertices = Set(i for k in cavity for i in tetrahedra[k])
+        new_vertices = Set(i for cell in new_cells for i in cell)
+        all(i in new_vertices for i in cavity_vertices) || return nothing, "a cavity vertex would be orphaned"
+        cavity_volume = sum(abs(tetrahedron_signed_volume(points, tetrahedra[k])) for k in cavity)
+        new_volume = sum(abs(tetrahedron_signed_volume(points, cell)) for cell in new_cells)
+        abs(new_volume - cavity_volume) <= 1.0e-9 * cavity_volume || return nothing, "volume not conserved"
+        # (ii) orientation: every child carries its parent's sign (the cavity construction
+        # guarantees it; asserted on the final configuration).
+        all(begin
+                volume = tetrahedron_signed_volume(points, cell)
+                volume != 0.0 && sign(volume) == sign(tetrahedron_signed_volume(points, tetrahedra[parent]))
+            end for (cell, parent) in zip(new_cells, parents)) || return nothing, "a new cell reversed or flat"
+        # (iv) F5-B's guards: the trigger's floor and ceiling; (v) decision 34: every new edge
+        # at or above the collapse threshold.
+        new_scaled = [scaled_of(cell) for cell in new_cells]
+        new_condition = [condition_of(cell) for cell in new_cells]
+        new_kappa = [kappa_of(cell) for cell in new_cells]
+        shortest_edge = minimum(norm(points[:, v] .- s) for cell in new_cells for v in cell if v != s_index)
+        shortest_edge >= edge_floor * (1.0 - 1.0e-9) ||
+            return nothing, "a new edge below the sub-size collapse threshold"
+        minimum(new_scaled) >= mesh.floors[t.cell] * (1.0 - 1.0e-9) || return nothing, "the scaled-Jacobian floor"
+        maximum(new_condition) <= mesh.condition_ceilings[t.cell] * (1.0 + 1.0e-9) ||
+            return nothing, "the condition ceiling"
+        # (iv) the corner's maximum kappa_reg at the insertion must improve on the trigger's;
+        # (vi) the corner-line edge is owned by >= 2 cells of the entity and none spans the
+        # wedge; both on the hypothetical list (the cavity replaced by the new cells).
+        cavity_set = Set(cavity)
+        corner_after = maximum(vcat([kappa_of(tetrahedra[k]) for k in corner_before if !(k in cavity_set)],
+                                    [new_kappa[c] for c in eachindex(new_cells)
+                                     if any(v in corner_vertices for v in new_cells[c])]))
+        corner_after < t.kappa || return nothing, "no improvement on the trigger"
+        owners = count(k -> !(k in cavity_set) && cell_entity(k) == entity && l2 in tetrahedra[k], incident[l1]) +
+                 count(cell -> l1 in cell && l2 in cell, new_cells)
+        owners >= 2 || return nothing, "the corner-line edge would be owned by $(owners) cell"
+        spanning_after = count(k -> !(k in cavity_set) && cell_entity(k) == entity && l2 in tetrahedra[k] &&
+                                    wedge_spanning_cell(points, tetrahedra[k], masks) !== nothing, incident[l1]) +
+                         count(cell -> l1 in cell && l2 in cell && wedge_spanning_cell(points, cell, masks) !== nothing,
+                               new_cells)
+        spanning_after == 0 || return nothing, "a wedge-spanning cell would remain"
+        # The (trial or real) application and the descent on the corner-incident cells UNION
+        # the new cells (the surviving corner cells first, then the new cells in their order).
+        slots, undo = apply_wedge_split_cavity!(points, mesh, cavity, new_cells, entity, scaled_target,
+                                                condition_target)
+        targets = vcat([k for k in corner_before if !(k in cavity_set)], slots)
+        vertices = unique(i for k in targets for i in tetrahedra[k])
+        saved_positions = points[:, vertices]
+        achieved, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases, mesh.floors,
+                                               bounds, targets, :regular_condition, goal;
+                                               ceilings=mesh.ceilings, condition_ceilings=mesh.condition_ceilings,
+                                               edge_floors=edge_floors)
+        candidate = Dict{String, Any}(
+            "Form" => String(form), "RadiusOverCornerSize" => j / WEDGE_SPLIT_RADIUS_STEPS,
+            "ZFraction" => i / WEDGE_SPLIT_Z_STEPS, "Point" => s, "CavityCells" => length(cavity),
+            "NewCells" => length(new_cells),
+            "VolumeConservation" => abs(new_volume - cavity_volume) / cavity_volume,
+            "MinScaledJacobianNew" => minimum(new_scaled), "MaxConditionNew" => maximum(new_condition),
+            "ShortestNewEdge" => shortest_edge,
+            "KappaRegAtInsertion" => Dict{String, Any}("Corner" => corner_after, "NewCells" => maximum(new_kappa)),
+            "Score" => achieved, "TrialMoves" => moves)
+        if apply
+            candidate["FinalPoint"] = points[:, s_index]
+            candidate["Displacement"] = norm(points[:, s_index] .- s)
+            candidate["NewCellsKappaRegMaxAfter"] = maximum(kappa_of(tetrahedra[p]) for p in slots)
+            candidate["MinScaledJacobianNewAfter"] = minimum(scaled_of(tetrahedra[p]) for p in slots)
+            return (candidate=candidate, cavity=cavity, slots=slots, trigger=t, achieved=achieved, moves=moves), ""
+        end
+        points[:, vertices] = saved_positions
+        undo_wedge_split_cavity!(mesh, undo)
+        return (candidate=candidate, trigger=t, form=form, j=j, i=i), ""
+    end
+    for t in triggers, form in WEDGE_SPLIT_FORMS, j in 1:WEDGE_SPLIT_RADIUS_STEPS, i in 1:(WEDGE_SPLIT_Z_STEPS - 1)
+        record["Candidates"] += 1
+        trial, reason = evaluate(t, form, j, i; apply=false)
+        if trial === nothing
+            reject(reason)
+            continue
+        end
+        record["Valid"] += 1
+        if best === nothing || trial.candidate["Score"] < best.candidate["Score"] - 1.0e-12
+            best = trial
+        end
+    end
+    best === nothing && return record, false, NaN, 0
+    # The selected candidate applied for real: the same code path gives the same result.
+    applied, reason = evaluate(best.trigger, best.form, best.j, best.i; apply=true)
+    applied === nothing && error("Wedge split at $(center): the selected candidate failed on its application ($(reason))")
+    abs(applied.achieved - best.candidate["Score"]) <= 1.0e-9 * max(1.0, best.candidate["Score"]) ||
+        error("Wedge split at $(center): the applied descent $(applied.achieved) differs from its trial " *
+              "$(best.candidate["Score"])")
+    record["Selected"] = applied.candidate
+    record["Trigger"] = Dict{String, Any}("KappaReg" => applied.trigger.kappa,
+                                          "DihedralDegrees" => rad2deg(applied.trigger.dihedral),
+                                          "DihedralFloor" => applied.trigger.floor,
+                                          "CornerLineEdge" => collect(applied.trigger.line))
+    record["CavityCells"] = applied.cavity; record["NewCellSlots"] = applied.slots
+    return record, true, applied.achieved, applied.moves
 end
 
 # Below-target cells of a target set grouped into vertex-sharing components.
@@ -2505,8 +3061,13 @@ end
 # maximum_corner_aspect, a scaled-Jacobian-gated cell stays below
 # minimum_scaled_jacobian or above maximum_jacobian_condition, or a layer cell
 # fails the rule. Returns (census record, indices of the moved vertices, the
-# collapse NamedTuple of collapse_short_edges!).
-function optimize_required_region!(points, tetrahedra, triangles, corners, radius, lc_fine,
+# collapse NamedTuple of collapse_short_edges!, the F5-B reconnection NamedTuple, the
+# point matrix, the wedge-split insertions). A WedgeSplit insertion (WEDGE_SPLIT_RULE) adds
+# a column to the point matrix, so `seed_points` is re-bound locally and the GROWN matrix is
+# RETURNED: a caller reads the moved positions from the returned matrix (without an
+# insertion it is the very matrix passed in, mutated in place as before); `inserted` lists
+# (entity, vertex index) per new vertex, in index order.
+function optimize_required_region!(seed_points, tetrahedra, triangles, corners, radius, lc_fine,
                                    spans, edge_size, growth_ratio, layer_thickness, row_zigzag,
                                    maximum_corner_aspect, minimum_scaled_jacobian,
                                    maximum_jacobian_condition, displacement_ratio, tolerance;
@@ -2514,11 +3075,14 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                                    corner_grading=CornerGrading(0.0, growth_ratio, lc_fine, radius),
                                    triangle_entities=zeros(Int, length(triangles)),
                                    lines=NTuple{2, Int}[], line_entities=Int[],
-                                   fixed=falses(size(points, 2)),
+                                   fixed=falses(size(seed_points, 2)),
                                    corner_kinds=fill(:legacy, length(corners)),
                                    corner_sides=fill(nothing, length(corners)),
                                    corner_shape_gate=0.0,
                                    cell_entities=zeros(Int, length(tetrahedra)))
+    # The type declaration keeps the closures below type-stable although the binding grows
+    # (a captured variable assigned twice is boxed; the declared type makes its reads cheap).
+    local points::Matrix{Float64} = seed_points
     original = copy(points)
     original_cell_count = length(tetrahedra)
     length(cell_entities) == original_cell_count || error("Every seed cell needs its volume entity")
@@ -2615,6 +3179,17 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
               corner_distance[i] <= radius ? corner_ball_size(corner_grading, corner_distance[i]) :
                                              lc_fine)
               for i in axes(points, 2)]
+    # The same law for a vertex a WedgeSplit inserts (its insertion point is its original).
+    function bound_of(point)
+        span = isempty(spans) ? lc_fine :
+               edge_size + (growth_ratio - 1.0) *
+                           minimum(span_point_distance(point, start, stop) for (start, stop) in spans)
+        distance = minimum((norm(point .- collect(corner)) for corner in corners); init=Inf)
+        return displacement_ratio * min(lc_fine, span,
+                                        distance <= radius ? corner_ball_size(corner_grading, distance) : lc_fine)
+    end
+    inserted = NamedTuple{(:entity, :index), Tuple{Int, Int}}[]
+    wedge_splits = Vector{Float64}[]
     # Per corner: the measure of its kind (legacy: tetrahedron_aspect, target 0.95 x
     # MaximumCornerAspect, verdict MaximumCornerAspect - bitwise the production path;
     # invariant: kappa_reg, goal INVARIANT_CORNER_TARGET, verdict corner_shape_gate), plus
@@ -2655,14 +3230,19 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         information_before = corner_information(targets)
         bridging_before = invariant ? bridging_slivers(center, sides, targets) : Int[]
         push!(corner_before, before)
+        # F5T R-1 (decision 674 (1)): every descent at this corner records its stop reason /
+        # best true value / sweeps; the records reach the corner row ONLY where the corner
+        # failed its gate (a passing census is byte-identical by construction).
+        descents = Dict{String, Any}[]
         if before <= target
             after, moves = before, 0
         else
+            push!(descents, Dict{String, Any}())
             after, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases,
                                                 floors, bounds, targets, objective, target;
                                                 ceilings=ceilings,
                                                 condition_ceilings=condition_ceilings,
-                                                edge_floors=edge_floors)
+                                                edge_floors=edge_floors, record=descents[end])
         end
         bridging_after = invariant ? bridging_slivers(center, sides, targets) : Int[]
         # Decision 365: the reconnection trigger = a bridging-sliver candidate still above
@@ -2672,91 +3252,175 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         trigger = invariant ? above_gate(bridging_after, gate) : Int[]
         reconnections = Dict{String, Any}[]
         after_descent = after
-        for round in 1:CORNER_RECONNECTION_ROUNDS
-            isempty(trigger) && break
-            flips = 0
-            # The trigger cells as they were when the round started (decision 392 MINOR-7): an
-            # earlier reconnection of this round may reuse a later trigger's slot for a NEW
-            # cell (the replaced slots take the new cells); such a slot is skipped so every
-            # Element / Before record names a trigger cell - the slot's cell, if still a
-            # candidate above the gate after the descent, triggers again next round.
-            trigger_cells = [tetrahedra[k] for k in trigger]
-            for (slot, k) in enumerate(trigger)
-                k in dead && continue
-                tetrahedra[k] == trigger_cells[slot] || continue
-                origin[k] in remapped_by_collapse && continue
-                before_flip = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
-                flip = best_two_three_flip(points, tetrahedra, incident, surface_faces,
-                                           p -> entity_of[p], k, floors[k], condition_ceilings[k])
-                removal = best_edge_removal(points, tetrahedra, incident, surface_edges,
-                                            p -> entity_of[p], k, floors[k], condition_ceilings[k])
-                flip !== nothing && origin[flip.neighbour] in remapped_by_collapse && (flip = nothing)
-                removal !== nothing && any(origin[j] in remapped_by_collapse for j in removal.ring) &&
-                    (removal = nothing)
-                flip === nothing && removal === nothing && continue
-                use_removal = removal !== nothing &&
-                              (flip === nothing || removal.quality <= flip.quality)
-                quality = use_removal ? removal.quality : flip.quality
-                quality < before_flip || continue
-                replaced = use_removal ? removal.ring : [k, flip.neighbour]
-                new_cells = use_removal ? removal.cells : flip.cells
-                entity = entity_of[k]
-                for p in replaced
-                    for i in tetrahedra[p]
-                        filter!(!=(p), incident[i])
+        wedge_split = nothing
+        # WedgeSplit (WEDGE_SPLIT_RULE; decisions 649 (2) / 669 (4)): pass 1 is today's F5-B rounds
+        # loop verbatim. ONLY when it exits with a trigger still above the gate (= this corner
+        # fails CornerShapeGate today) and a trigger cell SPANS the wedge, ONE vertex is
+        # inserted (wedge_split_corner!), then the rounds loop may run once more and a second
+        # insertion follow: WEDGE_SPLIT_ROUNDS passes. A corner whose trigger is empty at the
+        # exit runs no new code (the mesh, census and every record are byte-identical).
+        for split_pass in 1:WEDGE_SPLIT_ROUNDS
+            for round in 1:CORNER_RECONNECTION_ROUNDS
+                isempty(trigger) && break
+                flips = 0
+                # The trigger cells as they were when the round started (decision 392 MINOR-7): an
+                # earlier reconnection of this round may reuse a later trigger's slot for a NEW
+                # cell (the replaced slots take the new cells); such a slot is skipped so every
+                # Element / Before record names a trigger cell - the slot's cell, if still a
+                # candidate above the gate after the descent, triggers again next round.
+                trigger_cells = [tetrahedra[k] for k in trigger]
+                for (slot, k) in enumerate(trigger)
+                    k in dead && continue
+                    tetrahedra[k] == trigger_cells[slot] || continue
+                    origin[k] in remapped_by_collapse && continue
+                    before_flip = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
+                    flip = best_two_three_flip(points, tetrahedra, incident, surface_faces,
+                                               p -> entity_of[p], k, floors[k], condition_ceilings[k])
+                    removal = best_edge_removal(points, tetrahedra, incident, surface_edges,
+                                                p -> entity_of[p], k, floors[k], condition_ceilings[k])
+                    flip !== nothing && origin[flip.neighbour] in remapped_by_collapse && (flip = nothing)
+                    removal !== nothing && any(origin[j] in remapped_by_collapse for j in removal.ring) &&
+                        (removal = nothing)
+                    flip === nothing && removal === nothing && continue
+                    use_removal = removal !== nothing &&
+                                  (flip === nothing || removal.quality <= flip.quality)
+                    quality = use_removal ? removal.quality : flip.quality
+                    quality < before_flip || continue
+                    replaced = use_removal ? removal.ring : [k, flip.neighbour]
+                    new_cells = use_removal ? removal.cells : flip.cells
+                    entity = entity_of[k]
+                    for p in replaced
+                        for i in tetrahedra[p]
+                            filter!(!=(p), incident[i])
+                        end
+                        origin[p] > 0 && push!(reconnection_replaced, origin[p])
+                        origin[p] = 0
+                        delete!(reconnection_added, p)
                     end
-                    origin[p] > 0 && push!(reconnection_replaced, origin[p])
-                    origin[p] = 0
-                    delete!(reconnection_added, p)
-                end
-                # The new cells take the replaced slots; extra slots die, extra cells append.
-                slots = Int[]
-                for (index, new_cell) in enumerate(new_cells)
-                    if index <= length(replaced)
-                        p = replaced[index]
-                        tetrahedra[p] = new_cell
-                        scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
-                        floors[p] = min(scaled_new, scaled_target); ceilings[p] = Inf
-                        condition_ceilings[p] = max(tetrahedron_aspect([points[:, i] for i in new_cell]),
-                                                    condition_target)
-                    else
-                        push!(tetrahedra, new_cell)
-                        p = length(tetrahedra)
-                        push!(origin, 0); push!(entity_of, entity)
-                        scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
-                        push!(floors, min(scaled_new, scaled_target)); push!(ceilings, Inf)
-                        push!(condition_ceilings,
-                              max(tetrahedron_aspect([points[:, i] for i in new_cell]), condition_target))
+                    # The new cells take the replaced slots; extra slots die, extra cells append.
+                    slots = Int[]
+                    for (index, new_cell) in enumerate(new_cells)
+                        if index <= length(replaced)
+                            p = replaced[index]
+                            tetrahedra[p] = new_cell
+                            scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
+                            floors[p] = min(scaled_new, scaled_target); ceilings[p] = Inf
+                            condition_ceilings[p] = max(tetrahedron_aspect([points[:, i] for i in new_cell]),
+                                                        condition_target)
+                        else
+                            push!(tetrahedra, new_cell)
+                            p = length(tetrahedra)
+                            push!(origin, 0); push!(entity_of, entity)
+                            scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
+                            push!(floors, min(scaled_new, scaled_target)); push!(ceilings, Inf)
+                            push!(condition_ceilings,
+                                  max(tetrahedron_aspect([points[:, i] for i in new_cell]), condition_target))
+                        end
+                        push!(slots, p)
+                        reconnection_added[p] = (entity, new_cell)
+                        for i in new_cell
+                            push!(incident[i], p)
+                        end
                     end
-                    push!(slots, p)
-                    reconnection_added[p] = (entity, new_cell)
-                    for i in new_cell
-                        push!(incident[i], p)
+                    for p in replaced[(length(new_cells) + 1):end]
+                        push!(dead, p)
                     end
+                    flips += 1
+                    row = Dict{String, Any}(
+                        "Round" => round, "Kind" => use_removal ? "edge-removal" : "2-3",
+                        "Element" => use_removal ? collect(removal.edge) : collect(flip.face),
+                        "Before" => before_flip, "After" => quality,
+                        "ReplacedCells" => length(replaced), "AddedCells" => length(new_cells))
+                    split_pass > 1 && (row["WedgeSplitPass"] = split_pass)
+                    push!(reconnections, row)
                 end
-                for p in replaced[(length(new_cells) + 1):end]
-                    push!(dead, p)
-                end
-                flips += 1
-                push!(reconnections, Dict{String, Any}(
-                    "Round" => round, "Kind" => use_removal ? "edge-removal" : "2-3",
-                    "Element" => use_removal ? collect(removal.edge) : collect(flip.face),
-                    "Before" => before_flip, "After" => quality,
-                    "ReplacedCells" => length(replaced), "AddedCells" => length(new_cells)))
+                flips == 0 && break
+                targets = corner_incident(center)
+                push!(descents, Dict{String, Any}())
+                after, descent_moves = optimize_seed_cells!(points, original, tetrahedra, incident,
+                                                            bases, floors, bounds, targets, objective,
+                                                            target; ceilings=ceilings,
+                                                            condition_ceilings=condition_ceilings,
+                                                            edge_floors=edge_floors, record=descents[end])
+                moves += descent_moves
+                bridging_after = bridging_slivers(center, sides, targets)
+                trigger = above_gate(bridging_after, gate)
             end
-            flips == 0 && break
+            (invariant && !isempty(trigger) && sides !== nothing) || break
+            masks = sidewall_vertex_masks(points, triangles, center, sides, radius)
+            any(k -> !(k in dead) && wedge_spanning_cell(points, tetrahedra[k], masks) !== nothing, trigger) || break
+            # The spare column / entries for the vertex s (the insertion point is its original;
+            # the corner law's bound and the collapse threshold as for every ball vertex).
+            s_index = size(points, 2) + 1
+            points = hcat(points, zeros(3)); original = hcat(original, zeros(3))
+            push!(bounds, 0.0); push!(edge_floors, 0.0); push!(incident, Int[])
+            mesh = (tetrahedra=tetrahedra, incident=incident, floors=floors, ceilings=ceilings,
+                    condition_ceilings=condition_ceilings, origin=origin, entity_of=entity_of,
+                    reconnection_replaced=reconnection_replaced, reconnection_added=reconnection_added,
+                    dead=dead)
+            grid_size = corner_grading.corner_size > 0.0 ? corner_grading.corner_size : collapse_size
+            pass_record, applied, split_after, split_moves = wedge_split_corner!(
+                points, original, s_index, mesh, bases, bounds, edge_floors, bound_of,
+                remapped_by_collapse, surface_faces, center, sides, masks, trigger, corner_incident,
+                gate, target, scaled_target, condition_target, grid_size, collapse_threshold, tolerance)
+            pass_record["Pass"] = split_pass
+            if wedge_split === nothing
+                wedge_split = Dict{String, Any}("Rule" => WEDGE_SPLIT_RULE, "Rounds" => 0, "Passes" => Dict{String, Any}[])
+            end
+            push!(wedge_split["Passes"], pass_record)
+            if !applied
+                # No valid candidate: the spare column goes; the corner fails closed as today,
+                # the fail-closed message carrying the pass record (3.6).
+                points = points[:, 1:(s_index - 1)]; original = original[:, 1:(s_index - 1)]
+                pop!(bounds); pop!(edge_floors); pop!(incident)
+                break
+            end
+            wedge_split["Rounds"] += 1
+            split_entity = entity_of[pass_record["NewCellSlots"][1]]
+            push!(inserted, (entity=split_entity, index=s_index))
+            after = split_after; moves += split_moves
             targets = corner_incident(center)
-            after, descent_moves = optimize_seed_cells!(points, original, tetrahedra, incident,
-                                                        bases, floors, bounds, targets, objective,
-                                                        target; ceilings=ceilings,
-                                                        condition_ceilings=condition_ceilings,
-                                                        edge_floors=edge_floors)
-            moves += descent_moves
             bridging_after = bridging_slivers(center, sides, targets)
             trigger = above_gate(bridging_after, gate)
+            masks_after = sidewall_vertex_masks(points, triangles, center, sides, radius)
+            l1, l2 = pass_record["Trigger"]["CornerLineEdge"]
+            pass_record["DescentMovesAfter"] = split_moves
+            pass_record["CornerLineEdgeOwnersAfter"] = count(k -> !(k in dead) && entity_of[k] == split_entity &&
+                                                                 l2 in tetrahedra[k], incident[l1])
+            pass_record["SpanningCellsAfter"] = count(k -> wedge_spanning_cell(points, tetrahedra[k], masks_after) !== nothing,
+                                                     trigger)
+            pass_record["CornerKappaRegMaxAfter"] = maximum(tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
+                                                            for k in targets)
+            pass_record["BridgingSliversAfter"] = length(bridging_after)
+            pass_record["AboveGateAfter"] = length(trigger)
+            push!(reconnections, Dict{String, Any}(
+                "Round" => split_pass, "Kind" => "wedge-split", "Element" => [l1, l2],
+                "Before" => pass_record["Trigger"]["KappaReg"], "After" => split_after,
+                "AtInsertion" => pass_record["Selected"]["KappaRegAtInsertion"],
+                "ReplacedCells" => length(pass_record["CavityCells"]),
+                "AddedCells" => length(pass_record["NewCellSlots"]), "AddedNodes" => 1))
         end
+        if wedge_split !== nothing
+            # The design's flat row = the first pass; further passes stay in Passes.
+            merge!(wedge_split, Dict{String, Any}(key => value for (key, value) in wedge_split["Passes"][1]
+                                                  if key != "Pass"))
+            wedge_split["Rounds"] > 0 && push!(wedge_splits, center)
+        end
+        # F5T R-7 (decisions 674 (2) / 675): the FAIL PATH of a legacy corner - its stored-order
+        # verdict failed, the build would fail closed here - re-judged by the order-invariant
+        # verdict of record when the build carries CornerShapeGate (none: today's fail-closed
+        # path, unchanged). Entered on no passing build.
+        fail_path = nothing
+        if !invariant && after > gate && isfinite(corner_shape_gate) && corner_shape_gate > 1.0
+            fail_path = fail_path_legacy_verdict!(points, original, tetrahedra, incident, bases,
+                                                  floors, bounds, targets, corner_shape_gate;
+                                                  ceilings=ceilings,
+                                                  condition_ceilings=condition_ceilings,
+                                                  edge_floors=edge_floors)
+        end
+        passed = fail_path === nothing ? after <= gate : fail_path["Passed"]
         push!(corner_after, after); push!(corner_moves, moves)
-        push!(corner_measures, Dict{String, Any}(
+        row = Dict{String, Any}(
             "Point" => center, "Kind" => invariant ? "Invariant" : "Legacy",
             "Measure" => invariant ? "RegularCondition" : "VertexFrameCondition",
             "Before" => before, "After" => after, "Target" => target, "Gate" => gate,
@@ -2771,7 +3435,16 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             "Reconnections" => reconnections,
             "InformationBefore" => information_before,
             "Information" => corner_information(targets),
-            "Passed" => after <= gate))
+            "Passed" => passed)
+        wedge_split === nothing || (row["WedgeSplit"] = wedge_split)
+        if after > gate
+            # The corner failed its gate (the stored-order verdict at a legacy corner, kappa_reg
+            # at an invariant one): the R-1 descent records, and the R-7 fail-path verdict where
+            # it was entered.
+            row["Descents"] = descents
+            fail_path === nothing || (row["FailPathMeasure"] = fail_path)
+        end
+        push!(corner_measures, row)
     end
     if !isempty(reconnection_added)
         # The reconnections changed the cell list: the dead slots (an edge removal replaces
@@ -2987,6 +3660,20 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         "MaximumDisplacement" => isempty(moved) ? 0.0 : maximum(displacement[moved]),
         "MaximumDisplacementOverBound" =>
             isempty(moved) ? 0.0 : maximum(displacement[i] / bounds[i] for i in moved))
+    if !isempty(wedge_splits)
+        # WedgeSplit keys ONLY where the operation fired (decisions 639 (3) / 670).
+        record["WedgeSplitRule"] = WEDGE_SPLIT_RULE
+        record["WedgeSplitRounds"] = WEDGE_SPLIT_ROUNDS
+        record["WedgeSplits"] = wedge_splits
+        record["InsertedNodes"] = length(inserted)
+    end
+    # F5T (decisions 674 / 675; the 670 discipline): the fail-path keys exist only where the
+    # fail-path legacy verdict fired - the rule text and the corners it judged.
+    fail_path_rows = [row for row in corner_measures if haskey(row, "FailPathMeasure")]
+    if !isempty(fail_path_rows)
+        record["FailPathLegacyVerdictRule"] = FAIL_PATH_LEGACY_VERDICT_RULE
+        record["FailPathLegacyCorners"] = [row["Point"] for row in fail_path_rows]
+    end
     for row in corner_measures
         println("Seed corner $(row["Kind"]) $(row["Point"]): $(row["Measure"]) $(row["Before"]) -> " *
                 "$(row["After"]) (target $(row["Target"]), gate $(row["Gate"]), moves $(row["Moves"])), " *
@@ -2995,7 +3682,20 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                 "reconnections $(length(row["Reconnections"])) (after the descent $(row["AfterDescent"])), " *
                 "kappa_reg $(row["Information"]["KappaRegMax"]) " *
                 "kappa_v0 $(row["Information"]["KappaV0Max"]) kappa_min $(row["Information"]["KappaMinMax"]) " *
-                "kappa_max $(row["Information"]["KappaMaxMax"]) eta $(row["Information"]["EtaMin"])")
+                "kappa_max $(row["Information"]["KappaMaxMax"]) eta $(row["Information"]["EtaMin"])" *
+                (haskey(row, "WedgeSplit") ? "; wedge-split $(wedge_split_summary(row["WedgeSplit"]))" : "") *
+                (haskey(row, "Descents") ?
+                 "; descents " * join(["$(d["StopReason"]) after $(d["Sweeps"]) sweeps (best $(d["BestAchieved"]) " *
+                                       "at sweep $(d["BestSweep"]) move $(d["BestMove"]))" for d in row["Descents"]], ", ") :
+                 "") *
+                (haskey(row, "FailPathMeasure") ?
+                 "; fail-path $(row["FailPathMeasure"]["Measure"]) $(row["FailPathMeasure"]["Before"]) -> " *
+                 "$(row["FailPathMeasure"]["After"]) (target $(row["FailPathMeasure"]["Target"]), gate " *
+                 "$(row["FailPathMeasure"]["Gate"]), moves $(row["FailPathMeasure"]["Moves"]), " *
+                 "$(row["FailPathMeasure"]["Descent"]["StopReason"]) after " *
+                 "$(row["FailPathMeasure"]["Descent"]["Sweeps"]) sweeps), VertexFrameCondition then " *
+                 "$(row["FailPathMeasure"]["VertexFrameConditionAfter"]), passed " *
+                 "$(row["FailPathMeasure"]["Passed"])" : ""))
     end
     println("Seed required-region optimization: corners $(corner_before) -> $(corner_after), " *
             "required cells $(required_before_moves) -> $(length(required_cells)) " *
@@ -3041,8 +3741,9 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                 "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
     end
     failures = String[]
-    legacy_failed = [row["After"] for row in corner_measures
-                     if row["Kind"] == "Legacy" && row["After"] > row["Gate"]]
+    # A legacy corner fails iff its row did not pass: the stored-order verdict, or - where the
+    # fail-path verdict was entered (R-7) - that verdict (both readings named).
+    legacy_failed = [row for row in corner_measures if row["Kind"] == "Legacy" && !row["Passed"]]
     invariant_failed = [row for row in corner_measures
                         if row["Kind"] == "Invariant" && row["After"] > row["Gate"]]
     for row in corner_measures
@@ -3066,13 +3767,21 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     end
     isempty(legacy_failed) ||
         push!(failures, "Seed semantic-corner aspect exceeds the gate after optimization: " *
-                        "$(maximum(legacy_failed)) > $(maximum_corner_aspect)")
+                        "$(maximum(row["After"] for row in legacy_failed)) > $(maximum_corner_aspect)" *
+                        (any(haskey(row, "FailPathMeasure") for row in legacy_failed) ?
+                         "; fail-path legacy verdict (decisions 674 (2) / 675) failed too: " *
+                         join(["at $(row["Point"]): VertexFrameCondition $(row["After"]), kappa_reg " *
+                               "$(row["FailPathMeasure"]["Before"]) -> $(row["FailPathMeasure"]["After"]) > " *
+                               "CornerShapeGate $(row["FailPathMeasure"]["Gate"])"
+                               for row in legacy_failed if haskey(row, "FailPathMeasure")], "; ") : ""))
     isempty(invariant_failed) ||
         push!(failures, "Seed invariant semantic-corner kappa_reg exceeds CornerShapeGate after " *
                         "optimization: $(maximum(row["After"] for row in invariant_failed)) > " *
                         "$(corner_shape_gate) at $([row["Point"] for row in invariant_failed]) " *
                         "(bridging-sliver cells above the gate: " *
-                        "$([row["BridgingSlivers"]["AboveGateAfter"] for row in invariant_failed]))")
+                        "$([row["BridgingSlivers"]["AboveGateAfter"] for row in invariant_failed]))" *
+                        join(["; wedge-split at $(row["Point"]): $(wedge_split_summary(row["WedgeSplit"]))"
+                              for row in invariant_failed if haskey(row, "WedgeSplit")]))
     if below_gate > 0
         failing = sort([k for k in gated_cells if scaled_of(k) < minimum_scaled_jacobian];
                        by=scaled_of)
@@ -3108,7 +3817,22 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     end
     reconnection = (replaced=reconnection_replaced,
                     added=[(entity, cell) for (entity, cell) in values(reconnection_added)])
-    return record, moved, collapse, reconnection
+    return record, moved, collapse, reconnection, points, inserted
+end
+
+# The one-line summary of a corner's WedgeSplit record for the log and the fail-closed
+# message (DESIGN 3.6: candidates, valid, the best score, f(theta)); the last pass's numbers.
+function wedge_split_summary(wedge_split)
+    pass = wedge_split["Passes"][end]
+    selected = pass["Selected"]
+    triggers = pass["TriggerCells"]
+    floor = isempty(triggers) ? nothing : triggers[1]["DihedralFloor"]
+    theta = isempty(triggers) ? nothing : triggers[1]["DihedralDegrees"]
+    return "pass $(pass["Pass"]) of $(WEDGE_SPLIT_ROUNDS): $(pass["Candidates"]) candidates, $(pass["Valid"]) valid, " *
+           (selected === nothing ? "no insertion" :
+            "best score $(selected["Score"]) ($(selected["Form"]) r $(selected["RadiusOverCornerSize"]) x CornerSize " *
+            "z $(selected["ZFraction"]); cavity $(selected["CavityCells"]) -> $(selected["NewCells"]) cells)") *
+           ", f(theta $(theta) deg) $(floor), rounds $(wedge_split["Rounds"])"
 end
 
 # The linear cells of one dimension with their Gmsh element tags and entity tags
@@ -3171,7 +3895,7 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
     for tag in fixed_node_tags
         fixed[index[tag]] = true
     end
-    record, moved, collapse, reconnection = optimize_required_region!(
+    record, moved, collapse, reconnection, points, inserted = optimize_required_region!(
         points, tetrahedra, triangles, corners, radius, lc_fine, spans, edge_size, growth_ratio,
         layer_thickness, row_zigzag, maximum_corner_aspect, minimum_scaled_jacobian,
         maximum_jacobian_condition, displacement_ratio, tolerance;
@@ -3179,7 +3903,22 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
         triangle_entities=triangle_entities, lines=lines, line_entities=line_entities,
         fixed=fixed, corner_kinds=corner_kinds, corner_sides=corner_sides,
         corner_shape_gate=corner_shape_gate, cell_entities=Int.(entities))
+    # A WedgeSplit vertex (WEDGE_SPLIT_RULE) is added to its VOLUME entity with a fresh tag at
+    # its final position BEFORE the reconnection is applied (the new cells reference it
+    # through node_tags); the moved ORIGINAL nodes are then set as before.
+    original_nodes = length(node_tags)
+    if !isempty(inserted)
+        node_tags = collect(node_tags)
+        for (entity, index) in inserted
+            tag = gmsh.model.mesh.getMaxNodeTag() + 1
+            gmsh.model.mesh.addNodes(3, entity, [tag], points[:, index])
+            push!(node_tags, tag)
+            length(node_tags) == index ||
+                error("Seed wedge-split node bookkeeping: inserted vertex $(index) is node $(length(node_tags))")
+        end
+    end
     for i in moved
+        i <= original_nodes || continue
         gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
     end
     apply_seed_cell_collapse!(node_tags, tags, entities, collapse.cells_removed,
@@ -3976,9 +4715,14 @@ function offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
             collapsed=collapsed, interior=interior, angle=run.angle, run=item.run)
 end
 
-# Where the shifted line (`point`, `direction`) meets the offset circle of `arc`:
-# the foot of the centre when they are tangent (the arc-fit tolerance), else the
-# intersection nearest `near`; nothing when the line misses the circle.
+# Where the shifted line (`point`, `direction`) meets the offset circle of `arc`, and
+# whether they are TANGENT within the arc-fit tolerance: `(foot, true)` - the foot of the
+# centre on the line - when tangent, `(crossing, false)` for the intersection nearest
+# `near`, `(nothing, false)` when the line misses the circle. A tangent crossing is
+# unresolvable (a miss of `slack` moves it by sqrt(2 r slack) along the line) and the foot
+# lies r x turn behind the shifted ends of a joint that turns: the caller decides between
+# the foot and the midpoint of the shifted ends (round4/collarunion, decisions 661 / 668:
+# the a596 needle kite).
 function line_circle_junction(point, direction, arc, near, tolerance)
     u = unit2d(direction)
     w = (arc.center[1] - point[1], arc.center[2] - point[2])
@@ -3986,40 +4730,65 @@ function line_circle_junction(point, direction, arc, near, tolerance)
     along = w[1] * u[1] + w[2] * u[2]
     foot = (point[1] + along * u[1], point[2] + along * u[2])
     slack = arc_fit_tolerance(arc.radius, tolerance)
-    abs(h) > arc.radius + slack && return nothing
-    arc.radius - abs(h) <= slack && return foot
+    abs(h) > arc.radius + slack && return nothing, false
+    arc.radius - abs(h) <= slack && return foot, true
     half = sqrt(arc.radius^2 - h^2)
     candidates = ((foot[1] + half * u[1], foot[2] + half * u[2]),
                   (foot[1] - half * u[1], foot[2] - half * u[2]))
-    return argmin(c -> hypot(c[1] - near[1], c[2] - near[2]), candidates)
+    return argmin(c -> hypot(c[1] - near[1], c[2] - near[2]), candidates), false
 end
 
-# The junction point of two consecutive non-collapsed items (nothing when their
-# offsets do not meet).
+# Guard margin of the tangent line-arc snap (decision 668): the two shifted ends of a
+# Physical line and an arc whose offsets line_circle_junction reads as tangent are at most
+# |distance| x theta_w apart, theta_w = acos(1 - slack / r) the turn at which the shifted
+# line's distance from the centre, r cos(turn), leaves the tangency slack - the verdict's
+# own window. The snap admits a gap up to this multiple of that bound (roundoff at the
+# window edge); a larger gap is a junction the verdict does not describe (a Continuation
+# line, shift 0: the ends are |distance| apart; an unshared vertex) and keeps the foot.
+# Not a tolerance.
+const SNAP_GUARD_MARGIN = 2.0
+
+# The junction point of two consecutive non-collapsed items (nothing when their offsets do
+# not meet) and whether it is a SNAPPED tangent joint: the midpoint of the two shifted
+# ends (two arcs; a Physical line and an arc whose offsets are tangent within the arc-fit
+# tolerance with the ends within SNAP_GUARD_MARGIN of the tangency window's gap). A
+# snapped joint is tangent for curved_offset_loop whatever its turn reads, so that no
+# miter kite is built on an unresolvable crossing (round4/collarunion, decisions 661 /
+# 668); a tangent line-arc joint the guard refuses keeps the foot of the centre on the
+# line, not snapped.
 function offset_junction(before, after, distance, tolerance)
     if before.kind == :line && after.kind == :line
         denominator = cross2d(before.direction, after.direction)
         abs(denominator) > tolerance * hypot(before.direction...) * hypot(after.direction...) ||
-            return nothing
+            return nothing, false
         offset = (after.shifted_start[1] - before.shifted_start[1],
                   after.shifted_start[2] - before.shifted_start[2])
         coordinate = cross2d(offset, after.direction) / denominator
         return (before.shifted_start[1] + coordinate * before.direction[1],
-                before.shifted_start[2] + coordinate * before.direction[2])
-    elseif before.kind == :line
-        return line_circle_junction(before.shifted_start, before.direction, after,
-                                    after.shifted_start, tolerance)
-    elseif after.kind == :line
-        return line_circle_junction(after.shifted_start, after.direction, before,
-                                    before.shifted_stop, tolerance)
+                before.shifted_start[2] + coordinate * before.direction[2]), false
     end
     gap = hypot(before.shifted_stop[1] - after.shifted_start[1],
                 before.shifted_stop[2] - after.shifted_start[2])
-    gap <= arc_fit_tolerance(max(before.radius, after.radius), tolerance) ||
-        error("Two circular arcs of the plan-view boundary meet at a kink (their offsets " *
-              "by $distance differ by $gap): only tangent arc-arc joints are supported")
+    if before.kind == :line || after.kind == :line
+        line, arc = before.kind == :line ? (before, after) : (after, before)
+        point, tangent = before.kind == :line ?
+                         line_circle_junction(before.shifted_start, before.direction, after,
+                                              after.shifted_start, tolerance) :
+                         line_circle_junction(after.shifted_start, after.direction, before,
+                                              before.shifted_stop, tolerance)
+        tangent || return point, false
+        slack = arc_fit_tolerance(arc.radius, tolerance)
+        window = acos(clamp(1.0 - slack / arc.radius, -1.0, 1.0))
+        snapped = line.shift != (0.0, 0.0) &&
+                  gap <= SNAP_GUARD_MARGIN * abs(distance) * window
+        snapped || return point, false
+    else
+        gap <= arc_fit_tolerance(max(before.radius, after.radius), tolerance) ||
+            error("Two circular arcs of the plan-view boundary meet at a kink (their offsets " *
+                  "by $distance differ by $gap): only tangent arc-arc joints are supported")
+    end
     return (0.5 * (before.shifted_stop[1] + after.shifted_start[1]),
-            0.5 * (before.shifted_stop[2] + after.shifted_start[2]))
+            0.5 * (before.shifted_stop[2] + after.shifted_start[2])), true
 end
 
 # Mesher design round 3 class (5), interim guard 5B (part M 2.1 / 2.2; 510 MINOR-8 (b)): a
@@ -4150,7 +4919,8 @@ end
 # one per pair of consecutive non-collapsed items: (before, after) item indices, `vertex`
 # (the loop vertex, or the two vertices of the collapsed arcs between them), `point`
 # (nothing when bridged or deferred), `tangent` (the items join within
-# JUNCTION_TANGENT_ANGLE), `convex` (the metal turns convexly there) and `deferred` (fix
+# JUNCTION_TANGENT_ANGLE, or at a snapped joint of offset_junction: decisions 661 / 668),
+# `convex` (the metal turns convexly there) and `deferred` (fix
 # 5A: a Continuation line and an arc whose offsets do not meet; the arc's extension to the
 # box exit is in `extensions[arc item] = (at_stop, metal, offset, exit)`, and the offset
 # polygon carries the extension's offset-circle vertices so that the propagated run spans
@@ -4229,7 +4999,7 @@ function curved_offset_loop(loop, distance, runs, tolerance; box=nothing)
         end
         collapsed_between = !isempty(skipped)
         vertices = collapsed_between ? [before.stop, after.start] : [before.stop]
-        point = offset_junction(before, after, distance, tolerance)
+        point, snapped = offset_junction(before, after, distance, tolerance)
         resolved = point !== nothing && any(
             hypot(point[1] - v[1], point[2] - v[2]) <= 8.0 * max(abs(distance), tolerance)
             for v in vertices)
@@ -4268,8 +5038,8 @@ function curved_offset_loop(loop, distance, runs, tolerance; box=nothing)
         turn = metal_side * atan(cross2d(before.tangent_stop, after.tangent_start),
                                  before.tangent_stop[1] * after.tangent_start[1] +
                                  before.tangent_stop[2] * after.tangent_start[2])
-        tangent = !collapsed_between && abs(turn) <= JUNCTION_TANGENT_ANGLE
-        convex = !collapsed_between && turn > JUNCTION_TANGENT_ANGLE
+        tangent = !collapsed_between && (abs(turn) <= JUNCTION_TANGENT_ANGLE || snapped)
+        convex = !collapsed_between && !tangent && turn > JUNCTION_TANGENT_ANGLE
         append!(offset, before.interior)
         interior_indices[k] = collect((length(offset) - length(before.interior) + 1):length(offset))
         if resolved

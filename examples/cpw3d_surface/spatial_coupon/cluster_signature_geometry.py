@@ -315,6 +315,24 @@ CHAIN_JOINT_RULE = ("mesher design round 3 class (2), fix 2a (DESIGN-part-M 1.3)
                     "meet within the joint tolerance form a CHAIN rebuilt on ONE circle through the chain's outer ends; "
                     "every interior joint vertex is projected radially onto it and every member carries the chain's "
                     "centre and radius (identical digits)")
+# round4/collarunion ArcJointTilt (decisions 669 (5) / 673): the snap of ONE outer end of a chain onto its device
+# vertex (eps, up to ARC_JOINT_SNAP_OVER_R) rotates the whole rebuilt circle - the chain's other end included - by
+# eps / L (L the chain's chord), so a joint the SIGNATURE reads as smooth can turn by more than the mesher's
+# smooth bound on the boundary it builds (a596f5a4c303: 9.5e-8 -> 2.42e-4 rad at a 6.9-um chain of R 4781 um,
+# eps 1.68 nm). The joint CLASS (JointSmooth) is therefore decided on the BUILT turn (built_tangent, the quantity
+# arc_end_guards measures) with JUNCTION_TANGENT_ANGLE; the mesher's corner floor is spelled here as
+# ARC_CORNER_JOINT_TURN_FLOOR (mesh_spatial_coupon.jl ARC_CORNER_JOINT_TURN_RANGE's lower end, both kinds; one
+# concept, asserted equal by test). A built turn in neither built range is refused by NAME at generation (fail
+# closed where the number is made, never a mesher ScopeGuard later: the R2 MINOR-5 principle for kept arcs).
+ARC_CORNER_JOINT_TURN_FLOOR = 2.0e-4
+JOINT_CLASS_RULE = ("round4/collarunion ArcJointTilt (decisions 669 (5) / 673): the class of an arc joint (JointSmooth) is "
+                    "decided on the BUILT boundary - the rebuilt (chain) circle's tangent at the fixed end against the "
+                    "neighbour's built direction, the turn the mesher's arc_end_guards measures - with JUNCTION_TANGENT_ANGLE "
+                    "= 1e-4 rad; where it equals the signature's class (design A3 (1), pre-snap) the row keeps the signature's "
+                    "JointTurn bitwise, where it differs JointTurn records the BUILT turn so that the recorded class and "
+                    "number agree (a JointReclassified record names the end); a built turn in (ARC_SMOOTH_JOINT_TURN_BOUND "
+                    "5e-5, JUNCTION_TANGENT_ANGLE 1e-4] or in (JUNCTION_TANGENT_ANGLE, ARC_CORNER_JOINT_TURN_FLOOR 2e-4) lies in "
+                    "neither built range and is refused by name at generation")
 
 
 def _entry_tangent_at(entry, point, radius):
@@ -357,7 +375,11 @@ def rebuilt_arcs(signature, radius):
     JUNCTION_TANGENT_ANGLE is DEMOTED whole (fix (3)(ii), STRAIGHTENED_ARC_RULE: each member one
     chord between its fixed ends, Demoted True, no tag); (d) the joint classification, which
     never sees a demoted entry as an arc, and the MINOR-5 assertion on every smooth joint of a
-    demoted entry.  A chain of one member is today's rebuild, bitwise."""
+    demoted entry; for a KEPT arc the joint's CLASS is decided on the BUILT turn (JOINT_CLASS_RULE,
+    decision 673: the recorded turn is the signature's where the two classes agree, the built
+    turn - with a ``JointReclassified`` record - where they differ; a built turn in neither of
+    the mesher's built ranges is refused by name). A chain of one member is today's rebuild,
+    bitwise."""
     fixed, records = arc_end_snaps(signature, radius)
     entries = _serialised_entries(signature, radius)
     tolerance = (ARC_REBUILD_TOLERANCE_OVER_R + HALF_QUANTUM_OVER_R) * radius
@@ -545,6 +567,34 @@ def rebuilt_arcs(signature, radius):
         # angle between the lines of travel through it.
         return deterministic_math.acos(min(1.0, abs(_dot2(own, neighbour))))
 
+    def built_turn_between(own, neighbour):
+        # The same angle as the mesher's arc_end_guards reads it: atan of the cross and dot
+        # products (exact to the rounding of the directions near 0, where acos is not).
+        return deterministic_math.atan2(abs(float(own[0]) * float(neighbour[1]) - float(own[1]) * float(neighbour[0])),
+                                        abs(_dot2(own, neighbour)))
+
+    def classified_joint(i, end_index, signature_turn, built_turn):
+        # JOINT_CLASS_RULE: the class from the BUILT turn; the recorded number is the signature's
+        # where the classes agree (the row bitwise), the built turn where they differ; a built
+        # turn in neither built range is refused by name (the gaps read with the MINOR-5 slack).
+        built_smooth = built_turn <= JUNCTION_TANGENT_ANGLE
+        kind, index = entries[i]["Kind"].lower(), entries[i]["Index"]
+        if built_smooth and not built_turn < ARC_SMOOTH_JOINT_TURN_BOUND * (1.0 - 1.0e-12):
+            _refuse(f"JointTurnGap: {kind} {index} end {end_index} turns by {built_turn:.6e} rad on the built boundary "
+                    f"(the signature reads {signature_turn:.6e}): a smooth joint above ARC_SMOOTH_JOINT_TURN_BOUND "
+                    f"{ARC_SMOOTH_JOINT_TURN_BOUND:g} rad and at most JUNCTION_TANGENT_ANGLE {JUNCTION_TANGENT_ANGLE:g} rad lies "
+                    f"in neither built range of the mesher (round4/collarunion ArcJointTilt, decision 673)")
+        if not built_smooth and not built_turn > ARC_CORNER_JOINT_TURN_FLOOR * (1.0 + 1.0e-12):
+            _refuse(f"JointTurnGap: {kind} {index} end {end_index} turns by {built_turn:.6e} rad on the built boundary "
+                    f"(the signature reads {signature_turn:.6e}): a corner joint above JUNCTION_TANGENT_ANGLE "
+                    f"{JUNCTION_TANGENT_ANGLE:g} rad and below ARC_CORNER_JOINT_TURN_FLOOR {ARC_CORNER_JOINT_TURN_FLOOR:g} rad lies "
+                    f"in neither built range of the mesher (round4/collarunion ArcJointTilt, decision 673)")
+        if built_smooth == (signature_turn <= JUNCTION_TANGENT_ANGLE):
+            return signature_turn
+        records.append({"Piece": piece(i), "End": end_index, "Class": "JointReclassified",
+                        "SignatureTurnRad": signature_turn, "BuiltTurnRad": built_turn, "Rule": JOINT_CLASS_RULE})
+        return built_turn
+
     # (d) the joint classification of the kept arcs (and the MINOR-5 assertion of the demoted).
     arcs = []
     for i in arc_indices:
@@ -557,9 +607,13 @@ def rebuilt_arcs(signature, radius):
         if not closed:
             for end_index, point in enumerate((a, b)):
                 own = signature_tangent(i, point)
+                built_joint = None
                 for j, other_point in neighbours(i, point):
                     turn = turn_between(own, signature_tangent(j, other_point))
                     joints[end_index] = turn if joints[end_index] is None else min(joints[end_index], turn)
+                    if i not in demoted:
+                        built = built_turn_between(built_tangent(i, point), built_tangent(j, other_point))
+                        built_joint = built if built_joint is None else min(built_joint, built)
                     if i in demoted:
                         # MINOR-5: a joint smooth on the SIGNATURE must read, on the boundary the
                         # mesher sees (the chord against the neighbour's built direction), a turn
@@ -573,6 +627,8 @@ def rebuilt_arcs(signature, radius):
                                     f"{entries[j]['Index']} at a smooth joint whose chord turn {built:.6e} rad is not below "
                                     f"ARC_SMOOTH_JOINT_TURN_BOUND {ARC_SMOOTH_JOINT_TURN_BOUND:g} rad (mesher design round 3 "
                                     f"R2, decision 510 MINOR-5)")
+                if built_joint is not None:
+                    joints[end_index] = classified_joint(i, end_index, joints[end_index], built_joint)
         arcs.append({"ArcId": len(arcs) + 1, "Kind": kind, "Index": index, "Vertices": vertices, "Centre": centre,
                      "Radius": r, "Sweep": sweep, "Sign": int(entry["Entry"]["GapRadial"]), "Conductor": entry["Conductor"],
                      "Joints": joints, "Closed": closed, "Demoted": i in demoted, "ChainId": chain_of.get(i, 0)})

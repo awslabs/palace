@@ -630,7 +630,11 @@ class ArcContextJointSnapTest(unittest.TestCase):
             # Round 3 fix 2a: the ChainJoint projections (recorded where they act) sit beside the
             # ArcJoint snaps; a demoted entry (fix (3)(ii), baf9dacceb51's context arcs 4 / 5) has
             # no Arc record (Geometry.StraightenedArcs names it).
-            joints = [r for r in snaps if r["Class"] not in ("Arc", "ChainJoint")]
+            joints = [r for r in snaps if r["Class"] not in ("Arc", "ChainJoint", "JointReclassified")]
+            # Decision 673: the built-class rule reclassifies a joint ONLY on a596f5a4c303 (its chain 3,
+            # BuiltJointClassTest.test_a596f5a4c303_census_record...); every other census record is bitwise.
+            reclassified = [r for r in snaps if r["Class"] == "JointReclassified"]
+            self.assertEqual(len(reclassified), 2 if prefix == "a596f5a4c303" else 0, prefix)
             chain_joints = [r for r in snaps if r["Class"] == "ChainJoint"]
             straightened = coupon["Geometry"].get("StraightenedArcs", [])
             self.assertEqual(len(arcs) + len(straightened),
@@ -737,13 +741,17 @@ class ArcContextJointSnapTest(unittest.TestCase):
 
 
 def lead_with_arc_side(sweeps, radius_over_R=None, side_x=0.5, snap_over_R=0.0, box=(-3.0, -3.0, 3.0, 3.0),
-                       right_sign=1):
+                       right_sign=1, tangent_context=False):
     """A contract-3 lead of width 1 crossing the box (Box + Context): the left side straight, the
     RIGHT side between y = -1 and y = 1 a chain of arc claim entries of the sweeps given (in
     radians, summing to the chain sweep), all on ONE circle through (side_x, -1) and (side_x, 1)
     bulging outward by the sagitta (centre on the left at side_x - sqrt(R_arc^2 - 1)); the context
     continues both sides straight to the box faces. `snap_over_R` displaces the first entry's
-    START end laterally (an F0-a joint snap onto the straight context's end follows). Units of R."""
+    START end laterally (an F0-a joint snap onto the straight context's end follows). Units of R.
+    `tangent_context` (decision 673): the right-side context pieces leave the arc's ends along its
+    end TANGENTS (smooth joints, built or not), instead of vertically (joints turning by half the
+    chain sweep: a corner, or - for a sweep in (1e-4, 4e-4) - a turn in neither built range that the
+    generator now refuses by name)."""
     total = sum(sweeps)
     r = 1.0 / math.sin(0.5 * total) if radius_over_R is None else radius_over_R
     cx = side_x - math.sqrt(r * r - 1.0)
@@ -766,10 +774,18 @@ def lead_with_arc_side(sweeps, radius_over_R=None, side_x=0.5, snap_over_R=0.0, 
                      "Arc": [centre[0], centre[1], m[0], m[1]], "GapRadial": right_sign})
         angle += sweep
     claims = [portion((-0.5, -1.0, -0.5, 1.0), (-1.0, 0.0))] + arcs
+    if tangent_context:
+        t_low = (-math.sin(a_start), math.cos(a_start))                     # the travel direction at the start
+        t_high = (-math.sin(a_start + total), math.cos(a_start + total))    # and at the end (both upward)
+        low_end = (side_x - t_low[0] * (-1.0 - box[1]) / t_low[1], box[1])
+        high_end = (side_x + t_high[0] * (box[3] - 1.0) / t_high[1], box[3])
+        right = [context_piece((low_end[0], low_end[1], side_x, -1.0), (t_low[1], -t_low[0]), 1, True),
+                 context_piece((side_x, 1.0, high_end[0], high_end[1]), (t_high[1], -t_high[0]), 1, True)]
+    else:
+        right = [context_piece((side_x, box[1], side_x, -1.0), (1.0, 0.0), 1, True),
+                 context_piece((side_x, 1.0, side_x, box[3]), (1.0, 0.0), 1, True)]
     context = [context_piece((-0.5, box[1], -0.5, -1.0), (-1.0, 0.0), 1, True),
-               context_piece((-0.5, 1.0, -0.5, box[3]), (-1.0, 0.0), 1, True),
-               context_piece((side_x, box[1], side_x, -1.0), (1.0, 0.0), 1, True),
-               context_piece((side_x, 1.0, side_x, box[3]), (1.0, 0.0), 1, True)]
+               context_piece((-0.5, 1.0, -0.5, box[3]), (-1.0, 0.0), 1, True)] + right
     signature = {"Type": "SpatialEdgeCluster", "EdgeCount": len(claims), "Portions": claims, "Vertices": [],
                  "Box": list(box), "Context": context}
     return {"Topology": "SpatialEdgeCluster", "Geometry": {"EdgeCount": len(claims), "Signature": signature},
@@ -839,7 +855,12 @@ class ChainAndDemotionTest(unittest.TestCase):
         # Just above the threshold the arc is KEPT: 9 chords (ceil(2 R / 0.25 R) rounded up by
         # the sweep's excess) of ~0.22 R on a 20,000 R circle, per-chord turn 1.1e-5 rad - the
         # vertices fix 2b protects - tagged, no record.
-        kept, _ = csg.cluster_coupon(lead_with_arc_side([csg.JUNCTION_TANGENT_ANGLE * (1.0 + 1.0e-9)]), self.R, 0.1, 0.05)
+        # (Decision 673: with vertical contexts its end joints turn 5e-5 (1 + 1e-9), in the smooth gap
+        # the generator refuses by name; the kept arc is read with tangent contexts.)
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "JointTurnGap"):
+            csg.cluster_coupon(lead_with_arc_side([csg.JUNCTION_TANGENT_ANGLE * (1.0 + 1.0e-9)]), self.R, 0.1, 0.05)
+        kept, _ = csg.cluster_coupon(lead_with_arc_side([csg.JUNCTION_TANGENT_ANGLE * (1.0 + 1.0e-9)], tangent_context=True),
+                                     self.R, 0.1, 0.05)
         self.assertNotIn("StraightenedArcs", kept["Geometry"])
         arcs, records = csg.rebuilt_arcs(kept["Geometry"]["Signature"], self.R)
         self.assertFalse(arcs[0]["Demoted"])
@@ -848,15 +869,24 @@ class ChainAndDemotionTest(unittest.TestCase):
         self.assertTrue(all(abs(float(np.linalg.norm(v - arcs[0]["Centre"])) - arcs[0]["Radius"]) <= 1.0e-9 * self.R
                             for v in arcs[0]["Vertices"]))
         self.assertNotEqual(kept["Geometry"]["PlanViewFacets"], reference["PlanViewFacets"])
-        # S-G3-b: sweep 3e-4 (R_arc 6667 R) is kept likewise.
-        kept, _ = csg.cluster_coupon(lead_with_arc_side([3.0e-4]), self.R, 0.1, 0.05)
+        # S-G3-b: sweep 3e-4 (R_arc 6667 R) is kept likewise (vertical contexts: its end joints turn
+        # 1.5e-4, the corner gap the generator refuses by name since decision 673; tangent contexts: kept).
+        with self.assertRaisesRegex(csg.SignatureGeometryError, r"JointTurnGap: claim 1 end 0 turns by 1\.500000e-04 rad"):
+            csg.cluster_coupon(lead_with_arc_side([3.0e-4]), self.R, 0.1, 0.05)
+        kept, _ = csg.cluster_coupon(lead_with_arc_side([3.0e-4], tangent_context=True), self.R, 0.1, 0.05)
         self.assertNotIn("StraightenedArcs", kept["Geometry"])
 
     def test_chain_first_demotion(self):
         # R2 "chain-first matters": two same-circle members of 7.5e-5 rad each (each below the
         # threshold) whose chain sweeps 1.5e-4 stay ONE kept circle (identical digits on both
         # tags, the interior joint projected); two members of 4e-5 (chain 8e-5) are demoted whole.
-        kept, _ = csg.cluster_coupon(lead_with_arc_side([7.5e-5, 7.5e-5]), self.R, 0.1, 0.05)
+        # Decision 673 (JOINT_CLASS_RULE): with VERTICAL contexts the chain's end joints turn by half
+        # the sweep, 7.5e-5 rad - smooth for the classifier, above the mesher's 5e-5 smooth bound: the
+        # generator now refuses that lead by name (the mesher would have stopped it at
+        # ScopeGuard[ArcJointTilt]); the chain-first rule is read with TANGENT contexts (smooth joints).
+        with self.assertRaisesRegex(csg.SignatureGeometryError, r"JointTurnGap: claim 1 end 0 turns by 7\.500000e-05 rad"):
+            csg.cluster_coupon(lead_with_arc_side([7.5e-5, 7.5e-5]), self.R, 0.1, 0.05)
+        kept, _ = csg.cluster_coupon(lead_with_arc_side([7.5e-5, 7.5e-5], tangent_context=True), self.R, 0.1, 0.05)
         self.assertNotIn("StraightenedArcs", kept["Geometry"])
         arcs, records = csg.rebuilt_arcs(kept["Geometry"]["Signature"], self.R)
         self.assertEqual([a["Demoted"] for a in arcs], [False, False])
@@ -998,6 +1028,168 @@ class ChainAndDemotionTest(unittest.TestCase):
         self.assertEqual([r["Piece"] for r in coupon["Geometry"]["StraightenedArcs"]], [["Context", 4], ["Context", 5]])
         arcs = [r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "Arc"]
         self.assertEqual(sorted({r["ChainId"] for r in arcs}), [1, 2, 3, 4])
+
+
+def tangent_bend_lead(eps_over_R, radius_over_R=2500.0, side_x=0.5, box=(-3.0, -3.0, 3.0, 3.0), members=2):
+    """The a596f5a4c303 loop-3 chain-3 form (round4/collarunion ArcJointTilt, decision 673): a contract-3
+    lead whose RIGHT side between y = -1 and y = 1 is a same-circle chain of `members` arc entries of
+    radius `radius_over_R` (the chord L = 2 R, sweep 2 / radius > JUNCTION_TANGENT_ANGLE: kept, not
+    demoted) whose SERIALISED circle passes through the device vertex (side_x, 1) and through the
+    identification's end (side_x - eps, -1), `eps_over_R` off the device vertex (side_x, -1) the straight
+    context ends at (the arc-fit tolerance class: eps up to ARC_JOINT_SNAP_OVER_R); both straight context
+    pieces leave the device vertices along the SERIALISED circle's tangents, so the signature reads both
+    joints SMOOTH (turn 0) while the chain rebuilt through the snapped ends rotates by eps / L."""
+    r = radius_over_R
+    a_ser = (side_x - eps_over_R, -1.0)
+    b_dev = (side_x, 1.0)
+    chord = (b_dev[0] - a_ser[0], b_dev[1] - a_ser[1])
+    length = math.hypot(*chord)
+    mid = (0.5 * (a_ser[0] + b_dev[0]), 0.5 * (a_ser[1] + b_dev[1]))
+    normal = (-chord[1] / length, chord[0] / length)          # left of the travel a -> b (toward -x)
+    h = math.sqrt(r * r - 0.25 * length * length)
+    centre = (mid[0] + h * normal[0], mid[1] + h * normal[1])  # the bulge toward +x, the metal on the left
+    def angle_of(p):
+        return math.atan2(p[1] - centre[1], p[0] - centre[0])
+    def on_circle(angle):
+        return (centre[0] + r * math.cos(angle), centre[1] + r * math.sin(angle))
+    def tangent_at(p):
+        t = (-(p[1] - centre[1]) / r, (p[0] - centre[0]) / r)  # counter-clockwise travel
+        return t
+    ta, tb = angle_of(a_ser), angle_of(b_dev)
+    sweep = (tb - ta)
+    arcs = []
+    for k in range(members):
+        a = a_ser if k == 0 else on_circle(ta + sweep * k / members)
+        b = b_dev if k == members - 1 else on_circle(ta + sweep * (k + 1) / members)
+        m = on_circle(ta + sweep * (k + 0.5) / members)
+        arcs.append({"Conductor": 1, "Interfaces": ["MA", "MS", "SA"], "Law": LAW, "P": [a[0], a[1], b[0], b[1]],
+                     "Arc": [centre[0], centre[1], m[0], m[1]], "GapRadial": 1})
+    # The straight contexts: from the device vertices along the serialised tangents to the box faces.
+    t_low = tangent_at(a_ser)                                   # travel direction at the start (upward)
+    t_high = tangent_at(b_dev)
+    low_end = (side_x - t_low[0] * (-1.0 - box[1]) / t_low[1], box[1])
+    high_end = (side_x + t_high[0] * (box[3] - 1.0) / t_high[1], box[3])
+    gap_low = (t_low[1], -t_low[0])                             # the unit normal toward +x
+    gap_high = (t_high[1], -t_high[0])
+    claims = [portion((-0.5, -1.0, -0.5, 1.0), (-1.0, 0.0))] + arcs
+    context = [context_piece((-0.5, box[1], -0.5, -1.0), (-1.0, 0.0), 1, True),
+               context_piece((-0.5, 1.0, -0.5, box[3]), (-1.0, 0.0), 1, True),
+               context_piece((low_end[0], low_end[1], side_x, -1.0), gap_low, 1, True),
+               context_piece((side_x, 1.0, high_end[0], high_end[1]), gap_high, 1, True)]
+    signature = {"Type": "SpatialEdgeCluster", "EdgeCount": len(claims), "Portions": claims, "Vertices": [],
+                 "Box": list(box), "Context": context}
+    return {"Topology": "SpatialEdgeCluster", "Geometry": {"EdgeCount": len(claims), "Signature": signature},
+            "Signature": signature, "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"}}
+
+
+class BuiltJointClassTest(unittest.TestCase):
+    """round4/collarunion ArcJointTilt (decisions 669 (5) / 673; JOINT_CLASS_RULE): the class of a kept
+    arc's joint is decided on the BUILT turn - the snap of one outer end of a chain onto its device
+    vertex rotates the rebuilt circle by eps / L, so a signature-smooth joint can build as a corner (the
+    a596 stop: 9.5e-8 -> 2.42e-4 rad); the row keeps the signature's number where the classes agree
+    (bitwise) and records the built turn where they differ; a built turn in neither built range of the
+    mesher is refused by name at generation."""
+    R = 1.9
+
+    def test_arc_corner_joint_turn_floor_equals_the_mesher_range(self):
+        source = (HERE / "mesh_spatial_coupon.jl").read_text()
+        floors = re.search(r"const ARC_CORNER_JOINT_TURN_RANGE = \(fabricated=\(([0-9.e+-]+), [^)]*\)\), thin=\(([0-9.e+-]+),", source)
+        self.assertIsNotNone(floors)
+        self.assertEqual(csg.ARC_CORNER_JOINT_TURN_FLOOR, float(floors.group(1)))
+        self.assertEqual(csg.ARC_CORNER_JOINT_TURN_FLOOR, float(floors.group(2)))
+        self.assertEqual(csg.ARC_CORNER_JOINT_TURN_FLOOR, 2.0e-4)
+        self.assertLess(csg.ARC_SMOOTH_JOINT_TURN_BOUND, csg.JUNCTION_TANGENT_ANGLE)
+        self.assertLess(csg.JUNCTION_TANGENT_ANGLE, csg.ARC_CORNER_JOINT_TURN_FLOOR)
+
+    def test_a596_form_chain_is_reclassified_from_its_built_turn(self):
+        # T-AJT-1: eps 8.86e-4 R (a596's Claim 5 end 1 snap) on a chord of 2 R: the rebuilt chain
+        # turns by eps / L = 4.43e-4 rad at BOTH outer ends - above the corner floor - while the
+        # signature reads 0 at both: two JointReclassified records, JointTurn = the built turn.
+        eps = 8.86e-4
+        signature = tangent_bend_lead(eps)["Signature"]
+        arcs, records = csg.rebuilt_arcs(signature, self.R)
+        kept = [a for a in arcs if not a["Demoted"]]
+        self.assertEqual(len(kept), 2)
+        self.assertEqual({a["ChainId"] for a in kept}, {1})
+        snaps = [r for r in records if r["Class"] == "ArcJoint"]
+        self.assertEqual(len(snaps), 1)
+        self.assertAlmostEqual(snaps[0]["DistanceOverR"], eps, places=9)
+        reclassified = [r for r in records if r["Class"] == "JointReclassified"]
+        self.assertEqual(sorted((tuple(r["Piece"]), r["End"]) for r in reclassified), [(("Claim", 1), 0), (("Claim", 2), 1)])
+        expected = eps / 2.0                                       # eps / L, L = 2 R
+        for r in reclassified:
+            self.assertLessEqual(r["SignatureTurnRad"], 1.0e-9)
+            self.assertAlmostEqual(r["BuiltTurnRad"] / expected, 1.0, delta=0.01)
+            self.assertEqual(r["Rule"], csg.JOINT_CLASS_RULE)
+        start, stop = kept[0]["Joints"][0], kept[1]["Joints"][1]
+        self.assertGreater(start, csg.JUNCTION_TANGENT_ANGLE)
+        self.assertGreater(stop, csg.JUNCTION_TANGENT_ANGLE)
+        self.assertAlmostEqual(start / expected, 1.0, delta=0.01)
+        self.assertAlmostEqual(stop / expected, 1.0, delta=0.01)
+        # The interior chain joint: one circle, turn 0, not a reclassification.
+        self.assertEqual(kept[0]["Joints"][1], 0.0)
+        self.assertEqual(kept[1]["Joints"][0], 0.0)
+        # The whole generator: the records reach coupon.json's JointSnaps.
+        coupon, _ = csg.cluster_coupon(tangent_bend_lead(eps), self.R, 0.1, 0.05)
+        self.assertEqual([r["Class"] for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "JointReclassified"],
+                         ["JointReclassified", "JointReclassified"])
+
+    def test_a596f5a4c303_census_record_reclassifies_its_chain_3_joints(self):
+        # T-AJT-2 on the census-b record of a596f5a4c303 (the R4 stop, decision 669 (5)): chain 3 =
+        # Claim 5 + Context 2 (R 2516 R = 4781 um, chord 3.65 R), Claim 5 end 1 ArcJoint-snapped
+        # 8.86e-4 R onto its device vertex: the rebuilt circle turns by eps / L = 2.43e-4 rad at BOTH
+        # outer ends, the signature reads 0.0 / 9.5e-8 - the two joints the mesher stopped at
+        # (ScopeGuard[ArcJointTilt] "smooth-joint turn of 0.00024248309280445928") are CORNER joints
+        # of 2.4248e-4 / 2.4258e-4 rad in the fabricated built range; nothing else is reclassified.
+        coupon, _ = csg.cluster_coupon(census_record("a596f5a4c303"), self.R, 0.1, 0.05)
+        snaps = coupon["Geometry"]["JointSnaps"]
+        reclassified = {(tuple(r["Piece"]), r["End"]): r for r in snaps if r["Class"] == "JointReclassified"}
+        self.assertEqual(sorted(reclassified), [(("Claim", 5), 1), (("Context", 2), 0)])
+        claim = reclassified[(("Claim", 5), 1)]
+        context = reclassified[(("Context", 2), 0)]
+        self.assertEqual(claim["SignatureTurnRad"], 0.0)
+        self.assertAlmostEqual(context["SignatureTurnRad"], 9.541398640621977e-08, delta=1.0e-15)
+        self.assertAlmostEqual(context["BuiltTurnRad"], 2.4248309280445966e-04, delta=1.0e-15)
+        self.assertAlmostEqual(claim["BuiltTurnRad"], 2.4257563143211536e-04, delta=1.0e-15)
+        snap = next(r for r in snaps if r["Class"] == "ArcJoint" and r["Piece"] == ["Claim", 5])
+        arcs, _ = csg.rebuilt_arcs(coupon["Geometry"]["Signature"], self.R)
+        chain = [a for a in arcs if a["ChainId"] == 3]
+        self.assertEqual([(a["Kind"], a["Index"]) for a in chain], [("Claim", 5), ("Context", 2)])
+        outer_a, outer_b = chain[1]["Vertices"][0], chain[0]["Vertices"][-1]
+        chord = csg._norm2(outer_b - outer_a)
+        self.assertAlmostEqual(context["BuiltTurnRad"] / (snap["DistanceOverR"] * self.R / chord), 1.0, delta=0.01)
+        for a in chain:
+            self.assertGreater(a["Joints"][0 if a["Kind"] == "Context" else 1], csg.ARC_CORNER_JOINT_TURN_FLOOR)
+        # The 9 corner joints of the signature (arcs 1 / 2 / 3 / 4 / 5 / 7 / 13 / 14 / 15 against their
+        # straight sides) keep their class; with the 2 reclassified ends, 11 kept joints turn above 1e-4.
+        self.assertEqual(sum(1 for a in arcs if not a["Demoted"] for t in a["Joints"] if t is not None and t > csg.JUNCTION_TANGENT_ANGLE), 9 + 2)
+
+    def test_small_snap_keeps_the_signature_turn_bitwise(self):
+        # eps 1e-6 R: the built turn 5e-7 and the signature's 0 are both smooth: the signature's
+        # number is recorded unchanged and no record is written (every stored tagged source).
+        arcs, records = csg.rebuilt_arcs(tangent_bend_lead(1.0e-6)["Signature"], self.R)
+        self.assertFalse([r for r in records if r["Class"] == "JointReclassified"])
+        kept = [a for a in arcs if not a["Demoted"]]
+        self.assertLessEqual(kept[0]["Joints"][0], 1.0e-9)
+        self.assertLessEqual(kept[1]["Joints"][1], 1.0e-9)
+        # eps 0: the signature and the built boundary agree exactly (the pre-fix form, bitwise).
+        arcs, records = csg.rebuilt_arcs(tangent_bend_lead(0.0)["Signature"], self.R)
+        self.assertFalse([r for r in records if r["Class"] in ("JointReclassified", "ArcJoint")])
+
+    def test_built_turn_in_a_gap_is_refused_by_name(self):
+        # eps / L in (5e-5, 1e-4]: smooth for the classifier, above the mesher's smooth bound.
+        with self.assertRaisesRegex(csg.SignatureGeometryError,
+                                    r"JointTurnGap: claim 1 end 0 turns by 7\.\d+e-05 rad on the built boundary .* above "
+                                    r"ARC_SMOOTH_JOINT_TURN_BOUND 5e-05"):
+            csg.rebuilt_arcs(tangent_bend_lead(1.5e-4)["Signature"], self.R)
+        # eps / L in (1e-4, 2e-4): a corner for the classifier, below the mesher's corner floor.
+        with self.assertRaisesRegex(csg.SignatureGeometryError,
+                                    r"JointTurnGap: claim 1 end 0 turns by 1\.5\d+e-04 rad on the built boundary .* below "
+                                    r"ARC_CORNER_JOINT_TURN_FLOOR 0\.0002"):
+            csg.rebuilt_arcs(tangent_bend_lead(3.0e-4)["Signature"], self.R)
+        # The whole generator stops by name too (never a mesher ScopeGuard later).
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "JointTurnGap"):
+            csg.cluster_coupon(tangent_bend_lead(3.0e-4), self.R, 0.1, 0.05)
 
 
 class ClaimRadiusSpanCapTest(unittest.TestCase):

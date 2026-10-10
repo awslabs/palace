@@ -1374,6 +1374,56 @@ def validate_tube_rings_per_side(tubes, rows, command):
 CORNER_SHAPE_GATE = "CornerShapeGate"
 CORNER_MEASURES = {"Legacy": "VertexFrameCondition", "Invariant": "RegularCondition"}
 INVARIANT_CORNER_TARGET = 3.8
+# F5T R-7 (supervisor decisions 674 (2) / 675): a Legacy row whose stored-order verdict failed
+# may carry the FAIL-PATH verdict of record - the mesher's FailPathMeasure (Measure
+# RegularCondition, the kappa_reg descent from the legacy end state to INVARIANT_CORNER_TARGET,
+# then kappa_reg After <= the command's --corner-shape-gate). Such a row passes iff that
+# verdict passed; a Legacy row WITHOUT it is judged exactly as before. The census names the
+# fail-path corners (FailPathLegacyCorners) and the rule only where it fired.
+FAIL_PATH_MEASURE = "FailPathMeasure"
+FAIL_PATH_LEGACY_CORNERS = "FailPathLegacyCorners"
+FAIL_PATH_LEGACY_VERDICT_RULE = "FailPathLegacyVerdictRule"
+
+
+def fail_path_legacy_corners(optimization):
+    """The points of the Legacy CornerMeasures rows that carry the fail-path verdict (the
+    corners where the fail-path legacy verdict fired; [] for every census without one)."""
+    measures = optimization.get("CornerMeasures") if isinstance(optimization, dict) else None
+    if not isinstance(measures, list):
+        return []
+    return [row["Point"] for row in measures
+            if isinstance(row, dict) and row.get("Kind") == "Legacy" and isinstance(row.get(FAIL_PATH_MEASURE), dict)]
+
+
+def validate_fail_path_measure(row, corner_shape_gate):
+    """A Legacy row's FailPathMeasure (decisions 674 (2) / 675): entered only where the
+    stored-order verdict failed (After > Gate), RegularCondition, Target INVARIANT_CORNER_TARGET,
+    Gate = the command's --corner-shape-gate (required), After <= Gate iff Passed, the readings
+    before / after the descent and the descent record present. Returns the fail-path After."""
+    measure = row.get(FAIL_PATH_MEASURE)
+    if not isinstance(measure, dict):
+        raise ValueError("Seed Legacy corner fail-path verdict is not a record")
+    if _census_number(row, "After", "Seed corner measure") <= _census_number(row, "Gate", "Seed corner measure"):
+        raise ValueError("Seed Legacy corner carries a fail-path verdict although its stored-order verdict passed")
+    if corner_shape_gate is None:
+        raise ValueError("A Legacy corner was re-judged on the fail path without --corner-shape-gate")
+    if measure.get("Measure") != CORNER_MEASURES["Invariant"]:
+        raise ValueError("Seed Legacy corner fail-path verdict is not the RegularCondition measure")
+    if (_census_number(measure, "Gate", "Seed fail-path verdict") != corner_shape_gate or
+            _census_number(measure, "Target", "Seed fail-path verdict") != INVARIANT_CORNER_TARGET):
+        raise ValueError("Seed Legacy corner fail-path verdict gate / target differ from the invariant rule")
+    after = _census_number(measure, "After", "Seed fail-path verdict")
+    for name in ("Before", "VertexFrameConditionBefore", "VertexFrameConditionAfter"):
+        if _census_number(measure, name, "Seed fail-path verdict") <= 0.0:
+            raise ValueError(f"Seed Legacy corner fail-path verdict lacks a positive {name}")
+    if (_count(measure.get("Moves"), "Seed fail-path verdict moves") < 0 or
+            not isinstance(measure.get("Descent"), dict) or not isinstance(measure.get("Rule"), str)):
+        raise ValueError("Seed Legacy corner fail-path verdict lacks its descent record or rule")
+    if measure.get("Passed") is not (after <= corner_shape_gate) or row.get("Passed") is not measure.get("Passed"):
+        raise ValueError("Seed Legacy corner fail-path verdict Passed differs from its reading against CornerShapeGate")
+    if after > corner_shape_gate:
+        raise ValueError(f"Seed Legacy corner {row['Point']} fails the fail-path verdict: {after} > {corner_shape_gate}")
+    return after
 # Round 3 class (1) (decision 510): a corner-free build (the contract's Derivation.CornerFree,
 # SemanticCorners []) has no corner ball and no corner to judge - MaximumCornerAspect /
 # CornerShapeGate are NOT applicable and the census says so explicitly (the mesher's
@@ -1438,7 +1488,10 @@ def validate_corner_measures(optimization, corners, maximum_corner_aspect, corne
     decision 365: the measure is the verdict, a candidate above the gate the reconnection
     trigger, so none may remain above the gate); the set of Invariant corners equals the
     contract's Derivation.InvariantCorners (fail closed on a disagreement); CornerAspectsAfter
-    mirrors the per-corner After values. A PRE-RULE census (rule_round 'pre-rule', decision
+    mirrors the per-corner After values. A Legacy row carrying FailPathMeasure (decisions
+    674 (2) / 675: the fail-path legacy verdict, entered only where the stored-order verdict
+    failed) passes iff that verdict passed (validate_fail_path_measure); the census then names
+    those corners (FailPathLegacyCorners) and the rule. A PRE-RULE census (rule_round 'pre-rule', decision
     392 MINOR-6: no round-2 record declared) is judged by the pre-rule rule alone - every
     CornerAspectsAfter <= MaximumCornerAspect, no --corner-shape-gate, no contract invariant
     corner (such a contract needs a round-2 build). Returns the number of invariant corners."""
@@ -1465,6 +1518,7 @@ def validate_corner_measures(optimization, corners, maximum_corner_aspect, corne
     if not isinstance(after_values, list) or len(after_values) != len(measures):
         raise ValueError("Seed CornerAspectsAfter differs from the CornerMeasures rows")
     invariant_points = []
+    fail_path_points = []
     for row, after in zip(measures, after_values):
         kind = row.get("Kind")
         if kind not in CORNER_MEASURES or row.get("Measure") != CORNER_MEASURES[kind]:
@@ -1488,6 +1542,14 @@ def validate_corner_measures(optimization, corners, maximum_corner_aspect, corne
         if (_census_number(row, "Gate", "Seed corner measure") != expected_gate or
                 _census_number(row, "Target", "Seed corner measure") != expected_target):
             raise ValueError(f"Seed corner measure gate / target differ from the {kind} rule")
+        if kind == "Legacy" and FAIL_PATH_MEASURE in row:
+            # Decisions 674 (2) / 675: the fail-path verdict judges this row (its stored-order
+            # verdict failed by construction); every other clause above applies unchanged.
+            validate_fail_path_measure(row, corner_shape_gate)
+            fail_path_points.append(row["Point"])
+            if slivers["AboveGateAfter"] != 0:
+                raise ValueError(f"Seed {kind} corner {row['Point']} keeps bridging-sliver cells above the gate")
+            continue
         if value > expected_gate or slivers["AboveGateAfter"] != 0 or row.get("Passed") is not True:
             raise ValueError(f"Seed {kind} corner {row['Point']} fails its gate: {value} > {expected_gate} "
                              f"or {slivers['AboveGateAfter']} bridging-sliver cells above the gate remain")
@@ -1495,6 +1557,13 @@ def validate_corner_measures(optimization, corners, maximum_corner_aspect, corne
         raise ValueError("Seed invariant corners differ from the contract's Derivation.InvariantCorners")
     if optimization.get("InvariantCorners") != len(invariant_points):
         raise ValueError("Seed optimization InvariantCorners count differs from its rows")
+    recorded_fail_path = optimization.get(FAIL_PATH_LEGACY_CORNERS)
+    if fail_path_points:
+        if (sorted(recorded_fail_path or []) != sorted(fail_path_points) or
+                not isinstance(optimization.get(FAIL_PATH_LEGACY_VERDICT_RULE), str)):
+            raise ValueError("Seed optimization FailPathLegacyCorners / FailPathLegacyVerdictRule differ from its rows")
+    elif recorded_fail_path is not None or FAIL_PATH_LEGACY_VERDICT_RULE in optimization:
+        raise ValueError("Seed optimization records fail-path legacy keys without a fail-path row")
     recorded_gate = optimization.get(CORNER_SHAPE_GATE)
     if (corner_shape_gate is None) != (recorded_gate is None) or (
             corner_shape_gate is not None and
