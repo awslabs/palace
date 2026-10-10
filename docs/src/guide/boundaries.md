@@ -159,10 +159,11 @@ Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
 [`examples/pml_layered`](https://github.com/awslabs/palace/blob/main/examples/pml_layered),
 and [`examples/pml_oblique`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique)
-directories: a rectangular waveguide terminated by a PML (driven, adaptive sweep with circuit
-synthesis, and leaky-cavity eigenmode simulations), a layered substrate and vacuum
-parallel-plate waveguide whose material interface crosses the PML, and a periodic cell with a
-Floquet port for plane-wave absorption at oblique incidence.
+directories: a rectangular waveguide terminated by a PML (driven simulations, an adaptive
+sweep with circuit synthesis, and eigenmode simulations of a cavity coupled to the waveguide
+through an iris), a layered substrate and vacuum parallel-plate waveguide whose material
+interface crosses the PML, and a periodic cell with a Floquet port for plane-wave absorption
+at oblique incidence.
 
 ## Finite conductivity boundary
 
