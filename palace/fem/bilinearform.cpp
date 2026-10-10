@@ -3,6 +3,8 @@
 
 #include "bilinearform.hpp"
 
+#include <algorithm>
+
 #include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -48,6 +50,17 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
+  const bool has_unrestricted =
+      std::ranges::any_of(domain_integ_attr, [](const auto &a) { return a.empty(); });
+  std::vector<std::vector<int>> restrictions;
+  for (const auto &attr_list : domain_integ_attr)
+  {
+    if (!attr_list.empty() &&
+        std::ranges::find(restrictions, attr_list) == restrictions.end())
+    {
+      restrictions.push_back(attr_list);
+    }
+  }
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
@@ -58,7 +71,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
       const auto test_map_type =
           test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
 
-      if (mfem::Geometry::Dimension[geom] == mesh.Dimension() && !domain_integs.empty())
+      if (mfem::Geometry::Dimension[geom] == mesh.Dimension() && has_unrestricted)
       {
         // Assemble domain integrators on this element geometry type.
         CeedElemRestriction trial_restr =
@@ -68,8 +81,13 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
-        for (const auto &integ : domain_integs)
+        for (std::size_t k = 0; k < domain_integs.size(); k++)
         {
+          if (!domain_integ_attr[k].empty())
+          {
+            continue;
+          }
+          const auto &integ = domain_integs[k];
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
@@ -95,6 +113,41 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.geom_data_restr, &sub_op);
           op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
+        }
+      }
+    }
+
+    // Assemble the domain integrators restricted to the elements of given attributes.
+    for (const auto &attr_list : restrictions)
+    {
+      for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed, attr_list))
+      {
+        if (mfem::Geometry::Dimension[geom] != mesh.Dimension())
+        {
+          continue;
+        }
+        const auto trial_map_type =
+            trial_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
+        const auto test_map_type =
+            test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
+        CeedElemRestriction trial_restr =
+            trial_fespace.GetCeedElemRestriction(ceed, geom, data.indices, attr_list);
+        CeedElemRestriction test_restr =
+            test_fespace.GetCeedElemRestriction(ceed, geom, data.indices, attr_list);
+        CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
+        CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
+        for (std::size_t k = 0; k < domain_integs.size(); k++)
+        {
+          if (domain_integ_attr[k] != attr_list)
+          {
+            continue;
+          }
+          const auto &integ = domain_integs[k];
+          CeedOperator sub_op;
+          integ->SetMapTypes(trial_map_type, test_map_type);
+          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
+                          data.geom_data, data.geom_data_restr, &sub_op);
+          op->AddSubOperator(sub_op, nullptr, attr_list);  // Owned by ceed::Operator
         }
       }
     }
