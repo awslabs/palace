@@ -2678,14 +2678,14 @@ TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel]")
 {
-  // S_E(ω) from the partial factorization of the environment operator against a dense
-  // condensation of the same operator, and the substructured solve against the full
-  // system: PEC in the region, a lumped port in the environment, a second-order absorbing
-  // boundary on both sides, an impedance sheet crossing Γ, a lossy dielectric region and a
-  // conducting environment. A second frequency reuses the analyses. Hex meshes with an
-  // impedance sheet, conforming and nonconforming (hanging nodes on Γ and on the sheet from
-  // either side), and tet meshes with a non-planar interface (where second-order Nédélec
-  // face DOFs shared between ranks combine with signs).
+  // S_E(ω) from the partial factorization of the environment operator (alone, and with the
+  // region) against a dense condensation of the same operator, and the substructured solve
+  // against the full system: PEC in the region, a lumped port in the environment, a
+  // second-order absorbing boundary on both sides, an impedance sheet crossing Γ, a lossy
+  // dielectric region and a conducting environment. A second frequency reuses the analyses.
+  // Hex meshes with an impedance sheet, conforming and nonconforming (hanging nodes on Γ
+  // and on the sheet from either side), and tet meshes with a non-planar interface (where
+  // second-order Nédélec face DOFs shared between ranks combine with signs).
   enum class MeshKind
   {
     HEX,

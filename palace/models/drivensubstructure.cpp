@@ -83,9 +83,8 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        "environment!");
   }
 
-  // Interface DOFs: on region and environment elements; environment interior: on
-  // environment elements only; region-free: on region elements (all without the Dirichlet
-  // DOFs).
+  // Interface DOFs: on region and environment elements; environment (region) interior: on
+  // environment (region) elements only; all without the Dirichlet DOFs.
   mfem::Array<int> rm, em, im;
   {
     mfem::Array<int> ra(region.attrs.data(), static_cast<int>(region.attrs.size())),
@@ -529,9 +528,6 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   if (!side.schur)
   {
     Solver::Coo coo{std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)};
-    Release(side.irn_sys);
-    Release(side.jcn_sys);
-    Release(side.val);
     side.schur = std::make_unique<Solver>(
         space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
         side.gamma_sys, kBlrTol, 0, true, false, side.rows);
@@ -1424,30 +1420,6 @@ std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record 
   x.insert(x.end(), r.h.begin(), r.h.end());
   x.insert(x.end(), r.c.begin(), r.c.end());
   return x;
-}
-
-DrivenSubstructureModel::Record
-DrivenSubstructureModel::Unflatten(const std::vector<std::complex<double>> &x) const
-{
-  const auto sz = PartSizes();
-  MFEM_VERIFY(x.size() == sz[0] + sz[1] + sz[2] + sz[3], "Wrong size of a record!");
-  Record r;
-  const std::size_t n = nG;
-  r.S.resize(n * n);
-  for (std::size_t c = 0, q = 0; c < n; c++)
-  {
-    for (std::size_t i = c; i < n; i++, q++)
-    {
-      r.S[c * n + i] = r.S[i * n + c] = x[q];
-    }
-  }
-  auto it = x.begin() + static_cast<std::ptrdiff_t>(sz[0]);
-  r.g.assign(it, it + static_cast<std::ptrdiff_t>(sz[1]));
-  it += static_cast<std::ptrdiff_t>(sz[1]);
-  r.h.assign(it, it + static_cast<std::ptrdiff_t>(sz[2]));
-  it += static_cast<std::ptrdiff_t>(sz[2]);
-  r.c.assign(it, it + static_cast<std::ptrdiff_t>(sz[3]));
-  return r;
 }
 
 std::size_t DrivenSubstructureModel::HeaderBytes() const

@@ -482,9 +482,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   const int np = static_cast<int>(env_ports.size()),
             ne = static_cast<int>(model.excitations.size());
 
-  // Offline: condense the environment at ω and solve all excitations, and the record of the
-  // model (on rank 0), with the condensed voltage functionals of the environment's ports,
-  // h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
+  // The functionals l_j of the environment's ports at ω.
   auto port_functionals = [&](double omega)
   {
     std::vector<const ComplexVector *> L(np);
@@ -498,6 +496,9 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     }
     return L;
   };
+  // Offline: condense the environment at ω and solve all excitations, and the record of the
+  // model (on rank 0), with the condensed functionals of the environment's ports,
+  // h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
   auto condense = [&](double omega, bool with_record)
   {
     for (int k = 0; k < n; k++)

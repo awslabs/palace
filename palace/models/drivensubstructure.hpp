@@ -23,14 +23,6 @@ class MumpsSchurSolverT;
 class SpaceOperator;
 
 //
-// The saved environment model of a driven substructuring sweep: the interface signatures,
-// the fingerprints of the environment and of its sources, the environment's lumped ports,
-// the frequencies, and one record per frequency: S_E(ω), the condensation of the
-// environment's sources (per excitation with environment sources) and the condensed
-// voltage functionals of the environment's lumped ports, V_j = c_jk + h_j^T u_Γ for
-// excitation k. Written and read on rank 0 (the header is broadcast).
-//
-//
 // Barycentric rational interpolation of a vector-valued function of the frequency from its
 // samples x_j = x(ω_j), with one set of weights w for all entries,
 //   x̃(ω) = Σ_j a_j(ω) x_j,   a_j(ω) = (w_j / (ω - ω_j)) / Σ_k w_k / (ω - ω_k),
@@ -76,11 +68,14 @@ private:
 };
 
 //
-// A model saved by an offline driven substructuring sweep: the header (interface
-// signatures, fingerprints, environment ports) and one record per frequency. An exact model
-// holds the frequencies of a uniform sweep. A rational one (with weights) holds the samples
-// of an adaptive sweep, interpolated at any frequency between them
-// (BarycentricInterpolant).
+// A model saved by an offline driven substructuring sweep, written and read on rank 0 (the
+// header broadcast): the header (the interface signatures, the fingerprints of the
+// environment and of its sources, the environment's ports, the frequencies) and one record
+// per frequency: S_E(ω), the condensation g of the environment's sources (per excitation
+// with environment sources), and the condensed functionals of the environment's ports,
+// whose values are V_j = c_jk + h_j^T u_Γ for excitation k. An exact model holds the
+// frequencies of a uniform sweep, a rational one (with weights) the samples of an adaptive
+// sweep, interpolated at any frequency between them (BarycentricInterpolant).
 //
 struct DrivenSubstructureModel
 {
@@ -105,7 +100,6 @@ struct DrivenSubstructureModel
   // A record as one vector, in the order of the file (S by its lower triangle), and the
   // sizes of its parts.
   std::vector<std::complex<double>> Flatten(const Record &r) const;
-  Record Unflatten(const std::vector<std::complex<double>> &x) const;
   std::array<std::size_t, 4> PartSizes() const;
 
   // The header, in a new file or rewritten in place (with the same capacity).
@@ -113,10 +107,6 @@ struct DrivenSubstructureModel
   void AppendRecord(const std::string &path, const Record &r) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
   std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
-  Record ReadRecord(const std::string &path, int j) const
-  {
-    return Unflatten(ReadFlatRecord(path, j));
-  }
   // Number of complete records in the file.
   int NumRecords(const std::string &path) const;
 
@@ -252,10 +242,9 @@ private:
   std::vector<HYPRE_BigInt> gamma_tdofs;
   std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank
 
-  // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), with its
-  // pinned DOFs, factored by MUMPS: the lower-triangle pattern, the entries of the
-  // frequency-independent parts in pattern order (the assembled operators are not kept),
-  // and the positions of the unit diagonal of the pinned DOFs.
+  // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), factored by
+  // MUMPS on the side's interior and Γ: the lower-triangle pattern and the entries of the
+  // frequency-independent parts in pattern order (the assembled operators are not kept).
   struct Side
   {
     std::vector<int> attrs;

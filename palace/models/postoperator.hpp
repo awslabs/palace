@@ -453,9 +453,9 @@ public:
                             const ComplexVector &b, std::complex<double> omega)
     requires(solver_t == ProblemType::DRIVEN);
 
-  // Lumped port voltages given instead of measured from the field (for ports where the
-  // field is not known, online substructuring), used by the next measurements; their
-  // power is not available (zero).
+  // Lumped port voltages given instead of measured from the field (where the field is not
+  // known: substructuring from a model), used by the next measurements; their power is not
+  // available (zero).
   void SetLumpedPortVoltages(std::map<int, std::complex<double>> voltages)
     requires(solver_t == ProblemType::DRIVEN)
   {
