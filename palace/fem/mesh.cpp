@@ -265,7 +265,8 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   // layout matches that layout (the GPU backends) then read the vector directly as the
   // E-vector of every operator instead of gathering a copy of it per operator at setup.
   coords = coords && data.dim == 3 && data.space_dim == 3;
-  CeedInt geom_data_size = 2 + data.space_dim * data.dim + (coords ? data.space_dim : 0);
+  const CeedInt geom_data_size =
+      ceed::CeedGeometryDataSize(data.space_dim, data.dim, coords);
   const CeedSize geom_data_length =
       static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size;
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, geom_data_length, &data.geom_data));
