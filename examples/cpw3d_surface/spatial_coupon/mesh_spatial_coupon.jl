@@ -2092,6 +2092,398 @@ function vertex_supports(point_count, triangles, triangle_entities, lines, line_
     return supports
 end
 
+# ---------------------------------------------------------------------------
+# R2 "AcuteCornerRetry" (supervisor decisions 636 (3) / 638 / 639 / 641; the design of record
+# round4/corner-surface/DESIGN.md section 11). The fail-closed point of the seed gates
+# throws this typed exception (the SAME text as the former error(join(failures, "; ")) in
+# every log and BuildFailed reason) so the generator wrapper can tell a CornerShapeGate
+# failure in the LOCKED CLASS of acute fabricated tips from every other failure.
+struct SeedGateFailure <: Exception
+    failures::Vector{String}
+    invariant_failed::Vector{Dict{String, Any}}
+end
+Base.showerror(io::IO, failure::SeedGateFailure) = print(io, join(failure.failures, "; "))
+
+const ACUTE_CORNER_RETRY_RULE =
+    "When CornerShapeGate fails ONLY at invariant corners of a fabricated coupon in the locked " *
+    "class 2 sin(phi / 2) < SEED_COLLAPSE_SIZE_FRACTION (phi the convex metal opening between " *
+    "the two walls), the coupon is re-meshed once: after the 2-D pass, at each such corner, the " *
+    "surface nodes of the pedestal wedge - a node of a CAD line or face incident to the corner " *
+    "point, not the corner point and not a node of the vertical corner line (r_xy > tolerance), " *
+    "with r_xy < r_min(phi) = floor / (2 sin(phi / 2)) where floor = SEED_COLLAPSE_SIZE_FRACTION x " *
+    "min(EdgeSize, CornerSize) (the collapse size of record), z in [-Overetch - tolerance, " *
+    "+tolerance], and inside the closed metal sector (signed distance >= -SIDEWALL_PLANE_TOLERANCE " *
+    "to both wall half-planes, the inward normals oriented by the metal direction) - are each " *
+    "mapped onto the CORNER-LINE node nearest in z (the corner point for the z = 0 ring; the " *
+    "corner line's first, second, ... node below for the wall nodes at depth). The map is applied " *
+    "SIMULTANEOUSLY to every line and triangle of the affected entities: elements with a repeated " *
+    "vertex vanish, the others are rewritten; the result is valid iff no surviving rewritten " *
+    "triangle is degenerate (area < 1e-9 of its original) or reversed (normal sign), no two " *
+    "surviving triangles coincide, and no non-simplex (tube) element references a mapped node; " *
+    "else the retry fails closed naming the corner. The volume mesh is then generated on the " *
+    "cleaned surface and every gate runs as today (supervisor decisions 34 / 363 / 365 / 636 (3) / " *
+    "639: decision 363 governs the post-3-D reconnection and is not excepted; decision 34's floor " *
+    "and collapse are untouched - the surface is made to satisfy the floor)"
+
+# The geometric DIHEDRAL FLOOR f(phi) of kappa_reg at a tip of opening phi (radians): the
+# minimum of tetrahedron_regular_condition over the cells with one edge on the corner line
+# and one vertex on each wall (the dihedral angle phi at that edge). Scale-invariant and
+# attained at the symmetric cell (both wall vertices at mid-height of the corner-line
+# edge, equal wall radii), so a golden-section search over the wall radius / edge length
+# ratio suffices (design table: 15 -> 5.371, 18.75 -> 4.283, 22.5 -> 3.555, 90 -> 1.414).
+# A tip whose f(phi) exceeds CornerShapeGate cannot pass it by geometry (the named open
+# item R2-G, decision 639 (6)).
+function kappa_reg_dihedral_floor(phi)
+    0.0 < phi < pi || error("The dihedral floor needs an opening in (0, pi)")
+    origin = [0.0, 0.0, 0.0]; apex = [0.0, 0.0, 1.0]
+    value(u) = tetrahedron_regular_condition([origin, apex, [exp(u), 0.0, 0.5],
+                                              [exp(u) * cos(phi), exp(u) * sin(phi), 0.5]])
+    golden = (sqrt(5.0) - 1.0) / 2.0
+    a, b = log(1.0e-3), log(1.0e3)
+    x1 = b - golden * (b - a); x2 = a + golden * (b - a); f1 = value(x1); f2 = value(x2)
+    for _ in 1:200
+        if f1 < f2
+            b, x2, f2 = x2, x1, f1; x1 = b - golden * (b - a); f1 = value(x1)
+        else
+            a, x1, f1 = x1, x2, f2; x2 = a + golden * (b - a); f2 = value(x2)
+        end
+    end
+    return min(f1, f2)
+end
+
+# One-line JSON (write_json's text with its line breaks and indentation collapsed) for the
+# fail-closed messages that carry a record.
+compact_json(value) = replace(sprint(write_json, value), r"\n\s*" => " ")
+
+# The convex metal opening phi (radians) of a corner from its two unit wall directions, and
+# whether the metal fills the CONVEX sector between them (the metal direction on the side
+# of their bisector); a reflex metal sector is not the locked class. Dot products only
+# (robust to the 360-degree wrap of angle arithmetic).
+function corner_metal_opening(sides)
+    wall_1, wall_2 = sides.walls
+    phi = acos(clamp(dot(wall_1, wall_2), -1.0, 1.0))
+    bisector = wall_1 .+ wall_2
+    convex = norm(bisector) > 1.0e-9 && dot(bisector, sides.metal) > 0.0
+    return phi, convex
+end
+
+# The LOCKED CLASS predicate on a CornerMeasures row (decision 639 (1) (b)): a fabricated
+# coupon, Kind Invariant, the metal in the convex sector, 2 sin(phi / 2) below the collapse
+# fraction (the first ring then violates the sub-size edge floor by geometry).
+function acute_corner_locked_class(row, fabricated::Bool)
+    fabricated || return false
+    row["Kind"] == "Invariant" || return false
+    sides_record = row["Sides"]
+    sides_record === nothing && return false
+    sides = (walls=[Vector{Float64}(w) for w in sides_record["Walls"]],
+             metal=Vector{Float64}(sides_record["Metal"]))
+    phi, convex = corner_metal_opening(sides)
+    return convex && 2.0 * sin(phi / 2.0) < SEED_COLLAPSE_SIZE_FRACTION
+end
+
+# The (R-a) remap of one acute corner on plain arrays (ACUTE_CORNER_RETRY_RULE): `points`
+# 3 x n, `candidate_allowed[i]` true for a node of a CAD line or face (never a CAD point or a
+# tube node), `non_simplex[i]` true for a node of a non-simplex surface element, the linear
+# triangles / lines with their entity tags. Returns the map, the candidate list, the
+# rewritten elements (index => new tuple; a vanished element maps to `nothing`), the
+# validity findings (empty iff valid; judged on the FINAL configuration) and the record.
+function acute_corner_ring_remap(points, corner, sides, edge_floor, corner_size, overetch, tolerance,
+                                 candidate_allowed, non_simplex, triangles, triangle_entities,
+                                 lines, line_entities; node_entities=nothing)
+    phi, convex = corner_metal_opening(sides)
+    convex || error("Acute-corner remap at $(collect(corner)): the metal sector is the reflex one")
+    ratio = 2.0 * sin(phi / 2.0)
+    ratio < SEED_COLLAPSE_SIZE_FRACTION ||
+        error("Acute-corner remap at $(collect(corner)): 2 sin(phi / 2) = $(ratio) is not below " *
+              "$(SEED_COLLAPSE_SIZE_FRACTION)")
+    edge_floor > 0.0 || error("Acute-corner remap at $(collect(corner)): the collapse floor is not positive")
+    r_min = edge_floor / ratio
+    normals = Vector{Float64}[]
+    for wall in sides.walls
+        normal = [-wall[2], wall[1]]
+        dot(normal, sides.metal) < 0.0 && (normal = -normal)
+        push!(normals, normal)
+    end
+    n = size(points, 2)
+    dx(i) = points[1, i] - corner[1]; dy(i) = points[2, i] - corner[2]; dz(i) = points[3, i] - corner[3]
+    r_xy(i) = hypot(dx(i), dy(i))
+    in_depth(i) = -overetch - tolerance <= dz(i) <= tolerance
+    in_sector(i) = all(normals[k][1] * dx(i) + normals[k][2] * dy(i) >= -SIDEWALL_PLANE_TOLERANCE
+                       for k in eachindex(normals))
+    corner_line = [i for i in 1:n if r_xy(i) <= tolerance && in_depth(i)]
+    any(i -> abs(dz(i)) <= tolerance, corner_line) ||
+        error("Acute-corner remap at $(collect(corner)): no node at the corner point")
+    candidates = [i for i in 1:n if candidate_allowed[i] && tolerance < r_xy(i) < r_min &&
+                  in_depth(i) && in_sector(i)]
+    node_map = Dict{Int, Int}()
+    for v in candidates
+        node_map[v] = corner_line[argmin([abs(dz(c) - dz(v)) for c in corner_line])]
+    end
+    remap(i) = get(node_map, i, i)
+    findings = String[]
+    triangle_changes = Dict{Int, Union{Nothing, NTuple{3, Int}}}()
+    line_changes = Dict{Int, Union{Nothing, NTuple{2, Int}}}()
+    rewritten_keys = Dict{NTuple{3, Int}, Int}()
+    for (k, triangle) in enumerate(triangles)
+        new = (remap(triangle[1]), remap(triangle[2]), remap(triangle[3]))
+        new == triangle && continue
+        if new[1] == new[2] || new[1] == new[3] || new[2] == new[3]
+            triangle_changes[k] = nothing
+            continue
+        end
+        triangle_changes[k] = new
+        normal_old = cross(points[:, triangle[2]] .- points[:, triangle[1]],
+                           points[:, triangle[3]] .- points[:, triangle[1]])
+        normal_new = cross(points[:, new[2]] .- points[:, new[1]],
+                           points[:, new[3]] .- points[:, new[1]])
+        if norm(normal_new) <= 1.0e-9 * norm(normal_old)
+            push!(findings, "degenerate triangle $(k) $(collect(triangle)) -> $(collect(new)) " *
+                            "(entity $(triangle_entities[k]))")
+        elseif dot(normal_old, normal_new) < 0.0
+            push!(findings, "reversed triangle $(k) $(collect(triangle)) -> $(collect(new)) " *
+                            "(entity $(triangle_entities[k]))")
+        end
+        key = Tuple(sort!(collect(new)))
+        if haskey(rewritten_keys, key)
+            push!(findings, "duplicate triangles $(rewritten_keys[key]) and $(k) -> $(collect(new))")
+        else
+            rewritten_keys[key] = k
+        end
+    end
+    if !isempty(rewritten_keys)
+        for (k, triangle) in enumerate(triangles)
+            haskey(triangle_changes, k) && continue
+            key = Tuple(sort!(collect(triangle)))
+            haskey(rewritten_keys, key) &&
+                push!(findings, "duplicate triangles $(rewritten_keys[key]) -> $(collect(triangle)) and " *
+                                "the surviving $(k) (entity $(triangle_entities[k]))")
+        end
+    end
+    for (k, line) in enumerate(lines)
+        new = (remap(line[1]), remap(line[2]))
+        new == line && continue
+        line_changes[k] = new[1] == new[2] ? nothing : new
+    end
+    for v in candidates
+        non_simplex[v] && push!(findings, "non-simplex element references the mapped node $(v)")
+    end
+    # The per-entity rows (the metal sidewalls above z = 0 named) and the totals.
+    entity_rows = Dict{Tuple{Int, Int}, Dict{String, Any}}()
+    function entity_row!(dimension, entity, element, vanished)
+        row = get!(entity_rows, (dimension, Int(entity))) do
+            Dict{String, Any}("Dimension" => dimension, "Entity" => Int(entity),
+                              "TrianglesRewritten" => 0, "TrianglesRemoved" => 0,
+                              "LinesRewritten" => 0, "LinesRemoved" => 0, "MaximumZ" => -Inf,
+                              "MinimumZ" => Inf)
+        end
+        name = (dimension == 2 ? "Triangles" : "Lines") * (vanished ? "Removed" : "Rewritten")
+        row[name] += 1
+        row["MaximumZ"] = max(row["MaximumZ"], maximum(dz(i) for i in element))
+        row["MinimumZ"] = min(row["MinimumZ"], minimum(dz(i) for i in element))
+    end
+    for (k, new) in triangle_changes
+        entity_row!(2, triangle_entities[k], triangles[k], new === nothing)
+    end
+    for (k, new) in line_changes
+        entity_row!(1, line_entities[k], lines[k], new === nothing)
+    end
+    for row in values(entity_rows)
+        row["Kind"] = row["MaximumZ"] > tolerance ? "MetalSidewall" :
+                      row["MinimumZ"] >= -tolerance ? "ZeroPlane" : "PedestalWedge"
+    end
+    # The floor guarantee on the cleaned surface: the surviving candidate-class nodes of the
+    # wedge within 4 r_min of the corner, their shortest pair and shortest cross-wedge pair
+    # (two nodes strictly on different walls).
+    wall_of(i) = (d = [abs(normals[k][1] * dx(i) + normals[k][2] * dy(i)) for k in eachindex(normals)];
+                  d[1] <= SIDEWALL_PLANE_TOLERANCE ? 1 : d[2] <= SIDEWALL_PLANE_TOLERANCE ? 2 : 0)
+    survivors = [i for i in 1:n if candidate_allowed[i] && !haskey(node_map, i) && r_xy(i) > tolerance &&
+                 hypot(r_xy(i), dz(i)) <= 4.0 * r_min && in_depth(i) && in_sector(i)]
+    shortest = Inf; shortest_cross = Inf
+    for a in eachindex(survivors), b in (a + 1):length(survivors)
+        i, j = survivors[a], survivors[b]
+        distance = norm(points[:, i] .- points[:, j])
+        shortest = min(shortest, distance)
+        wall_of(i) != wall_of(j) && wall_of(i) > 0 && wall_of(j) > 0 &&
+            (shortest_cross = min(shortest_cross, distance))
+    end
+    record = Dict{String, Any}(
+        "Rule" => ACUTE_CORNER_RETRY_RULE,
+        "Point" => collect(corner),
+        "OpeningDegrees" => rad2deg(phi),
+        "CrossWedgeFirstRing" => 2.0 * corner_size * sin(phi / 2.0),
+        "Floor" => edge_floor,
+        "FirstRingRadius" => r_min,
+        "DihedralFloor" => kappa_reg_dihedral_floor(phi),
+        # DESIGN 11.2 (f): (node position, entity, target z); the owning entity when the
+        # caller knows it (`node_entities[v]` = (dimension, entity)).
+        "Candidates" => [merge(Dict{String, Any}("Position" => points[:, v], "Radius" => r_xy(v),
+                                                 "TargetZ" => points[3, node_map[v]],
+                                                 "Target" => points[:, node_map[v]]),
+                               node_entities === nothing ? Dict{String, Any}() :
+                               Dict{String, Any}("Dimension" => node_entities[v][1],
+                                                 "Entity" => node_entities[v][2]))
+                         for v in sort(candidates; by=v -> -dz(v))],
+        "CornerLineNodes" => length(corner_line),
+        "Entities" => [Dict{String, Any}(name => row[name] for name in
+                                         ("Dimension", "Entity", "Kind", "TrianglesRewritten",
+                                          "TrianglesRemoved", "LinesRewritten", "LinesRemoved"))
+                       for row in sort(collect(values(entity_rows));
+                                       by=row -> (row["Dimension"], row["Entity"]))],
+        "TrianglesRewritten" => count(new -> new !== nothing, values(triangle_changes)),
+        "TrianglesRemoved" => count(new -> new === nothing, values(triangle_changes)),
+        "LinesRewritten" => count(new -> new !== nothing, values(line_changes)),
+        "LinesRemoved" => count(new -> new === nothing, values(line_changes)),
+        "CleanedWedge" => Dict{String, Any}("Nodes" => length(survivors),
+                                            "ShortestPair" => isfinite(shortest) ? shortest : nothing,
+                                            "ShortestCrossWedgePair" =>
+                                                isfinite(shortest_cross) ? shortest_cross : nothing),
+        "InvalidRemaps" => length(findings))
+    return (map=node_map, candidates=candidates, corner_line=corner_line, triangles=triangle_changes,
+            lines=line_changes, findings=findings, record=record)
+end
+
+# Clear the mesh of one CAD entity and fail closed unless Gmsh applied it: GModel::deleteMesh
+# REFUSES an entity whose higher-dimensional neighbours still carry a mesh (a Warning only,
+# "Cannot delete mesh of entity (d, t), connected to mesh of higher dimensional entity"), so
+# a caller replacing several entities must clear them in DESCENDING dimension and must not
+# trust the call. `context` names the operation in the error.
+function clear_entity_mesh!(dimension, entity, context)
+    gmsh.model.mesh.clear([(dimension, entity)])
+    remaining_nodes, _, _ = gmsh.model.mesh.getNodes(dimension, entity)
+    _, remaining_elements, _ = gmsh.model.mesh.getElements(dimension, entity)
+    remaining = sum(length, remaining_elements; init=0)
+    isempty(remaining_nodes) && remaining == 0 ||
+        error("$(context): Gmsh refused to clear the mesh of entity ($(dimension), $(entity)): " *
+              "$(length(remaining_nodes)) nodes and $(remaining) elements remain (a higher-" *
+              "dimensional neighbour still carries a mesh)")
+    return nothing
+end
+
+# The Gmsh glue of the retry (decision 639 (1)): runs between the surface pass (the tube
+# faces installed) and generate(3); `entries` are the wrapper's retry records ("Point",
+# "FirstAttemptAfter"), each filled in place with the remap record. The affected entities'
+# meshes are REPLACED (clear in descending dimension - faces before their boundary lines, as
+# Gmsh requires - then addNodes of their own nodes minus the mapped ones with their tags in
+# ascending dimension - a face's triangles reference its lines' nodes - and addElementsByType
+# of every element block rewritten - the explicit-face path of install_tube_faces!). Fails
+# closed (naming the corner, the element and the first attempt's After value) on any validity
+# finding, on a clear Gmsh refused, and unless the model's nodes afterwards are exactly the
+# nodes before minus the mapped ones with unique tags (recorded as `ModelNodes`).
+function acute_corner_ring_cleanup!(entries, corners, corner_kinds, corner_sides, corner_size,
+                                    collapse_size, overetch, tolerance)
+    isempty(entries) && return entries
+    edge_floor = SEED_COLLAPSE_SIZE_FRACTION * collapse_size
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    allunique(node_tags) ||
+        error("Acute-corner retry (decision 639): the model's node tags are not unique before the cleanup")
+    points = reshape(copy(coordinates), 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    n = size(points, 2)
+    owner = fill((-1, 0), n)
+    for dimension in 0:2, (_, entity) in gmsh.model.getEntities(dimension)
+        tags, _, _ = gmsh.model.mesh.getNodes(dimension, entity)
+        for tag in tags
+            owner[index[tag]] = (dimension, Int(entity))
+        end
+    end
+    candidate_allowed = [owner[i][1] in (1, 2) for i in 1:n]
+    non_simplex = falses(n)
+    for (_, entity) in gmsh.model.getEntities(2)
+        types, _, blocks = gmsh.model.mesh.getElements(2, entity)
+        for (type, block) in zip(types, blocks)
+            Int(type) == GMSH_LINEAR_ELEMENT_TYPE[2] && continue
+            for tag in block
+                non_simplex[index[tag]] = true
+            end
+        end
+    end
+    triangles, _, triangle_entities = gmsh_entity_cells(index, 2, Val(3))
+    lines, _, line_entities = gmsh_entity_cells(index, 1, Val(2))
+    full_map = Dict{Int, Int}()
+    affected = Set{Tuple{Int, Int}}()
+    for entry in entries
+        point = Vector{Float64}(entry["Point"])
+        matches = [k for (k, corner) in enumerate(corners) if norm(collect(corner) .- point) <= tolerance]
+        length(matches) == 1 ||
+            error("Acute-corner retry at $(point): $(length(matches)) semantic corners match")
+        k = matches[1]
+        corner_kinds[k] === :invariant && corner_sides[k] !== nothing ||
+            error("Acute-corner retry at $(point): not an invariant corner with sides")
+        result = acute_corner_ring_remap(points, corners[k], corner_sides[k], edge_floor, corner_size,
+                                         overetch, tolerance, candidate_allowed, non_simplex,
+                                         triangles, triangle_entities, lines, line_entities;
+                                         node_entities=owner)
+        merge!(entry, result.record)
+        isempty(result.findings) ||
+            error("Acute-corner retry (decision 639) at $(point) fails closed: invalid remap " *
+                  "($(length(result.findings))): $(join(result.findings, "; ")); first attempt " *
+                  "kappa_reg $(get(entry, "FirstAttemptAfter", nothing)); record $(compact_json(entry))")
+        for (v, target) in result.map
+            haskey(full_map, v) && full_map[v] != target &&
+                error("Acute-corner retry at $(point): node $(v) mapped by two corners")
+            full_map[v] = target
+            push!(affected, owner[v])
+        end
+        for k in keys(result.triangles)
+            push!(affected, (2, Int(triangle_entities[k])))
+        end
+        for k in keys(result.lines)
+            push!(affected, (1, Int(line_entities[k])))
+        end
+        println("Acute-corner retry (decision 639) cleanup at $(point): opening " *
+                "$(entry["OpeningDegrees"]) degrees, r_min $(entry["FirstRingRadius"]), " *
+                "$(length(result.candidates)) candidates, triangles rewritten " *
+                "$(entry["TrianglesRewritten"]) removed $(entry["TrianglesRemoved"]), lines rewritten " *
+                "$(entry["LinesRewritten"]) removed $(entry["LinesRemoved"]), dihedral floor " *
+                "$(entry["DihedralFloor"]), shortest cross-wedge pair after " *
+                "$(entry["CleanedWedge"]["ShortestCrossWedgePair"]) (floor $(edge_floor))")
+    end
+    all(owner[v][1] in (1, 2) for v in keys(full_map)) ||
+        error("Acute-corner retry: a mapped node is not owned by a CAD line or face")
+    ordered = sort!(collect(affected))
+    blocks_of = Dict{Tuple{Int, Int}, Any}()
+    for (dimension, entity) in Iterators.reverse(ordered)
+        blocks_of[(dimension, entity)] = gmsh.model.mesh.getElements(dimension, entity)
+        clear_entity_mesh!(dimension, entity, "Acute-corner retry (decision 639) fails closed")
+    end
+    for (dimension, entity) in ordered
+        own = [tag for (i, tag) in enumerate(node_tags) if owner[i] == (dimension, entity)]
+        keep = [tag for tag in own if !haskey(full_map, index[tag])]
+        types, _, blocks = blocks_of[(dimension, entity)]
+        isempty(keep) || gmsh.model.mesh.addNodes(dimension, entity, keep,
+                                                  reduce(vcat, (points[:, index[tag]] for tag in keep)))
+        readded, _, _ = gmsh.model.mesh.getNodes(dimension, entity)
+        sort(Int.(readded)) == sort(Int.(keep)) ||
+            error("Acute-corner retry (decision 639) fails closed: entity ($(dimension), $(entity)) " *
+                  "holds $(length(readded)) nodes after the replacement, not its $(length(keep)) " *
+                  "surviving nodes")
+        for (type, block) in zip(types, blocks)
+            isempty(block) && continue
+            properties = gmsh.model.mesh.getElementProperties(type)
+            width = Int(properties[4])
+            connectivity = Int[]
+            for start in 1:width:length(block)
+                element = [Int(node_tags[get(full_map, index[block[start + j - 1]], index[block[start + j - 1]])])
+                           for j in 1:width]
+                length(unique(element)) == width || continue
+                append!(connectivity, element)
+            end
+            isempty(connectivity) ||
+                gmsh.model.mesh.addElementsByType(entity, type, Int[], connectivity)
+        end
+    end
+    tags_after, _, _ = gmsh.model.mesh.getNodes()
+    length(tags_after) == n - length(full_map) && allunique(tags_after) ||
+        error("Acute-corner retry (decision 639) fails closed: the model holds $(length(tags_after)) " *
+              "nodes ($(length(unique(tags_after))) unique tags) after the cleanup, not the " *
+              "$(n) before minus the $(length(full_map)) mapped")
+    for entry in entries
+        entry["ModelNodes"] = Dict{String, Any}("Before" => n, "Mapped" => length(full_map),
+                                                "After" => length(tags_after))
+    end
+    return entries
+end
+
 # Optimize the required region of a linear tetrahedral mesh in place and gate it.
 # The required set is the metric stage's rule evaluated on the FINAL vertex
 # positions: the moves can carry vertices across the corner-ball radius or the
@@ -2701,7 +3093,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                         "Jacobian condition gate $(maximum_jacobian_condition) after " *
                         "optimization (maximum $(condition_after))")
     end
-    isempty(failures) || error(join(failures, "; "))
+    isempty(failures) || throw(SeedGateFailure(failures, invariant_failed))
     if layer_rule
         println("Seed edge-layer quality rule: $(length(layer_cells)) layer cells, " *
                 "maximum edge aspect $(aspect_before_collapse) -> $(layer_aspect_before) -> " *
@@ -7261,6 +7653,26 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
              envelope_radius=tube_radius(top) + TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer)
         end
     end
+    # The BOUND-RING sections of a fabricated ARC-side component (round 4 F-3 redesign, decision 629
+    # DESIGN.md 4 / 8.2; decision 630): the bottom tube's rays reach the trench floor / pedestal
+    # plane w = -Overetch and the mid-thickness plane w = +T / 2, the top tube's the mid-thickness
+    # plane w = -T / 2 (both tubes' frames carry b = Nz, w towards the metal top). The envelope of
+    # such a tube is its largest node radius, the farthest bound node (decision 630 (4) (i)). Every
+    # other side keeps sections_of(K) bitwise; the thin kind has no bound.
+    bound_section_cache = Dict{Int, NamedTuple}()
+    function bound_sections_of(K)
+        return get!(bound_section_cache, K) do
+            fabricated || error("a thin coupon carries no bound ring")
+            plain = sections_of(K)
+            top = TubeSection(edge_size, ratio, K, plain.top.angles, plain.top.materials;
+                              bound_planes=[-0.5 * metal_thickness])
+            bottom = TubeSection(edge_size, ratio, K, plain.bottom.angles, plain.bottom.materials;
+                                 bound_planes=[-overetch, 0.5 * metal_thickness])
+            (top=top, bottom=bottom, sheet=plain.sheet, rings=K, radius=plain.radius,
+             outer_ring=plain.outer_ring, pyramid_height=plain.pyramid_height,
+             envelope_radius=max(plain.envelope_radius, section_reach(top), section_reach(bottom)))
+        end
+    end
     process = sections_of(rings)
     top_section, bottom_section, sheet_section = process.top, process.bottom, process.sheet
     radius = process.radius
@@ -7362,6 +7774,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # shared with a straight neighbour; the earlier part of one arc owns the split section.
     joints = Tuple{Int, Int, Int, Int}[]
     arc_tubes = 0
+    bound_ring_tubes = 0
     shared_sections = 0
     # The untubed short sides (design A9 family 3): recorded, no tube, not in `segments`
     # (which stays in lock-step with `tubes`: TubesPerSide tubes per segment).
@@ -7461,6 +7874,20 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         # joints are resolved on the indices into `tubes` once every segment has its tubes.
         layer_tube_index = Dict{Int, Int}()
         tubed_segments = Tuple{Int, NamedTuple}[]
+        # The ARC-CONTAINING side components (decision 629, DESIGN.md 4): the sides joined by
+        # smooth joints (an arc part, the straights smoothly jointed to it, the parts of one arc)
+        # whose component holds an arc. On a FABRICATED coupon every tube of such a component
+        # carries the bound ring; a coupon without an arc has no such component (the unchanged
+        # path, bitwise), and so does every thin coupon.
+        component = collect(1:length(layer_segments))
+        root(i) = (while component[i] != i; component[i] = component[component[i]]; i = component[i]; end; i)
+        for (i, segment) in enumerate(layer_segments), joint in segment.joints
+            joint === nothing && continue
+            a, b = root(i), root(joint[1])
+            a == b || (component[a] = b)
+        end
+        arc_roots = Set(root(i) for (i, segment) in enumerate(layer_segments) if segment.kind == :arc)
+        bound_ring_side = [fabricated && root(i) in arc_roots for i in eachindex(layer_segments)]
         for (segment_index, segment) in enumerate(layer_segments)
             if segment.untubed
                 push!(untubed_edges, untubed_edge_record(segment))
@@ -7468,8 +7895,11 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
             end
             b = [0.0, 0.0, Float64(layer.sign)]
             # The side's own sections (design round 2 F6: its ring count K_side) and their
-            # envelope / pyramid height / end-spacing cap.
-            own = sections_of(segment.rings)
+            # envelope / pyramid height / end-spacing cap; the bound-ring sections on an
+            # arc-containing component (decision 629).
+            own = bound_ring_side[segment_index] ? bound_sections_of(segment.rings) :
+                  sections_of(segment.rings)
+            bound_ring_side[segment_index] && (bound_ring_tubes += fabricated ? 2 : 1)
             placements = fabricated ?
                 ((layer.plane + layer.sign * metal_thickness, own.top),
                  (layer.plane, own.bottom)) :
@@ -7795,6 +8225,22 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         description["ArcTubeRule"] = ARC_TUBE_RULE
         description["SmoothJointRule"] = SMOOTH_JOINT_RULE
         description["ArcCurvatureBound"] = 0.25
+        # The bound ring (round 4 F-3 redesign, decisions 629 / 630): recorded only where an
+        # arc-containing side component exists (DESIGN 8.3 MINOR-6: no key elsewhere).
+        if bound_ring_tubes > 0
+            bound_process = bound_sections_of(rings)
+            description["BoundRing"] = Dict{String, Any}(
+                "Rule" => BOUND_RING_RULE,
+                "Tubes" => bound_ring_tubes,
+                "Planes" => Dict{String, Any}("Floor" => -overetch, "Mid" => 0.5 * metal_thickness),
+                "Reach" => bound_process.bottom.bound.reach,
+                "ReachRule" => "r_K + GrowthRatio x h_K of the side's own section",
+                "EnvelopeRadius" => bound_process.envelope_radius,
+                "Bottom" => bound_ring_record(bound_process.bottom),
+                "Top" => bound_ring_record(bound_process.top),
+                "CoveredLayers" => 3,
+                "StationLaw" => "SideShared(bottom axis)")
+        end
     end
     return tools, records, tubes, segments, description, untubed_edges, joints
 end
@@ -7810,6 +8256,29 @@ const ARC_TUBE_RULE =
     "degrees) parts of equal angular fraction (the same radial planes as the metal loft and " *
     "the trench wall of polygon_wire), consecutive parts sharing one section; the guard " *
     "ScopeGuard[ArcTubeRadiusVsCurvature] requires Radius + PyramidHeight <= ArcCurvatureBound x rho"
+const BOUND_RING_RULE =
+    "round 4 F-3 redesign (decisions 629 / 630; DESIGN.md sections 4 / 8): on a FABRICATED coupon " *
+    "every tube of a side component that contains an ArcTube (the arc parts and the straight tubes " *
+    "smoothly jointed to them) carries a BOUND RING - for every ray whose process plane (the trench " *
+    "floor / pedestal plane z = -Overetch below the bottom tube, the mid-thickness plane z = T / 2 " *
+    "between the two tubes) is within reach, r_bound = |plane| / |sin theta| <= Reach = r_K + " *
+    "GrowthRatio x h_K, the section's outermost node is the BOUND NODE on the plane at r_bound (an " *
+    "additional node beyond ring K); a sector with both rays covered is COVERED (its outer quad lies " *
+    "in the plane), with one a SHOULDER (its outer face is the slant from the free ring-K node to " *
+    "the bound node), else FREE (the pyramid-closed quad of every straight tube). Beyond ring K a " *
+    "covered sector is one prism + one pyramid + one tetrahedron per layer and a shoulder one pyramid " *
+    "+ one tetrahedron (decision 630 form (A): the pyramid's base is the quad shared with the inner / " *
+    "ring-K prism, its apex the pivot ray's bound node at station i; every plane / slant / pivot-ray " *
+    "quad is split on the diagonal from that node to the opposite node at station i + 1); an " *
+    "unpaired covered sector (the middle of an odd run between two shoulders) takes form (B), " *
+    "pyramids and tetrahedra about its centroid. The top tube ADOPTS the bottom tube's stations " *
+    "(StationLaw SideShared(bottom axis): one station set per metal side from the bottom tube's " *
+    "z = 0 axis law, DESIGN 8.1) and its bound-node tags on the mid-thickness plane at every " *
+    "station, so the two tubes meet face to face on z = T / 2 with two shared triangles per layer. " *
+    "No Gmsh-meshed layer remains between the tube and the trench wall / floor / pedestal plane / " *
+    "sidewall on an arc side (L1 / L2 / L3 of the F-3 cause); the tube's EnvelopeRadius is its " *
+    "farthest bound node. A coupon without an ArcTube and every THIN coupon take the unchanged path " *
+    "(bitwise; no key recorded)"
 const SMOOTH_JOINT_RULE =
     "block (b) design A3 (1)-(2) (decision 303): a joint whose signature turn is at most " *
     "1e-4 rad (JointSmooth) is no corner - no ball, no caps, clearance 0 - and the two tubes " *
@@ -8154,7 +8623,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                            curve_meshes, timings, band_record, quality, graded_points,
                            semantic_corners, junction_curves, band_curves, footprint_polygons,
                            box, lc_fine, lc_tangent, lc_far, far_growth, trace_basis_record,
-                           max_elements, element_count, layer_records)
+                           max_elements, element_count, layer_records; station_laws=Dict{Int, String}())
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(coordinates, 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
@@ -8207,6 +8676,20 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         end
         isempty(tube.joints) ||
             (tube_rows[end]["Joints"] = [joint_end_record(joint) for joint in tube.joints])
+        # The bound ring and the side-shared station law (round 4 F-3 redesign, decisions 629 /
+        # 630): recorded ONLY on the tubes of an arc-containing fabricated side component (DESIGN
+        # 8.3 MINOR-6: no key on any other row).
+        if has_bound_ring(section)
+            ring_record = bound_ring_record(section)
+            # The side's node envelope (decision 630 (4) (i)): the farthest bound node of EITHER tube
+            # of the side (the FaceEnd objects are shared by the pair), never below Radius + PyramidHeight.
+            pair_section = tubes_per_side == 2 ? tubes[isodd(k) ? k + 1 : k - 1][2] : section
+            ring_record["EnvelopeRadius"] = max(
+                tube_radius(section) + TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * ring_sizes(section)[end],
+                section_reach(section), section_reach(pair_section))
+            tube_rows[end]["BoundRing"] = ring_record
+        end
+        haskey(station_laws, k) && (tube_rows[end]["StationLaw"] = station_laws[k])
     end
     arc_rows = count(haskey(row, "Arc") for row in tube_rows)
     # The straight tubes' joint ends (Tubes[].Joints) and the arc part splits (an arc row whose
@@ -8262,7 +8745,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                 c -> minimum(span_point_distance(c, a, b) for (a, b) in junction_segments),
                 0.0, [lc_fine, 2lc_fine, 4lc_fine, 8lc_fine],
                 (c, d) -> band_law_size(d, lc_fine, lc_far, far_growth))))
-    return Dict{String, Any}(
+    record = Dict{String, Any}(
         "Rule" => "every straight metal edge (top and bottom edge of every metal segment) " *
                   "carries a prism tube on its dielectric side, except the untubed short sides " *
                   "(Scope.UntubedEdges: a tube interval below the inner ring size; their corner " *
@@ -8376,6 +8859,15 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "RequestedFarSize" => lc_far, "EffectiveFarSize" => lc_far, "Pressure" => 1.0,
             "Elements" => element_count, "MaximumElements" => max_elements,
             "ElementBudgetFraction" => element_count / max_elements))
+    # The bound cells' tetrahedra (decision 630): recorded only where a bound-ring volume exists.
+    bound_rows = [row for row in volume_census if haskey(row, "BoundCells")]
+    if !isempty(bound_rows)
+        record["Tetrahedra"] = sum(Int[row["Tetrahedra"] for row in bound_rows])
+        record["BoundCells"] = Dict{String, Any}(
+            name => sum(Int[row["BoundCells"][name] for row in bound_rows])
+            for name in ("Prisms", "Pyramids", "Tetrahedra"))
+    end
+    return record
 end
 
 # Straight segments (start, stop) of a curve list from the CAD endpoints.
@@ -8412,7 +8904,7 @@ function curve_segments(curves; subdivide=false, sagitta=nothing)
     return segments
 end
 
-function generate_spatial_coupon(;
+function generate_spatial_coupon_once(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
     boundary::Union{Nothing, String}=nothing,
@@ -8465,7 +8957,8 @@ function generate_spatial_coupon(;
     corner_shape_gate::Float64=0.0,
     minimum_qualified_rings::Int=0,
     maximum_rings::Int=0,
-    filename::String
+    filename::String,
+    acute_corner_retry::Vector{Dict{String, Any}}=Dict{String, Any}[]
 )
     matching_trace_mode in ("all","sides","levels","none") ||
         error("Unknown matching trace constraint mode")
@@ -9304,49 +9797,113 @@ function generate_spatial_coupon(;
     # the end layer is the size at the surface (decision 41: the narrow hats decay
     # from the cut surface at the trace rule's size there).
     tube_layer_records = Dict{String, Any}[]
+    # The side-shared station law of a bound-ring side (DESIGN 8.1, decision 629): the TOP tube
+    # adopts its BOTTOM tube's stations (the bottom's z = 0 axis law, where the semantic corners
+    # lie); the pairs (top k, bottom k + 1) of a fabricated coupon in `tubes` order (Edge "top" /
+    # "bottom" of the census). Every other tube keeps its own law bitwise.
+    tube_station_laws = Dict{Int, String}()
+    side_pairs = Tuple{Int, Int}[]           # (top state index, bottom state index)
     if prism_tubes
-        for (k, (tube, section)) in enumerate(tubes)
+        tubes_per_side = fabricated ? 2 : 1
+        station_order = collect(1:length(tubes))
+        for k in 1:length(tubes)
+            tubes_per_side == 2 && has_bound_ring(tubes[k][2]) && isodd(k) || continue
+            # the bottom (k + 1) before its top (k)
+            station_order[k], station_order[k + 1] = k + 1, k
+        end
+        graded_laws = Dict{Int, Tuple}()
+        tube_states_by_index = Vector{TubeMesh}(undef, length(tubes))
+        for k in station_order
+            tube, section = tubes[k]
             on_box(s) = on_outer_box(vcat(tube_point(tube, 0.0, 0.0, s), tube_point(tube, 0.0, 0.0, s)),
                                      lower, upper, outer_tolerance)
             axis_size(s) = tube_axis_size(tube_point(tube, 0.0, 0.0, s), lc_tangent, semantic_corners,
                                           corner_grading, corner_grading_slope)
-            graded = if isempty(tube.face_ends)
-                stations, axis_positions, axis_sizes = graded_tube_stations(
-                    tube.s_start, tube.s_end, axis_size, lc_tangent, edge_growth_ratio;
-                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-                tube isa ArcTube ? ArcTube(tube, stations) : EdgeTube(tube, stations)
-            elseif tube isa ArcTube
-                stations, fraction, block_end, axis_positions, axis_sizes = face_ended_tube_stations(
-                    tube, axis_size, lc_tangent, edge_growth_ratio;
-                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-                ArcTube(tube, stations; block_fraction=fraction, block_end=block_end)
+            shared = tubes_per_side == 2 && has_bound_ring(section) && isodd(k)
+            if shared
+                # The top tube of a bound-ring side: the bottom's stations, block fractions / shears
+                # (the same FaceEnd objects, the same s_start / s_end: asserted, fail closed) and law.
+                bottom = tubes[k + 1][1]
+                bottom.s_start == tube.s_start && bottom.s_end == tube.s_end &&
+                [face_end_record(f) for f in bottom.face_ends] == [face_end_record(f) for f in tube.face_ends] &&
+                (bottom isa ArcTube) == (tube isa ArcTube) ||
+                    error("the top and bottom tubes of a bound-ring side differ in interval or face ends " *
+                          "($(tube_description(tube)) vs $(tube_description(bottom))): the side-shared " *
+                          "station law needs identical tubes (DESIGN 8.1)")
+                stations, extra, axis_positions, axis_sizes = graded_laws[k + 1]
+                graded = if isempty(tube.face_ends)
+                    tube isa ArcTube ? ArcTube(tube, stations) : EdgeTube(tube, stations)
+                elseif tube isa ArcTube
+                    ArcTube(tube, stations; block_fraction=extra[1], block_end=extra[2])
+                else
+                    EdgeTube(tube, stations; shear_u=extra[1], shear_w=extra[2])
+                end
+                graded.stations == bottom.stations ||
+                    error("the top tube's stations differ from the bottom's on a bound-ring side")
+                graded_laws[k] = graded_laws[k + 1]
+                # Recorded on BOTH tubes of the side (DESIGN 8.1: the side's law is the bottom's).
+                tube_station_laws[k] = tube_station_laws[k + 1] = "SideShared(bottom axis)"
+                push!(side_pairs, (k, k + 1))
             else
-                # A face end replaces the surface layer of its end by the sheared end
-                # block (design A2); the other end keeps the surface rule.
-                stations, shear_u, shear_w, axis_positions, axis_sizes = face_ended_tube_stations(
-                    tube, axis_size, lc_tangent, edge_growth_ratio;
-                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-                EdgeTube(tube, stations; shear_u=shear_u, shear_w=shear_w)
+                graded = if isempty(tube.face_ends)
+                    stations, axis_positions, axis_sizes = graded_tube_stations(
+                        tube.s_start, tube.s_end, axis_size, lc_tangent, edge_growth_ratio;
+                        surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                    graded_laws[k] = (stations, (), axis_positions, axis_sizes)
+                    tube isa ArcTube ? ArcTube(tube, stations) : EdgeTube(tube, stations)
+                elseif tube isa ArcTube
+                    stations, fraction, block_end, axis_positions, axis_sizes = face_ended_tube_stations(
+                        tube, axis_size, lc_tangent, edge_growth_ratio;
+                        surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                    graded_laws[k] = (stations, (fraction, block_end), axis_positions, axis_sizes)
+                    ArcTube(tube, stations; block_fraction=fraction, block_end=block_end)
+                else
+                    # A face end replaces the surface layer of its end by the sheared end
+                    # block (design A2); the other end keeps the surface rule.
+                    stations, shear_u, shear_w, axis_positions, axis_sizes = face_ended_tube_stations(
+                        tube, axis_size, lc_tangent, edge_growth_ratio;
+                        surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                    graded_laws[k] = (stations, (shear_u, shear_w), axis_positions, axis_sizes)
+                    EdgeTube(tube, stations; shear_u=shear_u, shear_w=shear_w)
+                end
             end
             tubes[k] = (graded, section)
-            push!(tube_layer_records, tube_layer_statistics(graded, axis_positions, axis_sizes))
             # The pyramid height of the tube's OWN section (design round 2 F6: a side bound by
             # its facing width carries fewer rings; 0.5 x its outermost ring).
-            push!(tube_states, TubeMesh(graded, section, tube_volume_groups[k];
-                                        pyramid_height=TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING *
-                                                       ring_sizes(section)[end]))
+            tube_states_by_index[k] = TubeMesh(graded, section, tube_volume_groups[k];
+                                               pyramid_height=TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING *
+                                                              ring_sizes(section)[end])
+        end
+        for k in 1:length(tubes)
+            push!(tube_layer_records, tube_layer_statistics(tubes[k][1], graded_laws[k][3], graded_laws[k][4]))
+            push!(tube_states, tube_states_by_index[k])
         end
         for (adopting, own_end, owning, owner_end) in tube_joints
             register_joint!(tube_states[adopting], own_end, tube_states[owning], owner_end)
         end
+        # The side pairs (DESIGN 8.1; decision 630 (4) (ii)): the top tube adopts the bottom's
+        # bound nodes on the mid-thickness plane at every station - the top's covered rays on
+        # w = -T / 2 are the bottom's on w = +T / 2 at the same (u, z): matched by their (u, w_z).
+        for (top_index, bottom_index) in side_pairs
+            top_state, bottom_state = tube_states[top_index], tube_states[bottom_index]
+            node_map = bound_side_pair_map(top_state.section, bottom_state.section, metal_thickness)
+            register_side_pair!(top_state, bottom_state, node_map)
+        end
     end
     # Installation order (design A3 (2)): the owner of every shared section before the tube
-    # adopting it - the arc tubes (parts in arc order) before the straight tubes.
-    tube_install_order = vcat([i for (i, state) in enumerate(tube_states) if state.tube isa ArcTube],
-                              [i for (i, state) in enumerate(tube_states) if !(state.tube isa ArcTube)])
+    # adopting it - the arc tubes (parts in arc order) before the straight tubes; on a bound-ring
+    # side the bottom tube before its top (decision 630 (4) (ii)).
+    side_owner = Dict(top => bottom for (top, bottom) in side_pairs)
+    install_key(i) = haskey(side_owner, i) ? (i + 1, 1) : (i, 0)
+    tube_install_order = vcat(sort([i for (i, state) in enumerate(tube_states) if state.tube isa ArcTube]; by=install_key),
+                              sort([i for (i, state) in enumerate(tube_states) if !(state.tube isa ArcTube)]; by=install_key))
     for (adopting, _, owning, _) in tube_joints
         findfirst(==(owning), tube_install_order) < findfirst(==(adopting), tube_install_order) ||
             error("a tube adopts a shared section from a tube installed after it")
+    end
+    for (top_index, bottom_index) in side_pairs
+        findfirst(==(bottom_index), tube_install_order) < findfirst(==(top_index), tube_install_order) ||
+            error("a top tube adopts its side pair's bound nodes from a bottom tube installed after it")
     end
     tube_meshed_curves = Set{Int32}()
     tube_meshed_faces = Set{Int32}()
@@ -9696,6 +10253,13 @@ function generate_spatial_coupon(;
     if geometry_only
         return gmsh.finalize()
     end
+    # The collapse size of record (optimize_required_region!: the smallest prescribed size,
+    # EdgeSize inside a seeded layer or CornerSize inside a graded ball), read here for the
+    # R2 retry's floor (design 11.5 MINOR-1).
+    acute_corner_collapse_sizes = filter(>(0.0), [isempty(edge_layer_curves) ? 0.0 : edge_size,
+                                                 corner_grading.corner_size])
+    acute_corner_collapse_size = isempty(acute_corner_collapse_sizes) ? 0.0 :
+                                 minimum(acute_corner_collapse_sizes)
     tube_timings = Dict{String, Float64}()
     tube_face_meshes = Dict{String, Any}[]
     tube_volume_census = Dict{String, Any}[]
@@ -9727,6 +10291,13 @@ function generate_spatial_coupon(;
                                                           meshed=tube_meshed_faces)
             end
         end
+        # R2 retry (decision 639): only on the wrapper's second attempt, the acute-corner
+        # cleanup of the final surface mesh at the retried corners (every other build takes
+        # today's path verbatim).
+        isempty(acute_corner_retry) ||
+            acute_corner_ring_cleanup!(acute_corner_retry, semantic_corners, corner_kinds,
+                                       corner_sides, corner_grading.corner_size,
+                                       acute_corner_collapse_size, overetch, tolerance)
         remove_tube_volumes!(tube_states)
         # The 3D pass repeats the surface pass for the faces it finds pending (the explicitly
         # meshed periodic faces among them), so the arc coupon's tube faces stay hidden
@@ -9746,7 +10317,14 @@ function generate_spatial_coupon(;
                                             get(tube_discrete, 1, Int32[])), 1, "substrate")
         gmsh.model.addPhysicalGroup(3, vcat(setdiff(vacuum_tags, tube_volumes),
                                             get(tube_discrete, 2, Int32[])), 2, "vacuum")
+    elseif isempty(acute_corner_retry)
+        gmsh.model.mesh.generate(3)
     else
+        # R2 retry (decision 639) without tubes: the surface pass, the cleanup, the volume pass.
+        gmsh.model.mesh.generate(2)
+        acute_corner_ring_cleanup!(acute_corner_retry, semantic_corners, corner_kinds, corner_sides,
+                                   corner_grading.corner_size, acute_corner_collapse_size, overetch,
+                                   tolerance)
         gmsh.model.mesh.generate(3)
     end
     (trace_basis_record === nothing && tube_band_record === nothing) ||
@@ -9772,6 +10350,24 @@ function generate_spatial_coupon(;
             corner_kinds=corner_kinds, corner_sides=corner_sides,
             corner_shape_gate=corner_shape_gate) :
         nothing
+    # R2 retry (decision 639 (3)): the census keys exist ONLY on a retried build - the
+    # retried corner's CornerMeasures row carries AcuteCornerRetry (the remap record and the
+    # first attempt's After value), the optimization record AcuteCornerRetries.
+    if !isempty(acute_corner_retry)
+        seed_quality === nothing && error("Acute-corner retry needs the seed quality gates")
+        for entry in acute_corner_retry
+            point = Vector{Float64}(entry["Point"])
+            rows = [row for row in seed_quality["CornerMeasures"]
+                    if norm(Vector{Float64}(row["Point"]) .- point) <= tolerance]
+            length(rows) == 1 || error("Acute-corner retry at $(point): $(length(rows)) corner rows match")
+            rows[1]["AcuteCornerRetry"] = entry
+            println("Acute-corner retry (decision 639) at $(point): first attempt kappa_reg " *
+                    "$(entry["FirstAttemptAfter"]) -> $(rows[1]["After"]) (gate $(rows[1]["Gate"]), " *
+                    "dihedral floor $(entry["DihedralFloor"]), passed $(rows[1]["Passed"]))")
+        end
+        seed_quality["AcuteCornerRetryRule"] = ACUTE_CORNER_RETRY_RULE
+        seed_quality["AcuteCornerRetries"] = [entry["Point"] for entry in acute_corner_retry]
+    end
     # Per-type quality of the mixed mesh, gated after the corner-ball optimization
     # (fail closed): positive orientation and Jacobian condition for every type,
     # scaled Jacobian for the tetrahedra.
@@ -9886,7 +10482,7 @@ function generate_spatial_coupon(;
                           band_curves, footprint_polygons, (lower, upper, outer_tolerance),
                           lc_fine, lc_tangent, lc_far, far_growth,
                           trace_basis_record, max_elements, element_count_after_generation,
-                          tube_layer_records) :
+                          tube_layer_records; station_laws=tube_station_laws) :
         nothing
     if transform != IDENTITY_RIGID_TRANSFORM
         connectivity = gmsh.model.mesh.getElements()
@@ -10186,6 +10782,74 @@ function generate_spatial_coupon(;
         "layers=$(length(layers)), file=$filename"
     )
     return gmsh.finalize()
+end
+
+# R2 "AcuteCornerRetry" RETRY-ON-FAIL wrapper (supervisor decisions 639 (1) / 641): the build
+# runs EXACTLY as today (generate_spatial_coupon_once); only a SeedGateFailure whose failures
+# hold ONLY the CornerShapeGate failure, at corners all in the locked class (fabricated,
+# Invariant, convex metal sector, 2 sin(phi / 2) < SEED_COLLAPSE_SIZE_FRACTION), on the first
+# attempt, re-meshes the coupon once from scratch with the acute-corner cleanup at THOSE
+# corners (acute_corner_ring_cleanup!, between the surface and the volume pass); every other
+# failure is re-thrown unchanged, and a passing build never enters the catch (byte-identical
+# mesh and census by construction). A second SeedGateFailure fails closed with the retry's
+# record, the dihedral floor f(phi) and, when f(phi) exceeds the gate, the statement that the
+# gate is unattainable at this tip by geometry (the named open item R2-G, decision 639 (6)).
+# The wrapper's trigger (decision 639 (1) (a)-(c)): the retry entries ("Point",
+# "FirstAttemptAfter" per failed corner) when the failure holds ONLY the CornerShapeGate
+# failure and every failed row is in the locked class; `nothing` otherwise.
+function acute_corner_retry_entries(failure::SeedGateFailure, fabricated::Bool)
+    length(failure.failures) == 1 && !isempty(failure.invariant_failed) || return nothing
+    all(row -> acute_corner_locked_class(row, fabricated), failure.invariant_failed) || return nothing
+    return [Dict{String, Any}("Point" => Vector{Float64}(row["Point"]),
+                              "FirstAttemptAfter" => row["After"])
+            for row in failure.invariant_failed]
+end
+
+# The fail-closed text of a retry that fails the seed gates again: the gate failure of
+# record, then per retried corner the first attempt's and the retry's After values, the
+# dihedral floor f(phi) and - when f(phi) exceeds the gate - the statement that the gate is
+# unattainable at this tip by geometry (decision 639 (6), open item R2-G), then the records.
+function acute_corner_retry_failure_message(again::SeedGateFailure, entries)
+    statements = String[]
+    for entry in entries
+        point = Vector{Float64}(entry["Point"])
+        rows = [row for row in again.invariant_failed
+                if norm(Vector{Float64}(row["Point"]) .- point) <= 1.0e-9 * (1.0 + norm(point))]
+        after = isempty(rows) ? nothing : rows[1]["After"]
+        gate = isempty(rows) ? nothing : rows[1]["Gate"]
+        dihedral = get(entry, "DihedralFloor", nothing)
+        statement = "at $(point): first attempt $(entry["FirstAttemptAfter"]), retry $(after)"
+        if dihedral !== nothing
+            statement *= ", dihedral floor f($(entry["OpeningDegrees"]) deg) = $(dihedral)"
+            gate !== nothing && dihedral > gate &&
+                (statement *= " > CornerShapeGate $(gate): the gate is unattainable at this tip by " *
+                              "geometry (decision 639 (6), open item R2-G)")
+        end
+        push!(statements, statement)
+    end
+    return join(again.failures, "; ") * "; acute-corner retry (decision 639) failed again " *
+           join(statements, "; ") * "; AcuteCornerRetry records $(compact_json(entries))"
+end
+
+function generate_spatial_coupon(; kwargs...)
+    haskey(kwargs, :acute_corner_retry) &&
+        error("acute_corner_retry is the retry wrapper's own keyword")
+    try
+        return generate_spatial_coupon_once(; kwargs...)
+    catch failure
+        failure isa SeedGateFailure || rethrow()
+        entries = acute_corner_retry_entries(failure, Bool(kwargs[:fabricated]))
+        entries === nothing && rethrow()
+        gmsh.isInitialized() == 1 && gmsh.finalize()
+        println("Acute-corner retry (decision 639) at $([entry["Point"] for entry in entries]): " *
+                "first attempt $([entry["FirstAttemptAfter"] for entry in entries])")
+        try
+            return generate_spatial_coupon_once(; kwargs..., acute_corner_retry=entries)
+        catch again
+            again isa SeedGateFailure || rethrow()
+            error(acute_corner_retry_failure_message(again, entries))
+        end
+    end
 end
 
 function parse_options(args)

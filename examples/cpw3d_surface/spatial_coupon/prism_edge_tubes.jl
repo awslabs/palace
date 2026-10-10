@@ -21,17 +21,48 @@ using LinearAlgebra
 # (n, the signature "gap" direction) towards +z (b). The extrusion direction is
 # e = n x b so that the cross-section triangles (counterclockwise in (n, b)) make
 # positively oriented prisms.
+# The BOUND RING of a fabricated ARC-side tube (round 4 F-3 redesign, decision 629: DESIGN.md
+# sections 4 / 8; decision 630 the cell form). A ray theta is COVERED by a process plane w = w_p
+# (the trench floor / pedestal plane w = -Overetch below the bottom tube, the mid-thickness plane
+# w = +-MetalThickness / 2 between the two tubes) when the plane lies on its side and within reach,
+# r_bound = |w_p| / |sin theta| <= reach = r_K + ratio x size_K; its outermost node is then the
+# BOUND NODE on the plane at r_bound (an additional node beyond ring K, local ring index K + 1).
+# A sector with both rays covered is COVERED (its outer quad lies in the plane), with exactly one
+# a SHOULDER (its outer face is the slant from the free ring-K node to the bound node), else FREE
+# (the pyramid-closed lateral quad of every straight tube). The cells beyond ring K (decision 630
+# form (A)): a covered sector = one PRISM (ring_K p, ring_K q, bound q) + one PYRAMID (base = the
+# diagonal quad (ring_K p, bound q) x [i, i + 1], apex = bound p at station i) + one TET (bound p^i,
+# bound p^{i+1}, ring_K p^{i+1}, bound q^{i+1}), p the sector's PIVOT ray; a shoulder = one PYRAMID
+# (base = the ring-K quad, apex = bound p^i) + one TET; every Gmsh-facing or shared quad (the plane,
+# the slant, the ray-p segment) is split on the diagonal from the station-i bound node to the
+# opposite node at station i + 1, so the mesh is conforming by construction. Pivots run from the
+# shoulder ends of a covered run inward (two covered sectors sharing a ray both pivot there or
+# neither); the middle sector of an odd run between two shoulders (or a 1-sector run between two
+# shoulders) is UNPAIRED and takes form (B): pyramids / tets about the hex centroid, adapting each
+# side to its neighbour's presentation (decision 630 (2)). The thin sheet section and every
+# straight-only coupon carry no bound ring (bitwise).
+struct BoundRing
+    covered::Vector{Bool}       # per distinct ray
+    radii::Vector{Float64}      # r_bound per ray (NaN on a free ray)
+    planes::Vector{Float64}     # the plane w of each covered ray (NaN on a free ray)
+    reach::Float64              # r_K + ratio x size_K
+    kinds::Vector{Symbol}       # per sector: :free / :covered / :shoulder
+    pivots::Vector{Int}         # per sector (0-based ray): the pivot ray; -1 = form (B); -2 = free
+end
+
 struct TubeSection
     ring_radii::Vector{Float64}      # cumulative radii r_1 < ... < r_K (um), r_0 = 0 is the edge
     angles::Vector{Float64}          # rays theta_0 < ... < theta_J (degrees), J sectors
     materials::Vector{Int}           # material attribute of each sector (1 substrate, 2 vacuum)
     closed::Bool                     # theta_J = theta_0 + 360: ray J is ray 0 (a full-turn sheet section)
+    bound::Union{Nothing, BoundRing} # the bound ring of a fabricated arc-side section (nothing elsewhere)
 end
 
 # A section is closed when its rays span a full turn (the thin sheet edge: the metal
 # sheet ray is both the first and the last ray); its last ray shares the first ray's
-# nodes and CAD entities.
-function TubeSection(inner_size, ratio, rings, angles, materials)
+# nodes and CAD entities. `bound_planes` (the process planes' w, decision 629) adds the
+# bound ring; the default (none) is the unchanged section of every straight / thin tube.
+function TubeSection(inner_size, ratio, rings, angles, materials; bound_planes=nothing)
     inner_size > 0.0 || error("tube inner size must be positive")
     ratio > 1.0 || error("tube ring ratio must exceed 1")
     rings >= 1 || error("at least one ring")
@@ -40,13 +71,140 @@ function TubeSection(inner_size, ratio, rings, angles, materials)
     span = angles[end] - angles[1]
     span <= 360.0 + 1.0e-9 || error("tube rays span more than a full turn")
     radii = [inner_size * (ratio^k - 1.0) / (ratio - 1.0) for k = 1:rings]
-    return TubeSection(
+    section = TubeSection(
         radii,
         collect(Float64, angles),
         collect(Int, materials),
-        abs(span - 360.0) <= 1.0e-9
+        abs(span - 360.0) <= 1.0e-9,
+        nothing
+    )
+    bound_planes === nothing && return section
+    return TubeSection(
+        section.ring_radii,
+        section.angles,
+        section.materials,
+        section.closed,
+        bound_ring(section, bound_planes, ratio)
     )
 end
+
+has_bound_ring(section::TubeSection) = section.bound !== nothing
+
+# The bound ring of a section (see BoundRing): covered rays, radii, sector kinds and pivots.
+function bound_ring(section::TubeSection, planes, ratio)
+    section.closed && error("a closed (thin sheet) section carries no bound ring")
+    all(isfinite(w) && w != 0.0 for w in planes) || error("a bound plane needs a non-zero w")
+    D = distinct_ray_count(section)
+    K = ring_count(section)
+    reach = section.ring_radii[K] + ratio * ring_sizes(section)[K]
+    covered = falses(D)
+    radii = fill(NaN, D)
+    plane_of = fill(NaN, D)
+    for j = 1:D
+        s = sind(section.angles[j])
+        for w in planes
+            # The plane on the ray's side (same sign of w and sin theta), within reach.
+            (s > 0.0) == (w > 0.0) && abs(s) > 0.0 || continue
+            r = abs(w) / abs(s)
+            r <= reach * (1.0 + 1.0e-12) || continue
+            covered[j] && error("ray $(section.angles[j]) is covered by two bound planes")
+            r > section.ring_radii[K] ||
+                error("the bound plane w = $w lies inside ring $K on ray $(section.angles[j])")
+            covered[j] = true
+            radii[j] = r
+            plane_of[j] = w
+        end
+    end
+    J = ray_count(section) - 1
+    kinds = [covered[j + 1] && covered[j + 2] ? :covered :
+             covered[j + 1] || covered[j + 2] ? :shoulder : :free for j = 0:(J - 1)]
+    pivots = fill(-2, J)
+    for j = 0:(J - 1)
+        kinds[j + 1] == :shoulder || continue
+        pivots[j + 1] = covered[j + 1] ? j : j + 1
+    end
+    # Covered runs: pivots from the shoulder ends inward (a boundary end - the first / last ray
+    # of the section, a metal face - constrains nothing); the middle sector of an odd run between
+    # two shoulders, or a 1-sector run between two shoulders, is unpaired: form (B).
+    j = 0
+    while j < J
+        if kinds[j + 1] != :covered
+            j += 1
+            continue
+        end
+        j0 = j
+        while j < J && kinds[j + 1] == :covered
+            j += 1
+        end
+        j1 = j - 1
+        n = j1 - j0 + 1
+        left_shoulder = j0 > 0 && kinds[j0] == :shoulder
+        right_shoulder = j1 + 1 < J && kinds[j1 + 2] == :shoulder
+        # Pivot pattern from a shoulder end: the end sector pivots at the shoulder ray; then the
+        # pairs (s, s + 1) share the pivot ray s + 1 inward.
+        from_left(s) = (s - j0) == 0 ? j0 : (isodd(s - j0) ? s + 1 : s)
+        from_right(s) = (j1 - s) == 0 ? j1 + 1 : (isodd(j1 - s) ? s : s + 1)
+        if left_shoulder && right_shoulder && isodd(n)
+            middle = j0 + (n - 1) ÷ 2
+            for s = j0:(middle - 1)
+                pivots[s + 1] = from_left(s)
+            end
+            pivots[middle + 1] = -1
+            for s = (middle + 1):j1
+                pivots[s + 1] = from_right(s)
+            end
+        elseif left_shoulder || !right_shoulder
+            for s = j0:j1
+                pivots[s + 1] = from_left(s)
+            end
+        else
+            for s = j0:j1
+                pivots[s + 1] = from_right(s)
+            end
+        end
+    end
+    ring = BoundRing(covered, radii, plane_of, reach, kinds, pivots)
+    # Every shared ray's presentation is well defined (fail closed on a pairing defect).
+    for j = 0:(J - 1)
+        ring.covered[j + 1] && bound_ray_presentation(ring, j)
+    end
+    return ring
+end
+
+# Local node index of the bound node of covered ray j (1 + K D + its rank among the covered rays).
+function bound_node(section::TubeSection, j)
+    ring = section.bound
+    ring !== nothing && ring.covered[j + 1] || error("ray $j carries no bound node")
+    return 1 + ring_count(section) * distinct_ray_count(section) + count(ring.covered[1:(j + 1)])
+end
+covered_ray(section::TubeSection, j) = has_bound_ring(section) && section.bound.covered[j + 1]
+bound_ray_radius(section::TubeSection, j) = section.bound.radii[j + 1]
+sector_kind(section::TubeSection, j) = has_bound_ring(section) ? section.bound.kinds[j + 1] : :free
+sector_pivot(section::TubeSection, j) = section.bound.pivots[j + 1]
+# The outermost node of ray j: the bound node where covered, ring K elsewhere.
+outer_node(section::TubeSection, j) =
+    covered_ray(section, j) ? bound_node(section, j) : section_node(section, ring_count(section), j)
+
+# The presentation of the bound segment (ring K -> bound node) of covered ray r to its two sides:
+# :tri (split on the diagonal (bound r^i, ring_K r^{i+1})) when a shoulder or a sector pivoting
+# at r touches it, :quad otherwise; a form-(B) sector adopts its neighbour's. Fails closed when
+# the two sides disagree (a pairing defect) or both are form (B).
+function bound_ray_presentation(ring::BoundRing, r)
+    J = length(ring.kinds)
+    sides = Symbol[]
+    for s in (r - 1, r)
+        0 <= s < J || continue
+        kind = ring.kinds[s + 1]
+        kind == :free && error("a free sector touches the covered ray $r")
+        pivot = ring.pivots[s + 1]
+        pivot == -1 && continue
+        push!(sides, pivot == r ? :tri : :quad)
+    end
+    isempty(sides) && error("covered ray $r lies between two unpaired sectors")
+    allequal(sides) || error("covered ray $r is split on one side and a quad on the other")
+    return sides[1]
+end
+bound_ray_presentation(section::TubeSection, r) = bound_ray_presentation(section.bound, r)
 
 ring_sizes(section::TubeSection) = diff(vcat(0.0, section.ring_radii))
 tube_radius(section::TubeSection) = section.ring_radii[end]
@@ -54,17 +212,24 @@ ring_count(section::TubeSection) = length(section.ring_radii)
 ray_count(section::TubeSection) = length(section.angles)
 # Rays with their own nodes: every ray of an open section, all but the last of a closed one.
 distinct_ray_count(section::TubeSection) = ray_count(section) - (section.closed ? 1 : 0)
+# The largest radial extent of any section node: the farthest bound node, else ring K.
+function section_reach(section::TubeSection)
+    has_bound_ring(section) || return tube_radius(section)
+    return max(tube_radius(section), maximum(filter(!isnan, section.bound.radii); init=0.0))
+end
 
 # Cross-section node (k, j): k = 0 the edge point (one node), k >= 1 ring k, ray j
-# (0-based; the last ray of a closed section folds onto ray 0). Returns the 1-based
-# local index within one cross-section.
+# (0-based; the last ray of a closed section folds onto ray 0); k = K + 1 the bound node of
+# a covered ray. Returns the 1-based local index within one cross-section.
 function section_node(section::TubeSection, k, j)
     k == 0 && return 1
+    k == ring_count(section) + 1 && return bound_node(section, j)
     j = section.closed ? mod(j, distinct_ray_count(section)) : j
     return 1 + (k - 1) * distinct_ray_count(section) + j + 1
 end
 section_node_count(section::TubeSection) =
-    1 + ring_count(section) * distinct_ray_count(section)
+    1 + ring_count(section) * distinct_ray_count(section) +
+    (has_bound_ring(section) ? count(section.bound.covered) : 0)
 
 # Local (u, w) coordinates of every cross-section node, u along n, w along b.
 function section_coordinates(section::TubeSection)
@@ -73,6 +238,13 @@ function section_coordinates(section::TubeSection)
         theta = deg2rad(section.angles[j + 1])
         uw[:, section_node(section, k, j)] .=
             section.ring_radii[k] .* (cos(theta), sin(theta))
+    end
+    for j = 0:(distinct_ray_count(section) - 1)
+        covered_ray(section, j) || continue
+        theta = deg2rad(section.angles[j + 1])
+        # The bound node sits ON the plane: w = the plane exactly, u from the radius.
+        r = bound_ray_radius(section, j)
+        uw[:, bound_node(section, j)] .= (r * cos(theta), section.bound.planes[j + 1])
     end
     return uw
 end
@@ -98,6 +270,197 @@ function sector_triangles(section::TubeSection, j)
         push!(triangles, (a, c, d))
     end
     return triangles
+end
+
+# ---------------------------------------------------------------------------
+# The cells beyond ring K of a bound sector (decision 630). A node reference is (local index,
+# station offset 0 / 1); the centroid node of a form-(B) hex is the local index 0 (per sector and
+# layer: TubeMesh.centroid). Cells are (kind, nodes): :prism (6: bottom triangle then top),
+# :pyramid (5: base quad then apex), :tet (4); their orientation is fixed numerically at install
+# (orient_cell) from the station coordinates, so the generators carry only the incidence.
+const BOUND_CENTROID_NODE = 0
+
+# The two nodes of a bound ray r: ring K and the bound node.
+bound_ray_nodes(section::TubeSection, r) =
+    (section_node(section, ring_count(section), r), bound_node(section, r))
+
+# The ray whose station-i bound node starts the diagonal of the plane quad of covered sector j:
+# the pivot ray of a form-(A) sector; the larger-u bound ray of a form-(B) one (the same choice
+# seen from the mirror tube across z = T / 2: u is the shared outward normal coordinate).
+function plane_diagonal_ray(section::TubeSection, j)
+    pivot = sector_pivot(section, j)
+    pivot >= 0 && return pivot
+    u(r) = bound_ray_radius(section, r) * cosd(section.angles[r + 1])
+    return u(j) >= u(j + 1) ? j : j + 1
+end
+
+function bound_sector_cells(section::TubeSection, j)
+    kind = sector_kind(section, j)
+    kind == :free && return Tuple{Symbol, Vector{Tuple{Int, Int}}}[]
+    K = ring_count(section)
+    cells = Tuple{Symbol, Vector{Tuple{Int, Int}}}[]
+    if kind == :shoulder
+        p = sector_pivot(section, j)
+        f = p == j ? j + 1 : j
+        a = section_node(section, K, f)
+        b, c = bound_ray_nodes(section, p)
+        push!(cells, (:pyramid, [(a, 0), (b, 0), (b, 1), (a, 1), (c, 0)]))
+        push!(cells, (:tet, [(c, 0), (c, 1), (a, 1), (b, 1)]))
+        return cells
+    end
+    pivot = sector_pivot(section, j)
+    if pivot >= 0
+        p = pivot
+        q = p == j ? j + 1 : j
+        a, d = bound_ray_nodes(section, p)
+        b, c = bound_ray_nodes(section, q)
+        push!(cells, (:prism, [(a, 0), (b, 0), (c, 0), (a, 1), (b, 1), (c, 1)]))
+        push!(cells, (:pyramid, [(a, 0), (c, 0), (c, 1), (a, 1), (d, 0)]))
+        push!(cells, (:tet, [(d, 0), (d, 1), (a, 1), (c, 1)]))
+        return cells
+    end
+    # Form (B): the hex a b c d (ring_K j, ring_K j+1, bound j+1, bound j) about its centroid m.
+    a, d = bound_ray_nodes(section, j)
+    b, c = bound_ray_nodes(section, j + 1)
+    m = (BOUND_CENTROID_NODE, 0)
+    push!(cells, (:pyramid, [(a, 0), (b, 0), (b, 1), (a, 1), m]))
+    for (r, ring, bnd) in ((j, a, d), (j + 1, b, c))
+        if bound_ray_presentation(section, r) == :quad
+            push!(cells, (:pyramid, [(ring, 0), (bnd, 0), (bnd, 1), (ring, 1), m]))
+        else
+            # The ray's diagonal (bound^0, ring^1).
+            push!(cells, (:tet, [(ring, 0), (bnd, 0), (ring, 1), m]))
+            push!(cells, (:tet, [(bnd, 0), (bnd, 1), (ring, 1), m]))
+        end
+    end
+    x, y = plane_diagonal_ray(section, j) == j ? (d, c) : (c, d)
+    push!(cells, (:tet, [(x, 0), (y, 0), (y, 1), m]))
+    push!(cells, (:tet, [(x, 0), (y, 1), (x, 1), m]))
+    for offset in (0, 1)
+        push!(cells, (:tet, [(a, offset), (b, offset), (c, offset), m]))
+        push!(cells, (:tet, [(a, offset), (c, offset), (d, offset), m]))
+    end
+    return cells
+end
+
+# The cross-section triangles beyond ring K of a bound sector (the caps and the station faces;
+# counterclockwise in (u, w) like sector_triangles).
+function bound_cap_triangles(section::TubeSection, j)
+    kind = sector_kind(section, j)
+    kind == :free && return NTuple{3, Int}[]
+    K = ring_count(section)
+    a = section_node(section, K, j)
+    b = section_node(section, K, j + 1)
+    if kind == :shoulder
+        p = sector_pivot(section, j)
+        return [p == j ? (a, b, bound_node(section, j)) : (a, b, bound_node(section, j + 1))]
+    end
+    c = bound_node(section, j + 1)
+    d = bound_node(section, j)
+    pivot = sector_pivot(section, j)
+    # The diagonal (ring_K p, bound q): (a, c) when p = j, (b, d) when p = j + 1; form (B) (a, c).
+    pivot == j + 1 && return [(a, b, d), (b, c, d)]
+    return [(a, b, c), (a, c, d)]
+end
+
+# The triangles of the outer face of a bound sector between the outer nodes of rays j and j + 1
+# over one layer (the plane quad of a covered sector, the slant of a shoulder), in the loop
+# orientation (o_j^0, o_{j+1}^0, o_{j+1}^1, o_j^1) of the pyramid triangles, split on the
+# diagonal from the station-0 node of `start` ray to the station-1 node of the other.
+function bound_outer_triangles(section::TubeSection, j)
+    kind = sector_kind(section, j)
+    kind == :free && return NTuple{3, Tuple{Int, Int}}[]
+    start = kind == :shoulder ? sector_pivot(section, j) : plane_diagonal_ray(section, j)
+    oj = (outer_node(section, j), 0)
+    ok = (outer_node(section, j + 1), 0)
+    oj1 = (outer_node(section, j), 1)
+    ok1 = (outer_node(section, j + 1), 1)
+    start == j && return [(oj, ok, ok1), (oj, ok1, oj1)]
+    return [(oj, ok, oj1), (ok, ok1, oj1)]
+end
+
+# The surface elements of the bound segment of covered ray r over one layer, in the loop
+# orientation (ring^0, bound^0, bound^1, ring^1): one quad, or two triangles on the diagonal
+# (bound^0, ring^1).
+function bound_ray_faces(section::TubeSection, r)
+    ring, bnd = bound_ray_nodes(section, r)
+    bound_ray_presentation(section, r) == :quad &&
+        return (:quad, [[(ring, 0), (bnd, 0), (bnd, 1), (ring, 1)]])
+    return (:tri, [[(ring, 0), (bnd, 0), (ring, 1)], [(bnd, 0), (bnd, 1), (ring, 1)]])
+end
+
+# Orient a volume cell positively from its node coordinates (Gmsh's conventions: a tetrahedron
+# with det > 0; a pyramid whose base loop's right-hand normal points to the apex; a prism whose
+# bottom triangle's normal points to the top). Returns the (possibly re-ordered) node list.
+function orient_cell(kind, nodes, coordinate)
+    x = [coordinate(n) for n in nodes]
+    if kind == :tet
+        v = dot(cross(x[2] .- x[1], x[3] .- x[1]), x[4] .- x[1])
+        v != 0.0 || error("degenerate tetrahedron of a bound sector")
+        return v > 0.0 ? nodes : [nodes[1], nodes[3], nodes[2], nodes[4]]
+    elseif kind == :pyramid
+        v = dot(cross(x[2] .- x[1], x[4] .- x[1]), x[5] .- x[1])
+        v != 0.0 || error("degenerate pyramid of a bound sector")
+        return v > 0.0 ? nodes : [nodes[1], nodes[4], nodes[3], nodes[2], nodes[5]]
+    elseif kind == :prism
+        v = dot(cross(x[2] .- x[1], x[3] .- x[1]), x[4] .- x[1])
+        v != 0.0 || error("degenerate prism of a bound sector")
+        return v > 0.0 ? nodes : [nodes[1], nodes[3], nodes[2], nodes[4], nodes[6], nodes[5]]
+    end
+    return error("unknown cell kind $kind")
+end
+
+# A counterclockwise copy of a cross-section triangle in (u, w).
+function ccw_triangle(triangle, uw)
+    a, b, c = (uw[:, i] for i in triangle)
+    area = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
+    area != 0.0 || error("degenerate cross-section triangle")
+    return area > 0.0 ? triangle : (triangle[1], triangle[3], triangle[2])
+end
+
+# The node map of a SIDE PAIR (DESIGN 8.1): the top section's bound nodes on its mid-thickness
+# plane (w = -T / 2 in the top frame, z = T / 2) -> the bottom section's on w = +T / 2 at the same
+# u. Every mid-plane bound node of either section must find its partner (fail closed: the two
+# sections are mirror images about z = T / 2 by construction).
+function bound_side_pair_map(top::TubeSection, bottom::TubeSection, metal_thickness)
+    has_bound_ring(top) && has_bound_ring(bottom) || error("a side pair needs two bound-ring sections")
+    uw_top = section_coordinates(top)
+    uw_bottom = section_coordinates(bottom)
+    mid = 0.5 * metal_thickness
+    tolerance = 1.0e-9 * metal_thickness
+    on_mid(section, uw, j, w) = covered_ray(section, j) && abs(uw[2, bound_node(section, j)] - w) <= tolerance
+    top_nodes = [bound_node(top, j) for j = 0:(distinct_ray_count(top) - 1) if on_mid(top, uw_top, j, -mid)]
+    bottom_nodes = [bound_node(bottom, j) for j = 0:(distinct_ray_count(bottom) - 1) if on_mid(bottom, uw_bottom, j, mid)]
+    node_map = Dict{Int, Int}()
+    for t in top_nodes
+        matches = [b for b in bottom_nodes if abs(uw_top[1, t] - uw_bottom[1, b]) <= tolerance]
+        length(matches) == 1 ||
+            error("the top tube's mid-plane bound node at u = $(uw_top[1, t]) has $(length(matches)) partners on the bottom tube")
+        node_map[t] = matches[1]
+    end
+    length(node_map) == length(bottom_nodes) ||
+        error("the bottom tube's mid-plane bound nodes ($(length(bottom_nodes))) and the top's ($(length(top_nodes))) differ")
+    return node_map
+end
+
+# The census record of a section's bound ring (nothing without one).
+function bound_ring_record(section::TubeSection)
+    has_bound_ring(section) || return nothing
+    ring = section.bound
+    J = length(ring.kinds)
+    sector(j) = [section.angles[j + 1], section.angles[j + 2]]
+    return Dict{String, Any}(
+        "Reach" => ring.reach,
+        "Rays" => [section.angles[j] for j = 1:length(ring.covered) if ring.covered[j]],
+        "Radii" => [ring.radii[j] for j = 1:length(ring.covered) if ring.covered[j]],
+        "Planes" => [ring.planes[j] for j = 1:length(ring.covered) if ring.covered[j]],
+        "CoveredSectors" => [sector(j) for j = 0:(J - 1) if ring.kinds[j + 1] == :covered],
+        "ShoulderSectors" => [sector(j) for j = 0:(J - 1) if ring.kinds[j + 1] == :shoulder],
+        "Pivots" => [section.angles[ring.pivots[j + 1] + 1] for j = 0:(J - 1)
+                     if ring.kinds[j + 1] != :free && ring.pivots[j + 1] >= 0],
+        "UnpairedSectors" => [sector(j) for j = 0:(J - 1) if ring.pivots[j + 1] == -1],
+        "MaximumRadius" => section_reach(section)
+    )
 end
 
 # Contiguous sectors of one material: (first sector, last sector, material), 0-based.
@@ -1239,7 +1602,7 @@ function add_tube_volumes!(occ, tube::EdgeTube, section::TubeSection; box=nothin
         first, last, _ = group
         corners = [tube_point(tube, 0.0, 0.0, cad_start)]
         for j = first:(last + 1)
-            uwj = uw[:, section_node(section, K, j)]
+            uwj = uw[:, outer_node(section, j)]
             push!(corners, tube_point(tube, uwj[1], uwj[2], cad_start))
         end
         points = [occ.addPoint(c[1], c[2], c[3]) for c in corners]
@@ -1278,7 +1641,7 @@ function add_tube_volumes!(occ, tube::ArcTube, section::TubeSection; box=nothing
         first, last, _ = group
         corners = [tube_point(tube, 0.0, 0.0, cad_start)]
         for j = first:(last + 1)
-            uwj = uw[:, section_node(section, K, j)]
+            uwj = uw[:, outer_node(section, j)]
             push!(corners, tube_point(tube, uwj[1], uwj[2], cad_start))
         end
         points = [occ.addPoint(c[1], c[2], c[3]) for c in corners]
@@ -1358,7 +1721,7 @@ function face_ended_tube_entities(tube::EdgeTube, section::TubeSection, group)
     K = ring_count(section)
     rays = collect(first:(last + 1))
     entities = TubeEntity[]
-    outer(j) = uw[:, section_node(section, K, j)]
+    outer(j) = uw[:, outer_node(section, j)]
     at(end_index, u, w) = tube_end_point(tube, end_index, u, w)
     for end_index in (0, 1)
         push!(entities, TubeEntity(0, :edge_point, (0, end_index), at(end_index, 0.0, 0.0)))
@@ -1570,7 +1933,7 @@ function tube_entities(tube::ArcTube, section::TubeSection, group)
     K = ring_count(section)
     rays = collect(first:(last + 1))
     entities = TubeEntity[]
-    outer(j) = uw[:, section_node(section, K, j)]
+    outer(j) = uw[:, outer_node(section, j)]
     at(end_index, u, w) = tube_end_point(tube, end_index, u, w)
     for end_index in (0, 1)
         face_end = face_end_at(tube, end_index)
@@ -1676,7 +2039,7 @@ function tube_entities(tube::EdgeTube, section::TubeSection, group)
     rays = collect(first:(last + 1))
     mid = 0.5 * (tube.s_start + tube.s_end)
     entities = TubeEntity[]
-    outer(j) = uw[:, section_node(section, K, j)]
+    outer(j) = uw[:, outer_node(section, j)]
     # Points: edge ends and outer polygon vertices at both caps (end index 0 the
     # start cap, 1 the end cap).
     for (end_index, s) in ((0, tube.s_start), (1, tube.s_end))
@@ -1861,6 +2224,8 @@ mutable struct TubeMesh
     faces::Dict{Int32, Vector{Int32}}                           # OCC volume -> boundary faces
     discrete::Dict{Int32, Int32}                                # OCC volume -> discrete volume
     joints::Vector{Tuple{Int, TubeMesh, Int}}                   # (own end, the owning state, its end)
+    centroid::Dict{Tuple{Int, Int}, Int}                        # (sector j, layer i) -> the form-(B) hex centroid node
+    side_pairs::Vector{Tuple{TubeMesh, Dict{Int, Int}}}         # (the owning state, own local -> its local) at EVERY station
 end
 
 # A smooth joint (design A3 (2)): the end section `end_index` of `state` IS the end section
@@ -1873,13 +2238,36 @@ function register_joint!(state::TubeMesh, end_index, owner::TubeMesh, owner_end)
     end_index in (0, 1) && owner_end in (0, 1) || error("a joint end is 0 or 1")
     owner !== state || error("a tube cannot joint itself")
     state.section.ring_radii == owner.section.ring_radii &&
-    state.section.angles == owner.section.angles ||
+    state.section.angles == owner.section.angles &&
+    isequal(bound_ring_record(state.section), bound_ring_record(owner.section)) ||
         error("a smooth joint needs the same tube section on both tubes")
     push!(state.joints, (end_index, owner, owner_end))
     return state
 end
 
+# The SIDE PAIR of a bound-ring side (DESIGN 8.1, decision 630 (4) (ii)): the top tube's bound
+# nodes on the mid-thickness plane ARE the bottom tube's (the same points at the same stations:
+# the two tubes share one station vector, asserted here), so the top adopts the bottom's tags at
+# EVERY station through `node_map` (own local index -> the owner's). The owner installs first.
+function register_side_pair!(state::TubeMesh, owner::TubeMesh, node_map::Dict{Int, Int})
+    owner !== state || error("a tube cannot pair with itself")
+    state.tube.stations == owner.tube.stations ||
+        error("a side pair needs identical station vectors on both tubes (DESIGN 8.1)")
+    isempty(node_map) && error("a side pair shares at least one node")
+    push!(state.side_pairs, (owner, node_map))
+    return state
+end
+
 function adopt_joint_tags!(state::TubeMesh)
+    for (owner, node_map) in state.side_pairs
+        for (own_local, owner_local) in node_map, station = 0:(state.tube.layers)
+            tag = get(owner.tags, (owner_local, station), nothing)
+            tag === nothing && continue
+            haskey(state.tags, (own_local, station)) && continue
+            state.tags[(own_local, station)] = tag
+            state.coordinates[tag] = owner.coordinates[tag]
+        end
+    end
     for (end_index, owner, owner_end) in state.joints
         own_station = end_index == 0 ? 0 : state.tube.layers
         owner_station = owner_end == 0 ? 0 : owner.tube.layers
@@ -1898,7 +2286,8 @@ end
 # pyramid whose apex lies pyramid_height outside the quad on the sector bisector,
 # so Gmsh meshes pure tetrahedra against a closed triangulated boundary (its
 # tetrahedral optimizer was observed to create overlapping tetrahedra when it
-# had to close quadrangles with its own pyramids).
+# had to close quadrangles with its own pyramids). A bound sector's outer face (decision 630)
+# is split into triangles owned by its pyramid + tet cells instead.
 function TubeMesh(tube::AbstractTube, section::TubeSection, volumes; pyramid_height)
     pyramid_height > 0.0 || error("pyramid height must be positive")
     # Round 3 8A: the layers of a face-end block carry the block's own pyramid height (= h_pyr
@@ -1930,8 +2319,31 @@ function TubeMesh(tube::AbstractTube, section::TubeSection, volumes; pyramid_hei
         Dict{Tuple{Int, Int}, Int}(),
         faces,
         Dict{Int32, Int32}(),
-        Tuple{Int, TubeMesh, Int}[]
+        Tuple{Int, TubeMesh, Int}[],
+        Dict{Tuple{Int, Int}, Int}(),
+        Tuple{TubeMesh, Dict{Int, Int}}[]
     )
+end
+
+# The centroid node of the form-(B) hex of covered sector j over layer i (decision 630 (2)):
+# the mean of its eight corner nodes (the hex is convex).
+function centroid_node!(state::TubeMesh, next_node, j, i)
+    get!(state.centroid, (j, i)) do
+        section = state.section
+        a, d = bound_ray_nodes(section, j)
+        b, c = bound_ray_nodes(section, j + 1)
+        corners = [state.coordinates[state.tags[(n, i + offset)]] for n in (a, b, c, d), offset in (0, 1)]
+        next_node[] += 1
+        state.coordinates[next_node[]] = sum(corners) ./ length(corners)
+        return next_node[]
+    end
+end
+
+# The node tag of a bound-cell node reference (local, offset) over layer i.
+function bound_cell_node(state::TubeMesh, next_node, j, i, reference)
+    local_index, offset = reference
+    local_index == BOUND_CENTROID_NODE && return centroid_node!(state, next_node, j, i)
+    return state.tags[(local_index, i + offset)]
 end
 
 function apex_node!(state::TubeMesh, next_node, j, i)
@@ -1990,7 +2402,7 @@ function install_tube_curves!(
         for (end_index, i) in ((0, 0), (1, L))
             for (kind, id, local_index) in vcat(
                 [(:edge_point, (0, end_index), section_node(section, 0, 0))],
-                [(:outer_point, (j, end_index), section_node(section, K, j)) for j in rays]
+                [(:outer_point, (j, end_index), outer_node(section, j)) for j in rays]
             )
                 point = matched[(kind, id)]
                 tag = get!(point_nodes, point) do
@@ -2003,7 +2415,7 @@ function install_tube_curves!(
         end
         for (kind, id, local_index) in vcat(
             [(:edge_line, (0, 0), section_node(section, 0, 0))],
-            [(:outer_line, (j, 0), section_node(section, K, j)) for j in rays]
+            [(:outer_line, (j, 0), outer_node(section, j)) for j in rays]
         )
             curve = matched[(kind, id)]
             curve in meshed && continue
@@ -2026,8 +2438,8 @@ function install_tube_curves!(
                 append!(
                     get!(lines, curve, Int[]),
                     (
-                        state.tags[(section_node(section, K, j), i)],
-                        state.tags[(section_node(section, K, j + 1), i)]
+                        state.tags[(outer_node(section, j), i)],
+                        state.tags[(outer_node(section, j + 1), i)]
                     )
                 )
             end
@@ -2035,7 +2447,8 @@ function install_tube_curves!(
                 curve = matched[(:cap_ray, (j, end_index))]
                 curve in meshed && continue
                 push!(meshed, curve)
-                for k = 1:K
+                # The cap ray runs edge -> ring K -> the bound node of a covered ray.
+                for k = 1:(K + (covered_ray(section, j) ? 1 : 0))
                     append!(
                         get!(lines, curve, Int[]),
                         (
@@ -2109,13 +2522,19 @@ function install_tube_faces!(state::TubeMesh, next_node; meshed=Set{Int32}())
         push!(get!(face_nodes, face, Int[]), t)
         return t
     end
+    uw = section_coordinates(section)
     for (_, group, matched) in state.volumes
         first, last, _ = group
         for (end_index, i) in ((0, 0), (1, L))
             face = matched[(:cap, (0, end_index))]
             face in meshed && continue
             push!(meshed, face)
-            for j = first:last, (a, b, c) in sector_triangles(section, j)
+            for j = first:last,
+                (a, b, c) in vcat(
+                    sector_triangles(section, j),
+                    [ccw_triangle(t, uw) for t in bound_cap_triangles(section, j)]
+                )
+
                 append!(
                     get!(triangles, face, Int[]),
                     (
@@ -2128,6 +2547,20 @@ function install_tube_faces!(state::TubeMesh, next_node; meshed=Set{Int32}())
         end
         for j = first:last
             face = matched[(:lateral, (j, 0))]
+            if sector_kind(section, j) != :free
+                # A bound sector's outer face (decision 630): the plane quad / the slant as two
+                # triangles per layer owned by its pyramid + tet cells; the mid-thickness face is
+                # shared with the paired tube and meshed once (by the owner, installed first).
+                face in meshed && continue
+                push!(meshed, face)
+                for i = 0:(L - 1), triangle in bound_outer_triangles(section, j)
+                    append!(
+                        get!(triangles, face, Int[]),
+                        [state.tags[(local_index, i + offset)] for (local_index, offset) in triangle]
+                    )
+                end
+                continue
+            end
             push!(meshed, face)
             a = section_node(section, K, j)
             b = section_node(section, K, j + 1)
@@ -2159,6 +2592,16 @@ function install_tube_faces!(state::TubeMesh, next_node; meshed=Set{Int32}())
                         face_node!(face, b, i + 1),
                         face_node!(face, a, i + 1)
                     )
+                )
+            end
+            # The bound segment of a covered CAD ray: a quad, or the two triangles of its
+            # presentation (bound_ray_faces).
+            covered_ray(section, j) || continue
+            kind, faces_of_layer = bound_ray_faces(section, j)
+            for i = 0:(L - 1), element in faces_of_layer
+                append!(
+                    get!(kind == :quad ? quads : triangles, face, Int[]),
+                    [face_node!(face, local_index, i + offset) for (local_index, offset) in element]
                 )
             end
         end
@@ -2216,11 +2659,17 @@ function finalize_tube_volumes!(states::Vector{TubeMesh})
             for i = 1:(L - 1),
                 local_index in vcat(
                     [section_node(section, 0, 0)],
-                    [section_node(section, k, j) for k = 1:K for j in rays]
+                    [section_node(section, k, j) for k = 1:K for j in rays],
+                    [bound_node(section, j) for j in rays if covered_ray(section, j)]
                 )
 
                 haskey(state.tags, (local_index, i)) && continue
                 push!(interior, tube_node!(state, next_node, local_index, i))
+            end
+            # The form-(B) hex centroids (decision 630 (2)) are interior nodes of the volume too.
+            for i = 0:(L - 1), j = first:last
+                sector_kind(section, j) == :covered && sector_pivot(section, j) == -1 || continue
+                push!(interior, centroid_node!(state, next_node, j, i))
             end
             isempty(interior) || gmsh.model.mesh.addNodes(
                 3,
@@ -2242,9 +2691,9 @@ function finalize_tube_volumes!(states::Vector{TubeMesh})
                     )
                 )
             end
-            gmsh.model.mesh.addElementsByType(discrete, 6, Int[], prisms)
             pyramids = Int[]
             for i = 0:(L - 1), j = first:last
+                sector_kind(section, j) == :free || continue
                 a = section_node(section, K, j)
                 b = section_node(section, K, j + 1)
                 append!(
@@ -2258,21 +2707,44 @@ function finalize_tube_volumes!(states::Vector{TubeMesh})
                     )
                 )
             end
+            # The bound cells (decision 630): the prisms, pyramids and tetrahedra beyond ring K of
+            # the covered / shoulder sectors, oriented from their node coordinates.
+            tetrahedra = Int[]
+            bound_counts = Dict{String, Int}("Prisms" => 0, "Pyramids" => 0, "Tetrahedra" => 0)
+            for i = 0:(L - 1), j = first:last, (kind, references) in bound_sector_cells(section, j)
+                nodes = [bound_cell_node(state, next_node, j, i, r) for r in references]
+                nodes = orient_cell(kind, nodes, t -> state.coordinates[t])
+                if kind == :prism
+                    append!(prisms, nodes)
+                    bound_counts["Prisms"] += 1
+                elseif kind == :pyramid
+                    append!(pyramids, nodes)
+                    bound_counts["Pyramids"] += 1
+                else
+                    append!(tetrahedra, nodes)
+                    bound_counts["Tetrahedra"] += 1
+                end
+            end
+            gmsh.model.mesh.addElementsByType(discrete, 6, Int[], prisms)
             gmsh.model.mesh.addElementsByType(discrete, 7, Int[], pyramids)
+            isempty(tetrahedra) || gmsh.model.mesh.addElementsByType(discrete, 4, Int[], tetrahedra)
             push!(get!(volumes, material, Int32[]), discrete)
-            push!(
-                census,
-                Dict{String, Any}(
-                    "Volume" => Int(volume),
-                    "DiscreteVolume" => Int(discrete),
-                    "Material" => material,
-                    "Sectors" => last - first + 1,
-                    "Layers" => L,
-                    "Prisms" => length(prisms) ÷ 6,
-                    "Pyramids" => length(pyramids) ÷ 5,
-                    "InteriorNodes" => length(interior)
-                )
+            row = Dict{String, Any}(
+                "Volume" => Int(volume),
+                "DiscreteVolume" => Int(discrete),
+                "Material" => material,
+                "Sectors" => last - first + 1,
+                "Layers" => L,
+                "Prisms" => length(prisms) ÷ 6,
+                "Pyramids" => length(pyramids) ÷ 5,
+                "InteriorNodes" => length(interior)
             )
+            # Recorded only on a bound-ring tube (every straight / thin census row is bitwise).
+            if has_bound_ring(section)
+                row["Tetrahedra"] = length(tetrahedra) ÷ 4
+                row["BoundCells"] = bound_counts
+            end
+            push!(census, row)
         end
     end
     return volumes, census

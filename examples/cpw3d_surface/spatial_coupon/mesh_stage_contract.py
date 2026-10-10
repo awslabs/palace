@@ -2179,6 +2179,33 @@ def arc_crossing_slope(rho, envelope_radius, face_distance):
     return rho * face_distance / (r * math.sqrt((r - face_distance) * (r + face_distance)))
 
 
+def tube_row_envelope(row, plain_envelope):
+    """The node envelope of a prism tube row: the plain Radius + PyramidHeight, or the farthest bound
+    node of a BOUND-RING tube (round 4 F-3 redesign, decisions 629 / 630: Tubes[].BoundRing.EnvelopeRadius,
+    recorded only on the tubes of a fabricated arc-containing side component and never below the plain
+    envelope; fail closed otherwise)."""
+    ring = row.get("BoundRing") if isinstance(row, dict) else None
+    if ring is None:
+        return plain_envelope
+    if not isinstance(ring, dict):
+        raise ValueError("Tube row BoundRing is not a record")
+    envelope = _census_number(ring, "EnvelopeRadius", "Tube bound ring")
+    if envelope < plain_envelope * (1.0 - 1e-12):
+        raise ValueError("Tube bound ring EnvelopeRadius lies below the section's Radius + PyramidHeight")
+    for name in ("Rays", "Radii", "Planes", "CoveredSectors", "ShoulderSectors"):
+        if not isinstance(ring.get(name), list):
+            raise ValueError(f"Tube bound ring lacks its {name}")
+    if len(ring["Rays"]) != len(ring["Radii"]) or len(ring["Rays"]) != len(ring["Planes"]):
+        raise ValueError("Tube bound ring rays, radii and planes differ in length")
+    reach = _census_number(ring, "Reach", "Tube bound ring")
+    for angle, r, plane in zip(ring["Rays"], ring["Radii"], ring["Planes"]):
+        s = math.sin(math.radians(float(angle)))
+        if (abs(float(r) - abs(float(plane)) / abs(s)) > 1e-9 * max(1.0, abs(float(r))) or
+                float(r) > reach * (1.0 + 1e-9) or (s > 0.0) != (float(plane) > 0.0)):
+            raise ValueError("Tube bound ring radius does not follow |plane| / |sin theta| within the reach")
+    return envelope
+
+
 def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=None, round2b=False,
                             inner_size=None, growth_ratio=None, box=None, fabricated=None):
     """The face-end records of one census tube row (Tubes[].FaceEnds, absent on a plain
@@ -2222,6 +2249,11 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
         ring_radii = [inner_size * (growth_ratio**k - 1.0) / (growth_ratio - 1.0) for k in range(1, rings + 1)]
         radius = ring_radii[-1]
         pyramid_height = GMSH_BUILD_PYRAMID_HEIGHT_OVER_OUTER_RING * inner_size * growth_ratio**(rings - 1)
+    # The node envelope of the row's tube: Radius + PyramidHeight, or, on a BOUND-RING tube (round 4
+    # F-3 redesign, decisions 629 / 630 (4) (i)), its farthest bound node (Tubes[].BoundRing.EnvelopeRadius,
+    # never below the plain envelope), read by the arc crossing slope, the node-circle margin and the
+    # end-block layer count alike.
+    envelope = tube_row_envelope(row, radius + pyramid_height)
     bound = 0.0
     ends = []
     cap = None
@@ -2242,11 +2274,11 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
             face_value = (box[0] if record["Face"][1] == "0" else box[1])[axis]
             rho = _census_number(arc, "Radius", "Tube arc")
             face_distance = abs(face_value - _census_number({"c": arc["Centre"][axis]}, "c", "Tube arc centre"))
-            slope = arc_crossing_slope(rho, radius + pyramid_height, face_distance)
+            slope = arc_crossing_slope(rho, envelope, face_distance)
             if "CrossingSlope" not in record:
                 raise ValueError("Tube face end of an arc row lacks its CrossingSlope")
             # Round 3 B4 review (decision 579): the node-circle margin is recorded, bound and dominated.
-            margin = (rho - face_distance) / (radius + pyramid_height)
+            margin = (rho - face_distance) / envelope
             if "NodeCircleMargin" not in record:
                 raise ValueError("Tube face end of an arc row lacks its NodeCircleMargin")
             if abs(_census_number(record, "NodeCircleMargin", "Tube face end") - margin) > 1e-12 * margin:
@@ -2272,7 +2304,7 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
         regime_one_spacing = max(tangential_size, 4.0 * apex_height * slope)
 
         def regime_one_layers(lc):
-            return max(1, math.ceil(2.0 * (radius + pyramid_height) * slope / lc * (1.0 - 1e-9)))
+            return max(1, math.ceil(2.0 * envelope * slope / lc * (1.0 - 1e-9)))
 
         if "Regime" in record:
             if cap is None:
@@ -2302,7 +2334,7 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
                 if not apex < cap:
                     raise ValueError("Tube face end lies beyond the validity ceiling of the capped end block")
                 expected_regime, expected_spacing = "II", cap
-                expected_layers = max(math.ceil((radius + pyramid_height) * slope / (cap - apex)),
+                expected_layers = max(math.ceil(envelope * slope / (cap - apex)),
                                       regime_one_layers(cap))
             if regime != expected_regime:
                 raise ValueError("Tube face end regime does not follow 4 h_pyr |tan theta| against the cap")
@@ -2443,8 +2475,8 @@ def validate_arc_tubes(tubes, rows, boundary_rows, radius=None):
         return 0
     runs = {run["ArcId"]: run for loop_runs in boundary_arc_runs(boundary_rows) for run in loop_runs}
     section = tubes.get("Section") if isinstance(tubes, dict) else None
-    envelope = (_census_number(section, "Radius", "Tube section") +
-                _census_number(section, "PyramidHeight", "Tube section"))
+    plain_envelope = (_census_number(section, "Radius", "Tube section") +
+                      _census_number(section, "PyramidHeight", "Tube section"))
     joint_ends = 0
     for row in rows:
         for joint in row.get("Joints", []):
@@ -2460,6 +2492,8 @@ def validate_arc_tubes(tubes, rows, boundary_rows, radius=None):
             raise ValueError("Prism tube arc row names an arc the bound boundary does not carry")
         # The arc's own radius (rho); `radius` stays the coupon Radius for the arc-arc tolerance (decision 580 MAJOR-1).
         arc_radius = _census_number(arc, "Radius", "Tube arc")
+        # The row's node envelope: the bound ring's farthest node on a bound-ring tube (decision 630).
+        envelope = tube_row_envelope(row, plain_envelope)
         parts = _count(arc.get("Parts"), "Tube arc parts")
         part = _count(arc.get("Part"), "Tube arc part")
         centre = arc.get("Centre")
