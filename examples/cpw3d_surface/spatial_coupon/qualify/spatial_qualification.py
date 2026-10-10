@@ -999,7 +999,12 @@ def command_evaluate(args):
                                      q_fab=q_fab, q_thin=q_thin))
     gate = resolution_aware_gate([gate_solve_record(path) for path in args.gate], manifest["Model"])
     # The EXCLUSION-COVERAGE gate (decision 657 (b)): every dense run of both twins and the two
-    # basis-matrix runs (the Q matrices' own perimeter) against their palace.json records.
+    # basis-matrix runs (the Q matrices' own perimeter) against their palace.json records. The
+    # basis-matrix runs' REQUIRED interfaces are read from the dense {twin}-p{library_order}
+    # config (the reducer's own config is not an input here): exact while the reducer carries the
+    # same dielectric list as the dense run (the producer writes both from one model); a reducer
+    # listing EdgeExcludeSegments on an interface the dense config does not is not checked, one
+    # listing fewer fails closed by name ("record incomplete").
     coverage_runs = [exclusion_coverage_run(name, configs[name], Path(configs[name]["Problem"]["Output"]))
                      for name in sorted(runs)]
     for name, postpro in (("fabricated-matrices", args.fabricated_matrices), ("thin-matrices", args.thin_matrices)):
