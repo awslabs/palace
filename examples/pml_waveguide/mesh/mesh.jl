@@ -34,6 +34,32 @@ a wave-port S11 measurement.
 ```bash
 julia -e 'include("mesh.jl"); generate_waveguide_mesh(; filename="waveguide.msh")'
 ```
+
+# Iris-coupled cavity
+
+`generate_iris_cavity_mesh` generates a resonant cavity coupled to the PML-terminated
+waveguide through an inductive iris: a section of the guide shorted at z = 0, a thin wall
+with a centered aperture of width w spanning the height of the guide, and an output
+section ending in the PML.
+
+    z=0       z=l   z=l+t       z=l+t+L_o   z=l+t+L_o+d
+    |----------|=|------------|------------|
+    |  cavity  |i|   output   |    PML     |
+    |   (1)    |r|    (1)     |    (2)     |
+    |----------|=|------------|------------|
+    ↑
+    short (PEC)
+
+## Physical groups (mesh attributes)
+
+  Domain   1  — cavity, iris aperture, and output section (physical region)
+  Domain   2  — PML slab on the +z face
+  Boundary 3  — PEC walls (short, iris, and lateral walls of the physical region and PML)
+  Boundary 4  — PEC termination on the outer +z face of the PML
+
+```bash
+julia -e 'include("mesh.jl"); generate_iris_cavity_mesh(; filename="iris_cavity.msh")'
+```
 =#
 
 using Gmsh: gmsh
@@ -61,13 +87,11 @@ Generate the rectangular waveguide + PML slab mesh.
   - a, b        - waveguide cross-section dimensions (m)
   - L           - guide length (m)
   - d           - total PML thickness (m)
-  - n_pml_slabs - number of axis-aligned PML slabs along +z. Each slab becomes its
-    own mesh attribute so Palace's per-attribute PML stretch tensor
-    discretizes the continuous σ(z) at `n_pml_slabs` successive
-    levels. More slabs ⇒ closer to the ideal continuously-varying
-    σ(z) ⇒ lower residual |S11|. Attributes assigned in z-order,
-    starting at 2 (slab closest to the physical region) through
-    `1 + n_pml_slabs` (outermost slab).
+  - n_pml_slabs - number of axis-aligned PML slabs of equal thickness along +z, each
+    with its own mesh attribute, assigned in z-order from 2 (slab closest to the
+    physical region) to `1 + n_pml_slabs` (outermost slab). The PML stretch is
+    graded continuously across the layer, so all slabs are listed in a single
+    `config["Domains"]["PML"]["Attributes"]`.
   - mesh_size   - target element size (m)
   - verbose     - gmsh verbosity (0-5)
   - gui         - open gmsh GUI after mesh generation
@@ -183,6 +207,126 @@ function generate_waveguide_mesh(;
     println("  port:        attr $port_attr (2D, z = 0)")
     println("  pec_lateral: attr $pec_lateral_attr (2D, ±x, ±y walls, entire length)")
     println("  pec_end:     attr $pec_end_attr (2D, z = $(L+d))")
+    println()
+
+    if gui
+        gmsh.fltk.run()
+    end
+    return gmsh.finalize()
+end
+
+"""
+    generate_iris_cavity_mesh(; filename, a, b, l, t, w, L_o, d, mesh_size, iris_mesh_size,
+                              verbose, gui)
+
+Generate the iris-coupled cavity + PML slab mesh.
+
+# Arguments
+
+  - filename       - output .msh filename (written in this directory)
+  - a, b           - waveguide cross-section dimensions (m)
+  - l              - cavity length between the short and the iris (m)
+  - t              - iris thickness (m)
+  - w              - iris aperture width along x (m)
+  - L_o            - output section length between the iris and the PML (m)
+  - d              - PML thickness (m)
+  - mesh_size      - target element size (m)
+  - iris_mesh_size - target element size near the iris (m)
+  - verbose        - gmsh verbosity (0-5)
+  - gui            - open gmsh GUI after mesh generation
+"""
+function generate_iris_cavity_mesh(;
+    filename::AbstractString="iris_cavity.msh",
+    a::Real=0.1,
+    b::Real=0.05,
+    l::Real=0.15,
+    t::Real=0.005,
+    w::Real=0.04,
+    L_o::Real=0.15,
+    d::Real=0.1,
+    mesh_size::Real=0.02,
+    iris_mesh_size::Real=0.008,
+    verbose::Integer=3,
+    gui::Bool=false
+)
+    gmsh.initialize()
+    kernel = gmsh.model.occ
+    gmsh.option.setNumber("General.Verbosity", verbose)
+
+    if "iris_cavity" in gmsh.model.list()
+        gmsh.model.setCurrent("iris_cavity")
+        gmsh.model.remove()
+    end
+    gmsh.model.add("iris_cavity")
+
+    # Cavity, iris aperture, output section, and PML slab along +z, glued by fragment so
+    # that shared faces are conformal.
+    z_pml = l + t + L_o
+    cavity = kernel.addBox(-a / 2, -b / 2, 0.0, a, b, l)
+    aperture = kernel.addBox(-w / 2, -b / 2, l, w, b, t)
+    output = kernel.addBox(-a / 2, -b / 2, l + t, a, b, L_o)
+    pml = kernel.addBox(-a / 2, -b / 2, z_pml, a, b, d)
+    kernel.fragment([(3, cavity)], [(3, aperture), (3, output), (3, pml)])
+    kernel.synchronize()
+
+    all_3d = kernel.getEntities(3)
+    @assert length(all_3d) == 4
+    zmid(x) = 0.5 * (zmin(x) + zmax(x))
+    physical_dimtags = filter(e -> zmid(e) < z_pml, all_3d)
+    pml_dimtag = filter(e -> zmid(e) > z_pml, all_3d) |> only
+
+    # Exterior faces: the PEC termination of the PML on z = z_pml + d, and all other PEC
+    # walls.
+    boundary = gmsh.model.getBoundary(all_3d, true, false)
+    eps = iris_mesh_size / 100
+    pec_end_faces =
+        filter(e -> (zmax(e) - zmin(e) < eps) && abs(zmax(e) - (z_pml + d)) < eps, boundary)
+    @assert length(pec_end_faces) == 1
+    pec_faces = filter(e -> !(e in pec_end_faces), boundary)
+
+    physical_attr = gmsh.model.addPhysicalGroup(
+        3,
+        [extract_tag(dt) for dt in physical_dimtags],
+        -1,
+        "physical"
+    )
+    pml_attr = gmsh.model.addPhysicalGroup(3, [extract_tag(pml_dimtag)], -1, "pml")
+    pec_attr = gmsh.model.addPhysicalGroup(2, extract_tag.(pec_faces), -1, "pec")
+    pec_end_attr =
+        gmsh.model.addPhysicalGroup(2, extract_tag.(pec_end_faces), -1, "pec_end")
+
+    # Smaller elements around the iris.
+    gmsh.option.setNumber("Mesh.MeshSizeMin", iris_mesh_size)
+    gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size)
+    gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+    gmsh.option.setNumber("Mesh.CharacteristicLengthFromCurvature", 0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+    field = gmsh.model.mesh.field.add("Box")
+    gmsh.model.mesh.field.setNumber(field, "VIn", iris_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "VOut", mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "XMin", -a)
+    gmsh.model.mesh.field.setNumber(field, "XMax", a)
+    gmsh.model.mesh.field.setNumber(field, "YMin", -b)
+    gmsh.model.mesh.field.setNumber(field, "YMax", b)
+    gmsh.model.mesh.field.setNumber(field, "ZMin", l - 3 * iris_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "ZMax", l + t + 3 * iris_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "Thickness", 0.02)
+    gmsh.model.mesh.field.setAsBackgroundMesh(field)
+
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+
+    gmsh.model.mesh.generate(3)
+
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.Binary", 1)
+    gmsh.write(joinpath(@__DIR__, filename))
+
+    println("\n=== Mesh generated: $filename ===")
+    println("  physical: attr $physical_attr (cavity, iris aperture, output section)")
+    println("  pml:      attr $pml_attr, z ∈ [$z_pml, $(z_pml + d)]")
+    println("  pec:      attr $pec_attr (2D)")
+    println("  pec_end:  attr $pec_end_attr (2D, z = $(z_pml + d))")
     println()
 
     if gui

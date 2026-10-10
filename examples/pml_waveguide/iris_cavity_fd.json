@@ -1,0 +1,35 @@
+{
+  // The iris-coupled cavity of iris_cavity.json with a frequency-dependent stretch,
+  // evaluated at the complex eigenfrequency: the resulting nonlinear eigenvalue problem is
+  // solved with the hybrid nonlinear eigensolver. The resonance agrees with the static
+  // stretch to 1e-7 (real part) and 1e-4 (imaginary part).
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/iris_cavity_fd",
+    "OutputFormats": { "Paraview": false }
+  },
+  "Model": { "Mesh": "mesh/iris_cavity.msh", "L0": 1.0 },
+  "Domains":
+  {
+    "Materials":
+    [
+      { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
+    ],
+    "PML": { "Attributes": [2], "FrequencyDependent": true }
+  },
+  "Boundaries":
+  {
+    "PEC": { "Attributes": [3, 4] }
+  },
+  "Solver":
+  {
+    "Order": 2, "Device": "CPU",
+    "Eigenmode": { "Target": 1.75, "N": 1, "Tol": 1.0e-8, "Save": 0 },
+    "Linear":
+    {
+      "Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-10, "MaxIts": 100
+    }
+  }
+}

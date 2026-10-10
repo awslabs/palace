@@ -46,7 +46,7 @@ function generate_pml_layered_mesh(;
     kernel.fragment([(3, t) for t in tags], [])
     kernel.synchronize()
 
-    groups = Dict{String,Vector{Int}}()
+    groups = Dict{String, Vector{Int}}()
     for (dim, tag) in gmsh.model.getEntities(3)
         xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(dim, tag)
         sub = (ymin + ymax) / 2 < 0.0
@@ -60,9 +60,8 @@ function generate_pml_layered_mesh(;
 
     port, plates, pec_end, walls = Int[], Int[], Int[], Int[]
     tol = 0.05 * h
-    for (dim, tag) in gmsh.model.getBoundary(
-        [(3, t) for v in values(groups) for t in v], true, false
-    )
+    for (dim, tag) in
+        gmsh.model.getBoundary([(3, t) for v in values(groups) for t in v], true, false)
         xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, tag)
         if zmax < tol
             push!(port, tag)
@@ -87,5 +86,5 @@ function generate_pml_layered_mesh(;
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, "..", filename))
     println("Wrote $filename with $(length(gmsh.model.mesh.getNodes()[1])) nodes")
-    gmsh.finalize()
+    return gmsh.finalize()
 end
