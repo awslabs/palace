@@ -171,6 +171,19 @@ public:
     double cell_length =
         0.0;  // the longitudinal cell (nondimensional; 0 for a spatial patch)
     bool excluded = false;
+    // The patch's conductor probes read on the device chord polyline (decision 611 (2),
+    // ResponseCorrectionPatchData::Provenance::ProbeSnap): the snapped knots in the order
+    // of the placed patch's record; max_probe_snap = the largest displacement
+    // (nondimensional; the record multiplies by the mesh coordinate scale).
+    struct ProbeSnap
+    {
+      int vertex = -1;
+      int segment = -1;
+      int arc = -1;
+      double displacement = 0.0;
+    };
+    std::vector<ProbeSnap> probe_snaps;
+    double max_probe_snap = 0.0;
   };
   // The dimensionless tolerance of the gate: max_ratio above it excludes the patch (weight
   // 0, like a DomainBoundary cell). Calibrated (conductor-consistency-20261003/gate): the
@@ -356,6 +369,10 @@ private:
     // and the patch's provenance for the record.
     int probe_point_count = 0;
     std::vector<std::array<double, 3>> probe_points;
+    // The probes read on the device arc chords (decision 611 (2)): the placed patch's
+    // ProbeSnaps applied to probe_points, for the record.
+    std::vector<ConductorConsistencyRecord::ProbeSnap> probe_snaps;
+    double max_probe_snap = 0.0;
     int feature = -1;
     double claim_length = 0.0;
     double cell_length = 0.0;
@@ -757,6 +774,34 @@ double ArcChordDistance(const std::array<double, 3> &q, const std::array<double,
 double DevicePerimeterDistance(const IdentificationResult &identification,
                                const std::array<double, 3> &q);
 
+// The conductor-consistency probe snap (decision 611 (2); the R1 conductor diagnosis
+// section 6): the nearest REAL device perimeter segment to q (every segment read as the
+// straight chord of its key, the image segments of a mirror band excluded; a segment of
+// ANY conductor of the device - the identified segments carry no conductor, and a segment
+// of another conductor within the bound below would need a device gap smaller than the
+// arc's sagitta, so the patch's own conductor is the one found in practice). When that
+// segment is a chord of a fitted arc (Segments[].Arc) and q's in-plane distance to the
+// chord - in the arc's plane, the out-of-plane offset set aside - lies within the arc's
+// recorded largest chord sagitta (MaxChordSagittaOverR x R) plus the arc-fit tolerance
+// (kArcFitToleranceOverRadius x R, the band the device vertices lie on the fitted circle
+// within), the result is the displacement from q to its in-plane foot on the chord (the
+// out-of-plane offset unchanged) with the segment and arc; otherwise (a straight segment
+// nearest, an arc chord farther than its sagitta - coupon metal the device polyline does
+// not have - or a probe already on the chord at the signature's resolution,
+// kSignatureLengthQuantumOverRadius x R) nullopt - the probe is not moved. A coupon knot
+// built ON the fitted circle lies within that bound of the device's chord by construction,
+// a knot claiming metal farther away is read where it is.
+struct ProbeChordSnap
+{
+  int segment = -1;
+  int arc = -1;
+  std::array<double, 3> displacement{};
+  double distance = 0.0;
+};
+std::optional<ProbeChordSnap>
+SnapProbeToDeviceChord(const IdentificationResult &identification,
+                       const std::array<double, 3> &q);
+
 void WriteResponseGeometryCache(
     const std::filesystem::path &path,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config);
@@ -872,7 +917,11 @@ const char *TranslationalOwnershipClassName(const TranslationalOwnershipRecord &
 
 // The spatial supports of a response configuration: the bounding box of every spatial
 // model's basis points (mesh units) placed by its patch frame, with the cluster's claims;
-// models without basis points (preflight placeholders) are reported by name in skipped.
+// a contract-3 placeholder without basis points gets the Signature's support box placed by
+// the patch frame (its corners `support_box` x R, built in mesh units like the basis
+// points, so the bounds come out in the same patch units as every other support); models
+// without basis points and without a support box (legacy preflight placeholders) are
+// reported by name in skipped.
 std::vector<SpatialSupportBounds> CollectSpatialSupports(
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>

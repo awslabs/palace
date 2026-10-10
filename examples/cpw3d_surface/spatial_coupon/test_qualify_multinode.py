@@ -7,6 +7,8 @@ admission guard), the MaximumNodesPerJob fail-closed rule, the runner's multi-no
 and the bitwise proof that one-node plans are unchanged (replay_plans on the stored plans
 of record when the assessment tree is present).  The loop-end coupon 1b26671c9080 (846
 sources, 129.7 M H1 at p4) is the acceptance example."""
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -41,6 +43,16 @@ NODE_SCALING = {"MeasuredNodes": 8,
                 "Time": {"WorkerPerSource": {"Exponent": 0.8}, "WorkerNonSource": {"Exponent": 0.3},
                          "ReducerSetup": {"Exponent": 0.3}, "ReducerReduction": {"Exponent": 0.9},
                          "LocalEdge": {"Exponent": 0.0}}}
+
+
+def contextlib_redirect_stderr():
+    return contextlib.redirect_stderr(io.StringIO())
+
+
+@contextlib.contextmanager
+def quiet_stdout():
+    with contextlib.redirect_stdout(io.StringIO()):
+        yield
 
 
 def model_with_scaling(path=estimate_stages.DEVICE_COST_MODEL):
@@ -581,6 +593,81 @@ class DenseTwinPlanTest(unittest.TestCase):
         self.assertIn("D=/r/dense\n", script)
         with self.assertRaisesRegex(ValueError, "no measured order"):
             self.dense_twin_plan.estimate_run(self.model, self.dense_model, LOOP_END_COUNTS, 3, 5, profile=self.profile)
+
+    def test_the_plan_names_a_verified_binary_of_record_or_fails_closed_before_writing(self):
+        """Decision 605 F-5 (R2 PBS 60448: the dense-twin plan named <shared root>/palace-archive-
+        estimate-<sha>.bin, a symlink nobody had made): the planner verifies the executable where it
+        runs - (T15) an EMPTY root exits 3 with the seeding message and writes no plan; the seeded
+        pattern path at the frozen digest keeps the plan byte-identical (T16); (T14) --binary-path
+        names the binary of record, hashed and written into the plan."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "dense").mkdir()
+            mesh = root / "identity.msh"; mesh.write_text("mesh\n")
+            traces = []
+            for k in range(5):
+                trace = root / f"trace-{k}.csv"; trace.write_text(f"{k}\n")
+                traces.append({"Index": 100 + k, "DataFile": str(trace)})
+            (root / "fabricated-p5").mkdir()
+            config = {"Problem": {"Type": "Electrostatic", "Output": str(root / "fabricated-p5" / "postpro")}, "Model": {"Mesh": str(mesh)},
+                      "Solver": {"Order": 5}, "Boundaries": {"PrescribedPotential": traces}}
+            (root / "fabricated-p5" / "config.json").write_text(json.dumps(config))
+            (root / "dense" / "dense-traces.json").write_text(json.dumps(
+                {"Version": 1, "Model": "le", "Configs": {"fabricated-p5": str(root / "fabricated-p5" / "config.json")}, "Traces": []}))
+            (root / "counts.json").write_text(json.dumps(LOOP_END_COUNTS))
+            profile_path = root / "profile.json"
+            profile_path.write_text(json.dumps({**self.profile, "MaximumNodesPerJob": 8}))
+            model_path = root / "cost-model.json"
+            model_path.write_text(json.dumps(self.model))
+            binary = root / "shared" / "palace-02393de-81b345087bec.bin"
+            binary.parent.mkdir(); binary.write_bytes(b"the binary of record")
+            digest = hashlib.sha256(b"the binary of record").hexdigest()
+            remote_root = root / "lane-root"; remote_root.mkdir()
+            common = ["plan", "--dense-dir", str(root / "dense"), "--run", "fabricated-p5", "--entity-counts", str(root / "counts.json"),
+                      "--binary-sha256", digest, "--remote-root", str(remote_root), "--job-dir", str(remote_root / "dense"),
+                      "--case", "le", "--cost-model", str(model_path), "--cluster-profile", str(profile_path)]
+            pattern = remote_root / f"palace-archive-estimate-{digest}.bin"
+            # (T15) the empty lane root: no plan, exit 3, the seeding message.
+            out = root / "out-empty"
+            with contextlib_redirect_stderr() as stderr:
+                code = self.dense_twin_plan.main(common + ["--out", str(out)])
+            self.assertEqual(code, 3)
+            self.assertFalse(out.exists())
+            self.assertIn(f"STOP: the plan would name the frozen binary {pattern}, which does not exist: seed {pattern}", stderr.getvalue())
+            self.assertIn("--binary-path PATH; no plan written", stderr.getvalue())
+            # The seeded wrapper but a pattern path of another digest.
+            (remote_root / "mpiexec_bound.sh").write_text("#!/bin/bash\n")
+            pattern.write_bytes(b"another binary")
+            with contextlib_redirect_stderr() as stderr:
+                self.assertEqual(self.dense_twin_plan.main(common + ["--out", str(out)]), 3)
+            self.assertIn(f"has digest {hashlib.sha256(b'another binary').hexdigest()}, the plan pins {digest}", stderr.getvalue())
+            self.assertFalse(out.exists())
+            # (T16) the seeded pattern path at the frozen digest (the symlink of record): the plan
+            # reads exactly the pattern strings of the recorded plans.
+            pattern.unlink(); pattern.symlink_to(binary)
+            with quiet_stdout():
+                self.assertEqual(self.dense_twin_plan.main(common + ["--out", str(out)]), 0)
+            plan = json.loads((out / "plan.json").read_text())
+            self.assertEqual((plan["Binary"], plan["MPIExec"], plan["BinarySHA256"]),
+                             (str(pattern), str(remote_root / "mpiexec_bound.sh"), digest))
+            # (T14) the binary of record by its path: hashed here, named by the plan; a wrong digest
+            # or a missing wrapper path fails closed.
+            out_named = root / "out-named"
+            self.assertEqual(self.dense_twin_plan.main(common + ["--out", str(out_named), "--binary-path", str(binary),
+                                                                 "--mpiexec-path", str(root / "shared" / "mpiexec_bound.sh")]), 3)
+            self.assertFalse(out_named.exists())
+            (root / "shared" / "mpiexec_bound.sh").write_text("#!/bin/bash\n")
+            with quiet_stdout():
+                self.assertEqual(self.dense_twin_plan.main(common + ["--out", str(out_named), "--binary-path", str(binary),
+                                                                     "--mpiexec-path", str(root / "shared" / "mpiexec_bound.sh")]), 0)
+            named = json.loads((out_named / "plan.json").read_text())
+            self.assertEqual((named["Binary"], named["MPIExec"]), (str(binary), str(root / "shared" / "mpiexec_bound.sh")))
+            self.assertEqual({key: value for key, value in named.items() if key not in ("Binary", "MPIExec")},
+                             {key: value for key, value in plan.items() if key not in ("Binary", "MPIExec")})
+            with self.assertRaisesRegex(RuntimeError, "has digest"):
+                self.dense_twin_plan.executables_of_record(self.profile, str(remote_root), "0" * 64, binary_path=str(binary))
+            self.assertIn("seed <root>/<BinaryPattern>", self.dense_twin_plan.BINARY_OF_RECORD_RULE)
 
     def test_reducer_partition_is_read_from_the_qualify_record(self):
         with tempfile.TemporaryDirectory() as tmp:
