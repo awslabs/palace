@@ -170,6 +170,9 @@
         },
         "Postprocessing": {
           "$ref": "#/$defs/DomainPostprocessing"
+        },
+        "PML": {
+          "$ref": "#/$defs/PML"
         }
       }
     },
@@ -616,6 +619,147 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "PML": {
+      "type": "object",
+      "title": "Perfectly Matched Layer",
+      "description": "Perfectly matched layer (PML) regions, which turn the given domains into an absorbing layer for 3D frequency domain driven and eigenmode simulations (treated as regular materials for other simulation types, and not supported for 2D simulations). The uniaxial PML terminates an axis-aligned, box-shaped physical domain by applying the complex coordinate stretch factor `s = \u03ba + \u03c3 / (\u03b5\u2080 (\u03b1 + i\u03c9))` along each axis to the material properties of the PML regions (their background material properties), where `\u03ba`, `\u03c3`, and `\u03b1` are graded polynomially from 1, 0, and 0 at the interface with the physical domain to `\"KappaMax\"`, `\"SigmaMax\"`, and 2\u03c0 `\"AlphaMax\"` at the outer edge of the layer. The stretch is the same in all PML regions, so that materials crossing the layer (for example, a substrate) remain reflectionless. The materials of the PML regions may be anisotropic and have a loss tangent, but cannot have a conductivity or London penetration depth. In most cases, only `\"Attributes\"` needs to be specified: the layer geometry is detected from the mesh, the conductivity is computed from `\"ReflectionTarget\"`, and the stretch is evaluated at the lowest frequency of interest.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "type": "array",
+          "description": "Integer array of mesh domain attributes of the PML regions. Their material properties in `config[\"Domains\"][\"Materials\"]` are the background material properties of the layer.",
+          "items": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "Direction": {
+          "type": "array",
+          "description": "Faces of the physical domain covered by the layer, as an array of `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, or `\"-Z\"` (case-insensitive), for example `[\"+X\", \"+Z\"]` for an edge layer. Must be specified together with `\"Thickness\"`. When both are omitted, the faces and thicknesses are detected from the bounding boxes of the physical (non-PML) region and of the whole mesh.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "x-palace-advanced": true
+        },
+        "Thickness": {
+          "description": "Thickness of the layer in mesh length units, as a scalar for all faces listed in `\"Direction\"` or an array of 6 values for the faces `[-X, +X, -Y, +Y, -Z, +Z]`. Must be specified together with `\"Direction\"`.",
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 6,
+              "maxItems": 6
+            }
+          ],
+          "x-palace-advanced": true
+        },
+        "Order": {
+          "type": "integer",
+          "description": "Polynomial grading order of the PML profiles with depth into the layer.",
+          "minimum": 2,
+          "default": 3,
+          "x-palace-advanced": true
+        },
+        "SigmaMax": {
+          "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Negative values or `null` compute the value per face from `\"ReflectionTarget\"`, the layer thickness, and the smallest refractive index of the materials of the PML regions.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ],
+          "x-palace-advanced": true
+        },
+        "KappaMax": {
+          "description": "Maximum real coordinate stretch at the outer edge of the layer, which improves the absorption of evanescent waves. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes.",
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 1
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ],
+          "default": 1.0,
+          "x-palace-advanced": true
+        },
+        "AlphaMax": {
+          "description": "Maximum complex frequency shift of the complex frequency shifted (CFS) PML, GHz. Nonzero values reduce the absorption below this frequency and improve the absorption of evanescent waves at low frequencies. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Requires `\"FrequencyDependent\"`: for a static PML, the complex frequency shift is equivalent to a different `\"KappaMax\"` and `\"SigmaMax\"`.",
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ],
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "ReflectionTarget": {
+          "type": "number",
+          "description": "Target theoretical reflection coefficient at normal incidence, used to compute `\"SigmaMax\"` when not specified.",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1,
+          "default": 1e-06
+        },
+        "FrequencyDependent": {
+          "type": "boolean",
+          "description": "Evaluate the stretch factors at the solve frequency rather than at `\"ReferenceFrequency\"`. This gives an absorption independent of frequency over a broadband driven frequency sweep, at the cost of reassembling the PML terms at each frequency (a static PML evaluated at the lowest frequency usually performs as well). For eigenmode simulations, the stretch factors are evaluated at the complex eigenfrequency, which turns the problem into a nonlinear eigenvalue problem (see `config[\"Solver\"][\"Eigenmode\"][\"NonlinearType\"]`).",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "ReferenceFrequency": {
+          "type": "number",
+          "description": "Frequency at which the stretch factors are evaluated when `\"FrequencyDependent\"` is `false`, GHz. The resulting PML terms are independent of the solve frequency, which keeps the eigenmode problem linear. Their absorption grows with frequency. If omitted, Palace uses the lowest driven frequency or the eigenmode target frequency, so that `\"ReflectionTarget\"` is met at all frequencies of interest.",
+          "exclusiveMinimum": 0,
+          "x-palace-advanced": true
+        },
+        "AllowRefinement": {
+          "type": "boolean",
+          "description": "Allow adaptive mesh refinement inside of the PML regions. The error indicators of PML elements measure the discretization error of the stretched fields with the background material properties. By default, PML elements are not marked for refinement, and their error indicators do not contribute to the adaptive mesh refinement tolerance (they are included in the postprocessed error indicators).",
+          "default": false,
+          "x-palace-advanced": true
+        }
+      }
+    },
     "Material": {
       "type": "object",
       "additionalProperties": false,
@@ -677,134 +821,6 @@
           },
           "minItems": 3,
           "maxItems": 3
-        },
-        "PML": {
-          "type": "object",
-          "title": "Perfectly Matched Layer",
-          "description": "Perfectly matched layer (PML) properties, which turn the domains of this material into an absorbing layer for 3D frequency domain driven and eigenmode simulations (treated as regular materials for other simulation types, and not supported for 2D simulations). The uniaxial PML terminates an axis-aligned, box-shaped physical domain by applying the complex coordinate stretch factor `s = \u03ba + \u03c3 / (\u03b5\u2080 (\u03b1 + i\u03c9))` along each axis to the background material properties of this material, where `\u03ba`, `\u03c3`, and `\u03b1` are graded polynomially from 1, 0, and 0 at the interface with the physical domain to `\"KappaMax\"`, `\"SigmaMax\"`, and 2\u03c0 `\"AlphaMax\"` at the outer edge of the layer. The material may be anisotropic and have a loss tangent, but cannot have a conductivity or London penetration depth. All materials crossing the layer must be PML materials with the same stretch parameters. In most cases, an empty object `{}` for each of them is sufficient: the layer geometry is detected from the mesh, the conductivity is computed from `\"ReflectionTarget\"`, and the stretch is evaluated at the lowest frequency of interest.",
-          "additionalProperties": false,
-          "properties": {
-            "Direction": {
-              "type": "array",
-              "description": "Faces of the physical domain covered by this layer, as an array of `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, or `\"-Z\"` (case-insensitive), for example `[\"+X\", \"+Z\"]` for an edge layer. Must be specified together with `\"Thickness\"`. When both are omitted, the faces and thicknesses are detected from the bounding boxes of the physical (non-PML) region and of the whole mesh.",
-              "items": {
-                "type": "string"
-              },
-              "maxItems": 6,
-              "x-palace-advanced": true
-            },
-            "Thickness": {
-              "description": "Thickness of the layer in mesh length units, as a scalar for all faces listed in `\"Direction\"` or an array of 6 values for the faces `[-X, +X, -Y, +Y, -Z, +Z]`. Must be specified together with `\"Direction\"`.",
-              "oneOf": [
-                {
-                  "type": "number",
-                  "exclusiveMinimum": 0
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "number",
-                    "minimum": 0
-                  },
-                  "minItems": 6,
-                  "maxItems": 6
-                }
-              ],
-              "x-palace-advanced": true
-            },
-            "Order": {
-              "type": "integer",
-              "description": "Polynomial grading order of the PML profiles with depth into the layer.",
-              "minimum": 2,
-              "default": 3,
-              "x-palace-advanced": true
-            },
-            "SigmaMax": {
-              "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Negative values or `null` compute the value per face from `\"ReflectionTarget\"`, the layer thickness, and the smallest refractive index of the PML materials on the face. The stretch (`\"Thickness\"`, `\"Order\"`, `\"SigmaMax\"`, `\"KappaMax\"`, `\"AlphaMax\"`, `\"FrequencyDependent\"`, `\"ReferenceFrequency\"`) must be the same for all PML materials sharing a face.",
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "number"
-                  },
-                  "minItems": 3,
-                  "maxItems": 3
-                }
-              ],
-              "x-palace-advanced": true
-            },
-            "KappaMax": {
-              "description": "Maximum real coordinate stretch at the outer edge of the layer, which improves the absorption of evanescent waves. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes.",
-              "oneOf": [
-                {
-                  "type": "number",
-                  "minimum": 1
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "number",
-                    "minimum": 1
-                  },
-                  "minItems": 3,
-                  "maxItems": 3
-                }
-              ],
-              "default": 1.0,
-              "x-palace-advanced": true
-            },
-            "AlphaMax": {
-              "description": "Maximum complex frequency shift of the complex frequency shifted (CFS) PML, GHz. Nonzero values reduce the absorption below this frequency and improve the absorption of evanescent waves at low frequencies. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Requires `\"FrequencyDependent\"`: for a static PML, the complex frequency shift is equivalent to a different `\"KappaMax\"` and `\"SigmaMax\"`.",
-              "oneOf": [
-                {
-                  "type": "number",
-                  "minimum": 0
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "number",
-                    "minimum": 0
-                  },
-                  "minItems": 3,
-                  "maxItems": 3
-                }
-              ],
-              "default": 0.0,
-              "x-palace-advanced": true
-            },
-            "ReflectionTarget": {
-              "type": "number",
-              "description": "Target theoretical reflection coefficient at normal incidence, used to compute `\"SigmaMax\"` when not specified.",
-              "exclusiveMinimum": 0,
-              "exclusiveMaximum": 1,
-              "default": 1e-06
-            },
-            "FrequencyDependent": {
-              "type": "boolean",
-              "description": "Evaluate the stretch factors at the solve frequency rather than at `\"ReferenceFrequency\"`. This gives an absorption independent of frequency over a broadband driven frequency sweep, at the cost of reassembling the PML terms at each frequency (a static PML evaluated at the lowest frequency usually performs as well). For eigenmode simulations, the stretch factors are evaluated at the complex eigenfrequency, which turns the problem into a nonlinear eigenvalue problem (see `config[\"Solver\"][\"Eigenmode\"][\"NonlinearType\"]`).",
-              "default": false,
-              "x-palace-advanced": true
-            },
-            "ReferenceFrequency": {
-              "type": "number",
-              "description": "Frequency at which the stretch factors are evaluated when `\"FrequencyDependent\"` is `false`, GHz. The resulting PML terms are independent of the solve frequency, which keeps the eigenmode problem linear. Their absorption grows with frequency. If omitted, Palace uses the lowest driven frequency or the eigenmode target frequency, so that `\"ReflectionTarget\"` is met at all frequencies of interest.",
-              "exclusiveMinimum": 0,
-              "x-palace-advanced": true
-            },
-            "AllowRefinement": {
-              "type": "boolean",
-              "description": "Allow adaptive mesh refinement inside this PML region. The error indicators of PML elements measure the discretization error of the stretched fields with the background material properties. By default, PML elements are not marked for refinement, and their error indicators do not contribute to the adaptive mesh refinement tolerance (they are included in the postprocessed error indicators).",
-              "default": false,
-              "x-palace-advanced": true
-            }
-          }
         }
       }
     },

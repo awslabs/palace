@@ -22,8 +22,9 @@
 // s_j). These hold for general (anisotropic, lossy) background tensors μ⁻¹ and ε = ε' + i
 // ε''. For an isotropic background they reduce to the classic uniaxial PML tensors μ̃⁻¹_ii =
 // μ⁻¹ s_i / (s_j s_k), ε̃_ii = ε s_j s_k / s_i. The frequency ω is the complex solve
-// frequency for frequency-dependent profiles (so that the stretch is the analytic
-// continuation for complex eigenfrequencies), or a fixed real reference frequency ω₀.
+// frequency for a frequency-dependent stretch (so that the stretch is the analytic
+// continuation for complex eigenfrequencies), or a fixed real reference frequency ω₀ for a
+// static stretch.
 //
 // Context layout (array of CeedIntScalar):
 //
@@ -33,28 +34,29 @@
 //               2 → Re{c} |T| (entrywise magnitude, for real-valued approximations)
 //     [2, 3]    (Re, Im) of the prefactor c for μ̃⁻¹ terms (curl-curl, Floquet)
 //     [4, 5]    (Re, Im) of the prefactor c for ε̃ terms (mass, diffusion)
-//     [6, 7]    (Re, Im) of the live frequency ω for frequency-dependent profiles
+//     [6, 7]    (Re, Im) of the frequency ω of the stretch: the solve frequency for a
+//               frequency-dependent stretch, or the reference frequency ω₀ otherwise
 //     [8..16]   Floquet wave vector cross product matrix [k ×] (3 x 3, column-major)
-//   Attribute map (num_attr entries): profile index for each attribute, or -1 for
-//   attributes without a PML contribution.
-//   Profiles (PALACE_PML_PROFILE_SIZE entries each):
-//     [0]       frequency-dependent flag (stretch at the live ω instead of ω₀)
-//     [1]       polynomial grading order n
-//     [2]       reference frequency ω₀ for static profiles
-//     [3..8]    inner interface coordinate of each face {-x, +x, -y, +y, -z, +z}
-//     [9..14]   layer thickness of each face (≤ 0 for inactive faces)
-//     [15..20]  σ_max of each face
-//     [21..23]  κ_max per axis
-//     [24..26]  α_max per axis
-//     [27..35]  background μ⁻¹ (3 x 3, column-major)
-//     [36..44]  background Re{ε}
-//     [45..53]  background Im{ε}
+//   Stretch (PALACE_PML_STRETCH_SIZE entries), the same for all PML regions:
+//     [0]       polynomial grading order n
+//     [1..6]    inner interface coordinate of each face {-x, +x, -y, +y, -z, +z}
+//     [7..12]   layer thickness of each face (≤ 0 for inactive faces)
+//     [13..18]  σ_max of each face
+//     [19..21]  κ_max per axis
+//     [22..24]  α_max per axis
+//   Attribute map (num_attr entries): background material index for each attribute, or -1
+//   for attributes outside of the PML regions.
+//   Background materials (PALACE_PML_BACKGROUND_SIZE entries each):
+//     [0..8]    μ⁻¹ (3 x 3, column-major)
+//     [9..17]   Re{ε}
+//     [18..26]  Im{ε}
 //
 // The profile parameters are graded with depth d into the layer of thickness t on each face
 // as σ = σ_max (d/t)ⁿ, κ = 1 + (κ_max - 1)(d/t)ⁿ, α = α_max (d/t)ⁿ.
 
 #define PALACE_PML_HEADER_SIZE 17
-#define PALACE_PML_PROFILE_SIZE 54
+#define PALACE_PML_STRETCH_SIZE 25
+#define PALACE_PML_BACKGROUND_SIZE 27
 
 enum
 {
@@ -78,19 +80,19 @@ CEED_QFUNCTION_HELPER const CeedIntScalar *PMLWaveVectorCross(const CeedIntScala
   return ctx + 8;
 }
 
-// Return the profile data for the given (1-based) libCEED attribute, or a null pointer if
-// the attribute has no PML contribution.
-CEED_QFUNCTION_HELPER const CeedIntScalar *PMLProfileData(const CeedIntScalar *ctx,
-                                                          CeedInt attr)
+// Return the background material data for the given (1-based) libCEED attribute, or a null
+// pointer if the attribute is not in a PML region.
+CEED_QFUNCTION_HELPER const CeedIntScalar *PMLBackgroundData(const CeedIntScalar *ctx,
+                                                             CeedInt attr)
 {
   const CeedInt num_attr = PMLNumAttr(ctx);
   if (attr < 1 || attr > num_attr)
   {
     return 0;
   }
-  const CeedInt k = ctx[PALACE_PML_HEADER_SIZE + attr - 1].first;
-  return (k < 0) ? 0
-                 : ctx + PALACE_PML_HEADER_SIZE + num_attr + PALACE_PML_PROFILE_SIZE * k;
+  const CeedIntScalar *attr_map = ctx + PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE;
+  const CeedInt k = attr_map[attr - 1].first;
+  return (k < 0) ? 0 : attr_map + num_attr + PALACE_PML_BACKGROUND_SIZE * k;
 }
 
 CEED_QFUNCTION_HELPER CeedScalar PMLIntPow(CeedScalar x, CeedInt n)
@@ -119,29 +121,28 @@ CEED_QFUNCTION_HELPER void PMLComplexDiv(CeedScalar ar, CeedScalar ai, CeedScala
 }
 
 // Compute the complex stretch factors s_a for each axis at the physical point x.
-CEED_QFUNCTION_HELPER void PMLStretch(const CeedIntScalar *ctx, const CeedIntScalar *p,
-                                      const CeedScalar x[3], CeedScalar s_re[3],
-                                      CeedScalar s_im[3])
+CEED_QFUNCTION_HELPER void PMLStretch(const CeedIntScalar *ctx, const CeedScalar x[3],
+                                      CeedScalar s_re[3], CeedScalar s_im[3])
 {
-  const CeedInt order = p[1].first;
-  const CeedScalar omega_re = (p[0].first != 0) ? ctx[6].second : p[2].second;
-  const CeedScalar omega_im = (p[0].first != 0) ? ctx[7].second : 0.0;
+  const CeedIntScalar *p = ctx + PALACE_PML_HEADER_SIZE;
+  const CeedInt order = p[0].first;
+  const CeedScalar omega_re = ctx[6].second, omega_im = ctx[7].second;
   for (CeedInt a = 0; a < 3; a++)
   {
     s_re[a] = 1.0;
     s_im[a] = 0.0;
-    const CeedScalar t_neg = p[9 + 2 * a].second, t_pos = p[10 + 2 * a].second;
-    const CeedScalar d_neg = p[3 + 2 * a].second - x[a], d_pos = x[a] - p[4 + 2 * a].second;
+    const CeedScalar t_neg = p[7 + 2 * a].second, t_pos = p[8 + 2 * a].second;
+    const CeedScalar d_neg = p[1 + 2 * a].second - x[a], d_pos = x[a] - p[2 + 2 * a].second;
     CeedScalar r, sigma_max;
     if (t_neg > 0.0 && d_neg > 0.0)
     {
       r = d_neg / t_neg;
-      sigma_max = p[15 + 2 * a].second;
+      sigma_max = p[13 + 2 * a].second;
     }
     else if (t_pos > 0.0 && d_pos > 0.0)
     {
       r = d_pos / t_pos;
-      sigma_max = p[16 + 2 * a].second;
+      sigma_max = p[14 + 2 * a].second;
     }
     else
     {
@@ -149,8 +150,8 @@ CEED_QFUNCTION_HELPER void PMLStretch(const CeedIntScalar *ctx, const CeedIntSca
     }
     const CeedScalar shape = PMLIntPow((r < 1.0) ? r : 1.0, order);
     const CeedScalar sigma = sigma_max * shape;
-    const CeedScalar kappa = 1.0 + (p[21 + a].second - 1.0) * shape;
-    const CeedScalar alpha = p[24 + a].second * shape;
+    const CeedScalar kappa = 1.0 + (p[19 + a].second - 1.0) * shape;
+    const CeedScalar alpha = p[22 + a].second * shape;
 
     // σ / (α + iω) with α + iω = (α - Im{ω}) + i Re{ω}. The degenerate α = ω = 0 case falls
     // back to the real coordinate scaling κ.
@@ -184,20 +185,19 @@ CEED_QFUNCTION_HELPER CeedScalar PMLScaledPart(CeedInt part, CeedScalar c_re,
 }
 
 // Stretch factors s_a and their product det(S) = s_x s_y s_z at x.
-CEED_QFUNCTION_HELPER void PMLStretchDet(const CeedIntScalar *ctx, const CeedIntScalar *p,
-                                         const CeedScalar x[3], CeedScalar s_re[3],
-                                         CeedScalar s_im[3], CeedScalar *det_re,
-                                         CeedScalar *det_im)
+CEED_QFUNCTION_HELPER void PMLStretchDet(const CeedIntScalar *ctx, const CeedScalar x[3],
+                                         CeedScalar s_re[3], CeedScalar s_im[3],
+                                         CeedScalar *det_re, CeedScalar *det_im)
 {
-  PMLStretch(ctx, p, x, s_re, s_im);
+  PMLStretch(ctx, x, s_re, s_im);
   PMLComplexMult(s_re[0], s_im[0], s_re[1], s_im[1], det_re, det_im);
   PMLComplexMult(*det_re, *det_im, s_re[2], s_im[2], det_re, det_im);
 }
 
-// Requested part of c μ̃⁻¹ (3 x 3, column-major), with μ̃⁻¹_ij = μ⁻¹_ij s_i s_j / det(S) and
-// c the μ̃⁻¹ prefactor in the context header.
+// Requested part of c μ̃⁻¹ (3 x 3, column-major), with μ̃⁻¹_ij = μ⁻¹_ij s_i s_j / det(S) for
+// the background material b and c the μ̃⁻¹ prefactor in the context header.
 CEED_QFUNCTION_HELPER void PMLMuInvCoeffStretch(const CeedIntScalar *ctx,
-                                                const CeedIntScalar *p,
+                                                const CeedIntScalar *b,
                                                 const CeedScalar s_re[3],
                                                 const CeedScalar s_im[3], CeedScalar det_re,
                                                 CeedScalar det_im, CeedScalar coeff[9])
@@ -208,7 +208,7 @@ CEED_QFUNCTION_HELPER void PMLMuInvCoeffStretch(const CeedIntScalar *ctx,
   {
     for (CeedInt i = 0; i < 3; i++)
     {
-      const CeedScalar mu_inv = p[27 + i + 3 * j].second;
+      const CeedScalar mu_inv = b[i + 3 * j].second;
       if (mu_inv == 0.0)
       {
         coeff[i + 3 * j] = 0.0;
@@ -223,9 +223,10 @@ CEED_QFUNCTION_HELPER void PMLMuInvCoeffStretch(const CeedIntScalar *ctx,
 }
 
 // Requested part of c ε̃ (3 x 3, column-major), with ε̃_ij = ε_ij det(S) / (s_i s_j) for the
-// complex background ε_ij = ε'_ij + i ε''_ij and c the ε̃ prefactor in the context header.
+// complex permittivity ε_ij = ε'_ij + i ε''_ij of the background material b and c the ε̃
+// prefactor in the context header.
 CEED_QFUNCTION_HELPER void PMLEpsCoeffStretch(const CeedIntScalar *ctx,
-                                              const CeedIntScalar *p,
+                                              const CeedIntScalar *b,
                                               const CeedScalar s_re[3],
                                               const CeedScalar s_im[3], CeedScalar det_re,
                                               CeedScalar det_im, CeedScalar coeff[9])
@@ -236,7 +237,7 @@ CEED_QFUNCTION_HELPER void PMLEpsCoeffStretch(const CeedIntScalar *ctx,
   {
     for (CeedInt i = 0; i < 3; i++)
     {
-      const CeedScalar eps_re = p[36 + i + 3 * j].second, eps_im = p[45 + i + 3 * j].second;
+      const CeedScalar eps_re = b[9 + i + 3 * j].second, eps_im = b[18 + i + 3 * j].second;
       if (eps_re == 0.0 && eps_im == 0.0)
       {
         coeff[i + 3 * j] = 0.0;
@@ -252,34 +253,34 @@ CEED_QFUNCTION_HELPER void PMLEpsCoeffStretch(const CeedIntScalar *ctx,
 }
 
 // Requested part of c μ̃⁻¹ at x. Returns false (and leaves coeff unset) for attributes
-// without a PML contribution.
+// outside of the PML regions.
 CEED_QFUNCTION_HELPER bool PMLMuInvCoeff(const CeedIntScalar *ctx, CeedInt attr,
                                          const CeedScalar x[3], CeedScalar coeff[9])
 {
-  const CeedIntScalar *p = PMLProfileData(ctx, attr);
-  if (!p)
+  const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
+  if (!b)
   {
     return false;
   }
   CeedScalar s_re[3], s_im[3], det_re, det_im;
-  PMLStretchDet(ctx, p, x, s_re, s_im, &det_re, &det_im);
-  PMLMuInvCoeffStretch(ctx, p, s_re, s_im, det_re, det_im, coeff);
+  PMLStretchDet(ctx, x, s_re, s_im, &det_re, &det_im);
+  PMLMuInvCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, coeff);
   return true;
 }
 
-// Requested part of c ε̃ at x. Returns false (and leaves coeff unset) for attributes without
-// a PML contribution.
+// Requested part of c ε̃ at x. Returns false (and leaves coeff unset) for attributes outside
+// of the PML regions.
 CEED_QFUNCTION_HELPER bool PMLEpsCoeff(const CeedIntScalar *ctx, CeedInt attr,
                                        const CeedScalar x[3], CeedScalar coeff[9])
 {
-  const CeedIntScalar *p = PMLProfileData(ctx, attr);
-  if (!p)
+  const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
+  if (!b)
   {
     return false;
   }
   CeedScalar s_re[3], s_im[3], det_re, det_im;
-  PMLStretchDet(ctx, p, x, s_re, s_im, &det_re, &det_im);
-  PMLEpsCoeffStretch(ctx, p, s_re, s_im, det_re, det_im, coeff);
+  PMLStretchDet(ctx, x, s_re, s_im, &det_re, &det_im);
+  PMLEpsCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, coeff);
   return true;
 }
 
@@ -288,15 +289,15 @@ CEED_QFUNCTION_HELPER bool PMLMuInvEpsCoeff(const CeedIntScalar *ctx, CeedInt at
                                             const CeedScalar x[3], CeedScalar mu_coeff[9],
                                             CeedScalar eps_coeff[9])
 {
-  const CeedIntScalar *p = PMLProfileData(ctx, attr);
-  if (!p)
+  const CeedIntScalar *b = PMLBackgroundData(ctx, attr);
+  if (!b)
   {
     return false;
   }
   CeedScalar s_re[3], s_im[3], det_re, det_im;
-  PMLStretchDet(ctx, p, x, s_re, s_im, &det_re, &det_im);
-  PMLMuInvCoeffStretch(ctx, p, s_re, s_im, det_re, det_im, mu_coeff);
-  PMLEpsCoeffStretch(ctx, p, s_re, s_im, det_re, det_im, eps_coeff);
+  PMLStretchDet(ctx, x, s_re, s_im, &det_re, &det_im);
+  PMLMuInvCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, mu_coeff);
+  PMLEpsCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, eps_coeff);
   return true;
 }
 
