@@ -30,9 +30,10 @@ from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_CELL_RULE,
 from general_mesh_manifest import canonical_sha256, sha256
 from mesh_array_io import read_mesh
 from mesh_stage_contract import (GMSH_ONLY_PIPELINE, PIPELINE_BUILD_STAGE, PLACEMENT_STAGE_ORDER,
-                                 canonical_stage_order, dag_pipeline, footprint_segments,
-                                 gmsh_build_junction_segments, sha256 as stage_sha256,
-                                 stage_order, trace_basis_edges_of_census, validate_stage_dag)
+                                 canonical_stage_order, dag_pipeline, fail_path_legacy_corners,
+                                 footprint_segments, gmsh_build_junction_segments,
+                                 sha256 as stage_sha256, stage_order, trace_basis_edges_of_census,
+                                 validate_stage_dag)
 from mixed_mesh import (H1_ENTITY_NAMES, SHELL_LABEL_STRIDE, SURFACE_KINDS, VOLUME_KINDS, cell_blocks, element_counts,
                         h1_dofs_from_counts, h1_entity_counts, parent_label_view, shell_labels, shell_parent)
 from mixed_mesh import simplicial_view as _simplicial_view_uncached
@@ -813,25 +814,35 @@ def _tetrahedron_regular_conditions(mesh):
     return _memo(mesh, ("tetrahedron_regular_conditions",), compute)
 
 
-def _point_aspects(mesh, points, invariant=None):
+def _point_aspects(mesh, points, invariant=None, fail_path=None):
     """Per point the maximum corner measure of the incident tetrahedra: the vertex-frame
     condition, or kappa_reg for the points listed in `invariant` (the contract's invariant
     semantic corners, in the mesh frame), whose rows carry Measure = RegularCondition (a row
     without Measure is the legacy vertex-frame measure, so every rectilinear evidence
-    record is unchanged)."""
+    record is unchanged). `fail_path` (supervisor decisions 674 (2) / 675): the legacy corners
+    the build census marks as judged by the fail-path legacy verdict - their rows carry the
+    kappa_reg of the WRITTEN mesh RECOMPUTED here (never copied from the census), Measure =
+    RegularCondition, FailPathMeasure true and the stored-order vertex-frame reading for the
+    record; a point both invariant and fail-path is a contradiction (fail closed)."""
     xyz, centers, aspects = _tetrahedron_aspect_frames(mesh)
     invariant = np.asarray(invariant if invariant is not None else [], dtype=float).reshape(-1, 3)
+    fail_path = np.asarray(fail_path if fail_path is not None else [], dtype=float).reshape(-1, 3)
     result = []
     for point in np.asarray(points, dtype=float).reshape(-1, 3):
         incident = np.flatnonzero(np.any(np.linalg.norm(xyz - point, axis=2) <= 1e-10, axis=1))
         selected = incident if len(incident) else [int(np.argmin(np.linalg.norm(centers-point, axis=1)))]
         regular = len(invariant) and np.linalg.norm(invariant - point, axis=1).min() <= 1e-9
-        values = _tetrahedron_regular_conditions(mesh) if regular else aspects
+        rejudged = len(fail_path) and np.linalg.norm(fail_path - point, axis=1).min() <= 1e-9
+        if regular and rejudged:
+            raise ValueError(f"Semantic corner {point.tolist()} is both invariant and a fail-path legacy corner")
+        values = _tetrahedron_regular_conditions(mesh) if (regular or rejudged) else aspects
         row = {"Point": point.tolist(), "MaximumAspect": float(values[selected].max()),
                "Cells": int(len(selected))}
-        if regular:
+        if regular or rejudged:
             row["Measure"] = CORNER_MEASURES["Invariant"]
             row["MaximumVertexFrameAspect"] = float(aspects[selected].max())
+        if rejudged:
+            row["FailPathMeasure"] = True
         result.append(row)
     return result
 
@@ -1552,7 +1563,10 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "ActualSemanticCorners": transformed_corners.tolist(),
               "CornerNeighborhoods": _point_aspects(
                   mesh, transformed_corners,
-                  transformed(np.asarray(invariant_corners(contract), dtype=float).reshape(-1, 3))),
+                  transformed(np.asarray(invariant_corners(contract), dtype=float).reshape(-1, 3)),
+                  transformed(np.asarray(fail_path_legacy_corners(
+                      None if census is None else census.get("SeedQualityOptimization")),
+                      dtype=float).reshape(-1, 3))),
               "SubdivisionNeighborhoods": _point_aspects(mesh, transformed(subdivision_points)),
               "CutNeighborhoods": _point_aspects(mesh, transformed(cut_points)),
               "ProtectedSurfaces": _protected_surface_report(

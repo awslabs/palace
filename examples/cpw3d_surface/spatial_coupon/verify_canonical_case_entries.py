@@ -40,6 +40,7 @@ from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUAL
                                    _finite_number, _physical_comparison_failures,
                                    _validate_bound_records, _validate_mesh,
                                    audit_manifest_evidence, box_face_cut_end_readings, canonical_sha256, case_gates,
+                                   evidence_fail_path_corners,
                                    manifest_pipeline, option_values as _option_values, parent_labeled_mesh_sha256,
                                    sha256,
                                    validate_manifest, validate_production_recipe_commands)
@@ -228,7 +229,10 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
                "StageToolSHA256": manifest["StageToolSHA256"], "Gates": manifest["Gates"]}
     # The manifest Gates are the build's cache key (binding); the case is judged by
     # its own gates (the layer rule only where declared).
-    failures = audit_manifest_evidence(evidence, case_gates(manifest, case), contract, binding)
+    # Decisions 674 (2) / 675: the fail-path legacy corners named by the evidence-bound build
+    # census are judged by CornerShapeGate on their recomputed RegularCondition rows.
+    failures = audit_manifest_evidence(evidence, case_gates(manifest, case), contract, binding,
+                                       fail_path_corners=evidence_fail_path_corners(evidence_path, evidence))
     # Report-only (supervisor decision 313): the box-face cut ends' aspects, flagged below the
     # minimum non-corner aspect, recorded with the entry.
     cut_end_readings = box_face_cut_end_readings(evidence, contract, binding, case_gates(manifest, case))

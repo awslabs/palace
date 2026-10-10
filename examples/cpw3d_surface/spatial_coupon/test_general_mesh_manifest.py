@@ -3484,6 +3484,30 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                        "StageToolSHA256": evidence["StageToolSHA256"], "Transform": IDENTITY,
                        "Gates": manifest["Gates"]}
             self.assertEqual(audit_manifest_evidence(evidence, manifest["Gates"], contract, binding), [])
+            # F5T (decisions 674 (2) / 675): the fixture census names no fail-path legacy corner, so
+            # the judge's input is the one of before; the census is read from the evidence-bound
+            # bounded run only (its hash checked), never from the evidence's own numbers.
+            from general_mesh_manifest import evidence_fail_path_corners
+            self.assertEqual(evidence_fail_path_corners(evidence_path, evidence), [])
+            self.assertEqual(audit_manifest_evidence(evidence, manifest["Gates"], contract, binding,
+                                                     fail_path_corners=evidence_fail_path_corners(evidence_path, evidence)),
+                             [])
+            unbound = copy.deepcopy(evidence)
+            topology_item = next(item for item in unbound["AuditRecords"] if item["Kind"] == "mesh-topology-quality")
+            topology_item["SHA256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "audit record artifact hash mismatch"):
+                evidence_fail_path_corners(evidence_path, unbound)
+            # A census that does not hash as bound names nothing (the broken binding is reported
+            # by the bound-records check below, as before).
+            bounded_item = next(item for item in evidence["AuditRecords"] if item["Kind"] == "bounded-run")
+            bounded_record = json.loads((audits / bounded_item["Path"]).read_text()) if not Path(bounded_item["Path"]).is_absolute() \
+                else json.loads(Path(bounded_item["Path"]).read_text())
+            census_item = bounded_record["BoundedStages"]["gmsh-build"]["Artifacts"]["build-census"]
+            self.assertTrue(Path(census_item["Path"]).is_file())
+            original_census_text = Path(census_item["Path"]).read_text()
+            Path(census_item["Path"]).write_text(original_census_text + " ")
+            self.assertEqual(evidence_fail_path_corners(evidence_path, evidence), [])
+            Path(census_item["Path"]).write_text(original_census_text)
             tampered = copy.deepcopy(evidence)
             tampered["AchievedAnisotropy"]["CensusMatchesMesh"] = False
             self.assertIn("achieved-anisotropy",
@@ -4026,6 +4050,82 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             invariant_census["SeedQualityOptimization"]["CornerAspectsAfter"][0] = 5.5
             with self.assertRaisesRegex(ValueError, "Invariant corner .* fails its gate"):
                 validate_gmsh_build_census(gated_report, invariant_census, invariant_semantic)
+            # F5T R-7 (decisions 674 (2) / 675): a Legacy row whose stored-order verdict FAILED
+            # may carry the fail-path verdict (the kappa_reg descent, then kappa_reg After <=
+            # the command's --corner-shape-gate); it passes iff that verdict passed, the census
+            # names the corner, and every clause of the row's own rule still applies. A Legacy
+            # row without it is judged exactly as before (the clauses above).
+            def fail_path_row(c, after=3.7752797439279706, passed=True, gate=5.0, stored=4.547610478844198):
+                row = c["SeedQualityOptimization"]["CornerMeasures"][0]
+                row["After"] = stored
+                c["SeedQualityOptimization"]["CornerAspectsAfter"][0] = stored
+                row["Passed"] = passed
+                row["Descents"] = [{"StopReason": "no improving move", "Sweeps": 12, "BestAchieved": 4.492409188971175}]
+                row["FailPathMeasure"] = {
+                    "Measure": "RegularCondition", "Rule": "fail-path rule text", "Before": 4.374913381572155,
+                    "After": after, "Target": 3.8, "Gate": gate, "Moves": 48, "Passed": passed,
+                    "VertexFrameConditionBefore": stored, "VertexFrameConditionAfter": 5.576930814895972,
+                    "Descent": {"StopReason": "goal", "Sweeps": 2}}
+                c["SeedQualityOptimization"]["FailPathLegacyCorners"] = [row["Point"]]
+                c["SeedQualityOptimization"]["FailPathLegacyVerdictRule"] = "fail-path rule text"
+            fail_path = copy.deepcopy(gated)
+            fail_path_row(fail_path)
+            self.assertIs(validate_gmsh_build_census(gated_report, fail_path, semantic), fail_path)
+            from mesh_stage_contract import fail_path_legacy_corners
+            self.assertEqual(fail_path_legacy_corners(fail_path["SeedQualityOptimization"]),
+                             [census["SeedQualityOptimization"]["CornerMeasures"][0]["Point"]])
+            self.assertEqual(fail_path_legacy_corners(census["SeedQualityOptimization"]), [])
+            self.assertEqual(fail_path_legacy_corners(None), [])
+            def rejected_fail_path(mutate, message, report_used=gated_report):
+                broken = copy.deepcopy(fail_path)
+                mutate(broken)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(report_used, broken, semantic)
+            # The command must carry --corner-shape-gate (the gate of record of the verdict).
+            ungated = copy.deepcopy(census)
+            fail_path_row(ungated)
+            with self.assertRaisesRegex(ValueError, "re-judged on the fail path without --corner-shape-gate"):
+                validate_gmsh_build_census(report, ungated, semantic)
+            # The verdict itself: kappa_reg After above the gate fails; Passed must be its reading.
+            rejected_fail_path(lambda c: fail_path_row(c, after=5.5, passed=False), "fails the fail-path verdict")
+            rejected_fail_path(lambda c: fail_path_row(c, after=5.5, passed=True), "Passed differs from its reading")
+            rejected_fail_path(lambda c: fail_path_row(c, passed=False), "Passed differs from its reading")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].__setitem__("Passed", False),
+                               "Passed differs from its reading")
+            # Entered only on the fail path: a passing stored-order verdict (the fixture's
+            # MaximumCornerAspect is 3) cannot carry it.
+            rejected_fail_path(lambda c: fail_path_row(c, stored=2.9), "although its stored-order verdict passed")
+            # The verdict is the invariant rule's: RegularCondition, Target 3.8, Gate = the command's.
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0]["FailPathMeasure"].__setitem__(
+                                   "Measure", "VertexFrameCondition"), "not the RegularCondition measure")
+            rejected_fail_path(lambda c: fail_path_row(c, gate=4.3), "gate / target differ from the invariant rule")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0]["FailPathMeasure"].__setitem__(
+                                   "Target", 3.7), "gate / target differ from the invariant rule")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0]["FailPathMeasure"].pop("Descent"),
+                               "lacks its descent record or rule")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0]["FailPathMeasure"].pop(
+                                   "VertexFrameConditionAfter"), "lacks a finite VertexFrameConditionAfter")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].__setitem__("FailPathMeasure", 3.78),
+                               "fail-path verdict is not a record")
+            # The row's own clauses still apply (the Legacy gate / target, the bridging counts).
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].__setitem__("Target", 3.7),
+                               "gate / target differ from the Legacy rule")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0]["BridgingSlivers"].__setitem__(
+                                   "AboveGateAfter", 1), "keeps bridging-sliver cells above the gate")
+            # The census names exactly the fail-path corners and the rule, only where one fired.
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"].pop("FailPathLegacyCorners"),
+                               "FailPathLegacyCorners / FailPathLegacyVerdictRule differ")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"].pop("FailPathLegacyVerdictRule"),
+                               "FailPathLegacyCorners / FailPathLegacyVerdictRule differ")
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"].__setitem__("FailPathLegacyCorners", []),
+                               "FailPathLegacyCorners / FailPathLegacyVerdictRule differ")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__("FailPathLegacyCorners", []),
+                     "fail-path legacy keys without a fail-path row")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__("FailPathLegacyVerdictRule", "x"),
+                     "fail-path legacy keys without a fail-path row")
+            # Without the fail-path record the same stored-order reading fails as before.
+            rejected_fail_path(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].pop("FailPathMeasure"),
+                               "Legacy corner .* fails its gate")
             # Decision 392 MINOR-6 (the 4.1 / 4.2 convention): a census declaring NONE of the
             # round-2 records is a PRE-RULE census - judged by the pre-rule corner rule (every
             # CornerAspectsAfter <= MaximumCornerAspect) and bound to its declared tool (the
@@ -5467,6 +5567,77 @@ class BoxFaceCutEndTest(unittest.TestCase):
         self.assertIn(gate, audit_manifest_evidence(evidence([3.5, 3.1, 1.3], 1.3, 2.0), self.GATES, contract, binding))
         self.assertIn(gate, audit_manifest_evidence(evidence([3.5, 3.1, 1.3], 4.3, 4.5), self.GATES, contract, binding))
         self.assertIn(gate, audit_manifest_evidence(evidence([3.5, 3.1, 0.0], 4.3, 2.0), self.GATES, contract, binding))
+
+    def test_fail_path_legacy_corner_rows_are_judged_by_the_corner_shape_gate(self):
+        """F5T R-7 (decisions 674 (2) / 675): a legacy corner the evidence-bound census names as
+        judged by the fail-path verdict carries a RegularCondition row with FailPathMeasure true
+        and is judged by Gates.CornerShapeGate on its recomputed kappa_reg (the 39e4 thin corner
+        numbers: kappa_reg 3.775, stored-order frame 5.577 > MaximumCornerAspect 4.0); every
+        other non-invariant row keeps MaximumCornerAspect; the RegularCondition rows are exactly
+        the invariant corners plus exactly the named fail-path corners; without a named corner the
+        judge's output is the one of before."""
+        from general_mesh_manifest import audit_manifest_evidence
+        corners = self.contract()["SemanticCorners"]
+        subdivisions = self.contract()["FeatureTopology"]["CADSubdivisionEndpoints"]
+        contract = {**self.contract(), "VolumeMaterials": [], "BoundaryLabels": [], "UnmatchedPolicy": "x",
+                    "ProtectedSupports": []}
+        gates = {**self.GATES, "CornerShapeGate": 5.0}
+        binding = {**self.IDENTITY, "CaseId": "c", "Variant": "identity", "TransformSHA256": "t",
+                   "InputSHA256": {"Process": "p", "SemanticContract": "s", "MeshRecipe": "r"},
+                   "ToolSHA256": {}, "StageToolSHA256": {}}
+        rejudged = corners[1]
+
+        def evidence(row):
+            rows = [{"Point": p, "MaximumAspect": 3.2, "Cells": 1} for p in corners]
+            rows[1] = {"Point": rejudged, **row}
+            return {**self.evidence([3.5, 3.1, 3.3]), "ActualSemanticCorners": corners,
+                    "CornerNeighborhoods": rows,
+                    "SubdivisionNeighborhoods": [{"Point": p, "MaximumAspect": 4.3, "Cells": 1} for p in subdivisions]}
+
+        fail_path_row = {"MaximumAspect": 3.7752797439279706, "Cells": 14, "Measure": "RegularCondition",
+                         "MaximumVertexFrameAspect": 5.576930814895972, "FailPathMeasure": True}
+        gate = "semantic-corner-and-endpoint-anisotropy"
+        passing = evidence(fail_path_row)
+        # Named by the census: judged by CornerShapeGate on kappa_reg -> passes.
+        self.assertNotIn(gate, audit_manifest_evidence(passing, gates, contract, binding, fail_path_corners=[rejudged]))
+        # Not named by the census: a RegularCondition row at a legacy corner is refused (the row
+        # kinds must match), and the stored-order row of the same corner fails MaximumCornerAspect.
+        self.assertIn(gate, audit_manifest_evidence(passing, gates, contract, binding))
+        self.assertIn(gate, audit_manifest_evidence(passing, gates, contract, binding, fail_path_corners=[corners[2]]))
+        self.assertIn(gate, audit_manifest_evidence(evidence({"MaximumAspect": 5.576930814895972, "Cells": 14}),
+                                                    gates, contract, binding, fail_path_corners=[rejudged]))
+        # The recomputed kappa_reg above CornerShapeGate fails; the gate must exist.
+        self.assertIn(gate, audit_manifest_evidence(evidence({**fail_path_row, "MaximumAspect": 5.2}), gates, contract,
+                                                    binding, fail_path_corners=[rejudged]))
+        self.assertIn(gate, audit_manifest_evidence(passing, self.GATES, contract, binding, fail_path_corners=[rejudged]))
+        # The row must say so (FailPathMeasure true, exactly) and carry the stored-order reading.
+        self.assertIn(gate, audit_manifest_evidence(evidence({**fail_path_row, "FailPathMeasure": False}), gates, contract,
+                                                    binding, fail_path_corners=[rejudged]))
+        without_flag = dict(fail_path_row); without_flag.pop("FailPathMeasure")
+        self.assertIn(gate, audit_manifest_evidence(evidence(without_flag), gates, contract, binding,
+                                                    fail_path_corners=[rejudged]))
+        without_frame = dict(fail_path_row); without_frame.pop("MaximumVertexFrameAspect")
+        self.assertIn(gate, audit_manifest_evidence(evidence(without_frame), gates, contract, binding,
+                                                    fail_path_corners=[rejudged]))
+        # A plain legacy row never carries the flag; an invariant corner is never a fail-path one.
+        self.assertIn(gate, audit_manifest_evidence(evidence({"MaximumAspect": 3.2, "Cells": 1, "FailPathMeasure": True}),
+                                                    gates, contract, binding))
+        invariant_contract = {**contract, "Derivation": {"InvariantCorners": {"Rule": "kappa_reg", "Points": [rejudged]}}}
+        invariant_row = dict(fail_path_row); invariant_row.pop("FailPathMeasure")
+        self.assertNotIn(gate, audit_manifest_evidence(evidence(invariant_row), gates, invariant_contract, binding))
+        self.assertIn(gate, audit_manifest_evidence(passing, gates, invariant_contract, binding, fail_path_corners=[rejudged]))
+        # The census names the corner in the SOURCE frame; the judge places it with the variant.
+        angle = 0.63
+        c, s_ = math.cos(angle), math.sin(angle)
+        rotated = {**binding, "Transform": [c, -s_, 0.0, 0.0, s_, c, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
+        placed = evidence(fail_path_row)
+        for section in ("CornerNeighborhoods", "SubdivisionNeighborhoods", "CutNeighborhoods"):
+            for item in placed[section]:
+                x, y, z = item["Point"]
+                item["Point"] = [c * x - s_ * y, s_ * x + c * y, z]
+        placed["ActualSemanticCorners"] = [item["Point"] for item in placed["CornerNeighborhoods"]]
+        self.assertNotIn(gate, audit_manifest_evidence(placed, gates, contract, rotated, fail_path_corners=[rejudged]))
+        self.assertIn(gate, audit_manifest_evidence(placed, gates, contract, rotated))
 
 
 if __name__ == "__main__":
