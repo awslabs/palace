@@ -459,15 +459,17 @@ void MumpsSchurSolverT<T>::Factor()
     }
     if (!factored)
     {
-      // INFOG(21/22): effective memory, max per rank / total (MB); INFOG(29/35):
-      // theoretical / effective factor entries.
+      // INFOG(21/22), (18/19), (16/17): memory used, allocated and estimated (full rank),
+      // max per rank / total (MB); INFOG(29/35): theoretical / effective factor entries.
       auto big = [](MUMPS_INT v) { return v >= 0 ? static_cast<double>(v) : -1.0e6 * v; };
-      Mpi::Print(comm,
-                 " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}% of full rank, memory "
-                 "{:.2f} GB on {:d} rank{} ({:.2f} GB max per rank)\n",
-                 blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]),
-                 id.infog[21] / 1024.0, procs, (procs > 1) ? "s" : "",
-                 id.infog[20] / 1024.0);
+      Mpi::Print(
+          comm,
+          " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}% of full rank, memory "
+          "{:.2f} GB used of {:.2f} GB allocated ({:.2f} GB estimated) on {:d} rank{} "
+          "({:.2f} / {:.2f} GB max per rank)\n",
+          blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]), id.infog[21] / 1024.0,
+          id.infog[18] / 1024.0, id.infog[16] / 1024.0, procs, (procs > 1) ? "s" : "",
+          id.infog[20] / 1024.0, id.infog[17] / 1024.0);
     }
   }
   factored = true;
