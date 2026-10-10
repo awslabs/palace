@@ -126,7 +126,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);
       return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO, !freeze_pml);
     };
-    if (!freeze_pml || funcA2_seed(1i * target))
+    if (!freeze_pml || space_op.HasExtraSystemBdrTerms())
     {
       const double target_max = iodata.solver.eigenmode.target_upper;
       auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2_seed, A2->Width());

@@ -168,7 +168,7 @@ void GeometricMultigridSolver<OperType>::SetUpPMLSubdomain(
 
     // Selection operator S: the columns of the identity of the PML true DOFs. The PML
     // subdomain unknowns are numbered in the order of the global true DOFs and distributed
-    // evenly over the processes, since the PML elements are not in general (some processes
+    // evenly over the processes, since the PML elements in general are not (some processes
     // may own no PML unknowns, which the sparse direct solvers do not support).
     MFEM_VERIFY(HYPRE_AssumedPartitionCheck(),
                 "PML subdomain correction requires Hypre's assumed partition!");
