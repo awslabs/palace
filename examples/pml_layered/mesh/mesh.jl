@@ -12,7 +12,7 @@ using Gmsh: gmsh
 Generate a layered parallel-plate waveguide terminated by a PML: PEC plates at y = ±b/2,
 natural (PMC) walls at x = 0 and x = w (a single element across), a substrate for y < 0
 and vacuum for y > 0. The substrate/vacuum interface crosses the +z PML layer, so the PML
-is only reflectionless if the stretch is the same in both PML materials.
+is only reflectionless if the stretch is the same in both PML regions.
 
 Attributes:
 
