@@ -2876,11 +2876,15 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   for (const double omega : {1.3, 0.7})
   {
     CAPTURE(omega);
-    ds.Condense(omega);
     const auto A = dense_operator(omega);
-    if (root)
+    const auto S_ref = root ? dense_schur(A) : std::vector<std::complex<double>>();
+    for (const bool region : {false, true})  // the environment alone, then both sides
     {
-      const auto S_ref = dense_schur(A);
+      ds.Condense(omega, region);
+      if (!root)
+      {
+        continue;
+      }
       const auto &S = ds.Schur();
       REQUIRE(S.size() == S_ref.size());
       double d = 0.0, m = 0.0, asym = 0.0;
@@ -2940,6 +2944,11 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       }
       const auto h = ds.CondenseEnvironment({&l});
       CHECK(ds.CondenseEnvironment({}).empty());  // an environment without ports
+      std::vector<ComplexVector> x;  // the environment interior solution for b[1]
+      ds.CondenseEnvironment({&b[1]}, &x);
+      double lx[2] = {mfem::InnerProduct(l.Real(), x[0].Real()),
+                      mfem::InnerProduct(l.Real(), x[0].Imag())};
+      Mpi::GlobalSum(2, lx, comm);
       std::complex<double> V[2];
       for (int k = 0; k < 2; k++)
       {
@@ -2961,6 +2970,10 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
         const double dv = std::abs(V[1] - (V[0] - hu[0] + hu[1]));
         CAPTURE(dv, std::abs(V[1]));
         CHECK(dv <= 1.0e-10 * std::abs(V[1]));
+        // and l^T u = l^T x + h^T u_Γ, with x the environment interior solution.
+        const double dc = std::abs(V[0] - (std::complex<double>(lx[0], lx[1]) + hu[0]));
+        CAPTURE(dc);
+        CHECK(dc <= 1.0e-10 * std::abs(V[0]));
       }
     }
 

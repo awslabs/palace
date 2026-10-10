@@ -156,10 +156,10 @@ public:
   ~DrivenSubstructure();
 
   // Condense the environment and factor the region against it at the angular frequency ω
-  // (nondimensional). The analyses of the first frequency are reused at the next ones.
-  // Online, S_E(ω) is given on rank 0 (|Γ| x |Γ|, column-major, in interface order).
-  // Collective.
-  void Condense(double omega);
+  // (nondimensional), or only condense the environment (without region, for its condensed
+  // data). The analyses of the first frequency are reused at the next ones. Online, S_E(ω)
+  // is given on rank 0 (|Γ| x |Γ|, column-major, in interface order). Collective.
+  void Condense(double omega, bool region = true);
   void Condense(double omega, std::vector<std::complex<double>> &&S_env);
 
   // Solve the coupled problem at the frequency of the last condensation for a batch of
@@ -173,9 +173,11 @@ public:
 
   // Condensation onto Γ of vectors supported on the environment interior and Γ with the
   // environment factorization of the last condensation, b_Γ - A_ΓE A_EE^-1 b_E, on rank 0
-  // (|Γ| x |b|, column-major). Offline only. Collective.
+  // (|Γ| x |b|, column-major), and with x the environment interior solutions A_EE^-1 b_E
+  // (true DOFs, 0 elsewhere). Offline only. Collective.
   std::vector<std::complex<double>>
-  CondenseEnvironment(const std::vector<const ComplexVector *> &b);
+  CondenseEnvironment(const std::vector<const ComplexVector *> &b,
+                      std::vector<ComplexVector> *x = nullptr);
 
   // On rank 0, after Solve: the condensation of the environment's sources (|Γ| x |rhs|,
   // offline) and the interface solution (|Γ| x |rhs|), column-major.
@@ -285,6 +287,7 @@ private:
     double border = 1.0;
   };
   Side env, region;
+  bool solvable = false;  // the region is factored against the environment
   // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots; the
   // environment's source condensation and the interface solution of the last Solve.
   std::vector<std::complex<double>> S, T, g_last, u_last;

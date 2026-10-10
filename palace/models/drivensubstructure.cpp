@@ -567,7 +567,7 @@ std::vector<int> DrivenSubstructure::InterfaceIndex() const
   return index;
 }
 
-void DrivenSubstructure::Condense(double omega)
+void DrivenSubstructure::Condense(double omega, bool region_too)
 {
   MFEM_VERIFY(!online, "An online substructure is condensed with a given S_E!");
 #if !defined(MFEM_USE_MUMPS)
@@ -575,9 +575,12 @@ void DrivenSubstructure::Condense(double omega)
 #else
   if (!env.schur)
   {
-    // Both patterns first, so that the assembled operators are released before the
+    // The patterns first, so that the assembled operators are released before the
     // factorizations.
     Setup(env, omega);
+  }
+  if (region_too && !region.schur)
+  {
     Setup(region, omega);
   }
   // The dense interface matrices on rank 0 move between MUMPS's Schur buffers, S and T,
@@ -585,12 +588,19 @@ void DrivenSubstructure::Condense(double omega)
   Release(S);
   Release(T);
   Factor(env, omega);
-  Factor(region, omega);
+  if (region_too)
+  {
+    Factor(region, omega);
+  }
   if (Mpi::Root(space_op.GetComm()))
   {
     S = env.schur->ReleaseSchur();
   }
-  FactorInterface();
+  if (region_too)
+  {
+    FactorInterface();
+  }
+  solvable = region_too;
 #endif
 }
 
@@ -614,6 +624,7 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
   }
   FactorInterface();
   Release(S);  // (only the factored interface system is needed online)
+  solvable = true;
 #endif
 }
 
@@ -670,8 +681,7 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
 #if !defined(MFEM_USE_MUMPS)
   MFEM_ABORT("Driven substructuring requires MUMPS!");
 #else
-  MFEM_VERIFY(region.schur && (online || env.schur),
-              "Condense must be called before Solve!");
+  MFEM_VERIFY(solvable, "Condense (with the region) must be called before Solve!");
   MFEM_VERIFY(online == (g_env != nullptr),
               "The environment's source condensation is given online only!");
   MPI_Comm comm = space_op.GetComm();
@@ -998,7 +1008,8 @@ void DrivenSubstructure::SolveReduced(double omega,
 }
 
 std::vector<std::complex<double>>
-DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *> &b)
+DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *> &b,
+                                        std::vector<ComplexVector> *xo)
 {
   MFEM_VERIFY(!online && env.schur, "CondenseEnvironment needs the environment factor!");
   std::vector<std::complex<double>> red;
@@ -1017,10 +1028,15 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
     Xo[k] = &x[k];
   }
   env.schur->Reduce(X, red);
-  // The reduction is paired with an expansion (here of a zero interface solution).
+  // The reduction is paired with an expansion, of a zero interface solution: the interior
+  // solutions.
   std::vector<std::complex<double>> zero(Mpi::Root(space_op.GetComm()) ? red.size() : 0,
                                          0.0);
   env.schur->Expand(zero, Xo);
+  if (xo)
+  {
+    *xo = std::move(x);
+  }
 #endif
   return red;
 }

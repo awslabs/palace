@@ -485,6 +485,19 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   // Offline: condense the environment at ω and solve all excitations, and the record of the
   // model (on rank 0), with the condensed voltage functionals of the environment's ports,
   // h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
+  auto port_functionals = [&](double omega)
+  {
+    std::vector<const ComplexVector *> L(np);
+    for (int j = 0; j < np; j++)
+    {
+      if (env_ports[j] < 0)
+      {
+        port_l[j] = WaveOverlapFunctional(space_op, -env_ports[j], omega);
+      }
+      L[j] = &port_l[j];
+    }
+    return L;
+  };
   auto condense = [&](double omega, bool with_record)
   {
     for (int k = 0; k < n; k++)
@@ -498,16 +511,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     {
       return rec;
     }
-    std::vector<const ComplexVector *> L(np);
-    for (int j = 0; j < np; j++)
-    {
-      if (env_ports[j] < 0)
-      {
-        port_l[j] = WaveOverlapFunctional(space_op, -env_ports[j], omega);
-      }
-      L[j] = &port_l[j];
-    }
-    rec.h = ds->CondenseEnvironment(L);
+    rec.h = ds->CondenseEnvironment(port_functionals(omega));
     std::vector<std::complex<double>> lu(static_cast<std::size_t>(np) * n);
     for (int k = 0; k < n; k++)
     {
@@ -544,6 +548,47 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
           rec.c.push_back(c);
         }
       }
+    }
+    return rec;
+  };
+
+  // The record alone, from the environment (not factoring the region): with the condensed
+  // sources g_k and interior solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations
+  // with environment sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
+  auto condense_environment = [&](double omega)
+  {
+    std::vector<const ComplexVector *> B(ne);
+    for (int e = 0; e < ne; e++)
+    {
+      const int k = static_cast<int>(std::ranges::find(ex_idx, model.excitations[e]) -
+                                     ex_idx.begin());
+      space_op.GetExcitationVector(ex_idx[k], omega, rhs[k]);
+      B[e] = &rhs[k];
+    }
+    ds->Condense(omega, false);
+    DrivenSubstructureModel::Record rec;
+    rec.h = ds->CondenseEnvironment(port_functionals(omega));
+    std::vector<ComplexVector> x;
+    auto g = ds->CondenseEnvironment(B, &x);
+    std::vector<std::complex<double>> c(static_cast<std::size_t>(np) * ne);
+    for (int e = 0; e < ne; e++)
+    {
+      for (int j = 0; j < np; j++)
+      {
+        const auto &l = port_l[j];
+        c[static_cast<std::size_t>(e) * np + j] = {
+            mfem::InnerProduct(l.Real(), x[e].Real()) -
+                mfem::InnerProduct(l.Imag(), x[e].Imag()),
+            mfem::InnerProduct(l.Real(), x[e].Imag()) +
+                mfem::InnerProduct(l.Imag(), x[e].Real())};
+      }
+    }
+    Mpi::GlobalSum(static_cast<int>(c.size()), c.data(), comm);
+    if (root)
+    {
+      rec.S = ds->TakeSchur();
+      rec.g = std::move(g);
+      rec.c = std::move(c);
     }
     return rec;
   };
@@ -593,7 +638,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     // The relative error of the rational model at a new sample, before adding it.
     auto sample = [&](double omega)
     {
-      auto rec = condense(omega, true);
+      auto rec = condense_environment(omega);
       double err = std::numeric_limits<double>::infinity();
       if (root)
       {
