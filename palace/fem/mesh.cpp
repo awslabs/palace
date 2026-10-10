@@ -6,6 +6,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -210,8 +211,11 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
 auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
     const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr, Ceed ceed,
-    bool ceed_from_self, bool coords)
+    bool ceed_from_self, const std::vector<int> *attr_list = nullptr)
 {
+  // With attr_list, only the domain elements of the given (sorted) attributes, with the
+  // quadrature point coordinates.
+  const bool coords = (attr_list != nullptr);
   // Create a list of the element indices in the mesh corresponding to a given thread and
   // element geometry type and corresponding geometry factor data. libCEED operators will be
   // constructed in parallel over threads, where each thread builds a composite operator
@@ -269,6 +273,16 @@ auto BuildCeedGeomFactorData(
     }();
     for (auto &[geom, indices] : element_indices)
     {
+      if (attr_list)
+      {
+        std::erase_if(
+            indices, [&](int e)
+            { return !std::ranges::binary_search(*attr_list, mesh.GetAttribute(e)); });
+        if (indices.empty())
+        {
+          continue;
+        }
+      }
       Vector elem_attr(indices.size());
       for (std::size_t k = 0; k < indices.size(); k++)
       {
@@ -283,7 +297,7 @@ auto BuildCeedGeomFactorData(
   // Then boundary elements. For embedded meshes (dim != sdim), boundary element geometry
   // data is only available when the CEED data has been rebuilt from the mesh itself
   // (after attribute remapping on a boundary submesh).
-  if (mesh.Dimension() == mesh.SpaceDimension() || ceed_from_self)
+  if (!attr_list && (mesh.Dimension() == mesh.SpaceDimension() || ceed_from_self))
   {
     const int nbe = mesh.GetNBE();
     const int stride = (nbe + nt - 1) / nt;
@@ -324,10 +338,29 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   auto &geom_data_map = it->second;
   if (geom_data_map.empty() && !loc_attr.empty())
   {
-    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed,
-                                            ceed_from_self, ceed_quadrature_coordinates);
+    geom_data_map =
+        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed, ceed_from_self);
   }
   return geom_data_map;
+}
+
+const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
+Mesh::GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const
+{
+  MFEM_ASSERT(std::ranges::is_sorted(attr_list),
+              "Attribute list for the geometry factor data must be sorted!");
+  // The map entries are inserted by each thread for its own Ceed context.
+  std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>> *geom_data_map;
+  PalacePragmaOmp(critical(GetCeedGeomFactorData))
+  {
+    geom_data_map = &geom_data_attr[attr_list][ceed];
+  }
+  if (!geom_data_map->has_value())
+  {
+    *geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed,
+                                             ceed_from_self, &attr_list);
+  }
+  return **geom_data_map;
 }
 
 void Mesh::ResetCeedObjects()
@@ -341,19 +374,25 @@ void Mesh::ResetCeedObjects()
     }
   }
   geom_data.clear();
+  for (auto &[attr_list, ceed_map] : geom_data_attr)
+  {
+    for (auto &[ceed, geom_data_map] : ceed_map)
+    {
+      if (geom_data_map)
+      {
+        for (auto &[key, val] : *geom_data_map)
+        {
+          PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
+          PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.geom_data_restr));
+        }
+      }
+    }
+  }
+  geom_data_attr.clear();
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
     geom_data.emplace(ceed, ceed::GeometryObjectMap<ceed::CeedGeomFactorData>());
-  }
-}
-
-void Mesh::SetCeedQuadratureCoordinates(bool coords)
-{
-  if (coords != ceed_quadrature_coordinates)
-  {
-    ceed_quadrature_coordinates = coords;
-    ResetCeedObjects();
   }
 }
 

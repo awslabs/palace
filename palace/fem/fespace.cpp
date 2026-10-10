@@ -8,6 +8,7 @@
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/restriction.hpp"
 #include "linalg/rap.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -38,6 +39,30 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
     return restr_it->second;
   }
   return restr_map.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
+      .first->second;
+}
+
+CeedElemRestriction
+FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                           const std::vector<int> &indices,
+                                           const std::vector<int> &attr_list) const
+{
+  if (attr_list.empty())
+  {
+    return GetCeedElemRestriction(ceed, geom, indices);
+  }
+  // The map entries are inserted by each thread for its own Ceed context.
+  ceed::GeometryObjectMap<CeedElemRestriction> *restr_map;
+  PalacePragmaOmp(critical(GetCeedElemRestriction))
+  {
+    restr_map = &restr_attr[attr_list][ceed];
+  }
+  auto restr_it = restr_map->find(geom);
+  if (restr_it != restr_map->end())
+  {
+    return restr_it->second;
+  }
+  return restr_map->emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
       .first->second;
 }
 
@@ -117,6 +142,17 @@ void FiniteElementSpace::ResetCeedObjects()
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
     }
   }
+  for (auto &[attr_list, ceed_map] : restr_attr)
+  {
+    for (auto &[ceed, restr_map] : ceed_map)
+    {
+      for (auto &[key, val] : restr_map)
+      {
+        PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+      }
+    }
+  }
+  restr_attr.clear();
   basis.clear();
   restr.clear();
   interp_restr.clear();

@@ -110,14 +110,10 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     utils::PrettyPrint(dbc_attr);
   }
 
-  // The PML integrators evaluate the material tensors at the physical coordinates of the
-  // quadrature points.
+  // The PML integrators are only assembled on the elements of the PML regions, and evaluate
+  // the material tensors at the physical coordinates of their quadrature points.
   if (mat_op.HasPML())
   {
-    for (const auto &m : mesh)
-    {
-      m->SetCeedQuadratureCoordinates(true);
-    }
     PrintPML(units);
 
     // Boundary conditions other than PEC on the boundaries of the PML regions are not
@@ -393,6 +389,7 @@ struct PMLIntegrator
 {
   std::vector<CeedIntScalar> ctx;
   PMLIntegKind kind;
+  std::vector<int> attributes;  // Domain attributes of the PML regions
 };
 
 void AddPMLIntegrators(BilinearForm &a, const std::vector<PMLIntegrator> *pml, bool aux)
@@ -412,25 +409,30 @@ void AddPMLIntegrators(BilinearForm &a, const std::vector<PMLIntegrator> *pml, b
     switch (p.kind)
     {
       case PMLIntegKind::CURL_CURL:
-        a.AddDomainIntegrator<CurlCurlPMLIntegrator>(ctx, bytes);
+        a.AddDomainIntegratorOnAttributes<CurlCurlPMLIntegrator>(p.attributes, ctx, bytes);
         break;
       case PMLIntegKind::MASS:
-        a.AddDomainIntegrator<VectorFEMassPMLIntegrator>(ctx, bytes);
+        a.AddDomainIntegratorOnAttributes<VectorFEMassPMLIntegrator>(p.attributes, ctx,
+                                                                     bytes);
         break;
       case PMLIntegKind::CURL_CURL_MASS:
-        a.AddDomainIntegrator<CurlCurlMassPMLIntegrator>(ctx, bytes);
+        a.AddDomainIntegratorOnAttributes<CurlCurlMassPMLIntegrator>(p.attributes, ctx,
+                                                                     bytes);
         break;
       case PMLIntegKind::FLOQUET_MASS:
-        a.AddDomainIntegrator<FloquetMassPMLIntegrator>(ctx, bytes);
+        a.AddDomainIntegratorOnAttributes<FloquetMassPMLIntegrator>(p.attributes, ctx,
+                                                                    bytes);
         break;
       case PMLIntegKind::FLOQUET_CROSS:
-        a.AddDomainIntegrator<FloquetCrossPMLIntegrator>(ctx, bytes);
+        a.AddDomainIntegratorOnAttributes<FloquetCrossPMLIntegrator>(p.attributes, ctx,
+                                                                     bytes);
         break;
       case PMLIntegKind::DIFFUSION:
-        a.AddDomainIntegrator<DiffusionPMLIntegrator>(ctx, bytes);
+        a.AddDomainIntegratorOnAttributes<DiffusionPMLIntegrator>(p.attributes, ctx, bytes);
         break;
       case PMLIntegKind::FLOQUET_DIFFUSION:
-        a.AddDomainIntegrator<FloquetDiffusionPMLIntegrator>(ctx, bytes);
+        a.AddDomainIntegratorOnAttributes<FloquetDiffusionPMLIntegrator>(p.attributes, ctx,
+                                                                         bytes);
         break;
     }
   }
@@ -684,7 +686,7 @@ void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
     auto ctx = mat_op.GetPML().PackContext(header);
     if (!ctx.empty())
     {
-      dst->push_back({std::move(ctx), kind});
+      dst->push_back({std::move(ctx), kind, mat_op.GetPML().GetAttributes()});
     }
   }
 }

@@ -26,6 +26,7 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
   op_t.resize(nt, nullptr);
   u.resize(nt, nullptr);
   v.resize(nt, nullptr);
+  sub_op_attr.resize(nt);
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
@@ -62,7 +63,8 @@ Operator::~Operator()
   }
 }
 
-void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
+void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t,
+                              const std::vector<int> &attr_list)
 {
   // This should be called from within a OpenMP parallel region.
   const int id = utils::GetThreadNum();
@@ -77,6 +79,7 @@ void Operator::AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t)
               "Dimensions mismatch for CeedOperator!");
   PalaceCeedCall(ceed, CeedOperatorCompositeAddSub(op[id], sub_op));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
+  sub_op_attr[id].push_back(attr_list);
   if (sub_op_t)
   {
     Ceed ceed_t;
@@ -1050,19 +1053,24 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
 std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
                                               const FiniteElementSpace &fespace_coarse)
 {
-  auto SingleOperatorCoarsen =
-      [&fespace_coarse](Ceed ceed, CeedOperator op_fine, CeedOperator *op_coarse)
+  auto SingleOperatorCoarsen = [&fespace_coarse](Ceed ceed, CeedOperator op_fine,
+                                                 const std::vector<int> &attr_list,
+                                                 CeedOperator *op_coarse)
   {
     CeedBasis basis_fine;
     CeedElemTopology geom;
     PalaceCeedCall(ceed, CeedOperatorGetActiveBasis(op_fine, &basis_fine));
     PalaceCeedCall(ceed, CeedBasisGetTopology(basis_fine, &geom));
 
+    // Sub-operators can be restricted to the elements of given attributes.
+    const auto mfem_geom = GetMfemTopology(geom);
     const auto &geom_data =
-        fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(GetMfemTopology(geom));
+        attr_list.empty()
+            ? fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(mfem_geom)
+            : fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed, attr_list).at(mfem_geom);
     CeedElemRestriction restr_coarse = fespace_coarse.GetCeedElemRestriction(
-        ceed, GetMfemTopology(geom), geom_data.indices);
-    CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMfemTopology(geom));
+        ceed, mfem_geom, geom_data.indices, attr_list);
+    CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, mfem_geom);
 
     PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
                                                           basis_coarse, op_coarse, nullptr,
@@ -1098,8 +1106,9 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     for (CeedInt k = 0; k < nsub_ops_fine; k++)
     {
       CeedOperator sub_op_coarse;
-      SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
-      op_coarse->AddSubOperator(sub_op_coarse);  // Sub-operator owned by ceed::Operator
+      const auto &attr_list = op_fine.GetSubOperatorAttributes(id, k);
+      SingleOperatorCoarsen(ceed, sub_ops_fine[k], attr_list, &sub_op_coarse);
+      op_coarse->AddSubOperator(sub_op_coarse, nullptr, attr_list);  // Owned by op_coarse
     }
   }
 
