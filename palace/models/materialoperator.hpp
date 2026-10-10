@@ -4,7 +4,7 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
-#include <optional>
+#include <algorithm>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
@@ -41,9 +41,9 @@ private:
   double floquet_omega_ref = 0.0;  // Nondimensional; when > 0, k_F scales with frequency.
   mfem::Array<double> mat_c0_min, mat_c0_max, mat_mu_eps_max;
 
-  // PML regions, and the map from libCEED attribute to material index without the PML
+  // PML blocks, and the map from libCEED attribute to material index without the PML
   // attributes (-1), for the bulk material terms which the PML terms replace.
-  std::optional<pml::Layer> pml_layer;
+  std::vector<pml::Layer> pml_layers;
   mfem::Array<int> attr_mat_bulk;
 
   // Are materials isotropic? True when all the material properties are effectively
@@ -58,7 +58,7 @@ private:
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
-  void SetUpPML(const config::PMLData *pml,
+  void SetUpPML(const std::vector<config::PMLData> &pml,
                 const std::vector<config::MaterialData> &materials,
                 ProblemType problem_type, const mfem::ParMesh &mesh);
   void SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
@@ -84,7 +84,7 @@ private:
 public:
   MaterialOperator(const std::vector<config::MaterialData> &materials,
                    const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
-                   const Mesh &mesh, const config::PMLData *pml = nullptr);
+                   const Mesh &mesh, const std::vector<config::PMLData> &pml = {});
   MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
@@ -161,15 +161,27 @@ public:
   const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
-  // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems. A
-  // frequency-dependent stretch is evaluated at the solve frequency, so that the PML terms
-  // contribute to the frequency-dependent part A2(ω) of the system matrix.
-  bool HasPML() const { return pml_layer.has_value(); }
+  // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems, in
+  // blocks with their own stretch. A frequency-dependent stretch is evaluated at the solve
+  // frequency, so that the PML terms contribute to the frequency-dependent part A2(ω) of
+  // the system matrix.
+  bool HasPML() const { return !pml_layers.empty(); }
   bool HasFrequencyDependentPML() const
   {
-    return HasPML() && pml_layer->IsFrequencyDependent();
+    return std::ranges::any_of(pml_layers, [](const pml::Layer &layer)
+                               { return layer.IsFrequencyDependent(); });
   }
-  const pml::Layer &GetPML() const { return *pml_layer; }
+  const std::vector<pml::Layer> &GetPMLLayers() const { return pml_layers; }
+
+  // Attributes of the PML regions of all blocks (global mesh attributes, sorted).
+  std::vector<int> GetPMLAttributes() const;
+
+  // Whether the local libCEED attribute is in a PML region.
+  bool IsPMLCeedAttribute(int ceed_attr) const
+  {
+    return std::ranges::any_of(pml_layers, [ceed_attr](const pml::Layer &layer)
+                               { return layer.IsPMLCeedAttribute(ceed_attr); });
+  }
 
   // The material properties of PML attributes are those of the background material of the
   // layer. The map from attribute to material GetAttributeToMaterial() includes them (for

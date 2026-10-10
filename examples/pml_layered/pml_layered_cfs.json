@@ -48,12 +48,14 @@
         "Permittivity": 1.0
       }
     ],
-    "PML": {
-      "Attributes": [3, 4],
-      "FrequencyDependent": true,
-      "KappaMax": 3.0,
-      "AlphaMax": 0.5
-    }
+    "PML": [
+      {
+        "Attributes": [3, 4],
+        "FrequencyDependent": true,
+        "KappaMax": 3.0,
+        "AlphaMax": 0.5
+      }
+    ]
   },
   "Boundaries": {
     "WavePort": [

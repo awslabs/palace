@@ -50,7 +50,7 @@
         "Permittivity": 1.0
       }
     ],
-    "PML": { "Attributes": [3, 4] }
+    "PML": [{ "Attributes": [3, 4] }]
   },
   "Boundaries": {
     "WavePort": [

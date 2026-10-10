@@ -64,10 +64,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Requires a 3D mesh and an interior film. SchemaVer 4-1-0.
     [PR 992](https://github.com/awslabs/palace/pull/992).
   - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
-    eigenmode simulations, configured with `config["Domains"]["PML"]`, whose `"Attributes"`
-    are the domains of the PML regions (the other parameters have suitable defaults). The
-    coordinate stretch is the same in all PML regions, and their materials define the
-    background material properties. The uniaxial PML supports anisotropic and lossy
+    eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
+    `"Attributes"` are the domains of the PML regions (the other parameters have suitable
+    defaults). The coordinate stretch is the same in all PML regions of a block, and their
+    materials define the background material properties. Several blocks can terminate the
+    physical domain at different locations or with different parameters, with a stretch
+    that is checked to be continuous across their interfaces. The uniaxial PML supports
+    anisotropic and lossy
     background materials, graded conductivity, real stretch, and complex frequency shift
     (CFS-PML) profiles, and automatic detection of the layer geometry. The stretch can be
     evaluated at a fixed reference frequency (static PML, the default, at the lowest

@@ -406,7 +406,8 @@ void IoData::CheckConfiguration()
                 "at least one port (LumpedPort or WavePort) boundary condition!\n");
     const bool floquet_fd_pml = std::ranges::any_of(boundaries.periodic.wave_vector,
                                                     [](double k) { return k != 0.0; }) &&
-                                domains.pml && domains.pml->frequency_dependent;
+                                std::ranges::any_of(domains.pml, [](const auto &data)
+                                                    { return data.frequency_dependent; });
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !floquet_fd_pml,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
                 "support frequency-dependent PML regions with a Floquet wave vector: the "
@@ -563,10 +564,13 @@ void IoData::CheckConfiguration()
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
 
-  if (domains.pml && !domains.pml->frequency_dependent &&
-      domains.pml->reference_frequency <= 0.0)
+  for (auto &pml : domains.pml)
   {
-    MFEM_VERIFY(domains.pml->reference_frequency < 0.0,
+    if (pml.frequency_dependent || pml.reference_frequency > 0.0)
+    {
+      continue;
+    }
+    MFEM_VERIFY(pml.reference_frequency < 0.0,
                 "\"PML.ReferenceFrequency\" must be positive when specified. Omit it "
                 "to use the solver default.");
 
@@ -592,7 +596,7 @@ void IoData::CheckConfiguration()
                   "Static PML requires a positive reference frequency. Set "
                   "\"PML.ReferenceFrequency\", use positive driven sample frequencies, "
                   "or set a positive Eigenmode target.");
-      domains.pml->reference_frequency = reference_frequency;
+      pml.reference_frequency = reference_frequency;
     }
   }
 
@@ -804,7 +808,7 @@ void IoData::CheckConfiguration()
   // strongly absorbing layers.
   const bool has_pml =
       (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
-      domains.pml.has_value();
+      !domains.pml.empty();
   if (solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DEFAULT)
   {
 #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
@@ -914,9 +918,9 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   {
     config::Nondimensionalize(units, data);
   }
-  if (domains.pml)
+  for (auto &data : domains.pml)
   {
-    config::Nondimensionalize(units, *domains.pml);
+    config::Nondimensionalize(units, data);
   }
 
   // Probe location coordinates.

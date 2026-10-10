@@ -20,14 +20,16 @@
       { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
     ],
     "PML":
-    {
-      "Attributes": [2],
-      "Direction": ["+z"],
-      "Thickness": 0.1,
-      "Order": 3,
-      "KappaMax": 2.0, "AlphaMax": 0.1,
-      "FrequencyDependent": true
-    }
+    [
+      {
+        "Attributes": [2],
+        "Direction": ["+z"],
+        "Thickness": 0.1,
+        "Order": 3,
+        "KappaMax": 2.0, "AlphaMax": 0.1,
+        "FrequencyDependent": true
+      }
+    ]
   },
   "Boundaries":
   {
