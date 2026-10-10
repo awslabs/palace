@@ -236,23 +236,26 @@ public:
   }
 };
 
-// Per-material PML configuration. Attached to a MaterialData entry via
-// MaterialData::pml (the "PML" object of a material in the configuration file).
+// PML configuration (the "PML" object of config["Domains"]): the domain attributes of the
+// PML regions, whose materials define the background material properties, and the
+// coordinate stretch, the same in all PML regions.
 struct PMLData
 {
 public:
-  // Active absorption directions: per-face signs. Each entry is +1 (absorb on the positive
-  // side of the physical domain), −1 (negative side), or 0 (no absorption in that
-  // direction). Layout: [x_neg, x_pos, y_neg, y_pos, z_neg, z_pos].
-  std::array<int, 6> direction_signs{{0, 0, 0, 0, 0, 0}};
+  // Domain attributes of the PML regions.
+  std::vector<int> attributes = {};
+
+  // Active absorption directions, per face of the physical domain. Layout: [x_neg, x_pos,
+  // y_neg, y_pos, z_neg, z_pos].
+  std::array<bool, 6> directions{{false, false, false, false, false, false}};
 
   // PML layer thickness per face, in mesh length units (nondimensionalized at load time).
-  // Same layout as direction_signs.
+  // Same layout as directions.
   std::array<double, 6> thickness{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
 
-  // True when neither Direction nor Thickness is specified: MaterialOperator then detects
-  // the layer geometry by comparing the bounding boxes of the physical (non-PML) region
-  // and of the whole mesh.
+  // True when neither Direction nor Thickness is specified: the layer geometry is then
+  // detected by comparing the bounding boxes of the physical (non-PML) region and of the
+  // whole mesh.
   bool autodetect_geometry = true;
 
   // Polynomial grading order n of the profiles (·)(r) = (·)_max rⁿ, with r ∈ [0, 1] the
@@ -262,15 +265,16 @@ public:
   // Peak conductivity σ_max per axis, in S/m (nondimensionalized at load time). The stretch
   // factor along each axis is s = κ + σ / (ε₀ (2π α + iω)). Negative entries are computed
   // per face from reflection_target as σ_max = −(n + 1) ln(R) / (2 Z₀ n_r d), with d the
-  // face thickness and n_r the smallest refractive index of the PML materials on the face.
+  // face thickness and n_r the smallest refractive index of the materials of the PML
+  // regions.
   std::array<double, 3> sigma_max{{-1.0, -1.0, -1.0}};
 
   // Peak real coordinate scaling κ_max per axis (dimensionless, ≥ 1).
   std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
 
   // Peak complex frequency shift α_max per axis for CFS-PML, as a frequency in GHz
-  // (nondimensionalized to the angular frequency 2π α_max at load time). Only for
-  // frequency-dependent profiles.
+  // (nondimensionalized to the angular frequency 2π α_max at load time). Only for a
+  // frequency-dependent stretch.
   std::array<double, 3> alpha_max{{0.0, 0.0, 0.0}};
 
   // Target normal-incidence reflection coefficient for the computed σ_max.
@@ -282,14 +286,14 @@ public:
   // reference frequency below, which keeps the system matrices frequency-independent.
   bool frequency_dependent = false;
 
-  // Reference frequency f₀ in GHz for static profiles (nondimensionalized to the angular
+  // Reference frequency f₀ in GHz for a static stretch (nondimensionalized to the angular
   // frequency ω₀ = 2π f₀ at load time). Negative means use the solver default (the lowest
   // driven frequency or the eigenmode target, so that the absorption, which grows with
   // frequency, meets the target at all frequencies). Ignored when frequency_dependent.
   double reference_frequency = -1.0;
 
-  // If false, adaptive mesh refinement is disabled inside this PML region (the error
-  // indicators of its elements are ignored for marking and the refinement tolerance).
+  // If false, adaptive mesh refinement is disabled inside of the PML regions (the error
+  // indicators of their elements are ignored for marking and the refinement tolerance).
   bool allow_refinement = false;
 
   PMLData() = default;
@@ -313,9 +317,6 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
-
-  // Optional PML configuration for this material's attributes.
-  std::optional<PMLData> pml;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
@@ -384,6 +385,9 @@ public:
   std::vector<MaterialData> materials = {};
   std::map<int, CurrentDipoleData> current_dipole = {};
   DomainPostData postpro = {};
+
+  // Optional PML regions.
+  std::optional<PMLData> pml;
 
   DomainData() = default;
   DomainData(const json &domains);
@@ -1318,6 +1322,7 @@ namespace palace::config
 // given struct using the provided Units.
 void Nondimensionalize(const Units &units, RefinementData &data);
 void Nondimensionalize(const Units &units, MaterialData &data);
+void Nondimensionalize(const Units &units, PMLData &data);
 void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);

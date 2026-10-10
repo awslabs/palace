@@ -492,10 +492,10 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
     {
       if (domain_orthog_type == DomainOrthogonalizationWeight::ENERGY)
       {
-        // Use the background permittivity in PML regions, whose bulk material properties
-        // are zero, so that the weight is positive definite.
+        // With the background permittivity in PML regions, so that the weight is positive
+        // definite.
         return MaterialPropertyCoefficient{mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetBackgroundPermittivityReal()};
+                                           mat_op.GetPermittivityReal()};
       }
       // SPACE_OVERLAP: Integrate \int dx E(x) E(x)
       // Use Palace existing palace machinery, but make a trivial bulk material.
@@ -2859,15 +2859,13 @@ std::vector<std::complex<double>> RomOperator::GetPMLPoles(int num_poles) const
   // frequency shift) and pₖ = iτₖ, k ≥ 1, with τₖ geometrically spaced in
   // [ω_min / 2, τ_max].
   double tau_max = 0.0;
-  for (const auto &p : space_op.GetMaterialOp().GetPMLProfiles())
+  if (space_op.GetMaterialOp().HasFrequencyDependentPML())
   {
-    if (p.frequency_dependent)
+    const auto &p = space_op.GetMaterialOp().GetPML().GetStretch();
+    for (int a = 0; a < 3; a++)
     {
-      for (int a = 0; a < 3; a++)
-      {
-        const double sigma_max = std::max(p.sigma_max[2 * a], p.sigma_max[2 * a + 1]);
-        tau_max = std::max(tau_max, p.alpha_max[a] + sigma_max / p.kappa_max[a]);
-      }
+      const double sigma_max = std::max(p.sigma_max[2 * a], p.sigma_max[2 * a + 1]);
+      tau_max = std::max(tau_max, p.alpha_max[a] + sigma_max / p.kappa_max[a]);
     }
   }
   const double tau_min = 0.5 * sweep_omega_min;

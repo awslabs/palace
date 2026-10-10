@@ -340,11 +340,9 @@ void IoData::CheckConfiguration()
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "at least one port (LumpedPort or WavePort) boundary condition!\n");
-    const bool floquet_fd_pml =
-        std::ranges::any_of(boundaries.periodic.wave_vector,
-                            [](double k) { return k != 0.0; }) &&
-        std::ranges::any_of(domains.materials, [](const auto &m)
-                            { return m.pml && m.pml->frequency_dependent; });
+    const bool floquet_fd_pml = std::ranges::any_of(boundaries.periodic.wave_vector,
+                                                    [](double k) { return k != 0.0; }) &&
+                                domains.pml && domains.pml->frequency_dependent;
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !floquet_fd_pml,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
                 "support frequency-dependent PML regions with a Floquet wave vector: the "
@@ -490,15 +488,10 @@ void IoData::CheckConfiguration()
         "conditions!\n");
   }
 
-  for (auto &material : domains.materials)
+  if (domains.pml && !domains.pml->frequency_dependent &&
+      domains.pml->reference_frequency <= 0.0)
   {
-    if (!material.pml || material.pml->frequency_dependent ||
-        material.pml->reference_frequency > 0.0)
-    {
-      continue;
-    }
-
-    MFEM_VERIFY(material.pml->reference_frequency < 0.0,
+    MFEM_VERIFY(domains.pml->reference_frequency < 0.0,
                 "\"PML.ReferenceFrequency\" must be positive when specified. Omit it "
                 "to use the solver default.");
 
@@ -516,17 +509,16 @@ void IoData::CheckConfiguration()
     {
       reference_frequency = solver.eigenmode.target;
     }
-    else
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
     {
-      // PML regions are only supported for driven and eigenmode simulations, and treated as
-      // regular materials otherwise (see MaterialOperator).
-      continue;
+      // PML regions are only supported for driven and eigenmode simulations, and treated
+      // as regular materials otherwise (see MaterialOperator).
+      MFEM_VERIFY(reference_frequency > 0.0,
+                  "Static PML requires a positive reference frequency. Set "
+                  "\"PML.ReferenceFrequency\", use positive driven sample frequencies, "
+                  "or set a positive Eigenmode target.");
+      domains.pml->reference_frequency = reference_frequency;
     }
-    MFEM_VERIFY(reference_frequency > 0.0,
-                "Static PML requires a positive reference frequency. Set "
-                "\"PML.ReferenceFrequency\", use positive driven sample frequencies, "
-                "or set a positive Eigenmode target.");
-    material.pml->reference_frequency = reference_frequency;
   }
 
   // Resolve default values in configuration file.
@@ -728,8 +720,7 @@ void IoData::CheckConfiguration()
   // strongly absorbing layers.
   const bool has_pml =
       (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
-      std::ranges::any_of(domains.materials,
-                          [](const auto &m) { return m.pml.has_value(); });
+      domains.pml.has_value();
   if (solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DEFAULT)
   {
 #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
@@ -838,6 +829,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   for (auto &data : domains.materials)
   {
     config::Nondimensionalize(units, data);
+  }
+  if (domains.pml)
+  {
+    config::Nondimensionalize(units, *domains.pml);
   }
 
   // Probe location coordinates.

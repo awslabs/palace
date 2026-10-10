@@ -25,11 +25,11 @@ using namespace std::complex_literals;
 namespace
 {
 
-// Profile for a PML on the +x face of the physical domain [0, 1]³: the layer is
-// x ∈ [1, 1.1] with grading order 3.
-pml::Profile MakeXProfile(double sigma_max = 2.0)
+// Stretch for a PML on the +x face of the physical domain [0, 1]³: the layer is x ∈
+// [1, 1.1] with grading order 3.
+pml::Stretch MakeXStretch(double sigma_max = 2.0)
 {
-  pml::Profile p;
+  pml::Stretch p;
   p.geometry.inner = {0.0, 1.0, 0.0, 1.0, 0.0, 1.0};
   p.geometry.thickness = {0.0, 0.1, 0.0, 0.0, 0.0, 0.0};
   p.sigma_max = {0.0, sigma_max, 0.0, 0.0, 0.0, 0.0};
@@ -38,11 +38,10 @@ pml::Profile MakeXProfile(double sigma_max = 2.0)
   return p;
 }
 
-// Box PML of the physical domain [-1, 1]³ with different thicknesses on all faces and a
-// general anisotropic, lossy background.
-pml::Profile MakeBoxProfile()
+// Box PML of the physical domain [-1, 1]³ with different thicknesses on all faces.
+pml::Stretch MakeBoxStretch()
 {
-  pml::Profile p;
+  pml::Stretch p;
   p.geometry.inner = {-1.0, 1.0, -1.0, 1.0, -1.0, 1.0};
   p.geometry.thickness = {0.2, 0.3, 0.25, 0.2, 0.4, 0.1};
   p.sigma_max = {3.0, 2.0, 4.0, 1.0, 2.5, 5.0};
@@ -50,15 +49,22 @@ pml::Profile MakeBoxProfile()
   p.alpha_max = {0.1, 0.2, 0.05};
   p.order = 2;
   p.reference_frequency = 2.0;
-  // Symmetric positive definite background tensors (column-major).
-  p.mu_inv = {0.8, 0.1, 0.0, 0.1, 0.9, 0.05, 0.0, 0.05, 1.1};
-  p.epsilon_real = {4.0, 0.3, 0.2, 0.3, 5.0, 0.1, 0.2, 0.1, 6.0};
-  p.epsilon_imag = {-4e-3, 0.0, 0.0, 0.0, -5e-3, 0.0, 0.0, 0.0, -6e-3};
   return p;
 }
 
+// General anisotropic, lossy background (symmetric positive definite tensors,
+// column-major).
+pml::Background MakeAnisotropicBackground()
+{
+  pml::Background b;
+  b.mu_inv = {0.8, 0.1, 0.0, 0.1, 0.9, 0.05, 0.0, 0.05, 1.1};
+  b.epsilon_real = {4.0, 0.3, 0.2, 0.3, 5.0, 0.1, 0.2, 0.1, 6.0};
+  b.epsilon_imag = {-4e-3, 0.0, 0.0, 0.0, -5e-3, 0.0, 0.0, 0.0, -6e-3};
+  return b;
+}
+
 // Independent reference evaluation of the stretch factors with std::complex arithmetic.
-std::array<std::complex<double>, 3> ReferenceStretch(const pml::Profile &p,
+std::array<std::complex<double>, 3> ReferenceStretch(const pml::Stretch &p,
                                                      const std::array<double, 3> &x,
                                                      std::complex<double> omega)
 {
@@ -94,7 +100,8 @@ std::array<std::complex<double>, 3> ReferenceStretch(const pml::Profile &p,
 }
 
 // Reference tensors μ̃⁻¹ = S μ⁻¹ S / det(S) and ε̃ = det(S) S⁻¹ ε S⁻¹ (column-major).
-std::array<std::complex<double>, 9> ReferenceMuInv(const pml::Profile &p,
+std::array<std::complex<double>, 9> ReferenceMuInv(const pml::Stretch &p,
+                                                   const pml::Background &b,
                                                    const std::array<double, 3> &x,
                                                    std::complex<double> omega)
 {
@@ -105,13 +112,14 @@ std::array<std::complex<double>, 9> ReferenceMuInv(const pml::Profile &p,
   {
     for (int i = 0; i < 3; i++)
     {
-      T[i + 3 * j] = p.mu_inv[i + 3 * j] * s[i] * s[j] / det;
+      T[i + 3 * j] = b.mu_inv[i + 3 * j] * s[i] * s[j] / det;
     }
   }
   return T;
 }
 
-std::array<std::complex<double>, 9> ReferenceEps(const pml::Profile &p,
+std::array<std::complex<double>, 9> ReferenceEps(const pml::Stretch &p,
+                                                 const pml::Background &b,
                                                  const std::array<double, 3> &x,
                                                  std::complex<double> omega)
 {
@@ -122,31 +130,32 @@ std::array<std::complex<double>, 9> ReferenceEps(const pml::Profile &p,
   {
     for (int i = 0; i < 3; i++)
     {
-      T[i + 3 * j] = (p.epsilon_real[i + 3 * j] + 1i * p.epsilon_imag[i + 3 * j]) * det /
+      T[i + 3 * j] = (b.epsilon_real[i + 3 * j] + 1i * b.epsilon_imag[i + 3 * j]) * det /
                      (s[i] * s[j]);
     }
   }
   return T;
 }
 
-// Evaluate the device helpers for libCEED attribute 1, mapped to the given profile.
-bool EvalCoeff(const pml::Profile &p, const pml::ContextHeader &header, bool muinv,
-               const std::array<double, 3> &x, std::array<double, 9> &coeff,
-               std::vector<int> attr_to_profile = {0})
+// Evaluate the device helpers for libCEED attribute 1 in a PML region with the given
+// background material.
+bool EvalCoeff(const pml::Stretch &p, const pml::Background &b,
+               const pml::ContextHeader &header, bool muinv, const std::array<double, 3> &x,
+               std::array<double, 9> &coeff)
 {
-  const auto ctx = pml::PackContext(header, attr_to_profile, {p}, p.frequency_dependent);
+  const auto ctx = pml::PackContext(header, p, {0}, {b});
   REQUIRE(!ctx.empty());
   const CeedScalar xp[3] = {x[0], x[1], x[2]};
   return muinv ? PMLMuInvCoeff(ctx.data(), 1, xp, coeff.data())
                : PMLEpsCoeff(ctx.data(), 1, xp, coeff.data());
 }
 
-void CheckCoeff(const pml::Profile &p, std::complex<double> c, std::complex<double> omega,
-                const std::array<double, 3> &x)
+void CheckCoeff(const pml::Stretch &p, const pml::Background &b, std::complex<double> c,
+                std::complex<double> omega, const std::array<double, 3> &x)
 {
   for (bool muinv : {true, false})
   {
-    const auto T = muinv ? ReferenceMuInv(p, x, omega) : ReferenceEps(p, x, omega);
+    const auto T = muinv ? ReferenceMuInv(p, b, x, omega) : ReferenceEps(p, b, x, omega);
     for (auto part : {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS})
     {
       pml::ContextHeader header;
@@ -154,7 +163,7 @@ void CheckCoeff(const pml::Profile &p, std::complex<double> c, std::complex<doub
       (muinv ? header.c_muinv : header.c_eps) = c;
       header.omega = omega;
       std::array<double, 9> coeff;
-      REQUIRE(EvalCoeff(p, header, muinv, x, coeff));
+      REQUIRE(EvalCoeff(p, b, header, muinv, x, coeff));
       for (int k = 0; k < 9; k++)
       {
         const double expected = (part == pml::TensorPart::REAL) ? (c * T[k]).real()
@@ -207,7 +216,7 @@ TEST_CASE("PML::DetectLayerGeometry", "[pml][Serial]")
 TEST_CASE("PML::ConfiguredLayerGeometry", "[pml][Serial]")
 {
   config::PMLData data;
-  data.direction_signs = {0, 1, -1, 0, 0, 0};
+  data.directions = {false, true, true, false, false, false};
   data.thickness = {0.5, 0.1, 0.2, 0.0, 0.0, 0.0};  // −x thickness without direction
   const auto g =
       pml::ConfiguredLayerGeometry(data, {{-1.0, -1.0, -1.0}}, {{1.0, 1.0, 1.0}});
@@ -220,7 +229,7 @@ TEST_CASE("PML::ConfiguredLayerGeometry", "[pml][Serial]")
   CHECK(g.inner[2] == Approx(-0.8));
 }
 
-TEST_CASE("PML::ResolveSigmaMax", "[pml][Serial]")
+TEST_CASE("PML::BuildStretch", "[pml][Serial]")
 {
   config::PMLData data;
   data.order = 3;
@@ -228,57 +237,46 @@ TEST_CASE("PML::ResolveSigmaMax", "[pml][Serial]")
   pml::LayerGeometry g;
   g.thickness = {0.0, 0.1, 0.2, 0.4, 0.0, 0.0};
 
-  SECTION("Default from the reflection target, per face thickness")
+  SECTION("Default σ_max from the reflection target, per face thickness")
   {
-    const std::array<double, 6> n_r = {1.0, 2.0, 3.0, 1.5, 1.0, 1.0};
-    const auto sigma_max = pml::ResolveSigmaMax(data, g, n_r);
+    const double n_r = 1.5;
+    const auto p = pml::BuildStretch(data, g, n_r);
     for (int f = 0; f < 6; f++)
     {
-      const double expected =
-          (g.thickness[f] > 0.0) ? -4.0 * std::log(1.0e-6) / (2.0 * g.thickness[f] * n_r[f])
-                                 : 0.0;
-      CHECK(sigma_max[f] == Approx(expected));
+      const double expected = (g.thickness[f] > 0.0)
+                                  ? -4.0 * std::log(1.0e-6) / (2.0 * g.thickness[f] * n_r)
+                                  : 0.0;
+      CHECK(p.sigma_max[f] == Approx(expected));
     }
   }
 
-  SECTION("Configured values per axis")
+  SECTION("Configured σ_max per axis")
   {
     data.sigma_max = {-1.0, 7.0, -1.0};
-    std::array<double, 6> n_r;
-    n_r.fill(1.0);
-    const auto sigma_max = pml::ResolveSigmaMax(data, g, n_r);
-    CHECK(sigma_max[2] == Approx(7.0));
-    CHECK(sigma_max[3] == Approx(7.0));
-    CHECK(sigma_max[1] == Approx(-4.0 * std::log(1.0e-6) / (2.0 * 0.1)));
+    const auto p = pml::BuildStretch(data, g, 1.0);
+    CHECK(p.sigma_max[2] == Approx(7.0));
+    CHECK(p.sigma_max[3] == Approx(7.0));
+    CHECK(p.sigma_max[1] == Approx(-4.0 * std::log(1.0e-6) / (2.0 * 0.1)));
   }
-}
 
-TEST_CASE("PML::BuildProfile", "[pml][Serial]")
-{
-  config::PMLData data;
-  data.order = 2;
-  data.reflection_target = 1.0e-4;
-  data.kappa_max = {1.0, 2.0, 3.0};
-  data.alpha_max = {0.0, 0.1, 0.2};
-  data.reference_frequency = 5.0;
-  pml::LayerGeometry g;
-  g.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.25};
-  const std::array<double, 9> mu_inv = {0.5, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5};
-  const std::array<double, 9> eps = {8.0, 0.0, 0.0, 0.0, 8.0, 0.0, 0.0, 0.0, 8.0};
-  // n_r = sqrt(8 · 2) = 4.
-  const double n = pml::RefractiveIndex(mu_inv, eps);
-  CHECK(n == Approx(4.0));
-  std::array<double, 6> n_r;
-  n_r.fill(n);
-  auto p = pml::BuildProfile(data, g, n_r, mu_inv, eps, {});
-  CHECK(p.reference_frequency == Approx(5.0));
-  CHECK(p.kappa_max == data.kappa_max);
-  CHECK(p.sigma_max[5] == Approx(-3.0 * std::log(1.0e-4) / (2.0 * 0.25 * 4.0)));
+  SECTION("Static and frequency-dependent stretch")
+  {
+    data.order = 2;
+    data.kappa_max = {1.0, 2.0, 3.0};
+    data.reference_frequency = 5.0;
+    auto p = pml::BuildStretch(data, g, 4.0);
+    CHECK(p.order == 2);
+    CHECK(p.kappa_max == data.kappa_max);
+    CHECK(!p.frequency_dependent);
+    CHECK(p.reference_frequency == Approx(5.0));
 
-  data.frequency_dependent = true;
-  p = pml::BuildProfile(data, g, n_r, mu_inv, eps, {});
-  CHECK(p.frequency_dependent);
-  CHECK(p.reference_frequency == 0.0);
+    data.frequency_dependent = true;
+    data.alpha_max = {0.0, 0.1, 0.2};
+    p = pml::BuildStretch(data, g, 4.0);
+    CHECK(p.frequency_dependent);
+    CHECK(p.alpha_max == data.alpha_max);
+    CHECK(p.reference_frequency == 0.0);
+  }
 }
 
 TEST_CASE("PML::RefractiveIndex", "[pml][Serial]")
@@ -304,47 +302,12 @@ TEST_CASE("PML::RefractiveIndex", "[pml][Serial]")
   CHECK(pml::RefractiveIndex(mu_inv, eps) == Approx(std::sqrt(2.0 * 1.0)));
 }
 
-TEST_CASE("PML::CheckStretchConsistency", "[pml][Serial]")
-{
-  auto p = MakeBoxProfile(), q = MakeBoxProfile();
-  q.epsilon_real[0] = 11.0;  // Background material properties may differ
-  CHECK(pml::CheckStretchConsistency(p, q, 1.0e-9).empty());
-
-  // A face only active in one of the profiles is not shared.
-  q.geometry.thickness[0] = 0.0;
-  q.sigma_max[0] = 7.0;
-  CHECK(pml::CheckStretchConsistency(p, q, 1.0e-9).empty());
-
-  auto Check = [&](auto &&modify, const std::string &param)
-  {
-    auto r = MakeBoxProfile();
-    modify(r);
-    const auto msg = pml::CheckStretchConsistency(p, r, 1.0e-9);
-    CHECK(msg.find(param) != std::string::npos);
-  };
-  Check([](auto &r) { r.sigma_max[3] *= 1.01; }, "SigmaMax");
-  Check([](auto &r) { r.kappa_max[2] = 1.0; }, "KappaMax");
-  Check([](auto &r) { r.alpha_max[0] = 0.0; }, "AlphaMax");
-  Check([](auto &r) { r.order = 3; }, "Order");
-  Check([](auto &r) { r.geometry.thickness[5] = 0.2; }, "Thickness");
-  Check([](auto &r) { r.reference_frequency = 3.0; }, "ReferenceFrequency");
-  Check([](auto &r) { r.frequency_dependent = true; }, "FrequencyDependent");
-}
-
-TEST_CASE("PML::ComputeDepthFraction", "[pml][Serial]")
-{
-  const auto p = MakeBoxProfile();
-  const auto r = pml::ComputeDepthFraction(p, {{-1.1, 0.5, 1.2}});
-  CHECK(r[0] == Approx(0.5));
-  CHECK(r[1] == Approx(0.0));
-  CHECK(r[2] == Approx(1.0));  // Clamped
-}
-
 TEST_CASE("PML tensors for a single-axis layer", "[pml][Serial]")
 {
   // Classic UPML for a +x layer in vacuum: s = 1 - i σ / ω₀, μ̃⁻¹ = diag(s, 1/s, 1/s),
   // ε̃ = diag(1/s, s, s).
-  const auto p = MakeXProfile(2.0);
+  const auto p = MakeXStretch(2.0);
+  const pml::Background b;
   const std::array<double, 3> x = {1.05, 0.5, 0.5};
   const double sigma = 2.0 * std::pow(0.5, 3);
   const std::complex<double> s = 1.0 - 1i * sigma / p.reference_frequency;
@@ -358,7 +321,7 @@ TEST_CASE("PML tensors for a single-axis layer", "[pml][Serial]")
       header.part = part;
       header.c_muinv = header.c_eps = 1.0;
       std::array<double, 9> coeff;
-      REQUIRE(EvalCoeff(p, header, m, x, coeff));
+      REQUIRE(EvalCoeff(p, b, header, m, x, coeff));
       for (int i = 0; i < 3; i++)
       {
         const auto T = m ? muinv[i] : eps[i];
@@ -376,7 +339,7 @@ TEST_CASE("PML tensors for a single-axis layer", "[pml][Serial]")
     pml::ContextHeader header;
     header.c_muinv = 1.0;
     std::array<double, 9> coeff;
-    REQUIRE(EvalCoeff(p, header, true, xp, coeff));
+    REQUIRE(EvalCoeff(p, b, header, true, xp, coeff));
     CHECK(coeff[0] == Approx(1.0));
     CHECK(coeff[4] == Approx(1.0));
     CHECK(coeff[8] == Approx(1.0));
@@ -385,23 +348,24 @@ TEST_CASE("PML tensors for a single-axis layer", "[pml][Serial]")
 
 TEST_CASE("PML tensors match the reference evaluation", "[pml][Serial]")
 {
-  auto p = MakeBoxProfile();
+  auto p = MakeBoxStretch();
+  const auto b = MakeAnisotropicBackground();
   // Points in the physical region, face, edge, and corner regions of the layer.
   const std::array<std::array<double, 3>, 5> points = {{{0.2, -0.3, 0.4},
                                                         {1.2, 0.0, 0.0},
                                                         {-1.15, 1.1, 0.5},
                                                         {1.25, -1.2, -1.35},
                                                         {-1.3, 1.3, 1.2}}};
-  SECTION("Static profile")
+  SECTION("Static stretch")
   {
     for (const auto &x : points)
     {
-      CheckCoeff(p, 1.0, 0.0, x);
-      CheckCoeff(p, {-2.5, 0.7}, 0.0, x);
+      CheckCoeff(p, b, 1.0, 0.0, x);
+      CheckCoeff(p, b, {-2.5, 0.7}, 0.0, x);
     }
   }
 
-  SECTION("Frequency-dependent profile at real and complex frequencies")
+  SECTION("Frequency-dependent stretch at real and complex frequencies")
   {
     p.frequency_dependent = true;
     p.reference_frequency = 0.0;
@@ -410,8 +374,8 @@ TEST_CASE("PML tensors match the reference evaluation", "[pml][Serial]")
       for (std::complex<double> omega :
            {std::complex<double>{1.7, 0.0}, {1.7, 0.3}, {0.9, -0.2}})
       {
-        CheckCoeff(p, 1.0, omega, x);
-        CheckCoeff(p, -omega * omega, omega, x);
+        CheckCoeff(p, b, 1.0, omega, x);
+        CheckCoeff(p, b, -omega * omega, omega, x);
       }
     }
   }
@@ -431,9 +395,9 @@ TEST_CASE("PML tensors match the reference evaluation", "[pml][Serial]")
       header.omega = w;
       std::array<double, 9> re, im;
       header.part = pml::TensorPart::REAL;
-      EvalCoeff(p, header, false, x, re);
+      EvalCoeff(p, b, header, false, x, re);
       header.part = pml::TensorPart::IMAG;
-      EvalCoeff(p, header, false, x, im);
+      EvalCoeff(p, b, header, false, x, im);
       return std::complex<double>(re[4], im[4]);
     };
     const auto dFdr = (F(omega + h) - F(omega - h)) / (2.0 * h);
@@ -444,10 +408,9 @@ TEST_CASE("PML tensors match the reference evaluation", "[pml][Serial]")
 
 TEST_CASE("PML::PackContext", "[pml][Serial]")
 {
-  auto p0 = MakeXProfile(1.0), p1 = MakeBoxProfile(), p2 = MakeXProfile(3.0);
-  p1.frequency_dependent = true;
-  const std::vector<pml::Profile> profiles = {p0, p1, p2};
-  const std::vector<int> attr_to_profile = {2, -1, 0, 1};
+  const auto p = MakeBoxStretch();
+  pml::Background b0, b1 = MakeAnisotropicBackground();
+  const std::vector<int> attr_background = {1, -1, 0, 1};
 
   pml::ContextHeader header;
   header.part = pml::TensorPart::IMAG;
@@ -456,43 +419,44 @@ TEST_CASE("PML::PackContext", "[pml][Serial]")
   header.omega = {5.0, 6.0};
   header.wave_vector_cross = {0.0, 1.0, -2.0, -1.0, 0.0, 3.0, 2.0, -3.0, 0.0};
 
-  SECTION("Static profiles")
+  SECTION("Static stretch")
   {
-    const auto ctx = pml::PackContext(header, attr_to_profile, profiles, false);
+    const auto ctx = pml::PackContext(header, p, attr_background, {b0, b1});
+    CHECK(ctx.size() == PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE +
+                            attr_background.size() + 2 * PALACE_PML_BACKGROUND_SIZE);
     CHECK(PMLNumAttr(ctx.data()) == 4);
     CHECK(PMLPart(ctx.data()) == PALACE_PML_PART_IM);
     CHECK(ctx[2].second == 1.0);
     CHECK(ctx[5].second == 4.0);
-    CHECK(ctx[7].second == 6.0);
+    CHECK(ctx[6].second == p.reference_frequency);  // Stretch at ω₀
+    CHECK(ctx[7].second == 0.0);
     CHECK(PMLWaveVectorCross(ctx.data())[5].second == 3.0);
-    CHECK(ctx.size() ==
-          PALACE_PML_HEADER_SIZE + attr_to_profile.size() + 2 * PALACE_PML_PROFILE_SIZE);
-    CHECK(PMLProfileData(ctx.data(), 2) == nullptr);
-    CHECK(PMLProfileData(ctx.data(), 4) == nullptr);  // Frequency-dependent profile
-    CHECK(PMLProfileData(ctx.data(), 5) == nullptr);  // Out of range
-    // Attribute 1 → profile 2 (σ_max = 3), attribute 3 → profile 0 (σ_max = 1).
-    CHECK(PMLProfileData(ctx.data(), 1)[16].second == 3.0);
-    CHECK(PMLProfileData(ctx.data(), 3)[16].second == 1.0);
+    CHECK(ctx[PALACE_PML_HEADER_SIZE].first == p.order);
+    CHECK(ctx[PALACE_PML_HEADER_SIZE + 13 + 5].second == p.sigma_max[5]);
+    CHECK(PMLBackgroundData(ctx.data(), 2) == nullptr);
+    CHECK(PMLBackgroundData(ctx.data(), 5) == nullptr);  // Out of range
+    // Attributes 1 and 4 → background 1, attribute 3 → background 0.
+    CHECK(PMLBackgroundData(ctx.data(), 1)[9 + 4].second == b1.epsilon_real[4]);
+    CHECK(PMLBackgroundData(ctx.data(), 4)[18].second == b1.epsilon_imag[0]);
+    CHECK(PMLBackgroundData(ctx.data(), 3)[9].second == 1.0);
   }
 
-  SECTION("Frequency-dependent profiles")
+  SECTION("Frequency-dependent stretch")
   {
-    const auto ctx = pml::PackContext(header, attr_to_profile, profiles, true);
-    CHECK(ctx.size() ==
-          PALACE_PML_HEADER_SIZE + attr_to_profile.size() + PALACE_PML_PROFILE_SIZE);
-    CHECK(PMLProfileData(ctx.data(), 1) == nullptr);
-    CHECK(PMLProfileData(ctx.data(), 4)[0].first == 1);
-    CHECK(PMLProfileData(ctx.data(), 4)[36 + 4].second == p1.epsilon_real[4]);
+    auto q = p;
+    q.frequency_dependent = true;
+    const auto ctx = pml::PackContext(header, q, attr_background, {b0, b1});
+    CHECK(ctx[6].second == 5.0);  // Stretch at the solve frequency
+    CHECK(ctx[7].second == 6.0);
   }
 
-  SECTION("No matching attribute")
+  SECTION("No attribute in a PML region")
   {
-    CHECK(pml::PackContext(header, {-1, 0, 2}, profiles, true).empty());
-    CHECK(pml::PackContext(header, {-1, -1}, profiles, false).empty());
+    CHECK(pml::PackContext(header, p, {-1, -1}, {b0}).empty());
   }
 }
 
-TEST_CASE("MaterialOperator PML stretch consistency", "[pml][materialoperator][Serial]")
+TEST_CASE("MaterialOperator PML regions", "[pml][materialoperator][Serial]")
 {
   // Unit cube with a substrate (y < 0.5) and vacuum (y > 0.5), both of which cross a PML
   // layer on the +z face (z > 0.75) and, optionally, the +x face (x > 0.75).
@@ -512,107 +476,125 @@ TEST_CASE("MaterialOperator PML stretch consistency", "[pml][materialoperator][S
   };
   auto MakeMaterials = [](bool pml_x)
   {
-    std::vector<config::MaterialData> materials(pml_x ? 6 : 4);
-    for (int k = 0; k < static_cast<int>(materials.size()); k++)
+    std::vector<config::MaterialData> materials(2);
+    materials[0].attributes = {1, 3};
+    materials[1].attributes = {2, 4};
+    if (pml_x)
     {
-      auto &m = materials[k];
-      m.attributes = {k + 1};
-      m.epsilon_r.s.fill((k % 2 == 0) ? 9.0 : 1.0);
-      if (k >= 2)
-      {
-        m.pml = config::PMLData();
-        m.pml->reference_frequency = 2.0;
-      }
+      materials[0].attributes.push_back(5);
+      materials[1].attributes.push_back(6);
     }
+    materials[0].epsilon_r.s.fill(9.0);
     return materials;
+  };
+  auto MakePML = [](bool pml_x)
+  {
+    config::PMLData pml;
+    pml.attributes = pml_x ? std::vector<int>{3, 4, 5, 6} : std::vector<int>{3, 4};
+    pml.reference_frequency = 2.0;
+    return pml;
   };
   config::PeriodicBoundaryData periodic;
 
-  SECTION("Default σ_max for the smallest refractive index of the layer")
+  SECTION("Default σ_max for the smallest refractive index of the PML materials")
   {
     auto mesh = MakeMesh(false);
-    MaterialOperator mat_op(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh);
-    const auto &profiles = mat_op.GetPMLProfiles();
-    REQUIRE(profiles.size() == 2);
-    const double expected = -4.0 * std::log(1.0e-6) / (2.0 * 0.25 * 1.0);
-    CHECK(profiles[0].sigma_max[5] == Approx(expected));
-    CHECK(profiles[1].sigma_max[5] == Approx(expected));
-    CHECK(profiles[0].epsilon_real[0] == Approx(9.0));
-    CHECK(profiles[1].epsilon_real[0] == Approx(1.0));
+    const auto pml = MakePML(false);
+    MaterialOperator mat_op(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh,
+                            &pml);
+    REQUIRE(mat_op.HasPML());
+    CHECK(!mat_op.HasFrequencyDependentPML());
+    const auto &stretch = mat_op.GetPML().GetStretch();
+    CHECK(stretch.geometry.thickness[5] == Approx(0.25));
+    CHECK(stretch.sigma_max[5] == Approx(-4.0 * std::log(1.0e-6) / (2.0 * 0.25 * 1.0)));
+    CHECK(stretch.reference_frequency == Approx(2.0));
+    CHECK(mat_op.GetPML().GetAttributes() == std::vector<int>{3, 4});
   }
 
-  SECTION("Inconsistent stretch parameters")
+  SECTION("Background material properties and bulk attribute map")
+  {
+    // The materials are shared by physical and PML attributes. Their properties are not
+    // modified, and the PML attributes are only excluded from the bulk attribute map.
+    auto mesh = MakeMesh(false);
+    const auto pml = MakePML(false);
+    MaterialOperator mat_op(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh,
+                            &pml);
+    const auto &loc_attr = mesh->GetCeedAttributes();
+    for (int attr = 1; attr <= 4; attr++)
+    {
+      const int ceed_attr = loc_attr.at(attr);
+      const bool in_pml = (attr >= 3);
+      CHECK(mat_op.GetPML().IsPMLCeedAttribute(ceed_attr) == in_pml);
+      CHECK(mat_op.GetAttributeToMaterial()[ceed_attr - 1] >= 0);
+      CHECK((mat_op.GetBulkAttributeToMaterial()[ceed_attr - 1] < 0) == in_pml);
+      CHECK(mat_op.GetPermittivityReal(attr)(0, 0) == Approx((attr % 2) ? 9.0 : 1.0));
+    }
+    pml::ContextHeader header;
+    const auto ctx = mat_op.GetPML().PackContext(header);
+    REQUIRE(!ctx.empty());
+    CHECK(PMLBackgroundData(ctx.data(), loc_attr.at(1)) == nullptr);
+    CHECK(PMLBackgroundData(ctx.data(), loc_attr.at(3))[9].second == Approx(9.0));
+    CHECK(PMLBackgroundData(ctx.data(), loc_attr.at(4))[9].second == Approx(1.0));
+  }
+
+  SECTION("Unsupported materials and problem types")
   {
     auto mesh = MakeMesh(false);
+    const auto pml = MakePML(false);
     auto materials = MakeMaterials(false);
-    materials[3].pml->order = 2;
-    CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, *mesh));
-    materials = MakeMaterials(false);
-    materials[2].pml->sigma_max = {0.0, 0.0, 10.0};
-    CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, *mesh));
-    materials = MakeMaterials(false);
-    materials[2].pml->frequency_dependent = true;
-    CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, *mesh));
+    materials[1].sigma.s.fill(1.0);
+    CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, *mesh, &pml));
+
+    // Treated as regular materials for other problem types.
+    MaterialOperator mat_op(MakeMaterials(false), periodic, ProblemType::ELECTROSTATIC,
+                            *mesh, &pml);
+    CHECK(!mat_op.HasPML());
+    CHECK(mat_op.GetBulkAttributeToMaterial() == mat_op.GetAttributeToMaterial());
   }
 
   SECTION("Configured layer geometry")
   {
     auto mesh = MakeMesh(false);
-    auto materials = MakeMaterials(false);
-    for (int k : {2, 3})
-    {
-      materials[k].pml->autodetect_geometry = false;
-      materials[k].pml->direction_signs = {0, 0, 0, 0, 0, 1};
-      materials[k].pml->thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.25};
-    }
-    CHECK_NOTHROW(MaterialOperator(materials, periodic, ProblemType::DRIVEN, *mesh));
-
-    // Different thicknesses of the same face.
-    auto bad = materials;
-    bad[3].pml->thickness[5] = 0.5;
-    CHECK_THROWS(MaterialOperator(bad, periodic, ProblemType::DRIVEN, *mesh));
+    auto pml = MakePML(false);
+    pml.autodetect_geometry = false;
+    pml.directions = {false, false, false, false, false, true};
+    pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.25};
+    CHECK_NOTHROW(
+        MaterialOperator(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh, &pml));
 
     // A thinner layer leaves PML attributes in the physical region.
-    bad = materials;
-    for (int k : {2, 3})
-    {
-      bad[k].pml->thickness[5] = 0.125;
-    }
-    CHECK_THROWS(MaterialOperator(bad, periodic, ProblemType::DRIVEN, *mesh));
+    auto bad = pml;
+    bad.thickness[5] = 0.125;
+    CHECK_THROWS(
+        MaterialOperator(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh, &bad));
 
     // Vacuum not marked as PML extends into the layer.
-    bad = materials;
-    bad[3].pml.reset();
-    CHECK_THROWS(MaterialOperator(bad, periodic, ProblemType::DRIVEN, *mesh));
+    bad = pml;
+    bad.attributes = {3};
+    CHECK_THROWS(
+        MaterialOperator(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh, &bad));
   }
 
-  SECTION("PML attributes extending into faces of other materials")
+  SECTION("PML regions beyond an inactive face")
   {
-    // The +z attributes cover the corner region x > 0.75, z > 0.75, so their materials
-    // need both the +x and +z directions.
+    // The +x PML regions are outside of the layer of a +z PML.
     auto mesh = MakeMesh(true);
-    auto materials = MakeMaterials(true);
-    for (int k = 2; k < 6; k++)
-    {
-      materials[k].pml->autodetect_geometry = false;
-      materials[k].pml->direction_signs = {0, (k >= 4) ? 1 : 0, 0, 0, 0, (k < 4) ? 1 : 0};
-      materials[k].pml->thickness = {0.0, 0.25, 0.0, 0.0, 0.0, 0.25};
-    }
-    CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, *mesh));
-    for (int k : {2, 3})
-    {
-      materials[k].pml->direction_signs[1] = 1;
-    }
-    CHECK_NOTHROW(MaterialOperator(materials, periodic, ProblemType::DRIVEN, *mesh));
+    auto pml = MakePML(true);
+    pml.autodetect_geometry = false;
+    pml.directions = {false, false, false, false, false, true};
+    pml.thickness = {0.0, 0.25, 0.0, 0.0, 0.0, 0.25};
+    CHECK_THROWS(
+        MaterialOperator(MakeMaterials(true), periodic, ProblemType::DRIVEN, *mesh, &pml));
+    pml.directions[1] = true;
+    CHECK_NOTHROW(
+        MaterialOperator(MakeMaterials(true), periodic, ProblemType::DRIVEN, *mesh, &pml));
 
-    // With automatic detection, all PML materials use both faces.
-    materials = MakeMaterials(true);
-    MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, *mesh);
-    for (const auto &p : mat_op.GetPMLProfiles())
-    {
-      CHECK(p.geometry.thickness[1] == Approx(0.25));
-      CHECK(p.geometry.thickness[5] == Approx(0.25));
-    }
+    // With automatic detection, the layer covers both faces.
+    pml = MakePML(true);
+    MaterialOperator mat_op(MakeMaterials(true), periodic, ProblemType::DRIVEN, *mesh,
+                            &pml);
+    CHECK(mat_op.GetPML().GetStretch().geometry.thickness[1] == Approx(0.25));
+    CHECK(mat_op.GetPML().GetStretch().geometry.thickness[5] == Approx(0.25));
   }
 }
 

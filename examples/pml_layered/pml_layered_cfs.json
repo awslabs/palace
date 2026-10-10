@@ -1,9 +1,9 @@
 {
   // Layered parallel-plate waveguide (substrate for y < 0, vacuum for y > 0) terminated by a
-  // PML on +z which the substrate/vacuum interface crosses. The default σ_max of the +z face
-  // is computed for the smallest refractive index among the PML materials (vacuum), so that
-  // the stretch is the same in both PML materials and the quasi-TEM mode is absorbed without
-  // reflection at the interface inside the layer.
+  // PML on +z which the substrate/vacuum interface crosses. The two PML regions (attributes
+  // 3 and 4) have the same stretch, so that the quasi-TEM mode is absorbed without reflection
+  // at the interface inside the layer, with the default σ_max of the +z face computed for
+  // the smallest refractive index of their materials (vacuum).
   // Complex frequency shifted (CFS) PML with real stretch, for the low-frequency end of the band.
   "Problem": {
     "Type": "Driven",
@@ -38,26 +38,22 @@
           3
         ],
         "Permeability": 1.0,
-        "Permittivity": 9.8,
-        "PML": {
-          "FrequencyDependent": true,
-          "KappaMax": 3.0,
-          "AlphaMax": 0.5
-        }
+        "Permittivity": 9.8
       },
       {
         "Attributes": [
           4
         ],
         "Permeability": 1.0,
-        "Permittivity": 1.0,
-        "PML": {
-          "FrequencyDependent": true,
-          "KappaMax": 3.0,
-          "AlphaMax": 0.5
-        }
+        "Permittivity": 1.0
       }
-    ]
+    ],
+    "PML": {
+      "Attributes": [3, 4],
+      "FrequencyDependent": true,
+      "KappaMax": 3.0,
+      "AlphaMax": 0.5
+    }
   },
   "Boundaries": {
     "WavePort": [

@@ -270,17 +270,19 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
     vacuum.attributes = {1};
     pml.attributes = {2};
     pml.epsilon_r.s = {2.0, 2.0, 2.0};
-    pml.pml = config::PMLData();
-    pml.pml->autodetect_geometry = false;
-    pml.pml->direction_signs = {0, 0, 0, 0, 0, 1};
-    pml.pml->thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.25};
-    pml.pml->kappa_max = {1.0, 1.0, 1.5};
-    pml.pml->alpha_max = {0.0, 0.0, 0.2};
-    pml.pml->frequency_dependent = frequency_dependent;
-    pml.pml->reference_frequency = omega0;
+    config::PMLData pml_pml;
+    pml_pml.autodetect_geometry = false;
+    pml_pml.directions = {false, false, false, false, false, true};
+    pml_pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.25};
+    pml_pml.kappa_max = {1.0, 1.0, 1.5};
+    pml_pml.alpha_max = {0.0, 0.0, 0.2};
+    pml_pml.frequency_dependent = frequency_dependent;
+    pml_pml.reference_frequency = omega0;
     config::DomainData domains;
     domains.attributes = {1, 2};
     domains.materials = {vacuum, pml};
+    domains.pml = pml_pml;
+    domains.pml->attributes = pml.attributes;
     config::BoundaryData boundaries;
     Units units(1.0, 1.0);
     return std::make_unique<SpaceOperator>(solver, domains, boundaries,
@@ -475,14 +477,16 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   config::MaterialData vacuum, pml;
   vacuum.attributes = {1};
   pml.attributes = {2};
-  pml.pml = config::PMLData();
-  pml.pml->autodetect_geometry = false;
-  pml.pml->direction_signs = {0, 0, 0, 0, 0, 1};
-  pml.pml->thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.5};
-  pml.pml->reference_frequency = 2.0;
+  config::PMLData pml_pml;
+  pml_pml.autodetect_geometry = false;
+  pml_pml.directions = {false, false, false, false, false, true};
+  pml_pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.5};
+  pml_pml.reference_frequency = 2.0;
   config::DomainData domains;
   domains.attributes = {1, 2};
   domains.materials = {vacuum, pml};
+  domains.pml = pml_pml;
+  domains.pml->attributes = pml.attributes;
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
   SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
@@ -527,11 +531,13 @@ TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
   config::MaterialData vacuum, pml;
   vacuum.attributes = {1};
   pml.attributes = {2};
-  pml.pml = config::PMLData();
-  pml.pml->reference_frequency = 2.0;
+  config::PMLData pml_pml;
+  pml_pml.reference_frequency = 2.0;
   config::DomainData domains;
   domains.attributes = {1, 2};
   domains.materials = {vacuum, pml};
+  domains.pml = pml_pml;
+  domains.pml->attributes = pml.attributes;
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
   for (auto problem_type : {ProblemType::DRIVEN, ProblemType::EIGENMODE})
@@ -605,18 +611,19 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
       layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
       layer.tandelta.v = axes;
     }
-    if (with_pml)
-    {
-      layer.pml = config::PMLData();
-      layer.pml->autodetect_geometry = false;
-      layer.pml->direction_signs = {0, 1, 0, 0, 0, 1};
-      layer.pml->thickness = {0.0, 1.0 / 3.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
-      layer.pml->sigma_max = {0.0, 0.0, 0.0};
-      layer.pml->reference_frequency = 2.0;
-    }
     config::DomainData domains;
     domains.attributes = {1, 2};
     domains.materials = {vacuum, layer};
+    if (with_pml)
+    {
+      auto &pml = domains.pml.emplace();
+      pml.attributes = layer.attributes;
+      pml.autodetect_geometry = false;
+      pml.directions = {false, true, false, false, false, true};
+      pml.thickness = {0.0, 1.0 / 3.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+      pml.sigma_max = {0.0, 0.0, 0.0};
+      pml.reference_frequency = 2.0;
+    }
     config::BoundaryData boundaries;
     boundaries.periodic.wave_vector = {0.3, -0.2, 0.5};
     boundaries.periodic.floquet_reference_freq = scaled ? 1.5 : 0.0;
@@ -745,33 +752,52 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   layer.mu_r.s = {1.0, 2.0, 1.5};
   layer.epsilon_r.s = {2.0, 3.0, 4.0};
   layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
-  layer.pml = config::PMLData();
-  layer.pml->autodetect_geometry = false;
-  layer.pml->direction_signs = {0, 1, 0, 0, 0, 1};
-  layer.pml->thickness = {0.0, 1.0 / 3.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
-  layer.pml->sigma_max = {3.0, 0.0, 5.0};
-  layer.pml->kappa_max = {1.5, 1.0, 2.0};
-  layer.pml->alpha_max = {0.2, 0.0, 0.1};
-  layer.pml->reference_frequency = 2.0;
+  config::PMLData layer_pml;
+  layer_pml.autodetect_geometry = false;
+  layer_pml.directions = {false, true, false, false, false, true};
+  layer_pml.thickness = {0.0, 1.0 / 3.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+  layer_pml.sigma_max = {3.0, 0.0, 5.0};
+  layer_pml.kappa_max = {1.5, 1.0, 2.0};
+  layer_pml.alpha_max = {0.2, 0.0, 0.1};
+  layer_pml.reference_frequency = 2.0;
   config::DomainData domains;
   domains.attributes = {1, 2};
   domains.materials = {vacuum, layer};
+  domains.pml = layer_pml;
+  domains.pml->attributes = layer.attributes;
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
   SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
-  const auto &profiles = space_op.GetMaterialOp().GetPMLProfiles();
-  REQUIRE(profiles.size() == 1);
-  const auto &p = profiles[0];
+  REQUIRE(space_op.GetMaterialOp().HasPML());
+  const auto &p = space_op.GetMaterialOp().GetPML().GetStretch();
 
-  // Reference stretch factors and tensors at a physical point (diagonal background).
+  // Diagonal background material of the layer.
+  std::array<double, 3> b_mu_inv, b_eps_re, b_eps_im;
+  for (int i = 0; i < 3; i++)
+  {
+    b_mu_inv[i] = 1.0 / layer.mu_r.s[i];
+    b_eps_re[i] = layer.epsilon_r.s[i];
+    b_eps_im[i] = -layer.epsilon_r.s[i] * layer.tandelta.s[i];
+  }
+
+  // Reference stretch factors and tensors at a physical point.
   auto Stretch = [&p](const mfem::Vector &x)
   {
     std::array<std::complex<double>, 3> s;
     const std::array<double, 3> xp = {x(0), x(1), x(2)};
-    const auto r = pml::ComputeDepthFraction(p, xp);
     for (int a = 0; a < 3; a++)
     {
-      const double shape = std::pow(r[a], p.order);
+      const auto &g = p.geometry;
+      double r = 0.0;
+      if (g.thickness[2 * a] > 0.0 && xp[a] < g.inner[2 * a])
+      {
+        r = (g.inner[2 * a] - xp[a]) / g.thickness[2 * a];
+      }
+      else if (g.thickness[2 * a + 1] > 0.0 && xp[a] > g.inner[2 * a + 1])
+      {
+        r = (xp[a] - g.inner[2 * a + 1]) / g.thickness[2 * a + 1];
+      }
+      const double shape = std::pow(std::min(r, 1.0), p.order);
       const bool pos = (xp[a] > p.geometry.inner[2 * a + 1]);
       const double sigma = shape * p.sigma_max[2 * a + (pos ? 1 : 0)];
       s[a] = 1.0 + (p.kappa_max[a] - 1.0) * shape +
@@ -783,7 +809,7 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   {
     return mfem::MatrixFunctionCoefficient(
         3,
-        [=, &p](const mfem::Vector &x, mfem::DenseMatrix &T)
+        [=](const mfem::Vector &x, mfem::DenseMatrix &T)
         {
           // Bulk material values are evaluated by the PWConstCoefficient below.
           const auto s = Stretch(x);
@@ -792,8 +818,7 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
           for (int i = 0; i < 3; i++)
           {
             const std::complex<double> b =
-                muinv ? p.mu_inv[4 * i]
-                      : p.epsilon_real[4 * i] + 1i * p.epsilon_imag[4 * i];
+                muinv ? b_mu_inv[i] : b_eps_re[i] + 1i * b_eps_im[i];
             const std::complex<double> t =
                 muinv ? b * s[i] * s[i] / det : b * det / (s[i] * s[i]);
             T(i, i) = imag ? t.imag() : t.real();

@@ -188,10 +188,10 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
   }
 }
 
-// The bulk material properties of PML regions are zero (the stretched PML tensors are
-// assembled separately), so the flux error estimators use the background material of the
-// PML: the error indicators match those of the same mesh and fields without PML, rather
-// than vanishing in the PML and spuriously growing at the PML interface.
+// The flux error estimators use the background material of the PML regions (the stretched
+// PML tensors replace it only in the system matrices): the error indicators match those of
+// the same mesh and fields without PML, rather than vanishing in the PML and spuriously
+// growing at the PML interface.
 TEST_CASE("Flux error estimators use the background material in PML regions",
           "[errorestimator][pml][Serial][Parallel]")
 {
@@ -209,25 +209,19 @@ TEST_CASE("Flux error estimators use the background material in PML regions",
   constexpr int order = 2;
   fem::DefaultIntegrationOrder::p_trial = order;
 
-  auto MakeMaterials = [](bool pml)
+  std::vector<config::MaterialData> materials(2);
+  for (int k = 0; k < 2; k++)
   {
-    std::vector<config::MaterialData> materials(2);
-    for (int k = 0; k < 2; k++)
-    {
-      materials[k].attributes = {k + 1};
-      materials[k].epsilon_r.s = {2.0, 3.0, 4.0};
-      materials[k].mu_r.s = {1.0, 1.5, 2.0};
-    }
-    if (pml)
-    {
-      materials[1].pml = config::PMLData();
-      materials[1].pml->reference_frequency = 2.0;
-    }
-    return materials;
-  };
+    materials[k].attributes = {k + 1};
+    materials[k].epsilon_r.s = {2.0, 3.0, 4.0};
+    materials[k].mu_r.s = {1.0, 1.5, 2.0};
+  }
+  config::PMLData pml;
+  pml.attributes = {2};
+  pml.reference_frequency = 2.0;
   config::PeriodicBoundaryData periodic;
-  MaterialOperator mat_op_pml(MakeMaterials(true), periodic, ProblemType::DRIVEN, mesh);
-  MaterialOperator mat_op_ref(MakeMaterials(false), periodic, ProblemType::DRIVEN, mesh);
+  MaterialOperator mat_op_pml(materials, periodic, ProblemType::DRIVEN, mesh, &pml);
+  MaterialOperator mat_op_ref(materials, periodic, ProblemType::DRIVEN, mesh);
   REQUIRE(mat_op_pml.HasPML());
   REQUIRE(!mat_op_ref.HasPML());
 

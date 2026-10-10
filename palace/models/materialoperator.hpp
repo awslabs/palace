@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
@@ -40,14 +41,10 @@ private:
   double floquet_omega_ref = 0.0;  // Nondimensional; when > 0, k_F scales with frequency.
   mfem::Array<double> mat_c0_min, mat_c0_max, mat_mu_eps_max;
 
-  // PML profiles (one per PML material, the same on all processes) and the map from
-  // libCEED attribute to profile index, -1 for non-PML attributes. The bulk material
-  // properties above are zero for PML attributes: their contributions come from the PML
-  // integrators instead.
-  std::vector<pml::Profile> pml_profiles;
-  std::vector<int> pml_attr_to_profile;
-  bool has_pml_attr = false;
-  bool has_pml_freq_dependent_attr = false;
+  // PML regions, and the map from libCEED attribute to material index without the PML
+  // attributes (-1), for the bulk material terms which the PML terms replace.
+  std::optional<pml::Layer> pml_layer;
+  mfem::Array<int> attr_mat_bulk;
 
   // Are materials isotropic? True when all the material properties are effectively
   // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
@@ -61,7 +58,8 @@ private:
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
-  void SetUpPML(const std::vector<config::MaterialData> &materials,
+  void SetUpPML(const config::PMLData *pml,
+                const std::vector<config::MaterialData> &materials,
                 ProblemType problem_type, const mfem::ParMesh &mesh);
   void SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
                               ProblemType problem_type, const mfem::ParMesh &mesh);
@@ -86,7 +84,7 @@ private:
 public:
   MaterialOperator(const std::vector<config::MaterialData> &materials,
                    const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
-                   const Mesh &mesh);
+                   const Mesh &mesh, const config::PMLData *pml = nullptr);
   MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
@@ -163,21 +161,24 @@ public:
   const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
-  // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems. The
-  // frequency-dependent PML profiles have a stretch evaluated at the solve frequency, and
+  // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems. A
+  // frequency-dependent stretch is evaluated at the solve frequency, so that the PML terms
   // contribute to the frequency-dependent part A2(ω) of the system matrix.
-  bool HasPML() const { return has_pml_attr; }
-  bool HasFrequencyDependentPML() const { return has_pml_freq_dependent_attr; }
-  const std::vector<pml::Profile> &GetPMLProfiles() const { return pml_profiles; }
-  const std::vector<int> &GetPMLAttrToProfile() const { return pml_attr_to_profile; }
+  bool HasPML() const { return pml_layer.has_value(); }
+  bool HasFrequencyDependentPML() const
+  {
+    return HasPML() && pml_layer->IsFrequencyDependent();
+  }
+  const pml::Layer &GetPML() const { return *pml_layer; }
 
-  // Real part of the permittivity and inverse permeability, with the background material
-  // properties in PML regions (the bulk properties of PML attributes are zero otherwise).
-  // For positive definite weights which do not need to account for the PML stretch.
-  mfem::DenseTensor GetBackgroundPermittivityReal() const;
-  mfem::DenseTensor GetBackgroundInvPermeability() const;
-
+  // The material properties of PML attributes are those of the background material of the
+  // layer. The map from attribute to material GetAttributeToMaterial() includes them (for
+  // the error estimators, field postprocessing, and boundary conditions on the boundaries
+  // of the PML regions), while GetBulkAttributeToMaterial() excludes them: for the volume
+  // terms of the system matrices, replaced by the PML terms in the PML regions, and for the
+  // domain energies, which exclude the PML regions.
   const auto &GetAttributeToMaterial() const { return attr_mat; }
+  const auto &GetBulkAttributeToMaterial() const { return attr_mat_bulk; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
 
   template <typename T>
@@ -274,6 +275,9 @@ bool IsIsotropic(const config::SymmetricMatrixData<N> &data);
 
 template <std::size_t N>
 bool IsIdentity(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data);
 
 }  // namespace palace::internal::mat
 

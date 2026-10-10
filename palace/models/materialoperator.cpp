@@ -121,15 +121,18 @@ mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &d
 
 MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
                                    const config::PeriodicBoundaryData &periodic,
-                                   ProblemType problem_type, const Mesh &mesh)
+                                   ProblemType problem_type, const Mesh &mesh,
+                                   const config::PMLData *pml)
   : mesh(mesh)
 {
   SetUpMaterialProperties(materials, periodic, problem_type, mesh);
+  SetUpPML(pml, materials, problem_type, mesh);
 }
 
 MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh)
   : MaterialOperator(iodata.domains.materials, iodata.boundaries.periodic,
-                     iodata.problem.type, mesh)
+                     iodata.problem.type, mesh,
+                     iodata.domains.pml ? &*iodata.domains.pml : nullptr)
 {
 }
 
@@ -414,20 +417,14 @@ void MaterialOperator::SetUpMaterialProperties(
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
-
-  // Set up the Cartesian PML regions (overwrites the bulk material properties of PML
-  // attributes).
-  SetUpPML(materials, problem_type, mesh);
 }
 
-void MaterialOperator::SetUpPML(const std::vector<config::MaterialData> &materials,
+void MaterialOperator::SetUpPML(const config::PMLData *pml,
+                                const std::vector<config::MaterialData> &materials,
                                 ProblemType problem_type, const mfem::ParMesh &mesh)
 {
-  pml_profiles.clear();
-  pml_attr_to_profile.assign(attr_mat.Size(), -1);
-  has_pml_attr = has_pml_freq_dependent_attr = false;
-  if (std::none_of(materials.begin(), materials.end(),
-                   [](const config::MaterialData &data) { return data.pml.has_value(); }))
+  attr_mat_bulk = attr_mat;
+  if (!pml)
   {
     return;
   }
@@ -447,299 +444,15 @@ void MaterialOperator::SetUpPML(const std::vector<config::MaterialData> &materia
   {
     return;
   }
-
-  // Bounding boxes of the whole mesh and of the non-PML (physical) region, whose faces are
-  // the outer PML boundaries and the inner PML interfaces, respectively. These are global
-  // reductions, called on all ranks.
-  int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
-  Mpi::GlobalMax(1, &attr_max, mesh.GetComm());
-  mfem::Array<int> physical_marker(attr_max);
-  physical_marker = 1;
-  for (const auto &data : materials)
+  pml_layer.emplace(*pml, materials, this->mesh, attr_mat, mat_muinv, mat_epsilon,
+                    mat_epsilon_imag);
+  for (int i = 0; i < attr_mat_bulk.Size(); i++)
   {
-    if (data.pml)
+    if (pml_layer->IsPMLCeedAttribute(i + 1))
     {
-      for (auto attr : data.attributes)
-      {
-        if (attr <= attr_max)
-        {
-          physical_marker[attr - 1] = 0;
-        }
-      }
+      attr_mat_bulk[i] = -1;
     }
   }
-  mfem::Vector bbmin, bbmax, phys_bbmin, phys_bbmax;
-  mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
-  mesh::GetAxisAlignedBoundingBox(mesh, physical_marker, false, phys_bbmin, phys_bbmax);
-  const std::array<double, 3> outer_min{{bbmin(0), bbmin(1), bbmin(2)}},
-      outer_max{{bbmax(0), bbmax(1), bbmax(2)}},
-      inner_min{{phys_bbmin(0), phys_bbmin(1), phys_bbmin(2)}},
-      inner_max{{phys_bbmax(0), phys_bbmax(1), phys_bbmax(2)}};
-  const auto detected_geometry =
-      pml::DetectLayerGeometry(inner_min, inner_max, outer_min, outer_max);
-  double extent = 0.0;
-  for (int a = 0; a < 3; a++)
-  {
-    extent = std::max(extent, outer_max[a] - outer_min[a]);
-  }
-  const double tol = 1.0e-6 * extent;
-  auto AttributeBoundingBox =
-      [&](int attr, mfem::Vector &attr_bbmin, mfem::Vector &attr_bbmax)
-  {
-    // Collective, returns false if the attribute is not present on the mesh.
-    mfem::Array<int> attr_marker(attr_max);
-    attr_marker = 0;
-    if (attr <= attr_max)
-    {
-      attr_marker[attr - 1] = 1;
-    }
-    mesh::GetAxisAlignedBoundingBox(mesh, attr_marker, false, attr_bbmin, attr_bbmax);
-    return attr <= attr_max && attr_bbmin(0) <= attr_bbmax(0);
-  };
-  auto FaceName = [](int f)
-  { return fmt::format("{}{}", (f % 2) ? "+" : "-", "xyz"[f / 2]); };
-  auto AttributeList = [](const config::MaterialData &data)
-  { return fmt::format("{}", fmt::join(data.attributes, ", ")); };
-
-  // Layer geometry, background material tensors, and refractive index of each PML material.
-  struct PMLMaterial
-  {
-    const config::MaterialData *data;
-    pml::LayerGeometry geometry;
-    std::array<double, 9> mu_inv, eps_re, eps_im;
-    double n_r;
-  };
-  std::vector<PMLMaterial> pml_materials;
-  for (const auto &data : materials)
-  {
-    if (!data.pml)
-    {
-      continue;
-    }
-    MFEM_VERIFY(!internal::mat::IsValid(data.sigma) && data.lambda_L == 0.0,
-                "PML regions do not support materials with electrical conductivity or "
-                "London penetration depth!");
-    auto &m = pml_materials.emplace_back();
-    m.data = &data;
-    const bool autodetect = data.pml->autodetect_geometry;
-    m.geometry = autodetect ? detected_geometry
-                            : pml::ConfiguredLayerGeometry(*data.pml, outer_min, outer_max);
-    MFEM_VERIFY(std::any_of(m.geometry.thickness.begin(), m.geometry.thickness.end(),
-                            [](double t) { return t > 0.0; }),
-                "No active PML faces found for the PML material with attributes "
-                    << AttributeList(data)
-                    << (autodetect ? ": the PML regions must lie outside of the bounding "
-                                     "box of the non-PML regions of the mesh (or specify "
-                                     "\"Direction\" and \"Thickness\")!"
-                                   : "!"));
-    const auto eps = internal::mat::ToDenseMatrix(data.epsilon_r);
-    mfem::DenseMatrix muinv(3, 3), epstd(3, 3);
-    mfem::DenseMatrixInverse(internal::mat::ToDenseMatrix(data.mu_r), true)
-        .GetInverseMatrix(muinv);
-    Mult(eps, internal::mat::ToDenseMatrix(data.tandelta), epstd);
-    for (int i = 0; i < 9; i++)  // Column-major
-    {
-      m.mu_inv[i] = muinv.Data()[i];
-      m.eps_re[i] = eps.Data()[i];
-      m.eps_im[i] = -epstd.Data()[i];  // Im{ε} = -ε tan(δ)
-    }
-    m.n_r = pml::RefractiveIndex(m.mu_inv, m.eps_re);
-  }
-
-  // The stretch must be the same function of position in all PML materials, so that the
-  // PML is a coordinate transformation also across material interfaces in the layer (for
-  // example, a substrate crossing the PML). The default σ_max of each face is designed for
-  // the smallest refractive index among the PML materials on the face, so that each of them
-  // meets the reflection target.
-  std::array<double, 6> n_r;
-  n_r.fill(std::numeric_limits<double>::infinity());
-  for (const auto &m : pml_materials)
-  {
-    for (int f = 0; f < 6; f++)
-    {
-      if (m.geometry.thickness[f] > 0.0)
-      {
-        n_r[f] = std::min(n_r[f], m.n_r);
-      }
-    }
-  }
-  for (const auto &m : pml_materials)
-  {
-    pml_profiles.push_back(
-        pml::BuildProfile(*m.data->pml, m.geometry, n_r, m.mu_inv, m.eps_re, m.eps_im));
-    has_pml_freq_dependent_attr =
-        has_pml_freq_dependent_attr || m.data->pml->frequency_dependent;
-  }
-  pml::LayerGeometry layer;
-  for (std::size_t k = 0; k < pml_profiles.size(); k++)
-  {
-    for (std::size_t l = 0; l < k; l++)
-    {
-      const auto params =
-          pml::CheckStretchConsistency(pml_profiles[k], pml_profiles[l], tol);
-      MFEM_VERIFY(params.empty(),
-                  "PML materials with attributes "
-                      << AttributeList(*pml_materials[l].data) << " and "
-                      << AttributeList(*pml_materials[k].data) << " define different "
-                      << params
-                      << " for a shared PML face: the PML stretch must be the same in all "
-                         "PML materials!");
-    }
-    for (int f = 0; f < 6; f++)
-    {
-      if (pml_profiles[k].geometry.thickness[f] > 0.0)
-      {
-        layer.inner[f] = pml_profiles[k].geometry.inner[f];
-        layer.thickness[f] = pml_profiles[k].geometry.thickness[f];
-      }
-    }
-  }
-
-  std::unordered_map<int, int> loc_attr_profile;  // Global attribute -> profile
-  for (std::size_t k = 0; k < pml_materials.size(); k++)
-  {
-    for (auto attr : pml_materials[k].data->attributes)
-    {
-      loc_attr_profile[attr] = static_cast<int>(k);
-    }
-  }
-
-  // The non-PML regions must lie inside of the layer, and each PML attribute may only
-  // extend into the layer on the faces of its material (collective calls for all ranks).
-  auto Outside = [&](const mfem::Vector &bbmin_, const mfem::Vector &bbmax_, int f)
-  {
-    return layer.thickness[f] > 0.0 &&
-           ((f % 2 == 0) ? bbmin_(f / 2) < layer.inner[f] - tol
-                         : bbmax_(f / 2) > layer.inner[f] + tol);
-  };
-  for (int f = 0; f < 6; f++)
-  {
-    MFEM_VERIFY(!Outside(phys_bbmin, phys_bbmax, f),
-                "Non-PML regions of the mesh extend into the PML layer on the "
-                    << FaceName(f)
-                    << " face: their attributes must be PML materials as well!");
-  }
-  for (std::size_t k = 0; k < pml_materials.size(); k++)
-  {
-    const auto &data = *pml_materials[k].data;
-    const auto &geometry = pml_profiles[k].geometry;
-    for (auto attr : data.attributes)
-    {
-      mfem::Vector attr_bbmin, attr_bbmax;
-      if (!AttributeBoundingBox(attr, attr_bbmin, attr_bbmax))
-      {
-        continue;
-      }
-      for (int f = 0; f < 6; f++)
-      {
-        MFEM_VERIFY(!Outside(attr_bbmin, attr_bbmax, f) || geometry.thickness[f] > 0.0,
-                    "PML attribute " << attr << " extends into the PML layer on the "
-                                     << FaceName(f)
-                                     << " face, which is not a \"Direction\" of its PML "
-                                        "material!");
-      }
-    }
-  }
-
-  // Every element of a PML attribute must be in the layer of its material (an element in
-  // the physical region would have zero material properties).
-  {
-    int outside = 0;
-    for (int e = 0; e < mesh.GetNE() && !outside; e++)
-    {
-      const auto it = loc_attr_profile.find(mesh.GetAttribute(e));
-      if (it == loc_attr_profile.end())
-      {
-        continue;
-      }
-      mfem::IsoparametricTransformation T;
-      mfem::Vector center;
-      mesh.GetElementTransformation(e, &T);
-      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), center);
-      const auto &geometry = pml_profiles[it->second].geometry;
-      bool in_layer = false;
-      for (int f = 0; f < 6; f++)
-      {
-        in_layer = in_layer || (geometry.thickness[f] > 0.0 &&
-                                ((f % 2 == 0) ? center(f / 2) < geometry.inner[f]
-                                              : center(f / 2) > geometry.inner[f]));
-      }
-      outside = in_layer ? 0 : mesh.GetAttribute(e);
-    }
-    Mpi::GlobalMax(1, &outside, mesh.GetComm());
-    MFEM_VERIFY(!outside, "PML attribute "
-                              << outside
-                              << " has elements inside of the physical region, where no "
-                                 "PML stretch is applied (check \"Direction\" and "
-                                 "\"Thickness\")!");
-  }
-
-  // Map the local attributes of each PML material to its profile and zero their bulk
-  // material properties, so that the standard integrators contribute nothing on PML
-  // attributes.
-  const auto &loc_attr = this->mesh.GetCeedAttributes();
-  for (std::size_t k = 0; k < pml_materials.size(); k++)
-  {
-    for (auto attr : pml_materials[k].data->attributes)
-    {
-      auto it = loc_attr.find(attr);
-      if (it == loc_attr.end())
-      {
-        continue;
-      }
-      pml_attr_to_profile[it->second - 1] = static_cast<int>(k);
-      const int mat = attr_mat[it->second - 1];
-      MFEM_VERIFY(mat >= 0,
-                  "Missing material properties for PML attribute " << attr << "!");
-      mat_muinv(mat) = 0.0;
-      mat_epsilon(mat) = 0.0;
-      mat_epsilon_imag(mat) = 0.0;
-      mat_epsilon_abs(mat) = 0.0;
-      mat_muinvkx(mat) = 0.0;
-      mat_kxTmuinvkx(mat) = 0.0;
-    }
-  }
-  has_pml_attr = !pml_profiles.empty();
-}
-
-namespace
-{
-
-// Copy of the material tensors T with the background tensors of the PML profiles (a member
-// of pml::Profile) in the PML regions.
-template <typename Member>
-mfem::DenseTensor
-WithPMLBackground(const mfem::DenseTensor &T, const mfem::Array<int> &attr_mat,
-                  const std::vector<int> &pml_attr_to_profile,
-                  const std::vector<pml::Profile> &pml_profiles, Member member)
-{
-  mfem::DenseTensor B(T);
-  for (std::size_t i = 0; i < pml_attr_to_profile.size(); i++)
-  {
-    const int k = pml_attr_to_profile[i];
-    if (k >= 0 && attr_mat[static_cast<int>(i)] >= 0)
-    {
-      MFEM_ASSERT(B.SizeI() == 3 && B.SizeJ() == 3,
-                  "PML background material tensors are only available in 3D!");
-      const auto &t = pml_profiles[k].*member;
-      std::copy(t.begin(), t.end(), B(attr_mat[static_cast<int>(i)]).Data());
-    }
-  }
-  return B;
-}
-
-}  // namespace
-
-mfem::DenseTensor MaterialOperator::GetBackgroundPermittivityReal() const
-{
-  return WithPMLBackground(mat_epsilon, attr_mat, pml_attr_to_profile, pml_profiles,
-                           &pml::Profile::epsilon_real);
-}
-
-mfem::DenseTensor MaterialOperator::GetBackgroundInvPermeability() const
-{
-  return WithPMLBackground(mat_muinv, attr_mat, pml_attr_to_profile, pml_profiles,
-                           &pml::Profile::mu_inv);
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const
@@ -1245,5 +958,7 @@ template bool internal::mat::IsOrthonormal(const config::SymmetricMatrixData<3> 
 template bool internal::mat::IsValid(const config::SymmetricMatrixData<3> &);
 template bool internal::mat::IsIsotropic(const config::SymmetricMatrixData<3> &);
 template bool internal::mat::IsIdentity(const config::SymmetricMatrixData<3> &);
+template mfem::DenseMatrix
+internal::mat::ToDenseMatrix(const config::SymmetricMatrixData<3> &);
 
 }  // namespace palace

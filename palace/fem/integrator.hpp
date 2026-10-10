@@ -123,9 +123,10 @@ public:
 // evaluated at each quadrature point from the physical coordinate (cached in the geometry
 // data) and a packed QFunction context (layout in fem/qfunctions/coeff/pml_qf.h) which also
 // holds the complex prefactor c, the output part (real, imaginary, or magnitude), and the
-// solve frequency. Attributes without a PML profile in the context get no contribution.
-// These are used alongside the standard integrators, which get zero material properties on
-// the PML attributes (see MaterialOperator). Only 3D elements are supported.
+// frequency of the stretch. Attributes outside of the PML regions get no contribution.
+// These are used alongside the standard integrators, whose material coefficients exclude
+// the PML attributes (see MaterialOperator::GetBulkAttributeToMaterial). Only 3D elements
+// are supported.
 class PMLIntegratorBase : public BilinearFormIntegrator
 {
 protected:
