@@ -1,0 +1,40 @@
+{
+  // Iris-coupled cavity: a section of the waveguide of waveguide_pml.json shorted at z = 0
+  // and coupled through an inductive iris (a 5 mm thick wall with a 40 mm wide aperture) to an
+  // output section terminated by a PML (see mesh/mesh.jl). Its TE101-like resonance at 1.778
+  // GHz, with a Q of about 495 due to the radiation through the iris, does not depend on the
+  // PML: with a frequency-dependent stretch (iris_cavity_fd.json), or with other PML
+  // parameters, the eigenfrequency agrees to 1e-5 (real part) and 1e-2 (imaginary part).
+  // Static stretch at the target frequency (the default): the eigenvalue problem is linear.
+  // The shift-and-invert linear systems are solved with geometric multigrid preconditioning,
+  // with (by default) a sparse direct solve on the PML subdomain.
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/iris_cavity",
+    "OutputFormats": { "Paraview": false }
+  },
+  "Model": { "Mesh": "mesh/iris_cavity.msh", "L0": 1.0 },
+  "Domains":
+  {
+    "Materials":
+    [
+      { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
+    ],
+    "PML": { "Attributes": [2] }
+  },
+  "Boundaries":
+  {
+    "PEC": { "Attributes": [3, 4] }
+  },
+  "Solver":
+  {
+    "Order": 2, "Device": "CPU",
+    "Eigenmode": { "Target": 1.75, "N": 1, "Tol": 1.0e-8, "Save": 0 },
+    "Linear":
+    {
+      "Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-10, "MaxIts": 100
+    }
+  }
+}
