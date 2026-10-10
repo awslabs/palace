@@ -424,9 +424,10 @@ class VerifyCanonicalCaseEntriesTest(unittest.TestCase):
             manifest_path.write_text(json.dumps(labeled, indent=2) + "\n")
             judged = []
             original = verifier.audit_manifest_evidence
-            def recording(evidence, gates, contract, binding):
+            def recording(evidence, gates, contract, binding, **keywords):
+                # `fail_path_corners` (decisions 674 (2) / 675) passes through unchanged.
                 judged.append((gates, binding["Gates"]))
-                return original(evidence, gates, contract, binding)
+                return original(evidence, gates, contract, binding, **keywords)
             verifier.audit_manifest_evidence = recording
             try:
                 report = verify_case(manifest_path, audits, "base")

@@ -17,8 +17,9 @@ from edge_volume_metric import EDGE_LAYER_QUALITY_RULE
 from canonical_mesh_build import same_canonical_build, validate_build_record
 from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELINE_BUILD_STAGE,
                                  PLACEMENT_STAGE_ORDER, STAGE_TOOLS, TRACE_BASIS_RATIO_OPTION,
-                                 canonical_stage_order, pipeline_of, scope_classes_of_case_inputs,
-                                 stage_order, unsupported_scope_classes, validate_stage_dag)
+                                 canonical_stage_order, fail_path_legacy_corners, pipeline_of,
+                                 scope_classes_of_case_inputs, stage_order, unsupported_scope_classes,
+                                 validate_stage_dag)
 from semantic_mesh_contract import (REQUIRED_ROLES, contract_is_corner_free, invariant_corners,
                                     load_semantic_contract, validate_feature_topology)
 
@@ -1416,8 +1417,40 @@ def _bounded_stages(evidence_path, evidence):
     return record["BoundedStages"]
 
 
-def audit_manifest_evidence(evidence, gates, contract, binding):
-    """Judge actual measurements against a separately frozen semantic contract."""
+def evidence_fail_path_corners(evidence_path, evidence):
+    """The fail-path legacy corners (supervisor decisions 674 (2) / 675) of the build census
+    the evidence BINDS - the Gmsh-only bounded run's build census, whose SHA-256 the evidence's
+    mesh-topology-quality record carries as BuildCensusSHA256 - in the SOURCE frame (the
+    judge transforms them with the variant). [] for the legacy pipeline (no build census), for
+    every census without a fail-path row, and for a census that does not hash as the evidence
+    binds it (nothing is then named: a fail-path row in the evidence is refused by the judge,
+    and _validate_bound_records reports the broken binding as before). The census only NAMES
+    the corners; the judge reads their measure from the evidence's recomputed
+    CornerNeighborhoods rows, never from the census."""
+    bounded = _bounded_stages(evidence_path, evidence)
+    if pipeline_of(bounded) != GMSH_ONLY_PIPELINE:
+        return []
+    census_item = bounded["gmsh-build"]["Artifacts"]["build-census"]
+    topology_item = next(record for record in evidence["AuditRecords"]
+                         if record.get("Kind") == "mesh-topology-quality")
+    topology = json.loads(_check_artifact(evidence_path.parent, topology_item, "audit record").read_text())
+    if (not isinstance(census_item, dict) or not census_item.get("Path") or
+            topology.get("BuildCensusSHA256") != census_item.get("SHA256")):
+        return []
+    census_path = _artifact_path(evidence_path.parent, census_item)
+    if not census_path.is_file() or sha256(census_path) != census_item["SHA256"]:
+        return []
+    census = json.loads(census_path.read_text())
+    return fail_path_legacy_corners(census.get("SeedQualityOptimization"))
+
+
+def audit_manifest_evidence(evidence, gates, contract, binding, fail_path_corners=()):
+    """Judge actual measurements against a separately frozen semantic contract.
+    `fail_path_corners` (decisions 674 (2) / 675): the legacy corners the evidence-bound build
+    census marks as judged by the fail-path legacy verdict, in the SOURCE frame
+    (evidence_fail_path_corners); their CornerNeighborhoods rows are judged by
+    Gates.CornerShapeGate on the recomputed RegularCondition, as the invariant corners are;
+    every other non-invariant row by MaximumCornerAspect exactly as before."""
     failures = []
     required_binding = {
         "CaseId": binding["CaseId"], "Variant": binding["Variant"],
@@ -1477,7 +1510,7 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
     elif not _same_points(expected_corners, actual_corners, float(gates["CornerTolerance"])):
         failures.append("semantic-corners")
     def neighborhood_failure(name, expected, maximum=None, minimum=None, invariant=(),
-                             invariant_maximum=None):
+                             invariant_maximum=None, fail_path=()):
         values = evidence.get(name)
         if not isinstance(values, list) or len(values) != len(expected):
             return True
@@ -1490,20 +1523,34 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         # (kappa_reg) and is judged by CornerShapeGate; every other row is the legacy
         # vertex-frame measure under `maximum`. The row kinds must match the contract's
         # invariant corners exactly and the gate must exist where a row needs it.
+        # F5T R-7 (decisions 674 (2) / 675): a row of a fail-path legacy corner (named by the
+        # evidence-bound census, `fail_path`) carries Measure RegularCondition AND FailPathMeasure
+        # true and is judged by CornerShapeGate on its recomputed kappa_reg; the RegularCondition
+        # rows are exactly the invariant corners plus exactly the fail-path corners.
         tolerance = float(gates["CornerTolerance"])
-        for item in values:
-            regular = any(
+        def listed(item, points):
+            return any(
                 isinstance(item.get("Point"), list) and len(item["Point"]) == 3 and
                 math.dist([float(v) for v in item["Point"]], [float(v) for v in point]) <= tolerance
-                for point in invariant)
+                for point in points)
+        for item in values:
+            regular = listed(item, invariant)
+            rejudged = listed(item, fail_path)
+            if regular and rejudged:
+                return True
             measure = item.get("Measure")
-            if regular != (measure == "RegularCondition") or (measure is not None and
-                                                              measure != "RegularCondition"):
+            if ((regular or rejudged) != (measure == "RegularCondition") or
+                    (measure is not None and measure != "RegularCondition")):
+                return True
+            if rejudged != (item.get("FailPathMeasure") is True) or (
+                    "FailPathMeasure" in item and item["FailPathMeasure"] is not True):
                 return True
             value = item.get("MaximumAspect")
             if not _finite_number(value, positive=True):
                 return True
-            if regular:
+            if rejudged and not _finite_number(item.get("MaximumVertexFrameAspect"), positive=True):
+                return True
+            if regular or rejudged:
                 if invariant_maximum is None or value > invariant_maximum:
                     return True
             elif ((maximum is not None and value > maximum) or
@@ -1516,7 +1563,8 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
                              maximum=gates["MaximumCornerAspect"],
                              invariant=_transform_points(invariant_corners(contract),
                                                          binding["Transform"]),
-                             invariant_maximum=gates.get(CORNER_SHAPE_GATE)) or
+                             invariant_maximum=gates.get(CORNER_SHAPE_GATE),
+                             fail_path=_transform_points(list(fail_path_corners), binding["Transform"])) or
             neighborhood_failure("SubdivisionNeighborhoods", subdivisions,
                                  minimum=gates["MinimumNoncornerAspect"]) or
             cut_neighborhood_failure(evidence, contract, binding, gates)):
@@ -1933,7 +1981,8 @@ def run_manifest(args):
                            "StageToolSHA256": manifest["StageToolSHA256"],
                            "Gates": manifest["Gates"]}
                 failures = audit_manifest_evidence(evidence, case_gates(manifest, case), contract,
-                                                   binding)
+                                                   binding,
+                                                   fail_path_corners=evidence_fail_path_corners(path, evidence))
                 mesh_path = _check_artifact(path.parent, evidence.get("Mesh"), "audited mesh")
                 _validate_mesh(mesh_path, contract)
                 mesh_digest = evidence["Mesh"]["SHA256"]

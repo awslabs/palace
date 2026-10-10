@@ -1580,10 +1580,14 @@ end
 # sub-size/high-condition cells the collapse removes (measured on EL1c: the
 # descent moved face vertices to 0.013-0.24 nm of a row or ridge node, 43-56
 # cells above condition 1000; supervisor decision 34). Returns (achieved true
-# value, accepted moves).
+# value, accepted moves). `record` (a Dict, F5T R-1, supervisor decision 674 (1)) receives
+# the descent's StopReason ("goal" / "no improving move" / "sweep limit"), Sweeps,
+# BestAchieved (the best true value seen after an accepted move, with its sweep and move),
+# StartAchieved and EndAchieved - information only, the arithmetic and every accepted move
+# are those of the call without a record.
 function optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors, bounds,
                               targets, objective::Symbol, goal; ceilings=nothing,
-                              condition_ceilings=nothing, edge_floors=nothing)
+                              condition_ceilings=nothing, edge_floors=nothing, record=nothing)
     function cell_xyz(cell)
         return [points[:, i] for i in cell]
     end
@@ -1611,8 +1615,16 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
     filter!(pair -> size(pair[2], 2) > 0, movable)
     current = value()
     moves = 0
+    recording = record !== nothing
+    start_achieved = recording ? achieved() : NaN
+    best_achieved, best_sweep, best_move = start_achieved, 0, 0
+    sweeps = 0
+    stop_reason = "sweep limit"
     for _ in 1:60
-        (minimizing ? achieved() <= goal : achieved() >= goal) && break
+        if (minimizing ? achieved() <= goal : achieved() >= goal)
+            stop_reason = "goal"
+            break
+        end
         improved = false
         for (vertex, basis) in movable
             cells = incident[vertex]
@@ -1653,6 +1665,12 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
                             current = candidate
                             improved = true
                             moves += 1
+                            if recording
+                                now = achieved()
+                                if minimizing ? now < best_achieved : now > best_achieved
+                                    best_achieved, best_sweep, best_move = now, sweeps + 1, moves
+                                end
+                            end
                             break
                         end
                     end
@@ -1661,9 +1679,80 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
                 end
             end
         end
-        improved || break
+        sweeps += 1
+        if !improved
+            stop_reason = "no improving move"
+            break
+        end
     end
-    return achieved(), moves
+    final_achieved = achieved()
+    if recording
+        record["Objective"] = String(objective)
+        record["Goal"] = goal
+        record["StopReason"] = stop_reason
+        record["Sweeps"] = sweeps
+        record["SweepLimit"] = 60
+        record["Moves"] = moves
+        record["StartAchieved"] = start_achieved
+        record["EndAchieved"] = final_achieved
+        record["BestAchieved"] = best_achieved
+        record["BestSweep"] = best_sweep
+        record["BestMove"] = best_move
+    end
+    return final_achieved, moves
+end
+
+# ---------------------------------------------------------------------------
+# F5T R-7, the FAIL-PATH legacy verdict (supervisor decisions 674 (2) / 675; the diagnosis of
+# record round4/thincornerF5/DIAGNOSIS.md 3.1 O-E / 4 R-7). Entered ONLY when a LEGACY
+# corner's stored-order VertexFrameCondition exceeds MaximumCornerAspect after its descent
+# (today's fail-closed point for that build) and the build carries --corner-shape-gate: the
+# corner is re-judged by the order-INVARIANT verdict of record for invariant corners (F5-A,
+# decision 363) - a kappa_reg descent to INVARIANT_CORNER_TARGET from the legacy end state
+# under the production guards (the scaled-Jacobian floors, the condition ceilings, the edge
+# floors, the displacement bounds), then kappa_reg <= CornerShapeGate. Every passing build
+# is identical by construction (the branch is never entered); no threshold, target or floor
+# value changes; the rule text is recorded only where it fired (decision 670 discipline).
+const FAIL_PATH_LEGACY_VERDICT_RULE =
+    "On the FAIL PATH only (a Legacy semantic corner whose stored-order VertexFrameCondition " *
+    "exceeds MaximumCornerAspect after its descent, in a build carrying --corner-shape-gate), " *
+    "the corner is re-judged by the order-invariant verdict of record for invariant corners " *
+    "(decision 363 F5-A): its corner-incident seed cells are descended on kappa_reg to the " *
+    "fixed goal INVARIANT_CORNER_TARGET from the legacy end state, under the same guards as " *
+    "every seed descent (the scaled-Jacobian floors, the Jacobian condition ceilings, the edge " *
+    "floors, the displacement bounds), and the corner passes iff the maximum kappa_reg over " *
+    "those cells is at most CornerShapeGate; every other gate (the required-region scaled-" *
+    "Jacobian and condition gates, the tube and cap gates) still applies to the re-descended " *
+    "state; the corner row keeps Kind Legacy and its stored-order readings and records the " *
+    "FailPathMeasure (RegularCondition before and after the descent, the VertexFrameCondition " *
+    "after it, the descent record); the legacy measure is an order-dependent frame the solver " *
+    "re-orders at load (supervisor decisions 353 / 363 / 674 (2) / 675)"
+
+# The fail-path re-judgement of one legacy corner: the kappa_reg descent from the current
+# (legacy end) state over `targets`, then the verdict against `gate` (CornerShapeGate).
+# Returns the FailPathMeasure record; `points` holds the re-descended state.
+function fail_path_legacy_verdict!(points, original, tetrahedra, incident, bases, floors, bounds,
+                                   targets, gate; ceilings=nothing, condition_ceilings=nothing,
+                                   edge_floors=nothing)
+    isfinite(gate) && gate > 1.0 ||
+        error("The fail-path legacy verdict needs CornerShapeGate above 1 (--corner-shape-gate)")
+    kappa_reg_of(k) = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
+    kappa_v0_of(k) = tetrahedron_aspect([points[:, i] for i in tetrahedra[k]])
+    before = maximum(kappa_reg_of(k) for k in targets)
+    vertex_frame_before = maximum(kappa_v0_of(k) for k in targets)
+    descent = Dict{String, Any}()
+    after, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors,
+                                        bounds, targets, :regular_condition,
+                                        INVARIANT_CORNER_TARGET; ceilings=ceilings,
+                                        condition_ceilings=condition_ceilings,
+                                        edge_floors=edge_floors, record=descent)
+    return Dict{String, Any}(
+        "Measure" => "RegularCondition", "Rule" => FAIL_PATH_LEGACY_VERDICT_RULE,
+        "Before" => before, "After" => after, "Target" => INVARIANT_CORNER_TARGET,
+        "Gate" => gate, "Moves" => moves, "Passed" => after <= gate,
+        "VertexFrameConditionBefore" => vertex_frame_before,
+        "VertexFrameConditionAfter" => maximum(kappa_v0_of(k) for k in targets),
+        "Descent" => descent)
 end
 
 # ---------------------------------------------------------------------------
@@ -3141,14 +3230,19 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
         information_before = corner_information(targets)
         bridging_before = invariant ? bridging_slivers(center, sides, targets) : Int[]
         push!(corner_before, before)
+        # F5T R-1 (decision 674 (1)): every descent at this corner records its stop reason /
+        # best true value / sweeps; the records reach the corner row ONLY where the corner
+        # failed its gate (a passing census is byte-identical by construction).
+        descents = Dict{String, Any}[]
         if before <= target
             after, moves = before, 0
         else
+            push!(descents, Dict{String, Any}())
             after, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases,
                                                 floors, bounds, targets, objective, target;
                                                 ceilings=ceilings,
                                                 condition_ceilings=condition_ceilings,
-                                                edge_floors=edge_floors)
+                                                edge_floors=edge_floors, record=descents[end])
         end
         bridging_after = invariant ? bridging_slivers(center, sides, targets) : Int[]
         # Decision 365: the reconnection trigger = a bridging-sliver candidate still above
@@ -3242,11 +3336,12 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
                 end
                 flips == 0 && break
                 targets = corner_incident(center)
+                push!(descents, Dict{String, Any}())
                 after, descent_moves = optimize_seed_cells!(points, original, tetrahedra, incident,
                                                             bases, floors, bounds, targets, objective,
                                                             target; ceilings=ceilings,
                                                             condition_ceilings=condition_ceilings,
-                                                            edge_floors=edge_floors)
+                                                            edge_floors=edge_floors, record=descents[end])
                 moves += descent_moves
                 bridging_after = bridging_slivers(center, sides, targets)
                 trigger = above_gate(bridging_after, gate)
@@ -3311,8 +3406,21 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
                                                   if key != "Pass"))
             wedge_split["Rounds"] > 0 && push!(wedge_splits, center)
         end
+        # F5T R-7 (decisions 674 (2) / 675): the FAIL PATH of a legacy corner - its stored-order
+        # verdict failed, the build would fail closed here - re-judged by the order-invariant
+        # verdict of record when the build carries CornerShapeGate (none: today's fail-closed
+        # path, unchanged). Entered on no passing build.
+        fail_path = nothing
+        if !invariant && after > gate && isfinite(corner_shape_gate) && corner_shape_gate > 1.0
+            fail_path = fail_path_legacy_verdict!(points, original, tetrahedra, incident, bases,
+                                                  floors, bounds, targets, corner_shape_gate;
+                                                  ceilings=ceilings,
+                                                  condition_ceilings=condition_ceilings,
+                                                  edge_floors=edge_floors)
+        end
+        passed = fail_path === nothing ? after <= gate : fail_path["Passed"]
         push!(corner_after, after); push!(corner_moves, moves)
-        push!(corner_measures, Dict{String, Any}(
+        row = Dict{String, Any}(
             "Point" => center, "Kind" => invariant ? "Invariant" : "Legacy",
             "Measure" => invariant ? "RegularCondition" : "VertexFrameCondition",
             "Before" => before, "After" => after, "Target" => target, "Gate" => gate,
@@ -3327,8 +3435,16 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
             "Reconnections" => reconnections,
             "InformationBefore" => information_before,
             "Information" => corner_information(targets),
-            "Passed" => after <= gate))
-        wedge_split === nothing || (corner_measures[end]["WedgeSplit"] = wedge_split)
+            "Passed" => passed)
+        wedge_split === nothing || (row["WedgeSplit"] = wedge_split)
+        if after > gate
+            # The corner failed its gate (the stored-order verdict at a legacy corner, kappa_reg
+            # at an invariant one): the R-1 descent records, and the R-7 fail-path verdict where
+            # it was entered.
+            row["Descents"] = descents
+            fail_path === nothing || (row["FailPathMeasure"] = fail_path)
+        end
+        push!(corner_measures, row)
     end
     if !isempty(reconnection_added)
         # The reconnections changed the cell list: the dead slots (an edge removal replaces
@@ -3551,6 +3667,13 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
         record["WedgeSplits"] = wedge_splits
         record["InsertedNodes"] = length(inserted)
     end
+    # F5T (decisions 674 / 675; the 670 discipline): the fail-path keys exist only where the
+    # fail-path legacy verdict fired - the rule text and the corners it judged.
+    fail_path_rows = [row for row in corner_measures if haskey(row, "FailPathMeasure")]
+    if !isempty(fail_path_rows)
+        record["FailPathLegacyVerdictRule"] = FAIL_PATH_LEGACY_VERDICT_RULE
+        record["FailPathLegacyCorners"] = [row["Point"] for row in fail_path_rows]
+    end
     for row in corner_measures
         println("Seed corner $(row["Kind"]) $(row["Point"]): $(row["Measure"]) $(row["Before"]) -> " *
                 "$(row["After"]) (target $(row["Target"]), gate $(row["Gate"]), moves $(row["Moves"])), " *
@@ -3560,7 +3683,19 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
                 "kappa_reg $(row["Information"]["KappaRegMax"]) " *
                 "kappa_v0 $(row["Information"]["KappaV0Max"]) kappa_min $(row["Information"]["KappaMinMax"]) " *
                 "kappa_max $(row["Information"]["KappaMaxMax"]) eta $(row["Information"]["EtaMin"])" *
-                (haskey(row, "WedgeSplit") ? "; wedge-split $(wedge_split_summary(row["WedgeSplit"]))" : ""))
+                (haskey(row, "WedgeSplit") ? "; wedge-split $(wedge_split_summary(row["WedgeSplit"]))" : "") *
+                (haskey(row, "Descents") ?
+                 "; descents " * join(["$(d["StopReason"]) after $(d["Sweeps"]) sweeps (best $(d["BestAchieved"]) " *
+                                       "at sweep $(d["BestSweep"]) move $(d["BestMove"]))" for d in row["Descents"]], ", ") :
+                 "") *
+                (haskey(row, "FailPathMeasure") ?
+                 "; fail-path $(row["FailPathMeasure"]["Measure"]) $(row["FailPathMeasure"]["Before"]) -> " *
+                 "$(row["FailPathMeasure"]["After"]) (target $(row["FailPathMeasure"]["Target"]), gate " *
+                 "$(row["FailPathMeasure"]["Gate"]), moves $(row["FailPathMeasure"]["Moves"]), " *
+                 "$(row["FailPathMeasure"]["Descent"]["StopReason"]) after " *
+                 "$(row["FailPathMeasure"]["Descent"]["Sweeps"]) sweeps), VertexFrameCondition then " *
+                 "$(row["FailPathMeasure"]["VertexFrameConditionAfter"]), passed " *
+                 "$(row["FailPathMeasure"]["Passed"])" : ""))
     end
     println("Seed required-region optimization: corners $(corner_before) -> $(corner_after), " *
             "required cells $(required_before_moves) -> $(length(required_cells)) " *
@@ -3606,8 +3741,9 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
                 "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
     end
     failures = String[]
-    legacy_failed = [row["After"] for row in corner_measures
-                     if row["Kind"] == "Legacy" && row["After"] > row["Gate"]]
+    # A legacy corner fails iff its row did not pass: the stored-order verdict, or - where the
+    # fail-path verdict was entered (R-7) - that verdict (both readings named).
+    legacy_failed = [row for row in corner_measures if row["Kind"] == "Legacy" && !row["Passed"]]
     invariant_failed = [row for row in corner_measures
                         if row["Kind"] == "Invariant" && row["After"] > row["Gate"]]
     for row in corner_measures
@@ -3631,7 +3767,13 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
     end
     isempty(legacy_failed) ||
         push!(failures, "Seed semantic-corner aspect exceeds the gate after optimization: " *
-                        "$(maximum(legacy_failed)) > $(maximum_corner_aspect)")
+                        "$(maximum(row["After"] for row in legacy_failed)) > $(maximum_corner_aspect)" *
+                        (any(haskey(row, "FailPathMeasure") for row in legacy_failed) ?
+                         "; fail-path legacy verdict (decisions 674 (2) / 675) failed too: " *
+                         join(["at $(row["Point"]): VertexFrameCondition $(row["After"]), kappa_reg " *
+                               "$(row["FailPathMeasure"]["Before"]) -> $(row["FailPathMeasure"]["After"]) > " *
+                               "CornerShapeGate $(row["FailPathMeasure"]["Gate"])"
+                               for row in legacy_failed if haskey(row, "FailPathMeasure")], "; ") : ""))
     isempty(invariant_failed) ||
         push!(failures, "Seed invariant semantic-corner kappa_reg exceeds CornerShapeGate after " *
                         "optimization: $(maximum(row["After"] for row in invariant_failed)) > " *
