@@ -358,6 +358,12 @@ runs:
         export PRTE_MCA_hwloc_default_binding_policy=none
         export OMPI_MCA_hwloc_base_binding_policy=none
 
+        # Open MPI names its shared-memory backing files from a 16-bit hash of
+        # the job's namespace, so two concurrent MPI tests can end up sharing
+        # them and crash or hang.  SysV segments are anonymous and cannot
+        # collide.
+        export OMPI_MCA_shmem=sysv
+
         # Runs all hardware-compatible tests, skipping Catch2 benchmarks.
         # [Regression] and [Long] cases (labels "regression" / "long")
         # run separately via ./.github/actions/run-regression-tests at

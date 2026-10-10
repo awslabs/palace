@@ -111,6 +111,12 @@ runs:
         fi
         export PALACE_TEST_NUMPROC=$NUM_PROC_TEST
 
+        # Open MPI names its shared-memory backing files from a 16-bit hash of
+        # the job's namespace, so two concurrent MPI tests can end up sharing
+        # them and crash or hang.  SysV segments are anonymous and cannot
+        # collide.
+        export OMPI_MCA_shmem=sysv
+
         run_ctest() {
           ctest --test-dir "$TEST_DIR" --output-on-failure -j "$JOBS" "$@"
         }
