@@ -225,6 +225,54 @@ end
     @test !occursin("unattainable", acute_corner_retry_failure_message(again, entries))
 end
 
+# The number of nodes the writer put in a binary MSH 2.2 file (the ASCII count line after
+# `$Nodes`): Mesh.SaveAll is off, so these are the nodes the written elements use. The model
+# (`getNodes()`, the metadata's NodeCount) holds exactly these plus the vertices the seed
+# collapse orphaned (SubSizeEdgeCollapse / CollapsedVertices; apply_seed_cell_collapse!).
+function written_node_count(mesh_bytes)
+    start = findfirst(codeunits("\$Nodes\n"), mesh_bytes)
+    start === nothing && error("no \$Nodes section")
+    stop = findnext(==(UInt8('\n')), mesh_bytes, last(start) + 1)
+    return parse(Int, String(mesh_bytes[(last(start) + 1):(stop - 1)]))
+end
+
+function model_node_excess(census, metadata, mesh_bytes)
+    collapsed = census["SeedQualityOptimization"]["SubSizeEdgeCollapse"]["CollapsedVertices"]
+    return metadata["NodeCount"] - written_node_count(mesh_bytes) - collapsed
+end
+
+@testset "clear_entity_mesh! fails closed on the clear Gmsh refuses (a line under a meshed face)" begin
+    gmsh.isInitialized() == 1 && gmsh.finalize()
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("clear-order")
+    face = gmsh.model.occ.addRectangle(0.0, 0.0, 0.0, 1.0, 1.0)
+    gmsh.model.occ.synchronize()
+    gmsh.option.setNumber("Mesh.MeshSizeMax", 0.25)
+    gmsh.model.mesh.generate(2)
+    line = Int(gmsh.model.getBoundary([(2, face)], true, false)[1][2])
+    line_nodes, _, _ = gmsh.model.mesh.getNodes(1, line)
+    face_nodes, _, _ = gmsh.model.mesh.getNodes(2, face)
+    @test !isempty(line_nodes) && !isempty(face_nodes)
+    # Ascending order (the defect of 72045173db): Gmsh refuses the line, the stale mesh stays.
+    caught = try
+        clear_entity_mesh!(1, line, "test")
+        nothing
+    catch error
+        error
+    end
+    @test caught isa ErrorException
+    @test startswith(sprint(showerror, caught),
+                     "test: Gmsh refused to clear the mesh of entity (1, $(line)): $(length(line_nodes)) nodes and")
+    still, _, _ = gmsh.model.mesh.getNodes(1, line)
+    @test still == line_nodes
+    # Descending order: the face first, then its line; both are empty afterwards.
+    @test clear_entity_mesh!(2, face, "test") === nothing
+    @test clear_entity_mesh!(1, line, "test") === nothing
+    @test isempty(gmsh.model.mesh.getNodes(1, line)[1]) && isempty(gmsh.model.mesh.getNodes(2, face)[1])
+    gmsh.finalize()
+end
+
 # The production-size synthetic tip (test_invariant_corner_builds.jl's build_production_tip option
 # set) through generate_spatial_coupon_once (today's path) or the retry wrapper.
 function build_tip(directory, phi, theta; fabricated, once=false)
@@ -241,7 +289,8 @@ function build_tip(directory, phi, theta; fabricated, once=false)
           corner_size=edge, prism_tubes=true, far_growth=0.5, maximum_corner_aspect=4.0,
           minimum_scaled_jacobian=0.01, maximum_jacobian_condition=1000.0,
           quality_displacement_over_normal=0.75, corner_shape_gate=5.0)
-    return read(mesh), parse_json(read(census, String))
+    return read(mesh), parse_json(read(census, String)),
+           parse_json(read(mesh * ".metadata.json", String))
 end
 
 # The census without its per-run leaves: the wall clocks (every `Timings` sub-record) and the
@@ -260,9 +309,11 @@ has_key(value, name) = false
 
 @testset "a passing tip (22.5 degrees, fabricated) is byte-identical through the wrapper and carries no retry key" begin
     mktempdir() do directory
-        mesh_once, census_once = build_tip(mkpath(joinpath(directory, "once")), 22.5, 10.0; fabricated=true, once=true)
-        mesh_wrapped, census_wrapped = build_tip(mkpath(joinpath(directory, "wrapped")), 22.5, 10.0; fabricated=true)
+        mesh_once, census_once, _ = build_tip(mkpath(joinpath(directory, "once")), 22.5, 10.0; fabricated=true, once=true)
+        mesh_wrapped, census_wrapped, metadata = build_tip(mkpath(joinpath(directory, "wrapped")), 22.5, 10.0; fabricated=true)
         @test mesh_once == mesh_wrapped
+        # A passing build's model holds exactly the written nodes plus the collapse's orphans.
+        @test model_node_excess(census_wrapped, metadata, mesh_wrapped) == 0
         @test strip_volatile(census_once) == strip_volatile(census_wrapped)
         @test !has_key(census_wrapped, "AcuteCornerRetry") && !has_key(census_wrapped, "AcuteCornerRetries")
         row = census_wrapped["SeedQualityOptimization"]["CornerMeasures"][1]
@@ -287,7 +338,7 @@ end
         @test 5.0 < first_after < 5.5
         @test acute_corner_locked_class(failure.invariant_failed[1], true)
         @test acute_corner_retry_entries(failure, false) === nothing
-        _, census = build_tip(mkpath(joinpath(directory, "wrapped")), 18.75, 10.0; fabricated=true)
+        mesh, census, metadata = build_tip(mkpath(joinpath(directory, "wrapped")), 18.75, 10.0; fabricated=true)
         optimization = census["SeedQualityOptimization"]
         @test optimization["AcuteCornerRetries"] == [[0.0, 0.0, 0.0]]
         @test optimization["AcuteCornerRetryRule"] == ACUTE_CORNER_RETRY_RULE
@@ -302,6 +353,16 @@ end
         @test retry["TrianglesRewritten"] > 0 && retry["TrianglesRemoved"] > 0 && retry["LinesRemoved"] == 2
         @test count(e -> e["Kind"] == "MetalSidewall", retry["Entities"]) == 2
         @test retry["CleanedWedge"]["ShortestCrossWedgePair"] >= 0.000125
+        # The affected entities' meshes were REPLACED, not added beside the stale ones: the model
+        # lost exactly the mapped nodes (unique tags), and it holds exactly the written nodes plus
+        # the collapse's orphans (the stale corner-line meshes of 72045173db left 56 phantom nodes).
+        @test retry["ModelNodes"]["Mapped"] == 6
+        @test retry["ModelNodes"]["After"] == retry["ModelNodes"]["Before"] - 6
+        @test model_node_excess(census, metadata, mesh) == 0
+        # DESIGN 11.2 (f): each candidate names its owning entity (a CAD line or face).
+        @test all(c["Dimension"] in (1, 2) for c in retry["Candidates"])
+        line_entities = [e["Entity"] for e in retry["Entities"] if e["Dimension"] == 1]
+        @test count(c -> c["Dimension"] == 1 && c["Entity"] in line_entities, retry["Candidates"]) == 2
         # The floor is satisfiable after the cleanup: the ball's shortest edge is at or above it.
         @test census["Corners"][1]["EdgeMinimum"] >= 0.000125
         @test census["Corners"][1]["Measure"]["Value"] == row["After"]

@@ -2189,7 +2189,7 @@ end
 # validity findings (empty iff valid; judged on the FINAL configuration) and the record.
 function acute_corner_ring_remap(points, corner, sides, edge_floor, corner_size, overetch, tolerance,
                                  candidate_allowed, non_simplex, triangles, triangle_entities,
-                                 lines, line_entities)
+                                 lines, line_entities; node_entities=nothing)
     phi, convex = corner_metal_opening(sides)
     convex || error("Acute-corner remap at $(collect(corner)): the metal sector is the reflex one")
     ratio = 2.0 * sin(phi / 2.0)
@@ -2314,8 +2314,14 @@ function acute_corner_ring_remap(points, corner, sides, edge_floor, corner_size,
         "Floor" => edge_floor,
         "FirstRingRadius" => r_min,
         "DihedralFloor" => kappa_reg_dihedral_floor(phi),
-        "Candidates" => [Dict{String, Any}("Position" => points[:, v], "Radius" => r_xy(v),
-                                           "TargetZ" => points[3, node_map[v]], "Target" => points[:, node_map[v]])
+        # DESIGN 11.2 (f): (node position, entity, target z); the owning entity when the
+        # caller knows it (`node_entities[v]` = (dimension, entity)).
+        "Candidates" => [merge(Dict{String, Any}("Position" => points[:, v], "Radius" => r_xy(v),
+                                                 "TargetZ" => points[3, node_map[v]],
+                                                 "Target" => points[:, node_map[v]]),
+                               node_entities === nothing ? Dict{String, Any}() :
+                               Dict{String, Any}("Dimension" => node_entities[v][1],
+                                                 "Entity" => node_entities[v][2]))
                          for v in sort(candidates; by=v -> -dz(v))],
         "CornerLineNodes" => length(corner_line),
         "Entities" => [Dict{String, Any}(name => row[name] for name in
@@ -2336,18 +2342,40 @@ function acute_corner_ring_remap(points, corner, sides, edge_floor, corner_size,
             lines=line_changes, findings=findings, record=record)
 end
 
+# Clear the mesh of one CAD entity and fail closed unless Gmsh applied it: GModel::deleteMesh
+# REFUSES an entity whose higher-dimensional neighbours still carry a mesh (a Warning only,
+# "Cannot delete mesh of entity (d, t), connected to mesh of higher dimensional entity"), so
+# a caller replacing several entities must clear them in DESCENDING dimension and must not
+# trust the call. `context` names the operation in the error.
+function clear_entity_mesh!(dimension, entity, context)
+    gmsh.model.mesh.clear([(dimension, entity)])
+    remaining_nodes, _, _ = gmsh.model.mesh.getNodes(dimension, entity)
+    _, remaining_elements, _ = gmsh.model.mesh.getElements(dimension, entity)
+    remaining = sum(length, remaining_elements; init=0)
+    isempty(remaining_nodes) && remaining == 0 ||
+        error("$(context): Gmsh refused to clear the mesh of entity ($(dimension), $(entity)): " *
+              "$(length(remaining_nodes)) nodes and $(remaining) elements remain (a higher-" *
+              "dimensional neighbour still carries a mesh)")
+    return nothing
+end
+
 # The Gmsh glue of the retry (decision 639 (1)): runs between the surface pass (the tube
 # faces installed) and generate(3); `entries` are the wrapper's retry records ("Point",
 # "FirstAttemptAfter"), each filled in place with the remap record. The affected entities'
-# meshes are REPLACED (clear, addNodes of their own nodes minus the mapped ones with their
-# tags, addElementsByType of every element block rewritten - the explicit-face path of
-# install_tube_faces!). Fails closed (naming the corner, the element and the first attempt's
-# After value) on any validity finding.
+# meshes are REPLACED (clear in descending dimension - faces before their boundary lines, as
+# Gmsh requires - then addNodes of their own nodes minus the mapped ones with their tags in
+# ascending dimension - a face's triangles reference its lines' nodes - and addElementsByType
+# of every element block rewritten - the explicit-face path of install_tube_faces!). Fails
+# closed (naming the corner, the element and the first attempt's After value) on any validity
+# finding, on a clear Gmsh refused, and unless the model's nodes afterwards are exactly the
+# nodes before minus the mapped ones with unique tags (recorded as `ModelNodes`).
 function acute_corner_ring_cleanup!(entries, corners, corner_kinds, corner_sides, corner_size,
                                     collapse_size, overetch, tolerance)
     isempty(entries) && return entries
     edge_floor = SEED_COLLAPSE_SIZE_FRACTION * collapse_size
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    allunique(node_tags) ||
+        error("Acute-corner retry (decision 639): the model's node tags are not unique before the cleanup")
     points = reshape(copy(coordinates), 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
     n = size(points, 2)
@@ -2383,7 +2411,8 @@ function acute_corner_ring_cleanup!(entries, corners, corner_kinds, corner_sides
             error("Acute-corner retry at $(point): not an invariant corner with sides")
         result = acute_corner_ring_remap(points, corners[k], corner_sides[k], edge_floor, corner_size,
                                          overetch, tolerance, candidate_allowed, non_simplex,
-                                         triangles, triangle_entities, lines, line_entities)
+                                         triangles, triangle_entities, lines, line_entities;
+                                         node_entities=owner)
         merge!(entry, result.record)
         isempty(result.findings) ||
             error("Acute-corner retry (decision 639) at $(point) fails closed: invalid remap " *
@@ -2411,13 +2440,23 @@ function acute_corner_ring_cleanup!(entries, corners, corner_kinds, corner_sides
     end
     all(owner[v][1] in (1, 2) for v in keys(full_map)) ||
         error("Acute-corner retry: a mapped node is not owned by a CAD line or face")
-    for (dimension, entity) in sort!(collect(affected))
+    ordered = sort!(collect(affected))
+    blocks_of = Dict{Tuple{Int, Int}, Any}()
+    for (dimension, entity) in Iterators.reverse(ordered)
+        blocks_of[(dimension, entity)] = gmsh.model.mesh.getElements(dimension, entity)
+        clear_entity_mesh!(dimension, entity, "Acute-corner retry (decision 639) fails closed")
+    end
+    for (dimension, entity) in ordered
         own = [tag for (i, tag) in enumerate(node_tags) if owner[i] == (dimension, entity)]
         keep = [tag for tag in own if !haskey(full_map, index[tag])]
-        types, _, blocks = gmsh.model.mesh.getElements(dimension, entity)
-        gmsh.model.mesh.clear([(dimension, entity)])
+        types, _, blocks = blocks_of[(dimension, entity)]
         isempty(keep) || gmsh.model.mesh.addNodes(dimension, entity, keep,
                                                   reduce(vcat, (points[:, index[tag]] for tag in keep)))
+        readded, _, _ = gmsh.model.mesh.getNodes(dimension, entity)
+        sort(Int.(readded)) == sort(Int.(keep)) ||
+            error("Acute-corner retry (decision 639) fails closed: entity ($(dimension), $(entity)) " *
+                  "holds $(length(readded)) nodes after the replacement, not its $(length(keep)) " *
+                  "surviving nodes")
         for (type, block) in zip(types, blocks)
             isempty(block) && continue
             properties = gmsh.model.mesh.getElementProperties(type)
@@ -2432,6 +2471,15 @@ function acute_corner_ring_cleanup!(entries, corners, corner_kinds, corner_sides
             isempty(connectivity) ||
                 gmsh.model.mesh.addElementsByType(entity, type, Int[], connectivity)
         end
+    end
+    tags_after, _, _ = gmsh.model.mesh.getNodes()
+    length(tags_after) == n - length(full_map) && allunique(tags_after) ||
+        error("Acute-corner retry (decision 639) fails closed: the model holds $(length(tags_after)) " *
+              "nodes ($(length(unique(tags_after))) unique tags) after the cleanup, not the " *
+              "$(n) before minus the $(length(full_map)) mapped")
+    for entry in entries
+        entry["ModelNodes"] = Dict{String, Any}("Before" => n, "Mapped" => length(full_map),
+                                                "After" => length(tags_after))
     end
     return entries
 end
