@@ -383,17 +383,32 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
+void CurlCurlOperator::EnsureTwoPortCoupling()
+{
+  if (two_port_coupling_ || !sc_sheet_op.HasTwoPort())
+  {
+    return;
+  }
+  two_port_coupling_ = sc_sheet_op.BuildTwoPortCoupling(GetNDSpace().Get());
+
+  // K is eliminated on the essential (PEC) true DOFs with DIAG_ONE, so the copy of C summed
+  // into the Krylov operator must have those rows and columns removed (DIAG_ZERO keeps the
+  // unit diagonal from K). Without this, a film whose edge touches an essential boundary
+  // leaves the essential DOFs coupled through C: they are no longer pinned to zero, and CG
+  // stalls or converges to a wrong inductance. The sheet mass keeps the full C, because the
+  // RHS M_sheet·a_h and the kinetic energy need a_h's values on those edges, as the
+  // single-sheet M_sheet does.
+  // REVIEW/WIP: this covers only the base essential set. Screened current-port steps add
+  // shorted-port essential DOFs and need their own eliminated copy of C, one per short key.
+  two_port_coupling_ess_ = std::make_unique<mfem::HypreParMatrix>(*two_port_coupling_);
+  two_port_coupling_ess_->EliminateBC(dbc_tdof_lists.back(),
+                                      Operator::DiagonalPolicy::DIAG_ZERO);
+}
+
 mfem::HypreParMatrix *CurlCurlOperator::GetTwoPortCoupling()
 {
-  if (!sc_sheet_op.HasTwoPort())
-  {
-    return nullptr;
-  }
-  if (!two_port_coupling_)
-  {
-    two_port_coupling_ = sc_sheet_op.BuildTwoPortCoupling(GetNDSpace().Get());
-  }
-  return two_port_coupling_.get();
+  EnsureTwoPortCoupling();
+  return two_port_coupling_ess_.get();
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
@@ -584,11 +599,12 @@ void CurlCurlOperator::EnsureSheetMass()
   }
   auto m_mat = m.Assemble(GetNDSpaces(), false);
   auto diag = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
-  // Two-sided sheets: include the cross-face coupling C so the RHS (M_sheet·a_h) and the
-  // kinetic penalty energy match the K + C stiffness operator.
-  if (auto *C_par = GetTwoPortCoupling())
+  // Two-sided sheets: include the full (non-eliminated) cross-face coupling C so the RHS
+  // (M_sheet·a_h) and the kinetic penalty energy match the K + C stiffness operator.
+  EnsureTwoPortCoupling();
+  if (two_port_coupling_)
   {
-    M_sheet_ = std::make_unique<SumOperator>(std::move(diag), *C_par);
+    M_sheet_ = std::make_unique<SumOperator>(std::move(diag), *two_port_coupling_);
   }
   else
   {

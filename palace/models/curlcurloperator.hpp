@@ -104,10 +104,13 @@ private:
   SuperconductorSheetOperator sc_sheet_op;
 
   // Two-sided (two-port) sheet cross-face coupling as a true-dof HypreParMatrix on the
-  // finest ND space, built lazily by GetTwoPortCoupling and summed into both the stiffness
-  // and the sheet-mass operator (so the operator, the flux RHS, and the penalty energy stay
-  // consistent). Null unless a two-sided film is present.
-  mutable std::unique_ptr<mfem::HypreParMatrix> two_port_coupling_;
+  // finest ND space, built lazily by EnsureTwoPortCoupling. two_port_coupling_ is the full
+  // C, summed into the sheet-mass operator (flux RHS and penalty energy).
+  // two_port_coupling_ess_ is a copy with the base essential true DOFs eliminated
+  // (DIAG_ZERO), summed into the Krylov operator K + C to match K's elimination. Both null
+  // unless a two-sided film is present.
+  std::unique_ptr<mfem::HypreParMatrix> two_port_coupling_, two_port_coupling_ess_;
+  void EnsureTwoPortCoupling();
 
   // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
   // London flux films. Populated at construction after surf_flux_op is set.
@@ -161,8 +164,10 @@ public:
   auto &GetSuperconductorOp() { return sc_sheet_op; }
   const auto &GetSuperconductorOp() const { return sc_sheet_op; }
 
-  // Lazily builds and returns the two-sided (two-port) sheet cross-face coupling matrix, or
-  // nullptr if no two-sided sheet is configured.
+  // Lazily builds and returns the two-sided (two-port) sheet cross-face coupling matrix for
+  // the Krylov operator K + C, with the base essential true DOFs eliminated to match K, or
+  // nullptr if no two-sided sheet is configured. Screened steps add shorted-port essential
+  // DOFs that this copy does not eliminate (REVIEW/WIP).
   mfem::HypreParMatrix *GetTwoPortCoupling();
 
   // Return the parallel finite element space objects.
