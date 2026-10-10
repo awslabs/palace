@@ -136,6 +136,92 @@ def census_loops(prefix, radius=RADIUS):
     return coupon, arcs, loops, moved, count
 
 
+def record_loops(record, radius=RADIUS):
+    """census_loops' path on an in-memory requirement record."""
+    coupon, _ = csg.cluster_coupon(record, radius, THICKNESS, 0.05)
+    frame, edges, facets = gsr.normalize_geometry(coupon, radius)
+    lower, upper = gsr.coupon_bounds(edges, radius, THICKNESS, 0.05, coupon["Geometry"].get("SupportBox"))
+    arcs = gsr.signature_arcs(coupon, radius)
+    loops = gsr.plan_view_boundary_loops(facets, radius, lower, upper,
+                                         gsr.classified_continuation_segments(coupon["Geometry"], frame, radius),
+                                         protected=gsr.protected_arc_vertex_keys(arcs, frame, radius))
+    gsr.reconcile_mask_with_boundary(facets, loops, radius)
+    count = gsr.tag_arc_boundary_loops(loops, coupon, frame, radius, arcs=arcs)
+    return coupon, arcs, loops, count
+
+
+class BuiltJointClassBoundaryTest(unittest.TestCase):
+    """round4/collarunion ArcJointTilt (decision 673): the tagged boundary carries the BUILT class
+    (test_cluster_signature_geometry.BuiltJointClassTest's rule) and assert_built_joint_classes
+    re-reads every arc / straight joint by the mesher's own arithmetic, failing closed by name on a
+    class drift or a built turn in neither built range."""
+
+    def arc_loop(self, turn, smooth, radius=2000.0):
+        # One tagged arc side (the circle of `radius` centred far to the left, travelling up through
+        # the vertex (0, 0) where its tangent is vertical) meeting a straight side that leaves the
+        # vertex upward tilted by `turn` from the tangent; the loop closed far away.
+        tag = {"ArcId": 1, "ArcCx": -radius, "ArcCy": 0.0, "ArcR": radius, "ArcSign": 1, "ArcChain": 0}
+        below = (-radius + radius * np.cos(0.01), -radius * np.sin(0.01))
+        straight_end = (np.sin(turn) * 5.0, np.cos(turn) * 5.0)
+        points = [list(below), [0.0, 0.0], list(straight_end), [-10.0, 5.0], [-10.0, -5.0]]
+        n = len(points)
+        return [{"Points": points, "Classes": ["Physical"] * n, "Arcs": [tag, None, None, None, None],
+                 "Joints": [None, (turn, smooth), None, None, None]}]
+
+    def test_consistent_boundaries_pass_and_drifts_are_refused_by_name(self):
+        gsr.assert_built_joint_classes(self.arc_loop(1.0e-6, True))          # a smooth joint of today
+        gsr.assert_built_joint_classes(self.arc_loop(2.4e-4, False))         # the a596 class rebuilt as a corner
+        gsr.assert_built_joint_classes(self.arc_loop(0.3, False))            # an ordinary kink
+        gsr.assert_built_joint_classes([{"Points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], "Classes": ["Physical"] * 3}])
+        with self.assertRaisesRegex(ValueError, r"JointClassDrift: plan-view boundary loop 1 vertex 2 .* turns by 2\.4\d*e-04 rad"):
+            gsr.assert_built_joint_classes(self.arc_loop(2.4e-4, True))      # tagged smooth, built as a corner
+        with self.assertRaisesRegex(ValueError, "JointClassDrift"):
+            gsr.assert_built_joint_classes(self.arc_loop(1.0e-6, False))     # tagged corner, built smooth
+        with self.assertRaisesRegex(ValueError, r"JointTurnGap: .* 7\.0\d*e-05 rad .* above ARC_SMOOTH_JOINT_TURN_BOUND 5e-05"):
+            gsr.assert_built_joint_classes(self.arc_loop(7.0e-5, True))
+        with self.assertRaisesRegex(ValueError, r"JointTurnGap: .* 1\.5\d*e-04 rad .* below ARC_CORNER_JOINT_TURN_FLOOR 0\.0002"):
+            gsr.assert_built_joint_classes(self.arc_loop(1.5e-4, False))
+
+    def test_a596f5a4c303_boundary_carries_the_two_reclassified_corners(self):
+        # T-AJT-2 at the boundary (the census-b record of the R4 stop): exactly the two chain-3 ends are
+        # tagged JointSmooth 0 with JointTurn = the built turn - the digits of the regenerated
+        # plan-view-boundary.csv rows 158 / 174 of the lane record - at the mesher's stop point
+        # (2.1099253, 13.3130663) and at (2.1132788, 6.3733638); the 16 other tagged joints are the
+        # signature's; the boundary passes assert_built_joint_classes (inside tag_arc_boundary_loops).
+        coupon, arcs, loops, _, _ = census_loops("a596f5a4c303")
+        joints = {(round(float(point[0]), 7), round(float(point[1]), 7)): joint
+                  for loop in loops for point, joint in zip(loop["Points"], loop["Joints"]) if joint is not None and joint[0] is not None}
+        self.assertEqual(len(joints), 22)                 # 18 arc / straight + 4 same-circle chain joints
+        self.assertEqual(joints[(2.1099253, 13.3130663)], (2.4248309280445966e-04, False))
+        self.assertEqual(joints[(2.1132788, 6.3733638)], (2.4257563143211536e-04, False))
+        # The 20 others keep the signature's numbers: 11 smooth (7 arc / straight <= 1.7e-6, 4 chain
+        # joints at 0.0) and 9 corners, the smallest 4.23e-4 (the signature's reading of arc 13).
+        others = [j for p, j in joints.items() if p not in ((2.1099253, 13.3130663), (2.1132788, 6.3733638))]
+        self.assertEqual(len(others), 20)
+        self.assertEqual(sum(1 for j in others if j[1]), 11)
+        self.assertTrue(all(j[0] <= 1.7e-6 for j in others if j[1]))
+        self.assertAlmostEqual(min(j[0] for j in others if not j[1]), 4.233249016295932e-04, delta=1.0e-15)
+        self.assertEqual(len([r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "JointReclassified"]), 2)
+
+    def test_a596_form_boundary_is_tagged_with_the_built_class(self):
+        # T-AJT-1 on the boundary: the chain's two outer joints carry JointSmooth 0 with JointTurn =
+        # the built turn (eps / L = 4.43e-4), every other joint record unchanged in class; the boundary
+        # passes assert_built_joint_classes (run inside tag_arc_boundary_loops); eps 1e-6 stays smooth.
+        from test_cluster_signature_geometry import tangent_bend_lead
+        coupon, arcs, loops, count = record_loops(tangent_bend_lead(8.86e-4))
+        self.assertEqual(count, 2)
+        joints = [j for loop in loops for j in loop["Joints"] if j is not None and j[0] is not None]
+        corners = sorted(j[0] for j in joints if not j[1])
+        self.assertEqual(len(corners), 2)
+        for turn in corners:
+            self.assertAlmostEqual(turn / (8.86e-4 / 2.0), 1.0, delta=0.01)
+        self.assertTrue(all(j[0] <= 1.0e-9 for j in joints if j[1]))
+        reclassified = [r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "JointReclassified"]
+        self.assertEqual(len(reclassified), 2)
+        _, _, loops, _ = record_loops(tangent_bend_lead(1.0e-6))
+        self.assertTrue(all(j[1] for loop in loops for j in loop["Joints"] if j is not None and j[0] is not None))
+
+
 class ProtectedArcVerticesTest(unittest.TestCase):
     """Round 3 classes (2) / (3), fix 2b = R1 (DESIGN-part-M 1.3, part G G.3.3 (i); decision 510):
     the near-collinear merge of plan_view_boundary_loops never pops a chord vertex or an end of

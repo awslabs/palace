@@ -4573,9 +4573,14 @@ function offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
             collapsed=collapsed, interior=interior, angle=run.angle, run=item.run)
 end
 
-# Where the shifted line (`point`, `direction`) meets the offset circle of `arc`:
-# the foot of the centre when they are tangent (the arc-fit tolerance), else the
-# intersection nearest `near`; nothing when the line misses the circle.
+# Where the shifted line (`point`, `direction`) meets the offset circle of `arc`, and
+# whether they are TANGENT within the arc-fit tolerance: `(foot, true)` - the foot of the
+# centre on the line - when tangent, `(crossing, false)` for the intersection nearest
+# `near`, `(nothing, false)` when the line misses the circle. A tangent crossing is
+# unresolvable (a miss of `slack` moves it by sqrt(2 r slack) along the line) and the foot
+# lies r x turn behind the shifted ends of a joint that turns: the caller decides between
+# the foot and the midpoint of the shifted ends (round4/collarunion, decisions 661 / 668:
+# the a596 needle kite).
 function line_circle_junction(point, direction, arc, near, tolerance)
     u = unit2d(direction)
     w = (arc.center[1] - point[1], arc.center[2] - point[2])
@@ -4583,40 +4588,65 @@ function line_circle_junction(point, direction, arc, near, tolerance)
     along = w[1] * u[1] + w[2] * u[2]
     foot = (point[1] + along * u[1], point[2] + along * u[2])
     slack = arc_fit_tolerance(arc.radius, tolerance)
-    abs(h) > arc.radius + slack && return nothing
-    arc.radius - abs(h) <= slack && return foot
+    abs(h) > arc.radius + slack && return nothing, false
+    arc.radius - abs(h) <= slack && return foot, true
     half = sqrt(arc.radius^2 - h^2)
     candidates = ((foot[1] + half * u[1], foot[2] + half * u[2]),
                   (foot[1] - half * u[1], foot[2] - half * u[2]))
-    return argmin(c -> hypot(c[1] - near[1], c[2] - near[2]), candidates)
+    return argmin(c -> hypot(c[1] - near[1], c[2] - near[2]), candidates), false
 end
 
-# The junction point of two consecutive non-collapsed items (nothing when their
-# offsets do not meet).
+# Guard margin of the tangent line-arc snap (decision 668): the two shifted ends of a
+# Physical line and an arc whose offsets line_circle_junction reads as tangent are at most
+# |distance| x theta_w apart, theta_w = acos(1 - slack / r) the turn at which the shifted
+# line's distance from the centre, r cos(turn), leaves the tangency slack - the verdict's
+# own window. The snap admits a gap up to this multiple of that bound (roundoff at the
+# window edge); a larger gap is a junction the verdict does not describe (a Continuation
+# line, shift 0: the ends are |distance| apart; an unshared vertex) and keeps the foot.
+# Not a tolerance.
+const SNAP_GUARD_MARGIN = 2.0
+
+# The junction point of two consecutive non-collapsed items (nothing when their offsets do
+# not meet) and whether it is a SNAPPED tangent joint: the midpoint of the two shifted
+# ends (two arcs; a Physical line and an arc whose offsets are tangent within the arc-fit
+# tolerance with the ends within SNAP_GUARD_MARGIN of the tangency window's gap). A
+# snapped joint is tangent for curved_offset_loop whatever its turn reads, so that no
+# miter kite is built on an unresolvable crossing (round4/collarunion, decisions 661 /
+# 668); a tangent line-arc joint the guard refuses keeps the foot of the centre on the
+# line, not snapped.
 function offset_junction(before, after, distance, tolerance)
     if before.kind == :line && after.kind == :line
         denominator = cross2d(before.direction, after.direction)
         abs(denominator) > tolerance * hypot(before.direction...) * hypot(after.direction...) ||
-            return nothing
+            return nothing, false
         offset = (after.shifted_start[1] - before.shifted_start[1],
                   after.shifted_start[2] - before.shifted_start[2])
         coordinate = cross2d(offset, after.direction) / denominator
         return (before.shifted_start[1] + coordinate * before.direction[1],
-                before.shifted_start[2] + coordinate * before.direction[2])
-    elseif before.kind == :line
-        return line_circle_junction(before.shifted_start, before.direction, after,
-                                    after.shifted_start, tolerance)
-    elseif after.kind == :line
-        return line_circle_junction(after.shifted_start, after.direction, before,
-                                    before.shifted_stop, tolerance)
+                before.shifted_start[2] + coordinate * before.direction[2]), false
     end
     gap = hypot(before.shifted_stop[1] - after.shifted_start[1],
                 before.shifted_stop[2] - after.shifted_start[2])
-    gap <= arc_fit_tolerance(max(before.radius, after.radius), tolerance) ||
-        error("Two circular arcs of the plan-view boundary meet at a kink (their offsets " *
-              "by $distance differ by $gap): only tangent arc-arc joints are supported")
+    if before.kind == :line || after.kind == :line
+        line, arc = before.kind == :line ? (before, after) : (after, before)
+        point, tangent = before.kind == :line ?
+                         line_circle_junction(before.shifted_start, before.direction, after,
+                                              after.shifted_start, tolerance) :
+                         line_circle_junction(after.shifted_start, after.direction, before,
+                                              before.shifted_stop, tolerance)
+        tangent || return point, false
+        slack = arc_fit_tolerance(arc.radius, tolerance)
+        window = acos(clamp(1.0 - slack / arc.radius, -1.0, 1.0))
+        snapped = line.shift != (0.0, 0.0) &&
+                  gap <= SNAP_GUARD_MARGIN * abs(distance) * window
+        snapped || return point, false
+    else
+        gap <= arc_fit_tolerance(max(before.radius, after.radius), tolerance) ||
+            error("Two circular arcs of the plan-view boundary meet at a kink (their offsets " *
+                  "by $distance differ by $gap): only tangent arc-arc joints are supported")
+    end
     return (0.5 * (before.shifted_stop[1] + after.shifted_start[1]),
-            0.5 * (before.shifted_stop[2] + after.shifted_start[2]))
+            0.5 * (before.shifted_stop[2] + after.shifted_start[2])), true
 end
 
 # Mesher design round 3 class (5), interim guard 5B (part M 2.1 / 2.2; 510 MINOR-8 (b)): a
@@ -4747,7 +4777,8 @@ end
 # one per pair of consecutive non-collapsed items: (before, after) item indices, `vertex`
 # (the loop vertex, or the two vertices of the collapsed arcs between them), `point`
 # (nothing when bridged or deferred), `tangent` (the items join within
-# JUNCTION_TANGENT_ANGLE), `convex` (the metal turns convexly there) and `deferred` (fix
+# JUNCTION_TANGENT_ANGLE, or at a snapped joint of offset_junction: decisions 661 / 668),
+# `convex` (the metal turns convexly there) and `deferred` (fix
 # 5A: a Continuation line and an arc whose offsets do not meet; the arc's extension to the
 # box exit is in `extensions[arc item] = (at_stop, metal, offset, exit)`, and the offset
 # polygon carries the extension's offset-circle vertices so that the propagated run spans
@@ -4826,7 +4857,7 @@ function curved_offset_loop(loop, distance, runs, tolerance; box=nothing)
         end
         collapsed_between = !isempty(skipped)
         vertices = collapsed_between ? [before.stop, after.start] : [before.stop]
-        point = offset_junction(before, after, distance, tolerance)
+        point, snapped = offset_junction(before, after, distance, tolerance)
         resolved = point !== nothing && any(
             hypot(point[1] - v[1], point[2] - v[2]) <= 8.0 * max(abs(distance), tolerance)
             for v in vertices)
@@ -4865,8 +4896,8 @@ function curved_offset_loop(loop, distance, runs, tolerance; box=nothing)
         turn = metal_side * atan(cross2d(before.tangent_stop, after.tangent_start),
                                  before.tangent_stop[1] * after.tangent_start[1] +
                                  before.tangent_stop[2] * after.tangent_start[2])
-        tangent = !collapsed_between && abs(turn) <= JUNCTION_TANGENT_ANGLE
-        convex = !collapsed_between && turn > JUNCTION_TANGENT_ANGLE
+        tangent = !collapsed_between && (abs(turn) <= JUNCTION_TANGENT_ANGLE || snapped)
+        convex = !collapsed_between && !tangent && turn > JUNCTION_TANGENT_ANGLE
         append!(offset, before.interior)
         interior_indices[k] = collect((length(offset) - length(before.interior) + 1):length(offset))
         if resolved
