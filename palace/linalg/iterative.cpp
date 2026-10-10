@@ -742,7 +742,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       if (this->initial_guess)
       {
         auto beta_rhs = linalg::Norml2(comm, b);
-        CheckDot(beta_rhs, "GMRES residual norm is not valid: beta_rhs = ");
+        CheckDot(beta_rhs, "FGMRES residual norm is not valid: beta_rhs = ");
         initial_res = beta_rhs;
       }
       else

@@ -425,30 +425,18 @@ string(REPLACE ";" "; " MFEM_OPTIONS_PRINT "${MFEM_OPTIONS}")
 message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 
 # Download the MFEM patches used by the Spack build.
+include(PatchHelpers)
 set(MFEM_PATCH_DIR "${CMAKE_BINARY_DIR}/extern/mfem-patches")
-file(MAKE_DIRECTORY "${MFEM_PATCH_DIR}")
 set(MFEM_PATCH_FILES)
 
-function(download_mfem_patch FILENAME URL SHA256)
-  set(PATCH_FILE "${MFEM_PATCH_DIR}/${FILENAME}")
-  file(DOWNLOAD
-    "${URL}"
-    "${PATCH_FILE}"
-    EXPECTED_HASH "SHA256=${SHA256}"
-    TLS_VERIFY ON
-  )
-  list(APPEND MFEM_PATCH_FILES "${PATCH_FILE}")
-  set(MFEM_PATCH_FILES "${MFEM_PATCH_FILES}" PARENT_SCOPE)
-endfunction()
-
 # https://github.com/mfem/mfem/pull/3847
-download_mfem_patch(
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   mfem_pr3847.diff
   "https://github.com/mfem/mfem/compare/2d574015756711029556c14d096ca52c15d5b663...50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff"
   e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4
 )
 # https://github.com/mfem/mfem/pull/5353
-download_mfem_patch(
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   mfem_pr5353.diff
   "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5353.diff"
   c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f
@@ -456,17 +444,24 @@ download_mfem_patch(
 # https://github.com/mfem/mfem/pull/5494
 # NCMesh partition fixes; not yet in MFEM 4.10. Applied directly from the
 # upstream PR range, which uses FlipIndexSign (present as of 4.10).
-download_mfem_patch(
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   mfem_pr5494.diff
   "https://github.com/mfem/mfem/compare/10b0b596dbc26dca384b9f25f23026b1a6403592...399d72c2b7607e25d196dc19fd70b8840eaf1cc8.diff"
   771d758ce461c7353d2b33ff6b5c9fd5404cae77a0340c1a67c3935ce606fd4c
 )
 # https://github.com/mfem/mfem/pull/5502
 # NCMesh: fix 8-bit reference-counter overflow at high-valence vertices.
-download_mfem_patch(
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   mfem_pr5502.diff
   "https://github.com/mfem/mfem/commit/3091ba40b238c4008b67216314bb26da6738b833.diff"
   52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533
+)
+# https://github.com/mfem/mfem/pull/5531
+# Essential DOFs on interior boundaries of 2D nonconforming meshes refined on one side.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5531.diff
+  "https://github.com/mfem/mfem/commit/641e56439e63a1774f43bc2ba904797694a047ad.diff"
+  2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe
 )
 
 include(ExternalProject)

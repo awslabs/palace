@@ -468,7 +468,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                   num_conv, iodata.problem.verbose,
                                                   iodata.solver.eigenmode.refine_nonlinear);
     qn->SetTol(iodata.solver.eigenmode.tol);
-    qn->SetMaxIter(iodata.solver.eigenmode.max_it);
+    qn->SetMaxIter(iodata.solver.eigenmode.nonlinear_max_it);
     if (C)
     {
       qn->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);

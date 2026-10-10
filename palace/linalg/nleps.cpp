@@ -287,11 +287,7 @@ void QuasiNewtonSolver::SetInitialGuess()
   std::iota(indices.begin(), indices.end(), 0);
   if (nev_linear > nev)
   {
-    double min_error = res.get()[0];
-    for (int i = 0; i < nev_linear; i++)
-    {
-      min_error = std::min(min_error, res.get()[i]);
-    }
+    const double min_error = *std::min_element(res.get(), res.get() + nev_linear);
     const double threshold = 100.0 * min_error;
     // One partition key keeps a strict weak ordering when residuals equal the threshold.
     std::ranges::sort(indices,
@@ -758,6 +754,16 @@ int QuasiNewtonSolver::Solve()
     }
   }
   nev = k;  // in case some guesses did not converge
+  if (nev == 0)
+  {
+    // No eigenpair converged: there is no invariant pair to extract eigenpairs from (and
+    // the Schur decomposition does not support an empty matrix).
+    eigenvalues.clear();
+    eigenvectors.clear();
+    perm = std::make_unique<int[]>(0);
+    RescaleEigenvectors(0);
+    return 0;
+  }
 
   // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;

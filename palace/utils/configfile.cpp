@@ -1367,10 +1367,13 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
+  nonlinear_max_it = eigenmode.value("NonlinearMaxIts", nonlinear_max_it);
 
   // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
   // downstream sees -1. max_it is a single large cap because it only bounds iteration
-  // count, with no buffers scaling with it.
+  // count, with no buffers scaling with it. It does not apply to the quasi-Newton
+  // iterations (nonlinear_max_it), for which it would let a stagnating Newton iteration
+  // run indefinitely.
   if (max_it <= 0)
   {
     max_it = 1'000'000;

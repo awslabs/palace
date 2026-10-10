@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-2-0",
+  "$id": "urn:palace:schema:2-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2413,7 +2413,7 @@
         },
         "MaxIts": {
           "type": "integer",
-          "description": "Maximum number of iterations for the iterative eigenvalue solver. If omitted, Palace uses `1,000,000` iterations.",
+          "description": "Maximum number of iterations for the iterative eigenvalue solver. For nonlinear problems, applies to the linear or quadratic eigenvalue solver computing the initial guesses of the `\"Hybrid\"` solver (see `\"NonlinearMaxIts\"` for the quasi-Newton iterations), or to the `\"SLP\"` solver. If omitted, Palace uses `1,000,000` iterations.",
           "exclusiveMinimum": 0
         },
         "MaxSize": {
@@ -2508,6 +2508,13 @@
           "description": "Maximum number of restarts for the eigensolver.",
           "minimum": 0,
           "default": 2,
+          "x-palace-advanced": true
+        },
+        "NonlinearMaxIts": {
+          "type": "integer",
+          "description": "Maximum number of quasi-Newton iterations of each attempt to converge an eigenpair in the `\"Hybrid\"` nonlinear eigenvalue solver, before restarting.",
+          "exclusiveMinimum": 0,
+          "default": 100,
           "x-palace-advanced": true
         }
       }
