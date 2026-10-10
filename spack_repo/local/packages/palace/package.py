@@ -96,9 +96,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cxx", type="build")
     depends_on("cmake@3.18.1:", type="build", when="@0.11")
     depends_on("cmake@3.21:", type="build", when="@0.12:0.14")
-    depends_on("cmake@3.24:", type="build", when="@0.15:")
-    # C++20 device code: CMake knows nvcc's -std=c++20 from 3.25.2, and nvcc has it from 12.0
-    depends_on("cmake@3.25.2:", type="build", when="@0.19: +cuda")
+    depends_on("cmake@3.24:", type="build", when="@0.15:0.18")
+    depends_on("cmake@3.27:", type="build", when="@0.19:")
     depends_on("cuda@12:", when="@0.19: +cuda")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
@@ -319,6 +318,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
                 when="@4.10:",
             ),
+            # https://github.com/mfem/mfem/pull/5531 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "641e56439e63a1774f43bc2ba904797694a047ad.diff",
+                sha256="2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe",
+                when="@4.10:",
+            ),
         ],
     )
 
@@ -355,15 +362,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm@2: blas=0")
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
-        # NOTE: libxsmm builds on MacOS have linker issues
-        # https://github.com/libxsmm/libxsmm/issues/883
-        depends_on("libxsmm+shared")
+        depends_on("libxsmm+shared", when="+shared")
+        depends_on("libxsmm~shared", when="~shared")
 
     with when("@0.14:"):
-        # The builtin recipe has no libCEED release newer than 0.12.0, so an open range
-        # resolves to an unpinned develop. Pin per Palace release. The 0.14-0.17 pins match
-        # cmake/ExternalGitTags.cmake; 0.18 uses the libCEED main merge of the same change
-        # (the superbuild commit predates libCEED's libxsmm 2.0 requirement).
+        # libCEED had no release between 0.12.0 and 1.0.0, so 0.14-0.17 pin develop commits
+        # matching cmake/ExternalGitTags.cmake.
         depends_on(
             "libceed@develop commit=204f3be0a8a44f14c6b90cf1319bc5c5bd195020", when="@0.14"
         )
@@ -371,9 +375,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8",
             when="@0.15:0.17",
         )
-        depends_on(
-            "libceed@develop commit=d6367d2d6a0cca608a0b8e21d79b83c50a49a19a", when="@0.18:"
-        )
+        depends_on("libceed@1", when="@0.18:")
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
@@ -505,6 +507,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if commit == self.versions.get(self.spec.version, {}).get("commit"):
                 commit = f"v{self.spec.version}"
             args.append(self.define("PALACE_GIT_COMMIT_ID", commit))
+
+        # Lets `palace --version` point at the full spec (`spack find /<hash>`)
+        args.append(self.define("PALACE_BUILD_ID", f"Spack {self.spec.dag_hash()}"))
 
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))

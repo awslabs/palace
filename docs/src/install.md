@@ -124,7 +124,7 @@ spec (e.g., compiling with other solvers or with GPU support).
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.24 or later (3.25.2 or later for CUDA)
+  - [CMake](https://cmake.org/download) version 3.27 or later
   - C++20 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
@@ -216,6 +216,8 @@ Additional build options are (with default values in brackets):
   - `PALACE_GIT_COMMIT_ID []` :  Version string to embed (reported as `GitTag` in
     `palace.json`), for builds from a source tree without Git metadata. When empty, the
     `PALACE_GIT_COMMIT_ID` environment variable is used if set, otherwise `git describe`
+  - `PALACE_BUILD_ID []` :  Build identifier reported as `Build:` in `palace --version`. The
+    Spack package sets it to `Spack <DAG hash>`
 
 The build step is invoked by running (for example with 4 `make` threads)
 
@@ -234,26 +236,27 @@ which installs the binary executable in `${CMAKE_INSTALL_PREFIX}/bin/`.
 ### Math libraries
 
 During the configure step, the build system will try to detect system installations of BLAS
-and LAPACK libraries depending on the system architecture according to the following
-procedure:
+and LAPACK libraries from the following environment variables, in order (each can be given
+as `<NAME>_DIR`, `<NAME>ROOT`, or `<NAME>_ROOT`):
 
-  - For `x86_64` systems:
+  - `ARMPL`: [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries),
+    intended for `aarch64`/`arm64` systems.
+  - `AOCL`: [AMD Optimizing CPU Libraries (AOCL)](https://developer.amd.com/amd-aocl)
+    installation of BLIS and libFLAME, intended for `x86_64` systems.
+  - `MKL`: [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html),
+    intended for `x86_64` systems.
+  - `OPENBLAS`: [OpenBLAS](https://www.openblas.net/), which is permissively licensed and
+    available from most package managers.
 
-      + If the `MKLROOT` environment variable is set, looks for an
-        [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
-        installation.
-      + If the `AOCL_DIR` or `AOCLROOT` environment variables are set, looks for an
-        [AMD Optimizing CPU Libraries (AOCL)](https://developer.amd.com/amd-aocl)
-        installation of BLIS and libFLAME.
-      + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/)
-        which is permissively licensed and available from most package managers.
+If none of these are set, the libraries are located by CMake.
 
-  - For `aarch64`/`arm64` systems:
+This detection can be bypassed by passing a vendor to CMake with `-DBLA_VENDOR=<vendor>`
+(see the [CMake documentation](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors)
+for the supported values).
 
-      + If the `ARMPL_DIR` environment variable is set, looks for an
-        [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
-        installation.
-      + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/).
+On macOS, if none of these environment variables are set, CMake may pick Apple's Accelerate
+framework instead of OpenBLAS; set `OPENBLAS_DIR` or pass `-DBLA_VENDOR=OpenBLAS` to use
+OpenBLAS.
 
 If the installation path of OpenBLAS is non-standard or is not found by default, it can be
 set using the `OPENBLAS_DIR` or `OPENBLASROOT` environment variables, or added to

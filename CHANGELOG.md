@@ -52,6 +52,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
     must be updated. SchemaVer 2-0-0.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Solver.Eigenmode.NonlinearMaxIts` (default 100), the maximum number of
+    quasi-Newton iterations of each attempt to converge an eigenpair in the hybrid nonlinear
+    eigenvalue solver. `Solver.Eigenmode.MaxIts` no longer limits these iterations, and
+    only applies to the linear or quadratic eigenvalue solver computing the initial guesses
+    of the hybrid solver. SchemaVer 2-2-0
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
 
 #### Bug Fixes
 
@@ -67,6 +73,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
+    <<<<<<< HEAD
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
+    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
+    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
+    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
   - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
     metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
     the Spack package sets it from the resolved commit (`v<version>` for releases, from the
@@ -84,6 +98,46 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed the sign of the London penetration depth term for the out-of-plane field component
+    in `"BoundaryMode"` simulations and wave ports.
+    [PR 1025](https://github.com/awslabs/palace/pull/1025).
+  - Fixed issues affecting non-cracked 2D nonconformal meshes, and the wave ports of
+    non-cracked 3D nonconformal meshes, where the edges on the unrefined side were not
+    constrained.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed boundary mode simulations extracting their cross-section from a nonconformal 3D
+    mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
+    conditions of the cross-section.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed integer range expansion in configuration files rewriting brackets inside strings,
+    so a path such as `"mesh[1-3].msh"` is no longer read as `"mesh[1,2,3].msh"`, in both
+    Palace and `scripts/validate-config`. [PR 970](https://github.com/awslabs/palace/pull/970).
+  - Fixed the electric surface flux (`surface-F.csv`) and boundary surface charge (`Q_s`)
+    of complex fields in lossy dielectrics, which used the real permittivity only; they now
+    use the complex permittivity `ε(1 − i tanδ)` of the material model, consistent with the
+    solver. Also corrected the documented `Q_s` units to C/m².
+    [PR 953](https://github.com/awslabs/palace/pull/953).
+  - Fixed a heap overflow in 2D surface flux postprocessing with an explicit `"Center"`.
+    [PR 953](https://github.com/awslabs/palace/pull/953).
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
+    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
+    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
+    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
+    quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
+    error since fewer eigenmodes than requested were found
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
+  - Fixed numeric wave-port and boundary-mode mode ordering on lossy cross-sections (e.g. with
+    absorbing or finite-conductivity boundaries) that could select a strongly evanescent
+    mode instead of the intended propagating mode. Exact and reduced (adaptive sweep) mode
+    solves now rank modes by the complex distance of the propagation constant from the target.
+    [PR 1019](https://github.com/awslabs/palace/pull/1019).
+  - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux error
+    estimators on processes without elements of a submesh.
+    [PR 1022](https://github.com/awslabs/palace/pull/1022).
 
 #### Performance Improvements
 
@@ -106,7 +160,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Build system
 
   - *Palace* now requires a C++20 compiler, including for CUDA and HIP device code, so
-    CUDA builds need CUDA 12.0 and CMake 3.25.2 or later. The Spack recipe keeps
+    CUDA builds need CUDA 12.0. The Spack recipe keeps
     `cxxstd=17` available for 0.16 to 0.18.
     [PR 654](https://github.com/awslabs/palace/pull/654).
   - GPU Spack builds from 0.19 no longer cap Umpire at 2025.12; MFEM is built as C++20 to
@@ -116,6 +170,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
     [PR 918](https://github.com/awslabs/palace/pull/918).
+  - Bumped the MUMPS dependency of the superbuild to 5.9.1. The superbuild now uses the
+    ParMETIS and METIS it builds instead of letting MUMPS download its own.
+    [PR 1026](https://github.com/awslabs/palace/pull/1026).
+  - A `BLA_VENDOR` passed to CMake now takes precedence over the BLAS/LAPACK vendor
+    detected from the environment, and AOCL is located through CMake's `FindBLAS` and
+    `FindLAPACK`. *Palace* now requires CMake 3.27 or later.
+    [PR 1026](https://github.com/awslabs/palace/pull/1026).
+  - `palace --version` now reports the version of every linked dependency, and the build
+    identifier set with the `PALACE_BUILD_ID` CMake option (the Spack package sets it to
+    its DAG hash).
+    [PR 1028](https://github.com/awslabs/palace/pull/1028).
+  - The superbuild dependencies are now pinned to release tags instead of commit SHAs and
+    were bumped to their latest releases. The Spack package now uses a libCEED release
+    instead of a development commit.
+    [PR 1028](https://github.com/awslabs/palace/pull/1028).
 
 ## [0.18.1] - 2026-09-21
 

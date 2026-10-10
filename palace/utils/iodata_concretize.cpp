@@ -123,7 +123,8 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
                          {"TargetUpper", eigenmode.target_upper},
                          {"PreconditionerLag", eigenmode.preconditioner_lag},
                          {"PreconditionerLagTol", eigenmode.preconditioner_lag_tol},
-                         {"MaxRestart", eigenmode.max_restart}});
+                         {"MaxRestart", eigenmode.max_restart},
+                         {"NonlinearMaxIts", eigenmode.nonlinear_max_it}});
 }
 
 void ConcretizeTransient(const config::TransientSolverData &transient, json &j_transient)

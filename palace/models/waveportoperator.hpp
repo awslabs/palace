@@ -77,6 +77,13 @@ public:
   std::complex<double> modal_reaction = 0.0;
   std::complex<double> modal_reaction_scalar = 0.0;
 
+  // Finite element spaces on the port submesh, and the Dirichlet true DoFs of the port mode
+  // problem (those of the ND space, then those of the H1 space offset by the number of ND
+  // true DoFs).
+  const FiniteElementSpace &GetNDSpace() const { return *port_nd_fespace; }
+  const FiniteElementSpace &GetH1Space() const { return *port_h1_fespace; }
+  const mfem::Array<int> &GetDbcTDofList() const { return port_dbc_tdof_list; }
+
 private:
   // Raw-gauge reference reactions of the frozen e0 at ω0, cached for
   // ComputeComplexReactions to transport reactions into the ω0 gauge. Recomputed when

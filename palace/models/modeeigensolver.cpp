@@ -323,18 +323,22 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   // Build a permutation sorted by proximity to the shift target so that mode ordering is
   // consistent across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently).
   // The shift sigma = -kn_target^2, so kn_target = sqrt(-sigma). Sorting by ascending
-  // |Re{kn} - kn_target| puts the mode closest to the target first.
+  // complex distance |kn - kn_target| (mode_assembly::TargetDistance, shared with the
+  // reduced wave-port solve) puts the mode closest to the target first. Ranking on
+  // |Re{kn} - kn_target| alone would let a strongly evanescent mode of a lossy
+  // cross-section outrank the propagating mode. The stable sort keeps the backend order for
+  // exact ties.
   const double kn_target = std::sqrt(-sigma);
+  std::vector<double> distance(num_conv);
+  for (int i = 0; i < num_conv; i++)
+  {
+    distance[i] = mode_assembly::TargetDistance(
+        std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(i)), kn_target);
+  }
   mode_perm.resize(num_conv);
   std::iota(mode_perm.begin(), mode_perm.end(), 0);
-  std::ranges::sort(mode_perm,
-                    [this, sigma, kn_target](int a, int b)
-                    {
-                      auto kn_a = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(a));
-                      auto kn_b = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(b));
-                      return std::abs(kn_a.real() - kn_target) <
-                             std::abs(kn_b.real() - kn_target);
-                    });
+  std::ranges::stable_sort(mode_perm,
+                           [&distance](int a, int b) { return distance[a] < distance[b]; });
 
   if (real_frequency && num_conv > 0)
   {
@@ -817,7 +821,7 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   if (mat_op.HasLondonDepth())
   {
     poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),
-                                  mat_op.GetInvLondonDepthScalar());
+                                  mat_op.GetInvLondonDepthScalar(), -1.0);
   }
 
   // Boundary coefficients (real part only).
