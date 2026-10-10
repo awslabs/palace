@@ -137,9 +137,23 @@ struct EdgeExclusionRecord
   std::size_t excluded_perimeter_count = 0;
   double excluded_perimeter_length = 0.0;
   double straddling_perimeter_length = 0.0;
+  std::size_t removed_runs = 0;
+  std::size_t listed_chains = 0;
   double tolerance = 0.0;
   double max_sagitta = 0.0;
 };
+
+// The end allowance of decision 667 (1) over a classified perimeter (`excluded` parallels
+// `segments`): straddling_perimeter_length = the length of the kept perimeter segments that
+// contain a listed chain's end point within the tolerance (at most one kept segment per
+// listed end, each kept segment credited once), removed_runs = the maximal runs of removed
+// perimeter segments chained by shared vertices, listed_chains = the chains of listed
+// segments joined end to end within the tolerance. Public so the unit tests read it on
+// exclusion patterns the coincidence test cannot produce.
+void RecordEdgeExclusionEnds(const std::vector<mesh::BoundaryEdgeSegment> &segments,
+                             const std::vector<bool> &excluded,
+                             const std::vector<std::array<double, 6>> &exclude_segments,
+                             double tolerance, EdgeExclusionRecord &record);
 
 std::shared_ptr<const EdgeDistanceTree> BuildEdgeDistanceTree(
     const mfem::ParMesh &mesh, const std::vector<int> &edge_attributes,

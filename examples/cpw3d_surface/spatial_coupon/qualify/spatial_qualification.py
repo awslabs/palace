@@ -75,9 +75,10 @@ coupon's foreign edges (EdgeExcludeSegments, rule B5) must actually leave its wi
 perimeter - Palace records ExcludedPerimeterLength / ExcludeSegmentsLength per interface and
 the ratio must read within [0.99, 1.01] on every interface of every supplied run of BOTH twins
 (dense runs and basis-matrix runs), the floor also met by the END-ALLOWANCE coverage
-(ExcludedPerimeterLength + StraddlingPerimeterLength) / ExcludeSegmentsLength (decision 665:
-the kept perimeter segments adjoining the removed ones, at most one per listed end, since a
-listed end inside a perimeter segment keeps it whole); a missing record fails closed. (F)(a)
+(ExcludedPerimeterLength + StraddlingPerimeterLength) / ExcludeSegmentsLength (decision 665 /
+667 (1): the kept perimeter segments CONTAINING the listed chains' end points, at most one
+kept segment per listed end, since a listed end inside a perimeter segment keeps it whole; a
+hole of kept perimeter inside a listed piece earns nothing); a missing record fails closed. (F)(a)
 cannot see this
 defect (both twins share the perimeter), only the (F)(b) own-box ratio did (32b0, decision
 655 (2) (a)).
@@ -270,9 +271,11 @@ EXCLUSION_COVERAGE_RULE = (
     "StraddlingPerimeterLength) / ExcludeSegmentsLength (decision 665: a listed end falling inside a perimeter segment "
     "keeps that segment whole, an ABSOLUTE deficit of up to one segment per listed end - 25-45 nm on the v3-e census, "
     "0.9929 on 7d88 - that a correct exclusion of short pieces would otherwise fail; StraddlingPerimeterLength is the "
-    "KEPT perimeter length sharing a vertex with a removed segment, at most one segment per listed end when a piece is "
-    "removed in one run; the upper bound stays on the raw Coverage; the 32b0 defect still fails: its fragmented arc "
-    "exclusion reads ~0.84 with the allowance); fail closed: a run whose config lists EdgeExcludeSegments without the "
+    "length of the KEPT perimeter segments that CONTAIN a listed chain's end point within the tolerance, at most one "
+    "kept segment PER LISTED END (decision 667 (1): a hole of kept perimeter inside a listed piece earns nothing; the "
+    "record's RemovedRuns / ListedChains are information, a correct exclusion reads runs = chains); the upper bound stays "
+    "on the raw Coverage; the 32b0 defect still fails: its fragmented arc exclusion (21 runs on 1 chain) reads 0.7764 "
+    "with the allowance); fail closed: a run whose config lists EdgeExcludeSegments without the "
     "record (a binary before decision 657) or with an interface missing from it is Failed, a record without "
     "StraddlingPerimeterLength (a binary before decision 665) is read on the raw Coverage alone; a coupon without "
     "EdgeExcludeSegments has nothing to cover and passes as NotApplicable")
@@ -282,8 +285,9 @@ def exclusion_coverage_run(run_name, config, postpro):
     """The EXCLUSION-COVERAGE reading of one coupon run (EXCLUSION_COVERAGE_RULE): the interfaces
     of `config` listing EdgeExcludeSegments against the palace.json record under `postpro`.
     {Run, Required, Passed, Reason, Interfaces: {index: {Coverage, EndAllowanceCoverage,
-    ExcludeSegmentsLength, ExcludedPerimeterLength, StraddlingPerimeterLength, MaxSagitta,
-    Passed}}, MinCoverage, MaxCoverage, MinEndAllowanceCoverage}; an interface passes iff
+    ExcludeSegmentsLength, ExcludedPerimeterLength, StraddlingPerimeterLength, RemovedRuns,
+    ListedChains, MaxSagitta, Passed}}, MinCoverage, MaxCoverage, MinEndAllowanceCoverage};
+    RemovedRuns / ListedChains are information (decision 667 (1)); an interface passes iff
     Coverage <= EXCLUSION_COVERAGE_MAX and EXCLUSION_COVERAGE_MIN <= max(Coverage,
     EndAllowanceCoverage) (decision 665)."""
     dielectrics = config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", [])
@@ -322,6 +326,7 @@ def exclusion_coverage_run(run_name, config, postpro):
             "ExcludeSegmentsLength": entry.get("ExcludeSegmentsLength"),
             "ExcludedPerimeterLength": entry.get("ExcludedPerimeterLength"),
             "StraddlingPerimeterLength": entry.get("StraddlingPerimeterLength"),
+            "RemovedRuns": entry.get("RemovedRuns"), "ListedChains": entry.get("ListedChains"),
             "ExcludeSegmentsCount": entry.get("ExcludeSegmentsCount"),
             "ExcludedPerimeterCount": entry.get("ExcludedPerimeterCount"),
             "Tolerance": entry.get("Tolerance"), "MaxSagitta": entry.get("MaxSagitta")}
@@ -736,8 +741,9 @@ RULE = ("decision 282 (F) as restated by decision 299: closure |E_thin,p4 + dE_m
         "identity <= 1e-6; the resolution-aware conductor-consistency gate (decision 277 / 299: Count 0, MaxRatio <= 1e-4 "
         "on every supplied device solve, at the production orders on the registration mesh); the EXCLUSION-COVERAGE gate "
         "(decision 657 (b): ExcludedPerimeterLength / ExcludeSegmentsLength in [0.99, 1.01] on every interface of every "
-        "supplied run of both twins, the floor also met by the end-allowance coverage with the kept segments straddling "
-        "the listed ends, decision 665; fail closed on a missing record); (b) the reference box "
+        "supplied run of both twins, the floor also met by the end-allowance coverage with the kept segments containing "
+        "the listed chains' ends, at most one per listed end, decisions 665 / 667 (1); fail closed on a missing record); "
+        "(b) the reference box "
         "integral within the decision-218 marker lifts Qualified to WindowValidated")
 
 

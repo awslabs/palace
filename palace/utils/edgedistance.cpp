@@ -353,8 +353,8 @@ double SegmentLength(const mesh::BoundaryEdgeSegment &segment)
 }
 
 // The exclusion list's record before the test (the listed segments, their total length,
-// the tolerance, the largest sagitta) and the perimeter's count / length before the test;
-// the removed count / length are added by the callers.
+// the tolerance, the largest sagitta); the callers complete it with the perimeter's count /
+// length, the removed count / length (the coincidence test) and RecordEdgeExclusionEnds.
 EdgeExclusionRecord
 BeginEdgeExclusionRecord(const std::vector<mesh::BoundaryEdgeSegment> &exclusion_segments,
                          const std::vector<double> &sagittas, double tolerance)
@@ -371,32 +371,134 @@ BeginEdgeExclusionRecord(const std::vector<mesh::BoundaryEdgeSegment> &exclusion
   return record;
 }
 
-// The kept perimeter length sharing a vertex with an excluded perimeter segment (decision
-// 665's end allowance): the segments straddling the ends of the excluded runs. Vertices are
+double PointSegmentDistanceSquared(const std::array<double, 3> &point,
+                                   const mesh::BoundaryEdgeSegment &segment)
+{
+  double direction[3], offset[3];
+  double length_squared = 0.0;
+  double projection = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    direction[d] = segment.p1[d] - segment.p0[d];
+    offset[d] = point[d] - segment.p0[d];
+    length_squared += direction[d] * direction[d];
+    projection += offset[d] * direction[d];
+  }
+  const double t =
+      (length_squared > 0.0) ? std::clamp(projection / length_squared, 0.0, 1.0) : 0.0;
+  double distance_squared = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    const double delta = offset[d] - t * direction[d];
+    distance_squared += delta * delta;
+  }
+  return distance_squared;
+}
+
+// The number of connected components of a graph on `count` nodes given its edges.
+std::size_t CountComponents(std::size_t count,
+                            const std::vector<std::pair<std::size_t, std::size_t>> &edges)
+{
+  std::vector<std::size_t> parent(count);
+  std::iota(parent.begin(), parent.end(), 0);
+  auto Find = [&](std::size_t a)
+  {
+    while (parent[a] != a)
+    {
+      parent[a] = parent[parent[a]];
+      a = parent[a];
+    }
+    return a;
+  };
+  std::size_t components = count;
+  for (const auto &[a, b] : edges)
+  {
+    const std::size_t ra = Find(a), rb = Find(b);
+    if (ra != rb)
+    {
+      parent[ra] = rb;
+      components--;
+    }
+  }
+  return components;
+}
+
+// The listed segments' END points (decision 667 (1)): the endpoints no other listed
+// segment's endpoint meets within the tolerance; also the number of listed chains (the
+// listed segments joined end to end within the tolerance).
+std::vector<std::array<double, 3>>
+ListedChainEnds(const std::vector<mesh::BoundaryEdgeSegment> &exclusion_segments,
+                double tolerance, std::size_t &listed_chains)
+{
+  std::vector<std::array<double, 3>> endpoints;
+  endpoints.reserve(2 * exclusion_segments.size());
+  for (const auto &segment : exclusion_segments)
+  {
+    endpoints.push_back(segment.p0);
+    endpoints.push_back(segment.p1);
+  }
+  const double tolerance_squared = tolerance * tolerance;
+  auto Meets = [&](std::size_t i, std::size_t j)
+  {
+    double distance_squared = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      const double delta = endpoints[i][d] - endpoints[j][d];
+      distance_squared += delta * delta;
+    }
+    return distance_squared <= tolerance_squared;
+  };
+  std::vector<bool> joined(endpoints.size(), false);
+  std::vector<std::pair<std::size_t, std::size_t>> joints;
+  for (std::size_t i = 0; i < endpoints.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < endpoints.size(); j++)
+    {
+      if (i / 2 != j / 2 && Meets(i, j))
+      {
+        joined[i] = joined[j] = true;
+        joints.emplace_back(i / 2, j / 2);
+      }
+    }
+  }
+  listed_chains = CountComponents(exclusion_segments.size(), joints);
+  std::vector<std::array<double, 3>> ends;
+  for (std::size_t i = 0; i < endpoints.size(); i++)
+  {
+    if (!joined[i])
+    {
+      ends.push_back(endpoints[i]);
+    }
+  }
+  return ends;
+}
+
+// The maximal runs of removed perimeter segments chained by shared vertices. Vertices are
 // compared exactly, as the perimeter's coordinates come from the mesh vertices
 // (GetVertexCoordinates) and two segments at one vertex carry identical copies.
-double StraddlingPerimeterLength(const std::vector<mesh::BoundaryEdgeSegment> &segments,
-                                 const std::vector<bool> &excluded)
+std::size_t CountRemovedRuns(const std::vector<mesh::BoundaryEdgeSegment> &segments,
+                             const std::vector<bool> &excluded)
 {
-  std::set<std::array<double, 3>> excluded_vertices;
+  std::map<std::array<double, 3>, std::size_t> first_at_vertex;
+  std::vector<std::pair<std::size_t, std::size_t>> shared;
+  std::size_t removed = 0;
   for (std::size_t i = 0; i < segments.size(); i++)
   {
-    if (excluded[i])
+    if (!excluded[i])
     {
-      excluded_vertices.insert(segments[i].p0);
-      excluded_vertices.insert(segments[i].p1);
+      continue;
     }
-  }
-  double length = 0.0;
-  for (std::size_t i = 0; i < segments.size(); i++)
-  {
-    if (!excluded[i] && (excluded_vertices.count(segments[i].p0) ||
-                         excluded_vertices.count(segments[i].p1)))
+    for (const auto &vertex : {segments[i].p0, segments[i].p1})
     {
-      length += SegmentLength(segments[i]);
+      auto [it, inserted] = first_at_vertex.emplace(vertex, removed);
+      if (!inserted)
+      {
+        shared.emplace_back(it->second, removed);
+      }
     }
+    removed++;
   }
-  return length;
+  return CountComponents(removed, shared);
 }
 
 struct ElementBounds
@@ -479,6 +581,51 @@ ExclusionSegments(const std::vector<std::array<double, 6>> &exclude_segments)
 
 }  // namespace
 
+void RecordEdgeExclusionEnds(const std::vector<mesh::BoundaryEdgeSegment> &segments,
+                             const std::vector<bool> &excluded,
+                             const std::vector<std::array<double, 6>> &exclude_segments,
+                             double tolerance, EdgeExclusionRecord &record)
+{
+  MFEM_VERIFY(excluded.size() == segments.size(),
+              "The exclusion flags must parallel the perimeter segments!");
+  const auto exclusion_segments = ExclusionSegments(exclude_segments);
+  const auto ends = ListedChainEnds(exclusion_segments, tolerance, record.listed_chains);
+  record.removed_runs = CountRemovedRuns(segments, excluded);
+  // Decision 667 (1): per listed end, the ONE kept perimeter segment containing it (the
+  // nearest within the tolerance; a tie keeps the first in perimeter order); a kept segment
+  // containing two ends is credited once.
+  const double tolerance_squared = tolerance * tolerance;
+  std::set<std::size_t> straddling;
+  for (const auto &end : ends)
+  {
+    std::size_t nearest = segments.size();
+    double nearest_squared = 0.0;
+    for (std::size_t i = 0; i < segments.size(); i++)
+    {
+      if (excluded[i])
+      {
+        continue;
+      }
+      const double distance_squared = PointSegmentDistanceSquared(end, segments[i]);
+      if (distance_squared <= tolerance_squared &&
+          (nearest == segments.size() || distance_squared < nearest_squared))
+      {
+        nearest = i;
+        nearest_squared = distance_squared;
+      }
+    }
+    if (nearest < segments.size())
+    {
+      straddling.insert(nearest);
+    }
+  }
+  record.straddling_perimeter_length = 0.0;
+  for (const std::size_t i : straddling)
+  {
+    record.straddling_perimeter_length += SegmentLength(segments[i]);
+  }
+}
+
 void ExcludeCoincidentEdgeSegments(
     const std::vector<std::array<double, 6>> &exclude_segments,
     const std::vector<double> &sagittas, double tolerance, int space_dimension,
@@ -513,8 +660,8 @@ void ExcludeCoincidentEdgeSegments(
       local_record.excluded_perimeter_length += SegmentLength(segment);
     }
   }
-  local_record.straddling_perimeter_length =
-      StraddlingPerimeterLength(edge_segments, excluded);
+  RecordEdgeExclusionEnds(edge_segments, excluded, exclude_segments, tolerance,
+                          local_record);
   // The retained perimeter keeps its order (the within-radius tree is a function of it).
   std::size_t kept = 0;
   for (std::size_t i = 0; i < edge_segments.size(); i++)
@@ -579,7 +726,7 @@ void ExcludeCoincidentMetalEdgeSegmentIndices(
       local_record.excluded_perimeter_length += SegmentLength(segment);
     }
   }
-  local_record.straddling_perimeter_length = StraddlingPerimeterLength(segments, excluded);
+  RecordEdgeExclusionEnds(segments, excluded, exclude_segments, tolerance, local_record);
   std::size_t kept = 0;
   for (std::size_t i = 0; i < segment_indices.size(); i++)
   {

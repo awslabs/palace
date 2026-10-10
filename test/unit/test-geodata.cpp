@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -904,10 +905,14 @@ TEST_CASE("Sagitta-aware edge segment exclusion (EdgeExcludeSegmentSagittas)",
     CHECK(record.max_sagitta == 0.0);
     CHECK(record.tolerance == tolerance);
     CHECK(record.excluded_perimeter_length / record.exclude_segments_length < 0.5);
-    // The kept segments sharing a vertex with the removed straight piece: the first arc
-    // segment at (1, 0) only (the piece's other end (1, -1) continues nowhere).
+    // The three listed pieces form one chain (1, -1) -> (1, 0) -> arc -> (0, 1); (1, 0) is
+    // a joint, not an end, so the first arc segment (adjacent to the removed piece) is NOT
+    // credited; the end (0, 1) is contained by the kept last arc segment (the same length),
+    // the end (1, -1) by nothing kept. The straight piece is one run.
     CHECK_THAT(record.straddling_perimeter_length,
                WithinRel(2.0 * std::sin(0.25 * pi / arc_segments), 1.0e-12));
+    CHECK(record.removed_runs == 1);
+    CHECK(record.listed_chains == 1);
     // Explicit zero sagittas are the plain rule.
     auto zero = perimeter;
     ExcludeCoincidentEdgeSegments(exclude, {0.0, 0.0, 0.0}, tolerance, 3, zero);
@@ -943,8 +948,10 @@ TEST_CASE("Sagitta-aware edge segment exclusion (EdgeExcludeSegmentSagittas)",
         record.excluded_perimeter_length / record.exclude_segments_length;
     CHECK(coverage >= 1.0);
     CHECK(coverage < 1.03);
-    // Nothing kept touches the removed arc + straight piece.
+    // Nothing kept contains the chain's ends ((1, -1) and (0, 1)); one run of arc + piece.
     CHECK(record.straddling_perimeter_length == 0.0);
+    CHECK(record.removed_runs == 1);
+    CHECK(record.listed_chains == 1);
   }
 
   SECTION("the end allowance: a listed end inside a perimeter segment keeps it whole")
@@ -969,6 +976,8 @@ TEST_CASE("Sagitta-aware edge segment exclusion (EdgeExcludeSegmentSagittas)",
     CHECK(record.excluded_perimeter_count == 18);
     CHECK_THAT(record.excluded_perimeter_length, WithinRel(0.9, 1.0e-12));
     CHECK_THAT(record.straddling_perimeter_length, WithinRel(0.1, 1.0e-12));
+    CHECK(record.removed_runs == 1);
+    CHECK(record.listed_chains == 1);
     CHECK(record.excluded_perimeter_length / record.exclude_segments_length < 0.99);
     CHECK((record.excluded_perimeter_length + record.straddling_perimeter_length) /
               record.exclude_segments_length >=
@@ -995,6 +1004,137 @@ TEST_CASE("Sagitta-aware edge segment exclusion (EdgeExcludeSegmentSagittas)",
     CHECK(indices == std::vector<std::size_t>{0, 19});
     CHECK_THAT(automatic.excluded_perimeter_length, WithinRel(0.9, 1.0e-12));
     CHECK_THAT(automatic.straddling_perimeter_length, WithinRel(0.1, 1.0e-12));
+    CHECK(automatic.removed_runs == 1);
+    CHECK(automatic.listed_chains == 1);
+  }
+
+  SECTION("the end allowance credits one kept segment per listed end only")
+  {
+    // Decision 667 (1): a kept segment is credited only when it CONTAINS a listed chain's
+    // end point (within the tolerance), at most one per listed end, so a fragmented
+    // exclusion (holes of kept perimeter inside the listed piece) gains nothing from its
+    // runs' neighbours. The confirmation's 7 patterns on a perimeter of 20 segments of 0.05
+    // on x = 1 (y in [0, 1]) with the piece listed over all of them: the same masks and
+    // values as the census-v3 tool's test (test_exclusion_coverage_census_v3.py).
+    std::vector<mesh::BoundaryEdgeSegment> line;
+    for (int i = 0; i < 20; i++)
+    {
+      line.push_back({{1.0, 0.05 * i, 0.0}, {1.0, 0.05 * (i + 1), 0.0}});
+    }
+    const std::vector<std::array<double, 6>> whole = {{1.0, 0.0, 0.0, 1.0, 1.0, 0.0}};
+    const std::vector<std::array<double, 6>> halves = {{1.0, 0.0, 0.0, 1.0, 0.5, 0.0},
+                                                       {1.0, 0.5, 0.0, 1.0, 1.0, 0.0}};
+    auto Read = [&](const std::vector<int> &kept_indices,
+                    const std::vector<std::array<double, 6>> &listed)
+    {
+      std::vector<bool> excluded(line.size(), true);
+      for (const int i : kept_indices)
+      {
+        excluded[i] = false;
+      }
+      EdgeExclusionRecord record;
+      for (const auto &s : listed)
+      {
+        record.exclude_segments_length += std::abs(s[4] - s[1]);
+      }
+      for (std::size_t i = 0; i < line.size(); i++)
+      {
+        record.excluded_perimeter_length += excluded[i] ? 0.05 : 0.0;
+      }
+      RecordEdgeExclusionEnds(line, excluded, listed, tolerance, record);
+      return record;
+    };
+    auto Allowance = [](const EdgeExclusionRecord &r)
+    {
+      return (r.excluded_perimeter_length + r.straddling_perimeter_length) /
+             r.exclude_segments_length;
+    };
+    auto Passes = [&](const EdgeExclusionRecord &r)
+    {
+      const double raw = r.excluded_perimeter_length / r.exclude_segments_length;
+      return raw <= 1.01 && std::max(raw, Allowance(r)) >= 0.99;
+    };
+    // correct: all 20 removed.
+    auto correct = Read({}, whole);
+    CHECK(correct.straddling_perimeter_length == 0.0);
+    CHECK(correct.removed_runs == 1);
+    CHECK(correct.listed_chains == 1);
+    CHECK_THAT(Allowance(correct), WithinRel(1.0, 1.0e-12));
+    CHECK(Passes(correct));
+    // alternating: 0, 2, ..., 18 removed; the kept segment 19 contains the end y = 1.
+    auto alternating = Read({1, 3, 5, 7, 9, 11, 13, 15, 17, 19}, whole);
+    CHECK_THAT(alternating.straddling_perimeter_length, WithinRel(0.05, 1.0e-12));
+    CHECK(alternating.removed_runs == 10);
+    CHECK(alternating.listed_chains == 1);
+    CHECK_THAT(Allowance(alternating), WithinRel(0.55, 1.0e-12));
+    CHECK_FALSE(Passes(alternating));
+    // 1-segment holes at 3, 7, 11, 15.
+    auto holes1 = Read({3, 7, 11, 15}, whole);
+    CHECK(holes1.straddling_perimeter_length == 0.0);
+    CHECK(holes1.removed_runs == 5);
+    CHECK_THAT(Allowance(holes1), WithinRel(0.8, 1.0e-12));
+    CHECK_FALSE(Passes(holes1));
+    // three 2-segment holes.
+    auto holes2 = Read({3, 4, 9, 10, 15, 16}, whole);
+    CHECK(holes2.straddling_perimeter_length == 0.0);
+    CHECK(holes2.removed_runs == 4);
+    CHECK_THAT(Allowance(holes2), WithinRel(0.7, 1.0e-12));
+    CHECK_FALSE(Passes(holes2));
+    // two 3-segment holes.
+    auto holes3 = Read({4, 5, 6, 13, 14, 15}, whole);
+    CHECK(holes3.straddling_perimeter_length == 0.0);
+    CHECK(holes3.removed_runs == 3);
+    CHECK_THAT(Allowance(holes3), WithinRel(0.7, 1.0e-12));
+    CHECK_FALSE(Passes(holes3));
+    // one 4-segment hole.
+    auto hole4 = Read({8, 9, 10, 11}, whole);
+    CHECK(hole4.straddling_perimeter_length == 0.0);
+    CHECK(hole4.removed_runs == 2);
+    CHECK_THAT(Allowance(hole4), WithinRel(0.8, 1.0e-12));
+    CHECK_FALSE(Passes(hole4));
+    // 32b0-like: 2 segments at each chord vertex of two listed halves (one chain).
+    std::vector<int> kept_32b0;
+    for (int i = 2; i < 18; i++)
+    {
+      if (i != 9 && i != 10)
+      {
+        kept_32b0.push_back(i);
+      }
+    }
+    auto like_32b0 = Read(kept_32b0, halves);
+    CHECK(like_32b0.straddling_perimeter_length == 0.0);
+    CHECK(like_32b0.removed_runs == 3);
+    CHECK(like_32b0.listed_chains == 1);
+    CHECK_THAT(Allowance(like_32b0), WithinRel(0.3, 1.0e-12));
+    CHECK_FALSE(Passes(like_32b0));
+    // One kept segment per listed end: the piece (1, 0.5) -> (1, 1) with segments 9 AND 10
+    // kept (both contain the end y = 0.5) credits one segment.
+    const std::vector<std::array<double, 6>> upper = {{1.0, 0.5, 0.0, 1.0, 1.0, 0.0}};
+    std::vector<int> kept_two_at_end = {9, 10};
+    for (int i = 0; i < 9; i++)
+    {
+      kept_two_at_end.push_back(i);
+    }
+    auto two_at_end = Read(kept_two_at_end, upper);
+    CHECK_THAT(two_at_end.straddling_perimeter_length, WithinRel(0.05, 1.0e-12));
+    CHECK(two_at_end.removed_runs == 1);
+    // A kept segment credited once: the piece (1, 0.51) -> (1, 0.54) lies inside segment
+    // 10, nothing is removed, both ends are in that one segment.
+    const std::vector<std::array<double, 6>> inside = {{1.0, 0.51, 0.0, 1.0, 0.54, 0.0}};
+    std::vector<int> all_kept(20);
+    std::iota(all_kept.begin(), all_kept.end(), 0);
+    auto once = Read(all_kept, inside);
+    CHECK_THAT(once.straddling_perimeter_length, WithinRel(0.05, 1.0e-12));
+    CHECK(once.removed_runs == 0);
+    CHECK(once.listed_chains == 1);
+    // The chain count joins listed ends within the tolerance: the two halves offset by
+    // 5e-4 at their joint are still one chain with 2 ends; offset by 2e-3, two chains.
+    const std::vector<std::array<double, 6>> nearly = {{1.0, 0.0, 0.0, 1.0, 0.5, 0.0},
+                                                       {1.0, 0.5005, 0.0, 1.0, 1.0, 0.0}};
+    CHECK(Read({}, nearly).listed_chains == 1);
+    const std::vector<std::array<double, 6>> apart = {{1.0, 0.0, 0.0, 1.0, 0.5, 0.0},
+                                                      {1.0, 0.502, 0.0, 1.0, 1.0, 0.0}};
+    CHECK(Read({}, apart).listed_chains == 2);
   }
 
   SECTION("a sagitta widens the band of ITS segment only")

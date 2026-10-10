@@ -567,6 +567,8 @@ void BaseSolver::SaveMetadata(const SurfacePostOperator &surf_post_op) const
     entry["ExcludedPerimeterLength"] = exclusion.excluded_perimeter_length * length_scale;
     entry["StraddlingPerimeterLength"] =
         exclusion.straddling_perimeter_length * length_scale;
+    entry["RemovedRuns"] = exclusion.removed_runs;
+    entry["ListedChains"] = exclusion.listed_chains;
     entry["Coverage"] =
         exclusion.exclude_segments_length > 0.0
             ? exclusion.excluded_perimeter_length / exclusion.exclude_segments_length
@@ -592,12 +594,16 @@ void BaseSolver::SaveMetadata(const SurfacePostOperator &surf_post_op) const
       "sagitta-aware rule-B5 coincidence test removed (ExcludedPerimeterLength), both in "
       "mesh length units; Coverage = ExcludedPerimeterLength / ExcludeSegmentsLength (the "
       "perimeter is the single outline of the edge attributes, so a fully excluded list "
-      "reads 1); StraddlingPerimeterLength = the KEPT perimeter length sharing a vertex "
-      "with a removed segment (the segments straddling the ends of the removed runs; at "
-      "most one per listed end when a listed piece is removed in one run) and "
+      "reads 1); StraddlingPerimeterLength = the length of the KEPT perimeter segments "
+      "that contain a listed chain's END point within the Tolerance, at most one kept "
+      "segment per listed end (decision 667 (1); a listed end = an endpoint of a listed "
+      "segment no other listed segment's endpoint meets within the Tolerance), and "
       "EndAllowanceCoverage = (ExcludedPerimeterLength + StraddlingPerimeterLength) / "
       "ExcludeSegmentsLength (decision 665: a listed end falling inside a perimeter "
-      "segment keeps that segment whole, a deficit of up to one segment per end); "
+      "segment keeps that segment whole, a deficit of up to one segment per listed end); "
+      "RemovedRuns = the maximal runs of removed perimeter segments chained by shared "
+      "vertices and ListedChains = the chains of listed segments joined end to end within "
+      "the Tolerance (information: a correct exclusion reads RemovedRuns = ListedChains); "
       "Tolerance = EdgeExcludeSegmentTolerance, MaxSagitta = the largest "
       "EdgeExcludeSegmentSagittas entry";
   nlohmann::json meta = LoadMetadata(post_dir);

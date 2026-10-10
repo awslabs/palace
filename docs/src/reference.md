@@ -1775,10 +1775,11 @@ arc the mesh resolves as the true arc carries its chord's sagitta in
 `EdgeExcludeSegmentSagittas` (one entry per listed segment, mesh length units, default 0):
 the coincidence test against that segment uses the tolerance plus the sagitta, since a
 perimeter point on the arc lies up to the sagitta off its chord. The perimeter length
-actually removed, the listed length and the kept perimeter length adjoining the removed
-segments (the segments straddling the listed ends, at most one per end: a listed end
-falling inside a perimeter segment keeps that segment whole) are recorded per interface in
-`palace.json` (`SurfaceResponse.Diagnostics.EdgeExclusion`). In 3D, the
+actually removed, the listed length and the kept perimeter length containing the listed
+chains' end points (at most one kept segment per listed end: a listed end falling inside a
+perimeter segment keeps that segment whole), with the number of removed runs and of listed
+chains, are recorded per interface in `palace.json`
+(`SurfaceResponse.Diagnostics.EdgeExclusion`). In 3D, the
 perimeter is represented by straight segments joining the endpoints of the selected
 surface mesh edges; curved high-order edges are therefore approximated by their
 piecewise-linear mesh geometry.
