@@ -1354,11 +1354,48 @@ TEST_CASE("pml_waveguide_fd", "[Serial][Parallel][Regression]")
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml_fd", "port-S.csv", -55.0);
 }
 
-// Leaky cavity: the same waveguide closed by PEC on the port face, with the standing waves
-// leaking into the PML. With the static stretch the eigenvalue problem is linear; with the
-// frequency-dependent stretch (evaluated at the complex eigenfrequency) it is nonlinear and
-// solved by the hybrid eigensolver seeded with the stretch frozen at the target. The
-// complex eigenvalues (Q ~ 25, 7, 3.7) are diffed against the reference.
+// Iris-coupled cavity: a shorted section of the waveguide coupled through an inductive iris
+// to an output section terminated by the PML. With the static stretch the eigenvalue
+// problem is linear; with the frequency-dependent stretch (evaluated at the complex
+// eigenfrequency) it is nonlinear and solved by the hybrid eigensolver seeded with the
+// stretch frozen at the target. The resonance (1.778 GHz, Q ~ 495, set by the radiation
+// through the iris) is diffed against the reference, and against the same PML-independent
+// value for both stretches: with poorly absorbing PML parameters (a reflection target of
+// 1e-2 instead of 1e-6), Q changes by 11%.
+palace::test::CustomCheck TestPMLCavityResonance(double rtol, double f_re, double q,
+                                                 double rtol_f_re, double rtol_q)
+{
+  return [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    auto col = [](palace::Table &t, const std::string &key)
+    {
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    REQUIRE(actual.n_rows() >= 1);
+    REQUIRE(reference.n_rows() >= 1);
+    for (const std::string key : {"Re{f}", "Im{f}", "Q"})
+    {
+      const int a = col(actual, key), r = col(reference, key);
+      REQUIRE(a >= 0);
+      REQUIRE(r >= 0);
+      INFO("column '" << key << "'");
+      CHECK_THAT(actual[a].data[0], Catch::Matchers::WithinRel(reference[r].data[0], rtol));
+    }
+    const double f_re_a = actual[col(actual, "Re{f}")].data[0];
+    const double q_a = actual[col(actual, "Q")].data[0];
+    INFO("resonance Re{f} = " << f_re_a << " GHz, Q = " << q_a);
+    CHECK_THAT(f_re_a, Catch::Matchers::WithinRel(f_re, rtol_f_re));
+    CHECK_THAT(q_a, Catch::Matchers::WithinRel(q, rtol_q));
+  };
+}
+
 void RunPMLCavityCase(const std::string &config)
 {
   palace::test::RegressionOptions opts;
@@ -1368,17 +1405,19 @@ void RunPMLCavityCase(const std::string &config)
   opts.excluded_files = {"error-indicators.csv"};
   opts.skip_rowcount = true;
   opts.paraview_fields = false;
+  opts.custom_checks["eig.csv"] =
+      TestPMLCavityResonance(1.0e-4, 1.77827, 494.6, 2.0e-5, 1.0e-2);
   palace::test::RunRegressionCase("pml_waveguide", config + ".json", config, opts);
 }
 
-TEST_CASE("pml_waveguide_leaky_cavity", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_waveguide_iris_cavity", "[Serial][Parallel][Regression]")
 {
-  RunPMLCavityCase("waveguide_leaky_cavity");
+  RunPMLCavityCase("iris_cavity");
 }
 
-TEST_CASE("pml_waveguide_leaky_cavity_fd", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_waveguide_iris_cavity_fd", "[Serial][Parallel][Regression]")
 {
-  RunPMLCavityCase("waveguide_leaky_cavity_fd");
+  RunPMLCavityCase("iris_cavity_fd");
 }
 
 // Adaptive fast frequency sweep and circuit synthesis with a frequency-dependent PML on a
