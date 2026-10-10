@@ -377,7 +377,23 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   }
 
   print_hdr = false;
+
+  // Two-sided sheets: the cross-face coupling C is not element-local, so the caller solves
+  // with K + C (GetTwoPortCoupling) and preconditions with this assembled K.
   return K;
+}
+
+mfem::HypreParMatrix *CurlCurlOperator::GetTwoPortCoupling()
+{
+  if (!sc_sheet_op.HasTwoPort())
+  {
+    return nullptr;
+  }
+  if (!two_port_coupling_)
+  {
+    two_port_coupling_ = sc_sheet_op.BuildTwoPortCoupling(GetNDSpace().Get());
+  }
+  return two_port_coupling_.get();
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
@@ -567,7 +583,17 @@ void CurlCurlOperator::EnsureSheetMass()
     m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
   }
   auto m_mat = m.Assemble(GetNDSpaces(), false);
-  M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+  auto diag = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+  // Two-sided sheets: include the cross-face coupling C so the RHS (M_sheet·a_h) and the
+  // kinetic penalty energy match the K + C stiffness operator.
+  if (auto *C_par = GetTwoPortCoupling())
+  {
+    M_sheet_ = std::make_unique<SumOperator>(std::move(diag), *C_par);
+  }
+  else
+  {
+    M_sheet_ = std::move(diag);
+  }
 }
 
 template <ProblemType T>
