@@ -1485,6 +1485,15 @@ TEST_CASE("pml_oblique_grazing_80_te", "[Serial][Parallel][Regression]")
   RunPMLDrivenCase("pml_oblique", "grazing_80_te", "port-floquet-S.csv", -38.0);
 }
 
+// Adaptive fast frequency sweep (2.5-3.5 GHz) of the oblique incidence case with a
+// frequency-dependent PML. With the Floquet wave vector, the PML terms of the PROM are not
+// symmetric: symmetrizing them drops the Floquet cross terms and the greedy sampling does
+// not converge. The TM reflection stays below -70 dB over the band.
+TEST_CASE("pml_oblique_45_tm_adaptive", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_oblique", "oblique_45_tm_adaptive", "port-floquet-S.csv", -70.0);
+}
+
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
