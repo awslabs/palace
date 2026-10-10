@@ -4,6 +4,9 @@
 #include "nleps.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numbers>
 #include <Eigen/Dense>
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
@@ -410,6 +413,102 @@ int QuasiNewtonSolver::Solve()
   std::mt19937 gen(seed);
   std::uniform_real_distribution<> dist_real(-1.0, 1.0);
 
+  // A pole of A2 gives each mode shape a root on each side of it, but the polynomial seed
+  // has one eigenvalue per shape. When a pole lies between the target and a seed
+  // eigenvalue θ with eigenvector v, first start from the root on the target's side of the
+  // nonlinear Rayleigh functional vᴴ T(λ) v = 0. Multiplied by d(λ) it is a polynomial in λ
+  // for pole terms, so it is interpolated exactly from a few applications of T(λ) v; other
+  // frequency dependence of A2 is approximated, which Newton corrects. If that start fails,
+  // θ itself follows as the next guess. The extra start gets a bounded number of
+  // iterations: in a region partially filled with a pole material the mode shapes next to
+  // the pole differ from the seed's, and Newton from the extra start can stagnate.
+  auto target_side_root = [&](const ComplexVector &x, std::complex<double> theta)
+  {
+    const int degree = 2 + static_cast<int>(poles.poles.size());
+    const std::complex<double> c = 0.5 * (sigma + theta), r = 0.5 * (theta - sigma);
+    ComplexVector Kx(n), Cx(n), Mx(n), Ax(n);
+    for (auto *y : {&Kx, &Cx, &Mx, &Ax})
+    {
+      y->UseDevice(true);
+    }
+    opK->Mult(x, Kx);
+    Cx = 0.0;
+    if (opC)
+    {
+      opC->Mult(x, Cx);
+    }
+    opM->Mult(x, Mx);
+    const auto xx = linalg::Dot(GetComm(), x, x);
+    const auto xKx = linalg::Dot(GetComm(), Kx, x) / xx;
+    const auto xCx = linalg::Dot(GetComm(), Cx, x) / xx;
+    const auto xMx = linalg::Dot(GetComm(), Mx, x) / xx;
+    Eigen::MatrixXcd Vdm(degree + 1, degree + 1);
+    Eigen::VectorXcd f(degree + 1);
+    for (int j = 0; j <= degree; j++)
+    {
+      // A node at a pole is moved, which leaves the polynomial interpolation exact.
+      const double mu = poles.SampleNode(j, degree + 1, c, r);
+      const auto l = c + r * mu;
+      (*funcA2)(l)->Mult(x, Ax);
+      std::complex<double> d = 1.0;
+      for (const auto p : poles.poles)
+      {
+        d *= (l - p) / r;
+      }
+      f(j) = d * (xKx + l * xCx + l * l * xMx + linalg::Dot(GetComm(), Ax, x) / xx);
+      for (int k = 0; k <= degree; k++)
+      {
+        Vdm(j, k) = std::pow(mu, k);
+      }
+    }
+    const Eigen::VectorXcd a = Vdm.fullPivLu().solve(f);  // f(μ) = Σ_k a_k μ^k
+    Eigen::MatrixXcd comp = Eigen::MatrixXcd::Zero(degree, degree);
+    for (int k = 0; k < degree; k++)
+    {
+      comp(0, k) = -a(degree - 1 - k) / a(degree);
+    }
+    for (int k = 1; k < degree; k++)
+    {
+      comp(k, k - 1) = 1.0;
+    }
+    // The root nearest the target, between it and the pole.
+    std::complex<double> best = sigma;
+    double best_dist = std::numeric_limits<double>::infinity();
+    const Eigen::ComplexEigenSolver<Eigen::MatrixXcd> roots(comp);
+    for (const auto mu : roots.eigenvalues())
+    {
+      const auto l = c + r * mu;
+      if (std::isfinite(std::abs(l)) && l.imag() >= sigma.imag() &&
+          poles.Separates(l, theta) && !poles.IsAtPole(l, 1.0e-6) &&
+          std::abs(l - sigma) < best_dist)
+      {
+        best = l;
+        best_dist = std::abs(l - sigma);
+      }
+    }
+    return best;
+  };
+  std::vector<bool> pole_start;
+  {
+    std::vector<std::complex<double>> eig_guess;
+    std::vector<ComplexVector> vec_guess;
+    for (std::size_t i = 0; i < eigenvalues.size(); i++)
+    {
+      if (poles.Separates(sigma, eigenvalues[i]))
+      {
+        eig_guess.push_back(target_side_root(eigenvectors[i], eigenvalues[i]));
+        vec_guess.push_back(eigenvectors[i]);
+        pole_start.push_back(true);
+      }
+      eig_guess.push_back(eigenvalues[i]);
+      vec_guess.push_back(eigenvectors[i]);
+      pole_start.push_back(false);
+    }
+    eigenvalues = std::move(eig_guess);
+    eigenvectors = std::move(vec_guess);
+  }
+  bool pole_start_failed = false;
+
   const int num_init_guess = eigenvalues.size();
   std::uniform_int_distribution<int> dist_int(0, num_init_guess - 1);
 
@@ -422,8 +521,14 @@ int QuasiNewtonSolver::Solve()
   {
     // If > max_restart with the same initial guess, skip to next initial guess.
     // If we tried all initial guesses and the random guess, end search even if k < nev.
-    if (restart > max_restart)
+    // An extra start from the target side of a pole is not retried: its fallback follows.
+    const bool is_pole_start = (guess_idx < num_init_guess && pole_start[guess_idx]);
+    if (restart > (is_pole_start ? 0 : max_restart))
     {
+      if (is_pole_start)
+      {
+        pole_start_failed = true;
+      }
       if (guess_idx < num_init_guess)
       {
         guess_idx++;
@@ -441,6 +546,11 @@ int QuasiNewtonSolver::Solve()
     {
       eig = eigenvalues[guess_idx];
       v = eigenvectors[guess_idx];
+      if (poles.IsAtPole(eig))
+      {
+        restart = max_restart + 1;  // T is singular at a pole: skip this guess
+        continue;
+      }
     }
     else
     {
@@ -595,6 +705,17 @@ int QuasiNewtonSolver::Solve()
                    restart, res);
       }
 
+      // A2 is singular at its poles, which are not eigenvalues: move on to the next guess.
+      if (poles.IsAtPole(eig))
+      {
+        if (print > 0)
+        {
+          Mpi::Print(GetComm(), "Eigenvalue {:d}, Quasi-Newton reached a pole of A2.\n", k);
+        }
+        restart = max_restart + 1;
+        break;
+      }
+
       // End if residual below tolerance and eigenvalue above the target.
       if (res < rtol)
       {
@@ -630,6 +751,20 @@ int QuasiNewtonSolver::Solve()
         restart = 0;  // reset restart counter
         break;
       }
+      if (guess_idx < num_init_guess && pole_start[guess_idx] &&
+          it >= 2 * preconditioner_lag)
+      {
+        if (print > 0)
+        {
+          Mpi::Print(GetComm(),
+                     "Eigenvalue {:d}, Quasi-Newton from the target not converging, trying "
+                     "the seed.\n",
+                     k);
+        }
+        restart = max_restart + 1;
+        break;
+      }
+
       // Stop if large residual for 10 consecutive iterations.
       diverged_it = (res > 0.9) ? diverged_it + 1 : 0;
       if (diverged_it > 10)
@@ -647,8 +782,9 @@ int QuasiNewtonSolver::Solve()
 
       // Compute w = J * v. The A2 finite difference is a matrix-free sum (each A2 may
       // itself be a matrix-free SumComplexOperator carrying the wave-port correction).
-      auto opA2p = (*funcA2)(eig * (1.0 + delta));
-      const std::complex<double> denom = delta * eig;
+      const double fd = poles.IsAtPole(eig * (1.0 + delta), 0.5 * delta) ? -delta : delta;
+      auto opA2p = (*funcA2)(eig * (1.0 + fd));
+      const std::complex<double> denom = fd * eig;
       auto opAJ = std::make_unique<SumComplexOperator>(opA2p->Height(), opA2p->Width());
       opAJ->AddOperator(*opA2p, 1.0 / denom);
       opAJ->AddOperator(*A2n, -1.0 / denom);
@@ -667,6 +803,10 @@ int QuasiNewtonSolver::Solve()
         const ComplexVector XSSv2 = MatVecMult(X, S.fullPivLu().solve(Sv2));
         opJ->AddMult(XSv2, w, 1.0);
         A->AddMult(XSSv2, w, -1.0);
+      }
+      if (!poles.Empty())
+      {
+        w.AXPY(poles.LogDerivative(eig), u);  // Jacobian of d T, with u the residual at eig
       }
 
       // Undamped Newton step for the eigenvalue; the line search damps it.
@@ -689,6 +829,11 @@ int QuasiNewtonSolver::Solve()
       for (; bt < max_backtrack; bt++)
       {
         const std::complex<double> eig_trial = eig + alpha * delta_eig;
+        if (poles.IsAtPole(eig_trial) && bt < max_backtrack - 1)
+        {
+          alpha *= backtrack_factor;  // T is singular at a pole
+          continue;
+        }
 
         v_trial.AXPBYPCZ(1.0, v, alpha, du, 0.0);
         v2_trial = v2 + alpha * du2;
@@ -701,7 +846,9 @@ int QuasiNewtonSolver::Solve()
         // and no outer reference to A2n outlives this loop.
         const double res_trial = compute_residual(eig_trial, v_trial, v2_trial, u, u2, A2n);
 
-        if (res_trial <= (1.0 - armijo_c * alpha) * res || bt == max_backtrack - 1)
+        // The merit function is the residual of d T, consistent with the step.
+        const double scale = poles.RelativeScale(eig_trial, eig);
+        if (scale * res_trial <= (1.0 - armijo_c * alpha) * res || bt == max_backtrack - 1)
         {
           std::swap(v, v_trial);
           std::swap(v2, v2_trial);
@@ -754,6 +901,16 @@ int QuasiNewtonSolver::Solve()
     }
   }
   nev = k;  // in case some guesses did not converge
+  if (pole_start_failed)
+  {
+    // Eigenvalues of a region partially filled with a pole material accumulate at the pole.
+    Mpi::Warning(
+        GetComm(),
+        "Nonlinear eigensolver did not converge from the target for a mode shape "
+        "separated from it by a pole of A2! Eigenvalues near a frequency-dependent "
+        "material resonance may be missing; choose a target away from material "
+        "resonances.\n");
+  }
   if (nev == 0)
   {
     // No eigenpair converged: there is no invariant pair to extract eigenpairs from (and

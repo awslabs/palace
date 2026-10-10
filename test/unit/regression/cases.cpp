@@ -1073,6 +1073,48 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The automatically emitted domain-E and error-indicator files are retained as structural
+// regression artifacts. They do not validate physical stored energy for a dispersive
+// medium; the regression signal is the nonlinear eigenfrequency and Q output in eig.csv.
+TEST_CASE("cylinder_cavity_drude", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_drude.json", "cavity_drude", opts);
+}
+
+// Lorentz medium tuned to the TM010 cavity mode. Each cavity mode splits into a polariton
+// branch on each side of the material pole; above a target below the pole the lowest modes
+// are the lower branches, including that of TM011 next to the pole, which a polynomial seed
+// or an unscaled Newton step misses. Both nonlinear eigensolvers must find it.
+TEST_CASE("cylinder_cavity_lorentz", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz.json", "cavity_lorentz",
+                                  opts);
+}
+
+TEST_CASE("cylinder_cavity_lorentz_slp", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz_slp.json",
+                                  "cavity_lorentz_slp", opts);
+}
+
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

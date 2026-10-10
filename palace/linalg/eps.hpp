@@ -4,7 +4,11 @@
 #ifndef PALACE_LINALG_EPS_HPP
 #define PALACE_LINALG_EPS_HPP
 
+#include <algorithm>
+#include <cmath>
 #include <complex>
+#include <numbers>
+#include <vector>
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -14,6 +18,87 @@ namespace palace
 
 template <typename VecType>
 class DivFreeSolver;
+
+namespace nleps
+{
+
+//
+// Known poles p_k of A2(λ), as in dispersive materials. The Newton-type eigensolvers
+// iterate on d(λ) T(λ), d(λ) = Π_k (λ - p_k): the eigenpairs are those of T, but the local
+// linear model has no pole, so a step does not cross a nearby pole into the basin of the
+// root on its far side. Since d is scalar, it cancels from the correction T⁻¹ (d T) and
+// only the derivative changes: (d T)′ / d = T′ + L(λ) T with L = d′/d.
+//
+struct PoleTerms
+{
+  std::vector<std::complex<double>> poles;
+
+  bool Empty() const { return poles.empty(); }
+
+  // L(λ) = d′(λ) / d(λ).
+  std::complex<double> LogDerivative(std::complex<double> l) const
+  {
+    std::complex<double> L = 0.0;
+    for (const auto p : poles)
+    {
+      L += 1.0 / (l - p);
+    }
+    return L;
+  }
+
+  // |d(λ) / d(s)|, the scaling of a residual norm at λ relative to one at s.
+  double RelativeScale(std::complex<double> l, std::complex<double> s) const
+  {
+    double r = 1.0;
+    for (const auto p : poles)
+    {
+      r *= std::abs(l - p) / std::abs(s - p);
+    }
+    return r;
+  }
+
+  // Whether λ is at a pole, where T is singular but not an eigenvalue. The distance is
+  // relative to |λ| and |p|, independent of the nondimensionalization.
+  bool IsAtPole(std::complex<double> l, double rtol = 1.0e-8) const
+  {
+    for (const auto p : poles)
+    {
+      if (std::abs(l - p) <= rtol * std::max(std::abs(l), std::abs(p)))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Chebyshev node j of n on the segment c + r μ, μ ∈ [-1, 1], moved by a small fraction of
+  // the segment if it falls on a pole, where T cannot be evaluated.
+  double SampleNode(int j, int n, std::complex<double> c, std::complex<double> r) const
+  {
+    double mu = std::cos(std::numbers::pi * (2 * j + 1) / (2.0 * n));
+    if (IsAtPole(c + r * mu, 1.0e-6))
+    {
+      mu += 1.0e-3;
+    }
+    return mu;
+  }
+
+  // Whether a pole frequency Im(p) lies strictly between Im(a) and Im(b).
+  bool Separates(std::complex<double> a, std::complex<double> b) const
+  {
+    const double lo = std::min(a.imag(), b.imag()), hi = std::max(a.imag(), b.imag());
+    for (const auto p : poles)
+    {
+      if (p.imag() > lo && p.imag() < hi)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+};
+
+}  // namespace nleps
 
 //
 // Pure abstract base class for solving generalized linear eigenvalue problems problems or
@@ -78,6 +163,12 @@ public:
       std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>)
   {
     MFEM_ABORT("SetExtraSystemMatrix not defined!");
+  }
+
+  // Set the known poles of A2(λ) for the nonlinear eigensolvers (see nleps::PoleTerms).
+  virtual void SetExtraSystemPoles(const std::vector<std::complex<double>> &)
+  {
+    MFEM_ABORT("SetExtraSystemPoles not defined!");
   }
 
   virtual void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
