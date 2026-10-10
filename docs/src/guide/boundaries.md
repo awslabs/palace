@@ -146,10 +146,10 @@ tensors have components with complex phases of opposite signs, for which the pol
 smoothers of the geometric multigrid preconditioner do not converge. By default
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
 the multigrid preconditioner is therefore complemented by a sparse direct solve of the
-equations of the unknowns of the PML elements, which restores the convergence of the
-multigrid preconditioner without PML. This is affordable when the PML regions hold a small
-fraction of the unknowns, as is typical when the mesh is coarse in the layer compared to the
-physical region. Otherwise, a sparse direct solve of the whole system (`"MGMaxLevels": 1`
+equations of the unknowns of the PML elements (except those shared with the physical
+region), which restores the convergence of the multigrid preconditioner without PML. This
+is affordable when the PML regions hold a small fraction of the unknowns, as is typical when
+the mesh is coarse in the layer compared to the physical region. Otherwise, a sparse direct solve of the whole system (`"MGMaxLevels": 1`
 and `"ComplexCoarseSolve": true`) costs about as much. Simulations with PML regions
 therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS): the
 real-valued approximation of the system matrix used by the AMS solver is indefinite in
