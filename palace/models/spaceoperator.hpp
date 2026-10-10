@@ -121,8 +121,8 @@ private:
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
-  // Print a summary of the PML profiles.
-  void PrintPMLProfiles(const Units &units) const;
+  // Print a summary of the PML regions.
+  void PrintPML(const Units &units) const;
 
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
   // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
@@ -368,7 +368,7 @@ public:
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   // If K or M have eliminated boundary conditions, they are not eliminated from the
   // returned operator. With PML regions, the matrix is instead assembled using the
-  // entrywise magnitudes of the PML material tensors (with the frequency-dependent profiles
+  // entrywise magnitudes of the PML material tensors (with a frequency-dependent stretch
   // evaluated at omega, if positive).
   std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,
                                                   const ComplexOperator *K,

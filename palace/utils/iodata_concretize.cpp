@@ -272,15 +272,11 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
                                {"LossTan", m.tandelta.s[0]},
                                {"Conductivity", m.sigma.s[0]},
                                {"LondonDepth", m.lambda_L}});
-      if (m.pml)
-      {
-        if (!j_mats[i].contains("PML"))
-        {
-          j_mats[i]["PML"] = json::object();
-        }
-        ConcretizePML(*m.pml, j_mats[i]["PML"]);
-      }
     }
+  }
+  if (domains.pml && j_domains.contains("PML"))
+  {
+    ConcretizePML(*domains.pml, j_domains["PML"]);
   }
 }
 

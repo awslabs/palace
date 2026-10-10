@@ -294,24 +294,20 @@ MaterialData::MaterialData(const json &domain)
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
   ParseSymmetricMatrixData(domain, "Conductivity", sigma);
   lambda_L = domain.value("LondonDepth", lambda_L);
-  if (auto it = domain.find("PML"); it != domain.end())
-  {
-    pml = PMLData(*it);
-  }
 }
 
 namespace
 {
 
 // Helper: parse an array of direction strings like "+X", "-y", "+z" (case-insensitive) into
-// per-face signs. Empty strings are ignored.
-std::array<int, 6> ParsePMLDirections(const json &pml)
+// per-face flags. Empty strings are ignored.
+std::array<bool, 6> ParsePMLDirections(const json &pml)
 {
-  std::array<int, 6> signs{{0, 0, 0, 0, 0, 0}};
+  std::array<bool, 6> directions{{false, false, false, false, false, false}};
   auto it = pml.find("Direction");
   if (it == pml.end())
   {
-    return signs;
+    return directions;
   }
   MFEM_VERIFY(it->is_array(),
               "\"PML.Direction\" must be an array of strings like \"+X\", \"-Y\"!");
@@ -328,9 +324,9 @@ std::array<int, 6> ParsePMLDirections(const json &pml)
                 "\"+Z\", or \"-Z\" (got: \""
                     << s << "\")!");
     const int face = (s[0] == '-') ? 0 : 1;  // 0 = negative face, 1 = positive face
-    signs[2 * (axis - 'x') + face] = (s[0] == '-') ? -1 : 1;
+    directions[2 * (axis - 'x') + face] = true;
   }
-  return signs;
+  return directions;
 }
 
 // Helper: parse a JSON field that may be a scalar or a 3-element array, writing into
@@ -357,11 +353,18 @@ void ParseScalarOrArray3(const json &pml, const std::string &key,
 
 PMLData::PMLData(const json &pml)
 {
+  attributes = pml.at("Attributes").get<std::vector<int>>();  // Required
+  std::ranges::sort(attributes);
+  attributes.erase(std::ranges::unique(attributes).begin(), attributes.end());
+
   const bool has_direction = pml.find("Direction") != pml.end();
   const bool has_thickness = pml.find("Thickness") != pml.end();
   autodetect_geometry = !has_direction && !has_thickness;
+  MFEM_VERIFY(has_direction == has_thickness,
+              "\"PML.Direction\" and \"PML.Thickness\" must be specified together (or "
+              "both omitted, to detect the layer geometry from the mesh)!");
 
-  direction_signs = ParsePMLDirections(pml);
+  directions = ParsePMLDirections(pml);
 
   if (has_thickness)
   {
@@ -372,19 +375,14 @@ PMLData::PMLData(const json &pml)
     }
     else
     {
-      // Scalar: apply to every face that has a nonzero direction sign.
+      // Scalar: apply to every face of the directions.
       const double d = it->get<double>();
       for (std::size_t i = 0; i < thickness.size(); i++)
       {
-        thickness[i] = (direction_signs[i] != 0) ? d : 0.0;
+        thickness[i] = directions[i] ? d : 0.0;
       }
     }
   }
-
-  MFEM_VERIFY(autodetect_geometry || has_direction,
-              "\"PML.Thickness\" was specified without \"PML.Direction\". Either "
-              "specify both (manual control) or omit both (auto-detect from mesh "
-              "geometry).");
 
   order = pml.value("Order", order);
   MFEM_VERIFY(order >= 2,
@@ -483,6 +481,10 @@ DomainData::DomainData(const json &domains)
   current_dipole = ParseOptionalMap<CurrentDipoleData>(domains, "CurrentDipole",
                                                        "\"CurrentDipole\" source");
   postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
+  if (auto it = domains.find("PML"); it != domains.end())
+  {
+    pml = PMLData(*it);
+  }
 
   // Store all unique domain attributes.
   for (const auto &data : materials)
@@ -499,6 +501,16 @@ DomainData::DomainData(const json &domains)
         fmt::format("Domain postprocessing attribute {:d} has no corresponding entry in "
                     "config[\"Domains\"][\"Materials\"]!",
                     attr));
+  }
+  if (pml)
+  {
+    for (const auto &attr : pml->attributes)
+    {
+      MFEM_VERIFY(std::ranges::binary_search(attributes, attr),
+                  fmt::format("PML attribute {:d} has no corresponding entry in "
+                              "config[\"Domains\"][\"Materials\"]!",
+                              attr));
+    }
   }
 }
 
@@ -1873,10 +1885,6 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
-  if (data.pml)
-  {
-    Nondimensionalize(units, *data.pml);
-  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)

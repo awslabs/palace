@@ -31,17 +31,18 @@
           2
         ],
         "Permeability": 1.0,
-        "Permittivity": 1.0,
-        "PML": {
-          "Direction": [
-            "+Z"
-          ],
-          "Thickness": 0.1,
-          "Order": 3,
-          "FrequencyDependent": true
-        }
+        "Permittivity": 1.0
       }
-    ]
+    ],
+    "PML": {
+      "Attributes": [2],
+      "Direction": [
+        "+Z"
+      ],
+      "Thickness": 0.1,
+      "Order": 3,
+      "FrequencyDependent": true
+    }
   },
   "Boundaries": {
     "WavePort": [

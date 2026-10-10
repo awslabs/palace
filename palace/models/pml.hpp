@@ -6,15 +6,20 @@
 
 #include <array>
 #include <complex>
-#include <string>
 #include <vector>
+#include <mfem.hpp>
 #include "utils/configfile.hpp"
 
 // Forward-declare the union used by libCEED QFunction contexts (defined in
 // fem/qfunctions/coeff/coeff_qf.h).
 union CeedIntScalar;
 
-namespace palace::pml
+namespace palace
+{
+
+class Mesh;
+
+namespace pml
 {
 
 //
@@ -25,9 +30,14 @@ namespace palace::pml
 // with σ, κ - 1, α graded polynomially from zero at the inner interface to their maximum
 // values at the outer boundary. The stretch is applied through the equivalent anisotropic
 // material tensors μ̃⁻¹ = S μ⁻¹ S / det(S) and ε̃ = det(S) S⁻¹ ε S⁻¹, S = diag(s_x, s_y,
-// s_z), evaluated at each quadrature point (see fem/qfunctions/coeff/pml_qf.h). Static
-// profiles use a fixed real reference frequency ω₀ in the stretch, while
-// frequency-dependent profiles use the (possibly complex) solve frequency.
+// s_z), of the background material properties μ⁻¹ and ε of each PML region, evaluated at
+// each quadrature point (see fem/qfunctions/coeff/pml_qf.h). A static stretch uses a fixed
+// real reference frequency ω₀, while a frequency-dependent stretch uses the (possibly
+// complex) solve frequency.
+//
+// The stretch is the same function of position in all PML regions, so that the PML is a
+// coordinate transformation, also across the material interfaces inside of the layer (for
+// example, a substrate crossing the PML).
 //
 // Faces are indexed {-x, +x, -y, +y, -z, +z}: face f is on axis f / 2 and on the positive
 // side if f % 2 == 1. All quantities are nondimensional.
@@ -41,9 +51,8 @@ struct LayerGeometry
   std::array<double, 6> thickness{};
 };
 
-// A compiled PML profile: the stretch parameters of one PML material together with its
-// background material tensors (3 x 3, column-major).
-struct Profile
+// The coordinate stretch of the PML.
+struct Stretch
 {
   LayerGeometry geometry;
   std::array<double, 6> sigma_max{};
@@ -52,6 +61,11 @@ struct Profile
   int order = 3;
   bool frequency_dependent = false;
   double reference_frequency = 0.0;
+};
+
+// Background material tensors of a PML region (3 x 3, column-major).
+struct Background
+{
   std::array<double, 9> mu_inv{{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
   std::array<double, 9> epsilon_real{{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
   std::array<double, 9> epsilon_imag{};
@@ -73,37 +87,19 @@ LayerGeometry ConfiguredLayerGeometry(const config::PMLData &data,
                                       const std::array<double, 3> &outer_min,
                                       const std::array<double, 3> &outer_max);
 
-// Smallest refractive index of a background material over its principal directions.
+// Smallest refractive index of a background material over its principal directions, for
+// the 3 x 3 (column-major) tensors μ⁻¹ and Re{ε}.
 double RefractiveIndex(const std::array<double, 9> &mu_inv,
                        const std::array<double, 9> &epsilon_real);
 
-// Peak conductivity σ_max of each active face, either the configured value for the face's
+// Stretch from a (nondimensionalized) configuration and layer geometry. The peak
+// conductivity σ_max of each active face is either the configured value for the face's
 // axis, or, if not specified, σ_max = -(n + 1) ln(R) / (2 d n_r) for a target
 // normal-incidence reflection coefficient R, layer thickness d, grading order n, and
-// refractive index n_r of each face. For the stretch to be the same in all materials on
-// a face, n_r is the smallest refractive index of the PML materials on that face, so that
-// the reflection target is met in each of them.
-std::array<double, 6> ResolveSigmaMax(const config::PMLData &data,
-                                      const LayerGeometry &geometry,
-                                      const std::array<double, 6> &n_r);
-
-// Build a profile from a (nondimensionalized) configuration, layer geometry, refractive
-// indices of the faces for the default σ_max, and background material tensors μ⁻¹ and
-// ε = ε' + i ε'' (3 x 3, column-major).
-Profile BuildProfile(const config::PMLData &data, const LayerGeometry &geometry,
-                     const std::array<double, 6> &n_r, const std::array<double, 9> &mu_inv,
-                     const std::array<double, 9> &epsilon_real,
-                     const std::array<double, 9> &epsilon_imag);
-
-// Check that two profiles define the same stretch on the faces they share (with tolerance
-// tol for coordinates). Returns the names of inconsistent configuration parameters, or an
-// empty string.
-std::string CheckStretchConsistency(const Profile &p, const Profile &q, double tol);
-
-// Fractional depth d / t ∈ [0, 1] into the layer along each axis at the point x (zero for
-// axes along which x is not in the layer).
-std::array<double, 3> ComputeDepthFraction(const Profile &profile,
-                                           const std::array<double, 3> &x);
+// refractive index n_r: the smallest refractive index of the background materials of the
+// PML regions, so that each of them meets the reflection target.
+Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry,
+                     double n_r);
 
 // Output part of the complex PML tensor terms assembled by a PML integrator.
 enum class TensorPart : int
@@ -114,8 +110,8 @@ enum class TensorPart : int
 };
 
 // Per-integrator data of the PML QFunction context: the integrator assembles
-// part(c_muinv μ̃⁻¹) and/or part(c_eps ε̃) terms, with the stretch of frequency-dependent
-// profiles evaluated at omega.
+// part(c_muinv μ̃⁻¹) and/or part(c_eps ε̃) terms, with the frequency-dependent stretch
+// evaluated at omega (ignored for a static stretch).
 struct ContextHeader
 {
   TensorPart part = TensorPart::REAL;
@@ -123,15 +119,58 @@ struct ContextHeader
   std::array<double, 9> wave_vector_cross{};  // [k ×], column-major
 };
 
-// Pack the QFunction context (layout in fem/qfunctions/coeff/pml_qf.h), mapping each
-// libCEED attribute to its profile index in attr_to_profile (-1 for non-PML attributes).
-// Only profiles whose frequency dependence matches frequency_dependent are included.
-// Returns an empty context if no local attribute maps to an included profile.
-std::vector<CeedIntScalar> PackContext(const ContextHeader &header,
-                                       const std::vector<int> &attr_to_profile,
-                                       const std::vector<Profile> &profiles,
-                                       bool frequency_dependent);
+// Pack the QFunction context of a PML integrator (layout in fem/qfunctions/coeff/pml_qf.h),
+// with attr_background the background index of each (1-based) libCEED attribute (-1 for
+// attributes outside of the PML regions). Returns an empty context if no attribute is in a
+// PML region.
+std::vector<CeedIntScalar> PackContext(const ContextHeader &header, const Stretch &stretch,
+                                       const std::vector<int> &attr_background,
+                                       const std::vector<Background> &backgrounds);
 
-}  // namespace palace::pml
+//
+// The PML regions of a 3D mesh, for frequency domain problems: the stretch and the
+// background material of each PML attribute (the material properties of its material).
+//
+class Layer
+{
+private:
+  Stretch stretch;
+
+  // Domain attributes of the PML regions (global mesh attributes, sorted).
+  std::vector<int> attributes;
+
+  // Background material index of each local libCEED attribute (-1 for attributes outside
+  // of the PML regions), and background materials.
+  std::vector<int> attr_background;
+  std::vector<Background> backgrounds;
+
+public:
+  // Set up the PML regions configured by data. The background materials are the materials
+  // with the given properties (indexed by material, with attr_mat the map from libCEED
+  // attribute to material index). Checks that the PML regions are outside of the box of
+  // the physical region and that each of their elements is in the layer.
+  Layer(const config::PMLData &data, const std::vector<config::MaterialData> &materials,
+        const Mesh &mesh, const mfem::Array<int> &attr_mat, const mfem::DenseTensor &mu_inv,
+        const mfem::DenseTensor &epsilon_real, const mfem::DenseTensor &epsilon_imag);
+
+  const Stretch &GetStretch() const { return stretch; }
+  bool IsFrequencyDependent() const { return stretch.frequency_dependent; }
+  const std::vector<int> &GetAttributes() const { return attributes; }
+
+  // Whether the local libCEED attribute is in a PML region.
+  bool IsPMLCeedAttribute(int ceed_attr) const
+  {
+    return ceed_attr > 0 && ceed_attr <= static_cast<int>(attr_background.size()) &&
+           attr_background[ceed_attr - 1] >= 0;
+  }
+
+  // Pack the QFunction context of a PML integrator (see pml::PackContext). Returns an empty
+  // context if no local attribute is in a PML region.
+  std::vector<CeedIntScalar> PackContext(const ContextHeader &header) const;
+};
+
+}  // namespace pml
+
+}  // namespace palace
 
 #endif  // PALACE_MODELS_PML_HPP

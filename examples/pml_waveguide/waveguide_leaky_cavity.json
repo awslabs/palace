@@ -32,17 +32,18 @@
           2
         ],
         "Permeability": 1.0,
-        "Permittivity": 1.0,
-        "PML": {
-          "Direction": [
-            "+Z"
-          ],
-          "Thickness": 0.1,
-          "Order": 3,
-          "ReferenceFrequency": 1.7
-        }
+        "Permittivity": 1.0
       }
-    ]
+    ],
+    "PML": {
+      "Attributes": [2],
+      "Direction": [
+        "+Z"
+      ],
+      "Thickness": 0.1,
+      "Order": 3,
+      "ReferenceFrequency": 1.7
+    }
   },
   "Boundaries": {
     "PEC": {
