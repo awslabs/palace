@@ -362,9 +362,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm@2: blas=0")
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
-        # NOTE: libxsmm builds on MacOS have linker issues
-        # https://github.com/libxsmm/libxsmm/issues/883
-        depends_on("libxsmm+shared")
+        depends_on("libxsmm+shared", when="+shared")
+        depends_on("libxsmm~shared", when="~shared")
 
     with when("@0.14:"):
         # libCEED had no release between 0.12.0 and 1.0.0, so 0.14-0.17 pin develop commits
