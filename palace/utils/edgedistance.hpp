@@ -124,7 +124,10 @@ std::array<double, 6> GetPolarizedEdgeEnergyDensity(
 // chord lies up to the sagitta off it; decision 657 (a)). An empty list leaves the
 // perimeter unchanged; removing the whole perimeter is an error. `record`, when given,
 // receives the exclusion's coverage record (the listed length, the perimeter length
-// actually removed).
+// actually removed, and the KEPT perimeter length sharing a vertex with a removed segment:
+// the segments straddling the ends of the removed runs, at most one per end of a listed
+// piece when the piece is removed in one run; decision 665's end allowance, since a listed
+// end falling inside a perimeter segment keeps that segment whole).
 struct EdgeExclusionRecord
 {
   std::size_t exclude_segments_count = 0;
@@ -133,6 +136,7 @@ struct EdgeExclusionRecord
   double perimeter_length = 0.0;
   std::size_t excluded_perimeter_count = 0;
   double excluded_perimeter_length = 0.0;
+  double straddling_perimeter_length = 0.0;
   double tolerance = 0.0;
   double max_sagitta = 0.0;
 };

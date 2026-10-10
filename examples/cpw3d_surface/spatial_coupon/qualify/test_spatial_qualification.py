@@ -131,7 +131,13 @@ class CriteriaTest(unittest.TestCase):
         """Decision 657 (b): the EXCLUSION-COVERAGE gate on the palace.json record of a coupon run. The
         32b0 shape (its 23 foreign segments, coverage ~0.74 under the 1.9-nm rule) FAILS by name; the
         fixed shape (>= 0.99) passes; a missing record, a missing interface and an over-exclusion
-        (> 1.01) fail closed; a config without EdgeExcludeSegments is NotApplicable and passes."""
+        (> 1.01) fail closed; a config without EdgeExcludeSegments is NotApplicable and passes.
+        Decision 665: the 0.99 floor is also met by the end-allowance coverage (Excluded + Straddling)
+        / Listed - a short, many-ended straight-foreign model with a CORRECT exclusion (raw 0.918, 14
+        ends inside ~50-nm perimeter segments) passes, the census's 0.9929 (7d88) and 1.0000 (448693)
+        pass, 32b0 on main's rule (raw 0.7764, its fragmented arc exclusion's straddlers ~2.1 um ->
+        ~0.84) still fails, the upper bound stays on the raw coverage, and a record without
+        StraddlingPerimeterLength (a binary before decision 665) is read on the raw coverage alone."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             segments = [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]] * 23
@@ -140,12 +146,16 @@ class CriteriaTest(unittest.TestCase):
                 {"Index": 2, "Type": "MS", "EdgeExcludeSegments": segments},
                 {"Index": 3, "Type": "MA"}]}}}
 
-            def write(run, coverages):
+            def write(run, coverages, listed=32.852, straddling=None):
                 postpro = tmp / run
                 postpro.mkdir(exist_ok=True)
-                entries = {str(index): {"Coverage": value, "ExcludeSegmentsLength": 32.852, "ExcludedPerimeterLength": 32.852 * value,
+                entries = {str(index): {"Coverage": value, "ExcludeSegmentsLength": listed, "ExcludedPerimeterLength": listed * value,
                                         "ExcludeSegmentsCount": 23, "ExcludedPerimeterCount": 400, "Tolerance": 1.9e-3,
                                         "MaxSagitta": 4.24e-3} for index, value in coverages.items()}
+                if straddling is not None:
+                    for entry in entries.values():
+                        entry["StraddlingPerimeterLength"] = straddling
+                        entry["EndAllowanceCoverage"] = (entry["ExcludedPerimeterLength"] + straddling) / listed
                 (postpro / "palace.json").write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"EdgeExclusion": {
                     "Interfaces": entries, "Rule": "r"}}}}))
                 return postpro
@@ -155,6 +165,7 @@ class CriteriaTest(unittest.TestCase):
             self.assertEqual(defective["Required"], [1, 2])
             self.assertIn("EXCLUSION-COVERAGE FAIL", defective["Reason"])
             self.assertAlmostEqual(defective["MinCoverage"], 0.737)
+            self.assertAlmostEqual(defective["MinEndAllowanceCoverage"], 0.737)  # no straddling field: the raw coverage
             fixed = sq.exclusion_coverage_run("thin-p4", config, write("thin-p4", {"1": 0.9995, "2": 1.0003}))
             self.assertTrue(fixed["Passed"])
             self.assertIsNone(fixed["Reason"])
@@ -185,6 +196,44 @@ class CriteriaTest(unittest.TestCase):
             empty = sq.exclusion_coverage_gate([not_applicable])
             self.assertTrue(empty["Passed"])
             self.assertFalse(empty["Applicable"])
+            # Decision 665, the end allowance. A short, many-ended straight-foreign model: 7 pieces of
+            # 6.0 um in total, 14 ends each keeping a ~50-nm perimeter segment with ~35 nm of deficit:
+            # raw 0.918 (< 0.99 with a CORRECT exclusion), straddling 0.7 um -> 1.035: PASS.
+            short = sq.exclusion_coverage_run("short-p4", config, write("short-p4", {"1": 0.918, "2": 0.918}, listed=6.0,
+                                                                        straddling=0.7))
+            self.assertTrue(short["Passed"])
+            self.assertAlmostEqual(short["MinCoverage"], 0.918)
+            self.assertAlmostEqual(short["MinEndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+            self.assertAlmostEqual(short["Interfaces"]["1"]["EndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+            self.assertEqual(short["Interfaces"]["1"]["StraddlingPerimeterLength"], 0.7)
+            # The census readings: 7d88 thin (0.9929, 14 ends) and 448693 (1.0000) pass.
+            census_min = sq.exclusion_coverage_run("7d88-thin-p4", config, write("7d88-thin-p4", {"1": 0.9929, "2": 0.9929}, listed=12.376,
+                                                                                straddling=0.7))
+            self.assertTrue(census_min["Passed"])
+            arc_foreign = sq.exclusion_coverage_run("448693-p4", config, write("448693-p4", {"1": 1.0, "2": 1.0}, listed=17.855,
+                                                                              straddling=0.1))
+            self.assertTrue(arc_foreign["Passed"])
+            # 32b0 on main's rule: raw 0.7764, the fragmented arc exclusion's straddlers ~2.1 um -> ~0.84: still FAIL.
+            main_32b0 = sq.exclusion_coverage_run("32b0-main-p4", config, write("32b0-main-p4", {"1": 0.7764, "2": 0.7764},
+                                                                                straddling=2.1))
+            self.assertFalse(main_32b0["Passed"])
+            self.assertAlmostEqual(main_32b0["MinEndAllowanceCoverage"], (32.852 * 0.7764 + 2.1) / 32.852, places=6)
+            self.assertLess(main_32b0["MinEndAllowanceCoverage"], 0.85)
+            self.assertIn("end-allowance coverage min 0.84", main_32b0["Reason"])
+            # The upper bound stays on the raw coverage: an over-exclusion is not excused by the allowance.
+            over_allowed = sq.exclusion_coverage_run("over-p4", config, write("over-p4", {"1": 1.02, "2": 1.0}, straddling=0.1))
+            self.assertFalse(over_allowed["Passed"])
+            # A record without StraddlingPerimeterLength (a binary before decision 665): the raw coverage alone.
+            legacy_short = sq.exclusion_coverage_run("legacy-short-p4", config, write("legacy-short-p4", {"1": 0.918, "2": 0.918}, listed=6.0))
+            self.assertFalse(legacy_short["Passed"])
+            self.assertAlmostEqual(legacy_short["MinEndAllowanceCoverage"], 0.918)
+            allowance_gate = sq.exclusion_coverage_gate([short, census_min, arc_foreign, fixed])
+            self.assertTrue(allowance_gate["Passed"])
+            self.assertAlmostEqual(allowance_gate["MinCoverage"], 0.918)
+            self.assertAlmostEqual(allowance_gate["MinEndAllowanceCoverage"], 0.9995)
+            self.assertAlmostEqual(sq.end_allowance_coverage({"Coverage": 0.5, "ExcludeSegmentsLength": 2.0,
+                                                              "ExcludedPerimeterLength": 1.0, "StraddlingPerimeterLength": 0.5}),
+                                   0.75)
         # The status: a failing exclusion coverage is Failed whatever the other criteria read.
         self.assertEqual(sq.qualification_status(sq.STATUS_PENDING, dense_passed=True, identity_passed=True, gate_passed=True,
                                                  exclusion_passed=False), sq.STATUS_FAILED)
@@ -571,16 +620,20 @@ class CommandEvaluateTest(unittest.TestCase):
             config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeSegments"] = segments
             path.write_text(json.dumps(config))
 
-        def write_records(coverage, skip=()):
+        def write_records(coverage, skip=(), listed=32.852, straddling=None):
             for name in ("fabricated-p4", "thin-p4", "fabricated-p5", "thin-p5", "fab-matrices", "thin-matrices"):
                 postpro = self.tmp / name / ("postpro" if name.endswith("p4") or name.endswith("p5") else "")
                 target = postpro / "palace.json"
                 if name in skip:
                     target.write_text(json.dumps({"Problem": {"MeshElements": 1}}))
                     continue
+                entry = {"Coverage": coverage, "ExcludeSegmentsLength": listed, "ExcludedPerimeterLength": listed * coverage,
+                         "ExcludeSegmentsCount": 23, "ExcludedPerimeterCount": 400, "Tolerance": 1.9e-3, "MaxSagitta": 4.24e-3}
+                if straddling is not None:
+                    entry["StraddlingPerimeterLength"] = straddling
+                    entry["EndAllowanceCoverage"] = (entry["ExcludedPerimeterLength"] + straddling) / listed
                 target.write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"EdgeExclusion": {"Rule": "r", "Interfaces": {
-                    "1": {"Coverage": coverage, "ExcludeSegmentsLength": 32.852, "ExcludedPerimeterLength": 32.852 * coverage,
-                          "ExcludeSegmentsCount": 23, "ExcludedPerimeterCount": 400, "Tolerance": 1.9e-3, "MaxSagitta": 4.24e-3}}}}}}))
+                    "1": entry}}}}}))
         qualification = {"Verdict": "PendingQualification", "Record": "q.json", "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []}
         # The 32b0 reading on main's rule: Failed, the gate named with its runs.
         write_records(0.737)
@@ -612,6 +665,24 @@ class CommandEvaluateTest(unittest.TestCase):
         self.assertEqual(record["Status"], sq.STATUS_FAILED)
         self.assertEqual(list(record["ExclusionCoverage"]["Failures"]), ["fabricated-matrices"])
         self.assertIn("record missing", record["ExclusionCoverage"]["Failures"]["fabricated-matrices"])
+        # Decision 665: a short, many-ended straight-foreign model with a correct exclusion (raw 0.918 of
+        # 6.0 um, straddlers 0.7 um -> 1.035) is Qualified on the end allowance; 32b0 on main's rule with
+        # its straddlers (0.7764 -> ~0.84) stays Failed.
+        write_records(0.918, listed=6.0, straddling=0.7)
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        self.assertAlmostEqual(record["ExclusionCoverage"]["MinCoverage"], 0.918)
+        self.assertAlmostEqual(record["ExclusionCoverage"]["MinEndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertAlmostEqual(model["SpatialQualification"]["ExclusionCoverage"]["MinEndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+        write_records(0.7764, straddling=2.1)
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 1)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_FAILED)
+        self.assertLess(record["ExclusionCoverage"]["MinEndAllowanceCoverage"], 0.85)
 
     def test_identity_partition_is_recorded_and_mandatory_for_a_multi_node_reducer(self):
         """Decisions 482 / 487 (d): the loop end's 4-node reducer against a 1-node identity twin read

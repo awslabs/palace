@@ -74,7 +74,11 @@ k < 15 halvings (every production AMR sequence to date <= 8 cycles: >= 12x margi
 coupon's foreign edges (EdgeExcludeSegments, rule B5) must actually leave its within-R
 perimeter - Palace records ExcludedPerimeterLength / ExcludeSegmentsLength per interface and
 the ratio must read within [0.99, 1.01] on every interface of every supplied run of BOTH twins
-(dense runs and basis-matrix runs); a missing record fails closed. (F)(a) cannot see this
+(dense runs and basis-matrix runs), the floor also met by the END-ALLOWANCE coverage
+(ExcludedPerimeterLength + StraddlingPerimeterLength) / ExcludeSegmentsLength (decision 665:
+the kept perimeter segments adjoining the removed ones, at most one per listed end, since a
+listed end inside a perimeter segment keeps it whole); a missing record fails closed. (F)(a)
+cannot see this
 defect (both twins share the perimeter), only the (F)(b) own-box ratio did (32b0, decision
 655 (2) (a)).
 
@@ -262,20 +266,31 @@ EXCLUSION_COVERAGE_RULE = (
     "EVERY supplied run of BOTH twins (the dense runs at the library and control orders and the basis-matrix runs), the "
     "upper bound guarding over-exclusion (a wider band dropping non-listed perimeter; the perimeter is the single outline "
     "of the edge attributes, so a fully excluded list reads 1 + the arc-over-chord excess, <= 1.0003 for chords of <= 5 "
-    "degrees); fail closed: a run whose config lists EdgeExcludeSegments without the record (a binary before decision 657) "
-    "or with an interface missing from it is Failed; a coupon without EdgeExcludeSegments has nothing to cover and passes "
-    "as NotApplicable")
+    "degrees); the 0.99 floor is ALSO met by the end-allowance coverage EndAllowanceCoverage = (ExcludedPerimeterLength + "
+    "StraddlingPerimeterLength) / ExcludeSegmentsLength (decision 665: a listed end falling inside a perimeter segment "
+    "keeps that segment whole, an ABSOLUTE deficit of up to one segment per listed end - 25-45 nm on the v3-e census, "
+    "0.9929 on 7d88 - that a correct exclusion of short pieces would otherwise fail; StraddlingPerimeterLength is the "
+    "KEPT perimeter length sharing a vertex with a removed segment, at most one segment per listed end when a piece is "
+    "removed in one run; the upper bound stays on the raw Coverage; the 32b0 defect still fails: its fragmented arc "
+    "exclusion reads ~0.84 with the allowance); fail closed: a run whose config lists EdgeExcludeSegments without the "
+    "record (a binary before decision 657) or with an interface missing from it is Failed, a record without "
+    "StraddlingPerimeterLength (a binary before decision 665) is read on the raw Coverage alone; a coupon without "
+    "EdgeExcludeSegments has nothing to cover and passes as NotApplicable")
 
 
 def exclusion_coverage_run(run_name, config, postpro):
     """The EXCLUSION-COVERAGE reading of one coupon run (EXCLUSION_COVERAGE_RULE): the interfaces
     of `config` listing EdgeExcludeSegments against the palace.json record under `postpro`.
-    {Run, Required, Passed, Reason, Interfaces: {index: {Coverage, ExcludeSegmentsLength,
-    ExcludedPerimeterLength, MaxSagitta, Passed}}, MinCoverage, MaxCoverage}."""
+    {Run, Required, Passed, Reason, Interfaces: {index: {Coverage, EndAllowanceCoverage,
+    ExcludeSegmentsLength, ExcludedPerimeterLength, StraddlingPerimeterLength, MaxSagitta,
+    Passed}}, MinCoverage, MaxCoverage, MinEndAllowanceCoverage}; an interface passes iff
+    Coverage <= EXCLUSION_COVERAGE_MAX and EXCLUSION_COVERAGE_MIN <= max(Coverage,
+    EndAllowanceCoverage) (decision 665)."""
     dielectrics = config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", [])
     required = sorted(int(d["Index"]) for d in dielectrics if d.get("EdgeExcludeSegments"))
     result = {"Run": run_name, "Required": required, "Interfaces": {}, "MinCoverage": None, "MaxCoverage": None,
-              "Passed": True, "Reason": None, "Source": str(Path(postpro) / "palace.json")}
+              "MinEndAllowanceCoverage": None, "Passed": True, "Reason": None,
+              "Source": str(Path(postpro) / "palace.json")}
     if not required:
         result["Reason"] = "NotApplicable: the config lists no EdgeExcludeSegments"
         return result
@@ -290,6 +305,7 @@ def exclusion_coverage_run(run_name, config, postpro):
                             f"EdgeExcludeSegments on interfaces {required}")
         return result
     coverages = []
+    allowances = []
     missing = []
     for index in required:
         entry = record["Interfaces"].get(str(index))
@@ -297,18 +313,22 @@ def exclusion_coverage_run(run_name, config, postpro):
             missing.append(index)
             continue
         coverage = float(entry["Coverage"])
-        passed = EXCLUSION_COVERAGE_MIN <= coverage <= EXCLUSION_COVERAGE_MAX
+        allowance = end_allowance_coverage(entry)
+        passed = EXCLUSION_COVERAGE_MIN <= max(coverage, allowance) and coverage <= EXCLUSION_COVERAGE_MAX
         coverages.append(coverage)
+        allowances.append(allowance)
         result["Interfaces"][str(index)] = {
-            "Coverage": coverage, "Passed": passed,
+            "Coverage": coverage, "EndAllowanceCoverage": allowance, "Passed": passed,
             "ExcludeSegmentsLength": entry.get("ExcludeSegmentsLength"),
             "ExcludedPerimeterLength": entry.get("ExcludedPerimeterLength"),
+            "StraddlingPerimeterLength": entry.get("StraddlingPerimeterLength"),
             "ExcludeSegmentsCount": entry.get("ExcludeSegmentsCount"),
             "ExcludedPerimeterCount": entry.get("ExcludedPerimeterCount"),
             "Tolerance": entry.get("Tolerance"), "MaxSagitta": entry.get("MaxSagitta")}
     if coverages:
         result["MinCoverage"] = min(coverages)
         result["MaxCoverage"] = max(coverages)
+        result["MinEndAllowanceCoverage"] = min(allowances)
     if missing:
         result["Passed"] = False
         result["Reason"] = f"EXCLUSION-COVERAGE record incomplete: interfaces {missing} list EdgeExcludeSegments without a record"
@@ -317,8 +337,22 @@ def exclusion_coverage_run(run_name, config, postpro):
     if failed:
         result["Passed"] = False
         result["Reason"] = (f"EXCLUSION-COVERAGE FAIL: interfaces {failed} read coverage outside [{EXCLUSION_COVERAGE_MIN}, "
-                            f"{EXCLUSION_COVERAGE_MAX}] (min {result['MinCoverage']:.4f}, max {result['MaxCoverage']:.4f})")
+                            f"{EXCLUSION_COVERAGE_MAX}] (min {result['MinCoverage']:.4f}, max {result['MaxCoverage']:.4f}; "
+                            f"end-allowance coverage min {result['MinEndAllowanceCoverage']:.4f})")
     return result
+
+
+def end_allowance_coverage(entry):
+    """The end-allowance coverage of one interface record (decision 665): (ExcludedPerimeterLength
+    + StraddlingPerimeterLength) / ExcludeSegmentsLength from the Palace record's lengths (the
+    record's own EndAllowanceCoverage field reproduces it); a record without
+    StraddlingPerimeterLength (a binary before decision 665) reads the raw Coverage."""
+    straddling = entry.get("StraddlingPerimeterLength")
+    listed = entry.get("ExcludeSegmentsLength")
+    excluded = entry.get("ExcludedPerimeterLength")
+    if straddling is None or listed is None or excluded is None or float(listed) <= 0.0:
+        return float(entry["Coverage"])
+    return (float(excluded) + float(straddling)) / float(listed)
 
 
 def exclusion_coverage_gate(runs):
@@ -328,10 +362,13 @@ def exclusion_coverage_gate(runs):
     applicable = [run for run in runs if run["Required"]]
     coverages = [run["MinCoverage"] for run in applicable if run["MinCoverage"] is not None]
     maxima = [run["MaxCoverage"] for run in applicable if run["MaxCoverage"] is not None]
+    allowances = [run.get("MinEndAllowanceCoverage") for run in applicable
+                  if run.get("MinEndAllowanceCoverage") is not None]
     failures = {run["Run"]: run["Reason"] for run in runs if not run["Passed"]}
     return {"Rule": EXCLUSION_COVERAGE_RULE, "Minimum": EXCLUSION_COVERAGE_MIN, "Maximum": EXCLUSION_COVERAGE_MAX,
             "Applicable": bool(applicable), "Passed": not failures, "Failures": failures,
             "MinCoverage": min(coverages) if coverages else None, "MaxCoverage": max(maxima) if maxima else None,
+            "MinEndAllowanceCoverage": min(allowances) if allowances else None,
             "Runs": runs}
 
 
@@ -699,7 +736,8 @@ RULE = ("decision 282 (F) as restated by decision 299: closure |E_thin,p4 + dE_m
         "identity <= 1e-6; the resolution-aware conductor-consistency gate (decision 277 / 299: Count 0, MaxRatio <= 1e-4 "
         "on every supplied device solve, at the production orders on the registration mesh); the EXCLUSION-COVERAGE gate "
         "(decision 657 (b): ExcludedPerimeterLength / ExcludeSegmentsLength in [0.99, 1.01] on every interface of every "
-        "supplied run of both twins, fail closed on a missing record); (b) the reference box "
+        "supplied run of both twins, the floor also met by the end-allowance coverage with the kept segments straddling "
+        "the listed ends, decision 665; fail closed on a missing record); (b) the reference box "
         "integral within the decision-218 marker lifts Qualified to WindowValidated")
 
 
@@ -766,7 +804,8 @@ def stamp_library_status(library_path, model_name, record, record_path=None):
         "IdentityPartition": record.get("IdentityPartition"),
         "Gate": {key: gate.get(key) for key in ("Passed", "MaxRatio", "Orders", "ProductionOrdersMissing", "Count", "Probed")},
         "ExclusionCoverage": {key: record["ExclusionCoverage"].get(key)
-                              for key in ("Passed", "Applicable", "MinCoverage", "MaxCoverage", "Failures", "Minimum", "Maximum")},
+                              for key in ("Passed", "Applicable", "MinCoverage", "MaxCoverage", "MinEndAllowanceCoverage",
+                                          "Failures", "Minimum", "Maximum")},
         "Traces": [{"Name": t["Name"], "Family": t["Family"], "Passed": t["Passed"],
                     "Closure": {k: v["Residual"] for k, v in t["Closure"].items()},
                     "TwinConsistency": {k: v["Residual"] for k, v in t["TwinConsistency"].items()},
@@ -1008,7 +1047,8 @@ def command_evaluate(args):
     if not args.dry_run:
         stamp_library_status(args.library, manifest["Model"], record, args.output)
     coverage_text = ("n/a" if not exclusion_coverage["Applicable"]
-                     else f"{exclusion_coverage['MinCoverage']:.4f}" if exclusion_coverage["MinCoverage"] is not None else "missing")
+                     else f"{exclusion_coverage['MinCoverage']:.4f}, end-allowance {exclusion_coverage['MinEndAllowanceCoverage']:.4f}"
+                     if exclusion_coverage["MinCoverage"] is not None else "missing")
     print(f"{manifest['Model']}: closure {record['ClosurePassed']} twin-consistency {record['TwinConsistencyPassed']} "
           f"identity {record['IdentityPassed']} gate {record['GatePassed']} (orders {gate['Orders']}, max ratio "
           f"{gate['MaxRatio']:.2e}) exclusion-coverage {record['ExclusionCoveragePassed']} (min {coverage_text}) -> {record['Status']}"

@@ -904,6 +904,10 @@ TEST_CASE("Sagitta-aware edge segment exclusion (EdgeExcludeSegmentSagittas)",
     CHECK(record.max_sagitta == 0.0);
     CHECK(record.tolerance == tolerance);
     CHECK(record.excluded_perimeter_length / record.exclude_segments_length < 0.5);
+    // The kept segments sharing a vertex with the removed straight piece: the first arc
+    // segment at (1, 0) only (the piece's other end (1, -1) continues nowhere).
+    CHECK_THAT(record.straddling_perimeter_length,
+               WithinRel(2.0 * std::sin(0.25 * pi / arc_segments), 1.0e-12));
     // Explicit zero sagittas are the plain rule.
     auto zero = perimeter;
     ExcludeCoincidentEdgeSegments(exclude, {0.0, 0.0, 0.0}, tolerance, 3, zero);
@@ -939,6 +943,58 @@ TEST_CASE("Sagitta-aware edge segment exclusion (EdgeExcludeSegmentSagittas)",
         record.excluded_perimeter_length / record.exclude_segments_length;
     CHECK(coverage >= 1.0);
     CHECK(coverage < 1.03);
+    // Nothing kept touches the removed arc + straight piece.
+    CHECK(record.straddling_perimeter_length == 0.0);
+  }
+
+  SECTION("the end allowance: a listed end inside a perimeter segment keeps it whole")
+  {
+    // Decision 665: a straight piece listed from y = 0.02 to y = 0.98 along a perimeter of
+    // 20 segments of length 0.05 on x = 1 (y in [0, 1]). The two end segments have one
+    // point 0.02 beyond the listed end (> 1e-3) and are kept whole; the 18 inside are
+    // removed: the raw coverage reads 0.9 / 0.96 = 0.9375 (< 0.99 with a CORRECT
+    // exclusion, the census's absolute deficit per listed end), the kept segments sharing
+    // a vertex with a removed one are exactly the two straddlers (0.1), and the end
+    // allowance coverage reads 1.0 / 0.96 >= 0.99.
+    std::vector<mesh::BoundaryEdgeSegment> segments;
+    for (int i = 0; i < 20; i++)
+    {
+      segments.push_back({{1.0, 0.05 * i, 0.0}, {1.0, 0.05 * (i + 1), 0.0}});
+    }
+    segments.push_back({{3.0, 0.0, 0.0}, {3.0, 1.0, 0.0}});
+    const std::vector<std::array<double, 6>> piece = {{1.0, 0.02, 0.0, 1.0, 0.98, 0.0}};
+    EdgeExclusionRecord record;
+    ExcludeCoincidentEdgeSegments(piece, {0.0}, tolerance, 3, segments, &record);
+    CHECK(segments.size() == 3);
+    CHECK(record.excluded_perimeter_count == 18);
+    CHECK_THAT(record.excluded_perimeter_length, WithinRel(0.9, 1.0e-12));
+    CHECK_THAT(record.straddling_perimeter_length, WithinRel(0.1, 1.0e-12));
+    CHECK(record.excluded_perimeter_length / record.exclude_segments_length < 0.99);
+    CHECK((record.excluded_perimeter_length + record.straddling_perimeter_length) /
+              record.exclude_segments_length >=
+          0.99);
+    // The same piece listed through the automatic-edge path records the same lengths.
+    MetalEdgeGeometry geometry;
+    for (int i = 0; i <= 20; i++)
+    {
+      MetalEdgeVertex vertex;
+      vertex.coordinate = {1.0, 0.05 * i, 0.0};
+      geometry.vertices.push_back(vertex);
+    }
+    std::vector<std::size_t> indices;
+    for (int i = 0; i < 20; i++)
+    {
+      MetalEdgeSegment segment;
+      segment.vertices = {static_cast<std::size_t>(i), static_cast<std::size_t>(i + 1)};
+      geometry.segments.push_back(segment);
+      indices.push_back(i);
+    }
+    EdgeExclusionRecord automatic;
+    ExcludeCoincidentMetalEdgeSegmentIndices(geometry, piece, {0.0}, tolerance, 3, indices,
+                                             &automatic);
+    CHECK(indices == std::vector<std::size_t>{0, 19});
+    CHECK_THAT(automatic.excluded_perimeter_length, WithinRel(0.9, 1.0e-12));
+    CHECK_THAT(automatic.straddling_perimeter_length, WithinRel(0.1, 1.0e-12));
   }
 
   SECTION("a sagitta widens the band of ITS segment only")

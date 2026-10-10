@@ -8,6 +8,7 @@
 #include <map>
 #include <numeric>
 #include <queue>
+#include <set>
 #include <tuple>
 #include "utils/configfile.hpp"
 #include "utils/diagnostic.hpp"
@@ -370,6 +371,34 @@ BeginEdgeExclusionRecord(const std::vector<mesh::BoundaryEdgeSegment> &exclusion
   return record;
 }
 
+// The kept perimeter length sharing a vertex with an excluded perimeter segment (decision
+// 665's end allowance): the segments straddling the ends of the excluded runs. Vertices are
+// compared exactly, as the perimeter's coordinates come from the mesh vertices
+// (GetVertexCoordinates) and two segments at one vertex carry identical copies.
+double StraddlingPerimeterLength(const std::vector<mesh::BoundaryEdgeSegment> &segments,
+                                 const std::vector<bool> &excluded)
+{
+  std::set<std::array<double, 3>> excluded_vertices;
+  for (std::size_t i = 0; i < segments.size(); i++)
+  {
+    if (excluded[i])
+    {
+      excluded_vertices.insert(segments[i].p0);
+      excluded_vertices.insert(segments[i].p1);
+    }
+  }
+  double length = 0.0;
+  for (std::size_t i = 0; i < segments.size(); i++)
+  {
+    if (!excluded[i] && (excluded_vertices.count(segments[i].p0) ||
+                         excluded_vertices.count(segments[i].p1)))
+    {
+      length += SegmentLength(segments[i]);
+    }
+  }
+  return length;
+}
+
 struct ElementBounds
 {
   mfem::Vector center;
@@ -469,26 +498,33 @@ void ExcludeCoincidentEdgeSegments(
       BeginEdgeExclusionRecord(exclusion_segments, sagittas, tolerance);
   const EdgeDistanceTree excluded_tree(std::move(exclusion_segments));
   const double tolerance_squared = tolerance * tolerance;
-  for (const auto &segment : edge_segments)
+  std::vector<bool> excluded(edge_segments.size(), false);
+  for (std::size_t i = 0; i < edge_segments.size(); i++)
   {
+    const auto &segment = edge_segments[i];
     local_record.perimeter_count++;
     local_record.perimeter_length += SegmentLength(segment);
+    excluded[i] = IsCoincidentWithExcludedBoundary(segment, excluded_tree, space_dimension,
+                                                   tolerance_squared, sagittas,
+                                                   local_record.max_sagitta);
+    if (excluded[i])
+    {
+      local_record.excluded_perimeter_count++;
+      local_record.excluded_perimeter_length += SegmentLength(segment);
+    }
   }
-  edge_segments.erase(
-      std::remove_if(edge_segments.begin(), edge_segments.end(),
-                     [&](const auto &segment)
-                     {
-                       const bool excluded = IsCoincidentWithExcludedBoundary(
-                           segment, excluded_tree, space_dimension, tolerance_squared,
-                           sagittas, local_record.max_sagitta);
-                       if (excluded)
-                       {
-                         local_record.excluded_perimeter_count++;
-                         local_record.excluded_perimeter_length += SegmentLength(segment);
-                       }
-                       return excluded;
-                     }),
-      edge_segments.end());
+  local_record.straddling_perimeter_length =
+      StraddlingPerimeterLength(edge_segments, excluded);
+  // The retained perimeter keeps its order (the within-radius tree is a function of it).
+  std::size_t kept = 0;
+  for (std::size_t i = 0; i < edge_segments.size(); i++)
+  {
+    if (!excluded[i])
+    {
+      edge_segments[kept++] = edge_segments[i];
+    }
+  }
+  edge_segments.resize(kept);
   MFEM_VERIFY(!edge_segments.empty(),
               "Interface dielectric \"EdgeExcludeSegments\" removed the entire perimeter!");
   if (record)
@@ -525,27 +561,34 @@ void ExcludeCoincidentMetalEdgeSegmentIndices(
     return mesh::BoundaryEdgeSegment{geometry.vertices[source.vertices[0]].coordinate,
                                      geometry.vertices[source.vertices[1]].coordinate};
   };
-  for (const std::size_t index : segment_indices)
+  std::vector<mesh::BoundaryEdgeSegment> segments;
+  segments.reserve(segment_indices.size());
+  std::vector<bool> excluded(segment_indices.size(), false);
+  for (std::size_t i = 0; i < segment_indices.size(); i++)
   {
+    segments.push_back(SegmentOf(segment_indices[i]));
+    const auto &segment = segments.back();
     local_record.perimeter_count++;
-    local_record.perimeter_length += SegmentLength(SegmentOf(index));
+    local_record.perimeter_length += SegmentLength(segment);
+    excluded[i] = IsCoincidentWithExcludedBoundary(segment, excluded_tree, space_dimension,
+                                                   tolerance_squared, sagittas,
+                                                   local_record.max_sagitta);
+    if (excluded[i])
+    {
+      local_record.excluded_perimeter_count++;
+      local_record.excluded_perimeter_length += SegmentLength(segment);
+    }
   }
-  segment_indices.erase(
-      std::remove_if(segment_indices.begin(), segment_indices.end(),
-                     [&](std::size_t index)
-                     {
-                       const auto segment = SegmentOf(index);
-                       const bool excluded = IsCoincidentWithExcludedBoundary(
-                           segment, excluded_tree, space_dimension, tolerance_squared,
-                           sagittas, local_record.max_sagitta);
-                       if (excluded)
-                       {
-                         local_record.excluded_perimeter_count++;
-                         local_record.excluded_perimeter_length += SegmentLength(segment);
-                       }
-                       return excluded;
-                     }),
-      segment_indices.end());
+  local_record.straddling_perimeter_length = StraddlingPerimeterLength(segments, excluded);
+  std::size_t kept = 0;
+  for (std::size_t i = 0; i < segment_indices.size(); i++)
+  {
+    if (!excluded[i])
+    {
+      segment_indices[kept++] = segment_indices[i];
+    }
+  }
+  segment_indices.resize(kept);
   MFEM_VERIFY(!segment_indices.empty(),
               "Interface dielectric \"EdgeExcludeSegments\" removed the entire "
               "automatically extracted perimeter!");
