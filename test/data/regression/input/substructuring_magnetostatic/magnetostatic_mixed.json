@@ -1,0 +1,19 @@
+{
+  "Problem": { "Type": "Magnetostatic", "Output": "postpro/mixed" },
+  "Model": { "Mesh": "mesh/ring_disk_split.msh", "L0": 1.0e-6 },
+  "Domains": { "Materials": [
+    { "Attributes": [1], "Permeability": 1.0 },
+    { "Attributes": [8], "Permeability": 1.0 } ] },
+  "Boundaries": {
+    "PEC": { "Attributes": [2,3] },
+    "SurfaceCurrent": [
+      { "Index": 1, "Attributes": [4], "Direction": [0.0,1.0,0.0],
+        "Aperture": { "Attributes": [5,6,7], "Direction": "+Z" } } ],
+    "FluxLoop": [
+      { "Index": 2, "FilmAttributes": [5], "HoleAttributes": [6], "FluxAmounts": [1.0], "Direction": "+Z" } ] },
+  "Solver": { "Order": 1,
+    "Magnetostatic": { "Save": 0 },
+    "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
+    "Substructuring": { "Region": { "Attributes": [8] }, "Environment": { "Attributes": [1] },
+      "SaveModel": "environment_mixed.model" } }
+}

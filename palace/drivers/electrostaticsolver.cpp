@@ -11,8 +11,10 @@
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/substructuringsolver.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -21,6 +23,64 @@ namespace palace
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
+  // Substructuring: condense the environment to a Dirichlet-to-Neumann operator on the
+  // interface and solve the region against it.
+  if (iodata.solver.substructuring)
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
+    const std::vector<int> terminals = sub.TerminalIndices();
+    const int n = static_cast<int>(terminals.size());
+    MFEM_VERIFY(n > 0, "Substructuring electrostatic solve requires terminals!");
+
+    // Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region solves against the
+    // condensed environment; only the fields to be saved need the environment interior.
+    Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
+               (n > 1) ? "s" : "");
+    const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
+    const bool adapt = (iodata.model.refinement.max_it > 0);
+    std::vector<Vector> fields, region_fields;
+    const mfem::DenseMatrix C =
+        sub.CapacitanceMatrix(terminals, &fields, n_save, adapt ? &region_fields : nullptr);
+    if (root)
+    {
+      const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
+      TableWithCSVFile output(post_dir / "terminal-C.csv");
+      output.table.insert(Column("i", "i", 0, 0, 2, ""));
+      for (int j = 0; j < n; j++)
+      {
+        output.table.insert(fmt::format("C{}", terminals[j]),
+                            fmt::format("C[i][{}] (F)", terminals[j]));
+      }
+      for (int i = 0; i < n; i++)
+      {
+        output.table["i"] << static_cast<double>(terminals[i]);
+      }
+      for (int j = 0; j < n; j++)
+      {
+        auto &col = output.table[fmt::format("C{}", terminals[j])];
+        for (int i = 0; i < n; i++)
+        {
+          col << C(i, j) * F;
+        }
+      }
+      output.WriteFullTableTrunc();
+    }
+    if (n_save > 0)
+    {
+      sub.WriteParaView(post_dir.string(),
+                        std::vector<int>(terminals.begin(), terminals.begin() + n_save),
+                        fields);
+    }
+    Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
+               (n > 1) ? "s" : "");
+    // Adaptive refinement of the region only (the indicators are zero on the environment).
+    ErrorIndicator indicator =
+        adapt ? sub.RegionErrorIndicator(region_fields, C) : ErrorIndicator();
+    return {indicator, sub.GlobalTrueVSize()};
+  }
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero

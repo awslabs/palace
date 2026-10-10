@@ -40,6 +40,13 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
                                  const MaterialOperator &mat_op,
                                  const mfem::Vector &flux_direction, MPI_Comm comm);
 
+// The flux of ComputeFluxThroughSurface as a linear functional of B: f, on the true DOFs of
+// the B space, with f^T B the flux (B evaluated in the first neighboring element, which the
+// normal continuity of B makes equal to the two-sided average).
+Vector FluxThroughSurfaceFunctional(const FiniteElementSpace &rt_fespace,
+                                    const std::vector<int> &attributes,
+                                    const mfem::Vector &flux_direction);
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_CURL_SOLVER_HPP
