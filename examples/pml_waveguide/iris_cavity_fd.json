@@ -17,7 +17,7 @@
     [
       { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
     ],
-    "PML": { "Attributes": [2], "FrequencyDependent": true }
+    "PML": [{ "Attributes": [2], "FrequencyDependent": true }]
   },
   "Boundaries":
   {

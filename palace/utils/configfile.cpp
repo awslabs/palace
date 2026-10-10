@@ -483,7 +483,13 @@ DomainData::DomainData(const json &domains)
   postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
   if (auto it = domains.find("PML"); it != domains.end())
   {
-    pml = PMLData(*it);
+    MFEM_VERIFY(it->is_array(),
+                "config[\"Domains\"][\"PML\"] should specify an array of PML blocks in "
+                "the configuration file!");
+    for (const auto &p : *it)
+    {
+      pml.emplace_back(p);
+    }
   }
 
   // Store all unique domain attributes.
@@ -502,16 +508,24 @@ DomainData::DomainData(const json &domains)
                     "config[\"Domains\"][\"Materials\"]!",
                     attr));
   }
-  if (pml)
+  std::vector<int> pml_attributes;
+  for (const auto &data : pml)
   {
-    for (const auto &attr : pml->attributes)
+    for (const auto &attr : data.attributes)
     {
       MFEM_VERIFY(std::ranges::binary_search(attributes, attr),
                   fmt::format("PML attribute {:d} has no corresponding entry in "
                               "config[\"Domains\"][\"Materials\"]!",
                               attr));
     }
+    pml_attributes.insert(pml_attributes.end(), data.attributes.begin(),
+                          data.attributes.end());
   }
+  std::ranges::sort(pml_attributes);
+  const auto dup = std::ranges::adjacent_find(pml_attributes);
+  MFEM_VERIFY(dup == pml_attributes.end(),
+              fmt::format("PML attribute {:d} is specified in more than one PML block!",
+                          (dup != pml_attributes.end()) ? *dup : 0));
 }
 
 PecBoundaryData::PecBoundaryData(const json &pec)

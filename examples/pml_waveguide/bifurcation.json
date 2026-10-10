@@ -1,0 +1,53 @@
+{
+  // E-plane bifurcation: the waveguide of waveguide_pml.json is split by a 10 mm thick
+  // septum, parallel to the broad walls, into two arms of different lengths (0.2 m and 0.1
+  // m), each terminated by its own block of PML regions (see mesh/mesh.jl). The PML of the
+  // longer arm ends at the bounding box of the mesh, so that its layer geometry is detected
+  // from the mesh, while the layer of the shorter arm is specified with its direction and
+  // thickness, measured from the end of its PML region. The blocks have different
+  // parameters: a static stretch for the longer arm, and a frequency-dependent stretch for
+  // the shorter arm. With the arms matched by the PMLs, the reflection of the bifurcation
+  // (|S11| ≈ -19 dB) is independent of the lengths of the arms.
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/bifurcation",
+    "OutputFormats": { "Paraview": false }
+  },
+  "Model": { "Mesh": "mesh/bifurcation.msh", "L0": 1.0 },
+  "Domains":
+  {
+    "Materials":
+    [
+      { "Attributes": [1, 2, 3], "Permeability": 1.0, "Permittivity": 1.0 }
+    ],
+    "PML":
+    [
+      { "Attributes": [2] },
+      {
+        "Attributes": [3],
+        "Direction": ["+Z"],
+        "Thickness": 0.1,
+        "FrequencyDependent": true
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      { "Index": 1, "Attributes": [4], "Mode": 1, "Excitation": true }
+    ],
+    "PEC": { "Attributes": [5] }
+  },
+  "Solver":
+  {
+    "Order": 2, "Device": "CPU",
+    "Driven": { "MinFreq": 2.0, "MaxFreq": 2.8, "FreqStep": 0.4, "SaveStep": 0 },
+    "Linear":
+    {
+      "Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 100
+    }
+  }
+}

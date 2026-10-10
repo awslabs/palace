@@ -32,16 +32,18 @@
         "Permittivity": 1.0
       }
     ],
-    "PML": {
-      "Attributes": [2],
-      "Direction": [
-        "+Z"
-      ],
-      "Thickness": 0.3,
-      "Order": 3,
-      "ReflectionTarget": 1e-12,
-      "ReferenceFrequency": 3.0
-    }
+    "PML": [
+      {
+        "Attributes": [2],
+        "Direction": [
+          "+Z"
+        ],
+        "Thickness": 0.3,
+        "Order": 3,
+        "ReflectionTarget": 1e-12,
+        "ReferenceFrequency": 3.0
+      }
+    ]
   },
   "Boundaries": {
     "Periodic": {

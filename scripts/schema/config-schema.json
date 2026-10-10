@@ -172,7 +172,13 @@
           "$ref": "#/$defs/DomainPostprocessing"
         },
         "PML": {
-          "$ref": "#/$defs/PML"
+          "type": "array",
+          "title": "Perfectly Matched Layer",
+          "description": "Array of PML blocks, each with its own coordinate stretch and disjoint attributes.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PML"
+          }
         }
       }
     },
@@ -621,8 +627,7 @@
     },
     "PML": {
       "type": "object",
-      "title": "Perfectly Matched Layer",
-      "description": "Perfectly matched layer (PML) regions, which turn the given domains into an absorbing layer for 3D frequency domain driven and eigenmode simulations (treated as regular materials for other simulation types, and not supported for 2D simulations). The uniaxial PML terminates an axis-aligned, box-shaped physical domain by applying the complex coordinate stretch factor `s = \u03ba + \u03c3 / (\u03b5\u2080 (\u03b1 + i\u03c9))` along each axis to the material properties of the PML regions (their background material properties), where `\u03ba`, `\u03c3`, and `\u03b1` are graded polynomially from 1, 0, and 0 at the interface with the physical domain to `\"KappaMax\"`, `\"SigmaMax\"`, and 2\u03c0 `\"AlphaMax\"` at the outer edge of the layer. The stretch is the same in all PML regions, so that materials crossing the layer (for example, a substrate) remain reflectionless. The materials of the PML regions may be anisotropic and have a loss tangent, but cannot have a conductivity or London penetration depth. In most cases, only `\"Attributes\"` needs to be specified: the layer geometry is detected from the mesh, the conductivity is computed from `\"ReflectionTarget\"`, and the stretch is evaluated at the lowest frequency of interest.",
+      "description": "Block of perfectly matched layer (PML) regions, which turn the given domains into an absorbing layer for 3D frequency domain driven and eigenmode simulations (treated as regular materials for other simulation types, and not supported for 2D simulations). The uniaxial PML terminates the physical domain on the faces of an axis-aligned box by applying the complex coordinate stretch factor `s = \u03ba + \u03c3 / (\u03b5\u2080 (\u03b1 + i\u03c9))` along each axis to the material properties of the PML regions (their background material properties), where `\u03ba`, `\u03c3`, and `\u03b1` are graded polynomially from 1, 0, and 0 at the interface with the physical domain to `\"KappaMax\"`, `\"SigmaMax\"`, and 2\u03c0 `\"AlphaMax\"` at the outer edge of the layer. The stretch is the same in all PML regions of a block, so that materials crossing the layer (for example, a substrate) remain reflectionless. Several blocks can terminate the physical domain at different locations or with different parameters: the stretch must be continuous across the interfaces between the PML regions of different blocks (blocks in contact must have the same stretch on their interfaces). The materials of the PML regions may be anisotropic and have a loss tangent, but cannot have a conductivity or London penetration depth. In most cases, only `\"Attributes\"` needs to be specified: the layer geometry is detected from the mesh (for PML regions outside of the bounding box of the physical region), the conductivity is computed from `\"ReflectionTarget\"`, and the stretch is evaluated at the lowest frequency of interest.",
       "additionalProperties": false,
       "required": [
         "Attributes"
@@ -640,7 +645,7 @@
         },
         "Direction": {
           "type": "array",
-          "description": "Faces of the physical domain covered by the layer, as an array of `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, or `\"-Z\"` (case-insensitive), for example `[\"+X\", \"+Z\"]` for an edge layer. Must be specified together with `\"Thickness\"`. When both are omitted, the faces and thicknesses are detected from the bounding boxes of the physical (non-PML) region and of the whole mesh.",
+          "description": "Faces of the physical domain covered by the layer of the block, as an array of `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, or `\"-Z\"` (case-insensitive), for example `[\"+X\", \"+Z\"]` for an edge layer. Must be specified together with `\"Thickness\"`. When both are omitted, the faces and thicknesses are detected from the bounding boxes of the physical (non-PML) region and of the PML regions of the block.",
           "items": {
             "type": "string"
           },
@@ -648,7 +653,7 @@
           "x-palace-advanced": true
         },
         "Thickness": {
-          "description": "Thickness of the layer in mesh length units, as a scalar for all faces listed in `\"Direction\"` or an array of 6 values for the faces `[-X, +X, -Y, +Y, -Z, +Z]`. Must be specified together with `\"Direction\"`.",
+          "description": "Thickness of the layer in mesh length units, measured inward from the faces of the bounding box of the PML regions of the block, as a scalar for all faces listed in `\"Direction\"` or an array of 6 values for the faces `[-X, +X, -Y, +Y, -Z, +Z]`. Must be specified together with `\"Direction\"`.",
           "oneOf": [
             {
               "type": "number",
@@ -674,7 +679,7 @@
           "x-palace-advanced": true
         },
         "SigmaMax": {
-          "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Negative values or `null` compute the value per face from `\"ReflectionTarget\"`, the layer thickness, and the smallest refractive index of the materials of the PML regions.",
+          "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Negative values or `null` compute the value per face from `\"ReflectionTarget\"`, the layer thickness, and the smallest refractive index of the materials of the PML regions of the block.",
           "oneOf": [
             {
               "type": "null"

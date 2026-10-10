@@ -9,6 +9,7 @@
 // long-tests CI workflow.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <filesystem>
@@ -1352,6 +1353,68 @@ TEST_CASE("pml_waveguide_cfs", "[Serial][Parallel][Regression]")
 TEST_CASE("pml_waveguide_fd", "[Serial][Parallel][Regression]")
 {
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml_fd", "port-S.csv", -55.0);
+}
+
+// E-plane bifurcation with arms of different lengths, each terminated by its own block of
+// PML regions (one static, one frequency-dependent). The complex S11 (|S11| ~ -19 dB, the
+// reflection of the bifurcation) is diffed against the reference, and against the
+// PML-independent values of the same bifurcation with arms of equal lengths terminated by a
+// single PML block (separate mesh). The atol of 4e-3 covers the discretization differences
+// of the two meshes (~1.5e-3), while a poorly absorbing PML (reflection target 1e-2 in the
+// shorter arm) is off by 1e-2 to 2e-2.
+palace::test::CustomCheck TestPMLBifurcation(double atol_ref, double atol_pml)
+{
+  // (f (GHz), |S11| (dB), arg(S11) (deg.)) with arms of equal lengths.
+  constexpr std::array<std::array<double, 3>, 3> pml_independent = {
+      {{2.0, -18.964354921, -130.742504370},
+       {2.4, -18.947565085, 100.122345236},
+       {2.8, -18.939765133, -15.454213064}}};
+  return [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    auto col = [](palace::Table &t, const std::string &key)
+    {
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    auto S = [](double db, double deg)
+    { return std::polar(std::pow(10.0, db / 20.0), deg * std::numbers::pi / 180.0); };
+    const int a_f = col(actual, "f (GHz)"), a_mag = col(actual, "|S[1][1]| (dB)"),
+              a_arg = col(actual, "arg(S[1][1])");
+    const int r_mag = col(reference, "|S[1][1]| (dB)"),
+              r_arg = col(reference, "arg(S[1][1])");
+    REQUIRE(std::min({a_f, a_mag, a_arg, r_mag, r_arg}) >= 0);
+    REQUIRE(actual.n_rows() == pml_independent.size());
+    REQUIRE(reference.n_rows() == pml_independent.size());
+    for (std::size_t r = 0; r < pml_independent.size(); r++)
+    {
+      const auto s = S(actual[a_mag].data[r], actual[a_arg].data[r]);
+      const auto s_ref = S(reference[r_mag].data[r], reference[r_arg].data[r]);
+      const auto &[f, db, deg] = pml_independent[r];
+      INFO("f = " << actual[a_f].data[r] << " GHz: S11 = " << s << ", reference " << s_ref
+                  << ", PML-independent " << S(db, deg));
+      CHECK_THAT(actual[a_f].data[r], Catch::Matchers::WithinAbs(f, 1.0e-12));
+      CHECK(std::abs(s - s_ref) < atol_ref);
+      CHECK(std::abs(s - S(db, deg)) < atol_pml);
+    }
+  };
+}
+
+TEST_CASE("pml_waveguide_bifurcation", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestPMLBifurcation(1.0e-4, 4.0e-3);
+  palace::test::RunRegressionCase("pml_waveguide", "bifurcation.json", "bifurcation", opts);
 }
 
 // Iris-coupled cavity: a shorted section of the waveguide coupled through an inductive iris

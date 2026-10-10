@@ -74,7 +74,7 @@ simulations.
 A [perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer) is
 an absorbing region surrounding the physical domain, which typically reflects much less
 than an absorbing boundary condition, at the cost of additional mesh elements. In *Palace*,
-the domains of the PML regions are specified with the `"Attributes"` of
+the domains of the PML regions are specified with the `"Attributes"` of the blocks of
 [`config["Domains"]["PML"]`](../config/reference.md#config-domains-pml), and a PML is
 available for 3D frequency domain driven and eigenmode simulations. The material properties
 of these domains in
@@ -93,14 +93,20 @@ as a shell of a few elements around a box-shaped physical domain and to list its
   [
     { "Attributes": [1, 2], "Permittivity": 1.0 }
   ],
-  "PML": { "Attributes": [2] }
+  "PML": [{ "Attributes": [2] }]
 }
 ```
 
-The coordinate stretch is the same in all PML regions: the PML is only reflectionless if the
-stretch is the same function of position in the whole layer. The domains extending into the
-layer, for example a substrate and the vacuum above it, must be PML regions in the layer
-(which is checked), each with the background material properties of its material.
+The coordinate stretch is the same in all PML regions of a block: the PML is only
+reflectionless if the stretch is the same function of position in the whole layer. The
+domains extending into the layer, for example a substrate and the vacuum above it, must be
+PML regions in the layer, each with the background material properties of its material.
+Several blocks, each with its own parameters, can terminate the physical domain at different
+locations, for example at the ends of waveguides of different lengths, or with different
+parameters on different faces. The stretch must be continuous across the interfaces between
+the PML regions of different blocks, and must vanish at the interfaces with the physical
+region: blocks in contact must have the same stretch on their interfaces, and a layer must
+not extend into the physical region. Both conditions are checked on the faces of the mesh.
 
 The PML terms replace the bulk material terms of the PML regions in the system matrices.
 Otherwise, the PML regions have the material properties of their background material: for
@@ -115,12 +121,15 @@ coordinate normal to each face of the box with the complex factor
 ``\sigma``, and ``\alpha`` are graded polynomially from their values at the interface with
 the physical domain (1, 0, and 0) to `"KappaMax"`, `"SigmaMax"`, and ``2\pi`` `"AlphaMax"`
 at the outer edge of the layer. Layers on several faces, including the edge and corner
-regions of the box, are supported. By default, the faces and thicknesses of the layer are
-detected by comparing the bounding boxes of the physical (non-PML) region and of the whole
-mesh, and `"SigmaMax"` is computed from the target reflection coefficient at normal
-incidence `"ReflectionTarget"`, for the smallest refractive index of the materials of the
-PML regions. Alternatively, they can be specified
-using `"Direction"`, `"Thickness"`, and `"SigmaMax"`. A real stretch `"KappaMax"` > 1
+regions of the box, are supported. By default, the faces and thicknesses of the layer of a
+block are detected by comparing the bounding boxes of the physical (non-PML) region and of
+the PML regions of the block, and `"SigmaMax"` is computed from the target reflection
+coefficient at normal incidence `"ReflectionTarget"`, for the smallest refractive index of
+the materials of the PML regions of the block. Alternatively, they can be specified using
+`"Direction"`, `"Thickness"`, and `"SigmaMax"`, which is required for the blocks whose PML
+regions do not lie outside of the bounding box of the physical region (the thickness is
+measured inward from the bounding box of the PML regions of the block). A real stretch
+`"KappaMax"` > 1
 improves the absorption of evanescent waves, when near fields reach the layer, but reduces
 the accuracy for propagating waves on a given mesh.
 
@@ -149,8 +158,9 @@ the multigrid preconditioner is therefore complemented by a sparse direct solve 
 equations of the unknowns of the PML elements (except those shared with the physical
 region), which restores the convergence of the multigrid preconditioner without PML. This
 is affordable when the PML regions hold a small fraction of the unknowns, as is typical when
-the mesh is coarse in the layer compared to the physical region. Otherwise, a sparse direct solve of the whole system (`"MGMaxLevels": 1`
-and `"ComplexCoarseSolve": true`) costs about as much. Simulations with PML regions
+the mesh is coarse in the layer compared to the physical region. Otherwise, a sparse direct
+solve of the whole system (`"MGMaxLevels": 1` and `"ComplexCoarseSolve": true`) costs about
+as much. Simulations with PML regions
 therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS): the
 real-valued approximation of the system matrix used by the AMS solver is indefinite in
 strongly absorbing layers, and AMS is not supported with PML regions.
@@ -160,8 +170,9 @@ Sample configurations are provided in the
 [`examples/pml_layered`](https://github.com/awslabs/palace/blob/main/examples/pml_layered),
 and [`examples/pml_oblique`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique)
 directories: a rectangular waveguide terminated by a PML (driven simulations, an adaptive
-sweep with circuit synthesis, and eigenmode simulations of a cavity coupled to the waveguide
-through an iris), a layered substrate and vacuum parallel-plate waveguide whose material
+sweep with circuit synthesis, eigenmode simulations of a cavity coupled to the waveguide
+through an iris, and an E-plane bifurcation whose arms of different lengths are terminated
+by two PML blocks), a layered substrate and vacuum parallel-plate waveguide whose material
 interface crosses the PML, and a periodic cell with a Floquet port for plane-wave absorption
 at oblique incidence (at a single frequency and with an adaptive sweep).
 

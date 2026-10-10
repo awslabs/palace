@@ -788,7 +788,7 @@ TEST_CASE("Config Linear PML subdomain solver", "[config][Serial]")
     json domains = {{"Materials", {{{"Attributes", {1, 2}}}}}};
     if (pml)
     {
-      domains["PML"] = {{"Attributes", {2}}};
+      domains["PML"] = json::array({json{{"Attributes", {2}}}});
     }
     json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
@@ -873,10 +873,28 @@ TEST_CASE("Config PML regions", "[config][Serial]")
   CHECK_THROWS(config::PMLData(json{{"Attributes", {2}}, {"Thickness", 0.5}}));
 
   // PML attributes need materials.
-  json domains = {{"Materials", {{{"Attributes", {1, 2}}}}},
-                  {"PML", {{"Attributes", {2}}}}};
-  CHECK(config::DomainData(domains).pml->attributes == std::vector<int>{2});
-  domains["PML"]["Attributes"] = {3};
+  json domains = {{"Materials", {{{"Attributes", {1, 2, 3}}}}},
+                  {"PML", json::array({json{{"Attributes", {2}}}})}};
+  const config::DomainData data(domains);
+  REQUIRE(data.pml.size() == 1);
+  CHECK(data.pml[0].attributes == std::vector<int>{2});
+  domains["PML"][0]["Attributes"] = {4};
+  CHECK_THROWS(config::DomainData(domains));
+
+  // Several PML blocks, with their own parameters and disjoint attributes.
+  domains["PML"] = json::array({json{{"Attributes", {2}}, {"Order", 2}},
+                                json{{"Attributes", {3}}, {"FrequencyDependent", true}}});
+  const config::DomainData blocks(domains);
+  REQUIRE(blocks.pml.size() == 2);
+  CHECK(blocks.pml[0].order == 2);
+  CHECK(!blocks.pml[0].frequency_dependent);
+  CHECK(blocks.pml[1].order == 3);
+  CHECK(blocks.pml[1].frequency_dependent);
+  domains["PML"][1]["Attributes"] = {3, 2};
+  CHECK_THROWS(config::DomainData(domains));
+
+  // The PML blocks are given as an array.
+  domains["PML"] = json{{"Attributes", {2}}};
   CHECK_THROWS(config::DomainData(domains));
 }
 
@@ -1927,29 +1945,30 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
         {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
         {"Model", {{"Mesh", "test.msh"}}},
         {"Domains",
-         {{"Materials", {{{"Attributes", {1, 2}}}}}, {"PML", {{"Attributes", {2}}}}}},
+         {{"Materials", {{{"Attributes", {1, 2}}}}},
+          {"PML", json::array({json{{"Attributes", {2}}}})}}},
         {"Boundaries", json::object()},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
 
     IoData iodata1(config, false);
-    REQUIRE(iodata1.domains.pml);
-    CHECK(iodata1.domains.pml->reference_frequency == 1.0);
+    REQUIRE(iodata1.domains.pml.size() == 1);
+    CHECK(iodata1.domains.pml[0].reference_frequency == 1.0);
 
     config = IoData::ConcretizeDefaults(iodata1, config);
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
-    auto &j_pml = config["Domains"]["PML"];
+    auto &j_pml = config["Domains"]["PML"][0];
     CHECK(j_pml["ReferenceFrequency"].get<double>() == 1.0);
     CHECK(j_pml["FrequencyDependent"].get<bool>() == false);
     CHECK(j_pml["AllowRefinement"].get<bool>() == false);
     CHECK(j_pml["SigmaMax"].is_null());
 
     IoData iodata2(config, false);
-    REQUIRE(iodata2.domains.pml);
-    CHECK(iodata2.domains.pml->reference_frequency ==
-          iodata1.domains.pml->reference_frequency);
+    REQUIRE(iodata2.domains.pml.size() == 1);
+    CHECK(iodata2.domains.pml[0].reference_frequency ==
+          iodata1.domains.pml[0].reference_frequency);
 
     auto pml_gaps =
         SchemaCoverageGaps("/$defs/PML", j_pml, /*skip=*/{"Direction", "Thickness"});
@@ -1959,20 +1978,20 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
   SECTION("Static PML ReferenceFrequency defaults to eigenmode target")
   {
-    json config = {
-        {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains",
-         {{"Materials", {{{"Attributes", {1, 2}}}}}, {"PML", {{"Attributes", {2}}}}}},
-        {"Boundaries", json::object()},
-        {"Solver", {{"Eigenmode", {{"Target", 4.2}}}}}};
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials", {{{"Attributes", {1, 2}}}}},
+                     {"PML", json::array({json{{"Attributes", {2}}}})}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 4.2}}}}}};
 
     IoData iodata(config, false);
-    REQUIRE(iodata.domains.pml);
-    CHECK(iodata.domains.pml->reference_frequency == 4.2);
+    REQUIRE(iodata.domains.pml.size() == 1);
+    CHECK(iodata.domains.pml[0].reference_frequency == 4.2);
 
     config = IoData::ConcretizeDefaults(iodata, config);
-    CHECK(config["Domains"]["PML"]["ReferenceFrequency"].get<double>() == 4.2);
+    CHECK(config["Domains"]["PML"][0]["ReferenceFrequency"].get<double>() == 4.2);
   }
 
   SECTION("Static PML ReferenceFrequency zero is invalid")
@@ -1982,7 +2001,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
         {"Model", {{"Mesh", "test.msh"}}},
         {"Domains",
          {{"Materials", {{{"Attributes", {1, 2}}}}},
-          {"PML", {{"Attributes", {2}}, {"ReferenceFrequency", 0.0}}}}},
+          {"PML", json::array({json{{"Attributes", {2}}, {"ReferenceFrequency", 0.0}}})}}},
         {"Boundaries", json::object()},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
 

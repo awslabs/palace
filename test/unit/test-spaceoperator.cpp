@@ -281,8 +281,8 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
     config::DomainData domains;
     domains.attributes = {1, 2};
     domains.materials = {vacuum, pml};
-    domains.pml = pml_pml;
-    domains.pml->attributes = pml.attributes;
+    domains.pml = {pml_pml};
+    domains.pml[0].attributes = pml.attributes;
     config::BoundaryData boundaries;
     Units units(1.0, 1.0);
     return std::make_unique<SpaceOperator>(solver, domains, boundaries,
@@ -413,6 +413,119 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
   }
 }
 
+TEST_CASE("SpaceOperator PML blocks with static and frequency-dependent stretches",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  // Unit cube with PML layers z ∈ [0, 0.25] (attribute 2) and z ∈ [0.75, 1] (attribute 3).
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) < 0.25) ? 2 : ((center(2) > 0.75) ? 3 : 1));
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  constexpr double omega0 = 2.0;
+  auto MakeBlock = [](std::vector<int> attributes, int order, bool frequency_dependent)
+  {
+    config::PMLData pml;
+    pml.attributes = std::move(attributes);
+    pml.order = order;
+    pml.kappa_max = {1.0, 1.0, 1.5};
+    pml.frequency_dependent = frequency_dependent;
+    pml.reference_frequency = omega0;
+    return pml;
+  };
+  auto MakeSpaceOperator = [&](const std::vector<config::PMLData> &pml)
+  {
+    config::MaterialData vacuum, dielectric;
+    vacuum.attributes = {1, 3};
+    dielectric.attributes = {2};
+    dielectric.epsilon_r.s = {2.0, 2.0, 2.0};
+    config::DomainData domains;
+    domains.attributes = {1, 2, 3};
+    domains.materials = {vacuum, dielectric};
+    domains.pml = pml;
+    config::BoundaryData boundaries;
+    Units units(1.0, 1.0);
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries, ProblemType::DRIVEN,
+                                           units, mesh);
+  };
+
+  ComplexVector x, y1, y2;
+  auto RelErr = [&](ComplexVector &a, const ComplexVector &b)
+  {
+    a.Add(-1.0, b);
+    return linalg::Norml2(comm, a) / linalg::Norml2(comm, b);
+  };
+  auto Apply = [&](SpaceOperator &space_op, std::complex<double> omega, ComplexVector &y)
+  {
+    const ComplexOperator *C0 = nullptr;
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2 = space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -omega * omega, K.get(), C0,
+                                      M.get(), A2.get());
+    if (x.Size() == 0)
+    {
+      x.SetSize(space_op.GetNDSpace().GetTrueVSize());
+      x.UseDevice(true);
+      x.Real().Randomize(42 + Mpi::Rank(comm));
+      x.Imag().Randomize(314159 + Mpi::Rank(comm));
+    }
+    y.SetSize(x.Size());
+    y.UseDevice(true);
+    A->Mult(x, y);
+    return A2 != nullptr;
+  };
+
+  // A static block with a different grading and a frequency-dependent block: at ω = ω₀,
+  // the system matrix is the one of two static blocks.
+  auto mixed = MakeSpaceOperator({MakeBlock({2}, 2, false), MakeBlock({3}, 3, true)});
+  REQUIRE(mixed->GetMaterialOp().GetPMLLayers().size() == 2);
+  REQUIRE(mixed->GetMaterialOp().HasFrequencyDependentPML());
+  auto both_static =
+      MakeSpaceOperator({MakeBlock({2}, 2, false), MakeBlock({3}, 3, false)});
+  REQUIRE(!both_static->GetMaterialOp().HasFrequencyDependentPML());
+  CHECK(Apply(*mixed, omega0, y1));
+  CHECK(!Apply(*both_static, omega0, y2));
+  CHECK_THAT(RelErr(y1, y2), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+
+  // At another frequency, only the frequency-dependent block changes.
+  Apply(*mixed, 1.5 * omega0, y1);
+  Apply(*both_static, 1.5 * omega0, y2);
+  CHECK(RelErr(y1, y2) > 1.0e-3);
+
+  // Blocks with the same parameters are a single block (σ_max is given, since by default it
+  // depends on the materials of each block).
+  auto Block = [&](std::vector<int> attributes)
+  {
+    auto pml = MakeBlock(std::move(attributes), 3, false);
+    pml.sigma_max = {0.0, 0.0, 20.0};
+    return pml;
+  };
+  auto single = MakeSpaceOperator({Block({2, 3})});
+  auto split = MakeSpaceOperator({Block({2}), Block({3})});
+  REQUIRE(single->GetMaterialOp().GetPMLLayers().size() == 1);
+  Apply(*single, omega0, y1);
+  Apply(*split, omega0, y2);
+  CHECK_THAT(RelErr(y1, y2), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+}
+
 TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitioning",
           "[spaceoperator][pml][Serial][Parallel]")
 {
@@ -487,8 +600,8 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   config::DomainData domains;
   domains.attributes = {1, 2};
   domains.materials = {vacuum, pml};
-  domains.pml = pml_pml;
-  domains.pml->attributes = pml.attributes;
+  domains.pml = {pml_pml};
+  domains.pml[0].attributes = pml.attributes;
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
   SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
@@ -538,8 +651,8 @@ TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
   config::DomainData domains;
   domains.attributes = {1, 2};
   domains.materials = {vacuum, pml};
-  domains.pml = pml_pml;
-  domains.pml->attributes = pml.attributes;
+  domains.pml = {pml_pml};
+  domains.pml[0].attributes = pml.attributes;
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
   for (auto problem_type : {ProblemType::DRIVEN, ProblemType::EIGENMODE})
@@ -618,7 +731,7 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
     domains.materials = {vacuum, layer};
     if (with_pml)
     {
-      auto &pml = domains.pml.emplace();
+      auto &pml = domains.pml.emplace_back();
       pml.attributes = layer.attributes;
       pml.autodetect_geometry = false;
       pml.directions = {false, true, false, false, false, true};
@@ -765,13 +878,13 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   config::DomainData domains;
   domains.attributes = {1, 2};
   domains.materials = {vacuum, layer};
-  domains.pml = layer_pml;
-  domains.pml->attributes = layer.attributes;
+  domains.pml = {layer_pml};
+  domains.pml[0].attributes = layer.attributes;
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
   SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
   REQUIRE(space_op.GetMaterialOp().HasPML());
-  const auto &p = space_op.GetMaterialOp().GetPML().GetStretch();
+  const auto &p = space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch();
 
   // Diagonal background material of the layer.
   std::array<double, 3> b_mu_inv, b_eps_re, b_eps_im;

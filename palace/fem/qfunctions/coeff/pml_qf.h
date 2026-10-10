@@ -37,7 +37,7 @@
 //     [6, 7]    (Re, Im) of the frequency ω of the stretch: the solve frequency for a
 //               frequency-dependent stretch, or the reference frequency ω₀ otherwise
 //     [8..16]   Floquet wave vector cross product matrix [k ×] (3 x 3, column-major)
-//   Stretch (PALACE_PML_STRETCH_SIZE entries), the same for all PML regions:
+//   Stretch (PALACE_PML_STRETCH_SIZE entries) of the PML block of the integrator:
 //     [0]       polynomial grading order n
 //     [1..6]    inner interface coordinate of each face {-x, +x, -y, +y, -z, +z}
 //     [7..12]   layer thickness of each face (≤ 0 for inactive faces)

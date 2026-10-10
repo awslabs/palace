@@ -122,7 +122,7 @@ mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &d
 MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
                                    const config::PeriodicBoundaryData &periodic,
                                    ProblemType problem_type, const Mesh &mesh,
-                                   const config::PMLData *pml)
+                                   const std::vector<config::PMLData> &pml)
   : mesh(mesh)
 {
   SetUpMaterialProperties(materials, periodic, problem_type, mesh);
@@ -131,8 +131,7 @@ MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &mate
 
 MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh)
   : MaterialOperator(iodata.domains.materials, iodata.boundaries.periodic,
-                     iodata.problem.type, mesh,
-                     iodata.domains.pml ? &*iodata.domains.pml : nullptr)
+                     iodata.problem.type, mesh, iodata.domains.pml)
 {
 }
 
@@ -419,12 +418,12 @@ void MaterialOperator::SetUpMaterialProperties(
   has_wave_attr = has_attr[3];
 }
 
-void MaterialOperator::SetUpPML(const config::PMLData *pml,
+void MaterialOperator::SetUpPML(const std::vector<config::PMLData> &pml,
                                 const std::vector<config::MaterialData> &materials,
                                 ProblemType problem_type, const mfem::ParMesh &mesh)
 {
   attr_mat_bulk = attr_mat;
-  if (!pml)
+  if (pml.empty())
   {
     return;
   }
@@ -444,15 +443,41 @@ void MaterialOperator::SetUpPML(const config::PMLData *pml,
   {
     return;
   }
-  pml_layer.emplace(*pml, materials, this->mesh, attr_mat, mat_muinv, mat_epsilon,
-                    mat_epsilon_imag);
+  std::vector<int> pml_attributes;
+  for (const auto &data : pml)
+  {
+    pml_attributes.insert(pml_attributes.end(), data.attributes.begin(),
+                          data.attributes.end());
+  }
+  std::ranges::sort(pml_attributes);
+  MFEM_VERIFY(std::ranges::adjacent_find(pml_attributes) == pml_attributes.end(),
+              "PML attributes must not be specified in more than one PML block!");
+  pml_layers.reserve(pml.size());
+  for (const auto &data : pml)
+  {
+    pml_layers.emplace_back(data, pml_attributes, materials, this->mesh, attr_mat,
+                            mat_muinv, mat_epsilon, mat_epsilon_imag);
+  }
+  pml::CheckStretchContinuity(pml_layers, this->mesh);
   for (int i = 0; i < attr_mat_bulk.Size(); i++)
   {
-    if (pml_layer->IsPMLCeedAttribute(i + 1))
+    if (IsPMLCeedAttribute(i + 1))
     {
       attr_mat_bulk[i] = -1;
     }
   }
+}
+
+std::vector<int> MaterialOperator::GetPMLAttributes() const
+{
+  std::vector<int> attributes;
+  for (const auto &layer : pml_layers)
+  {
+    attributes.insert(attributes.end(), layer.GetAttributes().begin(),
+                      layer.GetAttributes().end());
+  }
+  std::ranges::sort(attributes);
+  return attributes;
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const

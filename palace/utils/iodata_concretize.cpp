@@ -274,9 +274,15 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
                                {"LondonDepth", m.lambda_L}});
     }
   }
-  if (domains.pml && j_domains.contains("PML"))
+  // PML blocks: positional match to the C++ vector.
+  if (j_domains.contains("PML") && j_domains["PML"].is_array())
   {
-    ConcretizePML(*domains.pml, j_domains["PML"]);
+    auto &j_pml = j_domains["PML"];
+    const std::size_t n = std::min(j_pml.size(), domains.pml.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      ConcretizePML(domains.pml[i], j_pml[i]);
+    }
   }
 }
 
