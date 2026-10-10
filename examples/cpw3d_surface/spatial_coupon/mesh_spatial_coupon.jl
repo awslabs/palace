@@ -3281,7 +3281,8 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
                 break
             end
             wedge_split["Rounds"] += 1
-            push!(inserted, (entity=entity_of[pass_record["NewCellSlots"][1]], index=s_index))
+            split_entity = entity_of[pass_record["NewCellSlots"][1]]
+            push!(inserted, (entity=split_entity, index=s_index))
             after = split_after; moves += split_moves
             targets = corner_incident(center)
             bridging_after = bridging_slivers(center, sides, targets)
@@ -3289,7 +3290,8 @@ function optimize_required_region!(seed_points, tetrahedra, triangles, corners, 
             masks_after = sidewall_vertex_masks(points, triangles, center, sides, radius)
             l1, l2 = pass_record["Trigger"]["CornerLineEdge"]
             pass_record["DescentMovesAfter"] = split_moves
-            pass_record["CornerLineEdgeOwnersAfter"] = count(k -> !(k in dead) && l2 in tetrahedra[k], incident[l1])
+            pass_record["CornerLineEdgeOwnersAfter"] = count(k -> !(k in dead) && entity_of[k] == split_entity &&
+                                                                 l2 in tetrahedra[k], incident[l1])
             pass_record["SpanningCellsAfter"] = count(k -> wedge_spanning_cell(points, tetrahedra[k], masks_after) !== nothing,
                                                      trigger)
             pass_record["CornerKappaRegMaxAfter"] = maximum(tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
