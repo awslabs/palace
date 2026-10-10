@@ -932,6 +932,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Source indices are either equipotential terminals or prescribed potential traces.
   PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op, nullptr,
                                                    &surface_post_geometry);
+  SaveMetadata(post_op.GetSurfacePostOp());
   int n_step = static_cast<int>(laplace_op.GetSources().size());
   MFEM_VERIFY(n_step > 0,
               "No terminal or prescribed potential boundaries specified for electrostatic "

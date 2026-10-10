@@ -70,10 +70,19 @@ registration (c0) mesh; margin: 1e-4 x 2^(k/2) stays below the solve-time exclus
 k < 15 halvings (every production AMR sequence to date <= 8 cycles: >= 12x margin), and lies
 >= 2e3 below fictitious metal.
 
+(4) The EXCLUSION-COVERAGE gate (decision 657 (b); EXCLUSION_COVERAGE_RULE): a device-plan
+coupon's foreign edges (EdgeExcludeSegments, rule B5) must actually leave its within-R
+perimeter - Palace records ExcludedPerimeterLength / ExcludeSegmentsLength per interface and
+the ratio must read within [0.99, 1.01] on every interface of every supplied run of BOTH twins
+(dense runs and basis-matrix runs); a missing record fails closed. (F)(a) cannot see this
+defect (both twins share the perimeter), only the (F)(b) own-box ratio did (32b0, decision
+655 (2) (a)).
+
 Statuses: PendingQualification (today's p-sequence controls) -> Qualified ((a) for T1 or T2
-AND the identity AND the gate) -> WindowValidated ((b) places the class inside its marker on
->= 1 window reference); (a) failing -> Failed (never placed).  A model whose driver verdict
-(Qualification.Verdict) is Failed is Failed whatever (a) reads (decisions 485 / 487 (a)).
+AND the identity AND the gate AND the exclusion coverage) -> WindowValidated ((b) places the
+class inside its marker on >= 1 window reference); (a) failing -> Failed (never placed).  A
+model whose driver verdict (Qualification.Verdict) is Failed is Failed whatever (a) reads
+(decisions 485 / 487 (a)).
 """
 import argparse
 import csv
@@ -241,6 +250,91 @@ def resolution_aware_gate(solves, model_name, tolerance=GATE_MAX_RATIO):
             "Excluded": sum(e.get("Excluded", 0) for e in probed)}
 
 
+EXCLUSION_COVERAGE_MIN = 0.99
+EXCLUSION_COVERAGE_MAX = 1.01
+EXCLUSION_COVERAGE_RULE = (
+    "decision 657 (b) (the 32b0 device-validity diagnosis, decisions 655 (2) / 656 (3)): a coupon whose foreign edges "
+    "(EdgeExcludeSegments, rule B5) are not removed from its within-R perimeter counts the foreign tube in its own surface "
+    "energy while the device keeps those cells' own models (decision 559) - a double count (F)(a) cannot see, since both "
+    "twins share the defective perimeter. Palace records per interface dielectric with EdgeExcludeSegments the listed "
+    "length and the perimeter length the coincidence test removed (palace.json SurfaceResponse.Diagnostics.EdgeExclusion); "
+    "the gate requires Coverage = ExcludedPerimeterLength / ExcludeSegmentsLength in [0.99, 1.01] on EVERY interface of "
+    "EVERY supplied run of BOTH twins (the dense runs at the library and control orders and the basis-matrix runs), the "
+    "upper bound guarding over-exclusion (a wider band dropping non-listed perimeter; the perimeter is the single outline "
+    "of the edge attributes, so a fully excluded list reads 1 + the arc-over-chord excess, <= 1.0003 for chords of <= 5 "
+    "degrees); fail closed: a run whose config lists EdgeExcludeSegments without the record (a binary before decision 657) "
+    "or with an interface missing from it is Failed; a coupon without EdgeExcludeSegments has nothing to cover and passes "
+    "as NotApplicable")
+
+
+def exclusion_coverage_run(run_name, config, postpro):
+    """The EXCLUSION-COVERAGE reading of one coupon run (EXCLUSION_COVERAGE_RULE): the interfaces
+    of `config` listing EdgeExcludeSegments against the palace.json record under `postpro`.
+    {Run, Required, Passed, Reason, Interfaces: {index: {Coverage, ExcludeSegmentsLength,
+    ExcludedPerimeterLength, MaxSagitta, Passed}}, MinCoverage, MaxCoverage}."""
+    dielectrics = config.get("Boundaries", {}).get("Postprocessing", {}).get("Dielectric", [])
+    required = sorted(int(d["Index"]) for d in dielectrics if d.get("EdgeExcludeSegments"))
+    result = {"Run": run_name, "Required": required, "Interfaces": {}, "MinCoverage": None, "MaxCoverage": None,
+              "Passed": True, "Reason": None, "Source": str(Path(postpro) / "palace.json")}
+    if not required:
+        result["Reason"] = "NotApplicable: the config lists no EdgeExcludeSegments"
+        return result
+    metadata_path = Path(postpro) / "palace.json"
+    record = None
+    if metadata_path.is_file():
+        record = json.loads(metadata_path.read_text()).get("SurfaceResponse", {}).get("Diagnostics", {}).get("EdgeExclusion")
+    if not isinstance(record, dict) or not isinstance(record.get("Interfaces"), dict):
+        result["Passed"] = False
+        result["Reason"] = (f"EXCLUSION-COVERAGE record missing: {metadata_path} carries no "
+                            "SurfaceResponse.Diagnostics.EdgeExclusion (a binary before decision 657 (b)) while the config lists "
+                            f"EdgeExcludeSegments on interfaces {required}")
+        return result
+    coverages = []
+    missing = []
+    for index in required:
+        entry = record["Interfaces"].get(str(index))
+        if entry is None:
+            missing.append(index)
+            continue
+        coverage = float(entry["Coverage"])
+        passed = EXCLUSION_COVERAGE_MIN <= coverage <= EXCLUSION_COVERAGE_MAX
+        coverages.append(coverage)
+        result["Interfaces"][str(index)] = {
+            "Coverage": coverage, "Passed": passed,
+            "ExcludeSegmentsLength": entry.get("ExcludeSegmentsLength"),
+            "ExcludedPerimeterLength": entry.get("ExcludedPerimeterLength"),
+            "ExcludeSegmentsCount": entry.get("ExcludeSegmentsCount"),
+            "ExcludedPerimeterCount": entry.get("ExcludedPerimeterCount"),
+            "Tolerance": entry.get("Tolerance"), "MaxSagitta": entry.get("MaxSagitta")}
+    if coverages:
+        result["MinCoverage"] = min(coverages)
+        result["MaxCoverage"] = max(coverages)
+    if missing:
+        result["Passed"] = False
+        result["Reason"] = f"EXCLUSION-COVERAGE record incomplete: interfaces {missing} list EdgeExcludeSegments without a record"
+        return result
+    failed = [index for index, entry in result["Interfaces"].items() if not entry["Passed"]]
+    if failed:
+        result["Passed"] = False
+        result["Reason"] = (f"EXCLUSION-COVERAGE FAIL: interfaces {failed} read coverage outside [{EXCLUSION_COVERAGE_MIN}, "
+                            f"{EXCLUSION_COVERAGE_MAX}] (min {result['MinCoverage']:.4f}, max {result['MaxCoverage']:.4f})")
+    return result
+
+
+def exclusion_coverage_gate(runs):
+    """The EXCLUSION-COVERAGE gate over the supplied coupon runs (exclusion_coverage_run
+    records): Passed iff every run passed; Applicable iff any run lists EdgeExcludeSegments;
+    MinCoverage / MaxCoverage over the applicable runs; the failing runs' reasons by name."""
+    applicable = [run for run in runs if run["Required"]]
+    coverages = [run["MinCoverage"] for run in applicable if run["MinCoverage"] is not None]
+    maxima = [run["MaxCoverage"] for run in applicable if run["MaxCoverage"] is not None]
+    failures = {run["Run"]: run["Reason"] for run in runs if not run["Passed"]}
+    return {"Rule": EXCLUSION_COVERAGE_RULE, "Minimum": EXCLUSION_COVERAGE_MIN, "Maximum": EXCLUSION_COVERAGE_MAX,
+            "Applicable": bool(applicable), "Passed": not failures, "Failures": failures,
+            "MinCoverage": min(coverages) if coverages else None, "MaxCoverage": max(maxima) if maxima else None,
+            "Runs": runs}
+
+
 def reference_box_closure(ft_model, e_in, e_straddle, validated_class):
     """(b): ft_model / REF_A with REF_A the central reading E_in + E_straddle / 2 and the
     bracket [E_in, E_in + E_straddle]; the decision-218 marker (0.05 validated / 0.10 new)."""
@@ -270,7 +364,7 @@ CONTROL_VERDICT_RULE = ("decisions 485 / 487 (a): the model's Qualification.Verd
 
 
 def qualification_status(current, *, dense_passed, identity_passed, gate_passed, window_validated=False, unjudged_types=(),
-                         control_verdict=None):
+                         control_verdict=None, exclusion_passed=True):
     """The library status transition: PendingQualification stays until (a) + identity + gate
     pass (Qualified); (b) on >= 1 window reference lifts Qualified to WindowValidated; a failing
     (a) or identity is Failed (never placed: the thin-run guard treats it as Missing); a
@@ -278,14 +372,16 @@ def qualification_status(current, *, dense_passed, identity_passed, gate_passed,
     `unjudged_types` (the model's Qualification.UnjudgedTypes) non-empty refuses the lift: the
     status stays PendingQualification (UNJUDGED_TYPES_RULE).  `control_verdict` (the model's
     Qualification.Verdict) Failed is Failed whatever the criteria read (CONTROL_VERDICT_RULE);
-    None (a model without a driver verdict) leaves the transition to the criteria."""
+    None (a model without a driver verdict) leaves the transition to the criteria.
+    `exclusion_passed` False (the EXCLUSION-COVERAGE gate, EXCLUSION_COVERAGE_RULE) is Failed:
+    the coupon's within-R surfaces claim a foreign edge the device keeps."""
     if current not in STATUSES:
         raise SpatialQualificationError(f"unknown library status {current!r}")
     if control_verdict is not None and control_verdict not in CONTROL_VERDICTS:
         raise SpatialQualificationError(f"unknown control verdict {control_verdict!r} (Qualification.Verdict is one of {CONTROL_VERDICTS})")
     if control_verdict == CONTROL_VERDICT_FAILED:
         return STATUS_FAILED
-    if not dense_passed or not identity_passed or not gate_passed:
+    if not dense_passed or not identity_passed or not gate_passed or not exclusion_passed:
         return STATUS_FAILED
     if unjudged_types:
         return STATUS_PENDING
@@ -601,20 +697,26 @@ RULE = ("decision 282 (F) as restated by decision 299: closure |E_thin,p4 + dE_m
         "0.02 (the thin twin acts through its domain matrix only: ft = E_out(R) + t^T Q_fab,surf t, the domain defect in "
         "the ft correction and the sc operator, the ff transform; the thin surface p-steps are information); the matrix "
         "identity <= 1e-6; the resolution-aware conductor-consistency gate (decision 277 / 299: Count 0, MaxRatio <= 1e-4 "
-        "on every supplied device solve, at the production orders on the registration mesh); (b) the reference box "
+        "on every supplied device solve, at the production orders on the registration mesh); the EXCLUSION-COVERAGE gate "
+        "(decision 657 (b): ExcludedPerimeterLength / ExcludeSegmentsLength in [0.99, 1.01] on every interface of every "
+        "supplied run of both twins, fail closed on a missing record); (b) the reference box "
         "integral within the decision-218 marker lifts Qualified to WindowValidated")
 
 
-def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=None, device_boxes=None, tolerances=None,
-             unjudged_types=(), control_verdict=None, identity_partition=None):
+def evaluate(traces, *, gate, exclusion_coverage, current_status=STATUS_PENDING, reference_boxes=None, device_boxes=None,
+             tolerances=None, unjudged_types=(), control_verdict=None, identity_partition=None):
     """The qualification record of a coupon: every dense trace's criteria (evaluate_trace
     results), the gate, the optional window references ((b) per class), the optional
     device-side domain reading (information) and the status; `unjudged_types` = the model's
     Qualification.UnjudgedTypes (the lift refused while non-empty, UNJUDGED_TYPES_RULE);
     `control_verdict` = the model's Qualification.Verdict (Failed is Failed, CONTROL_VERDICT_RULE);
-    `identity_partition` = identity_partition_record (recorded; the identity residual stays the gate)."""
+    `identity_partition` = identity_partition_record (recorded; the identity residual stays the gate);
+    `exclusion_coverage` = exclusion_coverage_gate over the coupon runs (EXCLUSION_COVERAGE_RULE; a
+    failing or missing record is Failed)."""
     if not traces:
         raise SpatialQualificationError("(a) needs at least one dense trace")
+    if not isinstance(exclusion_coverage, dict) or "Passed" not in exclusion_coverage:
+        raise SpatialQualificationError("the EXCLUSION-COVERAGE gate record is required (exclusion_coverage_gate)")
     families = {trace["Family"] for trace in traces}
     dense_passed = all(trace["Passed"] for trace in traces)
     identity_passed = all(v["Passed"] for trace in traces for v in trace["MatrixIdentity"].values())
@@ -626,8 +728,11 @@ def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=Non
     unjudged_types = list(unjudged_types or [])
     status = qualification_status(current_status, dense_passed=dense_passed, identity_passed=identity_passed,
                                   gate_passed=bool(gate["Passed"]), window_validated=bool(window and window["Passed"]),
-                                  unjudged_types=unjudged_types, control_verdict=control_verdict)
-    return {"Version": 2, "Rule": RULE,
+                                  unjudged_types=unjudged_types, control_verdict=control_verdict,
+                                  exclusion_passed=bool(exclusion_coverage["Passed"]))
+    return {"Version": 3, "Rule": RULE,
+            "ExclusionCoverage": exclusion_coverage,
+            "ExclusionCoveragePassed": bool(exclusion_coverage["Passed"]),
             "UnjudgedTypes": unjudged_types,
             "UnjudgedTypesRule": UNJUDGED_TYPES_RULE if unjudged_types else None,
             "ControlVerdict": control_verdict,
@@ -635,6 +740,7 @@ def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=Non
             "IdentityPartition": identity_partition,
             "Tolerances": {"Closure": CLOSURE_TOLERANCE, "TwinConsistency": TWIN_CONSISTENCY_TOLERANCE,
                            "MatrixIdentity": MATRIX_IDENTITY_TOLERANCE, "GateMaxRatio": GATE_MAX_RATIO,
+                           "ExclusionCoverageMin": EXCLUSION_COVERAGE_MIN, "ExclusionCoverageMax": EXCLUSION_COVERAGE_MAX,
                            **(tolerances or {})},
             "Families": sorted(families), "Traces": traces, "Gate": gate, "WindowReference": window,
             "DeviceBoxes": device_boxes,
@@ -659,6 +765,8 @@ def stamp_library_status(library_path, model_name, record, record_path=None):
         "ControlVerdict": record.get("ControlVerdict"),
         "IdentityPartition": record.get("IdentityPartition"),
         "Gate": {key: gate.get(key) for key in ("Passed", "MaxRatio", "Orders", "ProductionOrdersMissing", "Count", "Probed")},
+        "ExclusionCoverage": {key: record["ExclusionCoverage"].get(key)
+                              for key in ("Passed", "Applicable", "MinCoverage", "MaxCoverage", "Failures", "Minimum", "Maximum")},
         "Traces": [{"Name": t["Name"], "Family": t["Family"], "Passed": t["Passed"],
                     "Closure": {k: v["Residual"] for k, v in t["Closure"].items()},
                     "TwinConsistency": {k: v["Residual"] for k, v in t["TwinConsistency"].items()},
@@ -851,6 +959,14 @@ def command_evaluate(args):
                                      thin_p5=scaled(f"thin-p{args.control_order}"),
                                      q_fab=q_fab, q_thin=q_thin))
     gate = resolution_aware_gate([gate_solve_record(path) for path in args.gate], manifest["Model"])
+    # The EXCLUSION-COVERAGE gate (decision 657 (b)): every dense run of both twins and the two
+    # basis-matrix runs (the Q matrices' own perimeter) against their palace.json records.
+    coverage_runs = [exclusion_coverage_run(name, configs[name], Path(configs[name]["Problem"]["Output"]))
+                     for name in sorted(runs)]
+    for name, postpro in (("fabricated-matrices", args.fabricated_matrices), ("thin-matrices", args.thin_matrices)):
+        twin = "fabricated" if name.startswith("fabricated") else "thin"
+        coverage_runs.append(exclusion_coverage_run(name, configs[f"{twin}-p{args.library_order}"], Path(postpro)))
+    exclusion_coverage = exclusion_coverage_gate(coverage_runs)
     reference_boxes = None
     if args.reference_box:
         reference_boxes = [reference_box_closure(e["FtModel"], e["EIn"], e["EStraddle"], e.get("ValidatedClass", False))
@@ -883,16 +999,21 @@ def command_evaluate(args):
     identity_partition = identity_partition_record(
         json.loads(Path(args.identity_plan).read_text()) if args.identity_plan else None, model=model, run_name=identity_run,
         run_config=manifest["Configs"][identity_run], executed_status=executed_status)
-    record = evaluate(traces, gate=gate, current_status=model.get("QualificationStatus", STATUS_PENDING),
+    record = evaluate(traces, gate=gate, exclusion_coverage=exclusion_coverage,
+                      current_status=model.get("QualificationStatus", STATUS_PENDING),
                       reference_boxes=reference_boxes, device_boxes=device_boxes,
                       unjudged_types=qualification.get("UnjudgedTypes") or [],
                       control_verdict=qualification.get("Verdict"), identity_partition=identity_partition)
     Path(args.output).write_text(json.dumps(record, indent=2) + "\n")
     if not args.dry_run:
         stamp_library_status(args.library, manifest["Model"], record, args.output)
+    coverage_text = ("n/a" if not exclusion_coverage["Applicable"]
+                     else f"{exclusion_coverage['MinCoverage']:.4f}" if exclusion_coverage["MinCoverage"] is not None else "missing")
     print(f"{manifest['Model']}: closure {record['ClosurePassed']} twin-consistency {record['TwinConsistencyPassed']} "
           f"identity {record['IdentityPassed']} gate {record['GatePassed']} (orders {gate['Orders']}, max ratio "
-          f"{gate['MaxRatio']:.2e}) -> {record['Status']}"
+          f"{gate['MaxRatio']:.2e}) exclusion-coverage {record['ExclusionCoveragePassed']} (min {coverage_text}) -> {record['Status']}"
+          + (f" (EXCLUSION-COVERAGE: {'; '.join(f'{run}: {reason}' for run, reason in exclusion_coverage['Failures'].items())})"
+             if exclusion_coverage["Failures"] else "")
           + (f" (UnjudgedTypes {record['UnjudgedTypes']}: the Qualified lift is refused)" if record["UnjudgedTypes"] else "")
           + (f" (Qualification.Verdict {record['ControlVerdict']}: the Qualified lift is refused)"
              if record["ControlVerdict"] == CONTROL_VERDICT_FAILED else ""))

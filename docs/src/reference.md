@@ -1770,7 +1770,13 @@ lists explicit segments `[x0, y0, z0, x1, y1, z1]` (mesh length units) whose coi
 perimeter segments are removed as well (both ends and the midpoint within
 `EdgeExcludeSegmentTolerance`, by default 1e-3 of the smallest matching radius): a spatial
 coupon built from the device plan lists its foreign device edges here so that the
-within-radius edge energy covers its own edges only. In 3D, the
+within-radius edge energy covers its own edges only. A listed segment that is a chord of an
+arc the mesh resolves as the true arc carries its chord's sagitta in
+`EdgeExcludeSegmentSagittas` (one entry per listed segment, mesh length units, default 0):
+the coincidence test against that segment uses the tolerance plus the sagitta, since a
+perimeter point on the arc lies up to the sagitta off its chord. The perimeter length
+actually removed and the listed length are recorded per interface in `palace.json`
+(`SurfaceResponse.Diagnostics.EdgeExclusion`). In 3D, the
 perimeter is represented by straight segments joining the endpoints of the selected
 surface mesh edges; curved high-order edges are therefore approximated by their
 piecewise-linear mesh geometry.

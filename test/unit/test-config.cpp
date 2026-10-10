@@ -1054,6 +1054,17 @@ TEST_CASE("Config automatic interface dielectric edges", "[config][Serial]")
   dielectric["EdgeExcludeSegmentTolerance"] = -0.01;
   CHECK_THROWS(config::InterfaceDielectricData(dielectric));
   dielectric.erase("EdgeExcludeSegmentTolerance");
+  // EdgeExcludeSegmentSagittas (decision 657 (a)): one chord sagitta per listed segment,
+  // finite and nonnegative; absent = every sagitta 0 (the plain rule).
+  CHECK(segments.edge_exclude_segment_sagittas.empty());
+  dielectric["EdgeExcludeSegmentSagittas"] = {0.0, 4.2e-3};
+  CHECK(config::InterfaceDielectricData(dielectric).edge_exclude_segment_sagittas ==
+        std::vector<double>{0.0, 4.2e-3});
+  dielectric["EdgeExcludeSegmentSagittas"] = {4.2e-3};  // one per segment
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric["EdgeExcludeSegmentSagittas"] = {0.0, -4.2e-3};
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric.erase("EdgeExcludeSegmentSagittas");
   dielectric["EdgeExcludeSegments"] = {{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};  // zero length
   CHECK_THROWS(config::InterfaceDielectricData(dielectric));
   dielectric.erase("EdgeExcludeSegments");
@@ -1903,6 +1914,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                {"EdgeExcludeAttributes", {6, 7}},
                {"EdgeExcludeSegments", {{0.0, 0.0, 0.0, 1.0e-6, 0.0, 0.0}}},
                {"EdgeExcludeSegmentTolerance", 1.0e-9},
+               {"EdgeExcludeSegmentSagittas", {4.2e-9}},
                {"EdgeDistances", {1.0e-6, 2.0e-6}},
                {"EdgeDistanceSmoothing", 0.2},
                {"LocalizeEdgeEnergy", true},
@@ -1964,6 +1976,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
           iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_segments);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_exclude_segment_tolerance ==
           iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_segment_tolerance);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_exclude_segment_sagittas ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_segment_sagittas);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).automatic_edges ==
           iodata1.boundaries.postpro.dielectric.at(1).automatic_edges);
     REQUIRE(iodata1.boundaries.conductivity.size() == 1);

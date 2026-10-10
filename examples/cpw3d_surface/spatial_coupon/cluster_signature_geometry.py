@@ -625,10 +625,17 @@ def chorded_entries(signature, radius, include_context=False):
             continue
         n = len(vertices) - 1
         ta = deterministic_math.atan2(vertices[0][1] - centre[1], vertices[0][0] - centre[0])
+        # The chord sagitta (every chord of the arc spans the same angle |sweep| / n on the
+        # rebuilt circle): r (1 - cos(|sweep| / 2n)) = 2 r sin^2(|sweep| / 4n), mesh units -
+        # the band a mesh perimeter following the TRUE arc lies off the chord (decision 657
+        # (a): the coupon config's EdgeExcludeSegmentSagittas of a Chain: false arc).
+        quarter_sine = deterministic_math.sin(0.25 * abs(sweep) / n)
+        sagitta = 2.0 * float(arc["Radius"]) * quarter_sine * quarter_sine
         for k in range(n):
             tmid = ta + sweep * (k + 0.5) / n
             edges.append(dict(common, P0=(float(vertices[k][0]), float(vertices[k][1])), P1=(float(vertices[k + 1][0]), float(vertices[k + 1][1])),
-                              Gap=(sign * deterministic_math.cos(tmid), sign * deterministic_math.sin(tmid)), Chord=k, Chords=n))
+                              Gap=(sign * deterministic_math.cos(tmid), sign * deterministic_math.sin(tmid)), Chord=k, Chords=n,
+                              Sagitta=float(sagitta)))
     return edges, records
 
 
@@ -653,7 +660,8 @@ def context_from_signature(signature, radius):
         length = _norm2(p1 - p0)
         pieces.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                        "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
-                       "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False)), "GapRederived": rederived})
+                       "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False)), "GapRederived": rederived,
+                       "Sagitta": float(edge.get("Sagitta", 0.0))})
     return pieces
 
 
@@ -903,6 +911,18 @@ def foreign_edge_segments(pieces):
     edges only."""
     return [[float(p["P0"][0]), float(p["P0"][1]), 0.0, float(p["P1"][0]), float(p["P1"][1]), 0.0]
             for p in pieces if not p["Chain"]]
+
+
+def foreign_edge_sagittas(pieces):
+    """The chord sagittas of the FOREIGN context pieces, parallel to foreign_edge_segments
+    (mesh units; 0.0 for a straight piece, 2 r sin^2(sweep / 4n) for a chord of an arc piece):
+    the coupon config's ``EdgeExcludeSegmentSagittas`` (decision 657 (a)). The coupon mesh
+    builds a Chain: false arc as the TRUE arc while the config lists its chords, so the rule-B5
+    coincidence test against a chord runs at the tolerance plus this sagitta. Derived from the
+    Signature at run time (qualify/case_inputs.foreign_edge_sagittas), NOT written into the
+    generated sources: the registration's content hash (its case id) stays that of its
+    geometry."""
+    return [float(p.get("Sagitta", 0.0)) for p in pieces if not p["Chain"]]
 
 
 def exact_portion_edges(portions, rows):

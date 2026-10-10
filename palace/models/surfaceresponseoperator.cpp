@@ -11201,6 +11201,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     ExcludeMetalEdgeSegmentIndices(mesh, geometry, dielectric.edge_exclude_attributes,
                                    segment_indices);
     ExcludeCoincidentMetalEdgeSegmentIndices(geometry, dielectric.edge_exclude_segments,
+                                             dielectric.edge_exclude_segment_sagittas,
                                              dielectric.edge_exclude_segment_tolerance,
                                              mesh.SpaceDimension(), segment_indices);
     selections.push_back({dielectric.type, index, std::move(segment_indices),

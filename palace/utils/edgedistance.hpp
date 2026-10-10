@@ -75,6 +75,12 @@ public:
 
   double DistanceSquared(const mfem::Vector &point) const;
   NearestResult Nearest(const mfem::Vector &point) const;
+  // Distance to ONE segment of the tree (the per-segment test of the sagitta-aware
+  // exclusion, ExcludeCoincidentEdgeSegments).
+  double DistanceSquaredToSegment(const mfem::Vector &point, std::size_t index) const
+  {
+    return DistanceSquaredToSegment(point, segments[index]);
+  }
   double DistanceAlongEdgeToNonregularVertex(const mfem::Vector &point,
                                              std::size_t segment) const;
   std::size_t Size() const { return segments.size(); }
@@ -110,25 +116,47 @@ std::array<double, 6> GetPolarizedEdgeEnergyDensity(
     const mfem::Vector &point, const mesh::BoundaryEdgeSegment &segment,
     const EdgeFrame &frame, const mfem::Vector &field, const mfem::Vector &displacement);
 
+// Explicit segment exclusion (EdgeExcludeSegments, decision 282 rule B5): a perimeter
+// segment whose two ends and midpoint each lie within `tolerance` + the listed segment's
+// chord sagitta (`sagittas`, parallel to `exclude_segments`; empty = every sagitta 0) of
+// one listed exclusion segment [x0, y0, z0, x1, y1, z1] is dropped from the edge-distance
+// perimeter (the decision-611 rule: a mesh perimeter following the TRUE arc of a listed
+// chord lies up to the sagitta off it; decision 657 (a)). An empty list leaves the
+// perimeter unchanged; removing the whole perimeter is an error. `record`, when given,
+// receives the exclusion's coverage record (the listed length, the perimeter length
+// actually removed).
+struct EdgeExclusionRecord
+{
+  std::size_t exclude_segments_count = 0;
+  double exclude_segments_length = 0.0;
+  std::size_t perimeter_count = 0;
+  double perimeter_length = 0.0;
+  std::size_t excluded_perimeter_count = 0;
+  double excluded_perimeter_length = 0.0;
+  double tolerance = 0.0;
+  double max_sagitta = 0.0;
+};
+
 std::shared_ptr<const EdgeDistanceTree> BuildEdgeDistanceTree(
     const mfem::ParMesh &mesh, const std::vector<int> &edge_attributes,
     const std::vector<int> &edge_exclude_attributes,
     const std::optional<std::array<double, 3>> &process_normal = std::nullopt,
     const std::vector<std::array<double, 6>> &edge_exclude_segments = {},
-    double edge_exclude_segment_tolerance = 0.0);
+    double edge_exclude_segment_tolerance = 0.0,
+    const std::vector<double> &edge_exclude_segment_sagittas = {},
+    EdgeExclusionRecord *record = nullptr);
 
-// Explicit segment exclusion (EdgeExcludeSegments, decision 282 rule B5): a perimeter
-// segment whose two ends and midpoint lie within `tolerance` of one listed exclusion
-// segment [x0, y0, z0, x1, y1, z1] is dropped from the edge-distance perimeter. An empty
-// list leaves the perimeter unchanged; removing the whole perimeter is an error.
 void ExcludeCoincidentEdgeSegments(
-    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
-    int space_dimension, std::vector<mesh::BoundaryEdgeSegment> &edge_segments);
+    const std::vector<std::array<double, 6>> &exclude_segments,
+    const std::vector<double> &sagittas, double tolerance, int space_dimension,
+    std::vector<mesh::BoundaryEdgeSegment> &edge_segments,
+    EdgeExclusionRecord *record = nullptr);
 
 void ExcludeCoincidentMetalEdgeSegmentIndices(
     const MetalEdgeGeometry &geometry,
-    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
-    int space_dimension, std::vector<std::size_t> &segment_indices);
+    const std::vector<std::array<double, 6>> &exclude_segments,
+    const std::vector<double> &sagittas, double tolerance, int space_dimension,
+    std::vector<std::size_t> &segment_indices, EdgeExclusionRecord *record = nullptr);
 
 std::vector<std::size_t>
 GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int interface_index,

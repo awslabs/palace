@@ -44,6 +44,7 @@ TOOLS = HERE.parent
 for path in (str(HERE), str(TOOLS)):
     if path not in sys.path:
         sys.path.insert(0, path)
+import cluster_signature_geometry  # noqa: E402
 import generate_spatial_response as producer  # noqa: E402
 from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
 import trace_basis  # noqa: E402
@@ -229,6 +230,53 @@ def foreign_edge_segments(model, frame):
     return segments
 
 
+FOREIGN_EDGE_SAGITTA_RULE = (
+    "decision 657 (a) (the 32b0 device-validity diagnosis, decision 656 (3)): the coupon mesh builds a Chain: false "
+    "context ARC as the true arc while EdgeExcludeSegments list its chords, so the rule-B5 coincidence test (ends + "
+    "midpoint within EdgeExcludeSegmentTolerance = 1e-3 R of the nearest listed segment) leaves most of the arc's "
+    "perimeter in the within-R tree; the config lists each foreign edge's chord sagitta (EdgeExcludeSegmentSagittas, "
+    "2 r sin^2(sweep / 4n) on the Signature's rebuilt circle, 0 for a straight piece) and Palace tests against the "
+    "tolerance plus that sagitta; the sagittas are derived from the model's Signature "
+    "(cluster_signature_geometry.context_from_signature, the generator's own chording) and matched one-to-one to the "
+    "model's ForeignEdges within FOREIGN_EDGE_MATCH_OVER_R x R - fail closed on any mismatch (the Signature and the "
+    "ForeignEdges are one record); not a library field, so a registration's content hash (its case id) is unchanged")
+FOREIGN_EDGE_MATCH_OVER_R = 1.0e-9
+
+
+def foreign_edge_sagittas(model, radius, segments_mesh_frame=None):
+    """The chord sagittas of the model's ForeignEdges (mesh units, parallel to
+    foreign_edge_segments; the config's EdgeExcludeSegmentSagittas; FOREIGN_EDGE_SAGITTA_RULE),
+    derived from the model's Signature by the generator's own chording and matched one-to-one
+    to the model's ForeignEdges (canonical frame, the frame the Signature is in); [] for a
+    model without ForeignEdges. `segments_mesh_frame` (the frame-mapped segments) is only
+    checked for its count."""
+    foreign = model.get("ForeignEdges") or []
+    if not foreign:
+        return []
+    signature = model.get("Signature")
+    if not isinstance(signature, dict) or signature.get("Type") != "SpatialEdgeCluster":
+        raise CaseInputError(f"the model lists {len(foreign)} ForeignEdges without a SpatialEdgeCluster Signature: "
+                             "their chord sagittas cannot be derived")
+    pieces = [p for p in cluster_signature_geometry.context_from_signature(signature, radius) if not p["Chain"]]
+    if len(pieces) != len(foreign) or (segments_mesh_frame is not None and len(segments_mesh_frame) != len(foreign)):
+        raise CaseInputError(f"the model's Signature chords {len(pieces)} foreign pieces, the model lists {len(foreign)} "
+                             "ForeignEdges")
+    tolerance = FOREIGN_EDGE_MATCH_OVER_R * radius
+    sagittas = []
+    for index, (piece, segment) in enumerate(zip(pieces, foreign)):
+        values = [float(v) for v in segment]
+        p0, p1 = np.asarray(values[:3]), np.asarray(values[3:])
+        q0 = np.asarray([float(piece["P0"][0]), float(piece["P0"][1]), 0.0])
+        q1 = np.asarray([float(piece["P1"][0]), float(piece["P1"][1]), 0.0])
+        distance = max(float(np.linalg.norm(p0 - q0)), float(np.linalg.norm(p1 - q1)))
+        if distance > tolerance:
+            raise CaseInputError(f"ForeignEdges[{index}] {values} is {distance / radius:.3e} R from the Signature's "
+                                 f"foreign piece {index} (beyond {FOREIGN_EDGE_MATCH_OVER_R:g} R): the chord sagitta "
+                                 "cannot be attributed")
+        sagittas.append(float(piece["Sagitta"]))
+    return sagittas
+
+
 BUILD_CENSUS_NAME = "build-census.json"
 UNREFINED_CRACK_SEAMS_RULE = (
     "mesher design round 2 SEAM, supervisor decision 368 (3): a thin coupon whose build census records "
@@ -329,6 +377,7 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
     # conductor count); the foreign edges leave the within-R perimeter (rule B5).
     context_edges = local_edges({"Edges": model.get("ContextEdges", [])}, basis["Frame"])
     foreign_edges = foreign_edge_segments(model, basis["Frame"])
+    foreign_sagittas = foreign_edge_sagittas(model, radius, foreign_edges)
     edges = edges + context_edges
     conductors = sorted({int(edge["Conductor"]) for edge in edges})
     if conductors != list(range(1, len(conductors) + 1)):
@@ -374,7 +423,7 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
         terminal_conductors, fabricated, physics_run["Order"], radius, float(fabrication["SubstratePermittivity"]),
         layers, interfaces, edges, available_attributes=config_available,
         terminal_traces={conductor: f"{traces_remote}/{path.name}" for conductor, path in conductor_traces.items()},
-        edge_exclude_segments=foreign_edges)
+        edge_exclude_segments=foreign_edges, edge_exclude_segment_sagittas=foreign_sagittas)
     config["Problem"]["Output"] = output_root
     config["Solver"]["Linear"]["Tol"] = physics_run["LinearTol"]
     unrefined_crack_seams = apply_unrefined_crack_seams(config, Path(mesh_path), fabricated)
@@ -406,7 +455,10 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
               "PlanViewBoundary": str(paths["Boundary"]),
               "RetainedEtch": str(paths["RetainedEtch"]) if "RetainedEtch" in paths else None,
               "Signature": str(paths["Signature"]), "MeshAttributes": sorted(available), "AttributeCheck": attribute_check,
-              "UnrefinedCrackSeams": unrefined_crack_seams}
+              "UnrefinedCrackSeams": unrefined_crack_seams,
+              "ForeignEdgeSagittas": None if not foreign_edges else {
+                  "Rule": FOREIGN_EDGE_SAGITTA_RULE, "Count": len(foreign_sagittas),
+                  "MaxSagitta": max(foreign_sagittas), "ArcChords": sum(1 for s in foreign_sagittas if s > 0.0)}}
     if base_config is not None:
         record["BaseConfig"] = base_config
         record["BaseInterfaces"] = interface_types(base_config)

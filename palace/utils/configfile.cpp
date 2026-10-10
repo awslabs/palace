@@ -652,6 +652,8 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
       dielectric.value("EdgeExcludeSegments", std::vector<std::array<double, 6>>{});
   edge_exclude_segment_tolerance =
       dielectric.value("EdgeExcludeSegmentTolerance", edge_exclude_segment_tolerance);
+  edge_exclude_segment_sagittas =
+      dielectric.value("EdgeExcludeSegmentSagittas", std::vector<double>{});
   edge_distances = dielectric.value("EdgeDistances", std::vector<double>{});
   std::sort(edge_distances.begin(), edge_distances.end());
   edge_distance_smoothing =
@@ -795,6 +797,16 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   {
     edge_exclude_segment_tolerance = 1.0e-3 * edge_distances.front();
   }
+  MFEM_VERIFY(
+      edge_exclude_segment_sagittas.empty() ||
+          edge_exclude_segment_sagittas.size() == edge_exclude_segments.size(),
+      "Interface dielectric \"EdgeExcludeSegmentSagittas\" must list one sagitta per "
+      "\"EdgeExcludeSegments\" entry!");
+  MFEM_VERIFY(std::all_of(edge_exclude_segment_sagittas.begin(),
+                          edge_exclude_segment_sagittas.end(),
+                          [](double s) { return std::isfinite(s) && s >= 0.0; }),
+              "Interface dielectric \"EdgeExcludeSegmentSagittas\" must be finite and "
+              "nonnegative!");
   MFEM_VERIFY(std::adjacent_find(edge_distances.begin(), edge_distances.end()) ==
                   edge_distances.end(),
               "Interface dielectric \"EdgeDistances\" must be unique!");
@@ -2193,6 +2205,10 @@ void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
     }
   }
   data.edge_exclude_segment_tolerance /= units.GetMeshLengthRelativeScale();
+  for (auto &s : data.edge_exclude_segment_sagittas)
+  {
+    s /= units.GetMeshLengthRelativeScale();
+  }
   if (data.region)
   {
     for (auto *bound : {&data.region->box_min, &data.region->box_max})
