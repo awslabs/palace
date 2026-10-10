@@ -811,6 +811,37 @@ TEST_CASE("Config Linear PML subdomain solver", "[config][Serial]")
   CHECK(Resolve(false, json::object()) == PMLSubdomainSolver::NONE);
   CHECK(Resolve(true, json{{"MGMaxLevels", 1}}) == PMLSubdomainSolver::NONE);
   CHECK(Resolve(true, json{{"PMLSubdomainSolver", "None"}}) == PMLSubdomainSolver::NONE);
+
+  // AMS does not support PML regions.
+  CHECK_THROWS(Resolve(true, json{{"Type", "AMS"}}));
+  CHECK(Resolve(false, json{{"Type", "AMS"}}) == PMLSubdomainSolver::NONE);
+}
+
+TEST_CASE("Config preconditioner matrix symmetry", "[config][Serial]")
+{
+  auto Symmetry = [](json linear, bool floquet)
+  {
+    json boundaries = json::object();
+    if (floquet)
+    {
+      boundaries["Periodic"] = {
+          {"FloquetWaveVector", {0.0, 1.0, 0.0}},
+          {"BoundaryPairs", {{{"DonorAttributes", {1}}, {"ReceiverAttributes", {2}}}}}};
+    }
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}},
+                     {"Linear", linear}}}};
+    IoData iodata(config, false);
+    return GetPreconditionerMatrixSymmetry(iodata);
+  };
+  CHECK(Symmetry(json::object(), false) == MatrixSymmetry::SYMMETRIC);
+  CHECK(Symmetry(json{{"PCMatShifted", true}}, false) == MatrixSymmetry::SPD);
+  CHECK(Symmetry(json::object(), true) == MatrixSymmetry::UNSYMMETRIC);
+  CHECK(Symmetry(json{{"PCMatShifted", true}}, true) == MatrixSymmetry::UNSYMMETRIC);
 }
 
 TEST_CASE("Config PML complex frequency shift", "[config][Serial]")

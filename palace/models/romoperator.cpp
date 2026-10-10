@@ -2821,7 +2821,7 @@ Eigen::MatrixXcd RomOperator::ProjectPMLExtraSystem(double omega) const
     rw.UseDevice(true);
     ProjectMatInternal(space_op.GetComm(), V, *A2_pml, A, rw, 0, true);
   }
-  return 0.5 * (A + A.transpose());
+  return A;  // Not symmetric with a Floquet wave vector
 }
 
 const RomOperator::PMLSamples &RomOperator::GetPMLSamples() const
@@ -2909,10 +2909,7 @@ RomOperator::FitPMLExtraSystem(const std::vector<std::complex<double>> &poles) c
     return D;
   };
   auto Unpack = [n](const Eigen::RowVectorXcd &v)
-  {
-    const Eigen::MatrixXcd A = Eigen::Map<const Eigen::MatrixXcd>(v.data(), n, n);
-    return Eigen::MatrixXcd(0.5 * (A + A.transpose()));
-  };
+  { return Eigen::MatrixXcd(Eigen::Map<const Eigen::MatrixXcd>(v.data(), n, n)); };
   const Eigen::MatrixXcd coeff =
       Design(samples.w_fit).colPivHouseholderQr().solve(samples.Y_fit);
   PMLRationalFit fit;
@@ -2956,8 +2953,19 @@ void RomOperator::AddPMLSynthesis(Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &C
   };
   auto Realize = [&](const std::vector<std::complex<double>> &poles)
   {
+    // Without a Floquet wave vector (rejected for synthesis with frequency-dependent PML
+    // regions, see IoData), the PML terms are complex symmetric: remove the rounding errors
+    // of the fit before the Takagi factorization of the residues.
     Realization out;
     out.fit = FitPMLExtraSystem(poles);
+    for (auto *A : {&out.fit.P0, &out.fit.P1, &out.fit.P2})
+    {
+      *A = (0.5 * (*A + A->transpose())).eval();
+    }
+    for (auto &R : out.fit.residues)
+    {
+      R = (0.5 * (R + R.transpose())).eval();
+    }
     for (std::size_t k = 0; k < poles.size(); k++)
     {
       // Drop the directions whose maximum contribution on the band is insignificant.

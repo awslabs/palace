@@ -182,12 +182,9 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
-      pc = MakeWrapperSolver<ComplexOperator, MumpsSolver>(
-          linear_pml, comm, sym, linear.sym_factorization,
-          (linear_pml.strumpack_compression_type == SparseCompression::BLR)
-              ? linear.strumpack_lr_tol
-              : 0.0,
-          linear.reorder_reuse, print);
+      pc = MakeWrapperSolver<ComplexOperator, MumpsSolver>(linear_pml, comm, sym,
+                                                           linear.sym_factorization, 0.0,
+                                                           linear.reorder_reuse, print);
 #endif
       break;
     case LinearSolver::CUDSS:
@@ -328,19 +325,19 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
 
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
 {
-  // Mirrors the prior derivation that used to be stored on LinearSolverData::pc_mat_sym.
+  // The Floquet terms are not symmetric, also for a shifted preconditioner matrix.
   const auto &linear = iodata.solver.linear;
+  if (iodata.boundaries.periodic.wave_vector != std::array<double, 3>{0.0, 0.0, 0.0})
+  {
+    return MatrixSymmetry::UNSYMMETRIC;
+  }
   if (linear.pc_mat_shifted || iodata.problem.type == ProblemType::TRANSIENT ||
       iodata.problem.type == ProblemType::ELECTROSTATIC ||
       iodata.problem.type == ProblemType::MAGNETOSTATIC)
   {
     return MatrixSymmetry::SPD;
   }
-  if (iodata.boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0})
-  {
-    return MatrixSymmetry::SYMMETRIC;
-  }
-  return MatrixSymmetry::UNSYMMETRIC;
+  return MatrixSymmetry::SYMMETRIC;
 }
 
 template <OperatorType OperType>

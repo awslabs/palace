@@ -340,6 +340,15 @@ void IoData::CheckConfiguration()
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "at least one port (LumpedPort or WavePort) boundary condition!\n");
+    const bool floquet_fd_pml =
+        std::ranges::any_of(boundaries.periodic.wave_vector,
+                            [](double k) { return k != 0.0; }) &&
+        std::ranges::any_of(domains.materials, [](const auto &m)
+                            { return m.pml && m.pml->frequency_dependent; });
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !floquet_fd_pml,
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support frequency-dependent PML regions with a Floquet wave vector: the "
+                "synthesized PML terms must be reciprocal!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || boundaries.floquetport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
@@ -717,22 +726,30 @@ void IoData::CheckConfiguration()
   // uses a sparse direct solver. By default, it is used for frequency domain problems with
   // PML regions, since the multigrid smoothers do not converge on the PML equations of
   // strongly absorbing layers.
+  const bool has_pml =
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
+      std::ranges::any_of(domains.materials,
+                          [](const auto &m) { return m.pml.has_value(); });
   if (solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DEFAULT)
   {
 #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
     constexpr bool has_direct = true;
 #else
-    constexpr bool has_direct = false;
+    const bool has_direct = (solver.linear.type == LinearSolver::CUDSS);
 #endif
-    const bool has_pml = std::ranges::any_of(domains.materials, [](const auto &m)
-                                             { return m.pml.has_value(); });
-    const bool frequency_domain =
-        (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE);
     solver.linear.pml_subdomain_solver =
-        (has_direct && has_pml && frequency_domain && solver.linear.mg_max_levels > 1)
+        (has_direct && has_pml && solver.linear.mg_max_levels > 1)
             ? PMLSubdomainSolver::DIRECT
             : PMLSubdomainSolver::NONE;
   }
+
+  // AMS relies on a real-valued approximation of the system matrix, which the PML terms of
+  // strongly absorbing layers make indefinite: the preconditioner then breaks down, and the
+  // Krylov solver can report convergence to a meaningless solution.
+  MFEM_VERIFY(!has_pml || solver.linear.type != LinearSolver::AMS,
+              "PML regions are not supported with the AMS linear solver! Use a sparse "
+              "direct solver (\"Type\": \"SuperLU\", \"STRUMPACK\", or \"MUMPS\"), "
+              "which requires building Palace with SuperLU_DIST, STRUMPACK, or MUMPS.");
   if (solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE &&
       solver.linear.mg_max_levels == 1)
   {
@@ -740,7 +757,8 @@ void IoData::CheckConfiguration()
                  "geometric multigrid preconditioning (\"MGMaxLevels\" > 1)!\n");
   }
 #if !defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS)
-  MFEM_VERIFY(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::DIRECT,
+  MFEM_VERIFY(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::DIRECT ||
+                  solver.linear.type == LinearSolver::CUDSS,
               "PML subdomain solver \"Direct\" requested but Palace was not built with a "
               "sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS)!");
 #endif
