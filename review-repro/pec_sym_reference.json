@@ -1,0 +1,75 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "review-repro/postpro/pec_sym_reference"
+  },
+  "Model":
+  {
+    "Mesh": "review-repro/pec.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "Superconductor":
+    [
+      {
+        "Attributes": [8],       // Two-port London film: d > λ, so two-sided screening matters
+        "KineticInductance": 8.250044013657751e-14,
+        
+        "TwoSided": false
+      }
+    ],
+    "FluxLoop":
+    [
+      {
+        "Index": 1,
+        "FilmAttributes": [8],
+        "HoleAttributes": [9],
+        "FluxAmounts": [1.0],
+        "Direction": "+Z"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  }
+}

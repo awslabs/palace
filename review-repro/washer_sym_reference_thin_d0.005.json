@@ -1,0 +1,75 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "review-repro/postpro/washer_sym_reference_thin_d0.005"
+  },
+  "Model":
+  {
+    "Mesh": "test/data/regression/input/circular_hole_london/mesh/circular_hole.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3, 4, 5, 6, 7]
+    },
+    "Superconductor":
+    [
+      {
+        "Attributes": [8],       // Two-port London film: d > λ, so two-sided screening matters
+        "KineticInductance": 2.513797699832115e-12,
+                // d (μm)
+        "TwoSided": false
+      }
+    ],
+    "FluxLoop":
+    [
+      {
+        "Index": 1,
+        "FilmAttributes": [8],
+        "HoleAttributes": [9],
+        "FluxAmounts": [1.0],
+        "Direction": "+Z"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 2000
+    }
+  }
+}
