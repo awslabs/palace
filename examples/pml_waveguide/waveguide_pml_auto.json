@@ -17,10 +17,12 @@
       { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
     ],
     "PML":
-    {
-      "Attributes": [2],
-      "ReferenceFrequency": 3.0
-    }
+    [
+      {
+        "Attributes": [2],
+        "ReferenceFrequency": 3.0
+      }
+    ]
   },
   "Boundaries":
   {

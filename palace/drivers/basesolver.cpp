@@ -190,10 +190,13 @@ int MaskPMLRefinementIndicators(const IoData &iodata, const mfem::ParMesh &mesh,
 
   mfem::Array<int> marker(attr_max);
   marker = 0;
-  const auto &pml = iodata.domains.pml;
-  if (pml && !pml->allow_refinement)
+  for (const auto &pml : iodata.domains.pml)
   {
-    for (auto attr : pml->attributes)
+    if (pml.allow_refinement)
+    {
+      continue;
+    }
+    for (auto attr : pml.attributes)
     {
       if (attr > 0 && attr <= attr_max)
       {

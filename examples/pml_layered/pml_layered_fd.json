@@ -48,10 +48,12 @@
         "Permittivity": 1.0
       }
     ],
-    "PML": {
-      "Attributes": [3, 4],
-      "FrequencyDependent": true
-    }
+    "PML": [
+      {
+        "Attributes": [3, 4],
+        "FrequencyDependent": true
+      }
+    ]
   },
   "Boundaries": {
     "WavePort": [

@@ -60,6 +60,35 @@ section ending in the PML.
 ```bash
 julia -e 'include("mesh.jl"); generate_iris_cavity_mesh(; filename="iris_cavity.msh")'
 ```
+
+# E-plane bifurcation
+
+`generate_bifurcation_mesh` generates the waveguide split by a septum of thickness t,
+parallel to the broad walls, into two arms of different lengths, each terminated by its
+own PML slab:
+
+    side view (y up, z right):
+
+    z=0       z=L_in              z=L_in+L_up        z=L_in+L_up+d
+    |----------|-------------------|------------------|
+    |          |   upper arm (1)   |  upper PML (2)   |
+    |  input   |===================== septum (PEC) ===|
+    |   (1)    |  lower arm (1)  |  lower PML (3)   |
+    |----------|-----------------|------------------|
+    ↑                          z=L_in+L_lo        z=L_in+L_lo+d
+    wave port
+
+## Physical groups (mesh attributes)
+
+  Domain   1  — input guide and arms (physical region)
+  Domain   2  — PML slab of the upper arm (y > 0)
+  Domain   3  — PML slab of the lower arm (y < 0)
+  Boundary 4  — wave port on z = 0
+  Boundary 5  — PEC walls (guide, septum, and PML terminations)
+
+```bash
+julia -e 'include("mesh.jl"); generate_bifurcation_mesh(; filename="bifurcation.msh")'
+```
 =#
 
 using Gmsh: gmsh
@@ -90,8 +119,8 @@ Generate the rectangular waveguide + PML slab mesh.
   - n_pml_slabs - number of axis-aligned PML slabs of equal thickness along +z, each
     with its own mesh attribute, assigned in z-order from 2 (slab closest to the
     physical region) to `1 + n_pml_slabs` (outermost slab). The PML stretch is
-    graded continuously across the layer, so all slabs are listed in a single
-    `config["Domains"]["PML"]["Attributes"]`.
+    graded continuously across the layer, so all slabs are listed in the
+    `"Attributes"` of a single block of `config["Domains"]["PML"]`.
   - mesh_size   - target element size (m)
   - verbose     - gmsh verbosity (0-5)
   - gui         - open gmsh GUI after mesh generation
@@ -327,6 +356,131 @@ function generate_iris_cavity_mesh(;
     println("  pml:      attr $pml_attr, z ∈ [$z_pml, $(z_pml + d)]")
     println("  pec:      attr $pec_attr (2D)")
     println("  pec_end:  attr $pec_end_attr (2D, z = $(z_pml + d))")
+    println()
+
+    if gui
+        gmsh.fltk.run()
+    end
+    return gmsh.finalize()
+end
+
+"""
+    generate_bifurcation_mesh(; filename, a, b, t, L_in, L_up, L_lo, d, mesh_size,
+                              septum_mesh_size, verbose, gui)
+
+Generate the E-plane bifurcation mesh, with a PML slab at the end of each arm.
+
+# Arguments
+
+  - filename         - output .msh filename (written in this directory)
+  - a, b             - waveguide cross-section dimensions (m)
+  - t                - septum thickness (m)
+  - L_in             - input guide length between the port and the septum (m)
+  - L_up, L_lo       - lengths of the upper and lower arms (m)
+  - d                - PML thickness (m)
+  - mesh_size        - target element size (m)
+  - septum_mesh_size - target element size near the edge of the septum (m)
+  - verbose          - gmsh verbosity (0-5)
+  - gui              - open gmsh GUI after mesh generation
+"""
+function generate_bifurcation_mesh(;
+    filename::AbstractString="bifurcation.msh",
+    a::Real=0.1,
+    b::Real=0.05,
+    t::Real=0.01,
+    L_in::Real=0.1,
+    L_up::Real=0.2,
+    L_lo::Real=0.1,
+    d::Real=0.1,
+    mesh_size::Real=0.02,
+    septum_mesh_size::Real=0.0075,
+    verbose::Integer=3,
+    gui::Bool=false
+)
+    gmsh.initialize()
+    kernel = gmsh.model.occ
+    gmsh.option.setNumber("General.Verbosity", verbose)
+
+    if "bifurcation" in gmsh.model.list()
+        gmsh.model.setCurrent("bifurcation")
+        gmsh.model.remove()
+    end
+    gmsh.model.add("bifurcation")
+
+    # Input guide, arms, and PML slabs, glued by fragment so that shared faces are
+    # conformal. The septum (|y| < t / 2, z > L_in) is not part of the domain.
+    h = (b - t) / 2
+    input = kernel.addBox(-a / 2, -b / 2, 0.0, a, b, L_in)
+    upper = kernel.addBox(-a / 2, t / 2, L_in, a, h, L_up)
+    upper_pml = kernel.addBox(-a / 2, t / 2, L_in + L_up, a, h, d)
+    lower = kernel.addBox(-a / 2, -b / 2, L_in, a, h, L_lo)
+    lower_pml = kernel.addBox(-a / 2, -b / 2, L_in + L_lo, a, h, d)
+    kernel.fragment([(3, input)], [(3, upper), (3, upper_pml), (3, lower), (3, lower_pml)])
+    kernel.synchronize()
+
+    all_3d = kernel.getEntities(3)
+    @assert length(all_3d) == 5
+    ymid(x) = 0.5 * (ymin(x) + ymax(x))
+    zmid(x) = 0.5 * (zmin(x) + zmax(x))
+    is_upper_pml(e) = ymid(e) > 0 && zmid(e) > L_in + L_up
+    is_lower_pml(e) = ymid(e) < 0 && zmid(e) > L_in + L_lo
+    upper_pml_dimtag = filter(is_upper_pml, all_3d) |> only
+    lower_pml_dimtag = filter(is_lower_pml, all_3d) |> only
+    physical_dimtags = filter(e -> !is_upper_pml(e) && !is_lower_pml(e), all_3d)
+
+    # Exterior faces: the wave port on z = 0, and PEC walls elsewhere.
+    boundary = gmsh.model.getBoundary(all_3d, true, false)
+    eps = septum_mesh_size / 100
+    port_faces = filter(e -> (zmax(e) - zmin(e) < eps) && abs(zmax(e)) < eps, boundary)
+    @assert length(port_faces) == 1
+    pec_faces = filter(e -> !(e in port_faces), boundary)
+
+    physical_attr = gmsh.model.addPhysicalGroup(
+        3,
+        [extract_tag(dt) for dt in physical_dimtags],
+        -1,
+        "physical"
+    )
+    upper_pml_attr =
+        gmsh.model.addPhysicalGroup(3, [extract_tag(upper_pml_dimtag)], -1, "upper_pml")
+    lower_pml_attr =
+        gmsh.model.addPhysicalGroup(3, [extract_tag(lower_pml_dimtag)], -1, "lower_pml")
+    port_attr = gmsh.model.addPhysicalGroup(2, extract_tag.(port_faces), -1, "port")
+    pec_attr = gmsh.model.addPhysicalGroup(2, extract_tag.(pec_faces), -1, "pec")
+
+    # Smaller elements around the edge of the septum.
+    gmsh.option.setNumber("Mesh.MeshSizeMin", septum_mesh_size)
+    gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size)
+    gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+    gmsh.option.setNumber("Mesh.CharacteristicLengthFromCurvature", 0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+    field = gmsh.model.mesh.field.add("Box")
+    gmsh.model.mesh.field.setNumber(field, "VIn", septum_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "VOut", mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "XMin", -a)
+    gmsh.model.mesh.field.setNumber(field, "XMax", a)
+    gmsh.model.mesh.field.setNumber(field, "YMin", -t / 2 - 3 * septum_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "YMax", t / 2 + 3 * septum_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "ZMin", L_in - 3 * septum_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "ZMax", L_in + 3 * septum_mesh_size)
+    gmsh.model.mesh.field.setNumber(field, "Thickness", 0.02)
+    gmsh.model.mesh.field.setAsBackgroundMesh(field)
+
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+
+    gmsh.model.mesh.generate(3)
+
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.Binary", 1)
+    gmsh.write(joinpath(@__DIR__, filename))
+
+    println("\n=== Mesh generated: $filename ===")
+    println("  physical:  attr $physical_attr (input guide and arms)")
+    println("  upper_pml: attr $upper_pml_attr, z ∈ [$(L_in + L_up), $(L_in + L_up + d)]")
+    println("  lower_pml: attr $lower_pml_attr, z ∈ [$(L_in + L_lo), $(L_in + L_lo + d)]")
+    println("  port:      attr $port_attr (2D, z = 0)")
+    println("  pec:       attr $pec_attr (2D)")
     println()
 
     if gui

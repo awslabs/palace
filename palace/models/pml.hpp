@@ -35,9 +35,12 @@ namespace pml
 // real reference frequency ω₀, while a frequency-dependent stretch uses the (possibly
 // complex) solve frequency.
 //
-// The stretch is the same function of position in all PML regions, so that the PML is a
+// The PML regions are configured in blocks, each with its own stretch: the stretch of a
+// block is the same function of position in all of its PML regions, so that the PML is a
 // coordinate transformation, also across the material interfaces inside of the layer (for
-// example, a substrate crossing the PML).
+// example, a substrate crossing the PML). The stretch must be continuous across the
+// interfaces between the PML regions of different blocks, and equal to one at the
+// interfaces with the physical (non-PML) region (see CheckStretchContinuity).
 //
 // Faces are indexed {-x, +x, -y, +y, -z, +z}: face f is on axis f / 2 and on the positive
 // side if f % 2 == 1. All quantities are nondimensional.
@@ -72,9 +75,9 @@ struct Background
 };
 
 // Detect the PML layer geometry from the bounding box of the physical (non-PML) region,
-// whose faces are the inner PML interfaces, and the bounding box of the whole mesh, whose
-// faces are the outer PML boundaries. A face is active if the two boxes differ on that face
-// by more than rel_tol times the extent of the mesh.
+// whose faces are the inner PML interfaces, and the bounding box of the PML regions of a
+// block, whose faces are the outer PML boundaries. A face is active if the two boxes differ
+// on that face by more than rel_tol times the extent of the outer box.
 LayerGeometry DetectLayerGeometry(const std::array<double, 3> &inner_min,
                                   const std::array<double, 3> &inner_max,
                                   const std::array<double, 3> &outer_min,
@@ -82,7 +85,7 @@ LayerGeometry DetectLayerGeometry(const std::array<double, 3> &inner_min,
                                   double rel_tol = 1.0e-6);
 
 // Layer geometry from explicitly configured directions and thicknesses, measured inward
-// from the faces of the bounding box of the whole mesh.
+// from the faces of the bounding box of the PML regions of a block.
 LayerGeometry ConfiguredLayerGeometry(const config::PMLData &data,
                                       const std::array<double, 3> &outer_min,
                                       const std::array<double, 3> &outer_max);
@@ -97,7 +100,7 @@ double RefractiveIndex(const std::array<double, 9> &mu_inv,
 // axis, or, if not specified, σ_max = -(n + 1) ln(R) / (2 d n_r) for a target
 // normal-incidence reflection coefficient R, layer thickness d, grading order n, and
 // refractive index n_r: the smallest refractive index of the background materials of the
-// PML regions, so that each of them meets the reflection target.
+// PML regions of the block, so that each of them meets the reflection target.
 Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry,
                      double n_r);
 
@@ -119,6 +122,12 @@ struct ContextHeader
   std::array<double, 9> wave_vector_cross{};  // [k ×], column-major
 };
 
+// Stretch factors s_a(x, ω) at the point x, with the frequency-dependent stretch evaluated
+// at omega (ignored for a static stretch).
+std::array<std::complex<double>, 3> EvaluateStretch(const Stretch &stretch,
+                                                    const std::array<double, 3> &x,
+                                                    std::complex<double> omega);
+
 // Pack the QFunction context of a PML integrator (layout in fem/qfunctions/coeff/pml_qf.h),
 // with attr_background the background index of each (1-based) libCEED attribute (-1 for
 // attributes outside of the PML regions). Returns an empty context if no attribute is in a
@@ -128,7 +137,7 @@ std::vector<CeedIntScalar> PackContext(const ContextHeader &header, const Stretc
                                        const std::vector<Background> &backgrounds);
 
 //
-// The PML regions of a 3D mesh, for frequency domain problems: the stretch and the
+// A block of PML regions of a 3D mesh, for frequency domain problems: the stretch and the
 // background material of each PML attribute (the material properties of its material).
 //
 class Layer
@@ -145,19 +154,21 @@ private:
   std::vector<Background> backgrounds;
 
 public:
-  // Set up the PML regions configured by data. The background materials are the materials
-  // with the given properties (indexed by material, with attr_mat the map from libCEED
-  // attribute to material index). Checks that the PML regions are outside of the box of
-  // the physical region and that each of their elements is in the layer.
-  Layer(const config::PMLData &data, const std::vector<config::MaterialData> &materials,
-        const Mesh &mesh, const mfem::Array<int> &attr_mat, const mfem::DenseTensor &mu_inv,
+  // Set up the PML regions of the block configured by data, with pml_attributes the
+  // attributes of the PML regions of all blocks (the remaining attributes form the physical
+  // region). The background materials are the materials with the given properties
+  // (indexed by material, with attr_mat the map from libCEED attribute to material index).
+  // Checks that each element of the PML regions of the block is in the layer.
+  Layer(const config::PMLData &data, const std::vector<int> &pml_attributes,
+        const std::vector<config::MaterialData> &materials, const Mesh &mesh,
+        const mfem::Array<int> &attr_mat, const mfem::DenseTensor &mu_inv,
         const mfem::DenseTensor &epsilon_real, const mfem::DenseTensor &epsilon_imag);
 
   const Stretch &GetStretch() const { return stretch; }
   bool IsFrequencyDependent() const { return stretch.frequency_dependent; }
   const std::vector<int> &GetAttributes() const { return attributes; }
 
-  // Whether the local libCEED attribute is in a PML region.
+  // Whether the local libCEED attribute is in a PML region of the block.
   bool IsPMLCeedAttribute(int ceed_attr) const
   {
     return ceed_attr > 0 && ceed_attr <= static_cast<int>(attr_background.size()) &&
@@ -168,6 +179,13 @@ public:
   // context if no local attribute is in a PML region.
   std::vector<CeedIntScalar> PackContext(const ContextHeader &header) const;
 };
+
+// Check that the stretch is continuous across the interfaces between the PML regions of
+// different blocks, and equal to one at the interfaces between the PML regions and the
+// physical region: at points of each mesh face on these interfaces, the stretch factors of
+// the two sides must be the same functions of the frequency. Otherwise, the
+// PML is not a coordinate transformation and the interfaces reflect.
+void CheckStretchContinuity(const std::vector<Layer> &layers, const Mesh &mesh);
 
 }  // namespace pml
 
