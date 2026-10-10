@@ -327,8 +327,9 @@ end
     @test tetrahedron_scaled_jacobian([points[:, i] for i in slab]) < 0.01
     @test tetrahedron_edge_aspect([points[:, i] for i in slab]) > 200.0
     # Without the rule the slab is a scaled-Jacobian-gated required cell and the
-    # bounded repair (0.75 x ~2 nm) cannot lift it to the gate: fails closed.
-    @test_throws ErrorException optimize_required_region!(
+    # bounded repair (0.75 x ~2 nm) cannot lift it to the gate: fails closed (the typed
+    # SeedGateFailure of decision 639, the same text).
+    @test_throws SeedGateFailure optimize_required_region!(
         copy(points),
         copy(tetrahedra),
         triangles,
@@ -740,7 +741,7 @@ end
     @test record0["SubSizeEdgeCollapse"]["CollapsedVertices"] == 0
     # The condition gate fails closed (a bound below the fan's own condition).
     points5, tetrahedra5, triangles5 = corner_fan(0.0125)
-    @test_throws ErrorException optimize_required_region!(
+    @test_throws SeedGateFailure optimize_required_region!(
         points5,
         tetrahedra5,
         triangles5,
