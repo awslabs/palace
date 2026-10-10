@@ -96,9 +96,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cxx", type="build")
     depends_on("cmake@3.18.1:", type="build", when="@0.11")
     depends_on("cmake@3.21:", type="build", when="@0.12:0.14")
-    depends_on("cmake@3.24:", type="build", when="@0.15:")
-    # C++20 device code: CMake knows nvcc's -std=c++20 from 3.25.2, and nvcc has it from 12.0
-    depends_on("cmake@3.25.2:", type="build", when="@0.19: +cuda")
+    depends_on("cmake@3.24:", type="build", when="@0.15:0.18")
+    depends_on("cmake@3.27:", type="build", when="@0.19:")
     depends_on("cuda@12:", when="@0.19: +cuda")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")

@@ -147,7 +147,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Build system
 
   - *Palace* now requires a C++20 compiler, including for CUDA and HIP device code, so
-    CUDA builds need CUDA 12.0 and CMake 3.25.2 or later. The Spack recipe keeps
+    CUDA builds need CUDA 12.0. The Spack recipe keeps
     `cxxstd=17` available for 0.16 to 0.18.
     [PR 654](https://github.com/awslabs/palace/pull/654).
   - GPU Spack builds from 0.19 no longer cap Umpire at 2025.12; MFEM is built as C++20 to
@@ -157,6 +157,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
     [PR 918](https://github.com/awslabs/palace/pull/918).
+  - Bumped the MUMPS dependency of the superbuild to 5.9.1. The superbuild now uses the
+    ParMETIS and METIS it builds instead of letting MUMPS download its own.
+    [PR 1026](https://github.com/awslabs/palace/pull/1026).
+  - A `BLA_VENDOR` passed to CMake now takes precedence over the BLAS/LAPACK vendor
+    detected from the environment, and AOCL is located through CMake's `FindBLAS` and
+    `FindLAPACK`. *Palace* now requires CMake 3.27 or later.
+    [PR 1026](https://github.com/awslabs/palace/pull/1026).
 
 ## [0.18.1] - 2026-09-21
 
