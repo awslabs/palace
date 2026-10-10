@@ -1,0 +1,111 @@
+{
+  // Periodic vacuum cell with a Floquet port at z = 0, a +z PML layer, and a PEC termination
+  // behind the PML: plane wave absorption by the PML at oblique incidence at 3 GHz. The
+  // Floquet wave vector k_y = k₀ sin(θ) sets the angle of incidence θ.
+  // θ = 45°, TM polarization, swept from 2.5 to 3.5 GHz with the adaptive fast frequency
+  // sweep. The frequency-dependent stretch keeps the PML absorbing over the band; its terms,
+  // which are not symmetric with the Floquet wave vector, are projected per frequency during
+  // the greedy sampling and fit with a rational function for the online sweep.
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/oblique_45_tm_adaptive",
+    "OutputFormats": {
+      "Paraview": false
+    }
+  },
+  "Model": {
+    "Mesh": "mesh/pml_oblique.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ],
+    "PML": {
+      "Attributes": [2],
+      "Direction": [
+        "+Z"
+      ],
+      "Thickness": 0.3,
+      "Order": 3,
+      "FrequencyDependent": true
+    }
+  },
+  "Boundaries": {
+    "Periodic": {
+      "FloquetWaveVector": [
+        0.0,
+        44.459587,
+        0.0
+      ],
+      "FloquetReferenceFrequency": 3.0,
+      "BoundaryPairs": [
+        {
+          "DonorAttributes": [
+            3
+          ],
+          "ReceiverAttributes": [
+            4
+          ]
+        },
+        {
+          "DonorAttributes": [
+            5
+          ],
+          "ReceiverAttributes": [
+            6
+          ]
+        }
+      ]
+    },
+    "FloquetPort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          7
+        ],
+        "Excitation": true,
+        "IncidentPolarization": "TM",
+        "MaxOrder": 0
+      }
+    ],
+    "PEC": {
+      "Attributes": [
+        8
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {
+      "MinFreq": 2.5,
+      "MaxFreq": 3.5,
+      "FreqStep": 0.05,
+      "SaveStep": 0,
+      "AdaptiveTol": 1e-4
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1e-08,
+      "MaxIts": 300,
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
+    }
+  }
+}
