@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -1134,6 +1135,8 @@ TEST_CASE("substructuring_magnetostatic_mixed_london", "[Serial][Parallel][Regre
                                   "magnetostatic_mixed_london.json", "mixed_london", opts);
 }
 
+#if defined(MFEM_USE_MUMPS)  // driven substructuring needs MUMPS
+
 // Driven substructuring with exact per-frequency condensation: lumped ports across two
 // holes of a PEC film crossing the interface, one in the region (lossy dielectric) and one
 // in the environment. The references are regular simulations of the same configuration.
@@ -1223,6 +1226,8 @@ TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][Regression]")
   palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave_online.json",
                                   "online", opts);
 }
+
+#endif
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
