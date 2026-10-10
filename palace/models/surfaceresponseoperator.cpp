@@ -2554,6 +2554,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     const bool junction = model.topology == LibraryTopology::JUNCTION;
     const bool spatial_vertex = corner || endpoint || junction;
     const bool spatial_response = spatial_vertex || spatial_cluster;
+    // The largest conductor label of the plan view (a context-only conductor of a
+    // device-plan coupon carries no claimed Edge, decision 282): read by the
+    // conductor-reference count of a spatial cluster below.
+    int plan_view_conductor_count = 0;
     if (auto boundary = entry.find("PlanViewBoundary"); boundary != entry.end())
     {
       MFEM_VERIFY((spatial_cluster || endpoint || junction) && boundary->is_array() &&
@@ -2568,6 +2572,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                         component.contains("Segments") &&
                         component["Segments"].is_array() && !component["Segments"].empty(),
                     "Invalid PlanViewBoundary component!");
+        plan_view_conductor_count =
+            std::max(plan_view_conductor_count, component["Conductor"].get<int>());
         auto ValidSegment = [](const auto &segment)
         {
           return segment.is_array() && segment.size() == 2 &&
@@ -2927,7 +2933,14 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     if ((parallel_cluster && !model.cluster_edges.empty()) ||
         (spatial_cluster && !model.spatial_edges.empty()))
     {
-      const int conductor_count =
+      // The canonical conductor labels of an edge-cluster model are those of its claimed
+      // Edges and, for a spatial cluster, those of its PlanViewBoundary components: a
+      // device-plan coupon (decision 282) may carry a context-only conductor (a plan
+      // conductor with no claim), which the generator counts (one reference, one trace
+      // lift, a conductor state of the response matrices), so the loader counts it too
+      // (decision 649 (1): 448693d60a6f, claims on conductor 1 only, plan conductors 1-2,
+      // two references, was refused here).
+      int conductor_count =
           parallel_cluster
               ? std::max_element(model.cluster_edges.begin(), model.cluster_edges.end(),
                                  [](const auto &first, const auto &second)
@@ -2937,9 +2950,14 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                  [](const auto &first, const auto &second)
                                  { return first.conductor < second.conductor; })
                     ->conductor;
+      if (spatial_cluster)
+      {
+        conductor_count = std::max(conductor_count, plan_view_conductor_count);
+      }
       MFEM_VERIFY(static_cast<int>(model.conductor_references.size()) == conductor_count,
                   "Edge-cluster models require one conductor reference for each "
-                  "canonical conductor label!");
+                  "canonical conductor label of their Edges and PlanViewBoundary "
+                  "components!");
     }
     if (auto paths = entry.find("OpenContourPaths"); paths != entry.end())
     {
