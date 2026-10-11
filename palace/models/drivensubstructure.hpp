@@ -70,17 +70,19 @@ private:
 //
 // A model saved by an offline driven substructuring sweep, written and read on rank 0 (the
 // header broadcast): the header (the interface signatures, the fingerprints of the
-// environment and of its sources, the environment's ports, the frequencies) and one record
-// per frequency: S_E(ω), the condensation g of the environment's sources (per excitation
-// with environment sources), and the condensed functionals of the environment's ports,
-// whose values are V_j = c_jk + h_j^T u_Γ for excitation k. An exact model holds the
-// frequencies of a uniform sweep, a rational one (with weights) the samples of an adaptive
-// sweep, interpolated at any frequency between them (BarycentricInterpolant).
+// environment and of its sources, the environment's ports, the frequencies, the reference
+// length of the nondimensionalization) and one record per frequency: S_E(ω), the
+// condensation g of the environment's sources (per excitation with environment sources),
+// and the condensed functionals of the environment's ports, whose values are V_j = c_jk +
+// h_j^T u_Γ for excitation k. An exact model holds the frequencies of a uniform sweep, a
+// rational one (with weights) the samples of an adaptive sweep, interpolated at any
+// frequency between them (BarycentricInterpolant).
 //
 struct DrivenSubstructureModel
 {
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
-  int version = 2, nG = 0, sig_w = 0;
+  int version = 3, nG = 0, sig_w = 0;
+  double length_scale = 0.0;  // model.Lc of the offline run (0: not saved, version < 3)
   std::vector<double> signatures;  // nG x sig_w
   std::vector<double> env_fp;      // environment fingerprint
   std::vector<int> excitations;    // excitations with environment sources
@@ -143,8 +145,12 @@ private:
 class DrivenSubstructure
 {
 public:
+  // Online, with the saved model: a mesh holding less of the environment than the model
+  // was condensed from (as the region mesh written offline) holds the region, and Γ is the
+  // set of the region's boundary DOFs at the points of the saved interface DOFs.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
-                     const std::vector<int> &environment_attributes, bool online = false);
+                     const std::vector<int> &environment_attributes, bool online = false,
+                     const DrivenSubstructureModel *saved = nullptr);
   ~DrivenSubstructure();
 
   // Condense the environment and factor the region against it at the angular frequency ω
@@ -202,6 +208,17 @@ public:
   // Local true DOFs touched by the boundary elements with the given attributes.
   std::vector<char> BoundaryTrueDofs(const std::vector<int> &bdr_attributes) const;
 
+  // Online, whether the mesh holds the region only (and the environment comes from the
+  // saved model).
+  bool RegionOnly() const { return region_only; }
+
+  // Write a mesh of the region for online runs, in mesh length units (coordinates times
+  // length_scale): the region, and the environment elements on the boundary elements with
+  // the given attributes (the environment's ports, whose excitations and outputs need
+  // them). Collective.
+  void WriteRegionMesh(const std::string &path, const std::vector<int> &port_attributes,
+                       double length_scale) const;
+
   // The wave ports in the environment (each wave port lies inside one side).
   std::vector<int> EnvironmentWavePorts() const;
 
@@ -239,7 +256,7 @@ public:
 
 private:
   SpaceOperator &space_op;
-  bool online;
+  bool online, region_only = false;
   std::vector<char> is_env_int, is_gamma, is_region_int;
   std::vector<HYPRE_BigInt> gamma_tdofs;
   std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank

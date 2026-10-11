@@ -467,17 +467,26 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   RequireArtifact(config_path, "config file");
   RequireArtifact(ref_postpro, "reference data directory");
   nlohmann::json config = LoadConfigJson(config_path);
-  if (auto model = config.find("Model"); model != config.end())
+  // The mesh of a config, relative to dir (after a setup run, the stage: the setup run may
+  // write it).
+  auto require_mesh = [](const nlohmann::json &cfg, const std::filesystem::path &dir)
   {
-    if (auto mesh = model->find("Mesh"); mesh != model->end() && mesh->is_string())
+    if (auto model = cfg.find("Model"); model != cfg.end())
     {
-      std::filesystem::path mesh_path = mesh->get<std::string>();
-      if (mesh_path.is_relative())
+      if (auto mesh = model->find("Mesh"); mesh != model->end() && mesh->is_string())
       {
-        mesh_path = input_path / mesh_path;
+        std::filesystem::path mesh_path = mesh->get<std::string>();
+        if (mesh_path.is_relative())
+        {
+          mesh_path = dir / mesh_path;
+        }
+        RequireArtifact(mesh_path, "mesh file");
       }
-      RequireArtifact(mesh_path, "mesh file");
     }
+  };
+  if (opts.setup_config.empty())
+  {
+    require_mesh(config, input_path);
   }
 
   ScopedExampleStage stage(input_path, run_root, postpro_subdir, comm);
@@ -495,10 +504,13 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   {
     const std::filesystem::path setup_path = input_path / effective_opts.setup_config;
     RequireArtifact(setup_path, "setup config file");
-    IoData setup = LoadCaseIoData(LoadConfigJson(setup_path), effective_opts);
+    nlohmann::json setup_config = LoadConfigJson(setup_path);
+    require_mesh(setup_config, input_path);
+    IoData setup = LoadCaseIoData(std::move(setup_config), effective_opts);
     MakeOutputFolder(setup, comm);
     BlockTimer::Reset();
     palace::Run(setup, comm, omp_threads, /*git_tag=*/nullptr);
+    require_mesh(config, stage.path());
   }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
   MakeOutputFolder(iodata, comm);

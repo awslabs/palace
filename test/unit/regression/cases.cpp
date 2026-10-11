@@ -1227,6 +1227,60 @@ TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][Regression]")
                                   "online", opts);
 }
 
+// Online runs on the mesh of the region written by the offline run (with the environment's
+// ports), against the references of the online runs on the full mesh.
+TEST_CASE("substructuring_driven_region", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_region.json",
+                                  "online_region", opts);
+}
+
+TEST_CASE("substructuring_driven_reduced_region", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven",
+                                  "driven_online_reduced_region.json",
+                                  "online_reduced_region", opts);
+}
+
+TEST_CASE("substructuring_driven_wave_region", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_wave_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_wave",
+                                  "driven_wave_online_region.json", "online_region", opts);
+}
+
+// A region strictly inside the box (its mesh is smaller than the model's reference length)
+// and a PEC sheet in the environment ending on an edge of Γ (Dirichlet DOFs of the region
+// from the environment), redesigned: against a regular simulation of the redesign.
+TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_box", "driven_online_region.json",
+                                  "online_region", opts);
+}
+
 #endif
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface

@@ -5,6 +5,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <filesystem>
 #include <iostream>
 #include <numbers>
 #include <Eigen/Dense>
@@ -84,6 +85,13 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 namespace
 {
+
+// The mesh of the region written with a saved model: <model>_region.mesh.
+std::string RegionMeshPath(const std::string &model_path)
+{
+  std::filesystem::path p(model_path);
+  return p.replace_filename(p.stem().string() + "_region.mesh").string();
+}
 
 // The lumped ports on the environment side (and its wave ports, as -index), and an abort
 // for lumped ports touching Γ (their excitation and voltage would depend on both sides).
@@ -249,6 +257,29 @@ int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10)
 
 }  // namespace
 
+void DrivenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                              MPI_Comm comm) const
+{
+  if (const auto &sub = iodata.solver.substructuring;
+      sub && sub->mode == SubstructuringMode::ONLINE)
+  {
+    DrivenSubstructureModel model;
+    model.ReadHeader(sub->save_model, comm);
+    if (model.length_scale > 0.0)
+    {
+      MFEM_VERIFY(
+          !(iodata.model.Lc > 0.0) || std::abs(iodata.model.Lc - model.length_scale) <=
+                                          1.0e-12 * model.length_scale,
+          "\"Model\": \"Lc\" (" << iodata.model.Lc
+                                << ") differs from that of the saved substructuring "
+                                   "model ("
+                                << model.length_scale << ")!");
+      iodata.model.Lc = model.length_scale;
+    }
+  }
+  BaseSolver::Preprocess(iodata, smesh, comm);
+}
+
 ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
                                                 bool adaptive) const
 {
@@ -269,8 +300,14 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   const bool save = !online && !model_path.empty();
   MPI_Comm comm = space_op.GetComm();
   const bool root = Mpi::Root(comm);
+  DrivenSubstructureModel model;
+  if (online)
+  {
+    model.ReadHeader(model_path, comm);
+  }
   auto ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
-                                                 sub.environment_attributes, online);
+                                                 sub.environment_attributes, online,
+                                                 online ? &model : nullptr);
   const int nG = ds->InterfaceSize();
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   const auto &Curl = space_op.GetCurlMatrix();
@@ -346,7 +383,6 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   }
 
   // The model: header and environment ports.
-  DrivenSubstructureModel model;
   std::vector<ComplexVector> port_l;
   SignatureMap gamma_map;           // online: the saved interface on the current one
   std::vector<int> record, ex_col;  // the records of an exact model, model columns
@@ -371,6 +407,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
       }
     }
     model.ports = env_ports;
+    model.length_scale = iodata.model.Lc;
     if (adaptive)
     {
       const std::size_t n_init = iodata.solver.driven.prom_indices.size();
@@ -399,11 +436,32 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
                  "excitations with environment sources, {:d} environment ports)\n",
                  model_path, adaptive ? "up to " : "", model.capacity,
                  model.excitations.size(), env_ports.size());
+      // The mesh of the region for online runs, with the environment's ports.
+      std::vector<int> port_attrs;
+      for (int p : env_ports)
+      {
+        if (p > 0)
+        {
+          for (const auto &elem : iodata.boundaries.lumpedport.at(p).elements)
+          {
+            port_attrs.insert(port_attrs.end(), elem.attributes.begin(),
+                              elem.attributes.end());
+          }
+        }
+        else
+        {
+          const auto &attrs = iodata.boundaries.waveport.at(-p).attributes;
+          port_attrs.insert(port_attrs.end(), attrs.begin(), attrs.end());
+        }
+      }
+      const auto region_mesh = RegionMeshPath(model_path);
+      ds->WriteRegionMesh(region_mesh, port_attrs,
+                          iodata.units.GetMeshLengthRelativeScale());
+      Mpi::Print(" Writing the mesh of the region for online runs to {}\n", region_mesh);
     }
   }
   else if (online)
   {
-    model.ReadHeader(model_path, comm);
     MFEM_VERIFY(model.nG == nG,
                 "Saved substructuring model interface size ("
                     << model.nG << ") does not match this run (" << nG
@@ -412,12 +470,19 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     gamma_map = MatchSignatureBasis(
         TrueDofSignatures(space_op.GetNDSpace().Get(), ds->InterfaceIndex(), nG),
         model.signatures, model.sig_w);
-    MFEM_VERIFY(DrivenSubstructureModel::SameEnvironment(
-                    ds->EnvironmentFingerprint(model.omega[0]), model.env_fp),
-                "The environment differs from the one the saved substructuring model was "
-                "condensed from (environment mesh, materials, boundary conditions, "
-                "order or problem type changed): rerun in \"Offline\" mode to "
-                "condense it again!");
+    if (ds->RegionOnly())
+    {
+      Mpi::Print(" The mesh holds the region (the environment is that of the model)\n");
+    }
+    else
+    {
+      MFEM_VERIFY(DrivenSubstructureModel::SameEnvironment(
+                      ds->EnvironmentFingerprint(model.omega[0]), model.env_fp),
+                  "The environment differs from the one the saved substructuring model "
+                  "was condensed from (environment mesh, materials, boundary conditions, "
+                  "order or problem type changed): rerun in \"Offline\" mode to "
+                  "condense it again!");
+    }
     MFEM_VERIFY(env_ports == model.ports,
                 "The environment's lumped ports differ from those of the saved "
                 "substructuring model!");

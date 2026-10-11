@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <utility>
 #include <Eigen/Dense>
 #include "fem/substructure.hpp"
@@ -15,6 +16,8 @@
 #include "linalg/rap.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
+#include "utils/outputdir.hpp"
 
 extern "C"
 {
@@ -66,7 +69,7 @@ std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool i
 DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
                                        const std::vector<int> &environment_attributes,
-                                       bool online)
+                                       bool online, const DrivenSubstructureModel *saved)
   : space_op(space_op), online(online)
 {
   env.attrs = environment_attributes;
@@ -98,14 +101,56 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   {
     dbc[d] = 1;
   }
+  MPI_Comm comm = fes.GetComm();
+
+  // A mesh of the region (online): Γ also holds the region's boundary DOFs at the points
+  // of the saved interface DOFs, where the environment was cut off.
+  std::vector<char> cut(nt, 0);
+  if (saved)
+  {
+    double n_env = 0.0;
+    for (int i = 0; i < nt; i++)
+    {
+      n_env += !dbc[i] && em[i] && !rm[i];
+    }
+    Mpi::GlobalSum(1, &n_env, comm);
+    region_only = (n_env < saved->env_fp.at(0));
+  }
+  if (region_only)
+  {
+    const auto bdr = BoundaryTrueDofs(
+        std::vector<int>(mesh.bdr_attributes.begin(), mesh.bdr_attributes.end()));
+    std::vector<int> index(nt, -1);
+    int nc = 0;
+    for (int i = 0; i < nt; i++)
+    {
+      if (bdr[i] && rm[i] && !em[i] && !dbc[i])
+      {
+        index[i] = nc++;
+      }
+    }
+    int off = 0;
+    MPI_Exscan(&nc, &off, 1, MPI_INT, MPI_SUM, comm);
+    Mpi::GlobalSum(1, &nc, comm);
+    for (auto &g : index)
+    {
+      g += (g >= 0) ? off : 0;
+    }
+    const auto match = MatchSignaturePoints(TrueDofSignatures(fes, index, nc),
+                                            saved->signatures, saved->sig_w);
+    for (int i = 0; i < nt; i++)
+    {
+      cut[i] = (index[i] >= 0) && match[index[i]];
+    }
+  }
   is_env_int.assign(nt, 0);
   is_gamma.assign(nt, 0);
   is_region_int.assign(nt, 0);
   for (int i = 0; i < nt; i++)
   {
-    is_gamma[i] = !dbc[i] && rm[i] && em[i];
+    is_gamma[i] = !dbc[i] && ((rm[i] && em[i]) || cut[i]);
     is_env_int[i] = !dbc[i] && em[i] && !rm[i];
-    is_region_int[i] = !dbc[i] && rm[i] && !em[i];
+    is_region_int[i] = !dbc[i] && rm[i] && !em[i] && !cut[i];
     if (!is_gamma[i] && !is_env_int[i])
     {
       env.pinned.Append(i);
@@ -126,7 +171,6 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
       mine.push_back(tstart + i);
     }
   }
-  MPI_Comm comm = fes.GetComm();
   const int nranks = Mpi::Size(comm), nloc = static_cast<int>(mine.size());
   gamma_cnt.assign(nranks, 0);
   gamma_disp.assign(nranks, 0);
@@ -1070,6 +1114,143 @@ DrivenSubstructure::BoundaryTrueDofs(const std::vector<int> &bdr_attributes) con
 namespace
 {
 
+// A serial mesh of the region without the boundary elements duplicated by the cracking of
+// interior boundaries in the mesh preprocessing (a second one on a face, of the side now
+// outside the region), which a mesh read from file may not have: the preprocessing of the
+// online run cracks its interior boundaries again.
+class SerialRegionMesh : public mfem::Mesh
+{
+public:
+  explicit SerialRegionMesh(mfem::Mesh &&mesh) : mfem::Mesh(std::move(mesh)) {}
+
+  // Only for writing the mesh (its boundary tables are not updated).
+  void RemoveDuplicateBoundaryElements()
+  {
+    std::set<std::vector<int>> seen;  // attribute, then the sorted vertices
+    int nbe = 0;
+    for (int be = 0; be < NumOfBdrElements; be++)
+    {
+      mfem::Array<int> v;
+      boundary[be]->GetVertices(v);
+      std::vector<int> key(v.begin(), v.end());
+      std::sort(key.begin(), key.end());
+      key.insert(key.begin(), boundary[be]->GetAttribute());
+      if (!seen.insert(key).second)
+      {
+        FreeElement(boundary[be]);
+        continue;
+      }
+      boundary[nbe++] = boundary[be];
+    }
+    NumOfBdrElements = nbe;
+    boundary.SetSize(nbe);
+  }
+};
+
+}  // namespace
+
+void DrivenSubstructure::WriteRegionMesh(const std::string &path,
+                                         const std::vector<int> &port_attributes,
+                                         double length_scale) const
+{
+  // On a copy of the mesh, the environment elements touching the ports' DOFs (with the
+  // boundary conditions at their edges, as the PEC around a lumped port), and the Dirichlet
+  // DOFs of the region (on Γ, from boundary conditions in the environment), take a new
+  // attribute, for the domain submesh of the region and these elements, which get their
+  // attributes back.
+  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get());
+  const auto &parent = *fes.GetParMesh();
+  mfem::Vector tmark(fes.GetTrueVSize()), lmark(fes.GetVSize());
+  {
+    const auto port = BoundaryTrueDofs(port_attributes);
+    mfem::Array<int> rm, em, im, ra, ea;
+    for (int a : region.attrs)
+    {
+      ra.Append(a);
+    }
+    for (int a : env.attrs)
+    {
+      ea.Append(a);
+    }
+    MarkInterfaceTrueDofs(fes, ra, ea, rm, em, im);
+    tmark = 0.0;
+    for (int d : space_op.GetNDDbcTDofLists().back())
+    {
+      tmark(d) = rm[d];
+    }
+    for (int i = 0; i < fes.GetTrueVSize(); i++)
+    {
+      tmark(i) = std::max(tmark(i), static_cast<double>(port[i]));
+    }
+  }
+  fes.Dof_TrueDof_Matrix()->Mult(tmark, lmark);
+  mfem::ParMesh mesh(parent);
+  const int port_attr = (mesh.attributes.Size() ? mesh.attributes.Max() : 0) + 1;
+  mfem::Array<int> dofs;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (std::ranges::find(env.attrs, parent.GetAttribute(e)) == env.attrs.end())
+    {
+      continue;
+    }
+    fes.GetElementDofs(e, dofs);
+    if (std::ranges::any_of(dofs, [&](int d) { return lmark(d >= 0 ? d : -1 - d) != 0.0; }))
+    {
+      mesh.SetAttribute(e, port_attr);
+    }
+  }
+  mesh.SetAttributes();
+  mfem::Array<int> attrs;
+  for (int a : region.attrs)
+  {
+    attrs.Append(a);
+  }
+  attrs.Append(port_attr);
+  auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);
+  const auto &parent_ids = sub.GetParentElementIDMap();
+  for (int e = 0; e < sub.GetNE(); e++)
+  {
+    if (sub.GetAttribute(e) == port_attr)
+    {
+      sub.SetAttribute(e, parent.GetAttribute(parent_ids[e]));
+    }
+  }
+  sub.SetAttributes();
+
+  // The serial mesh on rank 0, in mesh length units.
+  auto write = [&](mfem::Mesh &smesh)
+  {
+    WriteRootOutputFile(path, parent.GetComm(),
+                        [&](std::ostream &out)
+                        {
+                          out << std::scientific;
+                          out.precision(std::numeric_limits<double>::max_digits10);
+                          mesh::DimensionalizeMesh(smesh, length_scale);
+                          smesh.Mesh::Print(out);
+                        });
+  };
+  if (sub.Nonconforming())
+  {
+    mfem::ParMesh smesh(sub);
+    mfem::Array<int> rank0(smesh.GetNE());
+    rank0 = 0;
+    smesh.Rebalance(rank0);
+    write(smesh);
+  }
+  else
+  {
+    SerialRegionMesh smesh(sub.GetSerialMesh(0));
+    if (Mpi::Root(parent.GetComm()))
+    {
+      smesh.RemoveDuplicateBoundaryElements();
+    }
+    write(smesh);
+  }
+}
+
+namespace
+{
+
 // Fixed polynomial fields of the fingerprints (true DOFs).
 Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
 {
@@ -1424,13 +1605,13 @@ std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record 
 std::size_t DrivenSubstructureModel::HeaderBytes() const
 {
   // Version 1: 8 ints and the frequencies; version 2: 10 ints, and room for capacity
-  // frequencies and weights.
+  // frequencies and weights; version 3: and the reference length after the ints.
   const std::size_t common = sizeof(double) * signatures.size() +
                              sizeof(double) * env_fp.size() +
                              sizeof(int) * excitations.size() +
                              sizeof(double) * exc_fp.size() + sizeof(int) * ports.size();
   return (version == 1) ? sizeof(int) * 8 + common + sizeof(double) * omega.size()
-                        : sizeof(int) * 10 + common +
+                        : sizeof(int) * 10 + ((version > 2) ? sizeof(double) : 0) + common +
                               (sizeof(double) + sizeof(std::complex<double>)) * capacity;
 }
 
@@ -1442,14 +1623,14 @@ std::size_t DrivenSubstructureModel::RecordBytes() const
 
 void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) const
 {
-  MFEM_VERIFY(version == 2 && capacity >= static_cast<int>(omega.size()) &&
+  MFEM_VERIFY(version == 3 && capacity >= static_cast<int>(omega.size()) &&
                   (weights.empty() || weights.size() == omega.size()),
               "Invalid substructuring model header!");
   std::fstream f(path, create ? (std::ios::binary | std::ios::out | std::ios::trunc)
                               : (std::ios::binary | std::ios::in | std::ios::out));
   MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
   const int head[10] = {kDrivenModelMagic,
-                        2,
+                        3,
                         nG,
                         sig_w,
                         static_cast<int>(env_fp.size()),
@@ -1463,6 +1644,7 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
   om.resize(capacity, 0.0);
   wt.resize(capacity, 0.0);
   f.write(reinterpret_cast<const char *>(head), sizeof(head));
+  f.write(reinterpret_cast<const char *>(&length_scale), sizeof(double));
   for (const auto *v : {&signatures, &env_fp})
   {
     f.write(reinterpret_cast<const char *>(v->data()),
@@ -1493,6 +1675,7 @@ void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
 {
   int head[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  length_scale = 0.0;
   std::ifstream f;
   if (Mpi::Root(comm))
   {
@@ -1501,10 +1684,15 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
     {
       f.read(reinterpret_cast<char *>(head), sizeof(int) * 2);
       f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * ((head[1] == 1) ? 6 : 8));
+      if (head[1] > 2)
+      {
+        f.read(reinterpret_cast<char *>(&length_scale), sizeof(double));
+      }
     }
   }
   Mpi::Broadcast(10, head, 0, comm);
-  MFEM_VERIFY(head[0] == kDrivenModelMagic && (head[1] == 1 || head[1] == 2),
+  Mpi::Broadcast(1, &length_scale, 0, comm);
+  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 3,
               "Cannot read the driven substructuring model \""
                   << path << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
   version = head[1];
@@ -1530,7 +1718,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   capacity = head[7];
   read(omega, capacity);
   weights.clear();
-  if (version == 2)
+  if (version >= 2)
   {
     read(weights, capacity);
     omega.resize(head[8]);

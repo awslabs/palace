@@ -33,6 +33,11 @@ private:
 
 public:
   using BaseSolver::BaseSolver;
+
+  // An online substructured run takes the reference length of its saved model, so that a
+  // mesh of the region alone is nondimensionalized as the model was.
+  void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                  MPI_Comm comm) const override;
 };
 
 }  // namespace palace

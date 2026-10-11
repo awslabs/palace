@@ -50,6 +50,11 @@ struct SignatureMap
   std::vector<T> DualMatrix(const std::vector<T> &S) const;
 };
 
+// Which of a set of H(curl) DOFs (signatures of width 12) lie at the point of one of a
+// saved set of DOFs, within the tolerance of MatchSignatureBasis.
+std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
+                                       const std::vector<double> &saved, int width);
+
 // The map from the saved to the current H(curl) signatures (width 12), aborting unless the
 // current signatures equal M times the saved ones within a relative tolerance.
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,

@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -39,6 +40,40 @@ TEST_CASE("Interface true DOFs are identified consistently in parallel",
   };
   CHECK(count(1) == 49);
   CHECK(count(2) == 169);
+}
+
+TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]")
+{
+  // Point-tangent DOFs u(p).t, with signatures (t_b, p_a t_b): a DOF at a saved point
+  // matches whatever its tangent (another one, as a face DOF in another basis, or the
+  // opposite one), a DOF off the saved points does not.
+  auto add = [](std::vector<double> &sig, std::array<double, 3> p, std::array<double, 3> t)
+  {
+    sig.insert(sig.end(), t.begin(), t.end());
+    for (int a = 0; a < 3; a++)
+    {
+      for (int b = 0; b < 3; b++)
+      {
+        sig.push_back(p[a] * t[b]);
+      }
+    }
+  };
+  std::vector<double> saved, candidates;
+  add(saved, {0.1, 0.2, 0.3}, {1.0, 0.0, 0.0});
+  add(saved, {0.5, -0.2, 0.0}, {0.0, 0.6, 0.8});
+  add(saved, {0.5, 0.4, 0.0}, {0.0, 0.0, 1.0});
+  add(candidates, {0.1, 0.2, 0.3}, {0.0, 1.0, 0.0});
+  add(candidates, {0.5, -0.2, 0.0}, {0.0, -0.6, -0.8});
+  add(candidates, {0.5, -0.2, 1.0e-6}, {0.0, 0.6, 0.8});
+  add(candidates, {0.1 + 1.0e-12, 0.2, 0.3}, {1.0, 0.0, 0.0});
+  add(candidates, {0.5, 0.4, 0.0}, {0.6, 0.8, 0.0});
+  const auto match = MatchSignaturePoints(candidates, saved, 12);
+  REQUIRE(match.size() == 5);
+  CHECK(match[0]);
+  CHECK(match[1]);
+  CHECK_FALSE(match[2]);
+  CHECK(match[3]);
+  CHECK(match[4]);
 }
 
 TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",

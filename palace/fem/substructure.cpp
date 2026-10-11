@@ -154,6 +154,71 @@ std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace
   return glob;
 }
 
+namespace
+{
+
+// The point p of each point-tangent DOF u(p).t from its signature (t_b, p_a t_b):
+// p = Q t / |t|^2 with Q_ab = p_a t_b.
+std::vector<std::array<double, 3>> SignaturePoints(const std::vector<double> &sig,
+                                                   int width)
+{
+  const int n = static_cast<int>(sig.size() / width);
+  std::vector<std::array<double, 3>> p(n, {0.0, 0.0, 0.0});
+  for (int g = 0; g < n; g++)
+  {
+    const double *v = &sig[static_cast<std::size_t>(g) * width];
+    const double t2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    for (int a = 0; a < 3 && t2 > 0.0; a++)
+    {
+      for (int b = 0; b < 3; b++)
+      {
+        p[g][a] += v[3 + 3 * a + b] * v[b] / t2;
+      }
+    }
+  }
+  return p;
+}
+
+// The matching tolerance for the signatures of a saved set.
+double SignatureTolerance(const std::vector<double> &saved)
+{
+  double scale = 1.0;
+  for (double v : saved)
+  {
+    scale = std::max(scale, std::abs(v));
+  }
+  return 1.0e-8 * scale;
+}
+
+}  // namespace
+
+std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
+                                       const std::vector<double> &saved, int width)
+{
+  MFEM_VERIFY(width == 12, "MatchSignaturePoints expects Nédélec signatures!");
+  const double tol = SignatureTolerance(saved);
+  const auto pc = SignaturePoints(candidates, width), ps = SignaturePoints(saved, width);
+  // The saved points by their first coordinate, searched within the tolerance.
+  std::vector<int> order(ps.size());
+  for (std::size_t s = 0; s < order.size(); s++)
+  {
+    order[s] = static_cast<int>(s);
+  }
+  std::sort(order.begin(), order.end(), [&](int a, int b) { return ps[a][0] < ps[b][0]; });
+  std::vector<char> match(pc.size(), 0);
+  for (std::size_t g = 0; g < pc.size(); g++)
+  {
+    auto it = std::lower_bound(order.begin(), order.end(), pc[g][0] - tol,
+                               [&](int s, double x) { return ps[s][0] < x; });
+    for (; it != order.end() && ps[*it][0] <= pc[g][0] + tol && !match[g]; ++it)
+    {
+      const auto &q = ps[*it];
+      match[g] = std::hypot(pc[g][0] - q[0], pc[g][1] - q[1], pc[g][2] - q[2]) <= tol;
+    }
+  }
+  return match;
+}
+
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width)
 {
@@ -161,12 +226,7 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
   MFEM_VERIFY(current.size() == saved.size(),
               "Saved and current DOF sets of different sizes cannot be matched!");
   const int n = static_cast<int>(current.size() / width);
-  double scale = 1.0;
-  for (double v : saved)
-  {
-    scale = std::max(scale, std::abs(v));
-  }
-  const double tol = 1.0e-8 * scale;
+  const double tol = SignatureTolerance(saved);
   auto row = [width](const std::vector<double> &sig, int g) { return &sig[g * width]; };
 
   // Signed one-to-one matches.
@@ -204,30 +264,11 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
   // The others with all DOFs at their point (for second-order Nédélec face DOFs on
   // tetrahedra, the two tangents at the face center, one of which may have matched): the
   // block M_g with current = M_g saved, M_g = C S^T (S S^T)^-1 for the signature blocks.
-  // A point-tangent DOF u(p).t has the signature (t_b, p_a t_b), so p = Q t / |t|^2 with
-  // Q_ab = p_a t_b.
   bool ok = true;
   double worst = 0.0;  // largest block residual
   if (std::find(matched.begin(), matched.end(), 0) != matched.end())
   {
-    auto points = [&](const std::vector<double> &sig)
-    {
-      std::vector<std::array<double, 3>> p(n, {0.0, 0.0, 0.0});
-      for (int g = 0; g < n; g++)
-      {
-        const double *v = row(sig, g);
-        const double t2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-        for (int a = 0; a < 3 && t2 > 0.0; a++)
-        {
-          for (int b = 0; b < 3; b++)
-          {
-            p[g][a] += v[3 + 3 * a + b] * v[b] / t2;
-          }
-        }
-      }
-      return p;
-    };
-    const auto pc = points(current), ps = points(saved);
+    const auto pc = SignaturePoints(current, width), ps = SignaturePoints(saved, width);
     auto near = [tol](const std::array<double, 3> &p, const std::array<double, 3> &q)
     { return std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= tol; };
     std::vector<char> done(n, 0);

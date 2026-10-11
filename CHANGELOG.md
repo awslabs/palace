@@ -50,8 +50,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     at saved frequencies solves a redesigned region against the saved environment. Adaptive
     sweeps condense it at frequencies chosen greedily for a rational model, checked for
     passivity, which online sweeps evaluate anywhere in its band, with the region reduced as
-    in the adaptive fast frequency sweep. Adds a driven example in `examples/substructuring`
-    (a 3 x 4 grid of CPW resonators). SchemaVer 2-3-1.
+    in the adaptive fast frequency sweep. The offline sweep also writes a mesh of the region,
+    on which online sweeps read and partition the region only. Adds a driven example in
+    `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 2-3-1.
 
 #### Interface Changes
 
