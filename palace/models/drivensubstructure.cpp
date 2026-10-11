@@ -1208,9 +1208,8 @@ bool DrivenSubstructureModel::SameEnvironment(const std::vector<double> &a,
   return true;
 }
 
-bool DrivenSubstructureModel::SameSource(const double *a, const double *b)
+bool DrivenSubstructureModel::SameSource(const double *a, const double *b, double tol)
 {
-  constexpr double tol = 1.0e-10;
   if (a[0] != b[0])
   {
     return false;

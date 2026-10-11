@@ -2553,6 +2553,17 @@ TEST_CASE("Saved driven excitations match across partitions", "[substructure][Se
   no_env[0] = 0.0;
   CHECK_FALSE(Model::SameSource(no_env.data(), saved.data()));
 
+  // A wave port's source follows its mode, reproducible to an eigensolver tolerance only:
+  // a change at that level matches to a tolerance above it, a different source does not.
+  auto perturbed = saved;
+  for (int q = 1; q < Model::kSourceFp; q++)
+  {
+    perturbed[q] *= 1.0 + 1.0e-7 * q;
+  }
+  CHECK_FALSE(Model::SameSource(online.data(), perturbed.data()));
+  CHECK(Model::SameSource(online.data(), perturbed.data(), 1.0e-4));
+  CHECK_FALSE(Model::SameSource(online.data(), other.data(), 1.0e-4));
+
   // Environment fingerprints: counts, then quadratic forms with a vanishing imaginary part.
   const std::vector<double> env = {100.0, 20.0, 3.0, 0.0, -2.0, 1.0e-3, 5.0, 0.0};
   auto env2 = env;

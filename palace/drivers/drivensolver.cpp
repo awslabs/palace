@@ -457,17 +457,28 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
         record.push_back(j);
       }
     }
-    // The model columns of the excitations with environment sources (-1: none).
+    // The model columns of the excitations with environment sources (-1: none). The modes
+    // of the environment's wave ports, and so their sources, are reproducible to their
+    // eigensolver tolerance over the spectral gap only.
     for (int k = 0; k < n; k++)
     {
       space_op.GetExcitationVector(ex_idx[k], model.omega[0], rhs[k]);
       const auto fp = ds->SourceFingerprint(rhs[k]);
+      double tol = 1.0e-10;
+      for (int p : port_excitations.excitations.at(ex_idx[k]).wave_port)
+      {
+        if (std::ranges::find(env_ports, -p) != env_ports.end())
+        {
+          tol = std::max(tol, 100.0 * iodata.boundaries.waveport.at(p).eig_tol);
+        }
+      }
       int col = -1;
       for (std::size_t e = 0; e < model.excitations.size(); e++)
       {
         if (model.excitations[e] == ex_idx[k] &&
             DrivenSubstructureModel::SameSource(
-                fp.data(), model.exc_fp.data() + DrivenSubstructureModel::kSourceFp * e))
+                fp.data(), model.exc_fp.data() + DrivenSubstructureModel::kSourceFp * e,
+                tol))
         {
           col = static_cast<int>(e);
         }

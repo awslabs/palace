@@ -114,9 +114,11 @@ struct DrivenSubstructureModel
   // then complex quadratic forms) entry by entry. A source's (a nonzero flag, then complex
   // pairings with the fingerprint fields, kSourceFp entries) relative to its largest
   // pairing: a pairing can vanish up to rounding, which depends on the partition (for a
-  // source in a plane where a fingerprint field is normal to it).
+  // source in a plane where a fingerprint field is normal to it). The sources of lumped
+  // ports are exact; those of wave ports follow their modes, computed to the tolerance of
+  // an eigensolver.
   static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
-  static bool SameSource(const double *a, const double *b);
+  static bool SameSource(const double *a, const double *b, double tol = 1.0e-10);
 
   // The passivity of a condensed environment S_E (n x n, complex symmetric, by its lower
   // triangle in the order of a record): the least eigenvalue of Im S_E, which is positive
