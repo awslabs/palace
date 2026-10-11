@@ -159,12 +159,18 @@ def mirror_formed_placement(identification, feature, model, row):
     None; reason names why the split cannot be read when the feature IS such a placement
     (None for an ordinary feature). The weights are the operator's MirrorFormedPlacement patch
     record (Feature + Patch), cross-checked against the model's ENTRY stamp Edges[].Weight;
-    the stamp alone when the record is absent (an older manifest)."""
+    the stamp alone when the record is absent (an older manifest). The stamp is read only
+    when EVERY model edge carries a Weight (the C++ record stamps one weight per edge): a
+    partial stamp is not evaluable, by name."""
     contract = (feature.get("Mirror") or {}).get("Contract")
     if not isinstance(contract, dict):
         return None, None
-    stamp = [float(edge.get("Weight", 1.0)) for edge in (model.get("Edges") or [])]
-    stamped = bool(model.get("Edges")) and any("Weight" in edge for edge in model["Edges"])
+    edges = model.get("Edges") or []
+    stamped_edges = sum(1 for edge in edges if "Weight" in edge)
+    if 0 < stamped_edges < len(edges):
+        return None, f"the model's ENTRY stamp Edges[].Weight is partial ({stamped_edges} of {len(edges)} edges stamped): every edge stamped or none"
+    stamped = bool(edges) and stamped_edges == len(edges)
+    stamp = [float(edge["Weight"]) for edge in edges] if stamped else []
     placement = None
     patches = ((identification.get("Diagnostics") or {}).get("MirrorFormedPlacement") or {}).get("Patches") or []
     for entry in patches:

@@ -486,6 +486,18 @@ class MirrorFormedPlacement(unittest.TestCase):
         self.assertEqual(by_name["A10-placement-evaluable"]["Status"], "FAIL")
         self.assertIn("without a MirrorFormedPlacement record or an ENTRY stamp", summary["NotEvaluable"][0]["Reason"])
         self.assertEqual(by_name["A10-context"]["Status"], "FAIL")
+        # A PARTIAL stamp (one edge without a Weight): every edge stamped or none, so listed by name — with the
+        # placement record present (its weights would otherwise agree with 1.0 defaults) and without it.
+        library = copy.deepcopy(self.library)
+        del library["Models"][0]["Edges"][17]["Weight"]
+        for ident in (self.identification, identification):
+            by_name, summary = self.gates(identification=ident, library=library)
+            self.assertEqual(by_name["A10-placement-evaluable"]["Status"], "FAIL")
+            self.assertIn("ENTRY stamp Edges[].Weight is partial (17 of 18 edges stamped)", summary["NotEvaluable"][0]["Reason"])
+            self.assertEqual(by_name["A10-context"]["Status"], "FAIL")
+        split, reason = PC.mirror_formed_placement(self.identification, self.identification["Features"][0], library["Models"][0], self.rows[0])
+        self.assertEqual(split, None)
+        self.assertIn("partial (17 of 18 edges stamped)", reason)
         # The planes missing from the record: the context gate fails by name (the image side cannot be told).
         identification = copy.deepcopy(self.identification)
         del identification["Diagnostics"]["MirrorBand"]
