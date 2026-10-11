@@ -1123,9 +1123,17 @@ class SerialRegionMesh : public mfem::Mesh
 public:
   explicit SerialRegionMesh(mfem::Mesh &&mesh) : mfem::Mesh(std::move(mesh)) {}
 
-  // Only for writing the mesh (its boundary tables are not updated).
-  void RemoveDuplicateBoundaryElements()
+  // Attributes above shift back by shift, and without the duplicated boundary elements;
+  // only for writing the mesh (its boundary tables are not updated).
+  void Finalize(int shift)
   {
+    for (int e = 0; e < GetNE(); e++)
+    {
+      if (GetAttribute(e) > shift)
+      {
+        SetAttribute(e, GetAttribute(e) - shift);
+      }
+    }
     std::set<std::vector<int>> seen;  // attribute, then the sorted vertices
     int nbe = 0;
     for (int be = 0; be < NumOfBdrElements; be++)
@@ -1144,6 +1152,7 @@ public:
     }
     NumOfBdrElements = nbe;
     boundary.SetSize(nbe);
+    SetAttributes();
   }
 };
 
@@ -1185,7 +1194,7 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
   }
   fes.Dof_TrueDof_Matrix()->Mult(tmark, lmark);
   mfem::ParMesh mesh(parent);
-  const int port_attr = (mesh.attributes.Size() ? mesh.attributes.Max() : 0) + 1;
+  const int shift = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
   mfem::Array<int> dofs;
   for (int e = 0; e < mesh.GetNE(); e++)
   {
@@ -1196,7 +1205,7 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
     fes.GetElementDofs(e, dofs);
     if (std::ranges::any_of(dofs, [&](int d) { return lmark(d >= 0 ? d : -1 - d) != 0.0; }))
     {
-      mesh.SetAttribute(e, port_attr);
+      mesh.SetAttribute(e, parent.GetAttribute(e) + shift);
     }
   }
   mesh.SetAttributes();
@@ -1205,22 +1214,18 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
   {
     attrs.Append(a);
   }
-  attrs.Append(port_attr);
-  auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);
-  const auto &parent_ids = sub.GetParentElementIDMap();
-  for (int e = 0; e < sub.GetNE(); e++)
+  for (int a : env.attrs)
   {
-    if (sub.GetAttribute(e) == port_attr)
-    {
-      sub.SetAttribute(e, parent.GetAttribute(parent_ids[e]));
-    }
+    attrs.Append(a + shift);
   }
-  sub.SetAttributes();
 
-  // The serial mesh on rank 0, in mesh length units.
+  // The submesh is extracted from the whole mesh on rank 0 (a parallel submesh can lose
+  // the entities shared between ranks that hold few of its elements), and written in mesh
+  // length units.
+  MPI_Comm comm = parent.GetComm();
   auto write = [&](mfem::Mesh &smesh)
   {
-    WriteRootOutputFile(path, parent.GetComm(),
+    WriteRootOutputFile(path, comm,
                         [&](std::ostream &out)
                         {
                           out << std::scientific;
@@ -1229,22 +1234,33 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
                           smesh.Mesh::Print(out);
                         });
   };
-  if (sub.Nonconforming())
+  if (mesh.Nonconforming())
   {
-    mfem::ParMesh smesh(sub);
-    mfem::Array<int> rank0(smesh.GetNE());
+    mfem::Array<int> rank0(mesh.GetNE());
     rank0 = 0;
-    smesh.Rebalance(rank0);
-    write(smesh);
+    mesh.Rebalance(rank0);
+    auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);
+    for (int e = 0; e < sub.GetNE(); e++)
+    {
+      if (sub.GetAttribute(e) > shift)
+      {
+        sub.SetAttribute(e, sub.GetAttribute(e) - shift);
+      }
+    }
+    sub.SetAttributes();
+    write(sub);
   }
   else
   {
-    SerialRegionMesh smesh(sub.GetSerialMesh(0));
-    if (Mpi::Root(parent.GetComm()))
+    mfem::Mesh smesh = mesh.GetSerialMesh(0);
+    SerialRegionMesh sub(Mpi::Root(comm)
+                             ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
+                             : mfem::Mesh());
+    if (Mpi::Root(comm))
     {
-      smesh.RemoveDuplicateBoundaryElements();
+      sub.Finalize(shift);
     }
-    write(smesh);
+    write(sub);
   }
 }
 
