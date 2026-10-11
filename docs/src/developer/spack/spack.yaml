@@ -44,3 +44,8 @@ spack:
       require: cflags=-std=gnu17
     mfem:
       require: "+exceptions"
+    # Each Fortran shared library holds its own copy of OpenMPI's MPI_IN_PLACE sentinel (a
+    # COMMON block) on macOS, and OpenMPI recognizes one of them only, so MUMPS must avoid
+    # MPI_IN_PLACE (its distributed right-hand sides break otherwise).
+    mumps:
+      require: fflags=-DAVOID_MPI_IN_PLACE
