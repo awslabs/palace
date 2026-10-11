@@ -41,6 +41,17 @@ R_mesh / R_library):
   coupon the model's first edge e1 must sit on the side of the coupon's recorded Convexity:
   the inner circle of a gap / the outer circle of a strip for Convex (read on the claimed
   fitted arc under e1; a chord without a fitted arc is not checked).
+* A MIRROR-FORMED cluster placed on its REAL half by its requirement contract (decision 557
+  (4); the feature's ``Mirror.Contract``, the operator's ``MirrorFormedPlacement`` record):
+  the model's REAL edges (the placement record's ``EdgeWeights`` 1.0 = ``RealEdges``, cross-
+  checked against the ENTRY stamp ``Edges[].Weight``) are checked as above; its IMAGE edges
+  (weight 0.0, never applied to a cell) lie beyond the mirror plane where the device has no
+  perimeter by construction and are LABELLED by name (``MirrorFormed.ImageEdges``), not
+  checked. The context gate classifies every Context entry end by the contract's mirror
+  planes (``Diagnostics.MirrorBand.Planes``: Inside = Offset - n . q, the image side is
+  Inside < -tolerance): real-side ends are checked, image-side ends labelled by name
+  (``ImageEnds``). A mirror-formed placement whose record lacks the weights or the planes is
+  listed, never silently passed (decision 616 MINOR-8; v3-f E-4).
 
 A model whose placement cannot be evaluated from its record (a topology the gate does not
 cover, a runtime model the library does not resolve) is listed, never silently passed. This gate is the one a misplaced
@@ -135,6 +146,73 @@ def gate(name, passed, detail, evaluable=True):
     return {"Gate": name, "Status": status, "Detail": detail}
 
 
+MIRROR_FORMED_RULE = ("decision 557 (4) / impl-B5 CONTRACT.md section 4: a mirror-formed cluster is placed ONCE on its REAL half; the "
+                      "model's real edges (EdgeWeights 1.0) are checked on the claimed portions, its image edges (0.0, never "
+                      "applied to a cell) lie beyond the mirror plane by construction and are labelled, not checked; Context "
+                      "entry ends on the image side of the contract's planes are labelled, not checked (v3-f E-4)")
+
+
+def mirror_formed_placement(identification, feature, model, row):
+    """The real / image split of a mirror-formed cluster placed on its real half by its
+    requirement contract (the feature's Mirror.Contract): (split, reason). split = {RealEdges,
+    ImageEdges (model Edge indices), Planes (indices into Diagnostics.MirrorBand.Planes)} or
+    None; reason names why the split cannot be read when the feature IS such a placement
+    (None for an ordinary feature). The weights are the operator's MirrorFormedPlacement patch
+    record (Feature + Patch), cross-checked against the model's ENTRY stamp Edges[].Weight;
+    the stamp alone when the record is absent (an older manifest). The stamp is read only
+    when EVERY model edge carries a Weight (the C++ record stamps one weight per edge): a
+    partial stamp is not evaluable, by name."""
+    contract = (feature.get("Mirror") or {}).get("Contract")
+    if not isinstance(contract, dict):
+        return None, None
+    edges = model.get("Edges") or []
+    stamped_edges = sum(1 for edge in edges if "Weight" in edge)
+    if 0 < stamped_edges < len(edges):
+        return None, f"the model's ENTRY stamp Edges[].Weight is partial ({stamped_edges} of {len(edges)} edges stamped): every edge stamped or none"
+    stamped = bool(edges) and stamped_edges == len(edges)
+    stamp = [float(edge["Weight"]) for edge in edges] if stamped else []
+    placement = None
+    patches = ((identification.get("Diagnostics") or {}).get("MirrorFormedPlacement") or {}).get("Patches") or []
+    for entry in patches:
+        if int(entry.get("Feature", -1)) == int(feature["Id"]) and (row is None or int(entry.get("Patch", -1)) == int(row["Patch"])):
+            placement = entry
+            break
+    if placement is not None:
+        weights = [float(w) for w in placement["EdgeWeights"]]
+        if stamped and weights != stamp:
+            return None, "the MirrorFormedPlacement EdgeWeights differ from the model's ENTRY stamp Edges[].Weight"
+    elif stamped:
+        weights = stamp
+    else:
+        return None, "mirror-formed placement without a MirrorFormedPlacement record or an ENTRY stamp (Edges[].Weight)"
+    if model.get("Edges") and len(weights) != len(model["Edges"]):
+        return None, f"{len(weights)} edge weights for {len(model['Edges'])} model Edges"
+    real = [k for k, w in enumerate(weights) if w > 0.0]
+    image = [k for k, w in enumerate(weights) if w <= 0.0]
+    planes = [int(k) for k in (contract.get("Planes") or (feature.get("Mirror") or {}).get("Planes") or [])]
+    return {"RealEdges": real, "ImageEdges": image, "Planes": planes, "Weights": weights,
+            "RealPortions": contract.get("RealPortions"), "Record": "MirrorFormedPlacement" if placement is not None else "EntryStamp"}, None
+
+
+def mirror_plane_inside(identification, plane_indices):
+    """Signed distance into the domain (>= 0 real side) of a mesh point from the nearest of the
+    given mirror planes (surfaceresponsemirror.hpp MirrorPlane::Inside: Offset - n . p), read
+    from Diagnostics.MirrorBand.Planes; None when the record lacks a named plane."""
+    planes = ((identification.get("Diagnostics") or {}).get("MirrorBand") or {}).get("Planes") or []
+    selected = []
+    for k in plane_indices:
+        if not 0 <= k < len(planes) or "Normal" not in planes[k] or "Offset" not in planes[k]:
+            return None
+        selected.append((np.asarray(planes[k]["Normal"], dtype=float), float(planes[k]["Offset"])))
+    if not selected:
+        return None
+
+    def inside(point):
+        return min(offset - float(np.dot(normal, point)) for normal, offset in selected)
+
+    return inside
+
+
 def load_patches(path):
     import csv
     rows = []
@@ -218,10 +296,25 @@ def context_gate(identification, patches, library, radius):
             continue
         origin, axes = row["Origin"], row["Axes"]
         entry = {"Feature": row["Feature"], "Model": row["Model"], "Checks": 0, "WorstOverR": 0.0, "Defects": [], "ArcEnds": 0}
+        split, reason = mirror_formed_placement(identification, feature, model or {}, row)
+        inside = None
+        if split is not None or reason is not None:
+            entry["ImageEnds"] = []
+            inside = mirror_plane_inside(identification, split["Planes"]) if split is not None else None
+            if inside is None:
+                entry["Defects"].append({"Point": "mirror planes", "DeviationOverR": math.inf, "Mapped": None,
+                                         "Reason": reason or "no Diagnostics.MirrorBand.Planes record for the contract's Planes "
+                                                             f"{(split or {}).get('Planes')}"})
+                entry["Checks"] += 1
         for index, piece in enumerate(signature.get("Context", [])):
             P = [float(v) for v in piece["P"]]
             for label, (x, y) in (("begin", (P[0], P[1])), ("end", (P[2], P[3]))):
                 q = origin + (scale * np.asarray([x * radius_library, y * radius_library, 0.0])) @ axes
+                if inside is not None and inside(q) < -tol:
+                    # The image side of the contract's mirror plane: the device has no
+                    # perimeter there by construction; labelled, not checked.
+                    entry["ImageEnds"].append(f"context {index} {label}")
+                    continue
                 distance = device_perimeter_distance(identification, q)
                 entry["Checks"] += 1
                 entry["WorstOverR"] = max(entry["WorstOverR"], distance / radius)
@@ -233,8 +326,10 @@ def context_gate(identification, patches, library, radius):
     defects = [e for e in entries if e["Defects"]]
     detail = {"Features": len(entries), "Checks": sum(e["Checks"] for e in entries), "ArcEnds": sum(e["ArcEnds"] for e in entries),
               "WorstDeviationOverR": max((e["WorstOverR"] for e in entries), default=None), "ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R,
-              "FeaturesWithDefects": len(defects), "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
-              "Basis": "every Context entry end of a placed contract-3 cluster model lies on the device perimeter (segments as chords, fitted-arc segments on their circle's arc) within the signature parameter tolerance: the C++ A10-extended check, mirrored"}
+              "FeaturesWithDefects": len(defects),
+              "MirrorFormedFeatures": sum(1 for e in entries if "ImageEnds" in e), "ImageEnds": sum(len(e.get("ImageEnds", [])) for e in entries),
+              "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
+              "Basis": "every Context entry end of a placed contract-3 cluster model lies on the device perimeter (segments as chords, fitted-arc segments on their circle's arc) within the signature parameter tolerance: the C++ A10-extended check, mirrored; a mirror-formed placement's ends on the image side of its contract's planes are labelled (ImageEnds), not checked"}
     return gate("A10-context", not defects, detail, evaluable=bool(entries)), entries
 
 
@@ -419,19 +514,44 @@ def placement_gates(identification, patches, library, radius):
             if len(rows) != 1:
                 entry["Defects"].append({"Point": "patch count", "DeviationOverR": math.inf, "Mapped": None, "Count": len(rows)})
             row = rows[0]
+            split, reason = mirror_formed_placement(identification, feature, model, row)
+            if reason is not None:
+                not_evaluable.append({"Feature": feature_id, "Type": kind, "Model": model_name, "Reason": f"mirror-formed placement: {reason}"})
+                continue
+            if split is not None and source != "Edges":
+                not_evaluable.append({"Feature": feature_id, "Type": kind, "Model": model_name,
+                                      "Reason": "mirror-formed placement by a Signature-only model: no Edges to split real / image"})
+                continue
+            if split is not None and len(split["Weights"]) != len(pairs):
+                not_evaluable.append({"Feature": feature_id, "Type": kind, "Model": model_name,
+                                      "Reason": f"mirror-formed placement: {len(split['Weights'])} edge weights for {len(pairs)} model edges"})
+                continue
             origin, axes = row["Origin"], row["Axes"]
             mapped_pairs = []
+            image_edges = []
             for k, (a, b) in enumerate(pairs):
                 ma = origin + (scale * a) @ axes
                 mb = origin + (scale * b) @ axes
+                if split is not None and k in split["ImageEdges"]:
+                    # An image edge (weight 0.0, never applied to a cell) lies beyond the
+                    # mirror plane where the device has no perimeter: labelled, not checked.
+                    image_edges.append({"Edge": k, "Mapped": [[float(x) for x in ma], [float(x) for x in mb]]})
+                    continue
                 mapped_pairs.append((ma, mb))
                 for label, q in ((f"edge {k} begin", ma), (f"edge {k} end", mb)):
                     record(label, claimed.distance(q), q)
-            # Reverse: every claimed straight endpoint / arc end on the mapped model polyline.
+            # Reverse: every claimed straight endpoint / arc end on the mapped model polyline
+            # (the real edges' for a mirror-formed placement: the claims are its real portions).
+            if not mapped_pairs:
+                entry["Defects"].append({"Point": "real edges", "DeviationOverR": math.inf, "Mapped": None, "Reason": "no real edge to place"})
+                entry["Checks"] += 1
             for j, q in enumerate(claimed.points):
-                record(f"claimed point {j}", min(_segment_distance(q, ma, mb) for ma, mb in mapped_pairs), q)
+                record(f"claimed point {j}", min((_segment_distance(q, ma, mb) for ma, mb in mapped_pairs), default=math.inf), q)
             entry["EdgeSource"] = source
             entry["ModelEdges"] = len(pairs)
+            if split is not None:
+                entry["MirrorFormed"] = {"Record": split["Record"], "RealEdges": split["RealEdges"], "ImageEdges": image_edges,
+                                         "RealPortions": split["RealPortions"], "Planes": split["Planes"], "Rule": MIRROR_FORMED_RULE}
             results["Clusters"].append(entry)
         elif kind in CORNER_TYPES:
             angle = math.radians(float(model.get("Angle", feature["Signature"].get("AngleDegrees", 0.0))))
@@ -565,8 +685,10 @@ def placement_gates(identification, patches, library, radius):
             "FeaturesWithDefects": len(defects),
             "ConvexityChecks": sum(e.get("ConvexityChecks", 0) for e in entries),
             "ConvexityNotEvaluable": sum(e.get("ConvexityNotEvaluable", 0) for e in entries),
+            "MirrorFormedFeatures": sum(1 for e in entries if "MirrorFormed" in e),
+            "ImageEdges": sum(len(e["MirrorFormed"]["ImageEdges"]) for e in entries if "MirrorFormed" in e),
             "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
-            "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation)",
+            "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation); a mirror-formed cluster's real edges only, its image edges labelled (MirrorFormed.ImageEdges)",
         }
         gates.append(gate(name, not defects, detail, evaluable=bool(entries)))
         summary[key] = {"Features": len(entries), "WorstDeviationOverR": worst, "FeaturesWithDefects": len(defects)}

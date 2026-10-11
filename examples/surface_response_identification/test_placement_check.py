@@ -16,6 +16,11 @@ if __package__ in (None, ""):
 from . import placement_check as PC  # noqa: E402
 
 R = 2.0
+# The PRODUCTION placement record of the rerun-3b J1-e osc003-O3 thin preflight: feature 90 =
+# the mirror-formed cluster d7c875318447 placed on its REAL half (decision 557 (4)), whose IMAGE
+# edges / context ends beyond the mirror plane x = -830 failed the not-mirror-aware A10 by
+# construction (J1-E10 / F-R3b-4; decision 616 MINOR-8; v3-f E-4).
+MIRROR_FORMED_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata", "mirror-formed-placement-o3-d7c875318447.json")
 LAW = '{"Type":"PEC"}'
 
 
@@ -327,6 +332,181 @@ class CornerStackPair(unittest.TestCase):
         self.assertEqual(pairs["Status"], "PASS")
         self.assertEqual(pairs["Detail"]["ConvexityChecks"], 0)
         self.assertEqual(pairs["Detail"]["ConvexityNotEvaluable"], 1)
+
+
+class MirrorFormedPlacement(unittest.TestCase):
+    """v3-f E-4 (decision 616 MINOR-8): the A10 clusters / context gates read a mirror-formed
+    placement's REAL half (the operator's MirrorFormedPlacement EdgeWeights = RealEdges, cross-
+    checked against the ENTRY stamp) and label the image half by name; on the O3 record the
+    reading of record (FAIL by construction on the image edge 2.53 R / the image context end
+    2.30 R beyond the plane) becomes PASS with the image edges / ends listed. A record without
+    the planes or the weights is listed, never silently passed; a misplaced REAL edge still
+    fails."""
+
+    def setUp(self):
+        import json
+        with open(MIRROR_FORMED_FIXTURE) as source:
+            self.fixture = json.load(source)
+        self.identification = self.fixture["Identification"]
+        self.library = self.fixture["Library"]
+        self.radius = float(self.fixture["MatchingRadius"])
+        self.rows = []
+        for row in self.fixture["PatchRows"]:
+            entry = dict(row)
+            for key in ("Patch", "Feature", "ModelIndex", "Segment"):
+                entry[key] = int(row[key])
+            for key in ("Weight", "ModelWeight", "QuadratureWeight", "SideFactor", "CouponDepth", "S0", "S1"):
+                entry[key] = float(row[key])
+            entry["Origin"] = np.asarray([float(row[k]) for k in ("OriginX", "OriginY", "OriginZ")])
+            entry["Axes"] = np.asarray([[float(row[f"Axis{a}{d}"]) for d in "XYZ"] for a in "UVW"])
+            self.rows.append(entry)
+
+    def gates(self, identification=None, library=None):
+        gates, summary = PC.placement_gates(identification or self.identification, self.rows, library or self.library, self.radius)
+        return {g["Gate"]: g for g in gates}, summary
+
+    def test_fixture_is_the_o3_record_and_its_reading_of_record(self):
+        feature = self.identification["Features"][0]
+        self.assertEqual((feature["Id"], feature["Type"], feature["Hash"][:12]), (90, "SpatialEdgeCluster", "d7c875318447"))
+        self.assertEqual(feature["Match"]["Status"], "Matched")
+        self.assertTrue(feature["Match"]["Note"].startswith("mirror-formed cluster configuration placed on its REAL half"))
+        self.assertEqual(feature["Mirror"]["Contract"]["RealPortions"], [0, 3])
+        self.assertEqual(feature["Mirror"]["Contract"]["Planes"], [0])
+        model = self.library["Models"][0]
+        self.assertEqual(model["Name"], feature["Match"]["Model"])
+        self.assertEqual([edge["Weight"] for edge in model["Edges"]], [1.0] * 15 + [0.0, 0.0, 1.0])
+        placement = self.identification["Diagnostics"]["MirrorFormedPlacement"]["Patches"][0]
+        self.assertEqual((placement["Feature"], placement["Patch"], placement["RealEdges"], placement["ImageEdges"]), (90, 7347, 16, 2))
+        self.assertEqual(placement["EdgeWeights"], [edge["Weight"] for edge in model["Edges"]])
+        self.assertEqual(self.rows[0]["Patch"], 7347)
+        plane = self.identification["Diagnostics"]["MirrorBand"]["Planes"][0]
+        self.assertEqual(plane["Normal"], [-1.0, 0.0, 0.0])
+        self.assertAlmostEqual(plane["Offset"], 830.0, places=5)
+        # The not-mirror-aware reading of record: the image edges 15 / 16 and the image context
+        # ends 1 / 2 / 3-begin, all at world x < -830 (beyond the plane).
+        of_record = self.fixture["PlacementOfRecord"]
+        self.assertEqual((of_record["Clusters"]["Status"], of_record["Context"]["Status"]), ("FAIL", "FAIL"))
+        self.assertAlmostEqual(of_record["Clusters"]["WorstDeviationOverR"], 2.5281348249990288)
+        self.assertAlmostEqual(of_record["Context"]["WorstDeviationOverR"], 2.3038284115964296)
+        self.assertEqual([d["Point"] for d in of_record["Clusters"]["Defects"]], ["edge 15 begin", "edge 15 end", "edge 16 begin", "edge 16 end"])
+        self.assertEqual([d["Point"] for d in of_record["Context"]["Defects"]],
+                         ["context 1 begin", "context 1 end", "context 2 begin", "context 2 end", "context 3 begin"])
+        inside = PC.mirror_plane_inside(self.identification, [0])
+        for defect in of_record["Clusters"]["Defects"] + of_record["Context"]["Defects"]:
+            self.assertLess(inside(np.asarray(defect["Mapped"])), -PC.SIGNATURE_TOLERANCE_OVER_R * self.radius)
+
+    def test_real_half_checked_image_half_labelled(self):
+        by_name, summary = self.gates()
+        clusters = by_name["A10-placement-clusters"]
+        self.assertEqual(clusters["Status"], "PASS")
+        self.assertEqual(clusters["Detail"]["Features"], 1)
+        self.assertEqual((clusters["Detail"]["MirrorFormedFeatures"], clusters["Detail"]["ImageEdges"]), (1, 2))
+        self.assertLess(clusters["Detail"]["WorstDeviationOverR"], PC.SIGNATURE_TOLERANCE_OVER_R)
+        # 16 real edges x 2 ends + the 4 claimed points (the straight portion's 2 ends + the arc's 2 ends)
+        self.assertEqual(clusters["Detail"]["Checks"], 32 + 4)
+        context = by_name["A10-context"]
+        self.assertEqual(context["Status"], "PASS")
+        self.assertEqual((context["Detail"]["MirrorFormedFeatures"], context["Detail"]["ImageEnds"], context["Detail"]["Checks"]), (1, 5, 5))
+        self.assertLess(context["Detail"]["WorstDeviationOverR"], PC.SIGNATURE_TOLERANCE_OVER_R)
+        self.assertEqual(summary["NotEvaluable"], [])
+        self.assertNotIn("A10-placement-evaluable", by_name)
+        # The split by name: the placement record's RealEdges (15 arc chords + edge 17) and the
+        # image edges 15 / 16, whose mapped ends are the defect points of record.
+        split, reason = PC.mirror_formed_placement(self.identification, self.identification["Features"][0], self.library["Models"][0], self.rows[0])
+        self.assertIsNone(reason)
+        self.assertEqual((split["Record"], split["RealEdges"], split["ImageEdges"], split["RealPortions"], split["Planes"]),
+                         ("MirrorFormedPlacement", list(range(15)) + [17], [15, 16], [0, 3], [0]))
+        pairs, source = PC.model_cluster_edges(self.library["Models"][0], float(self.library["MatchingRadius"]))
+        self.assertEqual(source, "Edges")
+        scale = self.radius / float(self.library["MatchingRadius"])
+        origin, axes = self.rows[0]["Origin"], self.rows[0]["Axes"]
+        of_record = {d["Point"]: d["Mapped"] for d in self.fixture["PlacementOfRecord"]["Clusters"]["Defects"]}
+        for k in split["ImageEdges"]:
+            np.testing.assert_allclose(origin + (scale * pairs[k][0]) @ axes, of_record[f"edge {k} begin"], atol=1e-9)
+            np.testing.assert_allclose(origin + (scale * pairs[k][1]) @ axes, of_record[f"edge {k} end"], atol=1e-9)
+        _, context_entries = PC.context_gate(self.identification, self.rows, self.library, self.radius)
+        self.assertEqual(context_entries[0]["ImageEnds"], ["context 1 begin", "context 1 end", "context 2 begin", "context 2 end", "context 3 begin"])
+        self.assertEqual(context_entries[0]["Defects"], [])
+        self.assertEqual(context_entries[0]["Checks"], 5)
+
+    def test_without_the_mirror_record_the_reading_of_record_returns(self):
+        """The same inputs read as an ORDINARY placement (the feature's Mirror record removed):
+        the not-mirror-aware FAILs of record, to the digit — the fix changes nothing else."""
+        import copy
+        plain = copy.deepcopy(self.identification)
+        del plain["Features"][0]["Mirror"]
+        by_name, _ = self.gates(identification=plain)
+        clusters, context = by_name["A10-placement-clusters"], by_name["A10-context"]
+        self.assertEqual((clusters["Status"], context["Status"]), ("FAIL", "FAIL"))
+        self.assertAlmostEqual(clusters["Detail"]["WorstDeviationOverR"], self.fixture["PlacementOfRecord"]["Clusters"]["WorstDeviationOverR"], places=12)
+        self.assertAlmostEqual(context["Detail"]["WorstDeviationOverR"], self.fixture["PlacementOfRecord"]["Context"]["WorstDeviationOverR"], places=12)
+        self.assertEqual([d["Point"] for d in clusters["Detail"]["Examples"][0]["Defects"]],
+                         [d["Point"] for d in self.fixture["PlacementOfRecord"]["Clusters"]["Defects"]])
+        self.assertEqual([d["Point"] for d in context["Detail"]["Examples"][0]["Defects"]],
+                         [d["Point"] for d in self.fixture["PlacementOfRecord"]["Context"]["Defects"]])
+        self.assertEqual((clusters["Detail"]["MirrorFormedFeatures"], context["Detail"]["MirrorFormedFeatures"]), (0, 0))
+
+    def test_misplaced_real_edge_still_fails_and_incomplete_records_are_listed(self):
+        import copy
+        # A real edge moved by 0.01 R along its gap direction (library units): the real half is checked.
+        library = copy.deepcopy(self.library)
+        edge = library["Models"][0]["Edges"][17]
+        self.assertEqual(edge["Weight"], 1.0)
+        edge["Point"] = [p + 0.01 * float(self.library["MatchingRadius"]) * g for p, g in zip(edge["Point"], edge["GapDirection"])]
+        by_name, _ = self.gates(library=library)
+        self.assertEqual(by_name["A10-placement-clusters"]["Status"], "FAIL")
+        self.assertGreater(by_name["A10-placement-clusters"]["Detail"]["WorstDeviationOverR"], 0.009)
+        # An image edge moved the same way: labelled, so no defect (the image half is not checked).
+        library = copy.deepcopy(self.library)
+        edge = library["Models"][0]["Edges"][15]
+        self.assertEqual(edge["Weight"], 0.0)
+        edge["Point"] = [p + 0.01 * float(self.library["MatchingRadius"]) * g for p, g in zip(edge["Point"], edge["GapDirection"])]
+        by_name, _ = self.gates(library=library)
+        self.assertEqual(by_name["A10-placement-clusters"]["Status"], "PASS")
+        # The placement record's weights disagreeing with the ENTRY stamp: not evaluable, listed.
+        identification = copy.deepcopy(self.identification)
+        identification["Diagnostics"]["MirrorFormedPlacement"]["Patches"][0]["EdgeWeights"][15] = 1.0
+        by_name, summary = self.gates(identification=identification)
+        self.assertEqual(by_name["A10-placement-clusters"]["Detail"]["Features"], 0)
+        self.assertEqual(by_name["A10-placement-evaluable"]["Status"], "FAIL")
+        self.assertIn("differ from the model's ENTRY stamp", summary["NotEvaluable"][0]["Reason"])
+        self.assertIn("differ from the model's ENTRY stamp", by_name["A10-context"]["Detail"]["Examples"][0]["Defects"][0]["Reason"])
+        # No placement record (an older manifest): the ENTRY stamp alone carries the split.
+        identification = copy.deepcopy(self.identification)
+        del identification["Diagnostics"]["MirrorFormedPlacement"]
+        by_name, summary = self.gates(identification=identification)
+        self.assertEqual((by_name["A10-placement-clusters"]["Status"], by_name["A10-context"]["Status"]), ("PASS", "PASS"))
+        split, reason = PC.mirror_formed_placement(identification, identification["Features"][0], self.library["Models"][0], self.rows[0])
+        self.assertEqual((reason, split["Record"], split["ImageEdges"]), (None, "EntryStamp", [15, 16]))
+        # Neither record nor stamp: listed, never silently passed.
+        library = copy.deepcopy(self.library)
+        for edge in library["Models"][0]["Edges"]:
+            del edge["Weight"]
+        by_name, summary = self.gates(identification=identification, library=library)
+        self.assertEqual(by_name["A10-placement-evaluable"]["Status"], "FAIL")
+        self.assertIn("without a MirrorFormedPlacement record or an ENTRY stamp", summary["NotEvaluable"][0]["Reason"])
+        self.assertEqual(by_name["A10-context"]["Status"], "FAIL")
+        # A PARTIAL stamp (one edge without a Weight): every edge stamped or none, so listed by name — with the
+        # placement record present (its weights would otherwise agree with 1.0 defaults) and without it.
+        library = copy.deepcopy(self.library)
+        del library["Models"][0]["Edges"][17]["Weight"]
+        for ident in (self.identification, identification):
+            by_name, summary = self.gates(identification=ident, library=library)
+            self.assertEqual(by_name["A10-placement-evaluable"]["Status"], "FAIL")
+            self.assertIn("ENTRY stamp Edges[].Weight is partial (17 of 18 edges stamped)", summary["NotEvaluable"][0]["Reason"])
+            self.assertEqual(by_name["A10-context"]["Status"], "FAIL")
+        split, reason = PC.mirror_formed_placement(self.identification, self.identification["Features"][0], library["Models"][0], self.rows[0])
+        self.assertEqual(split, None)
+        self.assertIn("partial (17 of 18 edges stamped)", reason)
+        # The planes missing from the record: the context gate fails by name (the image side cannot be told).
+        identification = copy.deepcopy(self.identification)
+        del identification["Diagnostics"]["MirrorBand"]
+        by_name, _ = self.gates(identification=identification)
+        self.assertEqual(by_name["A10-placement-clusters"]["Status"], "PASS")
+        self.assertEqual(by_name["A10-context"]["Status"], "FAIL")
+        self.assertEqual(by_name["A10-context"]["Detail"]["Examples"][0]["Defects"][0]["Point"], "mirror planes")
+        self.assertIsNone(PC.mirror_plane_inside(identification, [0]))
+
 
 
 if __name__ == "__main__":

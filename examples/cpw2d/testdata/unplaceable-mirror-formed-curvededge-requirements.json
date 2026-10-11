@@ -1,0 +1,2448 @@
+{
+ "Version": 1,
+ "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+ "SPDX-License-Identifier": "Apache-2.0",
+ "Rule": "PRODUCTION requirement records of the R4 39e4806d547d ATTEMPT-2 discovery (PBS 61317, 2026-10-10; the binary of record palace-1263518-575bf4678b2e.bin on main 9f11d3341c, library s2-r1p9-v3-c-abs, R = 1.9 um; decision 664): the pass-01 records, verbatim, of the 4 mirror-formed CurvedEdge keys the binary DECLARES UNPLACEABLE (Notes: 'no mirror placement in this version', surfaceresponseoperator.cpp decision 557) and of the coupon's own SpatialEdgeCluster key. In pass-02 the 5 placeholders were in the virtual library, 39e4806d547d read Exact and the 4 CurvedEdge keys STAYED Missing with the same Note, so the closure raised 'Geometry closure stalled with missing requirements' (the stall of record). Source: stage2-20261004/rerun-3b/R4/39e4806d547d/records/cluster/registration/39e4806d547d/register-attempt2-61317/device/discovery/pass-0{1,2}/postpro/surface-response-requirements.json. Fixture of test_discover_surface_response_requirements.py and test_device_coupons.py.",
+ "MatchingRadius": 1.9,
+ "SourceLibraryName": "s2-r1p9-v3-c-abs-closure",
+ "Pass01Counts": {
+  "DomainBoundary": 56,
+  "Exact": 1678,
+  "Interpolated": 3,
+  "LegacyContract": 0,
+  "Missing": 21,
+  "QuantumNearMatched": 0
+ },
+ "Pass02Counts": {
+  "DomainBoundary": 56,
+  "Exact": 1679,
+  "Interpolated": 3,
+  "LegacyContract": 0,
+  "Missing": 20,
+  "QuantumNearMatched": 0
+ },
+ "Pass02Placeholders": [
+  "__preflight_placeholder_16d5f621389b6a29",
+  "__preflight_placeholder_39e4806d547d5b3e",
+  "__preflight_placeholder_6a3fa6203046f9c0",
+  "__preflight_placeholder_8db2fa2f416f2c59",
+  "__preflight_placeholder_f2d2bc6d25527066"
+ ],
+ "Pass02Status": {
+  "8db2fa2f416f": {
+   "Status": "Missing",
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "SelectedModels": null
+  },
+  "6a3fa6203046": {
+   "Status": "Missing",
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "SelectedModels": null
+  },
+  "f2d2bc6d2552": {
+   "Status": "Missing",
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "SelectedModels": null
+  },
+  "16d5f621389b": {
+   "Status": "Missing",
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "SelectedModels": null
+  },
+  "39e4806d547d": {
+   "Status": "Exact",
+   "Notes": null,
+   "SelectedModels": [
+    {
+     "Name": "__preflight_placeholder_39e4806d547d5b3e",
+     "Topology": "SpatialEdgeCluster",
+     "Weight": 1.0
+    }
+   ]
+  }
+ },
+ "Requirements": {
+  "curvededge-8db2fa2f416f": {
+   "BoundaryCondition": {
+    "Type": "PEC"
+   },
+   "Count": 2,
+   "Dimension": 3,
+   "DistinctSignatures": 1,
+   "ExactParameters": true,
+   "Geometry": {
+    "BendRadius": 1.5118053,
+    "Convexity": "Convex",
+    "EdgeCount": 1,
+    "Kappa": 1.256775591407174
+   },
+   "Hash": "8db2fa2f416f2c59b541a8dc614f47eb6d8c25005c6c14573bd0dca23957fe76",
+   "Instances": 1,
+   "Interfaces": [
+    {
+     "Slot": 0,
+     "Target": 3,
+     "Type": "MA"
+    },
+    {
+     "Slot": 0,
+     "Target": 2,
+     "Type": "MS"
+    },
+    {
+     "Slot": 0,
+     "Target": 1,
+     "Type": "SA"
+    }
+   ],
+   "KeyText": "{\"Convexity\":\"Convex\",\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"RadiusOverR\":0.7956869999999999,\"Type\":\"CurvedEdge\"}",
+   "MirrorFormed": true,
+   "MirrorFormedContract": {
+    "ExtendedFeature": 48,
+    "Frame": {
+     "Axes": [
+      [
+       -0.60915816286,
+       -0.793048758035,
+       0.0
+      ],
+      [
+       0.793048758035,
+       -0.60915816286,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Chirality": 1,
+     "Origin": [
+      -6738.6454995665,
+      3720.961161411,
+      0.0
+     ]
+    },
+    "ImageLengthOverR": 0.6298484165418053,
+    "Planes": [
+     4
+    ],
+    "RealFeatures": [
+     42
+    ],
+    "RealLengthOverR": 0.626423401542526,
+    "RealPortions": [],
+    "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster requirement; RealPortions index Signature.Portions (0-based) whose world portions lie on real segments (segment < real_segments); every other portion is an image; Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the serialised portions' lengths over R (a straight portion its chord, an arc its length on the serialised circle), summed over the real / image entries; a CurvedEdge key carries no Portions (RealPortions empty): the real / image split is RealLengthOverR / ImageLengthOverR along the one arc (the 2D curvature family's consumer, decision 557)",
+    "Version": 1
+   },
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "ParameterSpread": 0.0,
+   "Signature": {
+    "Convexity": "Convex",
+    "Interfaces": [
+     "MA",
+     "MS",
+     "SA"
+    ],
+    "Law": "{\"Type\":\"PEC\"}",
+    "RadiusOverR": 0.7956869999999999,
+    "Type": "CurvedEdge"
+   },
+   "Status": "Missing",
+   "Topology": "CurvedEdge",
+   "TotalEdgeLength": 1.1902044629000001
+  },
+  "curvededge-6a3fa6203046": {
+   "BoundaryCondition": {
+    "Type": "PEC"
+   },
+   "Count": 2,
+   "Dimension": 3,
+   "DistinctSignatures": 1,
+   "ExactParameters": true,
+   "Geometry": {
+    "BendRadius": 1.9521493,
+    "Convexity": "Concave",
+    "EdgeCount": 1,
+    "Kappa": 0.97328621330346
+   },
+   "Hash": "6a3fa6203046f9c0301dfcdf5a17ec2e9c677339f19c81d80474ee9f7ed522be",
+   "Instances": 1,
+   "Interfaces": [
+    {
+     "Slot": 0,
+     "Target": 3,
+     "Type": "MA"
+    },
+    {
+     "Slot": 0,
+     "Target": 2,
+     "Type": "MS"
+    },
+    {
+     "Slot": 0,
+     "Target": 1,
+     "Type": "SA"
+    }
+   ],
+   "KeyText": "{\"Convexity\":\"Concave\",\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"RadiusOverR\":1.027447,\"Type\":\"CurvedEdge\"}",
+   "MirrorFormed": true,
+   "MirrorFormedContract": {
+    "ExtendedFeature": 50,
+    "Frame": {
+     "Axes": [
+      [
+       -0.473337616762,
+       -0.880881093314,
+       0.0
+      ],
+      [
+       0.880881093314,
+       -0.473337616762,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Chirality": 1,
+     "Origin": [
+      -6393.6826560065,
+      3721.1093578208,
+      0.0
+     ]
+    },
+    "ImageLengthOverR": 0.6610155481384116,
+    "Planes": [
+     4
+    ],
+    "RealFeatures": [
+     43
+    ],
+    "RealLengthOverR": 0.659248697792451,
+    "RealPortions": [],
+    "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster requirement; RealPortions index Signature.Portions (0-based) whose world portions lie on real segments (segment < real_segments); every other portion is an image; Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the serialised portions' lengths over R (a straight portion its chord, an arc its length on the serialised circle), summed over the real / image entries; a CurvedEdge key carries no Portions (RealPortions empty): the real / image split is RealLengthOverR / ImageLengthOverR along the one arc (the 2D curvature family's consumer, decision 557)",
+    "Version": 1
+   },
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "ParameterSpread": 0.0,
+   "Signature": {
+    "Convexity": "Concave",
+    "Interfaces": [
+     "MA",
+     "MS",
+     "SA"
+    ],
+    "Law": "{\"Type\":\"PEC\"}",
+    "RadiusOverR": 1.027447,
+    "Type": "CurvedEdge"
+   },
+   "Status": "Missing",
+   "Topology": "CurvedEdge",
+   "TotalEdgeLength": 1.2525725258
+  },
+  "curvededge-f2d2bc6d2552": {
+   "BoundaryCondition": {
+    "Type": "PEC"
+   },
+   "Count": 2,
+   "Dimension": 3,
+   "DistinctSignatures": 1,
+   "ExactParameters": true,
+   "Geometry": {
+    "BendRadius": 1.9768322,
+    "Convexity": "Convex",
+    "EdgeCount": 1,
+    "Kappa": 0.9611336763939803
+   },
+   "Hash": "f2d2bc6d255270660897c40095401386964313dca4fdbb1b2e2302a2b8ecb7ed",
+   "Instances": 1,
+   "Interfaces": [
+    {
+     "Slot": 0,
+     "Target": 3,
+     "Type": "MA"
+    },
+    {
+     "Slot": 0,
+     "Target": 2,
+     "Type": "MS"
+    },
+    {
+     "Slot": 0,
+     "Target": 1,
+     "Type": "SA"
+    }
+   ],
+   "KeyText": "{\"Convexity\":\"Convex\",\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"RadiusOverR\":1.040438,\"Type\":\"CurvedEdge\"}",
+   "MirrorFormed": true,
+   "MirrorFormedContract": {
+    "ExtendedFeature": 52,
+    "Frame": {
+     "Axes": [
+      [
+       -0.46472629941099997,
+       -0.885454384277,
+       0.0
+      ],
+      [
+       0.885454384277,
+       -0.46472629941099997,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Chirality": 1,
+     "Origin": [
+      -6389.324298532801,
+      3721.0711745187,
+      0.0
+     ]
+    },
+    "ImageLengthOverR": 0.6359700459072659,
+    "Planes": [
+     4
+    ],
+    "RealFeatures": [
+     44
+    ],
+    "RealLengthOverR": 0.6352291523018867,
+    "RealPortions": [],
+    "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster requirement; RealPortions index Signature.Portions (0-based) whose world portions lie on real segments (segment < real_segments); every other portion is an image; Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the serialised portions' lengths over R (a straight portion its chord, an arc its length on the serialised circle), summed over the real / image entries; a CurvedEdge key carries no Portions (RealPortions empty): the real / image split is RealLengthOverR / ImageLengthOverR along the one arc (the 2D curvature family's consumer, decision 557)",
+    "Version": 1
+   },
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "ParameterSpread": 0.0,
+   "Signature": {
+    "Convexity": "Convex",
+    "Interfaces": [
+     "MA",
+     "MS",
+     "SA"
+    ],
+    "Law": "{\"Type\":\"PEC\"}",
+    "RadiusOverR": 1.040438,
+    "Type": "CurvedEdge"
+   },
+   "Status": "Missing",
+   "Topology": "CurvedEdge",
+   "TotalEdgeLength": 1.2069353894000001
+  },
+  "curvededge-16d5f621389b": {
+   "BoundaryCondition": {
+    "Type": "PEC"
+   },
+   "Count": 1,
+   "Dimension": 3,
+   "DistinctSignatures": 1,
+   "ExactParameters": true,
+   "Geometry": {
+    "BendRadius": 1.9862562000000001,
+    "Convexity": "Concave",
+    "EdgeCount": 1,
+    "Kappa": 0.9565734772785102
+   },
+   "Hash": "16d5f621389b6a29ba66ffb4d8fea15ff91ba41387da39358c444e277ea43779",
+   "Instances": 1,
+   "Interfaces": [
+    {
+     "Slot": 0,
+     "Target": 3,
+     "Type": "MA"
+    },
+    {
+     "Slot": 0,
+     "Target": 2,
+     "Type": "MS"
+    },
+    {
+     "Slot": 0,
+     "Target": 1,
+     "Type": "SA"
+    }
+   ],
+   "KeyText": "{\"Convexity\":\"Concave\",\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"RadiusOverR\":1.045398,\"Type\":\"CurvedEdge\"}",
+   "MirrorFormed": true,
+   "MirrorFormedContract": {
+    "ExtendedFeature": 54,
+    "Frame": {
+     "Axes": [
+      [
+       -0.458741096402,
+       -0.8885699783759999,
+       0.0
+      ],
+      [
+       0.8885699783759999,
+       -0.458741096402,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Chirality": 1,
+     "Origin": [
+      -6385.3507568646,
+      3720.654083429,
+      0.0
+     ]
+    },
+    "ImageLengthOverR": 0.3874261275611758,
+    "Planes": [
+     4
+    ],
+    "RealFeatures": [
+     16
+    ],
+    "RealLengthOverR": 0.3874261275611758,
+    "RealPortions": [],
+    "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster requirement; RealPortions index Signature.Portions (0-based) whose world portions lie on real segments (segment < real_segments); every other portion is an image; Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the serialised portions' lengths over R (a straight portion its chord, an arc its length on the serialised circle), summed over the real / image entries; a CurvedEdge key carries no Portions (RealPortions empty): the real / image split is RealLengthOverR / ImageLengthOverR along the one arc (the 2D curvature family's consumer, decision 557)",
+    "Version": 1
+   },
+   "Notes": [
+    "mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature family's consumer, decision 557); the DomainBoundary raw fallback stays"
+   ],
+   "ParameterSpread": 0.0,
+   "Signature": {
+    "Convexity": "Concave",
+    "Interfaces": [
+     "MA",
+     "MS",
+     "SA"
+    ],
+    "Law": "{\"Type\":\"PEC\"}",
+    "RadiusOverR": 1.045398,
+    "Type": "CurvedEdge"
+   },
+   "Status": "Missing",
+   "Topology": "CurvedEdge",
+   "TotalEdgeLength": 0.7361096424
+  },
+  "cluster-39e4806d547d": {
+   "BoundaryCondition": {
+    "Type": "PEC"
+   },
+   "Count": 1,
+   "Dimension": 3,
+   "DistinctSignatures": 1,
+   "ExactParameters": true,
+   "Geometry": {
+    "EdgeCount": 31,
+    "Signature": {
+     "Box": [
+      -10.272528999999999,
+      -5.708413,
+      7.105030999999999,
+      8.063198
+     ],
+     "Context": [
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.372394,
+        7.547795,
+        -3.372394,
+        8.063198
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -4.951341,
+        7.547795,
+        -4.951341,
+        8.063198
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.89871,
+        7.547795,
+        -3.89871,
+        8.063198
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.421285,
+        2.936661,
+        -1.421285,
+        8.063198
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.372394,
+        2.936661,
+        -3.372394,
+        7.547795
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -4.951341,
+        2.936661,
+        -4.951341,
+        7.547795
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.157662,
+        5.063198,
+        0.157662,
+        8.063198
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.73661,
+        5.063198,
+        1.73661,
+        8.063198
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        -1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -10.272528999999999,
+        -1.330574,
+        -7.067400999999999,
+        -1.330574
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -10.272528999999999,
+        -0.277943,
+        -7.067400999999999,
+        -0.277943
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -10.272528999999999,
+        -1.85689,
+        -7.067400999999999,
+        -1.85689
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.368653,
+        5.063198,
+        -0.368653,
+        8.063198
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.947601,
+        2.936661,
+        -1.947601,
+        8.063198
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.89871,
+        2.936661,
+        -3.89871,
+        7.547795
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.210294,
+        5.063198,
+        1.210294,
+        8.063198
+       ]
+      }
+     ],
+     "EdgeCount": 31,
+     "Portions": [
+      {
+       "Arc": [
+        -0.368653,
+        -2.1294649999999997,
+        -1.112976,
+        -2.873788
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.421285,
+        -2.1294649999999997,
+        -0.368653,
+        -3.1820969999999997
+       ]
+      },
+      {
+       "Arc": [
+        -0.368653,
+        -2.1294649999999997,
+        -1.4851379999999998,
+        -3.2459499999999997
+       ],
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.947601,
+        -2.1294649999999997,
+        -0.368653,
+        -3.7084129999999997
+       ]
+      },
+      {
+       "Arc": [
+        -5.477657,
+        0.24837299999999998,
+        -3.9890109999999996,
+        -1.240273
+       ],
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -5.477657,
+        -1.85689,
+        -3.372394,
+        0.24837299999999998
+       ]
+      },
+      {
+       "Arc": [
+        -5.477657,
+        0.24837299999999998,
+        -4.361173,
+        -0.868111
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -5.477657,
+        -1.330574,
+        -3.89871,
+        0.24837299999999998
+       ]
+      },
+      {
+       "Arc": [
+        -5.477657,
+        0.24837299999999998,
+        -5.1054949999999995,
+        -0.123788
+       ],
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -5.477657,
+        -0.277943,
+        -4.951341,
+        0.24837299999999998
+       ]
+      },
+      {
+       "Arc": [
+        1.210294,
+        1.6073769999999998,
+        0.46597099999999997,
+        0.863054
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.157662,
+        1.6073769999999998,
+        1.210294,
+        0.5547449999999999
+       ]
+      },
+      {
+       "Arc": [
+        3.526083,
+        -2.1294649999999997,
+        4.2704059999999995,
+        -2.873788
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.526083,
+        -3.1820969999999997,
+        4.578715,
+        -2.1294649999999997
+       ]
+      },
+      {
+       "Arc": [
+        3.526083,
+        -2.1294649999999997,
+        4.642568,
+        -3.2459499999999997
+       ],
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.526083,
+        -3.7084129999999997,
+        5.105030999999999,
+        -2.1294649999999997
+       ]
+      },
+      {
+       "Arc": [
+        3.526083,
+        0.5547449999999999,
+        4.2704059999999995,
+        1.299068
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.526083,
+        1.6073769999999998,
+        4.578715,
+        0.5547449999999999
+       ]
+      },
+      {
+       "Arc": [
+        3.526083,
+        0.5547449999999999,
+        4.642568,
+        1.67123
+       ],
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.526083,
+        2.133693,
+        5.105030999999999,
+        0.5547449999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.421285,
+        -2.1294649999999997,
+        -1.421285,
+        2.936661
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.372394,
+        0.24837299999999998,
+        -3.372394,
+        2.936661
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -4.951341,
+        0.24837299999999998,
+        -4.951341,
+        2.936661
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.157662,
+        1.6073769999999998,
+        0.157662,
+        5.063198
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.73661,
+        2.133693,
+        1.73661,
+        5.063198
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.526083,
+        -2.1294649999999997,
+        3.526083,
+        0.5547449999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        5.105030999999999,
+        -2.1294649999999997,
+        5.105030999999999,
+        0.5547449999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        -1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.368653,
+        -3.1820969999999997,
+        3.526083,
+        -3.1820969999999997
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        -1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -7.067400999999999,
+        -1.330574,
+        -5.477657,
+        -1.330574
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        -1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.210294,
+        0.5547449999999999,
+        3.526083,
+        0.5547449999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        -1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.73661,
+        2.133693,
+        3.526083,
+        2.133693
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.368653,
+        -2.1294649999999997,
+        3.526083,
+        -2.1294649999999997
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.368653,
+        -3.7084129999999997,
+        3.526083,
+        -3.7084129999999997
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -7.067400999999999,
+        -0.277943,
+        -5.477657,
+        -0.277943
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -7.067400999999999,
+        -1.85689,
+        -5.477657,
+        -1.85689
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.0,
+        1.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.210294,
+        1.6073769999999998,
+        3.526083,
+        1.6073769999999998
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.368653,
+        -2.1294649999999997,
+        -0.368653,
+        5.063198
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.947601,
+        -2.1294649999999997,
+        -1.947601,
+        2.936661
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.89871,
+        0.24837299999999998,
+        -3.89871,
+        2.936661
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.210294,
+        1.6073769999999998,
+        1.210294,
+        5.063198
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        4.578715,
+        -2.1294649999999997,
+        4.578715,
+        0.5547449999999999
+       ]
+      }
+     ],
+     "Type": "SpatialEdgeCluster",
+     "Vertices": [
+      {
+       "P": [
+        -0.368653,
+        -2.1294649999999997
+       ],
+       "TurnDegrees": 90.0,
+       "Type": "ConcaveCorner"
+      },
+      {
+       "P": [
+        -4.951341,
+        -0.277943
+       ],
+       "TurnDegrees": 90.0,
+       "Type": "ConcaveCorner"
+      },
+      {
+       "P": [
+        1.210294,
+        1.6073769999999998
+       ],
+       "TurnDegrees": 90.0,
+       "Type": "ConcaveCorner"
+      },
+      {
+       "P": [
+        1.73661,
+        2.133693
+       ],
+       "TurnDegrees": 90.0,
+       "Type": "ConvexCorner"
+      },
+      {
+       "P": [
+        3.526083,
+        -2.1294649999999997
+       ],
+       "TurnDegrees": 90.0,
+       "Type": "ConcaveCorner"
+      },
+      {
+       "P": [
+        3.526083,
+        0.5547449999999999
+       ],
+       "TurnDegrees": 90.0,
+       "Type": "ConcaveCorner"
+      }
+     ]
+    }
+   },
+   "Hash": "39e4806d547d5b3e471ce2d5a39dac2e96a9ec8f3493c4d78a04635c18dc87bb",
+   "Instances": 1,
+   "Interfaces": [
+    {
+     "Slot": 0,
+     "Target": 3,
+     "Type": "MA"
+    },
+    {
+     "Slot": 0,
+     "Target": 2,
+     "Type": "MS"
+    },
+    {
+     "Slot": 0,
+     "Target": 1,
+     "Type": "SA"
+    }
+   ],
+   "KeyText": "{\"Box\":[-10.272528999999999,-5.708413,7.105030999999999,8.063198],\"Context\":[{\"Chain\":false,\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-3.372394,7.547795,-3.372394,8.063198]},{\"Chain\":false,\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-4.951341,7.547795,-4.951341,8.063198]},{\"Chain\":false,\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-3.89871,7.547795,-3.89871,8.063198]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-1.421285,2.936661,-1.421285,8.063198]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-3.372394,2.936661,-3.372394,7.547795]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-4.951341,2.936661,-4.951341,7.547795]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[0.157662,5.063198,0.157662,8.063198]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[1.73661,5.063198,1.73661,8.063198]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[0.0,-1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-10.272528999999999,-1.330574,-7.067400999999999,-1.330574]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[0.0,1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-10.272528999999999,-0.277943,-7.067400999999999,-0.277943]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[0.0,1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-10.272528999999999,-1.85689,-7.067400999999999,-1.85689]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-0.368653,5.063198,-0.368653,8.063198]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-1.947601,2.936661,-1.947601,8.063198]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-3.89871,2.936661,-3.89871,7.547795]},{\"Chain\":true,\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[1.210294,5.063198,1.210294,8.063198]}],\"EdgeCount\":31,\"Portions\":[{\"Arc\":[-0.368653,-2.1294649999999997,-1.112976,-2.873788],\"Conductor\":1,\"GapRadial\":1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-1.421285,-2.1294649999999997,-0.368653,-3.1820969999999997]},{\"Arc\":[-0.368653,-2.1294649999999997,-1.4851379999999998,-3.2459499999999997],\"Conductor\":1,\"GapRadial\":-1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-1.947601,-2.1294649999999997,-0.368653,-3.7084129999999997]},{\"Arc\":[-5.477657,0.24837299999999998,-3.9890109999999996,-1.240273],\"Conductor\":1,\"GapRadial\":-1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-5.477657,-1.85689,-3.372394,0.24837299999999998]},{\"Arc\":[-5.477657,0.24837299999999998,-4.361173,-0.868111],\"Conductor\":1,\"GapRadial\":1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-5.477657,-1.330574,-3.89871,0.24837299999999998]},{\"Arc\":[-5.477657,0.24837299999999998,-5.1054949999999995,-0.123788],\"Conductor\":1,\"GapRadial\":-1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-5.477657,-0.277943,-4.951341,0.24837299999999998]},{\"Arc\":[1.210294,1.6073769999999998,0.46597099999999997,0.863054],\"Conductor\":1,\"GapRadial\":1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[0.157662,1.6073769999999998,1.210294,0.5547449999999999]},{\"Arc\":[3.526083,-2.1294649999999997,4.2704059999999995,-2.873788],\"Conductor\":1,\"GapRadial\":1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[3.526083,-3.1820969999999997,4.578715,-2.1294649999999997]},{\"Arc\":[3.526083,-2.1294649999999997,4.642568,-3.2459499999999997],\"Conductor\":1,\"GapRadial\":-1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[3.526083,-3.7084129999999997,5.105030999999999,-2.1294649999999997]},{\"Arc\":[3.526083,0.5547449999999999,4.2704059999999995,1.299068],\"Conductor\":1,\"GapRadial\":1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[3.526083,1.6073769999999998,4.578715,0.5547449999999999]},{\"Arc\":[3.526083,0.5547449999999999,4.642568,1.67123],\"Conductor\":1,\"GapRadial\":-1,\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[3.526083,2.133693,5.105030999999999,0.5547449999999999]},{\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-1.421285,-2.1294649999999997,-1.421285,2.936661]},{\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-3.372394,0.24837299999999998,-3.372394,2.936661]},{\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-4.951341,0.24837299999999998,-4.951341,2.936661]},{\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[0.157662,1.6073769999999998,0.157662,5.063198]},{\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[1.73661,2.133693,1.73661,5.063198]},{\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[3.526083,-2.1294649999999997,3.526083,0.5547449999999999]},{\"Conductor\":1,\"Gap\":[-1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[5.105030999999999,-2.1294649999999997,5.105030999999999,0.5547449999999999]},{\"Conductor\":1,\"Gap\":[0.0,-1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-0.368653,-3.1820969999999997,3.526083,-3.1820969999999997]},{\"Conductor\":1,\"Gap\":[0.0,-1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-7.067400999999999,-1.330574,-5.477657,-1.330574]},{\"Conductor\":1,\"Gap\":[0.0,-1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[1.210294,0.5547449999999999,3.526083,0.5547449999999999]},{\"Conductor\":1,\"Gap\":[0.0,-1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[1.73661,2.133693,3.526083,2.133693]},{\"Conductor\":1,\"Gap\":[0.0,1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-0.368653,-2.1294649999999997,3.526083,-2.1294649999999997]},{\"Conductor\":1,\"Gap\":[0.0,1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-0.368653,-3.7084129999999997,3.526083,-3.7084129999999997]},{\"Conductor\":1,\"Gap\":[0.0,1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-7.067400999999999,-0.277943,-5.477657,-0.277943]},{\"Conductor\":1,\"Gap\":[0.0,1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-7.067400999999999,-1.85689,-5.477657,-1.85689]},{\"Conductor\":1,\"Gap\":[0.0,1.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[1.210294,1.6073769999999998,3.526083,1.6073769999999998]},{\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-0.368653,-2.1294649999999997,-0.368653,5.063198]},{\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-1.947601,-2.1294649999999997,-1.947601,2.936661]},{\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[-3.89871,0.24837299999999998,-3.89871,2.936661]},{\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[1.210294,1.6073769999999998,1.210294,5.063198]},{\"Conductor\":1,\"Gap\":[1.0,0.0],\"Interfaces\":[\"MA\",\"MS\",\"SA\"],\"Law\":\"{\\\"Type\\\":\\\"PEC\\\"}\",\"P\":[4.578715,-2.1294649999999997,4.578715,0.5547449999999999]}],\"Type\":\"SpatialEdgeCluster\",\"Vertices\":[{\"P\":[-0.368653,-2.1294649999999997],\"TurnDegrees\":90.0,\"Type\":\"ConcaveCorner\"},{\"P\":[-4.951341,-0.277943],\"TurnDegrees\":90.0,\"Type\":\"ConcaveCorner\"},{\"P\":[1.210294,1.6073769999999998],\"TurnDegrees\":90.0,\"Type\":\"ConcaveCorner\"},{\"P\":[1.73661,2.133693],\"TurnDegrees\":90.0,\"Type\":\"ConvexCorner\"},{\"P\":[3.526083,-2.1294649999999997],\"TurnDegrees\":90.0,\"Type\":\"ConcaveCorner\"},{\"P\":[3.526083,0.5547449999999999],\"TurnDegrees\":90.0,\"Type\":\"ConcaveCorner\"}]}",
+   "ParameterSpread": 0.0,
+   "Signature": {
+    "Box": [
+     -10.272528999999999,
+     -5.708413,
+     7.105030999999999,
+     8.063198
+    ],
+    "Context": [
+     {
+      "Chain": false,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -3.372394,
+       7.547795,
+       -3.372394,
+       8.063198
+      ]
+     },
+     {
+      "Chain": false,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -4.951341,
+       7.547795,
+       -4.951341,
+       8.063198
+      ]
+     },
+     {
+      "Chain": false,
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -3.89871,
+       7.547795,
+       -3.89871,
+       8.063198
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -1.421285,
+       2.936661,
+       -1.421285,
+       8.063198
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -3.372394,
+       2.936661,
+       -3.372394,
+       7.547795
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -4.951341,
+       2.936661,
+       -4.951341,
+       7.547795
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       0.157662,
+       5.063198,
+       0.157662,
+       8.063198
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.73661,
+       5.063198,
+       1.73661,
+       8.063198
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       -1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -10.272528999999999,
+       -1.330574,
+       -7.067400999999999,
+       -1.330574
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -10.272528999999999,
+       -0.277943,
+       -7.067400999999999,
+       -0.277943
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -10.272528999999999,
+       -1.85689,
+       -7.067400999999999,
+       -1.85689
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.368653,
+       5.063198,
+       -0.368653,
+       8.063198
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -1.947601,
+       2.936661,
+       -1.947601,
+       8.063198
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -3.89871,
+       2.936661,
+       -3.89871,
+       7.547795
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.210294,
+       5.063198,
+       1.210294,
+       8.063198
+      ]
+     }
+    ],
+    "EdgeCount": 31,
+    "Portions": [
+     {
+      "Arc": [
+       -0.368653,
+       -2.1294649999999997,
+       -1.112976,
+       -2.873788
+      ],
+      "Conductor": 1,
+      "GapRadial": 1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -1.421285,
+       -2.1294649999999997,
+       -0.368653,
+       -3.1820969999999997
+      ]
+     },
+     {
+      "Arc": [
+       -0.368653,
+       -2.1294649999999997,
+       -1.4851379999999998,
+       -3.2459499999999997
+      ],
+      "Conductor": 1,
+      "GapRadial": -1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -1.947601,
+       -2.1294649999999997,
+       -0.368653,
+       -3.7084129999999997
+      ]
+     },
+     {
+      "Arc": [
+       -5.477657,
+       0.24837299999999998,
+       -3.9890109999999996,
+       -1.240273
+      ],
+      "Conductor": 1,
+      "GapRadial": -1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -5.477657,
+       -1.85689,
+       -3.372394,
+       0.24837299999999998
+      ]
+     },
+     {
+      "Arc": [
+       -5.477657,
+       0.24837299999999998,
+       -4.361173,
+       -0.868111
+      ],
+      "Conductor": 1,
+      "GapRadial": 1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -5.477657,
+       -1.330574,
+       -3.89871,
+       0.24837299999999998
+      ]
+     },
+     {
+      "Arc": [
+       -5.477657,
+       0.24837299999999998,
+       -5.1054949999999995,
+       -0.123788
+      ],
+      "Conductor": 1,
+      "GapRadial": -1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -5.477657,
+       -0.277943,
+       -4.951341,
+       0.24837299999999998
+      ]
+     },
+     {
+      "Arc": [
+       1.210294,
+       1.6073769999999998,
+       0.46597099999999997,
+       0.863054
+      ],
+      "Conductor": 1,
+      "GapRadial": 1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       0.157662,
+       1.6073769999999998,
+       1.210294,
+       0.5547449999999999
+      ]
+     },
+     {
+      "Arc": [
+       3.526083,
+       -2.1294649999999997,
+       4.2704059999999995,
+       -2.873788
+      ],
+      "Conductor": 1,
+      "GapRadial": 1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       3.526083,
+       -3.1820969999999997,
+       4.578715,
+       -2.1294649999999997
+      ]
+     },
+     {
+      "Arc": [
+       3.526083,
+       -2.1294649999999997,
+       4.642568,
+       -3.2459499999999997
+      ],
+      "Conductor": 1,
+      "GapRadial": -1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       3.526083,
+       -3.7084129999999997,
+       5.105030999999999,
+       -2.1294649999999997
+      ]
+     },
+     {
+      "Arc": [
+       3.526083,
+       0.5547449999999999,
+       4.2704059999999995,
+       1.299068
+      ],
+      "Conductor": 1,
+      "GapRadial": 1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       3.526083,
+       1.6073769999999998,
+       4.578715,
+       0.5547449999999999
+      ]
+     },
+     {
+      "Arc": [
+       3.526083,
+       0.5547449999999999,
+       4.642568,
+       1.67123
+      ],
+      "Conductor": 1,
+      "GapRadial": -1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       3.526083,
+       2.133693,
+       5.105030999999999,
+       0.5547449999999999
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -1.421285,
+       -2.1294649999999997,
+       -1.421285,
+       2.936661
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -3.372394,
+       0.24837299999999998,
+       -3.372394,
+       2.936661
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -4.951341,
+       0.24837299999999998,
+       -4.951341,
+       2.936661
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       0.157662,
+       1.6073769999999998,
+       0.157662,
+       5.063198
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.73661,
+       2.133693,
+       1.73661,
+       5.063198
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       3.526083,
+       -2.1294649999999997,
+       3.526083,
+       0.5547449999999999
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       5.105030999999999,
+       -2.1294649999999997,
+       5.105030999999999,
+       0.5547449999999999
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       -1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.368653,
+       -3.1820969999999997,
+       3.526083,
+       -3.1820969999999997
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       -1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -7.067400999999999,
+       -1.330574,
+       -5.477657,
+       -1.330574
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       -1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.210294,
+       0.5547449999999999,
+       3.526083,
+       0.5547449999999999
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       -1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.73661,
+       2.133693,
+       3.526083,
+       2.133693
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.368653,
+       -2.1294649999999997,
+       3.526083,
+       -2.1294649999999997
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.368653,
+       -3.7084129999999997,
+       3.526083,
+       -3.7084129999999997
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -7.067400999999999,
+       -0.277943,
+       -5.477657,
+       -0.277943
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -7.067400999999999,
+       -1.85689,
+       -5.477657,
+       -1.85689
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.0,
+       1.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.210294,
+       1.6073769999999998,
+       3.526083,
+       1.6073769999999998
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.368653,
+       -2.1294649999999997,
+       -0.368653,
+       5.063198
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -1.947601,
+       -2.1294649999999997,
+       -1.947601,
+       2.936661
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -3.89871,
+       0.24837299999999998,
+       -3.89871,
+       2.936661
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.210294,
+       1.6073769999999998,
+       1.210294,
+       5.063198
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       4.578715,
+       -2.1294649999999997,
+       4.578715,
+       0.5547449999999999
+      ]
+     }
+    ],
+    "Type": "SpatialEdgeCluster",
+    "Vertices": [
+     {
+      "P": [
+       -0.368653,
+       -2.1294649999999997
+      ],
+      "TurnDegrees": 90.0,
+      "Type": "ConcaveCorner"
+     },
+     {
+      "P": [
+       -4.951341,
+       -0.277943
+      ],
+      "TurnDegrees": 90.0,
+      "Type": "ConcaveCorner"
+     },
+     {
+      "P": [
+       1.210294,
+       1.6073769999999998
+      ],
+      "TurnDegrees": 90.0,
+      "Type": "ConcaveCorner"
+     },
+     {
+      "P": [
+       1.73661,
+       2.133693
+      ],
+      "TurnDegrees": 90.0,
+      "Type": "ConvexCorner"
+     },
+     {
+      "P": [
+       3.526083,
+       -2.1294649999999997
+      ],
+      "TurnDegrees": 90.0,
+      "Type": "ConcaveCorner"
+     },
+     {
+      "P": [
+       3.526083,
+       0.5547449999999999
+      ],
+      "TurnDegrees": 90.0,
+      "Type": "ConcaveCorner"
+     }
+    ]
+   },
+   "Status": "Missing",
+   "Topology": "SpatialEdgeCluster",
+   "TotalEdgeLength": 164.7589625871
+  }
+ }
+}

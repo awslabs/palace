@@ -267,6 +267,12 @@ def content_hash(directory):
 
 
 OMITTED_METHOD = "OmittedRequirement"
+# A requirement the discovery's binary DECLARED unplaceable in this version (its Note carries
+# discover_surface_response_requirements.UNPLACEABLE_DECLARATION: today the mirror-formed
+# CurvedEdge configuration, decision 557): the discovery records it under the closure
+# manifest's UnplaceableRequirements instead of stalling (decisions 664 / 669 (3) (c)); this
+# adapter records it out of scope with this Method, whatever its family, and builds nothing.
+UNPLACEABLE_METHOD = "UnplaceableInThisVersion"
 
 
 # The mirror-formed cluster REQUIREMENT CONTRACT (decision 557; round-3 DESIGN 4.4 (MF), part G G.C.1 /
@@ -532,7 +538,9 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     output/sources/<case id>; returns the device record (written to output/device-coupons.json).
     `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
     placeholder (they stay Missing); an omitted requirement is never built here, whatever its
-    family: it is recorded out of scope with Method OmittedRequirement.
+    family: it is recorded out of scope with Method OmittedRequirement. A requirement the
+    discovery's binary declared unplaceable (the closure manifest's UnplaceableRequirements)
+    is likewise never built, recorded out of scope with Method UNPLACEABLE_METHOD.
     `support_span_caps` / `element_caps`: HASH_PREFIX=VALUE options (parse_requirement_option)
     naming one spatial coupon each - the generator's --support-span-cap (x R) for it, and the
     element cap its registered cases carry as GateOverrides.MaximumElements (register_device_sources)
@@ -598,6 +606,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     closure = run_discovery(device_config, output / "discovery", palace, python, omit_requirements=omit_requirements)
     closure_manifest = json.loads(closure.read_text())
     omitted = {record["Hash"]: record for record in closure_manifest.get("OmittedRequirements", [])}
+    unplaceable = {record["Hash"]: record for record in closure_manifest.get("UnplaceableRequirements", [])}
     library_path = Path(closure_manifest["Library"]["Path"])
     library = json.loads(library_path.read_text())
     parameters = planner.process_parameters(library)
@@ -615,7 +624,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                  "Fabrication": library.get("Fabrication")},
               "Discovery": {"Manifest": str(closure), "SHA256": sha256(closure), "Summary": closure_manifest["Summary"],
                             "Complete": closure_manifest.get("Complete"),
-                            "OmittedRequirements": [omitted[key] for key in sorted(omitted)]},
+                            "OmittedRequirements": [omitted[key] for key in sorted(omitted)],
+                            "UnplaceableRequirements": [unplaceable[key] for key in sorted(unplaceable)]},
               "Plan": {"Path": str(output / "coupon-plan.json"), "Summary": plan["Summary"]},
               "TraceBasis": {"RingSize": ring_size, "CapTriangulation": cap_triangulation,
                              "DefaultCapTriangulation": DEFAULT_CAP_TRIANGULATION,
@@ -654,6 +664,20 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                          "DeviceEdgeLength": coupon["DeviceEdgeLength"],
                                          "Rule": "an omitted requirement got no discovery placeholder and is not built by "
                                                  "this call: it stays Missing against the library (recorded, never silent)"})
+            continue
+        if coupon.get("Hash") in unplaceable:
+            declared = unplaceable[coupon["Hash"]]
+            record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": UNPLACEABLE_METHOD,
+                                         "Reason": declared["Declaration"],
+                                         "FamilyMethod": method, "Hash": coupon["Hash"], "MirrorFormed": coupon.get("MirrorFormed"),
+                                         "MirrorFormedContract": coupon.get("MirrorFormedContract"),
+                                         "DeviceOccurrences": coupon["DeviceOccurrences"],
+                                         "DeviceEdgeLength": coupon["DeviceEdgeLength"],
+                                         "Rule": "the discovery's binary declared this requirement unplaceable in this version "
+                                                 "(its Note, quoted as Reason), so no placeholder could close it; the discovery "
+                                                 "recorded it under UnplaceableRequirements instead of stalling (decisions 664 / "
+                                                 "669 (3) (c)) and it is not built by this call: it stays Missing against the "
+                                                 "library (recorded, never silent)"})
             continue
         if method != SPATIAL_METHOD:
             record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": method,

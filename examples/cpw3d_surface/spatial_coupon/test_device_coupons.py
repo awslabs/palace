@@ -177,6 +177,9 @@ class DeviceBasisDefaultTest(unittest.TestCase):
 
 
 MIRROR_FORMED_FIXTURE = HERE / "testdata" / "mirror-formed" / "contract-requirements.json"
+# The PRODUCTION records of the 4 mirror-formed CurvedEdge keys the binary declares unplaceable
+# (the R4 39e4806d547d attempt-2 discovery, decision 664; the fixture of the discovery test).
+UNPLACEABLE_FIXTURE = HERE.parents[1] / "cpw2d" / "testdata" / "unplaceable-mirror-formed-curvededge-requirements.json"
 
 
 def mirror_formed_fixture(name):
@@ -185,14 +188,16 @@ def mirror_formed_fixture(name):
     return json.loads(json.dumps(json.loads(MIRROR_FORMED_FIXTURE.read_text())["Requirements"][name]))
 
 
-def synthetic_closure(tmp, requirements):
+def synthetic_closure(tmp, requirements, unplaceable=()):
     """A requirement closure standing in for the discovery (no Palace): the transmon process seed
-    as the library, the given requirement records (every one Missing)."""
+    as the library, the given requirement records (every one Missing); `unplaceable` = the
+    discovery's UnplaceableRequirements records (decision 664)."""
     seed = json.loads(PROCESS_SEED.read_text())
     library = tmp / "process-seed.json"
     library.write_text(json.dumps(seed, indent=2) + "\n")
     closure = {"Version": 2, "Complete": False, "Library": {"Path": str(library), "MatchingRadius": seed["MatchingRadius"]},
-               "Summary": {"Missing": len(requirements)}, "Requirements": requirements}
+               "Summary": {"Missing": len(requirements)}, "Requirements": requirements,
+               "UnplaceableRequirements": list(unplaceable)}
     path = tmp / "discovery" / "surface-response-requirements.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(closure, indent=2) + "\n")
@@ -384,8 +389,8 @@ class MirrorFormedContractTest(unittest.TestCase):
             device_coupons.prepare_device_sources("device.json", palace="palace", output=self.tmp / "out", manifest_path="m.json",
                                                   mirror_formed="always")
 
-    def prepared(self, requirements, **kwargs):
-        closure = synthetic_closure(self.tmp, requirements)
+    def prepared(self, requirements, unplaceable=(), **kwargs):
+        closure = synthetic_closure(self.tmp, requirements, unplaceable)
         original = device_coupons.run_discovery
         device_coupons.run_discovery = lambda device_config, output, palace, python=sys.executable, omit_requirements=(): closure
         self.addCleanup(setattr, device_coupons, "run_discovery", original)
@@ -497,6 +502,43 @@ class MirrorFormedContractTest(unittest.TestCase):
         shutil.rmtree(self.tmp / "device-refuse")
         refused_null = self.prepared([null_contract])
         self.assertEqual([item["Method"] for item in refused_null["OutOfScope"]], [device_coupons.MIRROR_FORMED_NOT_ADMITTED_METHOD])
+
+    def test_unplaceable_requirement_is_recorded_out_of_scope_and_not_built(self):
+        """Decisions 664 / 669 (3) (c): a requirement the discovery recorded under UnplaceableRequirements (the
+        binary's 'no mirror placement in this version' declaration, the 4 mirror-formed CurvedEdge keys of the 39e4
+        attempt-2 stall) is OutOfScope UnplaceableInThisVersion with the declaration as Reason, routed BEFORE its
+        family (FamilyMethod kept), nothing built; the same records without the discovery's record keep today's
+        family routing (Unsupported: the CurvedEdge is the 2D family's)."""
+        fixture = json.loads(UNPLACEABLE_FIXTURE.read_text())
+        requirements = [json.loads(json.dumps(record)) for name, record in sorted(fixture["Requirements"].items())
+                        if record["Topology"] == "CurvedEdge"]
+        self.assertEqual(len(requirements), 4)
+        declaration = requirements[0]["Notes"][0]
+        self.assertIn("no mirror placement in this version", declaration)
+        unplaceable = [{"Hash": r["Hash"], "Topology": r["Topology"], "Count": r["Count"], "Instances": r["Instances"],
+                        "TotalEdgeLength": r["TotalEdgeLength"], "MirrorFormed": True,
+                        "OutOfScope": device_coupons.UNPLACEABLE_METHOD, "Declaration": r["Notes"][0],
+                        "Placeholder": f"__preflight_placeholder_{r['Hash'][:16]}", "Pass": 2} for r in requirements]
+        record = self.prepared(requirements, unplaceable=unplaceable)
+        self.assertEqual(record["Coupons"], [])
+        self.assertEqual(record["Discovery"]["UnplaceableRequirements"], sorted(unplaceable, key=lambda r: r["Hash"]))
+        self.assertEqual(record["Discovery"]["OmittedRequirements"], [])
+        out_of_scope = sorted(record["OutOfScope"], key=lambda item: item["Hash"])
+        self.assertEqual([(item["Method"], item["Hash"][:12], item["FamilyMethod"], item["Reason"], item["MirrorFormed"],
+                           item["DeviceOccurrences"]) for item in out_of_scope],
+                         [(device_coupons.UNPLACEABLE_METHOD, r["Hash"][:12], "Unsupported", declaration, True, r["Count"])
+                          for r in sorted(requirements, key=lambda r: r["Hash"])])
+        for item, requirement in zip(out_of_scope, sorted(requirements, key=lambda r: r["Hash"])):
+            self.assertEqual(item["MirrorFormedContract"], requirement["MirrorFormedContract"])
+            self.assertIn("UnplaceableRequirements", item["Rule"])
+        self.assertFalse((Path(record["Output"]) / "work").exists())
+        shutil.rmtree(self.tmp / "device-refuse")
+        # Without the discovery's record: today's family routing, no UnplaceableInThisVersion anywhere.
+        record = self.prepared(requirements)
+        self.assertEqual(record["Coupons"], [])
+        self.assertEqual(record["Discovery"]["UnplaceableRequirements"], [])
+        self.assertEqual({item["Method"] for item in record["OutOfScope"]}, {"Unsupported"})
+        self.assertEqual(len(record["OutOfScope"]), 4)
 
     def test_qualify_and_combine_carry_the_stamp_verbatim(self):
         import qualify_library

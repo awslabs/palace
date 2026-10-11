@@ -565,5 +565,217 @@ class MirrorFormedContractPlaceholderTest(unittest.TestCase):
             self.assertEqual(manifest["Requirements"][0]["Notes"], [SIGNATURE_ONLY_MODEL_NOTE])
 
 
+# The PRODUCTION requirement records of the R4 39e4806d547d attempt-2 discovery (PBS 61317; the
+# binary of record on main 9f11d3341c, library s2-r1p9-v3-c, R = 1.9 um; decision 664): the 4
+# mirror-formed CurvedEdge keys the binary declares unplaceable and the coupon's own key.
+UNPLACEABLE_FIXTURE = CPW2D / "testdata" / "unplaceable-mirror-formed-curvededge-requirements.json"
+# The binary's declaration (surfaceresponseoperator.cpp, the mirror-formed status loop,
+# decision 557), verbatim as recorded on the 4 keys.
+UNPLACEABLE_NOTE = ("mirror-formed CurvedEdge configuration: no mirror placement in this version (the 2D curvature "
+                    "family's consumer, decision 557); the DomainBoundary raw fallback stays")
+
+
+def unplaceable_fixture():
+    fixture = json.loads(UNPLACEABLE_FIXTURE.read_text())
+    return fixture, float(fixture["MatchingRadius"]), fixture["Requirements"]
+
+
+class UnplaceableRequirementTest(unittest.TestCase):
+    """Decisions 664 / 669 (3) (c): a requirement the binary DECLARES UNPLACEABLE ("no mirror
+    placement in this version") stays Missing whatever placeholder the closure adds; the
+    discovery records it under UnplaceableRequirements (OutOfScope UnplaceableInThisVersion, the
+    declaration quoted) instead of stalling. Generic: the rule reads the binary's Note, never a
+    key by name; a key that closes through its placeholder (a real instance beside the
+    unplaceable one) is not touched; a stall without the declaration still raises."""
+
+    CURVED = ("curvededge-8db2fa2f416f", "curvededge-6a3fa6203046", "curvededge-f2d2bc6d2552", "curvededge-16d5f621389b")
+
+    def test_fixture_records_are_the_attempt2_stall_of_record(self):
+        fixture, radius, requirements = unplaceable_fixture()
+        self.assertEqual(radius, 1.9)
+        self.assertEqual(sorted(requirements), sorted(self.CURVED + ("cluster-39e4806d547d",)))
+        for name in self.CURVED:
+            requirement = requirements[name]
+            self.assertEqual(requirement["Status"], "Missing")
+            self.assertEqual(requirement["Topology"], "CurvedEdge")
+            self.assertIs(requirement["MirrorFormed"], True)
+            self.assertEqual(requirement["MirrorFormedContract"]["RealPortions"], [])
+            self.assertTrue(requirement["Hash"].startswith(name.rsplit("-", 1)[1]))
+            self.assertEqual(requirement["Notes"], [UNPLACEABLE_NOTE])
+            self.assertEqual(DISCOVERY.unplaceable_declaration(requirement), UNPLACEABLE_NOTE)
+            self.assertIn(DISCOVERY.UNPLACEABLE_DECLARATION, UNPLACEABLE_NOTE)
+            # pass-02 of record: the placeholder present, the key still Missing with the Note.
+            status = fixture["Pass02Status"][name.rsplit("-", 1)[1]]
+            self.assertEqual((status["Status"], status["Notes"]), ("Missing", [UNPLACEABLE_NOTE]))
+            self.assertIn(f"__preflight_placeholder_{requirement['Hash'][:16]}", fixture["Pass02Placeholders"])
+        cluster = requirements["cluster-39e4806d547d"]
+        self.assertEqual(cluster["Topology"], "SpatialEdgeCluster")
+        self.assertNotIn("MirrorFormedContract", cluster)
+        self.assertIsNone(DISCOVERY.unplaceable_declaration(cluster))
+        self.assertEqual(fixture["Pass02Status"]["39e4806d547d"]["Status"], "Exact")
+        self.assertEqual(fixture["Pass01Counts"]["Missing"] - fixture["Pass02Counts"]["Missing"], cluster["Count"])
+        self.assertEqual(sum(requirements[name]["Count"] for name in self.CURVED), 7)
+
+    def fake_device(self, tmp, requirements, mixed=(), stalling=()):
+        """A device of the given Missing requirements, a seed library and an executable fake Palace
+        applying the operator's mirror-formed status rule (surfaceresponseoperator.cpp :8286-
+        :8301 on the binary of record): a mirror-formed configuration of a topology other than
+        SpatialEdgeCluster (a CurvedEdge carrying a MirrorFormedContract) is Missing with the
+        declaration whatever the library carries; every other requirement is Exact once a
+        placeholder named after its Hash exists. `mixed`: Hashes whose key also has a real
+        instance (the declaration in pass 1, Exact through the placeholder); `stalling`: Hashes
+        that stay Missing with a placeholder present WITHOUT the declaration (another note)."""
+        requirements_path = tmp / "fake-requirements.json"
+        requirements_path.write_text(json.dumps({"Requirements": requirements, "Mixed": list(mixed), "Stalling": list(stalling)}))
+        library = tmp / "process-library.json"
+        library.write_text(json.dumps({"Version": 3, "Name": "fake-seed", "MatchingRadius": 1.9, "Models": []}))
+        config = tmp / "device.json"
+        config.write_text(json.dumps({
+            "Problem": {"Type": "Electrostatic", "Output": str(tmp / "postpro")},
+            "Solver": {"Electrostatic": {"ResponseCorrection": {"Library": str(library), "UnmatchedPolicy": "Warn"}}}}))
+        palace = tmp / "fake-palace.py"
+        palace.write_text(textwrap.dedent(f"""\
+            #!{sys.executable}
+            import json, pathlib, sys
+            assert sys.argv[1] == "--surface-response-preflight"
+            config = json.load(open(sys.argv[2]))
+            response = config["Solver"]["Electrostatic"]["ResponseCorrection"]
+            library = json.load(open(response["Library"]))
+            names = {{model["Name"] for model in library["Models"]}}
+            device = json.load(open({str(requirements_path)!r}))
+            requirements, mixed, stalling = device["Requirements"], set(device["Mixed"]), set(device["Stalling"])
+            counts = {{"Exact": 0, "Interpolated": 0, "Missing": 0}}
+            lengths = {{"Exact": 0.0, "Interpolated": 0.0, "Missing": 0.0}}
+            for requirement in requirements:
+                placeholder = "__preflight_placeholder_" + requirement["Hash"][:16]
+                unplaceable = requirement["Topology"] != "SpatialEdgeCluster" and "MirrorFormedContract" in requirement
+                requirement.pop("Notes", None)
+                if unplaceable:
+                    requirement["Notes"] = [{UNPLACEABLE_NOTE!r}]
+                if placeholder in names and requirement["Hash"] in stalling:
+                    requirement["Status"] = "Missing"
+                    requirement["Notes"] = [{SIGNATURE_ONLY_MODEL_NOTE!r}]
+                elif placeholder in names and (not unplaceable or requirement["Hash"] in mixed):
+                    requirement["Status"] = "Exact"
+                    requirement["SelectedModels"] = [{{"Name": placeholder, "Weight": 1.0}}]
+                else:
+                    requirement["Status"] = "Missing"
+                counts[requirement["Status"]] += requirement["Count"]
+                lengths[requirement["Status"]] += requirement["TotalEdgeLength"]
+            output = pathlib.Path(config["Problem"]["Output"]); output.mkdir(parents=True, exist_ok=True)
+            manifest = {{"Version": 2, "Complete": counts["Missing"] == 0, "Requirements": requirements,
+                        "Library": {{"Name": library["Name"], "Path": response["Library"],
+                                    "MatchingRadius": library["MatchingRadius"]}},
+                        "Summary": {{"Counts": counts, "TotalEdgeLengths": lengths}}}}
+            (output / "surface-response-requirements.json").write_text(json.dumps(manifest))
+            """))
+        palace.chmod(palace.stat().st_mode | stat.S_IXUSR)
+        return config, palace
+
+    def test_fake_operator_reproduces_the_stall_of_record(self):
+        """The fake Palace keeps a mirror-formed CurvedEdge Missing with the declaration while
+        its placeholder is in the library (the pass-02 reading of record)."""
+        fixture, radius, requirements = unplaceable_fixture()
+        requirement = requirements[self.CURVED[0]]
+        with tempfile.TemporaryDirectory(prefix="discover-unplaceable-stall-") as tmp:
+            tmp = Path(tmp)
+            config, palace = self.fake_device(tmp, [requirement])
+            _, placeholder = DISCOVERY.placeholder_model(requirement, radius)
+            library = tmp / "with-placeholder.json"
+            library.write_text(json.dumps({"Version": 3, "Name": "with-placeholder", "MatchingRadius": radius, "Models": [placeholder]}))
+            pass_config = json.loads(config.read_text())
+            pass_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] = str(library)
+            pass_config["Problem"]["Output"] = str(tmp / "stall")
+            (tmp / "stall.json").write_text(json.dumps(pass_config))
+            DISCOVERY.run_preflight(palace, tmp / "stall.json", tmp / "stall.log")
+            manifest = json.loads((tmp / "stall" / "surface-response-requirements.json").read_text())
+            self.assertEqual(manifest["Requirements"][0]["Status"], "Missing")
+            self.assertEqual(manifest["Requirements"][0]["Notes"], [UNPLACEABLE_NOTE])
+            self.assertEqual(placeholder["Name"], fixture["Pass02Placeholders"][3])
+
+    def test_declared_unplaceable_keys_are_recorded_and_do_not_stall(self):
+        """The 39e4 attempt-2 closure (decision 664): the 4 unplaceable keys + the coupon's key
+        converge in two passes with the 5 placeholders of record (pass 1), the 4 keys recorded
+        under UnplaceableRequirements at pass 2 and restored Missing with OutOfScope
+        UnplaceableInThisVersion; the coupon's key restored Missing for the planner as any
+        other. FAILS on main e9a8f5977f ("Geometry closure stalled with missing requirements"
+        at pass-02, the stall of record)."""
+        fixture, radius, requirements = unplaceable_fixture()
+        records = [requirements[name] for name in self.CURVED] + [requirements["cluster-39e4806d547d"]]
+        with tempfile.TemporaryDirectory(prefix="discover-unplaceable-") as tmp:
+            tmp = Path(tmp)
+            config, palace = self.fake_device(tmp, records)
+            manifest = DISCOVERY.discover(config, tmp / "closure", palace)
+            history = json.loads((tmp / "closure" / "closure-history.json").read_text())
+            self.assertEqual(len(history["Passes"]), 2)
+            self.assertEqual(history["PlaceholderCount"], 5)
+            self.assertEqual(sorted(f"__preflight_placeholder_{p['Id']}" for p in history["Passes"][0]["AddedPlaceholders"]),
+                             fixture["Pass02Placeholders"])
+            self.assertEqual(history["Passes"][1]["AddedPlaceholders"], [])
+            self.assertEqual(history["Passes"][1]["ProductionSummary"]["Counts"], {"Exact": 1, "Interpolated": 0, "Missing": 7})
+            library = json.loads((tmp / "closure" / "pass-02" / "process-library.json").read_text())
+            self.assertEqual(sorted(m["Name"] for m in library["Models"]), fixture["Pass02Placeholders"])
+            # The record: the 4 keys by Hash order, declared at pass 2 with their placeholder.
+            self.assertFalse(manifest["Complete"])
+            self.assertEqual(manifest["Summary"]["Counts"], {"Exact": 0, "Interpolated": 0, "Missing": 8})
+            unplaceable = manifest["UnplaceableRequirements"]
+            self.assertEqual([r["Hash"] for r in unplaceable], sorted(requirements[name]["Hash"] for name in self.CURVED))
+            for record in unplaceable:
+                source = next(requirements[name] for name in self.CURVED if requirements[name]["Hash"] == record["Hash"])
+                self.assertEqual(record, {"Hash": source["Hash"], "Topology": "CurvedEdge", "Count": source["Count"],
+                                          "Instances": source["Instances"], "TotalEdgeLength": source["TotalEdgeLength"],
+                                          "MirrorFormed": True, "OutOfScope": device_coupons.UNPLACEABLE_METHOD,
+                                          "Declaration": UNPLACEABLE_NOTE,
+                                          "Placeholder": f"__preflight_placeholder_{source['Hash'][:16]}", "Pass": 2})
+            self.assertEqual(history["UnplaceableRequirements"], unplaceable)
+            self.assertEqual(manifest["OmittedRequirements"], [])
+            by_hash = {requirement["Hash"]: requirement for requirement in manifest["Requirements"]}
+            for name in self.CURVED:
+                restored = by_hash[requirements[name]["Hash"]]
+                self.assertEqual(restored["Status"], "Missing")
+                self.assertEqual(restored["OutOfScope"], device_coupons.UNPLACEABLE_METHOD)
+                self.assertTrue(restored["Reason"].startswith(f"{device_coupons.UNPLACEABLE_METHOD}: declared by the binary"))
+                self.assertIn(UNPLACEABLE_NOTE, restored["Reason"])
+                self.assertEqual(restored["Notes"], [UNPLACEABLE_NOTE])
+                self.assertEqual(restored["MirrorFormedContract"], requirements[name]["MirrorFormedContract"])
+                self.assertNotIn("SelectedModels", restored)
+            cluster = by_hash[requirements["cluster-39e4806d547d"]["Hash"]]
+            self.assertEqual(cluster["Status"], "Missing")
+            self.assertEqual(cluster["Reason"], "Missing from source library after exhaustive geometry discovery")
+            self.assertNotIn("OutOfScope", cluster)
+            self.assertEqual(cluster["Signature"], requirements["cluster-39e4806d547d"]["Signature"])
+            # The running lanes' PLAN form (669 (3) (c) omits by name) is unchanged: an omitted key
+            # gets no placeholder and is recorded omitted, never unplaceable.
+            prefixes = [requirements[name]["Hash"][:12] for name in self.CURVED]
+            manifest = DISCOVERY.discover(config, tmp / "omitted", palace, omit_requirements=prefixes)
+            self.assertEqual(sorted(r["Prefix"] for r in manifest["OmittedRequirements"]), sorted(prefixes))
+            self.assertEqual(manifest["UnplaceableRequirements"], [])
+            history = json.loads((tmp / "omitted" / "closure-history.json").read_text())
+            self.assertEqual(history["PlaceholderCount"], 1)
+            self.assertEqual(history["UnplaceableRequirements"], [])
+
+    def test_a_mixed_key_closes_and_an_undeclared_stall_still_raises(self):
+        fixture, radius, requirements = unplaceable_fixture()
+        declared, other = requirements[self.CURVED[0]], requirements[self.CURVED[1]]
+        with tempfile.TemporaryDirectory(prefix="discover-unplaceable-mixed-") as tmp:
+            tmp = Path(tmp)
+            # A key carrying the declaration in pass 1 whose placeholder closes it (a real
+            # instance of the same key beside the unplaceable one): restored Missing as any other.
+            config, palace = self.fake_device(tmp, [declared, other], mixed=[declared["Hash"]])
+            manifest = DISCOVERY.discover(config, tmp / "mixed", palace)
+            self.assertEqual([r["Hash"] for r in manifest["UnplaceableRequirements"]], [other["Hash"]])
+            by_hash = {requirement["Hash"]: requirement for requirement in manifest["Requirements"]}
+            self.assertEqual(by_hash[declared["Hash"]]["Reason"], "Missing from source library after exhaustive geometry discovery")
+            self.assertNotIn("OutOfScope", by_hash[declared["Hash"]])
+            self.assertEqual(by_hash[other["Hash"]]["OutOfScope"], device_coupons.UNPLACEABLE_METHOD)
+            # A key Missing with its placeholder present and NO declaration (another note) is the
+            # stall of decision 599: it still raises.
+            (tmp / "stall").mkdir()
+            config, palace = self.fake_device(tmp / "stall", [declared, other], stalling=[other["Hash"]])
+            with self.assertRaisesRegex(RuntimeError, "Geometry closure stalled with missing requirements"):
+                DISCOVERY.discover(config, tmp / "stall" / "closure", palace)
+
+
+
 if __name__ == "__main__":
     unittest.main()
