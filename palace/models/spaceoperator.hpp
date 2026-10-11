@@ -6,7 +6,9 @@
 
 #include <array>
 #include <complex>
+#include <initializer_list>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -84,6 +86,12 @@ private:
 
   PortExcitations port_excitation_helper;
 
+  // Optional restriction of the assembled operators to a set of domain attributes:
+  // libCEED domain attributes and boundary attributes (by neighboring domain) kept.
+  std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> assembly_domains;
+  void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
+                                 std::initializer_list<MaterialPropertyCoefficient *> fb);
+
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
@@ -147,6 +155,23 @@ public:
                 const config::BoundaryData &boundaries, ProblemType problem_type,
                 const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+
+  // Restricts the stiffness, damping, mass and extra system matrices to the elements with
+  // the given domain attributes and the boundary elements bounding them while in scope
+  // (the previous restriction is restored). The matrix-free wave-port and Floquet terms of
+  // GetExtraSystemOperator are not restricted.
+  class AssemblyRestriction
+  {
+  public:
+    AssemblyRestriction(SpaceOperator &op, const std::vector<int> &domain_attrs);
+    ~AssemblyRestriction() { op.assembly_domains = std::move(previous); }
+    AssemblyRestriction(const AssemblyRestriction &) = delete;
+    AssemblyRestriction &operator=(const AssemblyRestriction &) = delete;
+
+  private:
+    SpaceOperator &op;
+    std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> previous;
+  };
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const

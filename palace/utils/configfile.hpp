@@ -291,6 +291,11 @@ public:
   std::map<int, DomainEnergyData> energy = {};
   std::map<int, ProbeData> probe = {};
 
+  // Set by solvers whose field is known on part of the domain only (substructuring from a
+  // model; not read from the configuration file): no total energies or participation
+  // ratios.
+  bool partial = false;
+
   DomainPostData() = default;
   DomainPostData(const json &postpro);
 };
@@ -1187,6 +1192,34 @@ public:
   LinearSolverData(const json &linear);
 };
 
+struct SubstructuringData
+{
+public:
+  // Domain attributes defining the region of interest and the environment (rest of the
+  // domain). The environment is condensed to a boundary (DtN) operator on the shared
+  // interface; the region is solved (and can be redesigned) against it.
+  std::vector<int> region_attributes = {};
+  std::vector<int> environment_attributes = {};
+
+  // Offline condenses the environment now; Online loads a previously saved model and solves
+  // only the region.
+  SubstructuringMode mode = SubstructuringMode::OFFLINE;
+
+  // Optional path for the serialized environment DtN model (offline/online reuse).
+  std::string save_model = "";
+
+  // Relative tolerance of the hierarchical (HODLR) compression of the interface operator
+  // S_E (0: dense S_E).
+  double interface_offdiag_tol = 0.0;
+
+  // Relative block low-rank (BLR) tolerance of the MUMPS environment factorization (0:
+  // exact factorization).
+  double factorization_tol = 0.0;
+
+  SubstructuringData() = default;
+  SubstructuringData(const json &substructuring);
+};
+
 struct SolverData
 {
 public:
@@ -1217,6 +1250,9 @@ public:
   TransientSolverData transient = {};
   BoundaryModeSolverData boundary_mode = {};
   LinearSolverData linear = {};
+
+  // Optional domain-decomposition substructuring (region condensation) configuration.
+  std::optional<SubstructuringData> substructuring = std::nullopt;
 
   SolverData() = default;
   SolverData(const json &solver);

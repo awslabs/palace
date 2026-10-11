@@ -1,0 +1,100 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "postpro/transmon_substructuring_online"
+  },
+  "Model": {
+    "Mesh": "mesh/transmon_substructuring.msh2",
+    "L0": 1e-06
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1,
+          10
+        ],
+        "Permittivity": [
+          9.3,
+          9.3,
+          11.5
+        ],
+        "MaterialAxes": [
+          [
+            0.8,
+            0.6,
+            0.0
+          ],
+          [
+            -0.6,
+            0.8,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "Attributes": [
+          2,
+          11
+        ],
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [
+          9
+        ]
+      },
+      {
+        "Index": 2,
+        "Attributes": [
+          8
+        ]
+      },
+      {
+        "Index": 3,
+        "Attributes": [
+          5
+        ]
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Electrostatic": {
+      "Save": 0
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "CG",
+      "Tol": 1e-12,
+      "MaxIts": 1000
+    },
+    "Substructuring": {
+      "Region": {
+        "Attributes": [
+          1,
+          2
+        ]
+      },
+      "Environment": {
+        "Attributes": [
+          10,
+          11
+        ]
+      },
+      "Mode": "Online",
+      "SaveModel": "postpro/transmon_substructuring_environment.model"
+    }
+  }
+}

@@ -18,10 +18,12 @@
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/substructuringsolver.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -104,6 +106,89 @@ void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
+  // Substructuring: condense the environment, solve each excitation in the region against
+  // it, and form the inductance matrix from the energies as the regular solve.
+  if (iodata.solver.substructuring)
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    // Excitations of the surface currents (and their aperture flux functionals, for mixed
+    // extraction) and fluxoid generators of the flux loops, from the native operator,
+    // freed before the condensation.
+    std::vector<int> current_idx, flux_idx;
+    std::vector<Vector> J, apertures, a;
+    std::vector<double> I_inc, Phi_inc;
+    {
+      CurlCurlOperator curlcurl_op(iodata, mesh);
+      const bool mixed = curlcurl_op.GetSurfaceCurrentOp().Size() > 0 &&
+                         curlcurl_op.GetSurfaceFluxOp().Size() > 0;
+      Vector RHS, boundary_values;
+      for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+      {
+        curlcurl_op.GetCurrentExcitationVector(idx, RHS);
+        J.push_back(RHS);
+        current_idx.push_back(idx);
+        I_inc.push_back(data.GetExcitationCurrent());
+        if (mixed)
+        {
+          // l^T A = sum of the element aperture fluxes of B = Curl A, as the regular solve.
+          Vector f(curlcurl_op.GetRTSpace().GetTrueVSize()), l(RHS.Size());
+          f = 0.0;
+          for (const auto &elem : data.elements)
+          {
+            f.Add(elem.current_fraction,
+                  FluxThroughSurfaceFunctional(curlcurl_op.GetRTSpace(),
+                                               elem.aperture->attributes,
+                                               elem.aperture->direction));
+          }
+          curlcurl_op.GetCurlMatrix().MultTranspose(f, l);
+          apertures.push_back(std::move(l));
+        }
+      }
+      if (curlcurl_op.GetSurfaceFluxOp().Size() > 0)
+      {
+        PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+        for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+        {
+          curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
+          a.push_back(boundary_values);
+          flux_idx.push_back(idx);
+          Phi_inc.push_back(data.GetExcitationFlux());
+        }
+      }
+    }
+    const int nc = static_cast<int>(J.size()), nf = static_cast<int>(a.size());
+    MFEM_VERIFY(nc + nf > 0, "Magnetostatic substructuring requires flux-loop or "
+                             "surface-current excitations!");
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
+    Mpi::Print("\nSubstructuring inductance sweep: {:d} surface current{} and {:d} flux "
+               "loop{}\n",
+               nc, (nc != 1) ? "s" : "", nf, (nf != 1) ? "s" : "");
+    // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
+    // Superconductor), as is every "Superconductor" boundary. Only the fields to be saved
+    // need the environment interior.
+    const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
+    std::vector<Vector> A;
+    mfem::DenseMatrix linked_flux(nc, nf);
+    linked_flux = 0.0;
+    const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
+        current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
+        &A, n_save);
+    // Excitations in the layout of the regular solve (currents first, zero elsewhere).
+    I_inc.resize(nc + nf, 0.0);
+    Phi_inc.insert(Phi_inc.begin(), nc, 0.0);
+    PostprocessInductance(current_idx, flux_idx, E, I_inc, Phi_inc, linked_flux);
+    if (n_save > 0)
+    {
+      std::vector<int> ids(current_idx);
+      ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
+      ids.resize(n_save);
+      sub.WriteParaView(post_dir.string(), ids, A);
+    }
+    Mpi::Print("\nSubstructuring inductance sweep complete\n");
+    return {ErrorIndicator(), sub.GlobalTrueVSize()};
+  }
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
@@ -525,34 +610,18 @@ void MagnetostaticSolver::PostprocessTerminals(
   // well-defined and reciprocal. We therefore report self-inductances for all ports, but
   // mutual inductances only between ports that are Open when inactive; other off-diagonals
   // are set to NaN and Minv/Mm are computed over the Open-Open sub-block only.
-  int n_current = static_cast<int>(surf_j_op.Size());
-  int n_flux = static_cast<int>(surf_flux_op.Size());
-  int n = A.size();
-
-  // Mark which columns have a well-defined reciprocal mutual (Open-when-inactive ports).
-  // Flux loops always share one operator, so they are all reciprocal.
-  const InactivePortMode global_mode = iodata.solver.magnetostatic.inactive_port_mode;
-  std::vector<bool> reciprocal(n, true);
+  const int n = static_cast<int>(A.size());
+  std::vector<int> current_idx, flux_idx;
+  for (const auto &[idx, data] : surf_j_op)
   {
-    int col = 0;
-    for (const auto &[idx, data] : surf_j_op)
-    {
-      const auto &port_cfg = iodata.boundaries.current.at(idx);
-      // A single current port is never inactive during its own (only) solve, so its
-      // self-inductance is reciprocal regardless of the chosen mode.
-      reciprocal[col++] = n_current == 1 || port_cfg.inactive_port_mode.value_or(
-                                                global_mode) == InactivePortMode::OPEN;
-    }
-    // Remaining columns are flux loops (reciprocal), already initialized to true.
+    current_idx.push_back(idx);
   }
+  for (const auto &[idx, data] : surf_flux_op)
+  {
+    flux_idx.push_back(idx);
+  }
+  const std::vector<bool> reciprocal = ReciprocalColumns(current_idx, n);
   auto reciprocal_pair = [&](int i, int j) { return reciprocal[i] && reciprocal[j]; };
-  const double nan = std::numeric_limits<double>::quiet_NaN();
-
-  // Allocate final result matrices
-  mfem::DenseMatrix M(n), Minv(n), Mm(n);
-  M = nan;
-  Minv = nan;
-  Mm = nan;
 
   // Compute cross-energy matrix and diagonals. Off-diagonals are only meaningful between
   // reciprocal (Open-Open) port pairs; other pairs are left as NaN.
@@ -572,7 +641,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   };
 
   mfem::DenseMatrix cross_energy(n);
-  cross_energy = nan;
+  cross_energy = std::numeric_limits<double>::quiet_NaN();
   for (int i = 0; i < n; i++)
   {
     auto &A_gf = post_op.GetAGridFunction().Real();
@@ -594,6 +663,48 @@ void MagnetostaticSolver::PostprocessTerminals(
           linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) + london_correction(i, j);
     }
   }
+
+  PostprocessInductance(current_idx, flux_idx, cross_energy, I_inc, Phi_inc, linked_flux);
+}
+
+std::vector<bool>
+MagnetostaticSolver::ReciprocalColumns(const std::vector<int> &current_idx, int n) const
+{
+  // Mark which columns have a well-defined reciprocal mutual (Open-when-inactive ports).
+  // Flux loops always share one operator, so they are all reciprocal.
+  const InactivePortMode global_mode = iodata.solver.magnetostatic.inactive_port_mode;
+  const int n_current = static_cast<int>(current_idx.size());
+  std::vector<bool> reciprocal(n, true);
+  for (int col = 0; col < n_current; col++)
+  {
+    const auto &port_cfg = iodata.boundaries.current.at(current_idx[col]);
+    // A single current port is never inactive during its own (only) solve, so its
+    // self-inductance is reciprocal regardless of the chosen mode.
+    reciprocal[col] = n_current == 1 || port_cfg.inactive_port_mode.value_or(global_mode) ==
+                                            InactivePortMode::OPEN;
+  }
+  return reciprocal;
+}
+
+void MagnetostaticSolver::PostprocessInductance(const std::vector<int> &current_idx,
+                                                const std::vector<int> &flux_idx,
+                                                const mfem::DenseMatrix &cross_energy,
+                                                const std::vector<double> &I_inc,
+                                                const std::vector<double> &Phi_inc,
+                                                const mfem::DenseMatrix &linked_flux) const
+{
+  // The inductance matrix from the cross-energies of the excitations (currents first; see
+  // PostprocessTerminals), and the reluctance and mutual matrices.
+  const int n_current = static_cast<int>(current_idx.size());
+  const int n_flux = static_cast<int>(flux_idx.size());
+  const int n = n_current + n_flux;
+  const std::vector<bool> reciprocal = ReciprocalColumns(current_idx, n);
+  auto reciprocal_pair = [&](int i, int j) { return reciprocal[i] && reciprocal[j]; };
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  mfem::DenseMatrix M(n), Minv(n), Mm(n);
+  M = nan;
+  Minv = nan;
+  Mm = nan;
 
   if (n_flux == n)
   {
@@ -793,10 +904,10 @@ void MagnetostaticSolver::PostprocessTerminals(
   }
 
   // Write matrix data using existing pattern
-  auto PrintMatrix = [&surf_j_op, &surf_flux_op, this, n_current,
-                      n_flux](const std::string &file, const std::string &name,
-                              const std::string &unit, const mfem::DenseMatrix &mat,
-                              double scale)
+  auto PrintMatrix =
+      [&current_idx, &flux_idx, this](const std::string &file, const std::string &name,
+                                      const std::string &unit, const mfem::DenseMatrix &mat,
+                                      double scale)
   {
     TableWithCSVFile output(post_dir / file);
     output.table.insert(Column("i", "i", 0, 0, 2, ""));
@@ -813,13 +924,11 @@ void MagnetostaticSolver::PostprocessTerminals(
       }
     };
 
-    // Add current sources
+    // Add current sources, then flux loops.
     int j = 0;
-    for (const auto &[idx, data] : surf_j_op)
+    for (int idx : current_idx)
       AddTerminal(idx, j++);
-
-    // Add flux loops
-    for (const auto &[idx, data] : surf_flux_op)
+    for (int idx : flux_idx)
       AddTerminal(idx, j++);
 
     output.WriteFullTableTrunc();
@@ -837,7 +946,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     terminal_I.table.insert(Column("i", "i", 0, 0, 2, ""));
     terminal_I.table.insert("Iinc", "I_inc[i] (A)");
     int i = 0;
-    for (const auto &[idx, data] : surf_j_op)
+    for (int idx : current_idx)
     {
       terminal_I.table["i"] << double(idx);
       terminal_I.table["Iinc"] << iodata.units.Dimensionalize<Units::ValueType::CURRENT>(
@@ -857,7 +966,7 @@ void MagnetostaticSolver::PostprocessTerminals(
         iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>() *
         iodata.units.GetScaleFactor<Units::ValueType::CURRENT>();
     int i = n_current;
-    for (const auto &[idx, data] : surf_flux_op)
+    for (int idx : flux_idx)
     {
       terminal_Phi.table["i"] << double(idx);
       terminal_Phi.table["Phiinc"] << Phi_inc[i] * magnetic_flux_scale;

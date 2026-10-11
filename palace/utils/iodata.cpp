@@ -719,6 +719,91 @@ void IoData::CheckConfiguration()
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
+  // Validate substructuring configuration: region and environment attribute sets must be
+  // nonempty and disjoint (a well-posed complementary split).
+  if (solver.substructuring)
+  {
+    const auto &sub = *solver.substructuring;
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
+                    problem.type == ProblemType::MAGNETOSTATIC ||
+                    problem.type == ProblemType::DRIVEN,
+                "Substructuring is only supported for electrostatic, magnetostatic and "
+                "driven problem types!");
+    MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
+                "Substructuring requires nonempty Region and Environment attribute sets!");
+    MFEM_VERIFY(solver.device == Device::CPU,
+                "Substructuring requires \"Solver.Device\": \"CPU\"!");
+    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
+                "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
+    // Adaptive refinement refines the region of an online run only: the environment was
+    // condensed on its final mesh, and nonconforming refinement without a level constraint
+    // does not spread into it.
+    if (model.refinement.max_it > 0)
+    {
+      MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
+                  "Adaptive mesh refinement with substructuring is only supported for "
+                  "electrostatic problems!");
+      MFEM_VERIFY(sub.mode == SubstructuringMode::ONLINE,
+                  "Adaptive mesh refinement with substructuring refines the region of an "
+                  "\"Online\" run; to refine the full model, run the adaptation without "
+                  "\"Solver.Substructuring\" (with \"SaveAdaptMesh\") and condense the "
+                  "saved mesh offline!");
+      MFEM_VERIFY(model.refinement.nonconformal && model.refinement.max_nc_levels == 0,
+                  "Adaptive mesh refinement with substructuring requires nonconforming "
+                  "refinement (\"Nonconformal\": true) without a level constraint "
+                  "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
+    }
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      // Complex symmetric direct factorizations, exact per frequency or at the samples of
+      // an adaptive sweep (wave ports border them with their modal terms). Floquet ports
+      // and periodic boundaries make the system non-symmetric.
+      MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
+                  "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
+      MFEM_VERIFY(boundaries.floquetport.empty() &&
+                      boundaries.periodic.boundary_pairs.empty(),
+                  "Driven substructuring does not support Floquet ports or periodic "
+                  "boundaries!");
+      // From a model (online, or after an adaptive sweep's samples), the field is known in
+      // the region and on Γ only.
+      MFEM_VERIFY(
+          (sub.mode != SubstructuringMode::ONLINE && solver.driven.adaptive_tol <= 0.0) ||
+              (boundaries.postpro.flux.empty() && boundaries.postpro.dielectric.empty() &&
+               boundaries.postpro.farfield.attributes.empty() &&
+               domains.postpro.probe.empty()),
+          "Online or adaptive driven substructuring does not compute surface flux, "
+          "interface dielectric, far-field or probe postprocessing yet!");
+      MFEM_VERIFY(solver.driven.restart == 1,
+                  "Driven substructuring does not restart a sweep yet!");
+#if !defined(MFEM_USE_MUMPS)
+      MFEM_ABORT("Driven substructuring requires MUMPS!");
+#endif
+    }
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      // One condensed environment serves every excitation, so inactive surface-current
+      // ports may not be shorted (each would change the essential boundary).
+      for (const auto &[idx, data] : boundaries.current)
+      {
+        MFEM_VERIFY(
+            boundaries.current.size() == 1 ||
+                data.inactive_port_mode.value_or(solver.magnetostatic.inactive_port_mode) !=
+                    InactivePortMode::SHORT,
+            "Magnetostatic substructuring requires \"Open\" inactive surface "
+            "current ports (SurfaceCurrent index "
+                << idx << ")!");
+      }
+    }
+    std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
+    for (int a : sub.environment_attributes)
+    {
+      MFEM_VERIFY(region_set.find(a) == region_set.end(),
+                  "Substructuring Region and Environment attribute sets must be disjoint "
+                  "(attribute "
+                      << a << " appears in both)!");
+    }
+  }
+
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;

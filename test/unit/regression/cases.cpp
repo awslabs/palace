@@ -4,7 +4,8 @@
 // Regression cases: full Palace solves diffed against test data references.
 // Each case carries [Serial][Parallel][GPU][Regression] (the category
 // tag is orthogonal to execution style — every case is valid at any
-// rank count and on either CPU or GPU). [Long] modifies a regression
+// rank count and on either CPU or GPU), except the substructuring cases,
+// which are CPU-only (no [GPU]). [Long] modifies a regression
 // case to be skipped from the default sweep and run only under the
 // long-tests CI workflow.
 
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -1034,6 +1036,198 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
   palace::test::RunRegressionCase("circular_hole_london", "circular_hole_nc_amr.json",
                                   "nc_amr", opts);
 }
+
+// Region-condensed (substructuring) electrostatic solve: the environment (attr 2) is
+// condensed to a Dirichlet-to-Neumann operator and the region (attr 1) is solved against
+// it, producing the terminal capacitance matrix. Exercises the SubstructuringSolver driver
+// path.
+TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;  // Solver.Electrostatic.Save defaults to 0
+  palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json", "",
+                                  opts);
+}
+
+// Region-condensed (substructuring) magnetostatic solve on the mirror-split
+// double-circular- hole slab: the environment (right hole, attr 2) is condensed to a DtN
+// operator and the region (left hole, attr 1) is solved against it for each flux-loop
+// excitation, giving the 2x2 mutual-inductance matrix. The shared film is a London sheet
+// with the small PecPenetrationDepth, as in the native solver, which the result matches.
+TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic.json",
+                                  "base", opts);
+}
+
+// Magnetostatic substructuring with a finite-penetration-depth London film (λ = 0.4 μm,
+// d = 0.1 μm) shared by both flux loops and crossing the interface: the film is a free
+// London sheet in the condensation, and the total inductance includes the kinetic part.
+TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_london.json", "london", opts);
+}
+
+// Magnetostatic substructuring with surface currents across two square holes of a film
+// that crosses the interface, one hole in the region and one in the environment. The
+// references are regular simulations of the same configuration.
+TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current.json", "current", opts);
+}
+
+// As above with a finite-penetration-depth London film (λ = 0.4 μm, d = 0.1 μm), whose
+// supercurrent closes the port currents.
+TEST_CASE("substructuring_magnetostatic_current_london", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current_london.json", "current_london",
+                                  opts);
+}
+
+// Mixed surface-current and flux-loop extraction with substructuring on a small ring-disk
+// mesh: the region holds the ring terminal, and the ring's aperture crosses the interface.
+// The references are regular simulations of the same configurations.
+TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed.json", "mixed", opts);
+}
+
+// As above with a finite-penetration-depth London disk (λ = 0.4 μm, d = 0.1 μm).
+TEST_CASE("substructuring_magnetostatic_mixed_london", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed_london.json", "mixed_london", opts);
+}
+
+#if defined(MFEM_USE_MUMPS)  // driven substructuring needs MUMPS
+
+// Driven substructuring with exact per-frequency condensation: lumped ports across two
+// holes of a PEC film crossing the interface, one in the region (lossy dielectric) and one
+// in the environment. The references are regular simulations of the same configuration.
+TEST_CASE("substructuring_driven", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_driven", "driven.json", "lumped", opts);
+}
+
+// Online driven substructuring: an offline sweep saves the environment model, and an online
+// sweep at two of its frequencies solves a redesigned region (permittivity 4 -> 5) against
+// it. Environment-port voltages come from the model; the region's energy is written, the
+// environment's (and the totals) are not. The references are a regular simulation of the
+// redesigned configuration, in the online run's columns.
+TEST_CASE("substructuring_driven_online", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online.json", "online",
+                                  opts);
+}
+
+// Adaptive driven substructuring: an offline adaptive sweep samples the environment
+// greedily for a rational model of its condensed data, and an online sweep at frequencies
+// between the samples solves the redesigned region of substructuring_driven_online against
+// it. The references are a regular simulation of the redesigned configuration, in the
+// online run's columns.
+TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_adaptive.json",
+                                  "online_adaptive", opts);
+}
+
+// Adaptive online driven substructuring: the redesigned region of
+// substructuring_driven_adaptive reduced by Galerkin projection onto its fields at greedily
+// chosen frequencies, against the saved rational model. The references are a regular
+// simulation of the redesigned configuration, in the online run's columns.
+TEST_CASE("substructuring_driven_adaptive_online", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_reduced.json",
+                                  "online_reduced", opts);
+}
+
+// Driven substructuring with a wave port (a TM mode of a shorted circular waveguide, whose
+// modal terms border the factored side), in the region; and in the environment, with an
+// online sweep of a redesigned region (permittivity 2.08 -> 2.3) against a saved model.
+// The references are regular simulations, in the substructured runs' columns.
+TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave.json", "wave",
+                                  opts);
+}
+
+TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_wave_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave_online.json",
+                                  "online", opts);
+}
+
+#endif
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature

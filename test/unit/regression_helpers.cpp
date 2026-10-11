@@ -490,9 +490,18 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     effective_opts.max_rows = GetRequestedEigenmodeRows(config);
   }
 
+  const int omp_threads = palace::utils::ConfigureOmp();
+  if (!effective_opts.setup_config.empty())
+  {
+    const std::filesystem::path setup_path = input_path / effective_opts.setup_config;
+    RequireArtifact(setup_path, "setup config file");
+    IoData setup = LoadCaseIoData(LoadConfigJson(setup_path), effective_opts);
+    MakeOutputFolder(setup, comm);
+    BlockTimer::Reset();
+    palace::Run(setup, comm, omp_threads, /*git_tag=*/nullptr);
+  }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
   MakeOutputFolder(iodata, comm);
-  const int omp_threads = palace::utils::ConfigureOmp();
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
   BlockTimer::Reset();
   palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);

@@ -31,6 +31,27 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added substructuring for electrostatic and magnetostatic simulations
+    (`config["Solver"]["Substructuring"]`): the environment of a region of interest is
+    condensed exactly onto their shared interface, and the region is solved against it. A
+    saved environment model is reused across runs, including after the region is
+    re-meshed, and the capacitance or inductance matrix of a reused model needs no
+    environment solve. Includes optional block low-rank environment factorization with
+    MUMPS (`"FactorizationTol"`) and hierarchical compression of the interface operator
+    (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"` and
+    `"SurfaceCurrent"` excitations, alone or together, with the films and `"Superconductor"`
+    boundaries as London sheets (kinetic inductance included). Adds substructuring examples in `examples/transmon` and
+    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops, on separate rings
+    and on one plate). SchemaVer 2-3-0.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
+  - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
+    uniform frequency sweeps condense the environment exactly at each frequency, with lumped
+    ports, wave ports and lossy boundaries and materials on either side, and an online sweep
+    at saved frequencies solves a redesigned region against the saved environment. Adaptive
+    sweeps condense it at frequencies chosen greedily for a rational model, checked for
+    passivity, which online sweeps evaluate anywhere in its band, with the region reduced as
+    in the adaptive fast frequency sweep. Adds a driven example in `examples/substructuring`
+    (a 3 x 4 grid of CPW resonators). SchemaVer 2-3-1.
 
 #### Interface Changes
 
@@ -172,6 +193,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     were bumped to their latest releases. The Spack package now uses a libCEED release
     instead of a development commit.
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
+  - Builds with MUMPS now also need its complex double precision library (ZMUMPS), used by
+    driven substructuring; the superbuild and the Spack recipe build it.
 
 ## [0.18.1] - 2026-09-21
 

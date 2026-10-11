@@ -143,6 +143,215 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
 
 }  // namespace
 
+TEST_CASE("Config Substructuring", "[config][Serial]")
+{
+  SECTION("Fields parse and round-trip")
+  {
+    json solver = {{"Substructuring",
+                    {{"Region", {{"Attributes", {1}}}},
+                     {"Environment", {{"Attributes", {2, 3}}}},
+                     {"Mode", "Offline"},
+                     {"SaveModel", "env_dtn.dat"}}}};
+    config::SolverData data(solver);
+    REQUIRE(data.substructuring.has_value());
+    CHECK(data.substructuring->region_attributes == std::vector<int>{1});
+    CHECK(data.substructuring->environment_attributes == std::vector<int>{2, 3});
+    CHECK(data.substructuring->mode == SubstructuringMode::OFFLINE);
+    CHECK(data.substructuring->save_model == "env_dtn.dat");
+  }
+
+  SECTION("Absent block leaves substructuring unset")
+  {
+    config::SolverData data(json::object());
+    CHECK(!data.substructuring.has_value());
+  }
+
+  SECTION("Overlapping region/environment attributes are rejected")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Substructuring",
+                      {{"Region", {{"Attributes", {1, 2}}}},
+                       {"Environment", {{"Attributes", {2}}}}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("must be disjoint"));
+  }
+
+  SECTION("Adaptive mesh refinement refines the region of an online run")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}, {"Refinement", {{"MaxIts", 2}}}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", "Offline"},
+                       {"SaveModel", "environment.model"}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"SaveAdaptMesh\""));
+    config["Solver"]["Substructuring"]["Mode"] = "Online";
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"MaxNCLevels\": 0"));
+    config["Model"]["Refinement"]["MaxNCLevels"] = 0;
+    CHECK_NOTHROW(IoData(config, false));
+    config["Model"]["Refinement"]["Nonconformal"] = false;
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("nonconforming"));
+    config["Model"]["Refinement"]["MaxIts"] = 0;
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
+  SECTION("Substructuring requires the CPU device")
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Device", "GPU"},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"Solver.Device\": \"CPU\""));
+    config["Solver"]["Device"] = "CPU";
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
+  SECTION("Online substructuring requires a saved model")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", "Online"}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"SaveModel\""));
+    config["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
+  SECTION("Driven substructuring")
+  {
+    auto make_config = [](const json &driven, const json &extra_boundaries)
+    {
+      json boundaries = {{"LumpedPort",
+                          {{{"Index", 1},
+                            {"R", 50.0},
+                            {"Attributes", {4}},
+                            {"Direction", "+X"},
+                            {"Excitation", true}}}}};
+      boundaries.update(extra_boundaries);
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                  {"Boundaries", boundaries},
+                  {"Solver",
+                   {{"Driven", driven},
+                    {"Substructuring",
+                     {{"Region", {{"Attributes", {1}}}},
+                      {"Environment", {{"Attributes", {2}}}}}}}}};
+    };
+    const json uniform = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}};
+#if defined(MFEM_USE_MUMPS)
+    CHECK_NOTHROW(IoData(make_config(uniform, json::object()), false));
+#endif
+    json adaptive = uniform;
+    adaptive["AdaptiveTol"] = 1.0e-3;
+#if defined(MFEM_USE_MUMPS)
+    CHECK_NOTHROW(IoData(make_config(adaptive, json::object()), false));
+#endif
+    adaptive["AdaptiveCircuitSynthesis"] = true;
+    CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
+                      Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+#if defined(MFEM_USE_MUMPS)
+    const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
+    CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
+#endif
+    const json periodic = {
+        {"Periodic",
+         {{"BoundaryPairs", {{{"DonorAttributes", {5}}, {"ReceiverAttributes", {6}}}}}}}};
+    CHECK_THROWS_WITH(IoData(make_config(uniform, periodic), false),
+                      Catch::Matchers::ContainsSubstring("periodic boundaries"));
+#if defined(MFEM_USE_MUMPS)
+    json saved = make_config(uniform, json::object());
+    saved["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Substructuring"]["Mode"] = "Online";
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {
+        {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {4}}, {"Type", "Electric"}}}}};
+    CHECK_THROWS_WITH(IoData(saved, false),
+                      Catch::Matchers::ContainsSubstring("does not compute surface flux"));
+    saved["Solver"]["Substructuring"].erase("Mode");
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-6;
+    CHECK_THROWS_WITH(IoData(saved, false),
+                      Catch::Matchers::ContainsSubstring("does not compute surface flux"));
+#endif
+#if defined(MFEM_USE_MUMPS)
+    json fields = uniform;
+    fields["Save"] = {1.0};
+    CHECK_NOTHROW(IoData(make_config(fields, json::object()), false));
+#endif
+  }
+
+  SECTION("Magnetostatic substructuring excitations")
+  {
+    const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};
+    const json flux_loop = {{{"Index", 2},
+                             {"FilmAttributes", {6}},
+                             {"HoleAttributes", {7}},
+                             {"FluxAmounts", {1.0}},
+                             {"Direction", "+Z"}}};
+    auto make_config = [](const json &boundaries)
+    {
+      return json{{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                  {"Boundaries", boundaries},
+                  {"Solver",
+                   {{"Substructuring",
+                     {{"Region", {{"Attributes", {1}}}},
+                      {"Environment", {{"Attributes", {2}}}}}}}}};
+    };
+    CHECK_NOTHROW(IoData(make_config({{"FluxLoop", flux_loop}}), false));
+    // Finite-λ superconducting films are London sheets in the condensation.
+    const json superconductor = {
+        {{"Attributes", {6}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}}};
+    CHECK_NOTHROW(IoData(
+        make_config({{"FluxLoop", flux_loop}, {"Superconductor", superconductor}}), false));
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", surface_current}}), false));
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", surface_current},
+                                      {"Superconductor", superconductor}}),
+                         false));
+    // Mixed extraction (with the apertures the regular solve requires).
+    json mixed_current = surface_current;
+    mixed_current[0]["Aperture"] = {{"Attributes", {5}}, {"Direction", "+Z"}};
+    CHECK_NOTHROW(IoData(
+        make_config({{"SurfaceCurrent", mixed_current}, {"FluxLoop", flux_loop}}), false));
+    // Inactive ports must be open: a short changes the essential boundary per excitation.
+    json two_ports = surface_current;
+    two_ports.push_back({{"Attributes", {5}}, {"Index", 2}, {"Direction", "+X"}});
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", two_ports}}), false));
+    two_ports[1]["InactiveMode"] = "Short";
+    CHECK_THROWS_WITH(IoData(make_config({{"SurfaceCurrent", two_ports}}), false),
+                      Catch::Matchers::ContainsSubstring("\"Open\" inactive surface"));
+    json one_short = surface_current;
+    one_short[0]["InactiveMode"] = "Short";
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", one_short}}), false));
+  }
+}
+
 TEST_CASE("Config Domain Postprocessing", "[config][Serial]")
 {
   auto MakeDomains = [](const std::vector<int> &material_attributes,

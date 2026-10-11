@@ -55,6 +55,8 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-smoother.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-substructure.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-substructuringsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacecharge.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacefunctional.cpp

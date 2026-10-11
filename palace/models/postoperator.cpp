@@ -1626,6 +1626,10 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 
   // Log Domain Energy.
+  if (dom_post_op.partial)
+  {
+    return;
+  }
   const auto domain_E = units.Dimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_E_field_energy_all);
   const auto domain_H = units.Dimensionalize<Units::ValueType::ENERGY>(
@@ -1663,6 +1667,11 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       auto &vi = measurement_cache.lumped_port_vi[idx];
       vi.P = port_powers.at(idx);
       vi.V = port_voltages.at(idx);
+      if (auto it = lumped_port_voltages.find(idx); it != lumped_port_voltages.end())
+      {
+        vi.V = it->second;
+        vi.P = 0.0;
+      }
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C
@@ -1785,11 +1794,12 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
       auto &vi = measurement_cache.wave_port_vi[idx];
-      vi.S = data.GetSParameter(*E);
+      const auto given = wave_port_overlaps.find(idx);
+      vi.S = (given != wave_port_overlaps.end()) ? given->second : data.GetSParameter(*E);
       if (data.HasVoltageCoords())
       {
-        vi.P = data.GetPower(*E, *B);
-        vi.V = data.GetVoltage(*E);
+        vi.P = (given != wave_port_overlaps.end()) ? 0.0 : data.GetPower(*E, *B);
+        vi.V = (given != wave_port_overlaps.end()) ? 0.0 : data.GetVoltage(*E);
         vi.Z_PV = data.GetCharacteristicImpedance();
       }
     }

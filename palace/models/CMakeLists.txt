@@ -11,6 +11,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/currentdipoleoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/domainpostoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivensubstructure.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/farfieldboundaryoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/floquetportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/laplaceoperator.cpp
@@ -24,6 +25,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spaceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/substructuringsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceconductivityoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacecurlsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacecurrentoperator.cpp
