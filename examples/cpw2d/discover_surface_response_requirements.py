@@ -30,6 +30,24 @@ if str(SPATIAL_COUPON_TOOLS) not in sys.path:
 import cluster_signature_geometry  # noqa: E402
 import device_coupons  # noqa: E402
 
+# The binary's own declaration that a requirement has NO placement in this version
+# (surfaceresponseoperator.cpp, the mirror-formed status loop: a mirror-formed CurvedEdge
+# configuration is "the 2D curvature family's consumer: no mirror placement in this version",
+# decision 557). Such a requirement stays Missing whatever model the library carries, so a
+# placeholder can never close it: the closure records it OutOfScope
+# UnplaceableInThisVersion (device_coupons.UNPLACEABLE_METHOD) by name instead of stalling
+# (decisions 664 / 669 (3) (c): the R4 39e4 attempt-2 stall on 4 mirror-formed CurvedEdge keys).
+UNPLACEABLE_DECLARATION = "no mirror placement in this version"
+
+
+def unplaceable_declaration(requirement):
+    """The binary's Note declaring the requirement unplaceable in this version (None when the
+    requirement's Notes carry no such declaration)."""
+    for note in requirement.get("Notes") or []:
+        if isinstance(note, str) and UNPLACEABLE_DECLARATION in note:
+            return note
+    return None
+
 
 def load_json(path):
     return json.loads(path.read_text())
@@ -402,7 +420,15 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
     `omit_requirements`: Hash prefixes of Missing requirements that get NO placeholder (an
     omitted requirement stays Missing in every pass and in the final manifest, is listed
     under OmittedRequirements of the manifest and the history, and does not count as a
-    stalled closure); a prefix that matches no requirement fails closed."""
+    stalled closure); a prefix that matches no requirement fails closed.
+
+    A requirement the binary DECLARES UNPLACEABLE (its Notes carry UNPLACEABLE_DECLARATION)
+    and that stays Missing with its placeholder in the virtual library is recorded under
+    UnplaceableRequirements of the manifest and the history (OutOfScope
+    device_coupons.UNPLACEABLE_METHOD, the declaration quoted) and does not count as a
+    stalled closure either; it stays Missing in the final manifest with that Reason. A key
+    whose Notes carry the declaration but that turns Exact once its placeholder exists (a
+    real instance of the same key beside the unplaceable one) closes as any other."""
     if max_passes <= 0:
         raise ValueError("max_passes must be positive")
     omit_requirements = [str(prefix) for prefix in omit_requirements]
@@ -428,6 +454,7 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
     placeholder_names = set()
     placeholder_requirements = {}
     omitted = {}
+    unplaceable = {}
     history = []
     final_manifest = None
     for pass_index in range(1, max_passes + 1):
@@ -467,6 +494,9 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
 
         added = []
         stalled = 0
+        # The placeholders both preflights of this pass were run with (a placeholder added
+        # from the discovery view is not in the production view's library yet).
+        placed_before_pass = set(known)
         for current_manifest in (manifest, production_manifest):
             for requirement in current_manifest["Requirements"]:
                 if requirement["Status"] != "Missing":
@@ -485,13 +515,36 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
                         },
                     )
                     continue
-                stalled += 1
                 digest, model = placeholder_model(
                     requirement,
                     float(current_manifest["Library"]["MatchingRadius"]),
                     virtual_library.get("Fabrication", {}),
                 )
                 if digest in known:
+                    if digest not in placed_before_pass:
+                        continue
+                    # Still Missing with its placeholder in the virtual library: the binary
+                    # either declares the requirement unplaceable (recorded, not a stall) or
+                    # the placeholder failed to close it (a stall).
+                    declaration = unplaceable_declaration(requirement)
+                    if declaration is None:
+                        stalled += 1
+                    else:
+                        unplaceable.setdefault(
+                            requirement["Hash"],
+                            {
+                                "Hash": requirement["Hash"],
+                                "Topology": requirement["Topology"],
+                                "Count": requirement.get("Count"),
+                                "Instances": requirement.get("Instances"),
+                                "TotalEdgeLength": requirement.get("TotalEdgeLength"),
+                                "MirrorFormed": requirement.get("MirrorFormed"),
+                                "OutOfScope": device_coupons.UNPLACEABLE_METHOD,
+                                "Declaration": declaration,
+                                "Placeholder": model["Name"],
+                                "Pass": pass_index,
+                            },
+                        )
                     continue
                 known.add(digest)
                 placeholder_names.add(model["Name"])
@@ -511,7 +564,8 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
         )
         if not added:
             # Missing requirements other than the omitted ones (which never get a
-            # placeholder) stall the closure.
+            # placeholder) and the unplaceable ones (which the binary declares so with
+            # their placeholder present) stall the closure.
             if stalled:
                 raise RuntimeError(
                     "Geometry closure stalled with missing requirements; see "
@@ -536,6 +590,16 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
     )
     omitted_records = [omitted[key] for key in sorted(omitted)]
     final_manifest["OmittedRequirements"] = omitted_records
+    unplaceable_records = [unplaceable[key] for key in sorted(unplaceable)]
+    for requirement in final_manifest["Requirements"]:
+        record = unplaceable.get(requirement.get("Hash"))
+        if record is not None and requirement["Status"] == "Missing":
+            requirement["OutOfScope"] = device_coupons.UNPLACEABLE_METHOD
+            requirement["Reason"] = (
+                f"{device_coupons.UNPLACEABLE_METHOD}: declared by the binary, no placeholder "
+                f"can close it ({record['Declaration']})"
+            )
+    final_manifest["UnplaceableRequirements"] = unplaceable_records
     manifest_path = output / "surface-response-requirements.json"
     write_json(manifest_path, final_manifest)
     write_json(
@@ -547,6 +611,7 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
             "Passes": history,
             "PlaceholderCount": len(placeholder_names),
             "OmittedRequirements": omitted_records,
+            "UnplaceableRequirements": unplaceable_records,
             "CompleteAgainstSourceLibrary": final_manifest["Complete"],
         },
     )
