@@ -1268,7 +1268,9 @@ TEST_CASE("substructuring_driven_wave_region", "[Serial][Parallel][Regression]")
 
 // A region strictly inside the box (its mesh is smaller than the model's reference length)
 // and a PEC sheet in the environment ending on an edge of Γ (Dirichlet DOFs of the region
-// from the environment), redesigned: against a regular simulation of the redesign.
+// from the environment), redesigned: against a regular simulation of the redesign. The
+// sheet is not cracked: cracking it fails in the mesh preprocessing on 24 or more
+// processes, also without substructuring.
 TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
