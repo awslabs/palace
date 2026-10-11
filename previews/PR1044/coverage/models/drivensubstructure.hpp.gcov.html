@@ -1,0 +1,409 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/drivensubstructure.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - drivensubstructure.hpp<span style="font-size: 80%;"> (source / <a href="drivensubstructure.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">16.7&nbsp;%</td>
+            <td class="headerCovTableEntry">6</td>
+            <td class="headerCovTableEntry">1</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-10-11 02:05:57</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_MODELS_DRIVEN_SUBSTRUCTURE_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_MODELS_DRIVEN_SUBSTRUCTURE_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;array&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;complex&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;map&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;memory&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;string&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;vector&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;models/waveportoperator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : namespace palace</span>
+<span id="L19"><span class="lineNum">      19</span>              : {</span>
+<span id="L20"><span class="lineNum">      20</span>              : </span>
+<span id="L21"><span class="lineNum">      21</span>              : template &lt;typename T&gt;</span>
+<span id="L22"><span class="lineNum">      22</span>              : class MumpsSchurSolverT;</span>
+<span id="L23"><span class="lineNum">      23</span>              : class SpaceOperator;</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span>              : //</span>
+<span id="L26"><span class="lineNum">      26</span>              : // Barycentric rational interpolation of a vector-valued function of the frequency from its</span>
+<span id="L27"><span class="lineNum">      27</span>              : // samples x_j = x(ω_j), with one set of weights w for all entries,</span>
+<span id="L28"><span class="lineNum">      28</span>              : //   x̃(ω) = Σ_j a_j(ω) x_j,   a_j(ω) = (w_j / (ω - ω_j)) / Σ_k w_k / (ω - ω_k),</span>
+<span id="L29"><span class="lineNum">      29</span>              : // which interpolates the samples. The weights are those of the minimal rational interpolant</span>
+<span id="L30"><span class="lineNum">      30</span>              : // (MRI) of the snapshots {x_j, iω_j x_j}, as for the error indicator of the adaptive driven</span>
+<span id="L31"><span class="lineNum">      31</span>              : // solver (MinimalRationalInterpolation). The samples are distributed by rows over comm (the</span>
+<span id="L32"><span class="lineNum">      32</span>              : // local rows of each rank), and the weights are replicated.</span>
+<span id="L33"><span class="lineNum">      33</span>              : //</span>
+<span id="L34"><span class="lineNum">      34</span>              : class BarycentricInterpolant</span>
+<span id="L35"><span class="lineNum">      35</span>              : {</span>
+<span id="L36"><span class="lineNum">      36</span>              : public:</span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC tlaBgGNC">           1 :   explicit BarycentricInterpolant(MPI_Comm comm = MPI_COMM_SELF) : comm(comm) {}</span></span>
+<span id="L38"><span class="lineNum">      38</span>              : </span>
+<span id="L39"><span class="lineNum">      39</span>              :   // Add a sample (scaled by the caller so that its parts weigh alike), updating the</span>
+<span id="L40"><span class="lineNum">      40</span>              :   // weights.</span>
+<span id="L41"><span class="lineNum">      41</span>              :   void AddSample(double omega, const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;x);</span>
+<span id="L42"><span class="lineNum">      42</span>              : </span>
+<span id="L43"><span class="lineNum">      43</span>              :   // The interpolant at ω (the local rows).</span>
+<span id="L44"><span class="lineNum">      44</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; Evaluate(double omega) const;</span>
+<span id="L45"><span class="lineNum">      45</span>              : </span>
+<span id="L46"><span class="lineNum">      46</span>              :   // The interpolant over an orthonormal basis q_i of the samples, x̃(ω) = Σ_i y_i(ω) q_i.</span>
+<span id="L47"><span class="lineNum">      47</span>              :   const std::vector&lt;std::vector&lt;std::complex&lt;double&gt;&gt;&gt; &amp;Basis() const { return Q; }</span>
+<span id="L48"><span class="lineNum">      48</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; BasisCoefficients(double omega) const;</span>
+<span id="L49"><span class="lineNum">      49</span>              : </span>
+<span id="L50"><span class="lineNum">      50</span>              :   // The frequency between the outermost samples where the denominator Σ_j w_j / (ω - ω_j)</span>
+<span id="L51"><span class="lineNum">      51</span>              :   // is smallest (near a pole, or far from the samples): the next sample.</span>
+<span id="L52"><span class="lineNum">      52</span>              :   double FindMaxError() const;</span>
+<span id="L53"><span class="lineNum">      53</span>              : </span>
+<span id="L54"><span class="lineNum">      54</span>              :   const std::vector&lt;double&gt; &amp;Samples() const { return z; }</span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaUNC tlaBgUNC">           0 :   const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;Weights() const { return w; }</span></span>
+<span id="L56"><span class="lineNum">      56</span>              : </span>
+<span id="L57"><span class="lineNum">      57</span>              :   // The coefficients a_j(ω) of samples at z with weights w.</span>
+<span id="L58"><span class="lineNum">      58</span>              :   static std::vector&lt;std::complex&lt;double&gt;&gt;</span>
+<span id="L59"><span class="lineNum">      59</span>              :   Coefficients(const std::vector&lt;double&gt; &amp;z, const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;w,</span>
+<span id="L60"><span class="lineNum">      60</span>              :                double omega);</span>
+<span id="L61"><span class="lineNum">      61</span>              : </span>
+<span id="L62"><span class="lineNum">      62</span>              : private:</span>
+<span id="L63"><span class="lineNum">      63</span>              :   MPI_Comm comm;</span>
+<span id="L64"><span class="lineNum">      64</span>              :   std::vector&lt;double&gt; z;</span>
+<span id="L65"><span class="lineNum">      65</span>              :   std::vector&lt;std::vector&lt;std::complex&lt;double&gt;&gt;&gt; Q;  // orthonormal basis of the samples</span>
+<span id="L66"><span class="lineNum">      66</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; R;               // samples = Q R (m x m, column-major)</span>
+<span id="L67"><span class="lineNum">      67</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; w;</span>
+<span id="L68"><span class="lineNum">      68</span>              : };</span>
+<span id="L69"><span class="lineNum">      69</span>              : </span>
+<span id="L70"><span class="lineNum">      70</span>              : //</span>
+<span id="L71"><span class="lineNum">      71</span>              : // A model saved by an offline driven substructuring sweep, written and read on rank 0 (the</span>
+<span id="L72"><span class="lineNum">      72</span>              : // header broadcast): the header (the interface signatures, the fingerprints of the</span>
+<span id="L73"><span class="lineNum">      73</span>              : // environment and of its sources, the environment's ports, the frequencies) and one record</span>
+<span id="L74"><span class="lineNum">      74</span>              : // per frequency: S_E(ω), the condensation g of the environment's sources (per excitation</span>
+<span id="L75"><span class="lineNum">      75</span>              : // with environment sources), and the condensed functionals of the environment's ports,</span>
+<span id="L76"><span class="lineNum">      76</span>              : // whose values are V_j = c_jk + h_j^T u_Γ for excitation k. An exact model holds the</span>
+<span id="L77"><span class="lineNum">      77</span>              : // frequencies of a uniform sweep, a rational one (with weights) the samples of an adaptive</span>
+<span id="L78"><span class="lineNum">      78</span>              : // sweep, interpolated at any frequency between them (BarycentricInterpolant).</span>
+<span id="L79"><span class="lineNum">      79</span>              : //</span>
+<span id="L80"><span class="lineNum">      80</span>              : struct DrivenSubstructureModel</span>
+<span id="L81"><span class="lineNum">      81</span>              : {</span>
+<span id="L82"><span class="lineNum">      82</span>              :   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint</span>
+<span id="L83"><span class="lineNum">      83</span>              :   int version = 2, nG = 0, sig_w = 0;</span>
+<span id="L84"><span class="lineNum">      84</span>              :   std::vector&lt;double&gt; signatures;  // nG x sig_w</span>
+<span id="L85"><span class="lineNum">      85</span>              :   std::vector&lt;double&gt; env_fp;      // environment fingerprint</span>
+<span id="L86"><span class="lineNum">      86</span>              :   std::vector&lt;int&gt; excitations;    // excitations with environment sources</span>
+<span id="L87"><span class="lineNum">      87</span>              :   std::vector&lt;double&gt; exc_fp;      // their source fingerprints (kSourceFp each)</span>
+<span id="L88"><span class="lineNum">      88</span>              :   std::vector&lt;int&gt; ports;     // environment lumped ports (index) and wave ports (-index)</span>
+<span id="L89"><span class="lineNum">      89</span>              :   std::vector&lt;double&gt; omega;  // frequencies of the records (nondimensional)</span>
+<span id="L90"><span class="lineNum">      90</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; weights;  // barycentric weights (rational model)</span>
+<span id="L91"><span class="lineNum">      91</span>              :   int capacity = 0;  // records the header has room for (at least omega.size())</span>
+<span id="L92"><span class="lineNum">      92</span>              : </span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaUNC">           0 :   struct Record</span></span>
+<span id="L94"><span class="lineNum">      94</span>              :   {</span>
+<span id="L95"><span class="lineNum">      95</span>              :     // S (nG x nG), g (nG x excitations), h (nG x ports), c (ports x excitations), all</span>
+<span id="L96"><span class="lineNum">      96</span>              :     // column-major.</span>
+<span id="L97"><span class="lineNum">      97</span>              :     std::vector&lt;std::complex&lt;double&gt;&gt; S, g, h, c;</span>
+<span id="L98"><span class="lineNum">      98</span>              :   };</span>
+<span id="L99"><span class="lineNum">      99</span>              : </span>
+<span id="L100"><span class="lineNum">     100</span>              :   // A record as one vector, in the order of the file (S by its lower triangle), and the</span>
+<span id="L101"><span class="lineNum">     101</span>              :   // sizes of its parts.</span>
+<span id="L102"><span class="lineNum">     102</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; Flatten(const Record &amp;r) const;</span>
+<span id="L103"><span class="lineNum">     103</span>              :   std::array&lt;std::size_t, 4&gt; PartSizes() const;</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span>              :   // The header, in a new file or rewritten in place (with the same capacity).</span>
+<span id="L106"><span class="lineNum">     106</span>              :   void WriteHeader(const std::string &amp;path, bool create = true) const;</span>
+<span id="L107"><span class="lineNum">     107</span>              :   void AppendRecord(const std::string &amp;path, const Record &amp;r) const;</span>
+<span id="L108"><span class="lineNum">     108</span>              :   void ReadHeader(const std::string &amp;path, MPI_Comm comm);</span>
+<span id="L109"><span class="lineNum">     109</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; ReadFlatRecord(const std::string &amp;path, int j) const;</span>
+<span id="L110"><span class="lineNum">     110</span>              :   // Number of complete records in the file.</span>
+<span id="L111"><span class="lineNum">     111</span>              :   int NumRecords(const std::string &amp;path) const;</span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              :   // Whether fingerprints agree, to a relative tolerance. The environment's (two counts,</span>
+<span id="L114"><span class="lineNum">     114</span>              :   // then complex quadratic forms) entry by entry. A source's (a nonzero flag, then complex</span>
+<span id="L115"><span class="lineNum">     115</span>              :   // pairings with the fingerprint fields, kSourceFp entries) relative to its largest</span>
+<span id="L116"><span class="lineNum">     116</span>              :   // pairing: a pairing can vanish up to rounding, which depends on the partition (for a</span>
+<span id="L117"><span class="lineNum">     117</span>              :   // source in a plane where a fingerprint field is normal to it). The sources of lumped</span>
+<span id="L118"><span class="lineNum">     118</span>              :   // ports are exact; those of wave ports follow their modes, computed to the tolerance of</span>
+<span id="L119"><span class="lineNum">     119</span>              :   // an eigensolver.</span>
+<span id="L120"><span class="lineNum">     120</span>              :   static bool SameEnvironment(const std::vector&lt;double&gt; &amp;a, const std::vector&lt;double&gt; &amp;b);</span>
+<span id="L121"><span class="lineNum">     121</span>              :   static bool SameSource(const double *a, const double *b, double tol = 1.0e-10);</span>
+<span id="L122"><span class="lineNum">     122</span>              : </span>
+<span id="L123"><span class="lineNum">     123</span>              :   // The passivity of a condensed environment S_E (n x n, complex symmetric, by its lower</span>
+<span id="L124"><span class="lineNum">     124</span>              :   // triangle in the order of a record): the least eigenvalue of Im S_E, which is positive</span>
+<span id="L125"><span class="lineNum">     125</span>              :   // semidefinite for a passive environment (Im u_Γ^H S_E u_Γ is the power it absorbs),</span>
+<span id="L126"><span class="lineNum">     126</span>              :   // relative to ‖S_E‖_F. A negative value is a violation.</span>
+<span id="L127"><span class="lineNum">     127</span>              :   static double Passivity(const std::complex&lt;double&gt; *lower, int n);</span>
+<span id="L128"><span class="lineNum">     128</span>              : </span>
+<span id="L129"><span class="lineNum">     129</span>              : private:</span>
+<span id="L130"><span class="lineNum">     130</span>              :   std::size_t HeaderBytes() const;</span>
+<span id="L131"><span class="lineNum">     131</span>              :   std::size_t RecordBytes() const;</span>
+<span id="L132"><span class="lineNum">     132</span>              : };</span>
+<span id="L133"><span class="lineNum">     133</span>              : </span>
+<span id="L134"><span class="lineNum">     134</span>              : //</span>
+<span id="L135"><span class="lineNum">     135</span>              : // Exact per-frequency substructuring of a driven problem: the environment operator</span>
+<span id="L136"><span class="lineNum">     136</span>              : // A_E(ω) = K_E + iω C_E - ω² M_E + A2_E(ω), assembled with Palace's operators restricted</span>
+<span id="L137"><span class="lineNum">     137</span>              : // to the environment, is condensed onto the interface Γ by a partial complex symmetric</span>
+<span id="L138"><span class="lineNum">     138</span>              : // MUMPS factorization, which gives S_E(ω). The region is condensed onto Γ in the same way,</span>
+<span id="L139"><span class="lineNum">     139</span>              : // and the interface system S_R(ω) + S_E(ω) is factored densely. Online, the environment is</span>
+<span id="L140"><span class="lineNum">     140</span>              : // not assembled: S_E(ω) and the condensation of the environment's sources come from a</span>
+<span id="L141"><span class="lineNum">     141</span>              : // saved model, and the environment interior of the solution is not computed.</span>
+<span id="L142"><span class="lineNum">     142</span>              : //</span>
+<span id="L143"><span class="lineNum">     143</span>              : class DrivenSubstructure</span>
+<span id="L144"><span class="lineNum">     144</span>              : {</span>
+<span id="L145"><span class="lineNum">     145</span>              : public:</span>
+<span id="L146"><span class="lineNum">     146</span>              :   DrivenSubstructure(SpaceOperator &amp;space_op, const std::vector&lt;int&gt; &amp;region_attributes,</span>
+<span id="L147"><span class="lineNum">     147</span>              :                      const std::vector&lt;int&gt; &amp;environment_attributes, bool online = false);</span>
+<span id="L148"><span class="lineNum">     148</span>              :   ~DrivenSubstructure();</span>
+<span id="L149"><span class="lineNum">     149</span>              : </span>
+<span id="L150"><span class="lineNum">     150</span>              :   // Condense the environment and factor the region against it at the angular frequency ω</span>
+<span id="L151"><span class="lineNum">     151</span>              :   // (nondimensional), or only condense the environment (without region, for its condensed</span>
+<span id="L152"><span class="lineNum">     152</span>              :   // data). The analyses of the first frequency are reused at the next ones. Online, S_E(ω)</span>
+<span id="L153"><span class="lineNum">     153</span>              :   // is given on rank 0 (|Γ| x |Γ|, column-major, in interface order). Collective.</span>
+<span id="L154"><span class="lineNum">     154</span>              :   void Condense(double omega, bool region = true);</span>
+<span id="L155"><span class="lineNum">     155</span>              :   void Condense(double omega, std::vector&lt;std::complex&lt;double&gt;&gt; &amp;&amp;S_env);</span>
+<span id="L156"><span class="lineNum">     156</span>              : </span>
+<span id="L157"><span class="lineNum">     157</span>              :   // Solve the coupled problem at the frequency of the last condensation for a batch of</span>
+<span id="L158"><span class="lineNum">     158</span>              :   // right-hand sides (full true-DOF vectors): the region with the interface loads of the</span>
+<span id="L159"><span class="lineNum">     159</span>              :   // environment sources, then the environment interior. Online, g_env on rank 0</span>
+<span id="L160"><span class="lineNum">     160</span>              :   // (|Γ| x |rhs|, column-major) is the condensation of the environment's sources, which</span>
+<span id="L161"><span class="lineNum">     161</span>              :   // replaces the environment part of the right-hand sides, and the environment interior</span>
+<span id="L162"><span class="lineNum">     162</span>              :   // of u is zero. Collective.</span>
+<span id="L163"><span class="lineNum">     163</span>              :   void Solve(const std::vector&lt;const ComplexVector *&gt; &amp;rhs, std::vector&lt;ComplexVector&gt; &amp;u,</span>
+<span id="L164"><span class="lineNum">     164</span>              :              const std::vector&lt;std::complex&lt;double&gt;&gt; *g_env = nullptr);</span>
+<span id="L165"><span class="lineNum">     165</span>              : </span>
+<span id="L166"><span class="lineNum">     166</span>              :   // Condensation onto Γ of vectors supported on the environment interior and Γ with the</span>
+<span id="L167"><span class="lineNum">     167</span>              :   // environment factorization of the last condensation, b_Γ - A_ΓE A_EE^-1 b_E, on rank 0</span>
+<span id="L168"><span class="lineNum">     168</span>              :   // (|Γ| x |b|, column-major), and with x the environment interior solutions A_EE^-1 b_E</span>
+<span id="L169"><span class="lineNum">     169</span>              :   // (true DOFs, 0 elsewhere). Offline only. Collective.</span>
+<span id="L170"><span class="lineNum">     170</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt;</span>
+<span id="L171"><span class="lineNum">     171</span>              :   CondenseEnvironment(const std::vector&lt;const ComplexVector *&gt; &amp;b,</span>
+<span id="L172"><span class="lineNum">     172</span>              :                       std::vector&lt;ComplexVector&gt; *x = nullptr);</span>
+<span id="L173"><span class="lineNum">     173</span>              : </span>
+<span id="L174"><span class="lineNum">     174</span>              :   // On rank 0, after Solve: the condensation of the environment's sources (|Γ| x |rhs|,</span>
+<span id="L175"><span class="lineNum">     175</span>              :   // offline) and the interface solution (|Γ| x |rhs|), column-major.</span>
+<span id="L176"><span class="lineNum">     176</span>              :   const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;EnvironmentSourceCondensation() const</span>
+<span id="L177"><span class="lineNum">     177</span>              :   {</span>
+<span id="L178"><span class="lineNum">     178</span>              :     return g_last;</span>
+<span id="L179"><span class="lineNum">     179</span>              :   }</span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaUNC">           0 :   const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;InterfaceSolution() const { return u_last; }</span></span>
+<span id="L181"><span class="lineNum">     181</span>              : </span>
+<span id="L182"><span class="lineNum">     182</span>              :   // S_E(ω) of the last condensation on rank 0 (|Γ| x |Γ|, column-major, complex</span>
+<span id="L183"><span class="lineNum">     183</span>              :   // symmetric), in interface order (offline), or handed over.</span>
+<span id="L184"><span class="lineNum">     184</span>              :   const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;Schur() const { return S; }</span>
+<span id="L185"><span class="lineNum">     185</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; TakeSchur() { return std::move(S); }</span>
+<span id="L186"><span class="lineNum">     186</span>              : </span>
+<span id="L187"><span class="lineNum">     187</span>              :   // Global true DOFs of the interface in interface order (replicated), and its size.</span>
+<span id="L188"><span class="lineNum">     188</span>              :   const std::vector&lt;HYPRE_BigInt&gt; &amp;InterfaceTrueDofs() const { return gamma_tdofs; }</span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaUNC">           0 :   int InterfaceSize() const { return static_cast&lt;int&gt;(gamma_tdofs.size()); }</span></span>
+<span id="L190"><span class="lineNum">     190</span>              : </span>
+<span id="L191"><span class="lineNum">     191</span>              :   // Local true-DOF classification: environment interior, interface (excluding the</span>
+<span id="L192"><span class="lineNum">     192</span>              :   // Dirichlet DOFs).</span>
+<span id="L193"><span class="lineNum">     193</span>              :   const std::vector&lt;char&gt; &amp;EnvironmentInterior() const { return is_env_int; }</span>
+<span id="L194"><span class="lineNum">     194</span>              :   const std::vector&lt;char&gt; &amp;Interface() const { return is_gamma; }</span>
+<span id="L195"><span class="lineNum">     195</span>              :   const std::vector&lt;char&gt; &amp;RegionInterior() const { return is_region_int; }</span>
+<span id="L196"><span class="lineNum">     196</span>              : </span>
+<span id="L197"><span class="lineNum">     197</span>              :   // Interface index of each local true DOF (-1 if not on Γ).</span>
+<span id="L198"><span class="lineNum">     198</span>              :   std::vector&lt;int&gt; InterfaceIndex() const;</span>
+<span id="L199"><span class="lineNum">     199</span>              : </span>
+<span id="L200"><span class="lineNum">     200</span>              :   MPI_Comm GetComm() const;</span>
+<span id="L201"><span class="lineNum">     201</span>              : </span>
+<span id="L202"><span class="lineNum">     202</span>              :   // Local true DOFs touched by the boundary elements with the given attributes.</span>
+<span id="L203"><span class="lineNum">     203</span>              :   std::vector&lt;char&gt; BoundaryTrueDofs(const std::vector&lt;int&gt; &amp;bdr_attributes) const;</span>
+<span id="L204"><span class="lineNum">     204</span>              : </span>
+<span id="L205"><span class="lineNum">     205</span>              :   // The wave ports in the environment (each wave port lies inside one side).</span>
+<span id="L206"><span class="lineNum">     206</span>              :   std::vector&lt;int&gt; EnvironmentWavePorts() const;</span>
+<span id="L207"><span class="lineNum">     207</span>              : </span>
+<span id="L208"><span class="lineNum">     208</span>              :   // A reduced model of the region against a given environment (online): Galerkin projection</span>
+<span id="L209"><span class="lineNum">     209</span>              :   // onto the real span of field snapshots, as in the adaptive driven solver. The</span>
+<span id="L210"><span class="lineNum">     210</span>              :   // environment enters through its reduced terms on Γ, which the caller forms from the</span>
+<span id="L211"><span class="lineNum">     211</span>              :   // interface rows of the basis.</span>
+<span id="L212"><span class="lineNum">     212</span>              :   //</span>
+<span id="L213"><span class="lineNum">     213</span>              :   // Add the real and imaginary parts of the fields u (true DOFs, zero in the environment</span>
+<span id="L214"><span class="lineNum">     214</span>              :   // interior) to the orthonormal basis (collective).</span>
+<span id="L215"><span class="lineNum">     215</span>              :   void AddReducedBasis(const std::vector&lt;ComplexVector&gt; &amp;u);</span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaUNC">           0 :   int ReducedDimension() const { return static_cast&lt;int&gt;(red_basis.size()); }</span></span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span>              :   // The interface rows of the basis on rank 0 (|Γ| x r, column-major, in interface order).</span>
+<span id="L219"><span class="lineNum">     219</span>              :   const std::vector&lt;double&gt; &amp;ReducedInterfaceBasis() const { return red_gamma; }</span>
+<span id="L220"><span class="lineNum">     220</span>              : </span>
+<span id="L221"><span class="lineNum">     221</span>              :   // Solve the reduced system at ω for the region parts of rhs, with the environment's</span>
+<span id="L222"><span class="lineNum">     222</span>              :   // terms A_env (r x r) and b_env (r x |rhs|), column-major on rank 0, and expand: u = V y,</span>
+<span id="L223"><span class="lineNum">     223</span>              :   // and the interface solution (InterfaceSolution) on rank 0. Collective.</span>
+<span id="L224"><span class="lineNum">     224</span>              :   void SolveReduced(double omega, const std::vector&lt;const ComplexVector *&gt; &amp;rhs,</span>
+<span id="L225"><span class="lineNum">     225</span>              :                     const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;A_env,</span>
+<span id="L226"><span class="lineNum">     226</span>              :                     const std::vector&lt;std::complex&lt;double&gt;&gt; &amp;b_env,</span>
+<span id="L227"><span class="lineNum">     227</span>              :                     std::vector&lt;ComplexVector&gt; &amp;u);</span>
+<span id="L228"><span class="lineNum">     228</span>              : </span>
+<span id="L229"><span class="lineNum">     229</span>              :   // Fingerprint of the environment, independent of the region, of the partition and of the</span>
+<span id="L230"><span class="lineNum">     230</span>              :   // DOF numbering: the global counts of environment-interior and interface DOFs, and</span>
+<span id="L231"><span class="lineNum">     231</span>              :   // r_k^T A_E(ω) r_k for three fixed fields r_k, applied with the partially assembled</span>
+<span id="L232"><span class="lineNum">     232</span>              :   // environment operators. Collective.</span>
+<span id="L233"><span class="lineNum">     233</span>              :   std::vector&lt;double&gt; EnvironmentFingerprint(double omega) const;</span>
+<span id="L234"><span class="lineNum">     234</span>              : </span>
+<span id="L235"><span class="lineNum">     235</span>              :   // Fingerprint of the environment part b_E of a right-hand side, independent of the</span>
+<span id="L236"><span class="lineNum">     236</span>              :   // partition (which changes the basis of some Nédélec DOFs): whether b_E is nonzero, and</span>
+<span id="L237"><span class="lineNum">     237</span>              :   // r_k^T b_E for the three fixed fields r_k (complex). Collective.</span>
+<span id="L238"><span class="lineNum">     238</span>              :   std::vector&lt;double&gt; SourceFingerprint(const ComplexVector &amp;b) const;</span>
+<span id="L239"><span class="lineNum">     239</span>              : </span>
+<span id="L240"><span class="lineNum">     240</span>              : private:</span>
+<span id="L241"><span class="lineNum">     241</span>              :   SpaceOperator &amp;space_op;</span>
+<span id="L242"><span class="lineNum">     242</span>              :   bool online;</span>
+<span id="L243"><span class="lineNum">     243</span>              :   std::vector&lt;char&gt; is_env_int, is_gamma, is_region_int;</span>
+<span id="L244"><span class="lineNum">     244</span>              :   std::vector&lt;HYPRE_BigInt&gt; gamma_tdofs;</span>
+<span id="L245"><span class="lineNum">     245</span>              :   std::vector&lt;int&gt; gamma_cnt, gamma_disp;  // interface DOFs per rank</span>
+<span id="L246"><span class="lineNum">     246</span>              : </span>
+<span id="L247"><span class="lineNum">     247</span>              :   // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), factored by</span>
+<span id="L248"><span class="lineNum">     248</span>              :   // MUMPS on the side's interior and Γ: the lower-triangle pattern and the entries of the</span>
+<span id="L249"><span class="lineNum">     249</span>              :   // frequency-independent parts in pattern order (the assembled operators are not kept).</span>
+<span id="L250"><span class="lineNum">     250</span>              :   struct Side</span>
+<span id="L251"><span class="lineNum">     251</span>              :   {</span>
+<span id="L252"><span class="lineNum">     252</span>              :     std::vector&lt;int&gt; attrs;</span>
+<span id="L253"><span class="lineNum">     253</span>              :     // Local true DOFs pinned in the side's operator: outside its interior and Γ.</span>
+<span id="L254"><span class="lineNum">     254</span>              :     mfem::Array&lt;int&gt; pinned;</span>
+<span id="L255"><span class="lineNum">     255</span>              :     // The factored system, on the side's interior and Γ: its local true DOFs (the local</span>
+<span id="L256"><span class="lineNum">     256</span>              :     // rows), global size, and its indices of the interface DOFs.</span>
+<span id="L257"><span class="lineNum">     257</span>              :     std::vector&lt;int&gt; rows;</span>
+<span id="L258"><span class="lineNum">     258</span>              :     HYPRE_BigInt n_sys = 0;</span>
+<span id="L259"><span class="lineNum">     259</span>              :     std::vector&lt;HYPRE_BigInt&gt; gamma_sys;</span>
+<span id="L260"><span class="lineNum">     260</span>              :     // Lower-triangle pattern of the local rows (row_ptr over the local true DOFs, global</span>
+<span id="L261"><span class="lineNum">     261</span>              :     // columns jcn, 1-based), with the entries of the parts on it.</span>
+<span id="L262"><span class="lineNum">     262</span>              :     std::vector&lt;int&gt; row_ptr, jcn;</span>
+<span id="L263"><span class="lineNum">     263</span>              :     std::vector&lt;std::vector&lt;double&gt;&gt; parts;  // Kr, Ki, Cr, Ci, Mr, Mi (empty if absent)</span>
+<span id="L264"><span class="lineNum">     264</span>              :     bool extra = false;                      // A2(ω) is present</span>
+<span id="L265"><span class="lineNum">     265</span>              :     // The local entries (1-based COO in the system's indices) at the first frequency,</span>
+<span id="L266"><span class="lineNum">     266</span>              :     // until factored.</span>
+<span id="L267"><span class="lineNum">     267</span>              :     std::vector&lt;int&gt; irn_sys, jcn_sys;</span>
+<span id="L268"><span class="lineNum">     268</span>              :     std::vector&lt;std::complex&lt;double&gt;&gt; val;</span>
+<span id="L269"><span class="lineNum">     269</span>              :     std::unique_ptr&lt;MumpsSchurSolverT&lt;std::complex&lt;double&gt;&gt;&gt; schur;</span>
+<span id="L270"><span class="lineNum">     270</span>              :     // The rank-one modal terms g s sᵀ of the side's wave ports, bordering the system: an</span>
+<span id="L271"><span class="lineNum">     271</span>              :     // extra unknown y per term after its n_dofs DOFs, on the last rank, with the entries</span>
+<span id="L272"><span class="lineNum">     272</span>              :     // √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on its</span>
+<span id="L273"><span class="lineNum">     273</span>              :     // diagonal (eliminating y adds g s sᵀ), σ = border. The entries follow those of the</span>
+<span id="L274"><span class="lineNum">     274</span>              :     // pattern.</span>
+<span id="L275"><span class="lineNum">     275</span>              :     std::vector&lt;int&gt; wave_ports, term_ports;</span>
+<span id="L276"><span class="lineNum">     276</span>              :     std::vector&lt;std::vector&lt;int&gt;&gt; term_dofs;</span>
+<span id="L277"><span class="lineNum">     277</span>              :     HYPRE_BigInt n_dofs = 0;</span>
+<span id="L278"><span class="lineNum">     278</span>              :     double border = 1.0;</span>
+<span id="L279"><span class="lineNum">     279</span>              :   };</span>
+<span id="L280"><span class="lineNum">     280</span>              :   Side env, region;</span>
+<span id="L281"><span class="lineNum">     281</span>              :   bool solvable = false;  // the region is factored against the environment</span>
+<span id="L282"><span class="lineNum">     282</span>              :   // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots; the</span>
+<span id="L283"><span class="lineNum">     283</span>              :   // environment's source condensation and the interface solution of the last Solve.</span>
+<span id="L284"><span class="lineNum">     284</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; S, T, g_last, u_last;</span>
+<span id="L285"><span class="lineNum">     285</span>              :   std::vector&lt;int&gt; T_piv;</span>
+<span id="L286"><span class="lineNum">     286</span>              : </span>
+<span id="L287"><span class="lineNum">     287</span>              :   // The local true DOFs of the wave ports (each in the wave_ports of its side).</span>
+<span id="L288"><span class="lineNum">     288</span>              :   std::map&lt;int, std::vector&lt;char&gt;&gt; wave_port_dofs;</span>
+<span id="L289"><span class="lineNum">     289</span>              : </span>
+<span id="L290"><span class="lineNum">     290</span>              :   // The reduced region: its operator parts (Kr, Ki, Cr, Ci, Mr, Mi on the region, with the</span>
+<span id="L291"><span class="lineNum">     291</span>              :   // pinned DOFs eliminated), the basis V, the parts' projections V^T P V (r x r,</span>
+<span id="L292"><span class="lineNum">     292</span>              :   // column-major), and the interface rows of V on rank 0.</span>
+<span id="L293"><span class="lineNum">     293</span>              :   std::vector&lt;std::unique_ptr&lt;mfem::HypreParMatrix&gt;&gt; red_ops;</span>
+<span id="L294"><span class="lineNum">     294</span>              :   std::vector&lt;Vector&gt; red_basis;</span>
+<span id="L295"><span class="lineNum">     295</span>              :   std::vector&lt;std::vector&lt;double&gt;&gt; red_parts;</span>
+<span id="L296"><span class="lineNum">     296</span>              :   std::vector&lt;double&gt; red_gamma;</span>
+<span id="L297"><span class="lineNum">     297</span>              : </span>
+<span id="L298"><span class="lineNum">     298</span>              :   // Factor S_R + S_E on rank 0.</span>
+<span id="L299"><span class="lineNum">     299</span>              :   void FactorInterface();</span>
+<span id="L300"><span class="lineNum">     300</span>              : </span>
+<span id="L301"><span class="lineNum">     301</span>              :   // The rank-one modal terms of a side's wave ports at ω with their ports, in a fixed</span>
+<span id="L302"><span class="lineNum">     302</span>              :   // order.</span>
+<span id="L303"><span class="lineNum">     303</span>              :   std::vector&lt;std::pair&lt;int, WavePortOperator::ModalCorrectionTerm&gt;&gt;</span>
+<span id="L304"><span class="lineNum">     304</span>              :   ModalTerms(const Side &amp;side, double omega);</span>
+<span id="L305"><span class="lineNum">     305</span>              : </span>
+<span id="L306"><span class="lineNum">     306</span>              :   // The assembled parts of A2(ω) of a side, with the pinned DOFs eliminated.</span>
+<span id="L307"><span class="lineNum">     307</span>              :   std::vector&lt;std::unique_ptr&lt;mfem::HypreParMatrix&gt;&gt; ExtraParts(const Side &amp;side,</span>
+<span id="L308"><span class="lineNum">     308</span>              :                                                                 double omega);</span>
+<span id="L309"><span class="lineNum">     309</span>              : </span>
+<span id="L310"><span class="lineNum">     310</span>              :   // The pattern and entries of a side at the first frequency.</span>
+<span id="L311"><span class="lineNum">     311</span>              :   void Setup(Side &amp;side, double omega);</span>
+<span id="L312"><span class="lineNum">     312</span>              : </span>
+<span id="L313"><span class="lineNum">     313</span>              :   // Factor a side (set up at ω), or refactor it at another frequency.</span>
+<span id="L314"><span class="lineNum">     314</span>              :   void Factor(Side &amp;side, double omega);</span>
+<span id="L315"><span class="lineNum">     315</span>              : </span>
+<span id="L316"><span class="lineNum">     316</span>              :   // The entries of a side at ω on its pattern, given its A2(ω) and modal terms.</span>
+<span id="L317"><span class="lineNum">     317</span>              :   void Fill(const Side &amp;side, double omega,</span>
+<span id="L318"><span class="lineNum">     318</span>              :             const std::vector&lt;std::unique_ptr&lt;mfem::HypreParMatrix&gt;&gt; &amp;extra,</span>
+<span id="L319"><span class="lineNum">     319</span>              :             const std::vector&lt;std::pair&lt;int, WavePortOperator::ModalCorrectionTerm&gt;&gt; &amp;terms,</span>
+<span id="L320"><span class="lineNum">     320</span>              :             std::vector&lt;std::complex&lt;double&gt;&gt; &amp;val) const;</span>
+<span id="L321"><span class="lineNum">     321</span>              : };</span>
+<span id="L322"><span class="lineNum">     322</span>              : </span>
+<span id="L323"><span class="lineNum">     323</span>              : }  // namespace palace</span>
+<span id="L324"><span class="lineNum">     324</span>              : </span>
+<span id="L325"><span class="lineNum">     325</span>              : #endif  // PALACE_MODELS_DRIVEN_SUBSTRUCTURE_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
