@@ -424,7 +424,12 @@ correctness, not iteration count.
    Gmsh v2.2 `$NodeData` (with `$Nodes`) and VTU ASCII point data; `BuildGridFunction` maps
    the points to a P1 grid function on the solve mesh by coordinate matching. Tests read
    both formats back and validate config parsing.
-6. **Preconditioner** field-awareness (or documented fallback).
+6. **Preconditioner** field-awareness (or documented fallback). **DONE (documented
+   fallback)** — the p-multigrid preconditioner keeps constant material coefficients, which
+   affects only the iteration count, not the converged eigenvalue. A p-multigrid test with a
+   spatially-varying permittivity confirms it converges to the same mode as the direct
+   solve. Making the preconditioner field-aware (splitting the combined ε/μ⁻¹ mass
+   coefficients and adding two-field Q-function variants) is deferred.
 7. **Docs / schema / CHANGELOG.**
 8. **Phase 2 follow-ups**: refinement propagation, 3D→2D parent projection, anisotropic
    and vector fields, generalizing to other solvers.

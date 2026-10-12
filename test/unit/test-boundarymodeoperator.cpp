@@ -303,7 +303,8 @@ SolveRectangularModesMultigrid(int mg_max_levels,
 // uniform in y with E normal to the y-walls, so PEC there is satisfied exactly, and the
 // Gaussian tail makes the PEC truncation error exponentially small for W >> sqrt(x0/omega).
 std::complex<double> SolveParabolicSlabMode(int nx, int ny, int order, double W, double H,
-                                            double x0, double eps_c, double omega)
+                                            double x0, double eps_c, double omega,
+                                            int mg_max_levels = 1)
 {
   const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
   MPI_Comm comm = Mpi::World();
@@ -321,6 +322,7 @@ std::complex<double> SolveParabolicSlabMode(int nx, int ny, int order, double W,
   iodata.solver.boundary_mode.tol = 1.0e-11;
   iodata.solver.linear.tol = 1.0e-12;
   iodata.solver.linear.max_it = 200;
+  iodata.solver.linear.mg_max_levels = mg_max_levels;
 
   auto serial_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian2D(
       nx, ny, mfem::Element::QUADRILATERAL, false, 2.0 * W, H));
@@ -921,6 +923,23 @@ TEST_CASE("BoundaryModeOperator parabolic-index slab convergence",
     prev_err = err;
   }
   CHECK(prev_err < 5.0e-6);
+}
+
+TEST_CASE("BoundaryModeOperator parabolic-index slab p-multigrid with fields",
+          "[boundarymodeoperator][Serial]")
+{
+  // The p-multigrid preconditioner uses constant material coefficients (the field is
+  // applied only to the exact operator), so verify it still converges to the same mode with
+  // a spatially-varying permittivity.
+  constexpr double W = 6.0, H = 1.0, x0 = 1.0, eps_c = 4.0, omega = 1.0;
+  const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
+  const auto direct = SolveParabolicSlabMode(16, 1, 2, W, H, x0, eps_c, omega, 1);
+  const auto multigrid = SolveParabolicSlabMode(16, 1, 2, W, H, x0, eps_c, omega, 2);
+  CAPTURE(direct, multigrid, kn_exact);
+  REQUIRE(std::abs(multigrid.imag()) < 1.0e-6 * kn_exact);
+  CHECK_THAT(multigrid.real(), WithinRel(direct.real(), 1.0e-6));
+  CHECK_THAT(multigrid.imag(), WithinAbs(direct.imag(), 1.0e-8));
+  CHECK_THAT(direct.real(), WithinRel(kn_exact, 1.0e-2));
 }
 
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
