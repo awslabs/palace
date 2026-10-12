@@ -19,6 +19,7 @@
 #include "drivers/boundarymodesolver.hpp"
 
 #include "fem/fespace.hpp"
+#include "fem/materialfield.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
@@ -207,7 +208,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 // the BoundaryMode driver, which uses p-multigrid preconditioning when mg_max_levels > 1.
 std::vector<std::complex<double>>
 SolveRectangularModesMultigrid(int mg_max_levels,
-                               const std::function<void(IoData &)> &configure_bcs)
+                               const std::function<void(IoData &)> &configure_bcs,
+                               bool use_fields = false)
 {
   constexpr double width = 1000.0, height = 500.0, freq_ghz = 100.0, eig_tol = 1.0e-8;
   constexpr int order = 2, num_modes = 1;
@@ -239,8 +241,32 @@ SolveRectangularModesMultigrid(int mg_max_levels,
       std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
   iodata.CheckConfiguration();
 
+  // Optional constant material fields matching the config material (epsilon_r = 4,
+  // mu_r = 1), used to exercise the GridFunction coefficient path end to end.
+  std::unique_ptr<mfem::L2_FECollection> l2_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpace> l2_fes;
+  std::unique_ptr<mfem::ParGridFunction> eps_gf, mu_gf;
+  std::unique_ptr<MaterialField> eps_field, muinv_field;
+  if (use_fields)
+  {
+    l2_fec = std::make_unique<mfem::L2_FECollection>(0, mesh.back()->Dimension());
+    l2_fes = std::make_unique<mfem::ParFiniteElementSpace>(&mesh.back()->Get(),
+                                                           l2_fec.get());
+    eps_gf = std::make_unique<mfem::ParGridFunction>(l2_fes.get());
+    mu_gf = std::make_unique<mfem::ParGridFunction>(l2_fes.get());
+    mfem::Array<int> dofs;
+    for (int e = 0; e < mesh.back()->GetNE(); e++)
+    {
+      l2_fes->GetElementDofs(e, dofs);
+      (*eps_gf)(dofs[0]) = 4.0;
+      (*mu_gf)(dofs[0]) = 1.0;
+    }
+    eps_field = std::make_unique<MaterialField>(*eps_gf);
+    muinv_field = std::make_unique<MaterialField>(*mu_gf);
+  }
+
   MaterialOperator mat_op(iodata, *mesh.back());
-  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op, eps_field.get(), muinv_field.get());
   REQUIRE(mode_op.GetNDSpaceHierarchy().GetNumLevels() ==
           static_cast<std::size_t>(mg_max_levels));
 
@@ -785,6 +811,19 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator]
           imp.Ls = 1.0e-8;
         });
   }
+}
+
+TEST_CASE("BoundaryModeOperator constant material field equivalence",
+          "[boundarymodeoperator][Serial]")
+{
+  // A constant GridFunction material field matching the config material must reproduce the
+  // default material assembly through the full BoundaryModeOperator path.
+  const auto direct = SolveRectangularModesMultigrid(1, [](IoData &) {});
+  const auto fields = SolveRectangularModesMultigrid(1, [](IoData &) {}, true);
+  REQUIRE(direct.size() >= 1);
+  REQUIRE(fields.size() >= 1);
+  CHECK_THAT(fields[0].real(), WithinRel(direct[0].real(), 1.0e-8));
+  CHECK_THAT(fields[0].imag(), WithinAbs(direct[0].imag(), 1.0e-10));
 }
 
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",

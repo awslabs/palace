@@ -17,6 +17,7 @@ namespace palace
 
 class FarfieldBoundaryOperator;
 class FiniteElementSpace;
+class MaterialField;
 class MaterialOperator;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
@@ -74,7 +75,9 @@ public:
                     SurfaceRationalImpedanceOperator &surf_rz_op,
                     const mfem::HypreParMatrix &Bttr, const mfem::HypreParMatrix *Atnr,
                     const mfem::HypreParMatrix *Atni, const mfem::HypreParMatrix *Btnr,
-                    const mfem::Array<int> &dbc_tdof_list);
+                    const mfem::Array<int> &dbc_tdof_list,
+                    const MaterialField *eps_field = nullptr,
+                    const MaterialField *muinv_field = nullptr);
 
   const std::vector<OperatorComponent> &GetComponents() const { return components; }
   std::complex<double> EvaluateCoefficient(const OperatorComponent &component,
@@ -84,9 +87,11 @@ public:
 
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const MaterialField *muinv_field = nullptr);
 ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const MaterialField *muinv_field = nullptr);
 
 ComplexHypreParMatrix BuildSystemMatrixA(
     const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,

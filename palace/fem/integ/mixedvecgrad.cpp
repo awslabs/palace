@@ -39,14 +39,27 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   MFEM_VERIFY(trial_num_comp == test_num_comp && trial_num_comp == 1,
               "MixedVectorGradientIntegrator requires test and trial spaces with a single "
               "component!");
+  MFEM_VERIFY(!field_data ||
+                  (space_dim == 2 && dim == 2 &&
+                   test_map_type == mfem::FiniteElement::H_CURL),
+              "Spatially-varying material coefficients are only supported for the 2D "
+              "H(curl) mixed gradient!");
   switch (10 * space_dim + dim)
   {
     case 22:
       if (test_map_type == mfem::FiniteElement::H_CURL)
       {
-        info.apply_qf = assemble_q_data ? f_build_hcurl_22 : f_apply_hcurl_22;
-        info.apply_qf_path = PalaceQFunctionRelativePath(
-            assemble_q_data ? f_build_hcurl_22_loc : f_apply_hcurl_22_loc);
+        if (field_data)
+        {
+          info.apply_qf = f_apply_hcurl_field_22;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurl_field_22_loc);
+        }
+        else
+        {
+          info.apply_qf = assemble_q_data ? f_build_hcurl_22 : f_apply_hcurl_22;
+          info.apply_qf_path = PalaceQFunctionRelativePath(
+              assemble_q_data ? f_build_hcurl_22_loc : f_apply_hcurl_22_loc);
+        }
       }
       else if (test_map_type == mfem::FiniteElement::H_DIV)
       {

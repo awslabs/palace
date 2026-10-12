@@ -37,13 +37,24 @@ void CurlCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
   MFEM_VERIFY(trial_num_comp == test_num_comp && trial_num_comp == 1,
               "CurlCurlIntegrator requires test and trial spaces with a single component!");
+  MFEM_VERIFY(!field_data || (space_dim == 2 && dim == 2),
+              "Spatially-varying material coefficients are only supported for 2D "
+              "curl-curl!");
   switch (10 * space_dim + dim)
   {
     case 22:
       // Curl in 2D has a single component.
-      info.apply_qf = assemble_q_data ? f_build_l2_1 : f_apply_l2_1;
-      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_l2_1_loc
-                                                                       : f_apply_l2_1_loc);
+      if (field_data)
+      {
+        info.apply_qf = f_apply_l2_field_1;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2_field_1_loc);
+      }
+      else
+      {
+        info.apply_qf = assemble_q_data ? f_build_l2_1 : f_apply_l2_1;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_l2_1_loc : f_apply_l2_1_loc);
+      }
       break;
     case 33:
       info.apply_qf = assemble_q_data ? f_build_hdiv_33 : f_apply_hdiv_33;

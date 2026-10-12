@@ -108,7 +108,8 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
   Bttr = bmo.GetBtt();
   mode_op_model = std::make_unique<mode_assembly::ModeOperatorModel>(
       nd_fespace, h1_fespace, mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
+      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list, bmo.GetPermittivityField(),
+      bmo.GetInvPermeabilityField());
 
   Init(nd_fespace.GetComm());
 }

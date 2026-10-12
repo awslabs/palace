@@ -44,11 +44,28 @@ MaterialPropertyCoefficient MakeAttributeCoefficient(
   return MaterialPropertyCoefficient(attr_mat, mat_coeff);
 }
 
-// Relative error of the operators A and B applied to a deterministic test vector.
-double RelativeOperatorError(const Operator &A, const Operator &B, int size, MPI_Comm comm)
+// Unit scalar coefficient (times `a`) over all attributes, used so that a field supplies
+// the property value while the sign/scaling stays in the attribute coefficient.
+MaterialPropertyCoefficient UnitCoefficient(const Mesh &mesh, double a)
 {
-  Vector x(size), y1(size), y2(size);
-  for (int i = 0; i < size; i++)
+  const auto &loc_attr = mesh.GetCeedAttributes();
+  mfem::Array<int> attr_mat(loc_attr.size());
+  mfem::DenseTensor mat_coeff;
+  mat_coeff.SetSize(1, 1, loc_attr.size());
+  for (const auto &[global_attr, ceed_attr] : loc_attr)
+  {
+    attr_mat[ceed_attr - 1] = ceed_attr - 1;
+    mat_coeff(0, 0, ceed_attr - 1) = 1.0;
+  }
+  return MaterialPropertyCoefficient(attr_mat, mat_coeff, a);
+}
+
+// Relative error of the operators A and B applied to a deterministic test vector.
+double RelativeOperatorError(const Operator &A, const Operator &B, MPI_Comm comm)
+{
+  const int in_size = A.Width(), out_size = A.Height();
+  Vector x(in_size), y1(out_size), y2(out_size);
+  for (int i = 0; i < in_size; i++)
   {
     x[i] = 0.3 + std::sin(1.7 * (i + 1)) + 0.1 * (i % 7);
   }
@@ -118,7 +135,7 @@ TEST_CASE("MaterialField elementwise-constant H1 mass equivalence",
   a_field.AddDomainIntegrator<MassIntegrator>().SetMaterialField(&field);
   auto A_field = a_field.FullAssemble(false);
 
-  CHECK(RelativeOperatorError(*A_ref, *A_field, fespace.GetVSize(), Mpi::World()) < 1.0e-13);
+  CHECK(RelativeOperatorError(*A_ref, *A_field, Mpi::World()) < 1.0e-13);
 }
 
 // Verify that the field data cached for a smooth higher-order grid function matches direct
@@ -169,6 +186,93 @@ TEST_CASE("MaterialField smooth quadrature sampling", "[materialfield][Serial][P
     }
   }
   CHECK(max_err == 0.0);
+}
+
+// The mode-solver domain integrators must reproduce the constant material assembly when a
+// matching constant field is attached and the attribute coefficient is reduced to a unit
+// (sign-only) coefficient, for each sign convention used by the mode operator.
+TEST_CASE("Mode integrator material field equivalence", "[materialfield][Serial][Parallel]")
+{
+  constexpr int order = 1;
+  SetIntegrationOrder(order);
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(5, 4, mfem::Element::QUADRILATERAL, false, 2.0, 1.0));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh mesh(std::move(par_mesh));
+
+  auto nd_fec = std::make_unique<mfem::ND_FECollection>(order, mesh.Dimension());
+  auto h1_fec = std::make_unique<mfem::H1_FECollection>(order, mesh.Dimension());
+  FiniteElementSpace nd_fespace(mesh, nd_fec.get());
+  FiniteElementSpace h1_fespace(mesh, h1_fec.get());
+  MPI_Comm comm = Mpi::World();
+
+  constexpr double muinv = 2.5;
+  MaterialPropertyCoefficient mu_pos = MakeAttributeCoefficient(mesh, [](int) { return muinv; });
+  MaterialPropertyCoefficient mu_neg = mu_pos;
+  mu_neg *= -1.0;
+  // Named (not temporary) unit coefficients: the integrator stores a pointer to them.
+  MaterialPropertyCoefficient mu_unit_pos = UnitCoefficient(mesh, 1.0);
+  MaterialPropertyCoefficient mu_unit_neg = UnitCoefficient(mesh, -1.0);
+
+  // Elementwise-constant (L2, order 0) inverse permeability field.
+  mfem::L2_FECollection l2_fec(0, mesh.Dimension());
+  mfem::ParFiniteElementSpace l2_fes(&mesh.Get(), &l2_fec);
+  mfem::ParGridFunction mu_gf(&l2_fes);
+  mfem::Array<int> dofs;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    l2_fes.GetElementDofs(e, dofs);
+    mu_gf(dofs[0]) = muinv;
+  }
+  MaterialField mu_field(mu_gf);
+
+  // ND mass: +muinv.
+  {
+    BilinearForm ref(nd_fespace);
+    ref.AddDomainIntegrator<VectorFEMassIntegrator>(mu_pos);
+    auto A_ref = ref.FullAssemble(false);
+    BilinearForm field(nd_fespace);
+    field.AddDomainIntegrator<VectorFEMassIntegrator>(mu_unit_pos)
+        .SetMaterialField(&mu_field);
+    auto A_field = field.FullAssemble(false);
+    CHECK(RelativeOperatorError(*A_ref, *A_field, comm) < 1.0e-13);
+  }
+
+  // Curl-curl (2D scalar): +muinv.
+  {
+    BilinearForm ref(nd_fespace);
+    ref.AddDomainIntegrator<CurlCurlIntegrator>(mu_pos);
+    auto A_ref = ref.FullAssemble(false);
+    BilinearForm field(nd_fespace);
+    field.AddDomainIntegrator<CurlCurlIntegrator>(mu_unit_pos)
+        .SetMaterialField(&mu_field);
+    auto A_field = field.FullAssemble(false);
+    CHECK(RelativeOperatorError(*A_ref, *A_field, comm) < 1.0e-13);
+  }
+
+  // Mixed gradient (H1 trial, ND test): -muinv.
+  {
+    BilinearForm ref(h1_fespace, nd_fespace);
+    ref.AddDomainIntegrator<MixedVectorGradientIntegrator>(mu_neg);
+    auto A_ref = ref.FullAssemble(false);
+    BilinearForm field(h1_fespace, nd_fespace);
+    field.AddDomainIntegrator<MixedVectorGradientIntegrator>(mu_unit_neg)
+        .SetMaterialField(&mu_field);
+    auto A_field = field.FullAssemble(false);
+    CHECK(RelativeOperatorError(*A_ref, *A_field, comm) < 1.0e-13);
+  }
+
+  // H1 diffusion: -muinv.
+  {
+    BilinearForm ref(h1_fespace);
+    ref.AddDomainIntegrator<DiffusionIntegrator>(mu_neg);
+    auto A_ref = ref.FullAssemble(false);
+    BilinearForm field(h1_fespace);
+    field.AddDomainIntegrator<DiffusionIntegrator>(mu_unit_neg)
+        .SetMaterialField(&mu_field);
+    auto A_field = field.FullAssemble(false);
+    CHECK(RelativeOperatorError(*A_ref, *A_field, comm) < 1.0e-13);
+  }
 }
 
 }  // namespace palace

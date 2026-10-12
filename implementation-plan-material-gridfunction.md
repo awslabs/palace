@@ -389,8 +389,7 @@ correctness, not iteration count.
 
 ## 6. Work breakdown (ordered)
 
-> **Status:** Phase 1 complete (mechanism + H1 mass field variant + tests). Phases 2–8
-> pending.
+> **Status:** Phases 1–2 complete. Phases 3–8 pending.
 
 1. **`MaterialField` + integrator plumbing** (Q-functions, `AssembleCeedOperator`,
    `BilinearFormIntegrator`, `PartialAssemble`). Land the constant-field equivalence test
@@ -399,6 +398,14 @@ correctness, not iteration count.
    parameter, eager cache warming in `PartialAssemble`; tests in
    `test/unit/test-materialfield.cpp` (elementwise-constant exact equivalence and smooth
    P2 sampling, serial and 2-rank) pass, and `[libceed]`/`[coefficient]` regressions pass.
+2. **Exact mode operator wiring**: `AssembleAtn`/`AssembleBtt`/`ModeOperatorModel` and the
+   direct-API seam. **DONE** — field-aware `f_apply_hcurl_field_22` (shared by ND mass, H1
+   diffusion, and the mixed gradient) and `f_apply_l2_field_1` (2D curl-curl) wired into
+   the four integrators; `AssembleAtn`/`AssembleBtt`/`ModeOperatorModel` replace the
+   material constant with a sign-only unit coefficient and attach the field;
+   `BoundaryModeOperator` accepts/exposes the ε and μ⁻¹ fields and `ModeEigenSolver`
+   forwards them. A mode-integrator equivalence test and an end-to-end
+   `BoundaryModeOperator` constant-field equivalence test pass.
 2. **Exact mode operator wiring**: `AssembleAtn`/`AssembleBtt`/`ModeOperatorModel` and the
    direct-API seam.
 3. **Convergence unit test** (P2 parabola, direct API) — validates the core feature.
