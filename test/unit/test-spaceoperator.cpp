@@ -413,6 +413,109 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
   }
 }
 
+TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  // Unit cube (vacuum, lossless) with a strongly absorbing PML layer z ∈ [0.75, 1]
+  // (attribute 2), with two multigrid levels.
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) > 0.75) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  constexpr double omega = 2.0;
+  auto MakeSpaceOperator = [&](bool pc_mat_real, bool complex_coarse_solve)
+  {
+    config::SolverData solver;
+    solver.order = 2;
+    solver.linear.mg_max_levels = 2;
+    solver.linear.pc_mat_real = pc_mat_real;
+    solver.linear.pc_mat_shifted = 0;
+    solver.linear.complex_coarse_solve = complex_coarse_solve;
+    fem::DefaultIntegrationOrder::p_trial = solver.order;
+    config::MaterialData vacuum;
+    vacuum.attributes = {1, 2};
+    config::PMLData pml;
+    pml.attributes = {2};
+    pml.reference_frequency = omega;
+    pml.sigma_max = {0.0, 0.0, 100.0};
+    config::DomainData domains;
+    domains.attributes = {1, 2};
+    domains.materials = {vacuum};
+    domains.pml = {pml};
+    config::BoundaryData boundaries;
+    Units units(1.0, 1.0);
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries, ProblemType::DRIVEN,
+                                           units, mesh);
+  };
+  auto Coarse = [](const std::unique_ptr<ComplexOperator> &P) -> const ComplexOperator &
+  {
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    REQUIRE(mg->GetNumLevels() == 2);
+    return mg->GetOperatorAtLevel(0);
+  };
+
+  // Real-valued approximation of the preconditioner (PCMatReal).
+  auto real_op = MakeSpaceOperator(true, false);
+  auto P_real = real_op->GetPreconditionerMatrix<ComplexOperator>(
+      1.0 + 0.0i, 0.0 + 0.0i, -omega * omega + 0.0i, omega);
+  const ComplexOperator &B_real = Coarse(P_real);
+  REQUIRE(B_real.Real());
+  REQUIRE(!B_real.Imag());
+  Vector x(B_real.Width()), y_real(B_real.Height());
+  x.UseDevice(true);
+  y_real.UseDevice(true);
+  x.Randomize(42 + Mpi::Rank(comm));
+  B_real.Real()->Mult(x, y_real);
+
+  // With a real-valued coarse solve, the coarse-level operator of the complex
+  // preconditioner has the real-valued approximation Re{c} |T| of the PML terms as its real
+  // part, and no PML terms in its imaginary part (zero for this lossless problem): the sum
+  // of the two parts factored by the coarse solver is the coarse-level operator of the
+  // real-valued approximation.
+  for (bool complex_coarse_solve : {false, true})
+  {
+    auto space_op = MakeSpaceOperator(false, complex_coarse_solve);
+    auto P = space_op->GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 0.0 + 0.0i, -omega * omega + 0.0i, omega);
+    const ComplexOperator &B = Coarse(P);
+    REQUIRE(B.Real());
+    Vector y(B.Height()), t(B.Height());
+    y.UseDevice(true);
+    t.UseDevice(true);
+    B.Real()->Mult(x, y);
+    if (B.Imag())
+    {
+      B.Imag()->Mult(x, t);
+      y += t;
+    }
+    t = y;
+    t -= y_real;
+    const double err = linalg::Norml2(comm, t) / linalg::Norml2(comm, y_real);
+    INFO("ComplexCoarseSolve = " << complex_coarse_solve);
+    if (complex_coarse_solve)
+    {
+      // The complex coarse-level operator has the exact PML terms.
+      CHECK(err > 1.0e-2);
+    }
+    else
+    {
+      CHECK_THAT(err, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+    }
+  }
+}
+
 TEST_CASE("SpaceOperator PML blocks with static and frequency-dependent stretches",
           "[spaceoperator][pml][Serial][Parallel]")
 {

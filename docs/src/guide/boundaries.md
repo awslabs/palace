@@ -192,9 +192,13 @@ smoothers of the geometric multigrid preconditioner do not converge. By default
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
 the multigrid preconditioner is therefore complemented by a sparse direct solve of the
 equations of the unknowns of the PML elements (except those shared with the physical
-region), which restores the convergence of the multigrid preconditioner without PML. This
-is affordable when the PML regions hold a small fraction of the unknowns, as is typical when
-the mesh is coarse in the layer compared to the physical region. Otherwise, a sparse direct
+region), which restores the convergence of the multigrid preconditioner without PML. The
+real-valued coarse-level solve (`"ComplexCoarseSolve": false`) uses the PML terms with the
+magnitudes of the stretch factors, those of a real coordinate stretch, since the
+real-valued approximation of the PML terms of strongly absorbing layers is strongly
+indefinite. The PML subdomain solve is affordable when the PML regions hold a small fraction
+of the unknowns, as is typical when the mesh is coarse in the layer compared to the physical
+region. Otherwise, a sparse direct
 solve of the whole system (`"MGMaxLevels": 1` and `"ComplexCoarseSolve": true`) costs about
 as much. Simulations with PML regions
 therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS): the
