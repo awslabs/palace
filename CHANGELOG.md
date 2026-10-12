@@ -25,6 +25,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     via `KineticInductance`); a `FluxLoop` over such a film imposes a prescribed fluxoid and
     the total inductance is read from the field energy.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added spatially-varying scalar relative permittivity and permeability fields to the 2D
+    boundary mode solver via `Solver.BoundaryMode.MaterialFields`. Fields are read from a
+    Gmsh (`.msh` `$NodeData`) or VTK/VTU point-data file and consumed as GridFunction
+    coefficients sampled at the solver quadrature points. SchemaVer 2-3-0.
+    [Issue 925](https://github.com/awslabs/palace/issues/925).
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
     London magnetostatic solve SPD-solvable by AMS.
     [PR 929](https://github.com/awslabs/palace/pull/929).

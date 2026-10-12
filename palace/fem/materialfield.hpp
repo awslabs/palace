@@ -57,10 +57,13 @@ public:
   // bound).
   double GetLocalMax() const { return local_max; }
 
+  // Minimum grid function coefficient over this process.
+  double GetLocalMin() const { return local_min; }
+
 private:
   const mfem::ParGridFunction *gf;
   double scaling;
-  double local_max;
+  double local_max, local_min;
   mutable ceed::CeedObjectMap<CeedMaterialFieldData> data;
 
   CeedMaterialFieldData BuildData(Ceed ceed, mfem::Geometry::Type geom,

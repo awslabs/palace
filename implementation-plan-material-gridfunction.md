@@ -414,8 +414,16 @@ correctness, not iteration count.
 2. **Exact mode operator wiring**: `AssembleAtn`/`AssembleBtt`/`ModeOperatorModel` and the
    direct-API seam.
 3. **Convergence unit test** (P2 parabola, direct API) — validates the core feature.
-4. **Config + driver wiring + auto target**.
-5. **Field reader** (`gridfunctionio.*`) + reader tests.
+4. **Config + driver wiring + auto target**. **DONE** — `Solver.BoundaryMode.MaterialFields`
+   (`Permittivity`/`Permeability` `{File, Name}`) parsed into `BoundaryModeSolverData`;
+   `BoundaryModeSolver::Solve` reads the files, scales to the nondimensional mesh, inverts
+   the permeability, builds `MaterialField`s, and passes them to `BoundaryModeOperator`;
+   the auto shift target uses the field extrema. Schema updated (SchemaVer 2-3-0) with docs
+   and a CHANGELOG entry.
+5. **Field reader** (`gridfunctionio.*`) + reader tests. **DONE** — `ReadFieldFile` parses
+   Gmsh v2.2 `$NodeData` (with `$Nodes`) and VTU ASCII point data; `BuildGridFunction` maps
+   the points to a P1 grid function on the solve mesh by coordinate matching. Tests read
+   both formats back and validate config parsing.
 6. **Preconditioner** field-awareness (or documented fallback).
 7. **Docs / schema / CHANGELOG.**
 8. **Phase 2 follow-ups**: refinement propagation, 3D→2D parent projection, anisotropic

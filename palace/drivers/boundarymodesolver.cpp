@@ -9,12 +9,14 @@
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
+#include "fem/materialfield.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/modeeigensolver.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
+#include "utils/gridfunctionio.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -227,7 +229,47 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt0(Timer::CONSTRUCT);
   MaterialOperator mat_op(iodata, *mesh.back());
 
-  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  // Optional spatially-varying permittivity / permeability fields, defined on the solve
+  // mesh vertices (not yet supported with a 3D cross-section submesh).
+  MFEM_VERIFY(bm.attributes.empty() ||
+                  (bm.permittivity_field.empty() && bm.permeability_field.empty()),
+              "Spatially-varying material fields are not supported with a 3D cross-section "
+              "(Solver.BoundaryMode.Attributes)!");
+  const double mesh_scale = iodata.units.GetMeshLengthRelativeScale();
+  auto ReadGrid = [&](const config::MaterialFieldData &mf)
+  {
+    fieldio::FieldData data = fieldio::ReadFieldFile(mf.file, mf.name);
+    for (auto &p : data.points)
+    {
+      p[0] /= mesh_scale;
+      p[1] /= mesh_scale;
+      p[2] /= mesh_scale;
+    }
+    return std::make_unique<fieldio::FieldGridFunction>(
+        fieldio::BuildGridFunction(*mesh.back(), data));
+  };
+  std::unique_ptr<fieldio::FieldGridFunction> eps_grid, mu_grid;
+  std::unique_ptr<MaterialField> eps_field, muinv_field;
+  if (!bm.permittivity_field.empty())
+  {
+    eps_grid = ReadGrid(bm.permittivity_field);
+    eps_field = std::make_unique<MaterialField>(*eps_grid->gf);
+    Mpi::Print(" Read permittivity field from \"{}\"\n", bm.permittivity_field.file);
+  }
+  if (!bm.permeability_field.empty())
+  {
+    mu_grid = ReadGrid(bm.permeability_field);
+    // The integrators consume the inverse permeability; invert the sampled permeability.
+    for (int i = 0; i < mu_grid->gf->Size(); i++)
+    {
+      MFEM_VERIFY((*mu_grid->gf)(i) > 0.0, "Permeability field must be positive!");
+      (*mu_grid->gf)(i) = 1.0 / (*mu_grid->gf)(i);
+    }
+    muinv_field = std::make_unique<MaterialField>(*mu_grid->gf);
+    Mpi::Print(" Read permeability field from \"{}\"\n", bm.permeability_field.file);
+  }
+
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op, eps_field.get(), muinv_field.get());
 
   // Combined block system DBC tdof list: ND indices, then H1 indices offset by nd_size.
   const int nd_size = mode_op.GetNDTrueVSize();
@@ -267,7 +309,24 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    const double mu_eps_max = mode_op.GetMaterialOp().GetMaxMuEpsilon();
+    double mu_eps_max = mode_op.GetMaterialOp().GetMaxMuEpsilon();
+    if (eps_field || muinv_field)
+    {
+      // Conservative bound using the field extrema where a field supplies the property.
+      double eps_max = 1.0, mu_max = 1.0;
+      if (eps_field)
+      {
+        eps_max = eps_field->GetLocalMax();
+        Mpi::GlobalMax(1, &eps_max, mode_op.GetComm());
+      }
+      if (muinv_field)
+      {
+        double muinv_min = muinv_field->GetLocalMin();
+        Mpi::GlobalMin(1, &muinv_min, mode_op.GetComm());
+        mu_max = (muinv_min > 0.0) ? 1.0 / muinv_min : 1.0;
+      }
+      mu_eps_max = std::max(mu_eps_max, eps_max * mu_max);
+    }
     kn_target = omega * std::sqrt(1.1 * mu_eps_max);
     Mpi::Print(" Auto kn_target = {:.6e} (from max(mu_r) * max(epsilon_r) = {:.6e})\n",
                kn_target, mu_eps_max);

@@ -10,7 +10,8 @@ namespace palace
 {
 
 MaterialField::MaterialField(const mfem::ParGridFunction &gf, double scaling)
-  : gf(&gf), scaling(scaling), local_max(scaling * gf.Max())
+  : gf(&gf), scaling(scaling), local_max(scaling * gf.Max()),
+    local_min(scaling * gf.Min())
 {
 }
 
