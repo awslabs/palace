@@ -54,7 +54,8 @@ struct LayerGeometry
   std::array<double, 6> thickness{};
 };
 
-// The coordinate stretch of the PML.
+// The coordinate stretch of the PML. element_size is the size of the PML elements normal to
+// each face, measured on the mesh.
 struct Stretch
 {
   LayerGeometry geometry;
@@ -64,7 +65,21 @@ struct Stretch
   int order = 3;
   bool frequency_dependent = false;
   double reference_frequency = 0.0;
+  bool sigma_auto = false;
+  double refractive_index = 1.0;
+  std::array<double, 6> element_size{};
 };
+
+// Factor C of the automatic peak conductivity σ_max = C (n + 1) p / (n_r h), for grading
+// order n, finite element order p, refractive index n_r, and PML element size h normal to
+// the face: the optimal conductivity of a discrete layer of cells of size h / p (see for
+// example Taflove and Hagness, Computational Electrodynamics, 2005), for which the
+// theoretical reflection at normal incidence of a layer of N elements is exp(-2 C p N).
+constexpr double AUTO_SIGMA_FACTOR = 0.8;
+
+// Theoretical reflection coefficient at normal incidence of the stretch on face f,
+// exp(-2 n_r σ_max t / (n + 1)).
+double TheoreticalReflection(const Stretch &stretch, int f);
 
 // Background material tensors of a PML region (3 x 3, column-major).
 struct Background
@@ -97,12 +112,14 @@ double RefractiveIndex(const std::array<double, 9> &mu_inv,
 
 // Stretch from a (nondimensionalized) configuration and layer geometry. The peak
 // conductivity σ_max of each active face is either the configured value for the face's
-// axis, or, if not specified, σ_max = -(n + 1) ln(R) / (2 d n_r) for a target
-// normal-incidence reflection coefficient R, layer thickness d, grading order n, and
-// refractive index n_r: the smallest refractive index of the background materials of the
-// PML regions of the block, so that each of them meets the reflection target.
-Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry,
-                     double n_r);
+// axis, computed from the size h of the PML elements normal to the face (element_size) and
+// the finite element order p (data.sigma_auto, see AUTO_SIGMA_FACTOR), or σ_max = -(n + 1)
+// ln(R) / (2 d n_r) for a target normal-incidence reflection coefficient R, layer thickness
+// d, grading order n, and refractive index n_r: the smallest refractive index of the
+// background materials of the PML regions of the block, so that each of them meets the
+// reflection target.
+Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry, double n_r,
+                     const std::array<double, 6> &element_size = {}, int fe_order = 1);
 
 // Output part of the complex PML tensor terms assembled by a PML integrator.
 enum class TensorPart : int
@@ -158,11 +175,13 @@ public:
   // attributes of the PML regions of all blocks (the remaining attributes form the physical
   // region). The background materials are the materials with the given properties
   // (indexed by material, with attr_mat the map from libCEED attribute to material index).
-  // Checks that each element of the PML regions of the block is in the layer.
+  // Checks that each element of the PML regions of the block is in the layer. The finite
+  // element order is used for the automatic conductivity.
   Layer(const config::PMLData &data, const std::vector<int> &pml_attributes,
         const std::vector<config::MaterialData> &materials, const Mesh &mesh,
         const mfem::Array<int> &attr_mat, const mfem::DenseTensor &mu_inv,
-        const mfem::DenseTensor &epsilon_real, const mfem::DenseTensor &epsilon_imag);
+        const mfem::DenseTensor &epsilon_real, const mfem::DenseTensor &epsilon_imag,
+        int fe_order = 1);
 
   const Stretch &GetStretch() const { return stretch; }
   bool IsFrequencyDependent() const { return stretch.frequency_dependent; }

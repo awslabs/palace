@@ -2,7 +2,10 @@
   // Periodic vacuum cell with a Floquet port at z = 0, a +z PML layer, and a PEC termination
   // behind the PML: plane wave absorption by the PML at oblique incidence at 3 GHz. The
   // Floquet wave vector k_y = k₀ sin(θ) sets the angle of incidence θ.
-  // θ = 80° (grazing incidence), TE polarization, with a stronger reflection target.
+  // θ = 80° (grazing incidence), TE polarization. The conductivity is computed from a
+  // reflection target instead of the default computed from the size of the PML elements: at
+  // the angle of incidence θ, the reflection is about R^cos θ, so that the target must be
+  // small at grazing incidence.
   "Problem": {
     "Type": "Driven",
     "Verbose": 2,

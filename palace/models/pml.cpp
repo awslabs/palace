@@ -78,10 +78,13 @@ double RefractiveIndex(const std::array<double, 9> &mu_inv,
   return std::sqrt(eps_min / mu_inv_max);
 }
 
-Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry, double n_r)
+Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry, double n_r,
+                     const std::array<double, 6> &element_size, int fe_order)
 {
   Stretch stretch;
   stretch.geometry = geometry;
+  stretch.sigma_auto = data.sigma_auto;
+  stretch.refractive_index = n_r;
   for (int f = 0; f < 6; f++)
   {
     const double t = geometry.thickness[f];
@@ -89,10 +92,21 @@ Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry,
     {
       continue;
     }
-    stretch.sigma_max[f] =
-        (data.sigma_max[f / 2] >= 0.0)
-            ? data.sigma_max[f / 2]
-            : -(data.order + 1) * std::log(data.reflection_target) / (2.0 * t * n_r);
+    const double h = (element_size[f] > 0.0) ? element_size[f] : t;
+    stretch.element_size[f] = h;
+    if (data.sigma_max[f / 2] >= 0.0)
+    {
+      stretch.sigma_max[f] = data.sigma_max[f / 2];
+    }
+    else if (data.sigma_auto)
+    {
+      stretch.sigma_max[f] = AUTO_SIGMA_FACTOR * (data.order + 1) * fe_order / (n_r * h);
+    }
+    else
+    {
+      stretch.sigma_max[f] =
+          -(data.order + 1) * std::log(data.reflection_target) / (2.0 * t * n_r);
+    }
   }
   stretch.kappa_max = data.kappa_max;
   stretch.alpha_max = data.alpha_max;
@@ -105,7 +119,8 @@ Stretch BuildStretch(const config::PMLData &data, const LayerGeometry &geometry,
 Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes,
              const std::vector<config::MaterialData> &materials, const Mesh &mesh,
              const mfem::Array<int> &attr_mat, const mfem::DenseTensor &mu_inv,
-             const mfem::DenseTensor &epsilon_real, const mfem::DenseTensor &epsilon_imag)
+             const mfem::DenseTensor &epsilon_real, const mfem::DenseTensor &epsilon_imag,
+             int fe_order)
   : attributes(data.attributes)
 {
   const mfem::ParMesh &pmesh = mesh.Get();
@@ -189,7 +204,52 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
                             "\"Thickness\")!"
                           : "\"Thickness\" must be positive for at least one "
                             "\"Direction\"!"));
-  stretch = BuildStretch(data, geometry, n_r);
+  // Size of the PML elements normal to each active face: the mean extent along the axis of
+  // the face of the elements in the layer of the face (whose center is beyond the inner
+  // interface).
+  std::array<double, 6> element_size{};
+  {
+    std::array<double, 12> sums{};  // Extents [0, 6), counts [6, 12)
+    mfem::Array<int> verts;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      if (!IsPMLAttribute(pmesh.GetAttribute(e)))
+      {
+        continue;
+      }
+      pmesh.GetElementVertices(e, verts);
+      std::array<double, 3> lo, hi, c{};
+      lo.fill(std::numeric_limits<double>::infinity());
+      hi.fill(-std::numeric_limits<double>::infinity());
+      for (const int v : verts)
+      {
+        const double *x = pmesh.GetVertex(v);
+        for (int a = 0; a < 3; a++)
+        {
+          lo[a] = std::min(lo[a], x[a]);
+          hi[a] = std::max(hi[a], x[a]);
+          c[a] += x[a] / verts.Size();
+        }
+      }
+      for (int f = 0; f < 6; f++)
+      {
+        const int a = f / 2;
+        const double depth =
+            (f % 2 == 0) ? geometry.inner[f] - c[a] : c[a] - geometry.inner[f];
+        if (geometry.thickness[f] > 0.0 && depth > 0.0)
+        {
+          sums[f] += hi[a] - lo[a];
+          sums[6 + f] += 1.0;
+        }
+      }
+    }
+    Mpi::GlobalSum(12, sums.data(), pmesh.GetComm());
+    for (int f = 0; f < 6; f++)
+    {
+      element_size[f] = (sums[6 + f] > 0.0) ? sums[f] / sums[6 + f] : 0.0;
+    }
+  }
+  stretch = BuildStretch(data, geometry, n_r, element_size, fe_order);
 
   // Every element of a PML region must be in the layer (no stretch would be applied in a
   // region beyond an inactive face, or between the inner interface and the physical
@@ -255,6 +315,16 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
 std::vector<CeedIntScalar> Layer::PackContext(const ContextHeader &header) const
 {
   return pml::PackContext(header, stretch, attr_background, backgrounds);
+}
+
+double TheoreticalReflection(const Stretch &stretch, int f)
+{
+  if (stretch.geometry.thickness[f] <= 0.0)
+  {
+    return 1.0;
+  }
+  return std::exp(-2.0 * stretch.refractive_index * stretch.sigma_max[f] *
+                  stretch.geometry.thickness[f] / (stretch.order + 1));
 }
 
 namespace
