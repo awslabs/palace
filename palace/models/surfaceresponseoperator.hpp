@@ -883,7 +883,27 @@ struct TranslationalOwnershipRecord
 struct SpatialSupportBounds
 {
   std::size_t patch = 0;
+  // The mesh-axis-aligned bounding box of the placed basis points (patch units): read by
+  // the margin-overlap diagnostics and the stretch records' Box entry. NOT an ownership
+  // test: for a rotated patch frame it circumscribes the coupon's box (decision 715).
   std::array<double, 3> min{}, max{};
+  // The support box in the cluster's PATCH FRAME (the canonical frame of contract v3):
+  // `axes[k]` = the spatial patch's axis_u / axis_v / axis_w in mesh coordinates, and
+  // `frame_min[k]` / `frame_max[k]` the extremes over the placed basis points P of the
+  // projection dot(P, axes[k]) (patch units; NOT relative to the frame origin, so that a
+  // mesh-aligned frame — every axis a signed unit vector — reproduces `min` / `max` exactly
+  // and the ownership arithmetic stays bitwise). LineInsideBox / StretchStrictlyInside test
+  // against THIS box. Identity axes by default: a hand-built support sets both boxes at
+  // once with SetMeshAlignedBox.
+  std::array<std::array<double, 3>, 3> axes = {
+      {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  std::array<double, 3> frame_min{}, frame_max{};
+  void SetMeshAlignedBox(const std::array<double, 3> &lo, const std::array<double, 3> &hi)
+  {
+    min = frame_min = lo;
+    max = frame_max = hi;
+    axes = {{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  }
   std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionPatchData::Provenance::Claim>
       claims;
@@ -915,13 +935,14 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
 // ForeignContextEdge.
 const char *TranslationalOwnershipClassName(const TranslationalOwnershipRecord &record);
 
-// The spatial supports of a response configuration: the bounding box of every spatial
-// model's basis points (mesh units) placed by its patch frame, with the cluster's claims;
-// a contract-3 placeholder without basis points gets the Signature's support box placed by
-// the patch frame (its corners `support_box` x R, built in mesh units like the basis
-// points, so the bounds come out in the same patch units as every other support); models
-// without basis points and without a support box (legacy preflight placeholders) are
-// reported by name in skipped.
+// The spatial supports of a response configuration: for every spatial model's basis points
+// (mesh units) placed by its patch frame, the mesh AABB (`min` / `max`) and the box in the
+// patch frame (`axes`, `frame_min` / `frame_max`: the coupon's own box, decision 715), with
+// the cluster's claims; a contract-3 placeholder without basis points gets the Signature's
+// support box placed by the patch frame (its corners `support_box` x R, built in mesh units
+// like the basis points, so the bounds come out in the same patch units as every other
+// support); models without basis points and without a support box (legacy preflight
+// placeholders) are reported by name in skipped.
 std::vector<SpatialSupportBounds> CollectSpatialSupports(
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
@@ -943,8 +964,11 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
 // Continuation ownership at placement (decisions 236 (2) / 244): a translational cell of a
 // stretch that continues a claim of a spatial support (the Continuation criterion of the
 // stretch record above, judged on the whole stretch, inside the box or not) is owned by
-// that coupon inside the box — the coupon's twins carry the straight continuation of its
-// claims to the box face, so the cell's own patch there is the double count. The cell is
+// that coupon inside the box — the support's box IN THE CLUSTER'S PATCH FRAME (`axes`,
+// `frame_min` / `frame_max`; decision 715: the mesh AABB of a rotated frame over-owned the
+// cells between the coupon's face and the AABB's) — the coupon's twins carry the straight
+// continuation of its claims to the box face, so the cell's own patch there is the double
+// count. The cell is
 // CLIPPED exactly at the box face: its kept part is the part outside EVERY box whose claims
 // its stretch continues (the complement intersection: symmetric for a cell on the
 // continuations of two coupons, exact, idempotent); the patch keeps weight x kept / cell
