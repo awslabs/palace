@@ -99,11 +99,13 @@ std::array<std::complex<double>, 3> ReferenceStretch(const pml::Stretch &p,
   return s;
 }
 
-// Reference tensors μ̃⁻¹ = S μ⁻¹ S / det(S) and ε̃ = det(S) S⁻¹ ε S⁻¹ (column-major).
+// Reference tensors μ̃⁻¹ = S μ⁻¹ S / det(S) and ε̃ = det(S) S⁻¹ ε S⁻¹ (column-major), or with
+// the magnitudes of the stretch factors (magnitude = true).
 std::array<std::complex<double>, 9> ReferenceMuInv(const pml::Stretch &p,
                                                    const pml::Background &b,
                                                    const std::array<double, 3> &x,
-                                                   std::complex<double> omega)
+                                                   std::complex<double> omega,
+                                                   bool magnitude = false)
 {
   const auto s = ReferenceStretch(p, x, omega);
   const auto det = s[0] * s[1] * s[2];
@@ -112,7 +114,8 @@ std::array<std::complex<double>, 9> ReferenceMuInv(const pml::Stretch &p,
   {
     for (int i = 0; i < 3; i++)
     {
-      T[i + 3 * j] = b.mu_inv[i + 3 * j] * s[i] * s[j] / det;
+      const auto f = s[i] * s[j] / det;
+      T[i + 3 * j] = b.mu_inv[i + 3 * j] * (magnitude ? std::abs(f) : f);
     }
   }
   return T;
@@ -121,7 +124,8 @@ std::array<std::complex<double>, 9> ReferenceMuInv(const pml::Stretch &p,
 std::array<std::complex<double>, 9> ReferenceEps(const pml::Stretch &p,
                                                  const pml::Background &b,
                                                  const std::array<double, 3> &x,
-                                                 std::complex<double> omega)
+                                                 std::complex<double> omega,
+                                                 bool magnitude = false)
 {
   const auto s = ReferenceStretch(p, x, omega);
   const auto det = s[0] * s[1] * s[2];
@@ -130,8 +134,9 @@ std::array<std::complex<double>, 9> ReferenceEps(const pml::Stretch &p,
   {
     for (int i = 0; i < 3; i++)
     {
-      T[i + 3 * j] = (b.epsilon_real[i + 3 * j] + 1i * b.epsilon_imag[i + 3 * j]) * det /
-                     (s[i] * s[j]);
+      const auto f = det / (s[i] * s[j]);
+      T[i + 3 * j] = (b.epsilon_real[i + 3 * j] + 1i * b.epsilon_imag[i + 3 * j]) *
+                     (magnitude ? std::abs(f) : f);
     }
   }
   return T;
@@ -156,7 +161,11 @@ void CheckCoeff(const pml::Stretch &p, const pml::Background &b, std::complex<do
   for (bool muinv : {true, false})
   {
     const auto T = muinv ? ReferenceMuInv(p, b, x, omega) : ReferenceEps(p, b, x, omega);
-    for (auto part : {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS})
+    const auto T_mag =
+        muinv ? ReferenceMuInv(p, b, x, omega, true) : ReferenceEps(p, b, x, omega, true);
+    for (auto part :
+         {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
+          pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG})
     {
       pml::ContextHeader header;
       header.part = part;
@@ -166,10 +175,12 @@ void CheckCoeff(const pml::Stretch &p, const pml::Background &b, std::complex<do
       REQUIRE(EvalCoeff(p, b, header, muinv, x, coeff));
       for (int k = 0; k < 9; k++)
       {
-        const double expected = (part == pml::TensorPart::REAL) ? (c * T[k]).real()
-                                : (part == pml::TensorPart::IMAG)
-                                    ? (c * T[k]).imag()
-                                    : c.real() * std::abs(T[k]);
+        const double expected = (part == pml::TensorPart::REAL)   ? (c * T[k]).real()
+                                : (part == pml::TensorPart::IMAG) ? (c * T[k]).imag()
+                                : (part == pml::TensorPart::ABS) ? c.real() * std::abs(T[k])
+                                : (part == pml::TensorPart::STRETCH_MAGNITUDE_REAL)
+                                    ? (c * T_mag[k]).real()
+                                    : (c * T_mag[k]).imag();
         CHECK(coeff[k] == Approx(expected).margin(1.0e-14));
       }
     }

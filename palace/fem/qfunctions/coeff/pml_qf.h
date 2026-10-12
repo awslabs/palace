@@ -31,6 +31,8 @@
 //   Header (PALACE_PML_HEADER_SIZE entries):
 //     [0]       number of (1-based) libCEED attributes, num_attr
 //     [1]       output part of the scaled tensor c T: 0 → Re{c T}, 1 → Im{c T},
+//               3 → Re{c T̂}, 4 → Im{c T̂} for the tensor T̂ with the stretch factors
+//               replaced by their magnitudes (exact for a unit stretch),
 //               2 → Re{c} |T| (entrywise magnitude, for real-valued approximations)
 //     [2, 3]    (Re, Im) of the prefactor c for μ̃⁻¹ terms (curl-curl, Floquet)
 //     [4, 5]    (Re, Im) of the prefactor c for ε̃ terms (mass, diffusion)
@@ -62,7 +64,9 @@ enum
 {
   PALACE_PML_PART_RE = 0,
   PALACE_PML_PART_IM = 1,
-  PALACE_PML_PART_ABS = 2
+  PALACE_PML_PART_ABS = 2,
+  PALACE_PML_PART_MAG_RE = 3,
+  PALACE_PML_PART_MAG_IM = 4
 };
 
 CEED_QFUNCTION_HELPER CeedInt PMLNumAttr(const CeedIntScalar *ctx)
@@ -176,11 +180,24 @@ CEED_QFUNCTION_HELPER CeedScalar PMLScaledPart(CeedInt part, CeedScalar c_re,
   switch (part)
   {
     case PALACE_PML_PART_IM:
+    case PALACE_PML_PART_MAG_IM:
       return c_re * t_im + c_im * t_re;
     case PALACE_PML_PART_ABS:
       return c_re * sqrt(t_re * t_re + t_im * t_im);
     default:
       return c_re * t_re - c_im * t_im;
+  }
+}
+
+// Stretch factor f = f_re + i f_im of a tensor entry, replaced by its magnitude for the
+// parts with the magnitudes of the stretch factors.
+CEED_QFUNCTION_HELPER void PMLStretchFactorPart(CeedInt part, CeedScalar *f_re,
+                                                CeedScalar *f_im)
+{
+  if (part == PALACE_PML_PART_MAG_RE || part == PALACE_PML_PART_MAG_IM)
+  {
+    *f_re = sqrt(*f_re * *f_re + *f_im * *f_im);
+    *f_im = 0.0;
   }
 }
 
@@ -217,6 +234,7 @@ CEED_QFUNCTION_HELPER void PMLMuInvCoeffStretch(const CeedIntScalar *ctx,
       CeedScalar f_re, f_im;
       PMLComplexMult(s_re[i], s_im[i], s_re[j], s_im[j], &f_re, &f_im);
       PMLComplexDiv(f_re, f_im, det_re, det_im, &f_re, &f_im);
+      PMLStretchFactorPart(part, &f_re, &f_im);
       coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, mu_inv * f_re, mu_inv * f_im);
     }
   }
@@ -246,6 +264,7 @@ CEED_QFUNCTION_HELPER void PMLEpsCoeffStretch(const CeedIntScalar *ctx,
       CeedScalar f_re, f_im, t_re, t_im;
       PMLComplexMult(s_re[i], s_im[i], s_re[j], s_im[j], &f_re, &f_im);
       PMLComplexDiv(det_re, det_im, f_re, f_im, &f_re, &f_im);
+      PMLStretchFactorPart(part, &f_re, &f_im);
       PMLComplexMult(eps_re, eps_im, f_re, f_im, &t_re, &t_im);
       coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, t_re, t_im);
     }
