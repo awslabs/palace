@@ -6720,23 +6720,6 @@ TEST_CASE("SurfaceResponseIdentificationMirrorCompleteSupport",
       CHECK(box[2] - cut[0] > 0.5);
       missing_before += box[2] - cut[0];
     }
-    // AFTER (F-M1): MirrorCompletion = the reflected real plan beyond the band inside the
-    // box: 4 pieces, every one Chain: true, of exactly the length the band cuts left out -
-    // which is exactly what the legacy census read as FICTITIOUS continuation before the
-    // fix (DIAGNOSIS 1.4: 46d2's FictitiousContinuationLengthOverR 6.03167 = its deficit);
-    // that census now reads 0: every claim-cut end is continued by device plan.
-    REQUIRE(support.contains("MirrorCompletion"));
-    const nlohmann::json &completion = support.at("MirrorCompletion");
-    CHECK(completion.at("Planes") == std::vector<int>{0});
-    CHECK(completion.at("Pieces").get<int>() == 4);
-    CHECK(completion.at("ChainPieces").get<int>() == 4);
-    CHECK_THAT(completion.at("LengthOverR").get<double>(),
-               WithinAbs(missing_before, 1.0e-5));
-    CHECK_THAT(completion.at("LengthOverR").get<double>(), WithinAbs(9.337219, 1.0e-5));
-    CHECK_THAT(support.at("LegacyContinuation")
-                   .at("FictitiousContinuationLengthOverR")
-                   .get<double>(),
-               WithinAbs(0.0, 1.0e-9));
     // Every Chain: true context piece ends on a box face or at a chain end (a claim end or
     // another context piece's end): no free end inside the box (the generator's face-vote
     // stop of decision 699 has nothing to refuse).
@@ -6782,6 +6765,23 @@ TEST_CASE("SurfaceResponseIdentificationMirrorCompleteSupport",
     // The band cuts: three are met by an image piece AND its continuation, the fourth (an
     // image CLAIM cut at the band) by its continuation alone.
     CHECK(ends_at_cuts == 7);
+    // AFTER (F-M1): MirrorCompletion = the reflected real plan beyond the band inside the
+    // box: 4 pieces, every one Chain: true, of exactly the length the band cuts left out -
+    // which is exactly what the legacy census read as FICTITIOUS continuation before the
+    // fix (DIAGNOSIS 1.4: 46d2's FictitiousContinuationLengthOverR 6.03167 = its deficit);
+    // that census now reads 0: every claim-cut end is continued by device plan.
+    REQUIRE(support.contains("MirrorCompletion"));
+    const nlohmann::json &completion = support.at("MirrorCompletion");
+    CHECK(completion.at("Planes") == std::vector<int>{0});
+    CHECK(completion.at("Pieces").get<int>() == 4);
+    CHECK(completion.at("ChainPieces").get<int>() == 4);
+    CHECK_THAT(completion.at("LengthOverR").get<double>(),
+               WithinAbs(missing_before, 1.0e-5));
+    CHECK_THAT(completion.at("LengthOverR").get<double>(), WithinAbs(9.337219, 1.0e-5));
+    CHECK_THAT(support.at("LegacyContinuation")
+                   .at("FictitiousContinuationLengthOverR")
+                   .get<double>(),
+               WithinAbs(0.0, 1.0e-9));
     // T2 no longer reads a band cut as an interior device vertex: the minimum clearance is
     // the foreign corner's (the upper ground's outer edge meets its image), not a band
     // cut's distance from the +x face (0.840746 before the fix); the four image chains now
