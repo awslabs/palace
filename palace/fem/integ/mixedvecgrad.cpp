@@ -25,7 +25,7 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
                                              CeedBasis trial_basis, CeedBasis test_basis,
                                              CeedVector geom_data,
                                              CeedElemRestriction geom_data_restr,
-                                             CeedOperator *op) const
+                                             const CeedMaterialFieldData *field_data, CeedOperator *op) const
 {
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
@@ -142,13 +142,14 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   auto ctx = PopulateCoefficientContext(space_dim, Q, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
-                       geom_data_restr, op);
+                       geom_data_restr, field_data, op);
 }
 
 void MixedVectorWeakDivergenceIntegrator::Assemble(
     Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
     CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-    CeedElemRestriction geom_data_restr, CeedOperator *op) const
+    CeedElemRestriction geom_data_restr,
+        const CeedMaterialFieldData *field_data, CeedOperator *op) const
 {
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
@@ -202,7 +203,7 @@ void MixedVectorWeakDivergenceIntegrator::Assemble(
   auto ctx = PopulateCoefficientContext(space_dim, Q, transpose, -1.0);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
-                       geom_data_restr, op);
+                       geom_data_restr, field_data, op);
 }
 
 }  // namespace palace

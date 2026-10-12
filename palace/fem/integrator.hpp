@@ -11,6 +11,8 @@ namespace palace
 {
 
 class MaterialPropertyCoefficient;
+class MaterialField;
+struct CeedMaterialFieldData;
 
 //
 // Classes which implement or extend bilinear and linear form integrators. In doc strings u
@@ -40,17 +42,21 @@ class BilinearFormIntegrator
 {
 protected:
   const MaterialPropertyCoefficient *Q;
+
+  // Optional spatially-varying material coefficient field, sampled at quadrature points
+  // and consumed as an extra inactive input by field-aware QFunctions.
+  const MaterialField *field;
   bool assemble_q_data;
   bool transpose;
 
 public:
   BilinearFormIntegrator(const MaterialPropertyCoefficient *Q = nullptr,
                          const bool transpose = false)
-    : Q(Q), assemble_q_data(false), transpose(transpose)
+    : Q(Q), field(nullptr), assemble_q_data(false), transpose(transpose)
   {
   }
   BilinearFormIntegrator(const MaterialPropertyCoefficient &Q, const bool transpose = false)
-    : Q(&Q), assemble_q_data(false), transpose(transpose)
+    : Q(&Q), field(nullptr), assemble_q_data(false), transpose(transpose)
   {
   }
   virtual ~BilinearFormIntegrator() = default;
@@ -58,11 +64,16 @@ public:
   virtual void Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                         CeedElemRestriction test_restr, CeedBasis trial_basis,
                         CeedBasis test_basis, CeedVector geom_data,
-                        CeedElemRestriction geom_data_restr, CeedOperator *op) const = 0;
+                        CeedElemRestriction geom_data_restr,
+                        const CeedMaterialFieldData *field_data, CeedOperator *op) const = 0;
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
 
   void AssembleQuadratureData() { assemble_q_data = true; }
+
+  // Attach a spatially-varying material coefficient field.
+  void SetMaterialField(const MaterialField *f) { field = f; }
+  const MaterialField *GetMaterialField() const { return field; }
 };
 
 // Integrator for a(u, v) = (Q u, v) for H1 elements (also for vector (H1)ᵈ spaces).
@@ -73,7 +84,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q u, v) for vector finite elements.
@@ -88,7 +100,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 
   void SetMapTypes(int trial_type, int test_type) override
   {
@@ -105,7 +118,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
@@ -116,7 +130,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.
@@ -127,7 +142,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Qd grad u, grad v) + (Qm u, v) for H1 elements.
@@ -148,7 +164,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Qc curl u, curl v) + (Qm u, v) for Nedelec elements.
@@ -169,7 +186,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Qd div u, div v) + (Qm u, v) for Raviart-Thomas elements.
@@ -190,7 +208,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl) or H(div).
@@ -205,7 +224,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 
   void SetMapTypes(int trial_type, int test_type) override
   {
@@ -222,7 +242,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl).
@@ -237,7 +258,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 
   void SetMapTypes(int trial_type, int test_type) override
   {
@@ -258,7 +280,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 
   void SetMapTypes(int trial_type, int test_type) override
   {
@@ -275,7 +298,8 @@ public:
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
-                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+                CeedElemRestriction geom_data_restr,
+                const CeedMaterialFieldData *field_data, CeedOperator *op) const override;
 };
 
 // Base class for all discrete interpolators.

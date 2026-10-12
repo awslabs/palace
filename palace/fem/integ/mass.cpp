@@ -5,6 +5,7 @@
 
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "fem/materialfield.hpp"
 
 #include "fem/qfunctions/h1_qf.h"
 
@@ -16,7 +17,8 @@ using namespace ceed;
 void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                               CeedElemRestriction test_restr, CeedBasis trial_basis,
                               CeedBasis test_basis, CeedVector geom_data,
-                              CeedElemRestriction geom_data_restr, CeedOperator *op) const
+                              CeedElemRestriction geom_data_restr,
+                              const CeedMaterialFieldData *field_data, CeedOperator *op) const
 {
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
@@ -28,26 +30,37 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   MFEM_VERIFY(
       trial_num_comp == test_num_comp,
       "MassIntegrator requires test and trial spaces with same number of components!");
-  switch (trial_num_comp)
+  if (field_data)
   {
-    case 1:
-      info.apply_qf = assemble_q_data ? f_build_h1_1 : f_apply_h1_1;
-      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_1_loc
-                                                                       : f_apply_h1_1_loc);
-      break;
-    case 2:
-      info.apply_qf = assemble_q_data ? f_build_h1_2 : f_apply_h1_2;
-      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_2_loc
-                                                                       : f_apply_h1_2_loc);
-      break;
-    case 3:
-      info.apply_qf = assemble_q_data ? f_build_h1_3 : f_apply_h1_3;
-      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_3_loc
-                                                                       : f_apply_h1_3_loc);
-      break;
-    default:
-      MFEM_ABORT("Invalid value of num_comp = " << trial_num_comp
-                                                << " for MassIntegrator!");
+    MFEM_VERIFY(trial_num_comp == 1,
+                "Spatially-varying mass coefficients are only supported for scalar H1 "
+                "spaces!");
+    info.apply_qf = f_apply_h1_field_1;
+    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_h1_field_1_loc);
+  }
+  else
+  {
+    switch (trial_num_comp)
+    {
+      case 1:
+        info.apply_qf = assemble_q_data ? f_build_h1_1 : f_apply_h1_1;
+        info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_1_loc
+                                                                         : f_apply_h1_1_loc);
+        break;
+      case 2:
+        info.apply_qf = assemble_q_data ? f_build_h1_2 : f_apply_h1_2;
+        info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_2_loc
+                                                                         : f_apply_h1_2_loc);
+        break;
+      case 3:
+        info.apply_qf = assemble_q_data ? f_build_h1_3 : f_apply_h1_3;
+        info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_3_loc
+                                                                         : f_apply_h1_3_loc);
+        break;
+      default:
+        MFEM_ABORT("Invalid value of num_comp = " << trial_num_comp
+                                                  << " for MassIntegrator!");
+    }
   }
   info.trial_ops = EvalMode::Interp;
   info.test_ops = EvalMode::Interp;
@@ -56,7 +69,7 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   auto ctx = PopulateCoefficientContext(trial_num_comp, Q, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
-                       geom_data_restr, op);
+                       geom_data_restr, field_data, op);
 }
 
 }  // namespace palace
