@@ -943,6 +943,13 @@ std::vector<double> ProbeResponse(const SurfaceResponseOperator &response)
 // passes - the classification reproduces - and FAILS CLOSED on a mesh whose domain differs
 // (a smaller shear: the same metal and placed patches, 2 excluded cells instead of 4); a
 // curved (order-2) mesh refuses the reuse and recomputes; a fresh geometry starts over.
+// Under RECHECK a present entry whose tested-patch SIGNATURE differs from the
+// construction's (here the coordinate scale: the one signature input that is the
+// construction's, not the geometry's) ABORTS naming the mismatch, never a silent
+// replacement (decision 740 MAJOR-1). The MIRROR fixture (the S-45 half pad with a natural
+// cut: 0 DomainBoundary exclusions, Mirrored cut-crossing cells and half-weight virtual
+// corners) covers the Mirrored-under-reuse path: reused on the same and the refined mesh
+// with the identical Mirrored record, verified under RECHECK (decision 740 MINOR-1).
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "SurfaceResponseOperator domain-boundary containment reuse across AMR "
                  "cycles",
@@ -1095,6 +1102,130 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     SurfaceResponseOperator fresh(iodata, laplace, &fresh_geometry);
     CHECK_FALSE(fresh.DomainBoundaryContainmentReused());
     CHECK(DomainBoundaryRecordWithoutTiming(fresh) == first_record);
+  }
+
+  // The RECHECK guard fails closed on a changed tested input: the same geometry (its entry
+  // present) constructed under a coordinate scale 1 + 1e-9 (within the matrix files' R
+  // tolerance, so nothing before the containment block refuses), the signature's first
+  // entry; the entry is NOT replaced (the next construction at the first scale reuses it).
+  {
+    IoData scaled(config, false);
+    scaled.boundaries.cracked_attributes.insert(9);
+    scaled.units = Units(1.0, 1.0 + 1.0e-9);
+    {
+      ContainmentRecheckEnvGuard recheck;
+      CHECK_THROWS_WITH(SurfaceResponseOperator(scaled, laplace, &geometry),
+                        ContainsSubstring("different tested-patch signature") &&
+                            ContainsSubstring("coordinate scale 1 vs 1.000000001") &&
+                            ContainsSubstring("refuses to replace it"));
+    }
+    SurfaceResponseOperator after(iodata, laplace, &geometry);
+    CHECK(after.DomainBoundaryContainmentReused());
+    CHECK(DomainBoundaryRecordWithoutTiming(after) == first_record);
+  }
+
+  // The mirror fixture (boundary-cut DESIGN 4.1 S-45; the symmetry test below): the half
+  // pad with the wall x = 1 + (z - 1) as a natural cut and the isolated / convex-90 /
+  // concave-90 library, so the cut-crossing cells are Mirrored (applied with their
+  // reflections) and nothing is a DomainBoundary exclusion. The reuse carries the Mirrored
+  // record: cycle 2 on the same mesh and cycle 3 on the refined mesh reuse it, the record
+  // and the probe action are the first's; RECHECK on the refined mesh verifies it.
+  {
+    const auto mirror_library_path =
+        temp.temp_dir / "fabrication-process-containment-reuse-mirror-3d.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ifstream input(convex_library_3d_path);
+      REQUIRE(input);
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-containment-reuse-mirror-3d";
+      json convex;
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        if (model["Topology"] == "IsolatedEdge")
+        {
+          model["BasisPoints"] = basis_path.string();
+        }
+        if (model["Topology"] == "ConvexCorner")
+        {
+          convex = model;
+        }
+      }
+      REQUIRE(!convex.is_null());
+      json concave = convex;
+      concave["Name"] = "concave-corner-90";
+      concave["Topology"] = "ConcaveCorner";
+      concave["Angle"] = 90.0;
+      library["Models"].push_back(concave);
+      std::ofstream output(mirror_library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    json mirror_config = config;
+    mirror_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        mirror_library_path.string();
+    mirror_config["Solver"]["Electrostatic"]["ResponseCorrection"]["UnmatchedPolicy"] =
+        "Warn";
+    mirror_config["Solver"]["Electrostatic"]["ResponseCorrection"]["DomainBoundary"] = {
+        {"Mirror", "Natural"}};
+    IoData mirror_iodata(mirror_config, false);
+    mirror_iodata.boundaries.cracked_attributes.insert(9);
+    auto MakeMirrorMeshes = [&](int refinements)
+    {
+      mfem::Mesh serial = MakeSerialMirrorPadMesh(1.0, false);
+      auto parallel = std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+      for (int i = 0; i < refinements; i++)
+      {
+        parallel->UniformRefinement();
+      }
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      meshes.push_back(std::make_unique<Mesh>(std::move(parallel)));
+      return meshes;
+    };
+    auto mirror_meshes = MakeMirrorMeshes(0);
+    LaplaceOperator mirror_laplace(mirror_iodata, mirror_meshes);
+    std::shared_ptr<const SurfaceResponseGeometry> mirror_geometry;
+    SurfaceResponseOperator mirror_first(mirror_iodata, mirror_laplace, &mirror_geometry);
+    REQUIRE(mirror_geometry);
+    CHECK_FALSE(mirror_first.DomainBoundaryContainmentReused());
+    const json mirror_record = DomainBoundaryRecordWithoutTiming(mirror_first);
+    INFO(mirror_record.dump());
+    REQUIRE(mirror_record["Count"].get<int>() == 0);
+    REQUIRE(mirror_record["Mirrored"]["Count"].get<int>() > 0);
+    REQUIRE(mirror_record["Mirrored"]["Points"].get<int>() > 0);
+    REQUIRE(mirror_record["Mirrored"]["HalfVertices"].get<int>() == 4);
+    const int mirror_patch_count = mirror_first.GetPatchCount();
+    const auto mirror_probe = ProbeResponse(mirror_first);
+    REQUIRE(!mirror_probe.empty());
+    {
+      SurfaceResponseOperator second(mirror_iodata, mirror_laplace, &mirror_geometry);
+      CHECK(second.DomainBoundaryContainmentReused());
+      CHECK(second.GetPatchCount() == mirror_patch_count);
+      CHECK(DomainBoundaryRecordWithoutTiming(second) == mirror_record);
+      const auto second_probe = ProbeResponse(second);
+      CHECK(second_probe.size() == mirror_probe.size());
+      CHECK(std::memcmp(second_probe.data(), mirror_probe.data(),
+                        mirror_probe.size() * sizeof(double)) == 0);
+    }
+    auto refined_mirror_meshes = MakeMirrorMeshes(1);
+    LaplaceOperator refined_mirror_laplace(mirror_iodata, refined_mirror_meshes);
+    {
+      SurfaceResponseOperator refined(mirror_iodata, refined_mirror_laplace,
+                                      &mirror_geometry);
+      CHECK(refined.DomainBoundaryContainmentReused());
+      CHECK(refined.GetPatchCount() == mirror_patch_count);
+      CHECK(DomainBoundaryRecordWithoutTiming(refined) == mirror_record);
+    }
+    {
+      ContainmentRecheckEnvGuard recheck;
+      SurfaceResponseOperator rechecked(mirror_iodata, refined_mirror_laplace,
+                                        &mirror_geometry);
+      CHECK_FALSE(rechecked.DomainBoundaryContainmentReused());
+      CHECK(rechecked.GetPatchCount() == mirror_patch_count);
+      // No DomainBoundary patch, so no per-patch element-box distance: the whole record.
+      CHECK(DomainBoundaryRecordWithoutTiming(rechecked) == mirror_record);
+    }
   }
 #endif
 }

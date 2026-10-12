@@ -18255,7 +18255,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
 // every cycle of the 18 J2-f runs of record). `signature` is the exact tested input the
 // result belongs to (the candidate patches' frames, cells, weights and point counts and the
 // test's parameters; the configuration itself is this Impl's): a construction whose input
-// differs recomputes and replaces the entry.
+// differs recomputes and replaces the entry, naming the difference in the log, and aborts
+// under PALACE_RESPONSE_CONTAINMENT_RECHECK (decision 740 MAJOR-1).
 struct DomainBoundaryContainmentCache
 {
   std::vector<double> signature;
@@ -18319,6 +18320,29 @@ bool DomainBoundaryContainmentRechecks()
 {
   const char *value = std::getenv("PALACE_RESPONSE_CONTAINMENT_RECHECK");
   return value && !std::string_view(value).empty() && std::string_view(value) != "0";
+}
+
+// The first entry where a construction's containment signature differs from the cached
+// one, named (the four leading parameters by name, then the candidate records).
+std::string
+DescribeDomainBoundaryContainmentSignatureMismatch(const std::vector<double> &cached,
+                                                   const std::vector<double> &current)
+{
+  constexpr std::array<const char *, 4> parameters = {"coordinate scale", "matching radius",
+                                                      "mirror band", "patch count"};
+  const std::size_t common = std::min(cached.size(), current.size());
+  for (std::size_t i = 0; i < common; i++)
+  {
+    if (cached[i] != current[i])
+    {
+      const std::string name = i < parameters.size()
+                                   ? parameters[i]
+                                   : fmt::format("candidate-record entry {}", i);
+      return fmt::format("{} {} vs {}; {} vs {} signature entries", name, cached[i],
+                         current[i], cached.size(), current.size());
+    }
+  }
+  return fmt::format("{} vs {} signature entries", cached.size(), current.size());
 }
 
 // The classification of the containment test (the fields that decide and record which
@@ -23295,7 +23319,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // cached automatic geometry and reused on a first-order mesh whose tested input
     // (DomainBoundaryContainmentSignature) is the first's; a curved mesh (its boundary
     // moves under refinement), a changed input, or PALACE_RESPONSE_CONTAINMENT_RECHECK
-    // recompute, the recheck failing closed on any classification difference.
+    // recompute, the recheck failing closed on any classification difference and on a
+    // changed input (decision 740 MAJOR-1).
     {
       auto BasisPointsOf = [&](int model_idx) -> const std::vector<std::array<double, 3>> *
       { return &basis_points[model_indices.at(model_idx)]; };
@@ -23312,6 +23337,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           config->matching_radius, containment_mirror_band);
       const bool containment_hit = containment_cache && *containment_cache &&
                                    (*containment_cache)->signature == containment_signature;
+      const bool containment_mismatch =
+          containment_cache && *containment_cache && !containment_hit;
+      // The guard fails closed on a changed tested input too (decision 740 MAJOR-1): a
+      // present entry for a different signature is never replaced silently under RECHECK.
+      if (containment_mismatch && containment_recheck)
+      {
+        MFEM_ABORT("The domain-boundary containment cache holds the first construction's "
+                   "result for a different tested-patch signature ("
+                   << DescribeDomainBoundaryContainmentSignatureMismatch(
+                          (*containment_cache)->signature, containment_signature)
+                   << "); PALACE_RESPONSE_CONTAINMENT_RECHECK refuses to replace it!");
+      }
       if (cached_geometry && !first_order_mesh)
       {
         Mpi::Print(fespace.GetComm(),
@@ -23355,6 +23392,15 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         }
         else if (containment_cache && first_order_mesh)
         {
+          if (containment_mismatch)
+          {
+            Mpi::Print(fespace.GetComm(),
+                       " Domain-boundary containment result recomputed: the tested-patch "
+                       "signature differs from the first construction's ({}); the cached "
+                       "result is replaced\n",
+                       DescribeDomainBoundaryContainmentSignatureMismatch(
+                           (*containment_cache)->signature, containment_signature));
+          }
           *containment_cache =
               DomainBoundaryContainmentCache{containment_signature, exclusions};
         }

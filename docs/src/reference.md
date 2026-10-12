@@ -1451,8 +1451,8 @@ is kept with the automatic geometry the solver retains across cycles and reused 
 first-order mesh (h-refinement leaves the domain boundary in place) whose tested patches are
 the first construction's; a curved mesh recomputes it, and
 `PALACE_RESPONSE_CONTAINMENT_RECHECK=1` recomputes it on every cycle and aborts on any
-difference in the classification. Both act from the second construction on; the log reports
-the cache hits and the reuse per construction.
+difference in the classification or in the tested patches. Both act from the second
+construction on; the log reports the cache hits and the reuse per construction.
 
 A spatial coupon holds its metal cross-sections on its box faces at the conductor
 potentials while the device trace is imposed around them. At solve time, before any energy
