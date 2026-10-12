@@ -126,7 +126,9 @@ enum class TensorPart : int
 {
   REAL = 0,
   IMAG = 1,
-  ABS = 2  // Re{c} |T| with entrywise magnitude, for real-valued approximations
+  ABS = 2,  // Re{c} |T| with entrywise magnitude, for real-valued approximations
+  STRETCH_MAGNITUDE_REAL = 3,  // Re{c T̂}, T̂ with the magnitudes of the stretch factors
+  STRETCH_MAGNITUDE_IMAG = 4   // Im{c T̂}
 };
 
 // Per-integrator data of the PML QFunction context: the integrator assembles
