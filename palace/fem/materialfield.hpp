@@ -4,9 +4,6 @@
 #ifndef PALACE_FEM_MATERIALFIELD_HPP
 #define PALACE_FEM_MATERIALFIELD_HPP
 
-#include <map>
-#include <memory>
-#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
@@ -34,10 +31,6 @@ struct CeedMaterialFieldData
 // same at every level of a p-multigrid hierarchy), per element geometry. The resulting
 // quadrature data is cached and shared by all operators on the mesh.
 //
-// A geometric multigrid hierarchy uses coarser meshes. The coefficient is propagated to
-// those meshes by restricting the nodal grid function to their vertices (nested uniform
-// refinement), so the same field can be attached to operators at every level.
-//
 class MaterialField
 {
 public:
@@ -49,12 +42,11 @@ public:
   MaterialField(const MaterialField &) = delete;
   MaterialField &operator=(const MaterialField &) = delete;
 
-  // Return (building on first use) the quadrature data for the given libCEED context,
-  // mesh, and element geometry. `indices` must be the element ordering used by
-  // CeedGeomFactorData for the same geometry. Callers should warm the cache before entering
-  // a parallel region (see MaterialField::WarmCache).
-  const CeedMaterialFieldData &GetData(Ceed ceed, const Mesh &mesh,
-                                       mfem::Geometry::Type geom,
+  // Return (building on first use) the quadrature data for the given libCEED context and
+  // element geometry. `indices` must be the element ordering used by CeedGeomFactorData for
+  // the same geometry. Callers should warm the cache before entering a parallel region
+  // (see MaterialField::WarmCache).
+  const CeedMaterialFieldData &GetData(Ceed ceed, mfem::Geometry::Type geom,
                                        const std::vector<int> &indices) const;
 
   // Build quadrature data for all element geometries of the mesh on the given libCEED
@@ -69,25 +61,12 @@ public:
   double GetLocalMin() const { return local_min; }
 
 private:
-  // A grid function on a coarser mesh level, obtained by restricting the base grid
-  // function.
-  struct LevelGridFunction
-  {
-    std::unique_ptr<mfem::H1_FECollection> fec;
-    std::unique_ptr<mfem::ParFiniteElementSpace> fes;
-    std::unique_ptr<mfem::ParGridFunction> gf;
-  };
-
   const mfem::ParGridFunction *gf;
   double scaling;
   double local_max, local_min;
-  mutable std::map<const Mesh *, LevelGridFunction> level_fields;
-  mutable std::map<std::tuple<Ceed, const Mesh *, mfem::Geometry::Type>,
-                   CeedMaterialFieldData>
-      data;
+  mutable ceed::CeedObjectMap<CeedMaterialFieldData> data;
 
-  const mfem::ParGridFunction &GetLevelGridFunction(const Mesh &mesh) const;
-  CeedMaterialFieldData BuildData(Ceed ceed, const Mesh &mesh, mfem::Geometry::Type geom,
+  CeedMaterialFieldData BuildData(Ceed ceed, mfem::Geometry::Type geom,
                                   const std::vector<int> &indices) const;
 };
 

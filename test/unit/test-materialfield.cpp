@@ -168,7 +168,7 @@ TEST_CASE("MaterialField smooth quadrature sampling", "[materialfield][Serial][P
       {
         continue;
       }
-      const CeedMaterialFieldData &data = field.GetData(ceed, mesh, geom, geom_data.indices);
+      const CeedMaterialFieldData &data = field.GetData(ceed, geom, geom_data.indices);
       const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
       const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, q_order);
       const int num_qpts = ir.GetNPoints();

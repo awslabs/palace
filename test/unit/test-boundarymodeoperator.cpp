@@ -304,8 +304,7 @@ SolveRectangularModesMultigrid(int mg_max_levels,
 // Gaussian tail makes the PEC truncation error exponentially small for W >> sqrt(x0/omega).
 std::complex<double> SolveParabolicSlabMode(int nx, int ny, int order, double W, double H,
                                             double x0, double eps_c, double omega,
-                                            int mg_max_levels = 1, int h_levels = 0,
-                                            bool use_field = true)
+                                            int mg_max_levels = 1)
 {
   const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
   MPI_Comm comm = Mpi::World();
@@ -330,29 +329,10 @@ std::complex<double> SolveParabolicSlabMode(int nx, int ny, int order, double W,
   iodata.NondimensionalizeInputs(serial_mesh);
   iodata.solver.boundary_mode.freq =
       iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega / (2.0 * M_PI));
-  if (h_levels > 0)
-  {
-    iodata.model.refinement.uniform_ref_levels = h_levels;
-    iodata.solver.linear.mg_use_mesh = true;
-  }
-  iodata.CheckConfiguration();
-
   std::vector<std::unique_ptr<Mesh>> mesh;
-  if (h_levels > 0)
-  {
-    std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
-    mesh::RefineMesh(iodata, mfem_mesh);
-    for (auto &m : mfem_mesh)
-    {
-      mesh.push_back(std::make_unique<Mesh>(std::move(m)));
-    }
-  }
-  else
-  {
-    mesh.push_back(
-        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
-  }
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  iodata.CheckConfiguration();
 
   // Permittivity field on an order-2 H1 space (the parabola is exactly representable).
   mfem::H1_FECollection eps_fec(2, mesh.back()->Dimension());
@@ -368,8 +348,7 @@ std::complex<double> SolveParabolicSlabMode(int nx, int ny, int order, double W,
   MaterialField eps_field(eps_gf);
 
   MaterialOperator mat_op(iodata, *mesh.back());
-  BoundaryModeOperator mode_op(iodata, mesh, mat_op, use_field ? &eps_field : nullptr,
-                               nullptr);
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op, &eps_field, nullptr);
 
   const int nd_size = mode_op.GetNDTrueVSize();
   mfem::Array<int> dbc_tdof_list;
@@ -961,21 +940,6 @@ TEST_CASE("BoundaryModeOperator parabolic-index slab p-multigrid with fields",
   CHECK_THAT(multigrid.real(), WithinRel(direct.real(), 1.0e-6));
   CHECK_THAT(multigrid.imag(), WithinAbs(direct.imag(), 1.0e-8));
   CHECK_THAT(direct.real(), WithinRel(kn_exact, 1.0e-2));
-}
-
-TEST_CASE("BoundaryModeOperator parabolic-index slab with h-refinement fields",
-          "[boundarymodeoperator][Serial]")
-{
-  // Exercises the propagation of the material field to coarser geometric multigrid meshes
-  // (two uniform refinements with p-multigrid on top). The geometric multigrid
-  // preconditioner itself converges poorly for this mode problem (with or without the
-  // field), so only the real part of the mode is checked loosely; the test primarily
-  // verifies that the field is propagated and the solve completes.
-  constexpr double W = 6.0, H = 1.0, x0 = 1.0, eps_c = 40.0, omega = 1.0;
-  const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
-  const auto kn = SolveParabolicSlabMode(16, 1, 2, W, H, x0, eps_c, omega, 4, 2, true);
-  CAPTURE(kn.real(), kn_exact);
-  CHECK_THAT(kn.real(), WithinRel(kn_exact, 1.0e-2));
 }
 
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",

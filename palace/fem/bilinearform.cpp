@@ -87,7 +87,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           CeedOperator sub_op;
           const MaterialField *field = integ->GetMaterialField();
           const CeedMaterialFieldData *field_data =
-              field ? &field->GetData(ceed, mesh, geom, data.indices) : nullptr;
+              field ? &field->GetData(ceed, geom, data.indices) : nullptr;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.geom_data_restr, field_data, &sub_op);
