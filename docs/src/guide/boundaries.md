@@ -123,21 +123,35 @@ the physical domain (1, 0, and 0) to `"KappaMax"`, `"SigmaMax"`, and ``2\pi`` `"
 at the outer edge of the layer. Layers on several faces, including the edge and corner
 regions of the box, are supported. By default, the faces and thicknesses of the layer of a
 block are detected by comparing the bounding boxes of the physical (non-PML) region and of
-the PML regions of the block, and `"SigmaMax"` is computed from the target reflection
-coefficient at normal incidence `"ReflectionTarget"`, for the smallest refractive index of
-the materials of the PML regions of the block. Alternatively, they can be specified using
-`"Direction"`, `"Thickness"`, and `"SigmaMax"`, which is required for the blocks whose PML
-regions do not lie outside of the bounding box of the physical region (the thickness is
-measured inward from the bounding box of the PML regions of the block). A real stretch
-`"KappaMax"` > 1
-improves the absorption of evanescent waves, when near fields reach the layer, but reduces
-the accuracy for propagating waves on a given mesh.
+the PML regions of the block. Alternatively, they can be specified using `"Direction"` and
+`"Thickness"`, which is required for the blocks whose PML regions do not lie outside of the
+bounding box of the physical region (the thickness is measured inward from the bounding box
+of the PML regions of the block). A real stretch `"KappaMax"` > 1 improves the absorption of
+evanescent waves, when near fields reach the layer, but reduces the accuracy for propagating
+waves on a given mesh.
+
+The absorption of the layer is limited by its discretization: a strongly absorbing layer
+reflects and absorbs spuriously when its stretch changes too much between neighboring
+elements. By default (`"SigmaMax": "Auto"`), the conductivity of each face is therefore
+computed from the size ``h`` of the PML elements normal to the face, measured on the mesh,
+and the finite element order ``p``, as
+``\sigma_\text{max} = 0.8 (n + 1) p / (\eta_0 n_r h)`` for the grading order ``n`` and
+the smallest refractive index ``n_r`` of the materials of the PML regions of the block. The
+theoretical reflection at normal incidence of a layer of ``N`` elements is then
+``e^{-1.6 p N}``, and ``e^{-1.6 p N \cos\theta}`` at the angle of incidence ``\theta``:
+the absorption only depends on the number of elements across the layer and the order, and
+not on its thickness. About 4 to 8 elements across the layer are typically sufficient for
+second-order elements, with more for grazing incidence. A structured (extruded) mesh of
+layers of elements, aligned with the faces of the box, is recommended in the PML regions.
+Alternatively, `"SigmaMax"` can be specified, or computed from a target theoretical
+reflection coefficient at normal incidence `"ReflectionTarget"` and the layer thickness
+(which can require a finer mesh in thin layers). The conductivity, element size, and
+theoretical reflection of each face are printed in the log.
 
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
 frequency for driven simulations, or the target frequency for eigenmode simulations. This
 static PML keeps the system matrices independent of frequency, and so eigenmode problems
-remain linear, while the absorption in the layer grows with frequency, so that the
-reflection target is met at all frequencies. With `"FrequencyDependent": true`, the stretch
+remain linear, while the absorption in the layer grows with frequency. With `"FrequencyDependent": true`, the stretch
 factors are instead evaluated at the solve frequency, for an absorption independent of
 frequency, and a complex frequency shift `"AlphaMax"` can be added (CFS-PML), which reduces
 the absorption below this frequency. For eigenmode simulations, the solve frequency is the

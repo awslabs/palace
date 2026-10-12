@@ -60,7 +60,7 @@ private:
                                ProblemType problem_type, const mfem::ParMesh &mesh);
   void SetUpPML(const std::vector<config::PMLData> &pml,
                 const std::vector<config::MaterialData> &materials,
-                ProblemType problem_type, const mfem::ParMesh &mesh);
+                ProblemType problem_type, const mfem::ParMesh &mesh, int fe_order);
   void SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
                               ProblemType problem_type, const mfem::ParMesh &mesh);
 
@@ -84,7 +84,8 @@ private:
 public:
   MaterialOperator(const std::vector<config::MaterialData> &materials,
                    const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
-                   const Mesh &mesh, const std::vector<config::PMLData> &pml = {});
+                   const Mesh &mesh, const std::vector<config::PMLData> &pml = {},
+                   int fe_order = 1);
   MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }

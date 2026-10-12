@@ -855,6 +855,46 @@ TEST_CASE("Config PML complex frequency shift", "[config][Serial]")
   CHECK_NOTHROW(config::PMLData(json{{"Attributes", {2}}, {"AlphaMax", 0.0}}));
 }
 
+TEST_CASE("Config PML conductivity", "[config][Serial]")
+{
+  // By default, σ_max is computed from the size of the PML elements, unless a reflection
+  // target is specified.
+  const config::PMLData def(json{{"Attributes", {2}}});
+  CHECK(def.sigma_auto);
+  const config::PMLData automatic(json{{"Attributes", {2}}, {"SigmaMax", "Auto"}});
+  CHECK(automatic.sigma_auto);
+  const config::PMLData target(json{{"Attributes", {2}}, {"ReflectionTarget", 1.0e-3}});
+  CHECK(!target.sigma_auto);
+  CHECK(target.reflection_target == 1.0e-3);
+  CHECK_THROWS(config::PMLData(json{{"Attributes", {2}}, {"SigmaMax", "Default"}}));
+  CHECK_THROWS(config::PMLData(
+      json{{"Attributes", {2}}, {"SigmaMax", "Auto"}, {"ReflectionTarget", 1.0e-3}}));
+
+  // The resolved configurations are valid, and only contain the reflection target if used.
+  for (const auto &pml :
+       {json{{"Attributes", {2}}}, json{{"Attributes", {2}}, {"ReflectionTarget", 1.0e-3}}})
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials", {{{"Attributes", {1, 2}}}}}, {"PML", json::array({pml})}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+    const auto &j_pml = config["Domains"]["PML"][0];
+    CHECK(j_pml.contains("ReflectionTarget") == pml.contains("ReflectionTarget"));
+    CHECK(j_pml["SigmaMax"] == (pml.contains("ReflectionTarget") ? json(nullptr) : "Auto"));
+    IoData iodata2(config, false);
+    REQUIRE(iodata2.domains.pml.size() == 1);
+    CHECK(iodata2.domains.pml[0].sigma_auto == iodata.domains.pml[0].sigma_auto);
+  }
+}
+
 TEST_CASE("Config PML regions", "[config][Serial]")
 {
   const config::PMLData pml(json{{"Attributes", {4, 2, 4}}});
@@ -1963,7 +2003,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_pml["ReferenceFrequency"].get<double>() == 1.0);
     CHECK(j_pml["FrequencyDependent"].get<bool>() == false);
     CHECK(j_pml["AllowRefinement"].get<bool>() == false);
-    CHECK(j_pml["SigmaMax"].is_null());
+    CHECK(j_pml["SigmaMax"] == "Auto");
 
     IoData iodata2(config, false);
     REQUIRE(iodata2.domains.pml.size() == 1);
@@ -1971,7 +2011,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
           iodata1.domains.pml[0].reference_frequency);
 
     auto pml_gaps =
-        SchemaCoverageGaps("/$defs/PML", j_pml, /*skip=*/{"Direction", "Thickness"});
+        SchemaCoverageGaps("/$defs/PML", j_pml,
+                           /*skip=*/{"Direction", "Thickness", "ReflectionTarget"});
     INFO("Domains.PML missing keys: " << json(pml_gaps).dump());
     CHECK(pml_gaps.empty());
   }

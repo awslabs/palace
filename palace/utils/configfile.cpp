@@ -390,8 +390,23 @@ PMLData::PMLData(const json &pml)
               "and its first derivative across the PML/physical interface (got "
                   << order << ")!");
 
-  // SigmaMax: leave as -1 sentinel if unspecified/null ⇒ auto from reflection_target.
-  ParseScalarOrArray3(pml, "SigmaMax", sigma_max);
+  // Peak conductivity: given per axis, or, for the axes without a nonnegative value (null,
+  // negative, or "Auto"), computed from the size of the PML elements, or from the
+  // reflection target if one is specified.
+  const bool has_reflection_target = pml.find("ReflectionTarget") != pml.end();
+  if (auto it = pml.find("SigmaMax"); it != pml.end() && it->is_string())
+  {
+    MFEM_VERIFY(it->get<std::string>() == "Auto",
+                "\"PML.SigmaMax\" must be a number, an array of 3 numbers, or \"Auto\"!");
+    MFEM_VERIFY(!has_reflection_target,
+                "\"PML.ReflectionTarget\" is not used with \"PML.SigmaMax\": \"Auto\", "
+                "which computes the conductivity from the size of the PML elements!");
+  }
+  else
+  {
+    ParseScalarOrArray3(pml, "SigmaMax", sigma_max);
+  }
+  sigma_auto = !has_reflection_target;
   ParseScalarOrArray3(pml, "KappaMax", kappa_max);
   ParseScalarOrArray3(pml, "AlphaMax", alpha_max);
   MFEM_VERIFY(std::ranges::all_of(kappa_max, [](double k) { return k >= 1.0; }),

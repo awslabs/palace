@@ -233,12 +233,13 @@ TEST_CASE("PML::BuildStretch", "[pml][Serial]")
 {
   config::PMLData data;
   data.order = 3;
-  data.reflection_target = 1.0e-6;
   pml::LayerGeometry g;
   g.thickness = {0.0, 0.1, 0.2, 0.4, 0.0, 0.0};
 
-  SECTION("Default σ_max from the reflection target, per face thickness")
+  SECTION("σ_max from the reflection target, per face thickness")
   {
+    data.sigma_auto = false;
+    data.reflection_target = 1.0e-6;
     const double n_r = 1.5;
     const auto p = pml::BuildStretch(data, g, n_r);
     for (int f = 0; f < 6; f++)
@@ -252,11 +253,37 @@ TEST_CASE("PML::BuildStretch", "[pml][Serial]")
 
   SECTION("Configured σ_max per axis")
   {
+    data.sigma_auto = false;
+    data.reflection_target = 1.0e-6;
     data.sigma_max = {-1.0, 7.0, -1.0};
     const auto p = pml::BuildStretch(data, g, 1.0);
     CHECK(p.sigma_max[2] == Approx(7.0));
     CHECK(p.sigma_max[3] == Approx(7.0));
     CHECK(p.sigma_max[1] == Approx(-4.0 * std::log(1.0e-6) / (2.0 * 0.1)));
+  }
+
+  SECTION("Default σ_max from the element size")
+  {
+    REQUIRE(data.sigma_auto);
+    const std::array<double, 6> h = {0.0, 0.025, 0.05, 0.1, 0.0, 0.0};
+    const auto p = pml::BuildStretch(data, g, 1.5, h, 2);
+    CHECK(p.sigma_auto);
+    for (int f = 0; f < 6; f++)
+    {
+      if (g.thickness[f] > 0.0)
+      {
+        // σ_max = C (n + 1) p / (n_r h), with the theoretical reflection exp(-2 C p N) for
+        // N = d / h elements.
+        CHECK(p.sigma_max[f] == Approx(pml::AUTO_SIGMA_FACTOR * 4.0 * 2.0 / (1.5 * h[f])));
+        CHECK(
+            pml::TheoreticalReflection(p, f) ==
+            Approx(std::exp(-2.0 * pml::AUTO_SIGMA_FACTOR * 2.0 * g.thickness[f] / h[f])));
+      }
+      else
+      {
+        CHECK(p.sigma_max[f] == 0.0);
+      }
+    }
   }
 
   SECTION("Static and frequency-dependent stretch")
@@ -528,7 +555,17 @@ TEST_CASE("MaterialOperator PML regions", "[pml][materialoperator][Serial]")
     CHECK(!mat_op.HasFrequencyDependentPML());
     const auto &stretch = mat_op.GetPMLLayers().at(0).GetStretch();
     CHECK(stretch.geometry.thickness[5] == Approx(0.25));
-    CHECK(stretch.sigma_max[5] == Approx(-4.0 * std::log(1.0e-6) / (2.0 * 0.25 * 1.0)));
+    CHECK(stretch.element_size[5] == Approx(0.25));
+    CHECK(stretch.sigma_max[5] == Approx(pml::AUTO_SIGMA_FACTOR * 4.0 / (0.25 * 1.0)));
+
+    // σ_max for a reflection target.
+    auto pml_target = pml;
+    pml_target.sigma_auto = false;
+    pml_target.reflection_target = 1.0e-6;
+    MaterialOperator mat_op_target(MakeMaterials(false), periodic, ProblemType::DRIVEN,
+                                   *mesh, {pml_target});
+    CHECK(mat_op_target.GetPMLLayers().at(0).GetStretch().sigma_max[5] ==
+          Approx(-4.0 * std::log(1.0e-6) / (2.0 * 0.25 * 1.0)));
     CHECK(stretch.reference_frequency == Approx(2.0));
     CHECK(mat_op.GetPMLLayers().at(0).GetAttributes() == std::vector<int>{3, 4});
   }
@@ -572,6 +609,20 @@ TEST_CASE("MaterialOperator PML regions", "[pml][materialoperator][Serial]")
                             *mesh, {pml});
     CHECK(!mat_op.HasPML());
     CHECK(mat_op.GetBulkAttributeToMaterial() == mat_op.GetAttributeToMaterial());
+  }
+
+  SECTION("Element size and automatic σ_max for the finite element order")
+  {
+    // The +z layer z > 0.75 of the 4 x 4 x 4 mesh is one element thick.
+    auto mesh = MakeMesh(false);
+    auto pml = MakePML(false);
+    constexpr int fe_order = 2;
+    MaterialOperator mat_op(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh,
+                            {pml}, fe_order);
+    const auto &stretch = mat_op.GetPMLLayers().at(0).GetStretch();
+    CHECK(stretch.element_size[5] == Approx(0.25));
+    CHECK(stretch.sigma_max[5] ==
+          Approx(pml::AUTO_SIGMA_FACTOR * 4.0 * fe_order / (1.0 * 0.25)));
   }
 
   SECTION("Configured layer geometry")
@@ -697,6 +748,7 @@ TEST_CASE("MaterialOperator PML blocks", "[pml][materialoperator][Serial][Parall
     bad[1].order = 2;
     CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, mesh, bad));
     bad = pml;
+    bad[1].sigma_auto = false;
     bad[1].reflection_target = 1.0e-4;
     CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, mesh, bad));
     bad = pml;
@@ -748,6 +800,7 @@ TEST_CASE("MaterialOperator PML blocks", "[pml][materialoperator][Serial][Parall
     materials[0].attributes = {1, 2, 3};
     std::vector<config::PMLData> pml = {MakePML({2}), MakePML({3})};
     pml[0].order = 2;
+    pml[0].sigma_auto = false;
     pml[0].reflection_target = 1.0e-4;
     pml[1].frequency_dependent = true;
     pml[1].kappa_max = {1.0, 1.0, 2.0};
@@ -761,7 +814,7 @@ TEST_CASE("MaterialOperator PML blocks", "[pml][materialoperator][Serial][Parall
     CHECK(p0.geometry.thickness == std::array<double, 6>{0.0, 0.0, 0.0, 0.0, 0.25, 0.0});
     CHECK(p1.geometry.thickness == std::array<double, 6>{0.0, 0.0, 0.0, 0.0, 0.0, 0.25});
     CHECK(p0.sigma_max[4] == Approx(-3.0 * std::log(1.0e-4) / (2.0 * 0.25)));
-    CHECK(p1.sigma_max[5] == Approx(-4.0 * std::log(1.0e-6) / (2.0 * 0.25)));
+    CHECK(p1.sigma_max[5] == Approx(pml::AUTO_SIGMA_FACTOR * 4.0 / (1.0 * 0.25)));
 
     // A single block for both layers.
     MaterialOperator mat_op_single(materials, periodic, ProblemType::DRIVEN, mesh,

@@ -237,17 +237,23 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
 
 void ConcretizePML(const config::PMLData &pml, json &j_pml)
 {
-  // The automatic σ_max (negative entries) is computed per face from the mesh, so it is
-  // recorded as null when it applies to all axes.
-  const bool auto_sigma_max =
+  // The σ_max computed per face from the mesh (negative entries) is recorded as "Auto"
+  // (from the element size) or null (from the reflection target, which is only recorded if
+  // used) when it applies to all axes.
+  const bool computed_sigma_max =
       std::ranges::all_of(pml.sigma_max, [](double s) { return s < 0.0; });
   ApplyEntries(j_pml, {{"Order", pml.order},
-                       {"SigmaMax", auto_sigma_max ? json(nullptr) : json(pml.sigma_max)},
+                       {"SigmaMax", !computed_sigma_max ? json(pml.sigma_max)
+                                    : pml.sigma_auto    ? json("Auto")
+                                                        : json(nullptr)},
                        {"KappaMax", pml.kappa_max},
                        {"AlphaMax", pml.alpha_max},
-                       {"ReflectionTarget", pml.reflection_target},
                        {"FrequencyDependent", pml.frequency_dependent},
                        {"AllowRefinement", pml.allow_refinement}});
+  if (!pml.sigma_auto)
+  {
+    Concretize(j_pml, "ReflectionTarget", pml.reflection_target);
+  }
   if (!pml.frequency_dependent)
   {
     Concretize(j_pml, "ReferenceFrequency", pml.reference_frequency);

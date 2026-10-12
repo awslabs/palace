@@ -679,10 +679,13 @@
           "x-palace-advanced": true
         },
         "SigmaMax": {
-          "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Negative values or `null` compute the value per face from `\"ReflectionTarget\"`, the layer thickness, and the smallest refractive index of the materials of the PML regions of the block.",
+          "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. `\"Auto\"`, `null`, or negative values compute the value per face from the size `h` of the PML elements normal to the face (measured on the mesh) and the finite element order `p` as `\u03c3_max = 0.8 (n + 1) p / (\u03b7\u2080 n_r h)`, for the grading order `n` and the smallest refractive index `n_r` of the materials of the PML regions of the block: this bounds the change of the stretch between neighboring elements (the optimal conductivity of a discrete layer), and the theoretical reflection at normal incidence of a layer of `N` elements is `exp(-1.6 p N)`. If `\"ReflectionTarget\"` is specified, they are instead computed from the reflection target and the layer thickness.",
           "oneOf": [
             {
               "type": "null"
+            },
+            {
+              "const": "Auto"
             },
             {
               "type": "number"
@@ -696,6 +699,7 @@
               "maxItems": 3
             }
           ],
+          "default": "Auto",
           "x-palace-advanced": true
         },
         "KappaMax": {
@@ -740,10 +744,9 @@
         },
         "ReflectionTarget": {
           "type": "number",
-          "description": "Target theoretical reflection coefficient at normal incidence, used to compute `\"SigmaMax\"` when not specified.",
+          "description": "Target theoretical reflection coefficient at normal incidence. If specified, `\"SigmaMax\"` is computed from it and the layer thickness when not specified (instead of from the size of the PML elements), as `\u03c3_max = -(n + 1) ln(R) / (2 \u03b7\u2080 n_r d)`.",
           "exclusiveMinimum": 0,
-          "exclusiveMaximum": 1,
-          "default": 1e-06
+          "exclusiveMaximum": 1
         },
         "FrequencyDependent": {
           "type": "boolean",
