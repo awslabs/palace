@@ -262,11 +262,16 @@ public:
   // normalized depth into the layer. Must be ≥ 2.
   int order = 3;
 
+  // Compute σ_max (for the axes without a configured value) per face from the size h of the
+  // PML elements normal to the face, as σ_max = C (n + 1) p / (n_r h) for the finite
+  // element order p (see pml::BuildStretch), unless a reflection target is specified.
+  bool sigma_auto = true;
+
   // Peak conductivity σ_max per axis, in S/m (nondimensionalized at load time). The stretch
   // factor along each axis is s = κ + σ / (ε₀ (2π α + iω)). Negative entries are computed
-  // per face from reflection_target as σ_max = −(n + 1) ln(R) / (2 Z₀ n_r d), with d the
-  // face thickness and n_r the smallest refractive index of the materials of the PML
-  // regions.
+  // per face from the element size (sigma_auto), or from reflection_target as σ_max =
+  // −(n + 1) ln(R) / (2 Z₀ n_r d), with d the face thickness and n_r the smallest
+  // refractive index of the materials of the PML regions.
   std::array<double, 3> sigma_max{{-1.0, -1.0, -1.0}};
 
   // Peak real coordinate scaling κ_max per axis (dimensionless, ≥ 1).
@@ -277,7 +282,8 @@ public:
   // frequency-dependent stretch.
   std::array<double, 3> alpha_max{{0.0, 0.0, 0.0}};
 
-  // Target normal-incidence reflection coefficient for the computed σ_max.
+  // Target normal-incidence reflection coefficient for the computed σ_max, if specified
+  // (!sigma_auto).
   double reflection_target = 1.0e-6;
 
   // If true, the stretch factors are evaluated at the solve frequency: the real frequency
