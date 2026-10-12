@@ -406,6 +406,11 @@ correctness, not iteration count.
    `BoundaryModeOperator` accepts/exposes the ε and μ⁻¹ fields and `ModeEigenSolver`
    forwards them. A mode-integrator equivalence test and an end-to-end
    `BoundaryModeOperator` constant-field equivalence test pass.
+3. **Convergence unit test** (P2 parabola, direct API) — validates the core feature.
+   **DONE** — `BoundaryModeOperator parabolic-index slab convergence` solves
+   `eps_r(x) = eps_c - ((x-W)/x0)^2` (exact P2 H1 field) against the analytic TE result
+   `kn = sqrt(omega^2 eps_c - omega/x0)`. Errors are 2.2e-4, 1.5e-5, 9.3e-7 for
+   nx = 16, 32, 64 (ratio ≈ 16, i.e. O(h^4) for order 2).
 2. **Exact mode operator wiring**: `AssembleAtn`/`AssembleBtt`/`ModeOperatorModel` and the
    direct-API seam.
 3. **Convergence unit test** (P2 parabola, direct API) — validates the core feature.
