@@ -86,8 +86,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     decaying auxiliary states in the synthesized circuit. For iterative solvers, the
     geometric multigrid preconditioner is by default complemented with a sparse direct solve
     on the PML subdomain (`config["Solver"]["Linear"]["PMLSubdomainSolver"]`), since its
-    polynomial smoothers do not converge on the PML equations of strongly absorbing layers
-    (the AMS solver is not supported with PML regions). SchemaVer 4-2-0 [PR
+    polynomial smoothers do not converge on the PML equations of strongly absorbing layers,
+    and its real-valued coarse-level solve uses the PML terms with the magnitudes of the
+    stretch factors (the AMS solver is not supported with PML regions). SchemaVer 4-2-0 [PR
     XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes

@@ -51,7 +51,8 @@ private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
   const bool pc_mat_amg;      // Preconditioner uses AMS/BoomerAMG on the real-valued matrix
-  const bool pml_subdomain;   // Provide the PML true DOFs for the PML subdomain correction
+  const bool complex_coarse_solve;  // Use the complex-valued coarse-level operator
+  const bool pml_subdomain;  // Provide the PML true DOFs for the PML subdomain correction
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
