@@ -38,59 +38,10 @@ namespace palace
 // band formed no new feature (the bitwise requirements 2.2.2 (a)-(c)).
 //
 
-// A truncation plane: n . x = c with n the OUTWARD unit normal of the domain, fitted from
-// the boundary faces of one truncation attribute (an exterior, nonmetal, non-interface
-// attribute under no boundary condition: metaledge's simulation-cut surfaces). Status:
-// "Natural" (planar, vertical: mirrors), "Unsupported" (not parallel to the process normal:
-// a z cut would flip the metal's process side), "NonPlanar" (the attribute's faces are
-// chords of a curved surface: two of its plane groups meet at a dihedral turn below the
-// arc rule's joint cap, kArcMaxJointTurnDegrees).
-struct MirrorPlane
-{
-  int attribute = 0;
-  std::array<double, 3> normal{};
-  double offset = 0.0;
-  int faces = 0;
-  double max_deviation = 0.0;
-  std::string status;
-  // The bounding box of the plane's faces: a plane acts only where a point's PROJECTION
-  // onto it falls within its faces (a non-convex domain — a window with a re-entrant
-  // outline, the symmetry fixture's chevron — has planes whose infinite extension passes
-  // through the domain elsewhere).
-  std::array<double, 3> box_min{}, box_max{};
-  bool Mirrors() const { return status == "Natural"; }
-  bool NearFaces(const std::array<double, 3> &p, double margin) const
-  {
-    const double d = Inside(p);
-    for (int k = 0; k < 3; k++)
-    {
-      const double projected = p[k] + d * normal[k];
-      if (projected < box_min[k] - margin || projected > box_max[k] + margin)
-      {
-        return false;
-      }
-    }
-    return true;
-  }
-  // Signed distance of a point into the domain (>= 0 inside).
-  double Inside(const std::array<double, 3> &p) const
-  {
-    return offset - (normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2]);
-  }
-  std::array<double, 3> Reflect(const std::array<double, 3> &p) const
-  {
-    const double d = Inside(p);
-    return {p[0] + 2.0 * d * normal[0], p[1] + 2.0 * d * normal[1],
-            p[2] + 2.0 * d * normal[2]};
-  }
-  // The linear part of the reflection on a direction.
-  std::array<double, 3> ReflectDirection(const std::array<double, 3> &v) const
-  {
-    const double dot = normal[0] * v[0] + normal[1] * v[1] + normal[2] * v[2];
-    return {v[0] - 2.0 * dot * normal[0], v[1] - 2.0 * dot * normal[1],
-            v[2] - 2.0 * dot * normal[2]};
-  }
-};
+// struct MirrorPlane (the truncation plane: n . x = c with n the OUTWARD unit normal, its
+// status and the box of its faces) is defined in surfaceresponseidentification.hpp: the
+// mirror-extended IdentificationInput carries the planes (decision 732, F-M1: the support
+// plan of a mirror-formed cluster reflects the real plan beyond the imaged band).
 
 // Width of the mirror band in matching radii: the 2R interaction reach of every
 // identification rule plus R of margin, so that no real feature farther than 2R from a

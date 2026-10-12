@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -6497,9 +6498,17 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
       CHECK(entry->contains("ImagePortions"));
       CHECK(entry->at("Hash") == feature.hash);
     }
-    // Both convexities, the real arm on the first serialised portion of one key and on the
-    // second of the other (the chirality / sort of each wedge's own frame).
-    CHECK(real_portion_sets == std::set<std::vector<int>>{{0}, {1}});
+    // Both convexities. The real arm's serialised index is the chirality / sort of each
+    // wedge's own canonical frame (the minimal serialisation of Box + Context + Portions):
+    // with the MIRROR-COMPLETE support plan (decision 732, F-M1: each wedge's box reaches
+    // past the band, so its image-side context is now the reflected real plan, not the
+    // band-cut stub) both wedges' minimal frames put the real arm first; before F-M1 one of
+    // them read {1}. The mapping itself is exact either way (the midpoint checks above).
+    CHECK(real_portion_sets == std::set<std::vector<int>>{{0}});
+    for (const auto *configuration : configurations)
+    {
+      CHECK(configuration->spatial_support.contains("MirrorCompletion"));
+    }
     CHECK(gap_signs == std::set<int>{-1, 1});
     // The MirrorBand record lists the configurations' Unmerged records with MergedFeature.
     const auto band = DescribeMirrorBand(planes, extension, summary, merged, 3.0, 1.0);
@@ -6587,5 +6596,355 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
     CHECK(MirrorFormedContractOf(*configurations[0]).is_null());
     CHECK_THAT(configurations[0]->length,
                WithinAbs(unmerged.at("RealLength").get<double>(), 1.0e-12));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationMirrorCompleteSupport",
+          "[surfaceresponseidentification][mirror][contract][Serial]")
+{
+  // Decision 732 (F-M1, the v3-g M1 DIAGNOSIS sections 1 / 4 / 5 T1): the support plan of
+  // a mirror-formed SpatialEdgeCluster is MIRROR-COMPLETE. The mirror extension images real
+  // segments only within kMirrorBandOverRadius x R of a plane, so an image chain ends at a
+  // BAND-CUT vertex; the claims box (rule B2) pads a cut image claim by 3 R, so the box
+  // reaches past the band and, before the fix, the Chain: true Context pieces of the image
+  // side ended at the band cut INSIDE the box (no device vertex there) and T2 read the band
+  // cut as an interior device vertex (46d2: MinClearanceOverR 0.46436 = the band cut's face
+  // distance). After the fix ClusterSupport clips the REFLECTED real plan beyond the band
+  // into the box as context, the band cut is a continuing-edge split (cut_a / cut_b), and a
+  // band cut no reflection continues (the plane does not act there) is Unboxable BY NAME.
+  // The fixture is the 46d2 form: a CPW (trace 1 R, gaps 1 R, grounds 4 R; 2 conductors)
+  // crossing the Natural plane x = 0 at 45 degrees, mesh segments 1 R: the four gap edges
+  // meet their images in virtual 90-degree corners 1.41 R apart, one 8-edge cluster.
+  const double R = 2.0;
+  const double s2 = std::sqrt(2.0);
+  // Along-coordinate a (direction d = (1, 1) / sqrt 2) and offset o (n = (-1, 1) / sqrt 2):
+  // p = a d + o n; the plane x = 0 is a = o.
+  auto P = [&](double a, double o) -> Point2 { return {(a - o) / s2, (a + o) / s2}; };
+  const double L = 24.0 * R;
+  auto Strip = [&](double o0, double o1, int conductor)
+  {
+    LoopSpec strip{{P(-L, o0), P(o0, o0), P(o1, o1), P(-L, o1)}, conductor, 1.0 * R};
+    strip.truncation_edges = {1};
+    return strip;
+  };
+  const std::vector<LoopSpec> cpw = {Strip(-0.5 * R, 0.5 * R, 1),
+                                     Strip(-5.5 * R, -1.5 * R, 2),
+                                     Strip(1.5 * R, 5.5 * R, 2)};
+  std::vector<MirrorPlane> planes(1);
+  planes[0].attribute = 7;
+  planes[0].normal = {1.0, 0.0, 0.0};
+  planes[0].offset = 0.0;
+  planes[0].faces = 1;
+  planes[0].status = "Natural";
+  planes[0].box_min = {-1.0e9, -1.0e9, -1.0e9};
+  planes[0].box_max = {1.0e9, 1.0e9, 1.0e9};
+  auto Configurations = [](const IdentificationResult &merged)
+  {
+    std::vector<const IdentifiedFeature *> configurations;
+    for (const auto &feature : merged.features)
+    {
+      if (IsUnmergedMirrorConfiguration(feature) && feature.type == "SpatialEdgeCluster")
+      {
+        configurations.push_back(&feature);
+      }
+    }
+    return configurations;
+  };
+  auto Run = [&](const std::vector<MirrorPlane> &with_planes)
+  {
+    const auto input = MakeInput(cpw, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, with_planes);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, with_planes, merged);
+    return std::make_tuple(input, extension, merged, summary);
+  };
+
+  // The frame coordinates (units of R) of a world point in the configuration's frame.
+  auto InFrame = [&](const IdentifiedFeature &feature, const std::array<double, 3> &p)
+  {
+    Point2 q{};
+    for (int d = 0; d < 3; d++)
+    {
+      q[0] += (p[d] - feature.origin[d]) * feature.axes[0][d] / R;
+      q[1] += (p[d] - feature.origin[d]) * feature.axes[1][d] / R;
+    }
+    return q;
+  };
+  auto OnFace = [](const Point2 &p, const std::array<double, 4> &box, double tolerance)
+  {
+    return std::abs(p[0] - box[0]) <= tolerance || std::abs(p[0] - box[2]) <= tolerance ||
+           std::abs(p[1] - box[1]) <= tolerance || std::abs(p[1] - box[3]) <= tolerance;
+  };
+  auto StrictlyInside = [](const Point2 &p, const std::array<double, 4> &box, double margin)
+  {
+    return p[0] > box[0] + margin && p[0] < box[2] - margin && p[1] > box[1] + margin &&
+           p[1] < box[3] - margin;
+  };
+
+  SECTION("the 46d2 form: the image chains are completed to the box face by the reflected "
+          "real plan; the band cuts are continuing-edge splits; the real side is unchanged")
+  {
+    const auto [input, extension, merged, summary] = Run(planes);
+    const auto configurations = Configurations(merged);
+    REQUIRE(configurations.size() == 1);
+    const IdentifiedFeature &feature = *configurations[0];
+    const nlohmann::json &support = feature.spatial_support;
+    const nlohmann::json &signature = feature.signature;
+    INFO(support.dump(1));
+    INFO(signature.dump(1));
+    CHECK(support.at("Contract").get<int>() == 3);
+    CHECK(support.at("Unboxable").is_null());
+    CHECK_FALSE(support.at("Growth").at("Grown").get<bool>());
+    REQUIRE(feature.mirror.contains("Contract"));
+    CHECK(feature.mirror.at("Contract").at("RealPortions") == std::vector<int>{0, 1, 6, 7});
+    const auto box = signature.at("Box").get<std::array<double, 4>>();
+    // The four image chains' band cuts (ExtendIdentificationInputAcrossMirrorPlanes) on the
+    // cluster's plane lie strictly INSIDE the box, 0.84-3.83 R from the +x face: before the
+    // fix the image-side Chain: true pieces ended there (46d2's reading).
+    std::vector<Point2> cuts_in_box;
+    for (const std::size_t v : extension.band_cut_vertices)
+    {
+      const Point2 q = InFrame(feature, extension.input.vertices[v].coordinate);
+      if (StrictlyInside(q, box, 1.0e-3))
+      {
+        cuts_in_box.push_back(q);
+      }
+    }
+    REQUIRE(cuts_in_box.size() == 4);
+    double missing_before = 0.0;  // sum of (face - band cut) along the image chains (+x)
+    for (const Point2 &cut : cuts_in_box)
+    {
+      CHECK(box[2] - cut[0] > 0.5);
+      missing_before += box[2] - cut[0];
+    }
+    // AFTER (F-M1): MirrorCompletion = the reflected real plan beyond the band inside the
+    // box: 4 pieces, every one Chain: true, of exactly the length the band cuts left out -
+    // which is exactly what the legacy census read as FICTITIOUS continuation before the
+    // fix (DIAGNOSIS 1.4: 46d2's FictitiousContinuationLengthOverR 6.03167 = its deficit);
+    // that census now reads 0: every claim-cut end is continued by device plan.
+    REQUIRE(support.contains("MirrorCompletion"));
+    const nlohmann::json &completion = support.at("MirrorCompletion");
+    CHECK(completion.at("Planes") == std::vector<int>{0});
+    CHECK(completion.at("Pieces").get<int>() == 4);
+    CHECK(completion.at("ChainPieces").get<int>() == 4);
+    CHECK_THAT(completion.at("LengthOverR").get<double>(),
+               WithinAbs(missing_before, 1.0e-5));
+    CHECK_THAT(completion.at("LengthOverR").get<double>(), WithinAbs(9.337219, 1.0e-5));
+    CHECK_THAT(support.at("LegacyContinuation")
+                   .at("FictitiousContinuationLengthOverR")
+                   .get<double>(),
+               WithinAbs(0.0, 1.0e-9));
+    // Every Chain: true context piece ends on a box face or at a chain end (a claim end or
+    // another context piece's end): no free end inside the box (the generator's face-vote
+    // stop of decision 699 has nothing to refuse).
+    std::vector<Point2> ends;
+    for (const auto &portion : signature.at("Portions"))
+    {
+      const auto P = portion.at("P").get<std::array<double, 4>>();
+      ends.push_back({P[0], P[1]});
+      ends.push_back({P[2], P[3]});
+    }
+    for (const auto &piece : signature.at("Context"))
+    {
+      const auto P = piece.at("P").get<std::array<double, 4>>();
+      ends.push_back({P[0], P[1]});
+      ends.push_back({P[2], P[3]});
+    }
+    std::size_t chain_pieces = 0, ends_on_faces = 0, ends_at_cuts = 0;
+    for (const auto &piece : signature.at("Context"))
+    {
+      if (!piece.at("Chain").get<bool>())
+      {
+        continue;
+      }
+      chain_pieces++;
+      const auto P = piece.at("P").get<std::array<double, 4>>();
+      for (const Point2 e : {Point2{P[0], P[1]}, Point2{P[2], P[3]}})
+      {
+        const bool on_face = OnFace(e, box, 1.0e-3);
+        const std::size_t coincident = static_cast<std::size_t>(
+            std::count_if(ends.begin(), ends.end(), [&](const Point2 &o)
+                          { return std::hypot(o[0] - e[0], o[1] - e[1]) <= 1.0e-5; }));
+        CHECK((on_face || coincident >= 2));  // itself and at least one other end
+        ends_on_faces += on_face ? 1 : 0;
+        for (const Point2 &cut : cuts_in_box)
+        {
+          ends_at_cuts += std::hypot(cut[0] - e[0], cut[1] - e[1]) <= 1.0e-5 ? 1 : 0;
+        }
+      }
+    }
+    // 4 real chain pieces + 3 image pieces to the band cuts + 4 reflected continuations.
+    CHECK(chain_pieces == 11);
+    CHECK(ends_on_faces == 8);
+    // The band cuts: three are met by an image piece AND its continuation, the fourth (an
+    // image CLAIM cut at the band) by its continuation alone.
+    CHECK(ends_at_cuts == 7);
+    // T2 no longer reads a band cut as an interior device vertex: the minimum clearance is
+    // the foreign corner's (the upper ground's outer edge meets its image), not a band
+    // cut's distance from the +x face (0.840746 before the fix); the four image chains now
+    // CROSS the +x face (1 foreign crossing before, 5 after).
+    const auto &face_rules = support.at("FaceRules");
+    REQUIRE(support.at("Context").at("ForeignVertices").size() == 1);
+    CHECK_THAT(face_rules.at("MinClearanceOverR").get<double>(),
+               WithinAbs(support.at("Context")
+                             .at("ForeignVertices")[0]
+                             .at("FaceDistanceOverR")
+                             .get<double>(),
+                         1.0e-9));
+    for (const Point2 &cut : cuts_in_box)
+    {
+      CHECK(std::abs(face_rules.at("MinClearanceOverR").get<double>() - (box[2] - cut[0])) >
+            1.0e-3);
+    }
+    CHECK(face_rules.at("Crossings") == std::vector<int>{0, 0, 5, 5});
+    CHECK(face_rules.at("Passes").get<int>() == 1);
+    // The real side of the plan is UNCHANGED: the four real chains' continuations to the +y
+    // face and the two foreign pieces of the upper ground's outer edge and its image, as
+    // the record before the fix wrote them (main d73e7f7459, this fixture).
+    const std::vector<std::array<double, 4>> unchanged = {
+        {-1.261727, 3.336973, -1.261727, 6.336973},
+        {0.738273, 3.336973, 0.738273, 6.336973},
+        {-0.261727, 3.336973, -0.261727, 6.336973},
+        {-2.261727, 3.336973, -2.261727, 6.336973},
+        {4.738273, 4.604922, 6.470324, 4.604922},
+        {4.738273, 4.604922, 4.738273, 6.336973}};
+    for (const auto &expected : unchanged)
+    {
+      const bool present =
+          std::any_of(signature.at("Context").begin(), signature.at("Context").end(),
+                      [&](const nlohmann::json &piece)
+                      {
+                        const auto P = piece.at("P").get<std::array<double, 4>>();
+                        for (int k = 0; k < 4; k++)
+                        {
+                          if (std::abs(P[k] - expected[k]) > 1.0e-6)
+                          {
+                            return false;
+                          }
+                        }
+                        return true;
+                      });
+      CHECK(present);
+    }
+    CHECK(signature.at("Context").size() == 13);
+    // The image side now carries the real side's plan: every claim-cut end's straight
+    // continuation to the claims box lies on device plan, so the chain length equals the
+    // legacy straight continuation length (24.828205 R; 15.490986 before the fix).
+    CHECK_THAT(support.at("Context").at("ChainLengthOverR").get<double>(),
+               WithinAbs(support.at("LegacyContinuation")
+                             .at("StraightContinuationLengthOverR")
+                             .get<double>(),
+                         1.0e-5));
+    // The consumer (decision 733): every context end placed by the configuration's frame
+    // lies on the MIRROR-COMPLETE perimeter within the A10 tolerance - the reflected
+    // continuation ends beyond the band through the reflection, every other end as before;
+    // a genuinely mis-placed end beyond the band (0.1 R off the reflected plan) still
+    // fails.
+    const double tolerance = kSignatureParameterToleranceOverRadius * R;
+    const double span = std::max(box[2] - box[0], box[3] - box[1]) * R;
+    std::size_t beyond_band = 0, by_reflection_only = 0;
+    for (const auto &piece : signature.at("Context"))
+    {
+      const auto P = piece.at("P").get<std::array<double, 4>>();
+      for (const auto &q :
+           {DevicePoint(feature, P[0], P[1], R), DevicePoint(feature, P[2], P[3], R)})
+      {
+        const double direct = DevicePerimeterDistance(merged, q);
+        const double complete =
+            MirrorCompletePerimeterDistance(merged, q, planes, span, tolerance);
+        CHECK(complete <= tolerance);
+        CHECK(complete <= direct);
+        if (-planes[0].Inside(q) > kMirrorBandOverRadius * R)
+        {
+          beyond_band++;
+          if (direct > tolerance)
+          {
+            by_reflection_only++;
+            // Mis-placed: shifted by 0.1 R along the plane (off the reflected plan).
+            const std::array<double, 3> off = {q[0], q[1] + 0.1 * R, q[2]};
+            CHECK(MirrorCompletePerimeterDistance(merged, off, planes, span, tolerance) >
+                  tolerance);
+          }
+        }
+      }
+    }
+    // Beyond 3 R of the plane: the four continuations' face ends, the seven band-cut ends
+    // (a band cut is the FAR end of the last imaged segment, past 3 R) and one image
+    // piece's start at a claim cut 3.35 R out; only the four face ends lie on no image
+    // segment.
+    CHECK(beyond_band == 12);
+    CHECK(by_reflection_only == 4);
+    // A point inside the domain or without planes: exactly DevicePerimeterDistance.
+    const auto real_end = DevicePoint(feature, -1.261727, 6.336973, R);
+    CHECK(MirrorCompletePerimeterDistance(merged, real_end, planes, span, tolerance) ==
+          DevicePerimeterDistance(merged, real_end));
+    CHECK(MirrorCompletePerimeterDistance(merged, real_end, {}, span, tolerance) ==
+          DevicePerimeterDistance(merged, real_end));
+  }
+
+  SECTION("identity: an input without mirror planes forms no completion; a mirror window "
+          "whose boxes hold no un-imaged reflected plan records none")
+  {
+    const auto input = MakeInput(cpw, R);
+    CHECK(input.mirror_planes.empty());
+    const auto real = IdentifyMetalPerimeter(input);
+    for (const auto &feature : real.features)
+    {
+      CHECK_FALSE((feature.spatial_support.is_object() &&
+                   feature.spatial_support.contains("MirrorCompletion")));
+    }
+    // The extended input carries the planes; the straight 90-degree lead of the MirrorBand
+    // test (a Continued feature, no cluster) records no completion anywhere.
+    LoopSpec lead{Rectangle(-20.0, -3.0, 0.0, 3.0), 0, 1.0};
+    lead.truncation_edges = {1};
+    const auto lead_input = MakeInput({lead}, R);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(lead_input, planes);
+    CHECK(extension.input.mirror_planes.size() == 1);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    for (const auto &feature : extended.features)
+    {
+      CHECK_FALSE((feature.spatial_support.is_object() &&
+                   feature.spatial_support.contains("MirrorCompletion")));
+    }
+  }
+
+  SECTION("guard: a plane acting on the band but not on the real plan beyond it leaves a "
+          "band cut inside the box without continuation: Unboxable by name")
+  {
+    // The plane's faces end (in y) half a mesh segment above the lowest band cut of the
+    // cluster's four image chains (the lower gap edge's): every imaged segment of the
+    // cluster still has an end within the faces (the same cluster forms), the lower gap
+    // edge's first un-imaged real segment has none, so its reflection is not plan there.
+    const auto [input, extension, merged, summary] = Run(planes);
+    double lowest = std::numeric_limits<double>::infinity();
+    for (const std::size_t v : extension.band_cut_vertices)
+    {
+      const double y = extension.input.vertices[v].coordinate[1];
+      if (y > -15.0)  // the lower ground's OUTER edge (not a cluster member) lies below
+      {
+        lowest = std::min(lowest, y);
+      }
+    }
+    REQUIRE(std::isfinite(lowest));
+    auto partial = planes;
+    partial[0].box_min[1] = lowest + 0.5;
+    const auto [input_p, extension_p, merged_p, summary_p] = Run(partial);
+    const auto configurations = Configurations(merged_p);
+    REQUIRE(configurations.size() == 1);
+    const IdentifiedFeature &feature = *configurations[0];
+    INFO(feature.spatial_support.dump(1));
+    CHECK(feature.signature.value("Unboxable", false));
+    CHECK(feature.spatial_support.at("Contract").get<int>() == 0);
+    CHECK(feature.spatial_support.at("UnboxableReason") == "MirrorBandCutUncontinued");
+    CHECK_THAT(feature.spatial_support.at("Unboxable").get<std::string>(),
+               ContainsSubstring("plane 0 does not act"));
+    CHECK_THAT(feature.spatial_support.at("Unboxable").get<std::string>(),
+               ContainsSubstring("has no reflected continuation"));
+    CHECK_FALSE(
+        (feature.spatial_support.contains("MirrorCompletion") &&
+         feature.spatial_support.at("MirrorCompletion").at("Pieces").get<int>() == 4));
   }
 }
