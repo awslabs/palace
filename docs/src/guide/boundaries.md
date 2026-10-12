@@ -139,22 +139,44 @@ and the finite element order ``p``, as
 the smallest refractive index ``n_r`` of the materials of the PML regions of the block. The
 theoretical reflection at normal incidence of a layer of ``N`` elements is then
 ``e^{-1.6 p N}``, and ``e^{-1.6 p N \cos\theta}`` at the angle of incidence ``\theta``:
-the absorption only depends on the number of elements across the layer and the order, and
-not on its thickness. About 4 to 8 elements across the layer are typically sufficient for
-second-order elements, with more for grazing incidence. A structured (extruded) mesh of
-layers of elements, aligned with the faces of the box, is recommended in the PML regions.
-Alternatively, `"SigmaMax"` can be specified, or computed from a target theoretical
-reflection coefficient at normal incidence `"ReflectionTarget"` and the layer thickness
-(which can require a finer mesh in thin layers). The conductivity, element size, and
-theoretical reflection of each face are printed in the log.
+for a given order, it is set by the number of elements across the layer, and not by its
+thickness. The thickness ``d`` still matters through the element size ``h = d / N``, which
+must resolve the fields in the layer like the mesh of the physical region does (for
+example, about ``\lambda / 10`` for second-order elements, for the wavelength
+``\lambda`` in the materials of the PML regions at the highest frequency of interest): a
+thick layer of few elements is under-resolved, and reflects. In practice, choose the element
+size ``h`` from the wavelength and the order, as for the physical region, and the number of
+elements ``N`` from the required absorption: 4 to 8 elements are typically sufficient for
+second-order elements, with more for grazing incidence. The thickness ``d = N h`` follows.
+More elements increase the absorption exponentially, at a cost which grows linearly with
+``N`` on the faces of the box, but quadratically and cubically in its edge and corner
+regions, so that PML regions are best limited to the faces through which waves leave the
+domain. A structured (extruded) mesh of layers of elements, aligned with the faces of the
+box, is recommended in the PML regions. Alternatively, `"SigmaMax"` can be specified, or
+computed from a target theoretical reflection coefficient at normal incidence
+`"ReflectionTarget"` and the layer thickness (which can require a finer mesh in thin
+layers). The conductivity, element size, and theoretical reflection of each face are
+printed in the log.
+
+A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
+of the structures, which it distorts instead. The PML regions should therefore be placed at
+a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
+lowest frequency of interest. Closer, the PML mostly sees near fields, and absorbs them
+spuriously, which shows up for example as reduced quality factors of eigenmodes. For models
+much smaller than the wavelength, such as superconducting quantum processor chips at
+microwave frequencies, this distance is often impractical. If radiation is negligible, a PEC
+enclosure (a package) can then be adequate. Otherwise, a weaker absorption (a larger
+`"ReflectionTarget"`) reduces the spurious losses, at the cost of larger reflections of the
+propagating waves. First-order absorbing boundary conditions also absorb near fields
+spuriously.
 
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
 frequency for driven simulations, or the target frequency for eigenmode simulations. This
 static PML keeps the system matrices independent of frequency, and so eigenmode problems
-remain linear, while the absorption in the layer grows with frequency. With `"FrequencyDependent": true`, the stretch
-factors are instead evaluated at the solve frequency, for an absorption independent of
-frequency, and a complex frequency shift `"AlphaMax"` can be added (CFS-PML), which reduces
-the absorption below this frequency. For eigenmode simulations, the solve frequency is the
+remain linear, while the absorption in the layer grows with frequency. With
+`"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
+frequency, for an absorption independent of frequency, and a complex frequency shift
+`"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency. For eigenmode simulations, the solve frequency is the
 complex eigenfrequency, and the resulting nonlinear eigenvalue problem is solved with the
 nonlinear eigenvalue solver as for other frequency-dependent boundary conditions. For
 adaptive frequency sweeps, the frequency-dependent PML terms of the reduced-order model are
