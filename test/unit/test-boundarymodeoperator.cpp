@@ -966,10 +966,11 @@ TEST_CASE("BoundaryModeOperator parabolic-index slab p-multigrid with fields",
 TEST_CASE("BoundaryModeOperator parabolic-index slab with h-refinement fields",
           "[boundarymodeoperator][Serial]")
 {
-  // Exercises the propagation of the material field to coarser geometric multigrid levels
-  // (two uniform refinements of the base mesh with p-multigrid on top). eps_c is chosen so
-  // the permittivity stays positive across the truncated domain, keeping the multigrid
-  // preconditioner well posed.
+  // Exercises the propagation of the material field to coarser geometric multigrid meshes
+  // (two uniform refinements with p-multigrid on top). The geometric multigrid
+  // preconditioner itself converges poorly for this mode problem (with or without the
+  // field), so only the real part of the mode is checked loosely; the test primarily
+  // verifies that the field is propagated and the solve completes.
   constexpr double W = 6.0, H = 1.0, x0 = 1.0, eps_c = 40.0, omega = 1.0;
   const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
   const auto kn = SolveParabolicSlabMode(16, 1, 2, W, H, x0, eps_c, omega, 4, 2, true);

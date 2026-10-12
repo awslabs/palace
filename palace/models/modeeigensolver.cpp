@@ -45,6 +45,58 @@ namespace
 
 constexpr bool skip_zeros = false;
 
+// Whether a level is fully assembled (matching BilinearForm::Assemble's choice).
+bool UseFullAssembly(const FiniteElementSpace &fespace)
+{
+  const auto &fec = fespace.GetFEColl();
+  const int max_order = dynamic_cast<const mfem::L2_FECollection *>(&fec)
+                            ? fec.GetOrder() + 1
+                            : fec.GetOrder();
+  return (max_order < BilinearForm::pa_order_threshold);
+}
+
+// Assemble a hierarchy of operators, allowing the domain integrators to depend on whether a
+// level uses the finest mesh. Levels on coarser geometric multigrid meshes are assembled
+// with the constant-material integrators; the finest-mesh levels (and their p-coarsened
+// descendants) use the field-aware ones. `add_integrators(form, finest)` adds the domain
+// (and boundary) integrators to the form for the given level.
+template <typename AddIntegrators>
+std::vector<std::unique_ptr<palace::Operator>>
+AssembleLevelOperators(const FiniteElementSpaceHierarchy &hierarchy,
+                       const Mesh &finest_mesh, AddIntegrators &&add_integrators)
+{
+  const std::size_t n = hierarchy.GetNumLevels();
+  std::vector<std::unique_ptr<ceed::Operator>> pa_ops(n);
+  for (std::size_t l = 0; l < n; l++)
+  {
+    const auto &fes_l = hierarchy.GetFESpaceAtLevel(l);
+    if (l > 0 && &fes_l.GetMesh() == &hierarchy.GetFESpaceAtLevel(l - 1).GetMesh())
+    {
+      pa_ops[l] = ceed::CeedOperatorCoarsen(*pa_ops[l - 1], fes_l);
+    }
+    else
+    {
+      BilinearForm form(fes_l);
+      add_integrators(form, &fes_l.GetMesh() == &finest_mesh);
+      pa_ops[l] = form.PartialAssemble();
+    }
+  }
+
+  std::vector<std::unique_ptr<palace::Operator>> ops(n);
+  for (std::size_t l = 0; l < n; l++)
+  {
+    if (UseFullAssembly(hierarchy.GetFESpaceAtLevel(l)))
+    {
+      ops[l] = BilinearForm::FullAssemble(*pa_ops[l], skip_zeros);
+    }
+    else
+    {
+      ops[l] = std::move(pa_ops[l]);
+    }
+  }
+  return ops;
+}
+
 }  // namespace
 
 ModeEigenSolver::ModeEigenSolver(
@@ -747,8 +799,10 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
 
-  // Assemble ND operators at all levels from one BilinearForm. Unlike SpaceOperator's
-  // configured-coarse/active-fine split, these domain coefficients are always nonzero.
+  // Assemble the ND and auxiliary H1 (Hiptmair) operators at all levels. Levels on the
+  // finest mesh use the spatially-varying fields; coarser geometric multigrid meshes use
+  // the constant material coefficients. Unlike SpaceOperator's configured-coarse/active-fine
+  // split, these domain coefficients are always nonzero.
   constexpr bool assemble_q_data = false;
   // The integrators store pointers to the coefficients, which must outlive assembly.
   std::vector<std::unique_ptr<MaterialPropertyCoefficient>> coeffs;
@@ -757,61 +811,83 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
     coeffs.push_back(std::make_unique<MaterialPropertyCoefficient>(std::move(c)));
     return coeffs.back().get();
   };
+
+  // Constant-material coefficients, used when no field is present and on coarse meshes.
+  const auto *cc_muinv = add_coeff(
+      MaterialPropertyCoefficient(attr, mat_op.GetCurlCurlInvPermeability()));
+  MaterialPropertyCoefficient cc_mass_pc(attr, mat_op.GetPermittivityReal(), mass_coeff);
+  cc_mass_pc.AddCoefficient(attr, mat_op.GetInvPermeability(), shift_coeff);
+  if (mat_op.HasLondonDepth())
   {
-    BilinearForm att(bmo->GetNDSpaceHierarchy().GetFinestFESpace());
-    BilinearForm att_aux(bmo->GetH1AuxSpaceHierarchy().GetFinestFESpace());
-    if (!has_fields)
-    {
-      const auto *muinv_cc_func = add_coeff(
-          MaterialPropertyCoefficient(attr, mat_op.GetCurlCurlInvPermeability()));
-      MaterialPropertyCoefficient eps_shifted_pc(attr, mat_op.GetPermittivityReal(),
-                                                 mass_coeff);
-      eps_shifted_pc.AddCoefficient(attr, mat_op.GetInvPermeability(), shift_coeff);
-      if (mat_op.HasLondonDepth())
-      {
-        eps_shifted_pc.AddCoefficient(attr, mat_op.GetInvLondonDepth(), 1.0);
-      }
-      const auto *eps_pc = add_coeff(std::move(eps_shifted_pc));
-      att.AddDomainIntegrator<CurlCurlMassIntegrator>(*muinv_cc_func, *eps_pc);
-      att_aux.AddDomainIntegrator<DiffusionIntegrator>(*eps_pc);
-    }
-    else
+    cc_mass_pc.AddCoefficient(attr, mat_op.GetInvLondonDepth(), 1.0);
+  }
+  const auto *cc_mass = add_coeff(std::move(cc_mass_pc));
+
+  auto add_att = [&](BilinearForm &form, bool finest)
+  {
+    if (finest && has_fields)
     {
       // Split the combined curl-curl + mass operator so each term can use its own field.
       const auto *muinv_cc = add_coeff(mode_assembly::MakeMaterialCoefficient(
           attr, mat_op.GetCurlCurlInvPermeability(), 1.0, muinv_field));
-      att.AddDomainIntegrator<CurlCurlIntegrator>(*muinv_cc).SetMaterialField(muinv_field);
+      form.AddDomainIntegrator<CurlCurlIntegrator>(*muinv_cc).SetMaterialField(muinv_field);
       const auto *eps_mass = add_coeff(mode_assembly::MakeMaterialCoefficient(
           attr, mat_op.GetPermittivityReal(), mass_coeff, eps_field));
-      att.AddDomainIntegrator<VectorFEMassIntegrator>(*eps_mass).SetMaterialField(eps_field);
+      form.AddDomainIntegrator<VectorFEMassIntegrator>(*eps_mass).SetMaterialField(eps_field);
       const auto *muinv_mass = add_coeff(mode_assembly::MakeMaterialCoefficient(
           attr, mat_op.GetInvPermeability(), shift_coeff, muinv_field));
-      att.AddDomainIntegrator<VectorFEMassIntegrator>(*muinv_mass)
-          .SetMaterialField(muinv_field);
-      // The auxiliary H1 (Hiptmair) operator uses the same coefficient as a diffusion.
-      const auto *eps_diff = add_coeff(mode_assembly::MakeMaterialCoefficient(
-          attr, mat_op.GetPermittivityReal(), mass_coeff, eps_field));
-      att_aux.AddDomainIntegrator<DiffusionIntegrator>(*eps_diff).SetMaterialField(eps_field);
-      const auto *muinv_diff = add_coeff(mode_assembly::MakeMaterialCoefficient(
-          attr, mat_op.GetInvPermeability(), shift_coeff, muinv_field));
-      att_aux.AddDomainIntegrator<DiffusionIntegrator>(*muinv_diff)
+      form.AddDomainIntegrator<VectorFEMassIntegrator>(*muinv_mass)
           .SetMaterialField(muinv_field);
       if (mat_op.HasLondonDepth())
       {
         MaterialPropertyCoefficient london_t(attr.Size());
         london_t.AddCoefficient(attr, mat_op.GetInvLondonDepth(), 1.0);
-        const auto *london = add_coeff(std::move(london_t));
-        att.AddDomainIntegrator<VectorFEMassIntegrator>(*london);
-        att_aux.AddDomainIntegrator<DiffusionIntegrator>(*london);
+        form.AddDomainIntegrator<VectorFEMassIntegrator>(*add_coeff(std::move(london_t)));
       }
+    }
+    else
+    {
+      form.AddDomainIntegrator<CurlCurlMassIntegrator>(*cc_muinv, *cc_mass);
     }
     if (!fbr.empty())
     {
-      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
-      att_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fbr);
+      form.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
     }
-    auto att_ops = att.Assemble(bmo->GetNDSpaceHierarchy(), skip_zeros);
-    auto att_aux_ops = att_aux.Assemble(bmo->GetH1AuxSpaceHierarchy(), skip_zeros);
+  };
+  auto add_att_aux = [&](BilinearForm &form, bool finest)
+  {
+    if (finest && has_fields)
+    {
+      // The auxiliary H1 (Hiptmair) operator uses the same coefficient as a diffusion.
+      const auto *eps_diff = add_coeff(mode_assembly::MakeMaterialCoefficient(
+          attr, mat_op.GetPermittivityReal(), mass_coeff, eps_field));
+      form.AddDomainIntegrator<DiffusionIntegrator>(*eps_diff).SetMaterialField(eps_field);
+      const auto *muinv_diff = add_coeff(mode_assembly::MakeMaterialCoefficient(
+          attr, mat_op.GetInvPermeability(), shift_coeff, muinv_field));
+      form.AddDomainIntegrator<DiffusionIntegrator>(*muinv_diff)
+          .SetMaterialField(muinv_field);
+      if (mat_op.HasLondonDepth())
+      {
+        MaterialPropertyCoefficient london_t(attr.Size());
+        london_t.AddCoefficient(attr, mat_op.GetInvLondonDepth(), 1.0);
+        form.AddDomainIntegrator<DiffusionIntegrator>(*add_coeff(std::move(london_t)));
+      }
+    }
+    else
+    {
+      form.AddDomainIntegrator<DiffusionIntegrator>(*cc_mass);
+    }
+    if (!fbr.empty())
+    {
+      form.AddBoundaryIntegrator<DiffusionIntegrator>(fbr);
+    }
+  };
+
+  {
+    const auto &finest_mesh = bmo->GetMesh();
+    auto att_ops = AssembleLevelOperators(bmo->GetNDSpaceHierarchy(), finest_mesh, add_att);
+    auto att_aux_ops =
+        AssembleLevelOperators(bmo->GetH1AuxSpaceHierarchy(), finest_mesh, add_att_aux);
 
     for (std::size_t l = 0; l < n_levels; l++)
     {
@@ -872,49 +948,54 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
     }
   }
 
-  // Assemble H1 operators at all levels using hierarchy-aware assembly.
+  // Assemble H1 operators at all levels. Levels on the finest mesh use the fields; coarser
+  // geometric multigrid meshes use the constant material coefficients.
   std::vector<std::unique_ptr<MaterialPropertyCoefficient>> coeffs;
   auto add_coeff = [&coeffs](MaterialPropertyCoefficient c)
   {
     coeffs.push_back(std::make_unique<MaterialPropertyCoefficient>(std::move(c)));
     return coeffs.back().get();
   };
+  const auto *cc_neg_muinv =
+      add_coeff(MaterialPropertyCoefficient(attr, mat_op.GetInvPermeability(), -1.0));
+  MaterialPropertyCoefficient cc_mass_pc(attr, mat_op.GetPermittivityScalar(), omega * omega);
+  if (mat_op.HasLondonDepth())
   {
-    BilinearForm ann(bmo->GetH1SpaceHierarchy().GetFinestFESpace());
-    if (!has_fields)
-    {
-      const auto *neg_muinv_func =
-          add_coeff(MaterialPropertyCoefficient(attr, mat_op.GetInvPermeability(), -1.0));
-      MaterialPropertyCoefficient poseps_h1_func(attr, mat_op.GetPermittivityScalar(),
-                                                 omega * omega);
-      if (mat_op.HasLondonDepth())
-      {
-        poseps_h1_func.AddCoefficient(attr, mat_op.GetInvLondonDepthScalar(), -1.0);
-      }
-      const auto *poseps = add_coeff(std::move(poseps_h1_func));
-      ann.AddDomainIntegrator<DiffusionMassIntegrator>(*neg_muinv_func, *poseps);
-    }
-    else
+    cc_mass_pc.AddCoefficient(attr, mat_op.GetInvLondonDepthScalar(), -1.0);
+  }
+  const auto *cc_mass = add_coeff(std::move(cc_mass_pc));
+
+  auto add_ann = [&](BilinearForm &form, bool finest)
+  {
+    if (finest && has_fields)
     {
       // Split the combined diffusion + mass operator so each term uses its own field.
       const auto *neg_muinv = add_coeff(mode_assembly::MakeMaterialCoefficient(
           attr, mat_op.GetInvPermeability(), -1.0, muinv_field));
-      ann.AddDomainIntegrator<DiffusionIntegrator>(*neg_muinv).SetMaterialField(muinv_field);
+      form.AddDomainIntegrator<DiffusionIntegrator>(*neg_muinv).SetMaterialField(muinv_field);
       const auto *eps_mass = add_coeff(mode_assembly::MakeMaterialCoefficient(
           attr, mat_op.GetPermittivityScalar(), omega * omega, eps_field));
-      ann.AddDomainIntegrator<MassIntegrator>(*eps_mass).SetMaterialField(eps_field);
+      form.AddDomainIntegrator<MassIntegrator>(*eps_mass).SetMaterialField(eps_field);
       if (mat_op.HasLondonDepth())
       {
         MaterialPropertyCoefficient london_n(attr.Size());
         london_n.AddCoefficient(attr, mat_op.GetInvLondonDepthScalar(), -1.0);
-        ann.AddDomainIntegrator<MassIntegrator>(*add_coeff(std::move(london_n)));
+        form.AddDomainIntegrator<MassIntegrator>(*add_coeff(std::move(london_n)));
       }
+    }
+    else
+    {
+      form.AddDomainIntegrator<DiffusionMassIntegrator>(*cc_neg_muinv, *cc_mass);
     }
     if (!nn_fbr.empty())
     {
-      ann.AddBoundaryIntegrator<MassIntegrator>(nn_fbr);
+      form.AddBoundaryIntegrator<MassIntegrator>(nn_fbr);
     }
-    auto ann_ops = ann.Assemble(bmo->GetH1SpaceHierarchy(), skip_zeros);
+  };
+
+  {
+    const auto &finest_mesh = bmo->GetMesh();
+    auto ann_ops = AssembleLevelOperators(bmo->GetH1SpaceHierarchy(), finest_mesh, add_ann);
 
     for (std::size_t l = 0; l < n_levels; l++)
     {
