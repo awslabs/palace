@@ -5,7 +5,9 @@
 
 """Placement audit (gate A10, geometry only): every matched cluster / corner / stack / pair
 model, mapped through the patch frame the dry run actually used, lands on the feature's
-claimed perimeter portions within the signature parameter tolerance (1e-3 R).
+claimed perimeter portions within the signature parameter tolerance (1e-3 R; for a cluster
+model the identification's arc-fit tolerance plus the quantum terms, see
+cluster_tolerance_over_r).
 
     python3 -m surface_response_identification.placement_check \\
         --manifest postpro/surface-response-requirements.json [--patches ...csv] \\
@@ -19,7 +21,14 @@ R_mesh / R_library):
   (signature_library.cluster_plan_view_edges). Both directions are checked: every model
   edge endpoint lies on the feature's claimed geometry (straight portions as segments, arc
   portions as their fitted circle within the claimed angular range), and every claimed
-  straight-portion endpoint / arc end lies on the mapped model polyline.
+  straight-portion endpoint / arc end lies on the mapped model polyline. The claimed angular
+  range is parameterised as the identification parameterises it (Identifier::RunPoint): a
+  claim cut at parameter s of a mesh segment lies on the circle at the angle the collinear
+  RUN of the segment (its on-circle joints, RunIndex) maps s to linearly - not at the angle
+  interpolated between the segment's own keys, which on a design-polygon arc sub-divided by
+  the mesh are interior chord vertices up to the chord sagitta inside the circle (decision
+  710: 0c94 on C3's arc 42 read 1.37e-3 R of angular excess with the model at the
+  identification's claim end to 3.3e-7 R).
 * ConvexCorner / ConcaveCorner: arms from the patch origin along +u and at the model
   ``Angle`` counterclockwise in (u, v) (the corner coupon's frame, generate_corner_response
   corner_frame); a rounded corner's claimed arc chords lie on the fillet circle of the
@@ -79,6 +88,24 @@ from . import signature_library  # noqa: E402
 # lengths agree within this fraction of R; a placed model must agree with its feature at least
 # as well.
 SIGNATURE_TOLERANCE_OVER_R = 1.0e-3
+# Identification.Conventions ArcFitToleranceOverR (kArcFitToleranceOverRadius): an arc's joint
+# vertices lie on the fitted circle within this fraction of R, strictly. The identification
+# serialises an arc portion's end ON the circle at the junction vertex's angle; the generator's
+# ArcJoint snap (cluster_signature_geometry ARC_JOINT_SNAP_OVER_R = this tolerance +
+# ARC_JOINT_SNAP_QUANTA quanta, read inclusive to INCLUSIVE_READ_QUANTA) puts the model's end
+# on the vertex: a correctly placed arc end reads the vertex's radial fit residual eps
+# (decision 708: a596 8.97e-4 R), bounded by the fit tolerance + the snap admission.
+ARC_FIT_TOLERANCE_OVER_R = 1.0e-3
+# Identification.Conventions SignatureLengthQuantumOverR: the signature grid; a claimed end and a
+# model end are each rounded to it (a point rounding is at most sqrt(2) / 2 quantum).
+SIGNATURE_QUANTUM_OVER_R = 1.0e-6
+ARC_JOINT_SNAP_QUANTA = 2.0
+INCLUSIVE_READ_QUANTA = 0.5
+SERIALISATION_ROUNDINGS = 2
+# Identification.Conventions DirectionQuantum (kDirectionQuantum): two consecutive mesh
+# segments of a chain are one collinear run when their tangents' cosine is not below
+# 1 - DirectionQuantum on the quantised grid (Identifier::BuildRunIndex).
+DIRECTION_QUANTUM = 1.0e-12
 # Identification.Conventions PairSeparationToleranceRelative: the bent-pair rule admits a pair
 # whose sampled separation varies by this fraction (a slow taper is one pair at its mean
 # separation), so a pair / stack model's edge lines may sit this far from the mesh edges by
@@ -279,8 +306,9 @@ def context_gate(identification, patches, library, radius):
     """Gate A10-context (decision 282 section 3, arc-aware per block (b) DESIGN section 2
     (a)): every Context entry END of every placed contract-3 cluster model (the model's
     Signature placed by the dry-run patch frame) lies on the device perimeter within the
-    signature tolerance; returns (gate, entries)."""
-    tol = SIGNATURE_TOLERANCE_OVER_R * radius
+    cluster tolerance (cluster_tolerance_over_r: the fit tolerance + the quantum terms);
+    returns (gate, entries)."""
+    base_tolerance_over_r, base_terms = cluster_tolerance_over_r(identification)
     radius_library = float(library["MatchingRadius"])
     scale = radius / radius_library
     models = {m["Name"]: m for m in library["Models"]}
@@ -294,8 +322,10 @@ def context_gate(identification, patches, library, radius):
         signature = (model or {}).get("Signature") or {}
         if "Box" not in signature or (feature.get("Match") or {}).get("LegacyContract"):
             continue
+        tolerance_over_r, _ = cluster_tolerance_over_r(identification, feature)
+        tol = tolerance_over_r * radius
         origin, axes = row["Origin"], row["Axes"]
-        entry = {"Feature": row["Feature"], "Model": row["Model"], "Checks": 0, "WorstOverR": 0.0, "Defects": [], "ArcEnds": 0}
+        entry = {"Feature": row["Feature"], "Model": row["Model"], "Checks": 0, "WorstOverR": 0.0, "ToleranceOverR": tolerance_over_r, "Defects": [], "ArcEnds": 0}
         split, reason = mirror_formed_placement(identification, feature, model or {}, row)
         inside = None
         if split is not None or reason is not None:
@@ -325,20 +355,184 @@ def context_gate(identification, patches, library, radius):
         entries.append(entry)
     defects = [e for e in entries if e["Defects"]]
     detail = {"Features": len(entries), "Checks": sum(e["Checks"] for e in entries), "ArcEnds": sum(e["ArcEnds"] for e in entries),
-              "WorstDeviationOverR": max((e["WorstOverR"] for e in entries), default=None), "ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R,
+              "WorstDeviationOverR": max((e["WorstOverR"] for e in entries), default=None), "ToleranceOverR": base_tolerance_over_r,
+              "ToleranceTerms": base_terms, "ToleranceRule": CLUSTER_TOLERANCE_RULE,
+              "QuantumNearMatchedFeatures": sum(1 for e in entries if e["ToleranceOverR"] > base_tolerance_over_r),
+              "MaxToleranceOverR": max((e["ToleranceOverR"] for e in entries), default=base_tolerance_over_r),
               "FeaturesWithDefects": len(defects),
               "MirrorFormedFeatures": sum(1 for e in entries if "ImageEnds" in e), "ImageEnds": sum(len(e.get("ImageEnds", [])) for e in entries),
               "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
-              "Basis": "every Context entry end of a placed contract-3 cluster model lies on the device perimeter (segments as chords, fitted-arc segments on their circle's arc) within the signature parameter tolerance: the C++ A10-extended check, mirrored; a mirror-formed placement's ends on the image side of its contract's planes are labelled (ImageEnds), not checked"}
+              "Basis": "every Context entry end of a placed contract-3 cluster model lies on the device perimeter (segments as chords, fitted-arc segments on their circle's arc) within the cluster tolerance (the fit tolerance + the quantum terms): the C++ A10-extended check, mirrored; a mirror-formed placement's ends on the image side of its contract's planes are labelled (ImageEnds), not checked"}
     return gate("A10-context", not defects, detail, evaluable=bool(entries)), entries
+
+
+def cluster_tolerance_over_r(identification, feature=None):
+    """The A10 clusters / context tolerance of a placed cluster model in units of R (decisions
+    708 / 710: the identification's fit tolerance plus the quantum terms): the arc-fit
+    tolerance (a correctly placed arc end reads its junction vertex's radial fit residual,
+    strictly below it) + the generator's ArcJoint snap admission beyond it (2 quanta, read
+    inclusive to half a quantum) + the two serialisation roundings (the claimed end and the
+    model end on the signature grid, sqrt(2) / 2 quantum each) + the quantum near-match term
+    (sqrt(2) x Match.QuantumNearMatch.MaxDeltaQuanta quanta: the model's numbers differ from
+    the feature's by that many quanta per coordinate; 0 for an exact match). The constants
+    are the manifest's Identification.Conventions where recorded. Returns (tolerance, terms)."""
+    conventions = identification.get("Conventions") or {}
+    fit = float(conventions.get("ArcFitToleranceOverR", ARC_FIT_TOLERANCE_OVER_R))
+    quantum = float(conventions.get("SignatureLengthQuantumOverR", SIGNATURE_QUANTUM_OVER_R))
+    near_match = ((feature or {}).get("Match") or {}).get("QuantumNearMatch") or {}
+    delta_quanta = float(near_match.get("MaxDeltaQuanta", 0.0))
+    terms = {"FitToleranceOverR": fit,
+             "JointSnapAdmissionOverR": (ARC_JOINT_SNAP_QUANTA + INCLUSIVE_READ_QUANTA) * quantum,
+             "SerialisationRoundingOverR": SERIALISATION_ROUNDINGS * (math.sqrt(2.0) / 2.0) * quantum,
+             "QuantumNearMatchOverR": math.sqrt(2.0) * delta_quanta * quantum,
+             "QuantumNearMatchMaxDeltaQuanta": delta_quanta}
+    return terms["FitToleranceOverR"] + terms["JointSnapAdmissionOverR"] + terms["SerialisationRoundingOverR"] + terms["QuantumNearMatchOverR"], terms
+
+
+CLUSTER_TOLERANCE_RULE = ("decisions 708 / 710 (the chord-vs-arc class 611 / 653 / 655 / 663 / 708-709): the identification's arc-fit tolerance "
+                          "(a placed arc end reads its junction vertex's radial fit residual, strictly below it) + the generator's ArcJoint snap "
+                          "admission (2 quanta + the half-quantum inclusive read) + the two serialisation roundings (sqrt(2) quanta) + sqrt(2) x "
+                          "MaxDeltaQuanta quanta for a quantum near-match; the claimed arc range is parameterised by the RUN's on-circle joints "
+                          "(Identifier::RunPoint), not the mesh segment's keys")
+
+
+class RunIndex:
+    """The collinear RUNS of the fitted-arc mesh segments of an Identification, as the
+    identification builds them (Identifier::BuildRunIndex / BuildRunArcGeometry): the segments
+    of one chain on one arc, linked through shared keys and split where consecutive tangents
+    are not collinear on the DirectionQuantum grid; a run's parameter s (the chord length from
+    its start, every segment's [t0, t1] scaled so that the sum of the segment lengths is the
+    chord) maps linearly onto the angle between the run's two end joints on the circle
+    (RunPoint). A run is confined to one arc, as BuildRunArcGeometry requires of a run it
+    parameterises on the circle. A segment on no run of more than one member is its own run
+    (the mesh-resolved arc: the run convention and the segment-key convention coincide)."""
+
+    def __init__(self, identification, radius):
+        conventions = identification.get("Conventions") or {}
+        self.direction_quantum = float(conventions.get("DirectionQuantum", DIRECTION_QUANTUM))
+        self.segments = identification["Segments"]
+        self.grid = 1.0e-9 * radius  # shared keys are the same mesh vertex: equal to roundoff
+        self.runs = {}  # segment index -> {"members": {segment: (forward, t0, t1)}, "start", "end", "length"}
+        groups = defaultdict(list)
+        for index, segment in enumerate(self.segments):
+            if "Arc" in segment:
+                groups[(segment.get("Chain"), int(segment["Arc"]))].append(index)
+        for members in groups.values():
+            for path in self._paths(members):
+                for run in self._split_collinear(path):
+                    self._register(run)
+
+    def _key(self, point):
+        return tuple(int(round(float(x) / self.grid)) for x in point)
+
+    def _paths(self, members):
+        """The simple paths of the member segments through their shared keys, each as an
+        ordered list of (segment, forward)."""
+        ends = defaultdict(list)
+        for index in members:
+            for end in (0, 1):
+                ends[self._key(self.segments[index]["Key"][end])].append(index)
+        unused = set(members)
+        paths = []
+        while unused:
+            start = None
+            for index in sorted(unused):
+                for end in (0, 1):
+                    key = self._key(self.segments[index]["Key"][end])
+                    if sum(1 for other in ends[key] if other in unused) == 1:
+                        start = key
+                        break
+                if start is not None:
+                    break
+            if start is None:  # a closed loop of arc segments: start anywhere
+                start = self._key(self.segments[min(unused)]["Key"][0])
+            current, path = start, []
+            while True:
+                following = [other for other in ends[current] if other in unused]
+                if not following:
+                    break
+                index = following[0]
+                unused.discard(index)
+                forward = self._key(self.segments[index]["Key"][0]) == current
+                path.append((index, forward))
+                current = self._key(self.segments[index]["Key"][1 if forward else 0])
+            paths.append(path)
+        return paths
+
+    def _direction(self, index, forward):
+        key = np.asarray(self.segments[index]["Key"], dtype=float)
+        d = key[1] - key[0] if forward else key[0] - key[1]
+        return d / np.linalg.norm(d)
+
+    def _split_collinear(self, path):
+        runs, run = [], [path[0]]
+        for previous, current in zip(path, path[1:]):
+            cosine = float(np.dot(self._direction(*previous), self._direction(*current)))
+            if round(cosine / self.direction_quantum) >= round((1.0 - self.direction_quantum) / self.direction_quantum):
+                run.append(current)
+            else:
+                runs.append(run)
+                run = [current]
+        runs.append(run)
+        return runs
+
+    def _register(self, run):
+        first_index, first_forward = run[0]
+        last_index, last_forward = run[-1]
+        start = np.asarray(self.segments[first_index]["Key"][0 if first_forward else 1], dtype=float)
+        end = np.asarray(self.segments[last_index]["Key"][1 if last_forward else 0], dtype=float)
+        length = float(np.linalg.norm(end - start))
+        total = sum(float(self.segments[index]["Length"]) for index, _ in run)
+        ratio = length / total if total > 0.0 else 0.0
+        record = {"members": {}, "start": start, "end": end, "length": length}
+        t = 0.0
+        for index, forward in run:
+            segment_length = float(self.segments[index]["Length"])
+            record["members"][index] = (forward, t * ratio, (t + segment_length) * ratio)
+            t += segment_length
+        for index, _ in run:
+            self.runs[index] = record
+
+    def run_segments(self, index):
+        """The segment indices of the run holding segment ``index`` (in run order)."""
+        run = self.runs.get(index)
+        return sorted(run["members"], key=lambda k: run["members"][k][1]) if run else [index]
+
+    def arc_point(self, index, s, center, radius, normal):
+        """The point of the fitted circle (center, radius; plane normal) at a claim cut s along
+        mesh segment ``index`` from its Key[0], parameterised as the identification does
+        (RunPoint: the run parameter maps linearly onto the angle between the run's end
+        joints); None when the segment is on no run or the run is degenerate (no chord, no
+        sweep), where the caller reads the segment's own keys."""
+        run = self.runs.get(index)
+        if run is None or run["length"] <= 0.0:
+            return None
+        forward, t0, t1 = run["members"][index]
+        segment_length = float(self.segments[index]["Length"])
+        fraction = (s / segment_length if forward else 1.0 - s / segment_length) if segment_length > 0.0 else 0.0
+        s_run = t0 + fraction * (t1 - t0)
+        d0 = run["start"] - center
+        d0 = d0 - float(np.dot(d0, normal)) * normal
+        d1 = run["end"] - center
+        d1 = d1 - float(np.dot(d1, normal)) * normal
+        if float(np.linalg.norm(d0)) <= 1.0e-12 * radius or float(np.linalg.norm(d1)) <= 1.0e-12 * radius:
+            return None
+        u = d0 / np.linalg.norm(d0)
+        v = np.cross(normal, u)
+        sweep = math.atan2(float(np.dot(d1, v)), float(np.dot(d1, u)))
+        if abs(sweep) <= 1.0e-12:
+            return None
+        angle = sweep * s_run / run["length"]
+        return center + radius * (math.cos(angle) * u + math.sin(angle) * v)
 
 
 class ClaimedGeometry:
     """The claimed perimeter portions of one feature in mesh coordinates: straight
     sub-segments (per mesh segment) and, per fitted arc, the circle with the angular range
-    of the claimed chords (the plane of the arc is the process plane of the feature)."""
+    of the claimed chords (the plane of the arc is the process plane of the feature); a claim
+    cut inside an arc run is placed on the circle by the run convention (RunIndex)."""
 
-    def __init__(self, feature, segments, arcs, normal):
+    def __init__(self, feature, segments, arcs, normal, runs=None):
         self.normal = np.asarray(normal, dtype=float)
         self.normal /= np.linalg.norm(self.normal)
         self.straight = []          # (p0, p1, side)
@@ -372,13 +566,17 @@ class ClaimedGeometry:
                 self.arc_ranges[index] = entry
             # A claim cut inside a chord is a point of the ARC (the identification maps the
             # run parameter linearly onto the angle), not of the chord: the claimed end is
-            # the circle point at the interpolated angle (a chord's interior lies up to its
-            # sagitta inside the circle).
+            # the circle point at the angle the RUN of collinear mesh segments between two
+            # on-circle joints maps the cut to (Identifier::RunPoint; decision 710), read
+            # between the segment's own keys only where the segment is on no run (a chord's
+            # interior lies up to its sagitta inside the circle).
             a0, a1 = self._angle(entry, key[0]), self._angle(entry, key[1])
             sweep = math.remainder(a1 - a0, 2.0 * math.pi)
             for s in (float(s0), float(s1)):
-                angle = a0 + sweep * s / length
-                q = entry["center"] + entry["radius"] * (math.cos(angle) * entry["u"] + math.sin(angle) * entry["v"])
+                q = runs.arc_point(int(seg), s, entry["center"], entry["radius"], self.normal) if runs is not None else None
+                if q is None:
+                    angle = a0 + sweep * s / length
+                    q = entry["center"] + entry["radius"] * (math.cos(angle) * entry["u"] + math.sin(angle) * entry["v"])
                 angle = self._angle(entry, q)
                 entry["angles"].append(angle)
                 entry["ends"][round(angle, 9)] = q
@@ -454,13 +652,15 @@ def model_cluster_edges(model, radius_library):
 def placement_gates(identification, patches, library, radius):
     """Gates A10 on the placement of every matched cluster / corner / stack / pair model;
     returns (gates, summary)."""
-    tol = SIGNATURE_TOLERANCE_OVER_R * radius
+    signature_tol = SIGNATURE_TOLERANCE_OVER_R * radius
+    cluster_tolerance_base, cluster_terms = cluster_tolerance_over_r(identification)
     radius_library = float(library["MatchingRadius"])
     scale = radius / radius_library
     models = {m["Name"]: m for m in library["Models"]}
     features = {f["Id"]: f for f in identification["Features"]}
     segments = identification["Segments"]
     arcs = identification.get("Arcs", [])
+    runs = RunIndex(identification, radius)
     rows_by_feature = defaultdict(list)
     for row in patches:
         rows_by_feature[row["Feature"]].append(row)
@@ -485,8 +685,15 @@ def placement_gates(identification, patches, library, radius):
             continue
         model = resolved[model_name][0]
         normal = np.asarray(feature["Frame"]["Axes"][2], dtype=float)
-        claimed = ClaimedGeometry(feature, segments, arcs, normal)
+        claimed = ClaimedGeometry(feature, segments, arcs, normal, runs)
         entry = {"Feature": feature_id, "Type": kind, "Model": model_name, "WorstOverR": 0.0, "Checks": 0, "Defects": []}
+        # A cluster model's tolerance is the identification's fit tolerance + the quantum
+        # terms (cluster_tolerance_over_r); every other model's the signature tolerance.
+        if kind in CLUSTER_TYPES:
+            entry["ToleranceOverR"], _ = cluster_tolerance_over_r(identification, feature)
+            tol = entry["ToleranceOverR"] * radius
+        else:
+            tol = signature_tol
 
         def record(point_label, deviation, mapped=None, allowance=0.0):
             entry["Checks"] += 1
@@ -671,7 +878,8 @@ def placement_gates(identification, patches, library, radius):
             continue  # isolated / curved edges: the patch is the quadrature point itself
 
     gates = []
-    summary = {"ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R, "Scale": scale, "NotEvaluable": not_evaluable}
+    summary = {"ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R, "ClusterToleranceOverR": cluster_tolerance_base, "ClusterToleranceTerms": cluster_terms,
+               "Scale": scale, "NotEvaluable": not_evaluable}
     for name, key in (("A10-placement-clusters", "Clusters"), ("A10-placement-corners", "Corners"), ("A10-placement-stacks", "Stacks"), ("A10-placement-pairs", "Pairs")):
         entries = results[key]
         defects = [e for e in entries if e["Defects"]]
@@ -680,7 +888,7 @@ def placement_gates(identification, patches, library, radius):
             "Features": len(entries),
             "Checks": sum(e["Checks"] for e in entries),
             "WorstDeviationOverR": worst,
-            "ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R,
+            "ToleranceOverR": cluster_tolerance_base if key == "Clusters" else SIGNATURE_TOLERANCE_OVER_R,
             "Models": sorted({m for e in entries for m in e.get("Models", [e["Model"]])}),
             "FeaturesWithDefects": len(defects),
             "ConvexityChecks": sum(e.get("ConvexityChecks", 0) for e in entries),
@@ -688,8 +896,13 @@ def placement_gates(identification, patches, library, radius):
             "MirrorFormedFeatures": sum(1 for e in entries if "MirrorFormed" in e),
             "ImageEdges": sum(len(e["MirrorFormed"]["ImageEdges"]) for e in entries if "MirrorFormed" in e),
             "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
-            "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range) within the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation); a mirror-formed cluster's real edges only, its image edges labelled (MirrorFormed.ImageEdges)",
+            "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range, the range parameterised by the run's on-circle joints as the identification does) within the tolerance: for a cluster model the fit tolerance + the quantum terms (ToleranceTerms), else the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation); a mirror-formed cluster's real edges only, its image edges labelled (MirrorFormed.ImageEdges)",
         }
+        if key == "Clusters":
+            detail["ToleranceTerms"] = cluster_terms
+            detail["ToleranceRule"] = CLUSTER_TOLERANCE_RULE
+            detail["QuantumNearMatchedFeatures"] = sum(1 for e in entries if e["ToleranceOverR"] > cluster_tolerance_base)
+            detail["MaxToleranceOverR"] = max((e["ToleranceOverR"] for e in entries), default=cluster_tolerance_base)
         gates.append(gate(name, not defects, detail, evaluable=bool(entries)))
         summary[key] = {"Features": len(entries), "WorstDeviationOverR": worst, "FeaturesWithDefects": len(defects)}
     if not_evaluable:

@@ -1,0 +1,7232 @@
+{
+ "Version": 1,
+ "Copyright": "Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+ "SPDX-License-Identifier": "Apache-2.0",
+ "Rule": "The decision-663 ABORT inputs of the rerun-3b R4 39e4 discovery (attempt 1, PBS 61316, 2026-10-10; binary palace-34701cc-731d45d6c5ab.bin; the C1 window, R = 1.9 um): feature 70 = the MIRROR-FORMED contract-bearing SpatialEdgeCluster 533962c48056 (Missing in the pass-01 manifest, matched here to the pass-02 discovery placeholder __preflight_placeholder_533962c480569ca5: 52 Edges with the ENTRY-stamp Weights, 28 Context entries), its device segments within 40 um of the frame origin plus the runs of its claimed arc segments (chain 1 arc 46), the IMAGE segments within 40 um (the manifest's ImageSegments: Chain / Key / Length, no Arc), the mirror planes, the Conventions, the feature record without its ImagePortions / KeyText / SpatialSupport keys. The patch row is SYNTHESISED from the feature Frame (no patches CSV exists: the pass-2 preflight aborted in BuildFeaturePatches before writing it; a Signature-keyed cluster model is placed at the feature's frame, M = identity). InBinaryReadingOfRecord = the A10-extended abort text's 1.0895502333436160e-03 R (pass-02/preflight.log :167-:168), reproduced here as the distance of the placeholder's context 0 end to the IMAGE chord polyline (the end sits on its context arc's circle; the image side carries no Arc record: the chord-vs-arc class on the image side). PlacementOfRecord = main d73e7f7459's mirror-aware placement_check (the end is an ImageEnd, labelled, not checked).",
+ "MatchingRadius": 1.9,
+ "Identification": {
+  "MatchingRadius": 1.9,
+  "Conventions": {
+   "ArcFitToleranceOverR": 0.001,
+   "SignatureParameterToleranceOverR": 0.001,
+   "SignatureLengthQuantumOverR": 1e-06,
+   "DirectionQuantum": 1e-12,
+   "ClusterQuantumNearMatchMaxQuanta": 4,
+   "ClusterQuantumInclusiveMargin": 0.5,
+   "LengthQuantumOverR": 1e-08
+  },
+  "Segments": [
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3676.2675915510004,
+      0.0
+     ],
+     [
+      -6750.0,
+      3685.5246672601,
+      0.0
+     ]
+    ],
+    "Length": 9.2570757092,
+    "SourceSegment": 42
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3676.3351775098004,
+      4.8
+     ],
+     [
+      -6750.0,
+      3683.322945808,
+      4.8
+     ]
+    ],
+    "Length": 6.987768298200001,
+    "SourceSegment": 43
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3683.322945808,
+      4.8
+     ],
+     [
+      -6750.0,
+      3690.6977458768,
+      4.8
+     ]
+    ],
+    "Length": 7.3748000688,
+    "SourceSegment": 44
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3685.5246672601,
+      0.0
+     ],
+     [
+      -6750.0,
+      3688.8601356351,
+      0.0
+     ]
+    ],
+    "Length": 3.335468375,
+    "SourceSegment": 45
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3688.8601356351,
+      0.0
+     ],
+     [
+      -6750.0,
+      3692.8486232596,
+      0.0
+     ]
+    ],
+    "Length": 3.9884876245000003,
+    "SourceSegment": 46
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3690.6977458768,
+      4.8
+     ],
+     [
+      -6750.0,
+      3694.9680784468,
+      4.8
+     ]
+    ],
+    "Length": 4.27033257,
+    "SourceSegment": 47
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3692.8486232596,
+      0.0
+     ],
+     [
+      -6750.0,
+      3696.4471158541,
+      0.0
+     ]
+    ],
+    "Length": 3.5984925945,
+    "SourceSegment": 48
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3694.9680784468,
+      4.8
+     ],
+     [
+      -6750.0,
+      3698.6715929370002,
+      4.8
+     ]
+    ],
+    "Length": 3.7035144901000003,
+    "SourceSegment": 49
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3696.4471158541,
+      0.0
+     ],
+     [
+      -6750.0,
+      3700.4233338946,
+      0.0
+     ]
+    ],
+    "Length": 3.9762180405,
+    "SourceSegment": 50
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3698.6715929370002,
+      4.8
+     ],
+     [
+      -6750.0,
+      3701.6883366678003,
+      4.8
+     ]
+    ],
+    "Length": 3.0167437308,
+    "SourceSegment": 51
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3700.4233338946,
+      0.0
+     ],
+     [
+      -6750.0,
+      3701.9628886216,
+      0.0
+     ]
+    ],
+    "Length": 1.539554727,
+    "SourceSegment": 52
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3701.6883366678003,
+      4.8
+     ],
+     [
+      -6750.0,
+      3702.9094655877,
+      4.8
+     ]
+    ],
+    "Length": 1.2211289199,
+    "SourceSegment": 53
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3701.9628886216,
+      0.0
+     ],
+     [
+      -6750.0,
+      3702.8350759105,
+      0.0
+     ]
+    ],
+    "Length": 0.8721872889000001,
+    "SourceSegment": 54
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3702.8350759105,
+      0.0
+     ],
+     [
+      -6750.0,
+      3705.1951330291004,
+      0.0
+     ]
+    ],
+    "Length": 2.3600571186,
+    "SourceSegment": 55
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3702.9094655877,
+      4.8
+     ],
+     [
+      -6750.0,
+      3705.7944173783003,
+      4.8
+     ]
+    ],
+    "Length": 2.8849517906,
+    "SourceSegment": 56
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3705.1951330291004,
+      0.0
+     ],
+     [
+      -6750.0,
+      3707.5551901477,
+      0.0
+     ]
+    ],
+    "Length": 2.3600571186,
+    "SourceSegment": 57
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3705.7944173783003,
+      4.8
+     ],
+     [
+      -6750.0,
+      3708.6793691689,
+      4.8
+     ]
+    ],
+    "Length": 2.8849517906,
+    "SourceSegment": 58
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3707.5551901477,
+      0.0
+     ],
+     [
+      -6750.0,
+      3708.0096308459,
+      0.0
+     ]
+    ],
+    "Length": 0.4544406982,
+    "SourceSegment": 59
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3708.0096308459,
+      0.0
+     ],
+     [
+      -6750.0,
+      3708.5323606320003,
+      0.0
+     ]
+    ],
+    "Length": 0.5227297861,
+    "SourceSegment": 60
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3708.5323606320003,
+      0.0
+     ],
+     [
+      -6750.0,
+      3710.6459388304,
+      0.0
+     ]
+    ],
+    "Length": 2.1135781985,
+    "SourceSegment": 61
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3708.6793691689,
+      4.8
+     ],
+     [
+      -6750.0,
+      3710.5354914607,
+      4.8
+     ]
+    ],
+    "Length": 1.8561222918,
+    "SourceSegment": 62
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3710.5354914607,
+      4.8
+     ],
+     [
+      -6750.0,
+      3714.0790817698003,
+      4.8
+     ]
+    ],
+    "Length": 3.5435903091000003,
+    "SourceSegment": 63
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3710.6459388304,
+      0.0
+     ],
+     [
+      -6750.0,
+      3712.7595170289,
+      0.0
+     ]
+    ],
+    "Length": 2.1135781985,
+    "SourceSegment": 64
+   },
+   {
+    "Chain": 0,
+    "Key": [
+     [
+      -6750.0,
+      3712.7595170289,
+      0.0
+     ],
+     [
+      -6748.259656031601,
+      3710.5106028366004,
+      0.0
+     ]
+    ],
+    "Length": 2.8436617543000002,
+    "Portions": [
+     [
+      0.0,
+      1.9000000000000001,
+      67
+     ],
+     [
+      1.9000000000000001,
+      2.8436617543000002,
+      39
+     ]
+    ],
+    "SourceSegment": 65
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3714.0790817698003,
+      4.8
+     ],
+     [
+      -6750.0,
+      3716.1822160482,
+      4.8
+     ]
+    ],
+    "Length": 2.1031342784000002,
+    "SourceSegment": 66
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3716.1822160482,
+      4.8
+     ],
+     [
+      -6750.0,
+      3718.0366574287,
+      4.8
+     ]
+    ],
+    "Length": 1.8544413805,
+    "SourceSegment": 67
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3718.0366574287,
+      4.8
+     ],
+     [
+      -6750.0,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 1.9633425713000001,
+    "SourceSegment": 68
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6750.0,
+      3720.0,
+      4.8
+     ],
+     [
+      -6749.8443803978,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 0.1556196022,
+    "SourceSegment": 69
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6749.8443803978,
+      3720.0,
+      4.8
+     ],
+     [
+      -6748.257988279201,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 1.5863921185,
+    "SourceSegment": 70
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6749.7597361983,
+      3720.0,
+      0.0
+     ],
+     [
+      -6749.749659341101,
+      3719.9849776395004,
+      0.0
+     ]
+    ],
+    "Length": 0.0180890676,
+    "Portions": [
+     [
+      0.0,
+      0.0180890676,
+      40
+     ]
+    ],
+    "SourceSegment": 71
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6749.7597361983,
+      3720.0,
+      0.0
+     ],
+     [
+      -6749.7378253681,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.021910830200000002,
+    "SourceSegment": 72
+   },
+   {
+    "Arc": 4,
+    "Chain": 1,
+    "Key": [
+     [
+      -6749.749659341101,
+      3719.9849776395004,
+      0.0
+     ],
+     [
+      -6748.5677733079,
+      3718.2813570026,
+      0.0
+     ]
+    ],
+    "Length": 2.0734458927,
+    "Portions": [
+     [
+      0.0,
+      2.0734458927,
+      40
+     ]
+    ],
+    "SourceSegment": 73
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6749.7378253681,
+      3720.0,
+      0.0
+     ],
+     [
+      -6747.8390223608,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 1.8988030073000002,
+    "SourceSegment": 74
+   },
+   {
+    "Arc": 4,
+    "Chain": 1,
+    "Key": [
+     [
+      -6748.5677733079,
+      3718.2813570026,
+      0.0
+     ],
+     [
+      -6747.4631437177,
+      3716.7393085837,
+      0.0
+     ]
+    ],
+    "Length": 1.8968710704,
+    "Portions": [
+     [
+      0.0,
+      1.8968710704,
+      40
+     ]
+    ],
+    "SourceSegment": 75
+   },
+   {
+    "Arc": 0,
+    "Chain": 0,
+    "Key": [
+     [
+      -6748.259656031601,
+      3710.5106028366004,
+      0.0
+     ],
+     [
+      -6746.2087472881,
+      3707.9896499853003,
+      0.0
+     ]
+    ],
+    "Length": 3.2498353731000003,
+    "Portions": [
+     [
+      0.0,
+      3.2498353731000003,
+      39
+     ]
+    ],
+    "SourceSegment": 76
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6748.257988279201,
+      3720.0,
+      4.8
+     ],
+     [
+      -6746.92866224,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 1.3293260392000001,
+    "SourceSegment": 77
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6747.8390223608,
+      3720.0,
+      0.0
+     ],
+     [
+      -6747.4277005731,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.4113217877,
+    "SourceSegment": 78
+   },
+   {
+    "Arc": 4,
+    "Chain": 1,
+    "Key": [
+     [
+      -6747.4631437177,
+      3716.7393085837,
+      0.0
+     ],
+     [
+      -6746.336983740101,
+      3715.2143020941003,
+      0.0
+     ]
+    ],
+    "Length": 1.8957534356,
+    "Portions": [
+     [
+      0.0,
+      1.8957534356,
+      40
+     ]
+    ],
+    "SourceSegment": 79
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6747.4277005731,
+      3720.0,
+      0.0
+     ],
+     [
+      -6746.3181179531,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 1.10958262,
+    "SourceSegment": 80
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6746.92866224,
+      3720.0,
+      4.8
+     ],
+     [
+      -6744.6355382618,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 2.2931239782,
+    "SourceSegment": 81
+   },
+   {
+    "Arc": 4,
+    "Chain": 1,
+    "Key": [
+     [
+      -6746.336983740101,
+      3715.2143020941003,
+      0.0
+     ],
+     [
+      -6745.1895444938,
+      3713.7068668249003,
+      0.0
+     ]
+    ],
+    "Length": 1.8944597949000002,
+    "Portions": [
+     [
+      0.0,
+      1.8944597949000002,
+      40
+     ]
+    ],
+    "SourceSegment": 82
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6746.3181179531,
+      3720.0,
+      0.0
+     ],
+     [
+      -6745.4808746131,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.83724334,
+    "SourceSegment": 83
+   },
+   {
+    "Arc": 0,
+    "Chain": 0,
+    "Key": [
+     [
+      -6746.2087472881,
+      3707.9896499853003,
+      0.0
+     ],
+     [
+      -6744.0788450946,
+      3705.4995670810004,
+      0.0
+     ]
+    ],
+    "Length": 3.2767356049000003,
+    "Portions": [
+     [
+      0.0,
+      3.2767356049000003,
+      39
+     ]
+    ],
+    "SourceSegment": 84
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6745.4808746131,
+      3720.0,
+      0.0
+     ],
+     [
+      -6744.8065285646,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.6743460485,
+    "SourceSegment": 85
+   },
+   {
+    "Arc": 4,
+    "Chain": 1,
+    "Key": [
+     [
+      -6745.1895444938,
+      3713.7068668249003,
+      0.0
+     ],
+     [
+      -6744.0211426377,
+      3712.2175621595,
+      0.0
+     ]
+    ],
+    "Length": 1.892931928,
+    "Portions": [
+     [
+      0.0,
+      1.892931928,
+      40
+     ]
+    ],
+    "SourceSegment": 86
+   },
+   {
+    "Chain": 2,
+    "Key": [
+     [
+      -6744.8065285646,
+      3720.0,
+      0.0
+     ],
+     [
+      -6744.1796029826,
+      3719.1154561238,
+      0.0
+     ]
+    ],
+    "Length": 1.0841833583,
+    "Portions": [
+     [
+      0.0,
+      1.0841833583,
+      68
+     ]
+    ],
+    "SourceSegment": 87
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6744.6355382618,
+      3720.0,
+      4.8
+     ],
+     [
+      -6741.991155008201,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 2.6443832536,
+    "SourceSegment": 88
+   },
+   {
+    "Arc": 9,
+    "Chain": 2,
+    "Key": [
+     [
+      -6744.1796029826,
+      3719.1154561238,
+      0.0
+     ],
+     [
+      -6743.095844105101,
+      3717.6323103677,
+      0.0
+     ]
+    ],
+    "Length": 1.8369144341,
+    "Portions": [
+     [
+      0.0,
+      0.8158166417,
+      68
+     ],
+     [
+      0.8158166417,
+      1.8369144341,
+      41
+     ]
+    ],
+    "SourceSegment": 89
+   },
+   {
+    "Arc": 0,
+    "Chain": 0,
+    "Key": [
+     [
+      -6744.0788450946,
+      3705.4995670810004,
+      0.0
+     ],
+     [
+      -6741.8999963857,
+      3703.0757646148,
+      0.0
+     ]
+    ],
+    "Length": 3.2591716879000003,
+    "Portions": [
+     [
+      0.0,
+      3.2591716879000003,
+      39
+     ]
+    ],
+    "SourceSegment": 90
+   },
+   {
+    "Arc": 4,
+    "Chain": 1,
+    "Key": [
+     [
+      -6744.0211426377,
+      3712.2175621595,
+      0.0
+     ],
+     [
+      -6742.832167972901,
+      3710.7469788635003,
+      0.0
+     ]
+    ],
+    "Length": 1.8911044349000001,
+    "Portions": [
+     [
+      0.0,
+      1.8911044349000001,
+      40
+     ]
+    ],
+    "SourceSegment": 91
+   },
+   {
+    "Arc": 9,
+    "Chain": 2,
+    "Key": [
+     [
+      -6743.095844105101,
+      3717.6323103677,
+      0.0
+     ],
+     [
+      -6741.9914154681,
+      3716.1661308095,
+      0.0
+     ]
+    ],
+    "Length": 1.8356048352,
+    "Portions": [
+     [
+      0.0,
+      1.8356048352,
+      41
+     ]
+    ],
+    "SourceSegment": 92
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6742.832167972901,
+      3710.7469788635003,
+      0.0
+     ],
+     [
+      -6741.6158360782,
+      3709.287355809,
+      0.0
+     ]
+    ],
+    "Length": 1.8999901945000002,
+    "Portions": [
+     [
+      0.0,
+      1.8999901945000002,
+      40
+     ]
+    ],
+    "SourceSegment": 93
+   },
+   {
+    "Arc": 9,
+    "Chain": 2,
+    "Key": [
+     [
+      -6741.9914154681,
+      3716.1661308095,
+      0.0
+     ],
+     [
+      -6740.8666243535,
+      3714.7174653105003,
+      0.0
+     ]
+    ],
+    "Length": 1.8340629160000002,
+    "Portions": [
+     [
+      0.0,
+      1.8340629160000002,
+      41
+     ]
+    ],
+    "SourceSegment": 94
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6741.991155008201,
+      3720.0,
+      4.8
+     ],
+     [
+      -6740.9293000732005,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 1.061854935,
+    "SourceSegment": 95
+   },
+   {
+    "Arc": 0,
+    "Chain": 0,
+    "Key": [
+     [
+      -6741.8999963857,
+      3703.0757646148,
+      0.0
+     ],
+     [
+      -6739.6685223645,
+      3700.7112591958003,
+      0.0
+     ]
+    ],
+    "Length": 3.2512093418,
+    "Portions": [
+     [
+      0.0,
+      3.2512093418,
+      39
+     ]
+    ],
+    "SourceSegment": 96
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6741.6158360782,
+      3709.287355809,
+      0.0
+     ],
+     [
+      -6740.3797619711,
+      3707.8480951365,
+      0.0
+     ]
+    ],
+    "Length": 1.8971954253,
+    "Portions": [
+     [
+      0.0,
+      1.8971954253,
+      40
+     ]
+    ],
+    "SourceSegment": 97
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6740.9293000732005,
+      3720.0,
+      4.8
+     ],
+     [
+      -6739.953499267201,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 0.9758008060000001,
+    "SourceSegment": 98
+   },
+   {
+    "Arc": 9,
+    "Chain": 2,
+    "Key": [
+     [
+      -6740.8666243535,
+      3714.7174653105003,
+      0.0
+     ],
+     [
+      -6739.7218423972,
+      3713.2868841672002,
+      0.0
+     ]
+    ],
+    "Length": 1.8322358295,
+    "Portions": [
+     [
+      0.0,
+      1.8322358295,
+      41
+     ]
+    ],
+    "SourceSegment": 99
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6740.3797619711,
+      3707.8480951365,
+      0.0
+     ],
+     [
+      -6739.1246837709,
+      3706.4295386268,
+      0.0
+     ]
+    ],
+    "Length": 1.894075991,
+    "Portions": [
+     [
+      0.0,
+      1.894075991,
+      40
+     ]
+    ],
+    "SourceSegment": 100
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6739.953499267201,
+      3720.0,
+      4.8
+     ],
+     [
+      -6736.5113625339,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 3.4421367332,
+    "SourceSegment": 101
+   },
+   {
+    "Chain": 2,
+    "Key": [
+     [
+      -6739.7218423972,
+      3713.2868841672002,
+      0.0
+     ],
+     [
+      -6738.5503276392,
+      3711.8665934035002,
+      0.0
+     ]
+    ],
+    "Length": 1.8411063743,
+    "Portions": [
+     [
+      0.0,
+      1.8411063743,
+      41
+     ]
+    ],
+    "SourceSegment": 102
+   },
+   {
+    "Arc": 0,
+    "Chain": 0,
+    "Key": [
+     [
+      -6739.6685223645,
+      3700.7112591958003,
+      0.0
+     ],
+     [
+      -6736.9040289401,
+      3697.9298699811,
+      0.0
+     ]
+    ],
+    "Length": 3.9215494205000003,
+    "Portions": [
+     [
+      0.0,
+      3.9215494205000003,
+      39
+     ]
+    ],
+    "SourceSegment": 103
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6739.3581090155,
+      3720.0,
+      0.0
+     ],
+     [
+      -6739.0339204164,
+      3719.5445131045003,
+      0.0
+     ]
+    ],
+    "Length": 0.5590765241,
+    "Portions": [
+     [
+      0.0,
+      0.5590765241,
+      42
+     ]
+    ],
+    "SourceSegment": 104
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6739.3581090155,
+      3720.0,
+      0.0
+     ],
+     [
+      -6738.8700675543005,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.4880414612,
+    "SourceSegment": 105
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6739.1246837709,
+      3706.4295386268,
+      0.0
+     ],
+     [
+      -6737.8510474565,
+      3705.0316472396003,
+      0.0
+     ]
+    ],
+    "Length": 1.8910975099,
+    "Portions": [
+     [
+      0.0,
+      1.8910975099,
+      40
+     ]
+    ],
+    "SourceSegment": 106
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6739.0339204164,
+      3719.5445131045003,
+      0.0
+     ],
+     [
+      -6737.6895917545,
+      3717.7943630765003,
+      0.0
+     ]
+    ],
+    "Length": 2.206863084,
+    "Portions": [
+     [
+      0.0,
+      2.206863084,
+      42
+     ]
+    ],
+    "SourceSegment": 107
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6738.8700675543005,
+      3720.0,
+      0.0
+     ],
+     [
+      -6737.1841479512,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 1.6859196031,
+    "SourceSegment": 108
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6738.5503276392,
+      3711.8665934035002,
+      0.0
+     ],
+     [
+      -6737.3594376471,
+      3710.4657845205,
+      0.0
+     ]
+    ],
+    "Length": 1.838609393,
+    "Portions": [
+     [
+      0.0,
+      1.838609393,
+      41
+     ]
+    ],
+    "SourceSegment": 109
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6737.8510474565,
+      3705.0316472396003,
+      0.0
+     ],
+     [
+      -6736.5595721438,
+      3703.6546467181,
+      0.0
+     ]
+    ],
+    "Length": 1.8878662346000001,
+    "Portions": [
+     [
+      0.0,
+      1.8878662346000001,
+      40
+     ]
+    ],
+    "SourceSegment": 110
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6737.6895917545,
+      3717.7943630765003,
+      0.0
+     ],
+     [
+      -6736.3452630925,
+      3716.0442130486003,
+      0.0
+     ]
+    ],
+    "Length": 2.206863084,
+    "Portions": [
+     [
+      0.0,
+      2.206863084,
+      42
+     ]
+    ],
+    "SourceSegment": 111
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6737.3594376471,
+      3710.4657845205,
+      0.0
+     ],
+     [
+      -6736.1499188701,
+      3709.0848302345003,
+      0.0
+     ]
+    ],
+    "Length": 1.8357479162,
+    "Portions": [
+     [
+      0.0,
+      1.8357479162,
+      41
+     ]
+    ],
+    "SourceSegment": 112
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6737.1841479512,
+      3720.0,
+      0.0
+     ],
+     [
+      -6734.7346689136,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 2.4494790376,
+    "SourceSegment": 113
+   },
+   {
+    "Chain": 0,
+    "Key": [
+     [
+      -6736.9040289401,
+      3697.9298699811,
+      0.0
+     ],
+     [
+      -6734.080015985301,
+      3695.2376609051003,
+      0.0
+     ]
+    ],
+    "Length": 3.9016712929,
+    "Portions": [
+     [
+      0.0,
+      3.9016712929,
+      39
+     ]
+    ],
+    "SourceSegment": 120
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6736.5595721438,
+      3703.6546467181,
+      0.0
+     ],
+     [
+      -6735.240343285001,
+      3702.2873662107,
+      0.0
+     ]
+    ],
+    "Length": 1.8999528330000002,
+    "Portions": [
+     [
+      0.0,
+      1.8999528330000002,
+      40
+     ]
+    ],
+    "SourceSegment": 121
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6736.5113625339,
+      3720.0,
+      4.8
+     ],
+     [
+      -6734.8110401371005,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 1.7003223968,
+    "SourceSegment": 122
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6736.3452630925,
+      3716.0442130486003,
+      0.0
+     ],
+     [
+      -6734.9277899637,
+      3714.333559569,
+      0.0
+     ]
+    ],
+    "Length": 2.2216132423,
+    "Portions": [
+     [
+      0.0,
+      2.2216132423,
+      42
+     ]
+    ],
+    "SourceSegment": 123
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6736.1499188701,
+      3709.0848302345003,
+      0.0
+     ],
+     [
+      -6734.922382581,
+      3707.7238874787004,
+      0.0
+     ]
+    ],
+    "Length": 1.8327603569000002,
+    "Portions": [
+     [
+      0.0,
+      1.8327603569000002,
+      41
+     ]
+    ],
+    "SourceSegment": 124
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6735.240343285001,
+      3702.2873662107,
+      0.0
+     ],
+     [
+      -6733.9049788797,
+      3700.9409442223,
+      0.0
+     ]
+    ],
+    "Length": 1.8963254641,
+    "Portions": [
+     [
+      0.0,
+      1.8963254641,
+      40
+     ]
+    ],
+    "SourceSegment": 125
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6734.9277899637,
+      3714.333559569,
+      0.0
+     ],
+     [
+      -6733.5103168348005,
+      3712.6229060894,
+      0.0
+     ]
+    ],
+    "Length": 2.2216132423,
+    "Portions": [
+     [
+      0.0,
+      2.2216132423,
+      42
+     ]
+    ],
+    "SourceSegment": 128
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6734.922382581,
+      3707.7238874787004,
+      0.0
+     ],
+     [
+      -6733.6775526579,
+      3706.3831884979,
+      0.0
+     ]
+    ],
+    "Length": 1.8295013786,
+    "Portions": [
+     [
+      0.0,
+      1.8295013786,
+      41
+     ]
+    ],
+    "SourceSegment": 129
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6734.8110401371005,
+      3720.0,
+      4.8
+     ],
+     [
+      -6732.1205817323,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 2.6904584048,
+    "SourceSegment": 130
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6734.7346689136,
+      3720.0,
+      0.0
+     ],
+     [
+      -6734.0684883654,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.6661805482000001,
+    "SourceSegment": 131
+   },
+   {
+    "Arc": 1,
+    "Chain": 0,
+    "Key": [
+     [
+      -6734.080015985301,
+      3695.2376609051003,
+      0.0
+     ],
+     [
+      -6731.2025981769,
+      3692.6316900926,
+      0.0
+     ]
+    ],
+    "Length": 3.8820892726,
+    "Portions": [
+     [
+      0.0,
+      3.8820892726,
+      39
+     ]
+    ],
+    "SourceSegment": 134
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6734.0684883654,
+      3720.0,
+      0.0
+     ],
+     [
+      -6731.9227869134,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 2.1457014519,
+    "SourceSegment": 135
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6733.9049788797,
+      3700.9409442223,
+      0.0
+     ],
+     [
+      -6732.5544427429,
+      3699.6153105846,
+      0.0
+     ]
+    ],
+    "Length": 1.8924197204000002,
+    "Portions": [
+     [
+      0.0,
+      1.8924197204000002,
+      40
+     ]
+    ],
+    "SourceSegment": 136
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6733.6775526579,
+      3706.3831884979,
+      0.0
+     ],
+     [
+      -6732.3991422729005,
+      3705.0448654217003,
+      0.0
+     ]
+    ],
+    "Length": 1.8507949019,
+    "Portions": [
+     [
+      0.0,
+      1.8507949019,
+      41
+     ]
+    ],
+    "SourceSegment": 137
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6733.5103168348005,
+      3712.6229060894,
+      0.0
+     ],
+     [
+      -6732.0394596387005,
+      3710.9747410541,
+      0.0
+     ]
+    ],
+    "Length": 2.2090425244,
+    "Portions": [
+     [
+      0.0,
+      2.2090425244,
+      42
+     ]
+    ],
+    "SourceSegment": 138
+   },
+   {
+    "Arc": 3,
+    "Chain": 1,
+    "Key": [
+     [
+      -6732.5544427429,
+      3699.6153105846,
+      0.0
+     ],
+     [
+      -6731.189730587001,
+      3698.3103891250003,
+      0.0
+     ]
+    ],
+    "Length": 1.8881894195,
+    "Portions": [
+     [
+      0.0,
+      1.8881894195,
+      40
+     ]
+    ],
+    "SourceSegment": 141
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6732.3991422729005,
+      3705.0448654217003,
+      0.0
+     ],
+     [
+      -6731.1047605063,
+      3703.7267238987,
+      0.0
+     ]
+    ],
+    "Length": 1.84740933,
+    "Portions": [
+     [
+      0.0,
+      1.84740933,
+      41
+     ]
+    ],
+    "SourceSegment": 142
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6732.1205817323,
+      3720.0,
+      4.8
+     ],
+     [
+      -6729.2705278503,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 2.850053882,
+    "SourceSegment": 143
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6732.0394596387005,
+      3710.9747410541,
+      0.0
+     ],
+     [
+      -6730.5686024426,
+      3709.3265760189,
+      0.0
+     ]
+    ],
+    "Length": 2.2090425244,
+    "Portions": [
+     [
+      0.0,
+      2.2090425244,
+      42
+     ]
+    ],
+    "SourceSegment": 144
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6731.9227869134,
+      3720.0,
+      0.0
+     ],
+     [
+      -6729.7770854615,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 2.1457014519,
+    "SourceSegment": 145
+   },
+   {
+    "Arc": 1,
+    "Chain": 0,
+    "Key": [
+     [
+      -6731.2025981769,
+      3692.6316900926,
+      0.0
+     ],
+     [
+      -6728.2766241683,
+      3690.107876767,
+      0.0
+     ]
+    ],
+    "Length": 3.8640597305,
+    "Portions": [
+     [
+      0.0,
+      3.8640597305,
+      39
+     ]
+    ],
+    "SourceSegment": 150
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6731.189730587001,
+      3698.3103891250003,
+      0.0
+     ],
+     [
+      -6729.8109743755,
+      3697.025274529,
+      0.0
+     ]
+    ],
+    "Length": 1.8848045564,
+    "Portions": [
+     [
+      0.0,
+      1.8848045564,
+      40
+     ]
+    ],
+    "SourceSegment": 151
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6731.1047605063,
+      3703.7267238987,
+      0.0
+     ],
+     [
+      -6729.7953716709,
+      3702.4287101549003,
+      0.0
+     ]
+    ],
+    "Length": 1.8437295901000001,
+    "Portions": [
+     [
+      0.0,
+      1.8437295901000001,
+      41
+     ]
+    ],
+    "SourceSegment": 152
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6730.5686024426,
+      3709.3265760189,
+      0.0
+     ],
+     [
+      -6729.0083318913,
+      3707.6982974647003,
+      0.0
+     ]
+    ],
+    "Length": 2.2551574763,
+    "Portions": [
+     [
+      0.0,
+      2.2551574763,
+      42
+     ]
+    ],
+    "SourceSegment": 153
+   },
+   {
+    "Arc": 2,
+    "Chain": 1,
+    "Key": [
+     [
+      -6729.8109743755,
+      3697.025274529,
+      0.0
+     ],
+     [
+      -6728.4159029411,
+      3695.7569511858,
+      0.0
+     ]
+    ],
+    "Length": 1.8854358673,
+    "Portions": [
+     [
+      0.0,
+      1.8854358673,
+      40
+     ]
+    ],
+    "SourceSegment": 154
+   },
+   {
+    "Arc": 8,
+    "Chain": 2,
+    "Key": [
+     [
+      -6729.7953716709,
+      3702.4287101549003,
+      0.0
+     ],
+     [
+      -6728.4719628256,
+      3701.1507542104,
+      0.0
+     ]
+    ],
+    "Length": 1.8397234487,
+    "Portions": [
+     [
+      0.0,
+      1.8397234487,
+      41
+     ]
+    ],
+    "SourceSegment": 155
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6729.7770854615,
+      3720.0,
+      0.0
+     ],
+     [
+      -6728.8492685918,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.9278168698,
+    "SourceSegment": 156
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6729.2705278503,
+      3720.0,
+      4.8
+     ],
+     [
+      -6727.9882657238,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 1.2822621265,
+    "SourceSegment": 159
+   },
+   {
+    "Arc": 5,
+    "Chain": 3,
+    "Key": [
+     [
+      -6729.0083318913,
+      3707.6982974647003,
+      0.0
+     ],
+     [
+      -6727.4480613401,
+      3706.0700189106,
+      0.0
+     ]
+    ],
+    "Length": 2.2551574763,
+    "Portions": [
+     [
+      0.0,
+      2.2551574763,
+      42
+     ]
+    ],
+    "SourceSegment": 160
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6728.8492685918,
+      3720.0,
+      0.0
+     ],
+     [
+      -6727.56426256,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 1.2850060318,
+    "SourceSegment": 161
+   },
+   {
+    "Chain": 2,
+    "Key": [
+     [
+      -6728.4719628256,
+      3701.1507542104,
+      0.0
+     ],
+     [
+      -6727.1350152008,
+      3699.8922811306,
+      0.0
+     ]
+    ],
+    "Length": 1.8360782783,
+    "Portions": [
+     [
+      0.0,
+      1.8360782783,
+      41
+     ]
+    ],
+    "SourceSegment": 164
+   },
+   {
+    "Arc": 2,
+    "Chain": 1,
+    "Key": [
+     [
+      -6728.4159029411,
+      3695.7569511858,
+      0.0
+     ],
+     [
+      -6727.0049990516,
+      3694.5050656189,
+      0.0
+     ]
+    ],
+    "Length": 1.8862309662,
+    "Portions": [
+     [
+      0.0,
+      1.8862309662,
+      40
+     ]
+    ],
+    "SourceSegment": 165
+   },
+   {
+    "Arc": 1,
+    "Chain": 0,
+    "Key": [
+     [
+      -6728.2766241683,
+      3690.107876767,
+      0.0
+     ],
+     [
+      -6725.3079056363,
+      3687.6630731797,
+      0.0
+     ]
+    ],
+    "Length": 3.8458229682000002,
+    "Portions": [
+     [
+      0.0,
+      3.8458229682000002,
+      39
+     ]
+    ],
+    "SourceSegment": 166
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6727.9882657238,
+      3720.0,
+      4.8
+     ],
+     [
+      -6723.267291720001,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 4.7209740039,
+    "SourceSegment": 167
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6727.56426256,
+      3720.0,
+      0.0
+     ],
+     [
+      -6722.1501067633,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 5.4141557967,
+    "SourceSegment": 170
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6727.4480613401,
+      3706.0700189106,
+      0.0
+     ],
+     [
+      -6725.8432134095,
+      3704.5036018936003,
+      0.0
+     ]
+    ],
+    "Length": 2.2425876017,
+    "Portions": [
+     [
+      0.0,
+      2.2425876017,
+      42
+     ]
+    ],
+    "SourceSegment": 171
+   },
+   {
+    "Arc": 7,
+    "Chain": 2,
+    "Key": [
+     [
+      -6727.1350152008,
+      3699.8922811306,
+      0.0
+     ],
+     [
+      -6725.7823221309,
+      3698.6502938614003,
+      0.0
+     ]
+    ],
+    "Length": 1.8363852859,
+    "Portions": [
+     [
+      0.0,
+      1.8363852859,
+      41
+     ]
+    ],
+    "SourceSegment": 172
+   },
+   {
+    "Arc": 2,
+    "Chain": 1,
+    "Key": [
+     [
+      -6727.0049990516,
+      3694.5050656189,
+      0.0
+     ],
+     [
+      -6725.5790424372,
+      3693.2695138799,
+      0.0
+     ]
+    ],
+    "Length": 1.8867804234,
+    "Portions": [
+     [
+      0.0,
+      1.8867804234,
+      40
+     ]
+    ],
+    "SourceSegment": 173
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6725.8432134095,
+      3704.5036018936003,
+      0.0
+     ],
+     [
+      -6724.2383654789,
+      3702.9371848767,
+      0.0
+     ]
+    ],
+    "Length": 2.2425876017,
+    "Portions": [
+     [
+      0.0,
+      2.2425876017,
+      42
+     ]
+    ],
+    "SourceSegment": 180
+   },
+   {
+    "Arc": 7,
+    "Chain": 2,
+    "Key": [
+     [
+      -6725.7823221309,
+      3698.6502938614003,
+      0.0
+     ],
+     [
+      -6724.414059413,
+      3697.4241503417,
+      0.0
+     ]
+    ],
+    "Length": 1.8372726516,
+    "Portions": [
+     [
+      0.0,
+      1.8372726516,
+      41
+     ]
+    ],
+    "SourceSegment": 181
+   },
+   {
+    "Arc": 2,
+    "Chain": 1,
+    "Key": [
+     [
+      -6725.5790424372,
+      3693.2695138799,
+      0.0
+     ],
+     [
+      -6724.1391150577,
+      3692.0504178174,
+      0.0
+     ]
+    ],
+    "Length": 1.8866865314,
+    "Portions": [
+     [
+      0.0,
+      1.8866865314,
+      40
+     ]
+    ],
+    "SourceSegment": 182
+   },
+   {
+    "Arc": 7,
+    "Chain": 2,
+    "Key": [
+     [
+      -6724.414059413,
+      3697.4241503417,
+      0.0
+     ],
+     [
+      -6723.0309307621,
+      3696.2136867291,
+      0.0
+     ]
+    ],
+    "Length": 1.8380062628,
+    "Portions": [
+     [
+      0.0,
+      1.8380062628,
+      41
+     ]
+    ],
+    "SourceSegment": 184
+   },
+   {
+    "Arc": 6,
+    "Chain": 3,
+    "Key": [
+     [
+      -6724.2383654789,
+      3702.9371848767,
+      0.0
+     ],
+     [
+      -6722.5955213239,
+      3701.4306328052003,
+      0.0
+     ]
+    ],
+    "Length": 2.229043755,
+    "Portions": [
+     [
+      0.0,
+      2.229043755,
+      42
+     ]
+    ],
+    "SourceSegment": 185
+   },
+   {
+    "Arc": 2,
+    "Chain": 1,
+    "Key": [
+     [
+      -6724.1391150577,
+      3692.0504178174,
+      0.0
+     ],
+     [
+      -6722.6870197581,
+      3690.84844321,
+      0.0
+     ]
+    ],
+    "Length": 1.8850261845,
+    "Portions": [
+     [
+      0.0,
+      1.8850261845,
+      40
+     ]
+    ],
+    "SourceSegment": 186
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6723.267291720001,
+      3720.0,
+      4.8
+     ],
+     [
+      -6721.0979644456,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 2.1693272743,
+    "SourceSegment": 188
+   },
+   {
+    "Arc": 7,
+    "Chain": 2,
+    "Key": [
+     [
+      -6723.0309307621,
+      3696.2136867291,
+      0.0
+     ],
+     [
+      -6721.6339617466,
+      3695.0189892569,
+      0.0
+     ]
+    ],
+    "Length": 1.8381579041,
+    "Portions": [
+     [
+      0.0,
+      1.8381579041,
+      41
+     ]
+    ],
+    "SourceSegment": 193
+   },
+   {
+    "Arc": 2,
+    "Chain": 1,
+    "Key": [
+     [
+      -6722.6870197581,
+      3690.84844321,
+      0.0
+     ],
+     [
+      -6721.1394636361,
+      3689.5959629288,
+      0.0
+     ]
+    ],
+    "Length": 1.9908884462,
+    "Portions": [
+     [
+      0.0,
+      1.9908884462,
+      40
+     ]
+    ],
+    "SourceSegment": 194
+   },
+   {
+    "Arc": 6,
+    "Chain": 3,
+    "Key": [
+     [
+      -6722.5955213239,
+      3701.4306328052003,
+      0.0
+     ],
+     [
+      -6720.952677168801,
+      3699.9240807337,
+      0.0
+     ]
+    ],
+    "Length": 2.229043755,
+    "Portions": [
+     [
+      0.0,
+      2.229043755,
+      42
+     ]
+    ],
+    "SourceSegment": 195
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6722.1501067633,
+      3720.0,
+      0.0
+     ],
+     [
+      -6717.2588014301,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 4.8913053332,
+    "SourceSegment": 196
+   },
+   {
+    "Arc": 7,
+    "Chain": 2,
+    "Key": [
+     [
+      -6721.6339617466,
+      3695.0189892569,
+      0.0
+     ],
+     [
+      -6720.2249752895,
+      3693.8407603783003,
+      0.0
+     ]
+    ],
+    "Length": 1.8366997922000001,
+    "Portions": [
+     [
+      0.0,
+      1.8366997922000001,
+      41
+     ]
+    ],
+    "SourceSegment": 198
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6721.0979644456,
+      3720.0,
+      4.8
+     ],
+     [
+      -6713.8533608349,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 7.2446036108000005,
+    "SourceSegment": 200
+   },
+   {
+    "Arc": 6,
+    "Chain": 3,
+    "Key": [
+     [
+      -6720.952677168801,
+      3699.9240807337,
+      0.0
+     ],
+     [
+      -6719.2783832893,
+      3698.4751055682,
+      0.0
+     ]
+    ],
+    "Length": 2.2142242491,
+    "Portions": [
+     [
+      0.0,
+      2.2142242491,
+      42
+     ]
+    ],
+    "SourceSegment": 201
+   },
+   {
+    "Arc": 7,
+    "Chain": 2,
+    "Key": [
+     [
+      -6720.2249752895,
+      3693.8407603783003,
+      0.0
+     ],
+     [
+      -6718.7090617781005,
+      3692.6012802416003,
+      0.0
+     ]
+    ],
+    "Length": 1.9581380910000001,
+    "Portions": [
+     [
+      0.0,
+      1.9581380910000001,
+      41
+     ]
+    ],
+    "SourceSegment": 208
+   },
+   {
+    "Arc": 6,
+    "Chain": 3,
+    "Key": [
+     [
+      -6719.2783832893,
+      3698.4751055682,
+      0.0
+     ],
+     [
+      -6717.6040894098005,
+      3697.0261304027003,
+      0.0
+     ]
+    ],
+    "Length": 2.2142242491,
+    "Portions": [
+     [
+      0.0,
+      2.2142242491,
+      42
+     ]
+    ],
+    "SourceSegment": 212
+   },
+   {
+    "Arc": 6,
+    "Chain": 3,
+    "Key": [
+     [
+      -6717.6040894098005,
+      3697.0261304027003,
+      0.0
+     ],
+     [
+      -6716.0085310183,
+      3695.71524043,
+      0.0
+     ]
+    ],
+    "Length": 2.0650034143,
+    "Portions": [
+     [
+      0.0,
+      2.0650034143,
+      42
+     ]
+    ],
+    "SourceSegment": 220
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6717.2588014301,
+      3720.0,
+      0.0
+     ],
+     [
+      -6714.2557150852,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 3.0030863449000003,
+    "SourceSegment": 222
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6714.2557150852,
+      3720.0,
+      0.0
+     ],
+     [
+      -6710.0274803428,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 4.2282347424,
+    "SourceSegment": 237
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6713.8533608349,
+      3720.0,
+      4.8
+     ],
+     [
+      -6713.4259637889,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 0.427397046,
+    "SourceSegment": 239
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6713.4259637889,
+      3720.0,
+      4.8
+     ],
+     [
+      -6713.0389340184,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 0.38702977040000003,
+    "SourceSegment": 240
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6713.0389340184,
+      3720.0,
+      4.8
+     ],
+     [
+      -6704.7725328523,
+      3720.0,
+      4.8
+     ]
+    ],
+    "Length": 8.2664011661,
+    "SourceSegment": 243
+   },
+   {
+    "Chain": -1,
+    "Exclusion": {
+     "Class": "TruncationCut",
+     "Reason": "metal perimeter on the simulation boundary"
+    },
+    "Key": [
+     [
+      -6710.0274803428,
+      3720.0,
+      0.0
+     ],
+     [
+      -6703.7749933604,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 6.252486982400001,
+    "SourceSegment": 256
+   }
+  ],
+  "Arcs": [
+   {
+    "Center": [
+     -6643.024172661,
+     3794.0966722165003,
+     0.0
+    ],
+    "Joints": 6,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.007528999999999999,
+    "Radius": 134.3923290419,
+    "RadiusOverR": 70.732805,
+    "Segments": 5,
+    "TurnDegrees": 8.633915,
+    "SourceArc": 0
+   },
+   {
+    "Center": [
+     -6622.3625411304,
+     3815.7612443428,
+     0.0
+    ],
+    "Joints": 4,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.006032999999999999,
+    "Radius": 164.3374765519,
+    "RadiusOverR": 86.493409,
+    "Segments": 3,
+    "TurnDegrees": 5.466396,
+    "SourceArc": 1
+   },
+   {
+    "Center": [
+     -6614.8261660841,
+     3822.4619346208,
+     0.0
+    ],
+    "Joints": 9,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.001532,
+    "Radius": 170.1660246213,
+    "RadiusOverR": 89.561066,
+    "Segments": 8,
+    "TurnDegrees": 5.844131,
+    "SourceArc": 44
+   },
+   {
+    "Center": [
+     -6638.9774764166,
+     3796.3727669469004,
+     0.0
+    ],
+    "Joints": 9,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.001764,
+    "Radius": 134.6063966046,
+    "RadiusOverR": 70.845472,
+    "Segments": 8,
+    "TurnDegrees": 7.208165999999999,
+    "SourceArc": 45
+   },
+   {
+    "Center": [
+     -6642.070373756001,
+     3793.4030245397003,
+     0.0
+    ],
+    "Joints": 7,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.00217,
+    "Radius": 130.3265148691,
+    "RadiusOverR": 68.59290299999999,
+    "Segments": 6,
+    "TurnDegrees": 5.951758,
+    "SourceArc": 46
+   },
+   {
+    "Center": [
+     -6641.002617999,
+     3792.13148077,
+     0.0
+    ],
+    "Joints": 5,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.010973,
+    "Radius": 121.9802376739,
+    "RadiusOverR": 64.200125,
+    "Segments": 8,
+    "TurnDegrees": 10.253295,
+    "SourceArc": 47
+   },
+   {
+    "Center": [
+     -6614.3981099715,
+     3819.5106349061,
+     0.0
+    ],
+    "Joints": 4,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.008164,
+    "Radius": 160.1698738113,
+    "RadiusOverR": 84.299934,
+    "Segments": 6,
+    "TurnDegrees": 6.221278,
+    "SourceArc": 48
+   },
+   {
+    "Center": [
+     -6614.0926851572,
+     3822.0184377428,
+     0.0
+    ],
+    "Joints": 9,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.001516,
+    "Radius": 166.4150657437,
+    "RadiusOverR": 87.586877,
+    "Segments": 8,
+    "TurnDegrees": 5.844999,
+    "SourceArc": 83
+   },
+   {
+    "Center": [
+     -6638.497973852201,
+     3795.9074018009,
+     0.0
+    ],
+    "Joints": 9,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.001725,
+    "Radius": 130.6663830364,
+    "RadiusOverR": 68.77178099999999,
+    "Segments": 8,
+    "TurnDegrees": 7.214626999999999,
+    "SourceArc": 84
+   },
+   {
+    "Center": [
+     -6642.2456218504,
+     3792.4556145734,
+     0.0
+    ],
+    "Joints": 5,
+    "Kind": "Bend",
+    "MaxChordSagittaOverR": 0.0017679999999999998,
+    "Radius": 125.57590663900001,
+    "RadiusOverR": 66.092582,
+    "Segments": 4,
+    "TurnDegrees": 4.189899,
+    "SourceArc": 85
+   }
+  ],
+  "Features": [
+   {
+    "BendRadiusOverR": 0.8360679999999999,
+    "Chirality": 1,
+    "ClaimsFrame": {
+     "Axes": [
+      [
+       0.563338669377,
+       -0.826226085031,
+       0.0
+      ],
+      [
+       0.826226085031,
+       0.563338669377,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Chirality": 1,
+     "Origin": [
+      -6750.000008783501,
+      3719.9999603472,
+      0.0
+     ]
+    },
+    "ExactParameters": true,
+    "Frame": {
+     "Axes": [
+      [
+       0.5976791534829999,
+       -0.801735386204,
+       0.0
+      ],
+      [
+       0.801735386204,
+       0.5976791534829999,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Origin": [
+      -6750.000008783501,
+      3719.9999603472,
+      0.0
+     ]
+    },
+    "Hash": "533962c480569ca595c7f56b6aedebc0a7cb27e3a8fb5e0b0832a8ea2a8d3c78",
+    "Id": 70,
+    "Length": 5.5324230750000005,
+    "Match": {
+     "Status": "Matched",
+     "Model": "__preflight_placeholder_533962c480569ca5",
+     "Note": "the discovery's pass-2 placeholder of the Missing key (attempt 1, PBS 61316): the pass-01 manifest's Missing feature, matched here to the pass-02 placeholder"
+    },
+    "Mirror": {
+     "Contract": {
+      "ExtendedFeature": 22,
+      "Frame": {
+       "Axes": [
+        [
+         0.5976791534829999,
+         -0.801735386204,
+         0.0
+        ],
+        [
+         0.801735386204,
+         0.5976791534829999,
+         0.0
+        ],
+        [
+         0.0,
+         0.0,
+         1.0
+        ]
+       ],
+       "Chirality": 1,
+       "Origin": [
+        -6750.000008783501,
+        3719.9999603472,
+        0.0
+       ]
+      },
+      "ImageLengthOverR": 8.735379078367258,
+      "Planes": [
+       0,
+       4
+      ],
+      "RealFeatures": [
+       40
+      ],
+      "RealLengthOverR": 2.9118317288245765,
+      "RealPortions": [
+       2,
+       4
+      ],
+      "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster requirement; RealPortions index Signature.Portions (0-based) whose world portions lie on real segments (segment < real_segments); every other portion is an image; Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the serialised portions' lengths over R (a straight portion its chord, an arc its length on the serialised circle), summed over the real / image entries",
+      "Version": 1
+     },
+     "ExtendedFeature": 22,
+     "ImageLength": 0.015734798613173086,
+     "Planes": [
+      0,
+      4
+     ],
+     "RealFeatures": [
+      40
+     ],
+     "RealLength": 0.0052449972269383634,
+     "Status": "Unmerged",
+     "UnmergedIndex": 1
+    },
+    "PortionTurns": [
+     0.011386130000000001,
+     0.595362271,
+     0.014554759,
+     0.011847298000000001
+    ],
+    "Portions": [
+     [
+      29,
+      0.0,
+      0.0180890676
+     ],
+     [
+      31,
+      0.0,
+      2.0734458927
+     ],
+     [
+      33,
+      0.0,
+      1.8968710704
+     ],
+     [
+      37,
+      0.0,
+      1.5440170442
+     ]
+    ],
+    "Signature": {
+     "Box": [
+      -6.8673329999999995,
+      -7.418549,
+      7.617229999999999,
+      7.4185669999999995
+     ],
+     "Context": [
+      {
+       "Arc": [
+        -2.986516,
+        -69.160207,
+        -3.079099,
+        -0.040035999999999995
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.171683,
+        -0.040222,
+        -2.986516,
+        -0.039973999999999996
+       ]
+      },
+      {
+       "Arc": [
+        -65.266772,
+        -22.559521,
+        0.9808049999999999,
+        -3.440807
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.8144669999999999,
+        -2.873573,
+        1.142274,
+        -4.009446
+       ]
+      },
+      {
+       "Arc": [
+        2.38488,
+        68.448618,
+        6.0853139999999994,
+        -2.187326
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        4.551655,
+        -2.250992,
+        7.617229999999999,
+        -2.090394
+       ]
+      },
+      {
+       "Arc": [
+        2.697406,
+        70.87217199999999,
+        7.387537,
+        0.182119
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        7.157794,
+        0.16725099999999998,
+        7.617229999999999,
+        0.197734
+       ]
+      },
+      {
+       "Arc": [
+        2.97761,
+        68.63288899999999,
+        4.573302,
+        0.058549
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.9865299999999997,
+        0.039986999999999995,
+        6.1592199999999995,
+        0.113814
+       ]
+      },
+      {
+       "Arc": [
+        3.0446109999999997,
+        70.928117,
+        7.3255289999999995,
+        2.289706
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        7.033751,
+        2.2721299999999998,
+        7.617229999999999,
+        2.308521
+       ]
+      },
+      {
+       "Arc": [
+        3.322257,
+        68.260915,
+        4.135355,
+        2.173335
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.204144,
+        2.177791,
+        6.065872,
+        2.225303
+       ]
+      },
+      {
+       "Arc": [
+        3.85004,
+        68.683459,
+        5.63035,
+        4.508023
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.641762,
+        4.483671,
+        7.617229999999999,
+        4.5939559999999995
+       ]
+      },
+      {
+       "Arc": [
+        64.63241,
+        22.724545,
+        1.0356189999999998,
+        4.1205419999999995
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.644,
+        5.515705,
+        1.4576529999999999,
+        2.734276
+       ]
+      },
+      {
+       "Arc": [
+        65.427627,
+        22.611504999999998,
+        -0.8408909999999999,
+        2.962329
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.86715,
+        3.05111,
+        -0.814512,
+        2.873583
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.017993,
+        0.999838
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.055224,
+        -2.277608,
+        4.551645,
+        -2.2506779999999997
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.022039,
+        -0.999757
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.347584,
+        4.490532,
+        3.6417629999999996,
+        4.4840469999999994
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.024023,
+        -0.9997109999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -2.204171,
+        -2.177745,
+        -1.633713,
+        -2.191453
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.049082999999999995,
+        0.998795
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        6.065872,
+        2.2253179999999997,
+        7.033707,
+        2.272879
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.951225,
+        -0.30849899999999997
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.6337139999999999,
+        -2.191452,
+        -1.457677,
+        -2.7342429999999998
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.951835,
+        -0.30661099999999997
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.257364,
+        4.77061,
+        3.347585,
+        4.490532
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.962372,
+        -0.271734
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.626122,
+        7.006214,
+        3.257364,
+        4.77061
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.963344,
+        -0.268269
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.055224,
+        -2.277608,
+        3.4567319999999997,
+        -3.71941
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.96959,
+        -0.24473599999999998
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.4567319999999997,
+        -3.71941,
+        3.875339,
+        -5.377835
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.971753,
+        -0.23599799999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.525979,
+        7.4185669999999995,
+        2.626122,
+        7.006214
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.9753269999999999,
+        -0.220765
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.875339,
+        -5.377835,
+        4.25607,
+        -7.059882
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        0.024023,
+        0.9997109999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.633686,
+        2.1914849999999997,
+        2.204144,
+        2.177777
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        0.951225,
+        0.30849899999999997
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.45765,
+        2.734274,
+        1.633686,
+        2.191484
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        0.967583,
+        0.252552
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.400459,
+        6.448779999999999,
+        0.644004,
+        5.515706
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -0.010019,
+        0.99995
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -4.168717,
+        -0.050214999999999996,
+        -3.171683,
+        -0.040225
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -0.961174,
+        -0.275943
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.142286,
+        4.0094829999999995,
+        -0.867147,
+        3.0511109999999997
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.054099999999999995,
+        -0.998536
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        6.159217,
+        0.113893,
+        7.157747,
+        0.167993
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.965104,
+        0.261868
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.142259,
+        -4.009450999999999,
+        1.4031529999999999,
+        -4.9709639999999995
+       ]
+      }
+     ],
+     "EdgeCount": 8,
+     "Portions": [
+      {
+       "Arc": [
+        -2.986516,
+        -69.160207,
+        -1.5354889999999999,
+        -0.055207
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -2.986516,
+        -0.039973999999999996,
+        -0.085102,
+        -0.100897
+       ]
+      },
+      {
+       "Arc": [
+        -65.266772,
+        -22.559521,
+        0.385554,
+        -1.487294
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.072437,
+        -0.11034899999999999,
+        0.8144669999999999,
+        -2.873573
+       ]
+      },
+      {
+       "Arc": [
+        2.97761,
+        68.63288899999999,
+        1.5354809999999999,
+        0.055147999999999996
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.085077,
+        0.101002,
+        2.9865299999999997,
+        0.039986999999999995
+       ]
+      },
+      {
+       "Arc": [
+        65.427627,
+        22.611504999999998,
+        -0.38555999999999996,
+        1.487325
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.814512,
+        2.873583,
+        0.07239899999999999,
+        0.11037699999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -0.049731,
+        -0.998763
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.075565,
+        0.10139899999999999,
+        0.085074,
+        0.100926
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -0.942974,
+        -0.332866
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.072397,
+        0.11037699999999999,
+        0.075566,
+        0.10139899999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.049731,
+        0.998763
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.085101,
+        -0.100894,
+        -0.075593,
+        -0.101367
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.942974,
+        0.332866
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.075593,
+        -0.101367,
+        -0.072424,
+        -0.110345
+       ]
+      }
+     ],
+     "Type": "SpatialEdgeCluster",
+     "Vertices": []
+    },
+    "TurnTowardMetal": 0.633150459,
+    "Type": "SpatialEdgeCluster",
+    "Vertices": []
+   }
+  ],
+  "Diagnostics": {
+   "MirrorBand": {
+    "Planes": [
+     {
+      "Attribute": 132,
+      "Box": [
+       [
+        -6750.000000000001,
+        3380.0,
+        -525.0
+       ],
+       [
+        -6749.999999999998,
+        3720.0,
+        529.8
+       ]
+      ],
+      "Faces": 873,
+      "MaxDeviation": 1.873701194199384e-12,
+      "Normal": [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      "Offset": 6750.0,
+      "Status": "Natural"
+     },
+     {
+      "Attribute": 132,
+      "Box": [
+       [
+        -6750.000000000001,
+        3379.9999999999986,
+        -525.0
+       ],
+       [
+        -6249.999999999999,
+        3380.0000000000005,
+        529.8
+       ]
+      ],
+      "Faces": 1224,
+      "MaxDeviation": 9.36850597099692e-13,
+      "Normal": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "Offset": -3380.00000175,
+      "Status": "Natural"
+     },
+     {
+      "Attribute": 132,
+      "Box": [
+       [
+        -6750.000000000001,
+        3380.0,
+        -525.0
+       ],
+       [
+        -6250.0,
+        3720.0,
+        -524.9999999999999
+       ]
+      ],
+      "Faces": 264,
+      "MaxDeviation": 1.171063246374615e-13,
+      "Normal": [
+       0.0,
+       0.0,
+       -1.0
+      ],
+      "Offset": 525.0000014999999,
+      "Status": "Unsupported"
+     },
+     {
+      "Attribute": 132,
+      "Box": [
+       [
+        -6750.0,
+        3380.0,
+        529.8
+       ],
+       [
+        -6250.0,
+        3720.0,
+        529.8000000000001
+       ]
+      ],
+      "Faces": 262,
+      "MaxDeviation": 1.171063246374615e-13,
+      "Normal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Offset": 529.80000075,
+      "Status": "Unsupported"
+     },
+     {
+      "Attribute": 132,
+      "Box": [
+       [
+        -6750.000000000001,
+        3719.999999999999,
+        -525.0
+       ],
+       [
+        -6249.999999999999,
+        3720.0000000000005,
+        529.8
+       ]
+      ],
+      "Faces": 1851,
+      "MaxDeviation": 9.36850597099692e-13,
+      "Normal": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "Offset": 3719.99999925,
+      "Status": "Natural"
+     },
+     {
+      "Attribute": 132,
+      "Box": [
+       [
+        -6250.000000000001,
+        3379.9999999999995,
+        -525.0
+       ],
+       [
+        -6249.999999999998,
+        3720.0,
+        529.8
+       ]
+      ],
+      "Faces": 766,
+      "MaxDeviation": 1.873701194199384e-12,
+      "Normal": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "Offset": -6250.0000005,
+      "Status": "Natural"
+     }
+    ]
+   }
+  },
+  "ImageSegments": [
+   {
+    "Chain": 98,
+    "Key": [
+     [
+      -6751.7403439684,
+      3710.5106028366004,
+      0.0
+     ],
+     [
+      -6750.0,
+      3712.7595170289,
+      0.0
+     ]
+    ],
+    "Length": 2.8436617543000002,
+    "SourceImageSegment": 0
+   },
+   {
+    "Chain": 99,
+    "Key": [
+     [
+      -6750.2503406589,
+      3719.9849776395004,
+      0.0
+     ],
+     [
+      -6750.2402638017,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 0.0180890676,
+    "SourceImageSegment": 1
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6749.7597361983,
+      3719.9999985,
+      0.0
+     ],
+     [
+      -6749.749659341101,
+      3720.0150208605,
+      0.0
+     ]
+    ],
+    "Length": 0.0180890676,
+    "SourceImageSegment": 2
+   },
+   {
+    "Chain": 101,
+    "Key": [
+     [
+      -6750.2503406589,
+      3720.0150208605,
+      0.0
+     ],
+     [
+      -6750.2402638017,
+      3719.9999985,
+      0.0
+     ]
+    ],
+    "Length": 0.0180890676,
+    "SourceImageSegment": 3
+   },
+   {
+    "Chain": 99,
+    "Key": [
+     [
+      -6751.4322266921,
+      3718.2813570026,
+      0.0
+     ],
+     [
+      -6750.2503406589,
+      3719.9849776395004,
+      0.0
+     ]
+    ],
+    "Length": 2.0734458927,
+    "SourceImageSegment": 4
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6749.749659341101,
+      3720.0150208605,
+      0.0
+     ],
+     [
+      -6748.5677733079,
+      3721.7186414974003,
+      0.0
+     ]
+    ],
+    "Length": 2.0734458927,
+    "SourceImageSegment": 5
+   },
+   {
+    "Chain": 101,
+    "Key": [
+     [
+      -6751.4322266921,
+      3721.7186414974003,
+      0.0
+     ],
+     [
+      -6750.2503406589,
+      3720.0150208605,
+      0.0
+     ]
+    ],
+    "Length": 2.0734458927,
+    "SourceImageSegment": 6
+   },
+   {
+    "Chain": 99,
+    "Key": [
+     [
+      -6752.5368562823005,
+      3716.7393085837,
+      0.0
+     ],
+     [
+      -6751.4322266921,
+      3718.2813570026,
+      0.0
+     ]
+    ],
+    "Length": 1.8968710704,
+    "SourceImageSegment": 7
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6748.5677733079,
+      3721.7186414974003,
+      0.0
+     ],
+     [
+      -6747.4631437177,
+      3723.2606899163,
+      0.0
+     ]
+    ],
+    "Length": 1.8968710704,
+    "SourceImageSegment": 8
+   },
+   {
+    "Chain": 101,
+    "Key": [
+     [
+      -6752.5368562823005,
+      3723.2606899163,
+      0.0
+     ],
+     [
+      -6751.4322266921,
+      3721.7186414974003,
+      0.0
+     ]
+    ],
+    "Length": 1.8968710704,
+    "SourceImageSegment": 9
+   },
+   {
+    "Chain": 98,
+    "Key": [
+     [
+      -6753.791252711901,
+      3707.9896499853003,
+      0.0
+     ],
+     [
+      -6751.7403439684,
+      3710.5106028366004,
+      0.0
+     ]
+    ],
+    "Length": 3.2498353731000003,
+    "SourceImageSegment": 10
+   },
+   {
+    "Chain": 99,
+    "Key": [
+     [
+      -6753.6630162599,
+      3715.2143020941003,
+      0.0
+     ],
+     [
+      -6752.5368562823005,
+      3716.7393085837,
+      0.0
+     ]
+    ],
+    "Length": 1.8957534356,
+    "SourceImageSegment": 11
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6747.4631437177,
+      3723.2606899163,
+      0.0
+     ],
+     [
+      -6746.336983740101,
+      3724.7856964059,
+      0.0
+     ]
+    ],
+    "Length": 1.8957534356,
+    "SourceImageSegment": 12
+   },
+   {
+    "Chain": 101,
+    "Key": [
+     [
+      -6753.6630162599,
+      3724.7856964059,
+      0.0
+     ],
+     [
+      -6752.5368562823005,
+      3723.2606899163,
+      0.0
+     ]
+    ],
+    "Length": 1.8957534356,
+    "SourceImageSegment": 13
+   },
+   {
+    "Chain": 99,
+    "Key": [
+     [
+      -6754.8104555062,
+      3713.7068668249003,
+      0.0
+     ],
+     [
+      -6753.6630162599,
+      3715.2143020941003,
+      0.0
+     ]
+    ],
+    "Length": 1.8944597949000002,
+    "SourceImageSegment": 14
+   },
+   {
+    "Chain": 1,
+    "Key": [
+     [
+      -6746.336983740101,
+      3724.7856964059,
+      0.0
+     ],
+     [
+      -6745.1895444938,
+      3726.2931316751,
+      0.0
+     ]
+    ],
+    "Length": 1.8944597949000002,
+    "SourceImageSegment": 15
+   },
+   {
+    "Chain": 101,
+    "Key": [
+     [
+      -6754.8104555062,
+      3726.2931316751,
+      0.0
+     ],
+     [
+      -6753.6630162599,
+      3724.7856964059,
+      0.0
+     ]
+    ],
+    "Length": 1.8944597949000002,
+    "SourceImageSegment": 16
+   },
+   {
+    "Chain": 98,
+    "Key": [
+     [
+      -6755.9211549054,
+      3705.4995670810004,
+      0.0
+     ],
+     [
+      -6753.791252711901,
+      3707.9896499853003,
+      0.0
+     ]
+    ],
+    "Length": 3.2767356049000003,
+    "SourceImageSegment": 17
+   },
+   {
+    "Chain": 99,
+    "Key": [
+     [
+      -6755.9788573623,
+      3712.2175621595,
+      0.0
+     ],
+     [
+      -6754.8104555062,
+      3713.7068668249003,
+      0.0
+     ]
+    ],
+    "Length": 1.892931928,
+    "SourceImageSegment": 18
+   },
+   {
+    "Chain": 102,
+    "Key": [
+     [
+      -6755.8203970174,
+      3719.1154561238,
+      0.0
+     ],
+     [
+      -6755.1934714354,
+      3720.0,
+      0.0
+     ]
+    ],
+    "Length": 1.0841833583,
+    "SourceImageSegment": 19
+   },
+   {
+    "Chain": 103,
+    "Key": [
+     [
+      -6744.8065285646,
+      3719.9999985,
+      0.0
+     ],
+     [
+      -6744.1796029826,
+      3720.8845423762,
+      0.0
+     ]
+    ],
+    "Length": 1.0841833583,
+    "SourceImageSegment": 20
+   },
+   {
+    "Chain": 104,
+    "Key": [
+     [
+      -6755.8203970174,
+      3720.8845423762,
+      0.0
+     ],
+     [
+      -6755.1934714354,
+      3719.9999985,
+      0.0
+     ]
+    ],
+    "Length": 1.0841833583,
+    "SourceImageSegment": 21
+   },
+   {
+    "Chain": 103,
+    "Key": [
+     [
+      -6744.1796029826,
+      3720.8845423762,
+      0.0
+     ],
+     [
+      -6743.095844105101,
+      3722.3676881323,
+      0.0
+     ]
+    ],
+    "Length": 1.8369144341,
+    "SourceImageSegment": 22
+   },
+   {
+    "Chain": 103,
+    "Key": [
+     [
+      -6743.095844105101,
+      3722.3676881323,
+      0.0
+     ],
+     [
+      -6741.9914154681,
+      3723.8338676905,
+      0.0
+     ]
+    ],
+    "Length": 1.8356048352,
+    "SourceImageSegment": 23
+   },
+   {
+    "Chain": 103,
+    "Key": [
+     [
+      -6741.9914154681,
+      3723.8338676905,
+      0.0
+     ],
+     [
+      -6740.8666243535,
+      3725.2825331895,
+      0.0
+     ]
+    ],
+    "Length": 1.8340629160000002,
+    "SourceImageSegment": 24
+   },
+   {
+    "Chain": 103,
+    "Key": [
+     [
+      -6740.8666243535,
+      3725.2825331895,
+      0.0
+     ],
+     [
+      -6739.7218423972,
+      3726.7131143328,
+      0.0
+     ]
+    ],
+    "Length": 1.8322358295,
+    "SourceImageSegment": 25
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6739.3581090155,
+      3719.9999985,
+      0.0
+     ],
+     [
+      -6739.0339204164,
+      3720.4554853955,
+      0.0
+     ]
+    ],
+    "Length": 0.5590765241,
+    "SourceImageSegment": 26
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6739.0339204164,
+      3720.4554853955,
+      0.0
+     ],
+     [
+      -6737.6895917545,
+      3722.2056354235,
+      0.0
+     ]
+    ],
+    "Length": 2.206863084,
+    "SourceImageSegment": 27
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6737.6895917545,
+      3722.2056354235,
+      0.0
+     ],
+     [
+      -6736.3452630925,
+      3723.9557854514,
+      0.0
+     ]
+    ],
+    "Length": 2.206863084,
+    "SourceImageSegment": 28
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6736.3452630925,
+      3723.9557854514,
+      0.0
+     ],
+     [
+      -6734.9277899637,
+      3725.6664389310004,
+      0.0
+     ]
+    ],
+    "Length": 2.2216132423,
+    "SourceImageSegment": 29
+   },
+   {
+    "Chain": 3,
+    "Key": [
+     [
+      -6734.9277899637,
+      3725.6664389310004,
+      0.0
+     ],
+     [
+      -6733.5103168348005,
+      3727.3770924106,
+      0.0
+     ]
+    ],
+    "Length": 2.2216132423,
+    "SourceImageSegment": 30
+   }
+  ]
+ },
+ "PatchRows": [
+  {
+   "Patch": "0",
+   "Feature": "70",
+   "Topology": "SpatialEdgeCluster",
+   "Model": "__preflight_placeholder_533962c480569ca5",
+   "ModelIndex": "0",
+   "Weight": "1",
+   "ModelWeight": "1",
+   "QuadratureWeight": "1",
+   "SideFactor": "1",
+   "CouponDepth": "0",
+   "Segment": "-1",
+   "S0": "0",
+   "S1": "0",
+   "OriginX": "-6750.000008783501",
+   "OriginY": "3719.9999603472",
+   "OriginZ": "0.0",
+   "AxisUX": "0.5976791534829999",
+   "AxisUY": "-0.801735386204",
+   "AxisUZ": "0.0",
+   "AxisVX": "0.801735386204",
+   "AxisVY": "0.5976791534829999",
+   "AxisVZ": "0.0",
+   "AxisWX": "0.0",
+   "AxisWY": "0.0",
+   "AxisWZ": "1.0"
+  }
+ ],
+ "Library": {
+  "MatchingRadius": 1.9,
+  "Models": [
+   {
+    "Name": "__preflight_placeholder_533962c480569ca5",
+    "Topology": "SpatialEdgeCluster",
+    "Signature": {
+     "Box": [
+      -6.8673329999999995,
+      -7.418549,
+      7.617229999999999,
+      7.4185669999999995
+     ],
+     "Context": [
+      {
+       "Arc": [
+        -2.986516,
+        -69.160207,
+        -3.079099,
+        -0.040035999999999995
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -3.171683,
+        -0.040222,
+        -2.986516,
+        -0.039973999999999996
+       ]
+      },
+      {
+       "Arc": [
+        -65.266772,
+        -22.559521,
+        0.9808049999999999,
+        -3.440807
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.8144669999999999,
+        -2.873573,
+        1.142274,
+        -4.009446
+       ]
+      },
+      {
+       "Arc": [
+        2.38488,
+        68.448618,
+        6.0853139999999994,
+        -2.187326
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        4.551655,
+        -2.250992,
+        7.617229999999999,
+        -2.090394
+       ]
+      },
+      {
+       "Arc": [
+        2.697406,
+        70.87217199999999,
+        7.387537,
+        0.182119
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        7.157794,
+        0.16725099999999998,
+        7.617229999999999,
+        0.197734
+       ]
+      },
+      {
+       "Arc": [
+        2.97761,
+        68.63288899999999,
+        4.573302,
+        0.058549
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.9865299999999997,
+        0.039986999999999995,
+        6.1592199999999995,
+        0.113814
+       ]
+      },
+      {
+       "Arc": [
+        3.0446109999999997,
+        70.928117,
+        7.3255289999999995,
+        2.289706
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        7.033751,
+        2.2721299999999998,
+        7.617229999999999,
+        2.308521
+       ]
+      },
+      {
+       "Arc": [
+        3.322257,
+        68.260915,
+        4.135355,
+        2.173335
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.204144,
+        2.177791,
+        6.065872,
+        2.225303
+       ]
+      },
+      {
+       "Arc": [
+        3.85004,
+        68.683459,
+        5.63035,
+        4.508023
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.641762,
+        4.483671,
+        7.617229999999999,
+        4.5939559999999995
+       ]
+      },
+      {
+       "Arc": [
+        64.63241,
+        22.724545,
+        1.0356189999999998,
+        4.1205419999999995
+       ],
+       "Chain": false,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.644,
+        5.515705,
+        1.4576529999999999,
+        2.734276
+       ]
+      },
+      {
+       "Arc": [
+        65.427627,
+        22.611504999999998,
+        -0.8408909999999999,
+        2.962329
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.86715,
+        3.05111,
+        -0.814512,
+        2.873583
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.017993,
+        0.999838
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.055224,
+        -2.277608,
+        4.551645,
+        -2.2506779999999997
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.022039,
+        -0.999757
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.347584,
+        4.490532,
+        3.6417629999999996,
+        4.4840469999999994
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.024023,
+        -0.9997109999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -2.204171,
+        -2.177745,
+        -1.633713,
+        -2.191453
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.049082999999999995,
+        0.998795
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        6.065872,
+        2.2253179999999997,
+        7.033707,
+        2.272879
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.951225,
+        -0.30849899999999997
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.6337139999999999,
+        -2.191452,
+        -1.457677,
+        -2.7342429999999998
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.951835,
+        -0.30661099999999997
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.257364,
+        4.77061,
+        3.347585,
+        4.490532
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.962372,
+        -0.271734
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.626122,
+        7.006214,
+        3.257364,
+        4.77061
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.963344,
+        -0.268269
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.055224,
+        -2.277608,
+        3.4567319999999997,
+        -3.71941
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.96959,
+        -0.24473599999999998
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.4567319999999997,
+        -3.71941,
+        3.875339,
+        -5.377835
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.971753,
+        -0.23599799999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        2.525979,
+        7.4185669999999995,
+        2.626122,
+        7.006214
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        -0.9753269999999999,
+        -0.220765
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        3.875339,
+        -5.377835,
+        4.25607,
+        -7.059882
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        0.024023,
+        0.9997109999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.633686,
+        2.1914849999999997,
+        2.204144,
+        2.177777
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        0.951225,
+        0.30849899999999997
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.45765,
+        2.734274,
+        1.633686,
+        2.191484
+       ]
+      },
+      {
+       "Chain": false,
+       "Conductor": 1,
+       "Gap": [
+        0.967583,
+        0.252552
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.400459,
+        6.448779999999999,
+        0.644004,
+        5.515706
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -0.010019,
+        0.99995
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -4.168717,
+        -0.050214999999999996,
+        -3.171683,
+        -0.040225
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -0.961174,
+        -0.275943
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -1.142286,
+        4.0094829999999995,
+        -0.867147,
+        3.0511109999999997
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.054099999999999995,
+        -0.998536
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        6.159217,
+        0.113893,
+        7.157747,
+        0.167993
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.965104,
+        0.261868
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.142259,
+        -4.009450999999999,
+        1.4031529999999999,
+        -4.9709639999999995
+       ]
+      }
+     ],
+     "EdgeCount": 8,
+     "Portions": [
+      {
+       "Arc": [
+        -2.986516,
+        -69.160207,
+        -1.5354889999999999,
+        -0.055207
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -2.986516,
+        -0.039973999999999996,
+        -0.085102,
+        -0.100897
+       ]
+      },
+      {
+       "Arc": [
+        -65.266772,
+        -22.559521,
+        0.385554,
+        -1.487294
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.072437,
+        -0.11034899999999999,
+        0.8144669999999999,
+        -2.873573
+       ]
+      },
+      {
+       "Arc": [
+        2.97761,
+        68.63288899999999,
+        1.5354809999999999,
+        0.055147999999999996
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.085077,
+        0.101002,
+        2.9865299999999997,
+        0.039986999999999995
+       ]
+      },
+      {
+       "Arc": [
+        65.427627,
+        22.611504999999998,
+        -0.38555999999999996,
+        1.487325
+       ],
+       "Conductor": 1,
+       "GapRadial": 1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.814512,
+        2.873583,
+        0.07239899999999999,
+        0.11037699999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -0.049731,
+        -0.998763
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.075565,
+        0.10139899999999999,
+        0.085074,
+        0.100926
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -0.942974,
+        -0.332866
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.072397,
+        0.11037699999999999,
+        0.075566,
+        0.10139899999999999
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.049731,
+        0.998763
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.085101,
+        -0.100894,
+        -0.075593,
+        -0.101367
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.942974,
+        0.332866
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.075593,
+        -0.101367,
+        -0.072424,
+        -0.110345
+       ]
+      }
+     ],
+     "Type": "SpatialEdgeCluster",
+     "Vertices": []
+    },
+    "FabricatedMatrix": "__preflight_dummy/__preflight_placeholder_533962c480569ca5-fabricated.csv",
+    "ThinMatrix": "__preflight_dummy/__preflight_placeholder_533962c480569ca5-thin.csv",
+    "BasisPoints": "__preflight_dummy/__preflight_placeholder_533962c480569ca5-basis-points.csv",
+    "BoundaryLawQualification": {
+     "Version": 1,
+     "Status": "Unqualified",
+     "Calibration": "GeometryDiscoveryOnly",
+     "FrequencyUniversal": false
+    },
+    "Edges": [
+     {
+      "Point": [
+       -5.674380399991435,
+       -0.07595565989217334,
+       0.0
+      ],
+      "GapDirection": [
+       0.0017478349286773362,
+       0.9999984725353646,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990186
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -5.214855628450443,
+       -0.07675883456528254,
+       0.0
+      ],
+      "GapDirection": [
+       0.005246868771343621,
+       0.9999862350893118,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.4595254734499085
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -4.755336480327635,
+       -0.0791699044215477,
+       0.0
+      ],
+      "GapDirection": [
+       0.008745838374561474,
+       0.999961754424201,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990874
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -4.295828581694053,
+       -0.08318883994135717,
+       0.0
+      ],
+      "GapDirection": [
+       0.012244700899090778,
+       0.9999250308397585,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990746
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -3.8363375584829997,
+       -0.08881559191925703,
+       0.0
+      ],
+      "GapDirection": [
+       0.01574341350700064,
+       0.9998760647856052,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990846
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -3.376869036421163,
+       -0.09605009146477528,
+       0.0
+      ],
+      "GapDirection": [
+       0.01924193336219743,
+       0.9998148568612515,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990846
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -2.917428640959744,
+       -0.1048922500031324,
+       0.0
+      ],
+      "GapDirection": [
+       0.022740217630945705,
+       0.9997414078160899,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990824
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -2.4580219972055777,
+       -0.11534195927634983,
+       0.0
+      ],
+      "GapDirection": [
+       0.026238223482396142,
+       0.9996557185493853,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990874
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -1.9986547298522628,
+       -0.1273990913445857,
+       0.0
+      ],
+      "GapDirection": [
+       0.029735908089106443,
+       0.9995577901102648,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990824
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -1.5393324631112995,
+       -0.14106349858769818,
+       0.0
+      ],
+      "GapDirection": [
+       0.033233228627569195,
+       0.9994476236977042,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990724
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -1.0800608206432267,
+       -0.15633501370703584,
+       0.0
+      ],
+      "GapDirection": [
+       0.03673014227873264,
+       0.9993252206605135,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990946
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.6208454254887696,
+       -0.17321344972756947,
+       0.0
+      ],
+      "GapDirection": [
+       0.04022660622852848,
+       0.9991905824973206,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952547344990635
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.1376056,
+       -0.2096555,
+       0.0
+      ],
+      "GapDirection": [
+       0.9460861499197439,
+       0.32391510759770975,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952792409027154
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.011242436975862802,
+       -0.6444085044831738,
+       0.0
+      ],
+      "GapDirection": [
+       0.9472165096207716,
+       0.32059457871561503,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.4595279240902798
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.15856459820764712,
+       -1.0796809408132475,
+       0.0
+      ],
+      "GapDirection": [
+       0.9483352151249664,
+       0.31727010535801137,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.4595279240902819
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.30435907109871607,
+       -1.5154674535613353,
+       0.0
+      ],
+      "GapDirection": [
+       0.9494422526681953,
+       0.3139417284279726,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952792409027393
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.448624061848534,
+       -1.9517626809735447,
+       0.0
+      ],
+      "GapDirection": [
+       0.9505376086298831,
+       0.31060948887660067,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952792409027754
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.5913577954747495,
+       -2.3885612550369686,
+       0.0
+      ],
+      "GapDirection": [
+       0.951621269533181,
+       0.30727342770252186,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.4595279240902768
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.732558515834981,
+       -2.825857801545709,
+       0.0
+      ],
+      "GapDirection": [
+       0.9526932220451313,
+       0.30393358595138215,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.4595279240902762
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.8722244856485304,
+       -3.2636469401669856,
+       0.0
+      ],
+      "GapDirection": [
+       0.9537534529768322,
+       0.30059000471534236,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952792409027954
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       1.0103539865176572,
+       -3.701923284507366,
+       0.0
+      ],
+      "GapDirection": [
+       0.9548019492835998,
+       0.2972427251325726,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.4595279240902819
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       1.1469453189487808,
+       -4.140681442179009,
+       0.0
+      ],
+      "GapDirection": [
+       0.9558386980651287,
+       0.2938917883867461,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952792409027365
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       1.281996802373314,
+       -4.579916014866029,
+       0.0
+      ],
+      "GapDirection": [
+       0.9568636865656504,
+       0.2905372357065321,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.45952792409027443
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       1.4155067751684527,
+       -5.019621598390913,
+       0.0
+      ],
+      "GapDirection": [
+       0.9578769021740906,
+       0.28717910836508925,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.4595279240903076
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.1616406,
+       0.1917594,
+       0.0
+      ],
+      "GapDirection": [
+       -0.04038256884996275,
+       -0.9991842913762596,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595325612032677,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       0.6207983165302045,
+       0.17320229470840331,
+       0.0
+      ],
+      "GapDirection": [
+       -0.036859189667615,
+       -0.9993204691874609,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.459532561203266,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       1.080018611198768,
+       0.1562642968765715,
+       0.0
+      ],
+      "GapDirection": [
+       -0.033335352224351425,
+       -0.9994442227018366,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595325612032938,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       1.539295774636778,
+       0.14094561709029563,
+       0.0
+      ],
+      "GapDirection": [
+       -0.02981110033114577,
+       -0.9995555503807912,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.459532561203266,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       1.9986240967682027,
+       0.1272464458028253,
+       0.0
+      ],
+      "GapDirection": [
+       -0.026286477804123805,
+       -0.9996544508402158,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45953256120326513,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       2.457997866881051,
+       0.11516695333250482,
+       0.0
+      ],
+      "GapDirection": [
+       -0.02276152846401955,
+       -0.9997409228505062,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595325612032947,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       2.9174113736982896,
+       0.10470728986052791,
+       0.0
+      ],
+      "GapDirection": [
+       -0.019236296135629976,
+       -0.9998149653365779,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595325612032653,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       3.376858905448761,
+       0.09586758542926077,
+       0.0
+      ],
+      "GapDirection": [
+       -0.01571082464727105,
+       -0.9998765773778796,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45953256120326585,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       3.8363347499383735,
+       0.08864794994047998,
+       0.0
+      ],
+      "GapDirection": [
+       -0.01218515783023147,
+       -0.9999257582084043,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595325612032654,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       4.295833194620998,
+       0.08304847315406505,
+       0.0
+      ],
+      "GapDirection": [
+       -0.008659339518228653,
+       -0.9999625072166997,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45953256120326524,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       4.755348526669527,
+       0.07906922468694688,
+       0.0
+      ],
+      "GapDirection": [
+       -0.005133413546863275,
+       -0.9999868239458743,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595325612032945,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       5.214875033046923,
+       0.07671025401202769,
+       0.0
+      ],
+      "GapDirection": [
+       -0.0016074237530751794,
+       -0.9999987080936046,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595325612032673,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       -1.547567209000718,
+       5.459809365918034,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9578605176797791,
+       -0.2872337526653607,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595253281403331,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -1.4155760245541842,
+       5.019648197218565,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9568496090322224,
+       -0.29058359502023395,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45952532814041325,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -1.2820455027002993,
+       4.579951566647004,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9558269853112071,
+       -0.29392987964970396,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595253281403571,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -1.146977278304007,
+       4.1407248575764655,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9547926590371046,
+       -0.2972725655839354,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595253281404232,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -1.0103730050569055,
+       3.701973447626372,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9537466428735646,
+       -0.30061161189715424,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595253281403462,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.8722343554570671,
+       3.263702708597144,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9526889496273602,
+       -0.30394697770814766,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45952532814036434,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.7325630207884615,
+       2.8259180064039313,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9516195922482321,
+       -0.3072786221807635,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45952532814041375,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.5913607111003074,
+       2.388624701011217,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9505385838287291,
+       -0.3106065045244131,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.4595253281403593,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.4486291551861967,
+       1.951828146367248,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9494459376040483,
+       -0.3139305839945668,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45952532814041325,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.30437010056277813,
+       1.5155336903381667,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9483416669518725,
+       -0.317250819893257,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45952532814034824,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.15858531344854043,
+       1.0797466746429407,
+       0.0
+      ],
+      "GapDirection": [
+       -0.947225785392207,
+       -0.32056717156957376,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45952532814042335,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.011276578741984622,
+       0.6444724347875166,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9460983065872143,
+       -0.3238795984201622,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.45952532814034597,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       0.1435735,
+       0.19265809999999997,
+       0.0
+      ],
+      "GapDirection": [
+       -0.04968092453708441,
+       -0.9987651404294907,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.018089437915535134,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 1.0
+     },
+     {
+      "Point": [
+       0.1375543,
+       0.20971629999999997,
+       0.0
+      ],
+      "GapDirection": [
+       -0.9429806378868805,
+       -0.332847587598967,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       -0.01808966092689412,
+       0.0
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.16169189999999997,
+       -0.1916986,
+       0.0
+      ],
+      "GapDirection": [
+       0.04968613680917957,
+       0.9987648811451971,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.018087540262014624
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     },
+     {
+      "Point": [
+       -0.14362669999999997,
+       -0.1925973,
+       0.0
+      ],
+      "GapDirection": [
+       0.942980637886881,
+       0.33284758759896566,
+       0.0
+      ],
+      "ProcessNormal": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Interval": [
+       0.0,
+       0.01808966092689411
+      ],
+      "Conductor": 1,
+      "InterfaceSlot": 0,
+      "BoundaryCondition": {
+       "Type": "PEC"
+      },
+      "Weight": 0.0
+     }
+    ],
+    "MirrorFormed": {
+     "Version": 1,
+     "RealPortions": [
+      2,
+      4
+     ],
+     "ImagePortions": [
+      0,
+      1,
+      3,
+      5,
+      6,
+      7
+     ],
+     "EdgePortions": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "Planes": [
+      0,
+      4
+     ],
+     "RealLengthOverR": 2.9118317288245765,
+     "ImageLengthOverR": 8.735379078367258,
+     "RealLengthFraction": 0.25000249218693626,
+     "MatchingRadius": 1.9,
+     "RealFeatures": [
+      40
+     ],
+     "ExtendedFeature": 22,
+     "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the library entry of a mirror-formed cluster built from the FULL symmetric signature; RealPortions index Signature.Portions (0-based), EdgePortions names the portion of every model Edge (an arc portion's chords share it), Edges[].Weight is 1.0 on a real portion and 0.0 on an image portion: the placement applies the model on the real half only; RealLengthFraction = RealLengthOverR / (RealLengthOverR + ImageLengthOverR)"
+    },
+    "FabricatedSurfaceMatrix": "__preflight_dummy_fabricated_surface.csv",
+    "ThinSurfaceMatrix": "__preflight_dummy_thin_surface.csv",
+    "Interfaces": [
+     {
+      "Slot": 0,
+      "Type": "MA",
+      "Coupon": 1
+     },
+     {
+      "Slot": 0,
+      "Type": "MS",
+      "Coupon": 2
+     },
+     {
+      "Slot": 0,
+      "Type": "SA",
+      "Coupon": 3
+     }
+    ]
+   }
+  ]
+ },
+ "PlacementOfRecord": {
+  "Clusters": {
+   "Status": "PASS",
+   "WorstDeviationOverR": 7.595222502527385e-05,
+   "Checks": 30,
+   "Defects": []
+  },
+  "Context": {
+   "Status": "PASS",
+   "WorstDeviationOverR": 0.0003762500480496724,
+   "Checks": 25,
+   "FeatureWorstOverR": 0.0003762500480496724,
+   "FeatureChecks": 25,
+   "ImageEnds": [
+    "context 0 begin",
+    "context 0 end",
+    "context 1 begin",
+    "context 1 end",
+    "context 8 begin",
+    "context 8 end",
+    "context 9 begin",
+    "context 9 end",
+    "context 12 begin",
+    "context 12 end",
+    "context 14 begin",
+    "context 14 end",
+    "context 15 begin",
+    "context 16 begin",
+    "context 16 end",
+    "context 17 end",
+    "context 18 begin",
+    "context 18 end",
+    "context 19 begin",
+    "context 19 end",
+    "context 20 begin",
+    "context 20 end",
+    "context 22 begin",
+    "context 23 begin",
+    "context 23 end",
+    "context 24 begin",
+    "context 24 end",
+    "context 25 begin",
+    "context 25 end",
+    "context 27 begin",
+    "context 27 end"
+   ]
+  }
+ },
+ "Window": "ctx003-C1",
+ "InBinaryReadingOfRecord": {
+  "DeviationOverR": 0.001089550233343616,
+  "Reproduced": 0.0010895502352852853,
+  "Point": "context 0 end",
+  "Mapped": [
+   -6753.452359941137,
+   3724.503917818348,
+   0.0
+  ],
+  "Source": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/rerun-3b/R4/39e4806d547d/records/cluster/registration/39e4806d547d/register-attempt1-61316/device/discovery/pass-02/preflight.log :167-:168"
+ },
+ "Source": {
+  "Manifest": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/rerun-3b/R4/39e4806d547d/records/cluster/registration/39e4806d547d/register-attempt1-61316/device/discovery/pass-01/postpro/surface-response-requirements.json",
+  "Library": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/rerun-3b/R4/39e4806d547d/records/cluster/registration/39e4806d547d/register-attempt1-61316/device/discovery/pass-02/process-library.json"
+ }
+}
