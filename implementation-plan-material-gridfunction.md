@@ -389,7 +389,7 @@ correctness, not iteration count.
 
 ## 6. Work breakdown (ordered)
 
-> **Status:** Phases 1–2 complete. Phases 3–8 pending.
+> **Status:** Phases 1–7 complete; Phase 8 (follow-ups) pending.
 
 1. **`MaterialField` + integrator plumbing** (Q-functions, `AssembleCeedOperator`,
    `BilinearFormIntegrator`, `PartialAssemble`). Land the constant-field equivalence test
@@ -430,7 +430,9 @@ correctness, not iteration count.
    spatially-varying permittivity confirms it converges to the same mode as the direct
    solve. Making the preconditioner field-aware (splitting the combined ε/μ⁻¹ mass
    coefficients and adding two-field Q-function variants) is deferred.
-7. **Docs / schema / CHANGELOG.**
+7. **Docs / schema / CHANGELOG.** **DONE** — `Solver.BoundaryMode.MaterialFields` added to
+   the config schema (SchemaVer 2-3-0) and `docs/src/guide/problem.md`, with a CHANGELOG
+   entry.
 8. **Phase 2 follow-ups**: refinement propagation, 3D→2D parent projection, anisotropic
    and vector fields, generalizing to other solvers.
 
