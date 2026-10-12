@@ -445,6 +445,9 @@ private:
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
   DomainBoundaryPortions domain_boundary_portions;
+  // The domain-boundary containment result was reused from the first construction on the
+  // cached automatic geometry rather than recomputed on this mesh (decision 734 F2).
+  bool domain_boundary_containment_reused = false;
   // The Natural mirror planes and band (mesh units) of the mirror-point evaluation
   // (F-DB-c; DESIGN 2.2.3); empty / 0 without the mirror.
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
@@ -689,6 +692,14 @@ public:
   const DomainBoundaryPortions &GetDomainBoundaryPortionRecord() const
   {
     return domain_boundary_portions;
+  }
+  // Whether this construction reused the first construction's domain-boundary containment
+  // result through the cached automatic geometry (decision 734 F2; false on the first
+  // construction, on a curved mesh, under PALACE_RESPONSE_CONTAINMENT_RECHECK, or when the
+  // tested patch set changed).
+  bool DomainBoundaryContainmentReused() const
+  {
+    return domain_boundary_containment_reused;
   }
 
   int GetBasisSize() const { return global_basis_size; }
@@ -1328,6 +1339,28 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
         &unmerged_portions = {});
+
+// The per-process cache of the DERIVED model response matrices (decision 734 F1; the
+// response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /
+// thin matrices, the defect, the fixed-flux transform and defect: an Eigen eigensolve and
+// five n x n products per model) and BuildSurfaceResponseMatrices (the per-interface sums)
+// are recomputed at every AMR cycle on inputs that do not change across cycles - the
+// model's files, its ZeroTraceIndices and the units. Their outputs are cached per process,
+// keyed on the source files' ResponseMatrixFileKey (path / size / time / expected size /
+// within-R), the blend weights, the zero-trace indices, the interface mappings and the two
+// unit scale factors; a hit returns the first computation's bits, so every downstream
+// quantity is byte-identical by construction. PALACE_RESPONSE_DERIVED_CACHE=0 recomputes
+// on every hit and fails closed unless the recomputation equals the cached matrices bit
+// for bit (the validation switch). The counters are process-wide (every construction,
+// electrostatic and Maxwell).
+struct DerivedResponseMatrixCacheCounters
+{
+  long long int hits = 0;    // cached derived matrices returned (recomputed-and-verified
+                             // ones included under PALACE_RESPONSE_DERIVED_CACHE=0)
+  long long int misses = 0;  // derived matrices computed and stored
+  long long int entries = 0;
+};
+DerivedResponseMatrixCacheCounters GetDerivedResponseMatrixCacheCounters();
 
 // The mirror planes of a response configuration as the mirror module's planes.
 std::vector<MirrorPlane> MirrorPlanesOf(
