@@ -7353,8 +7353,7 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
   using Claim = Patch::Provenance::Claim;
   SpatialSupportBounds box;
   box.patch = 0;
-  box.min = {-3.0, -3.0, -2.0};
-  box.max = {1.5, 3.0, 2.0};
+  box.SetMeshAlignedBox({-3.0, -3.0, -2.0}, {1.5, 3.0, 2.0});
   box.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}},
                 Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
   SECTION("a stack end adjacent to the cluster records nothing")
@@ -7597,8 +7596,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
   using Claim = Patch::Provenance::Claim;
   SpatialSupportBounds box;
   box.patch = 0;
-  box.min = {-3.0, -3.0, -2.0};
-  box.max = {1.5, 3.0, 2.0};
+  box.SetMeshAlignedBox({-3.0, -3.0, -2.0}, {1.5, 3.0, 2.0});
   box.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}},
                 Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
   SECTION("a continuation cell wholly inside the box keeps weight 0")
@@ -8099,8 +8097,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     // far side, inside B's box only.
     SpatialSupportBounds other;
     other.patch = 9;
-    other.min = {0.5, -3.0, -2.0};
-    other.max = {6.0, 3.0, 2.0};
+    other.SetMeshAlignedBox({0.5, -3.0, -2.0}, {6.0, 3.0, 2.0});
     other.claims = {Claim{9, {2.0, 0.0, 0.0}, {4.0, 0.0, 0.0}},
                     Claim{11, {4.0, 0.0, 0.0}, {4.0, 1.0, 0.0}}};
     std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.0),
@@ -8366,6 +8363,344 @@ TEST_CASE("SurfaceResponseOperatorSignatureBoxSupport",
   }
 }
 
+TEST_CASE("SurfaceResponseOperatorRotatedSupportBoxOwnership",
+          "[surfaceresponseoperator][rotatedbox][Serial]")
+{
+  // Decision 715 (lane RB, T-RB1): the continuation ownership tests a cell against the
+  // cluster's support box in the cluster's PATCH FRAME, not against the mesh-axis-aligned
+  // bounding box of the placed basis points (which circumscribes a rotated frame's box: the
+  // S5 448693 cluster at -52.8 deg lost 21.6 um of other models' cells that no coupon
+  // covered). The fixture is the ContinuationOwnership case rotated by 52.8 deg about the
+  // plane normal and moved off the origin: a cluster whose local box is x in [-3, 1.5],
+  // |y| <= 3, |z| <= 2 (R = 1.5), claims along local y = 0 from x = -2.5 to 0 (segment 3)
+  // and x = -2.5 from y = 0 to 1 (segment 5), and a stretch on segment 7 continuing the
+  // claim cut at local (0, 0) along local +x with cells wholly inside the box, straddling
+  // the rotated face x = 1.5, wholly outside the box but inside its mesh AABB, straddling
+  // the AABB, and beyond the AABB. Cells carry weight 0.1 x length and a Maxwell anchor at
+  // the origin. The test needs only the public API of CollectSpatialSupports /
+  // ApplyContinuationOwnership, so it compiles against the pre-715 sources and FAILS there
+  // (the two cells outside the rotated box were owned / clipped by the AABB).
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.5;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  const double theta = 52.8 * M_PI / 180.0;
+  const std::array<double, 3> origin = {37.25, -12.5, 0.0};
+  const std::array<double, 3> axis_u = {std::cos(theta), std::sin(theta), 0.0};
+  const std::array<double, 3> axis_v = {-std::sin(theta), std::cos(theta), 0.0};
+  const std::array<double, 3> axis_w = {0.0, 0.0, 1.0};
+  auto Placed = [&](double x, double y, double z = 0.0)
+  {
+    std::array<double, 3> p{};
+    for (int d = 0; d < 3; d++)
+    {
+      p[d] = origin[d] + x * axis_u[d] + y * axis_v[d] + z * axis_w[d];
+    }
+    return p;
+  };
+  // A translational cell along local +x at local y = 0 (AxisW = the frame's u, AxisU = the
+  // frame's v, AxisV = the plane normal), on mesh segment 7.
+  auto Cell = [&](int feature, int stretch, double begin, double end)
+  {
+    Patch patch;
+    patch.model = 1;
+    patch.origin = Placed(0.5 * (begin + end), 0.0);
+    patch.axis_u = axis_v;
+    patch.axis_v = axis_w;
+    patch.axis_w = axis_u;
+    patch.longitudinal_cell = {-0.5 * (end - begin), 0.5 * (end - begin)};
+    patch.weight = 0.1 * (end - begin);
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    patch.provenance.s0 = 0.0;
+    patch.provenance.s1 = 5.0;
+    patch.provenance.quadrature_weight = (end - begin) / 5.0;
+    patch.maxwell_conductor_anchors = {patch.origin};
+    return patch;
+  };
+  auto Same = [](const Patch &a, const Patch &b)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(a.origin[d], WithinAbs(b.origin[d], 1.0e-12));
+      CHECK_THAT(a.maxwell_conductor_anchors.front()[d],
+                 WithinAbs(b.maxwell_conductor_anchors.front()[d], 1.0e-12));
+    }
+    CHECK_THAT(a.longitudinal_cell[0], WithinAbs(b.longitudinal_cell[0], 1.0e-12));
+    CHECK_THAT(a.longitudinal_cell[1], WithinAbs(b.longitudinal_cell[1], 1.0e-12));
+    CHECK_THAT(a.weight, WithinAbs(b.weight, 1.0e-12));
+    CHECK_THAT(a.provenance.quadrature_weight,
+               WithinAbs(b.provenance.quadrature_weight, 1.0e-12));
+  };
+  auto Untouched = [](const Patch &a, const Patch &b)
+  {
+    CHECK(a.origin == b.origin);
+    CHECK(a.maxwell_conductor_anchors == b.maxwell_conductor_anchors);
+    CHECK(a.longitudinal_cell == b.longitudinal_cell);
+    CHECK(a.weight == b.weight);
+    CHECK(a.provenance.quadrature_weight == b.provenance.quadrature_weight);
+  };
+  // The spatial patch (index 0) and its basis points: the 8 corners of the local box.
+  config::ElectrostaticSolverData::ResponseCorrectionData data;
+  data.matching_radius = R;
+  data.models.emplace_back().idx = 1;
+  data.models.back().name = "isolated-edge";
+  data.models.emplace_back().idx = 2;
+  data.models.back().name = "spatialedgecluster_rotated";
+  data.models.back().spatial_basis = true;
+  Patch spatial;
+  spatial.model = 2;
+  spatial.origin = origin;
+  spatial.axis_u = axis_u;
+  spatial.axis_v = axis_v;
+  spatial.axis_w = axis_w;
+  spatial.provenance.feature = 9;
+  spatial.provenance.claims = {Claim{3, Placed(-2.5, 0.0), Placed(0.0, 0.0)},
+                               Claim{5, Placed(-2.5, 0.0), Placed(-2.5, 1.0)}};
+  data.patches.push_back(spatial);
+  std::vector<std::array<double, 3>> corners;
+  for (const double x : {-3.0, 1.5})
+  {
+    for (const double y : {-3.0, 3.0})
+    {
+      for (const double z : {-2.0, 2.0})
+      {
+        corners.push_back({x, y, z});
+      }
+    }
+  }
+  const std::vector<SpatialSupportBounds> supports = CollectSpatialSupports(
+      data, [&](int) -> const std::vector<std::array<double, 3>> * { return &corners; },
+      1.0, 3);
+  REQUIRE(supports.size() == 1);
+  CHECK(supports.front().patch == 0);
+  // The mesh AABB of the rotated box reaches local x = 3.78 along the stretch (its face
+  // mesh y = max over the corners), beyond the rotated face x = 1.5: the cells [2.5, 3.5]
+  // and [3.5, 4] lie outside the box but inside / across its AABB.
+  {
+    const auto far = Placed(3.5, 0.0);
+    const auto beyond = Placed(4.0, 0.0);
+    bool far_inside_aabb = true, beyond_inside_aabb = true;
+    for (int d = 0; d < 3; d++)
+    {
+      far_inside_aabb &=
+          far[d] > supports.front().min[d] && far[d] < supports.front().max[d];
+      beyond_inside_aabb &=
+          beyond[d] > supports.front().min[d] && beyond[d] < supports.front().max[d];
+    }
+    REQUIRE(far_inside_aabb);
+    REQUIRE(!beyond_inside_aabb);
+  }
+  // Patches 1-5: the continuation cells [0, 1], [1, 2.5], [2.5, 3.5], [3.5, 4], [4, 5].
+  data.patches.push_back(Cell(4, 0, 0.0, 1.0));
+  data.patches.push_back(Cell(4, 0, 1.0, 2.5));
+  data.patches.push_back(Cell(4, 0, 2.5, 3.5));
+  data.patches.push_back(Cell(4, 0, 3.5, 4.0));
+  data.patches.push_back(Cell(4, 0, 4.0, 5.0));
+  const auto before = data.patches;
+  const auto ownership =
+      ApplyContinuationOwnership(data.patches, supports, 3, tolerance, R);
+  // (i) wholly inside: owned, weight 0; (ii) straddling the rotated face: clipped EXACTLY
+  // at local x = 1.5 (the kept [1.5, 2.5] is a cell built on that interval).
+  REQUIRE(ownership.cells.size() == 2);
+  CHECK(ownership.wholly_owned_cells == 1);
+  CHECK(ownership.clipped_cells == 1);
+  CHECK(ownership.shared_cells == 0);
+  CHECK_THAT(ownership.owned_length, WithinAbs(1.5, 1.0e-12));
+  CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(1.5, 1.0e-12));
+  CHECK(ownership.cells[0].patch == 1);
+  CHECK_THAT(ownership.cells[0].owned_length, WithinAbs(1.0, 1.0e-12));
+  CHECK(data.patches[1].weight == 0.0);
+  CHECK(data.patches[1].longitudinal_cell == std::array<double, 2>{0.0, 0.0});
+  CHECK(ownership.cells[1].patch == 2);
+  CHECK_THAT(ownership.cells[1].owned_length, WithinAbs(0.5, 1.0e-12));
+  CHECK_THAT(ownership.cells[1].cell_length, WithinAbs(1.5, 1.0e-12));
+  Same(data.patches[2], Cell(4, 0, 1.5, 2.5));
+  CHECK_THAT(data.patches[2].weight, WithinAbs(before[2].weight / 1.5, 1.0e-12));
+  // (iii) outside the rotated box but inside its mesh AABB, (iv) across the AABB face and
+  // (v) beyond it: UNTOUCHED, bitwise.
+  Untouched(data.patches[3], before[3]);
+  Untouched(data.patches[4], before[4]);
+  Untouched(data.patches[5], before[5]);
+  // The stretch record's containment reads the same box: the stretch [2.5, 3.5] alone
+  // (outside the rotated box, inside its AABB) is not inside the support.
+  {
+    std::vector<Patch> outside = {spatial, Cell(6, 0, 2.5, 3.0), Cell(6, 0, 3.0, 3.5)};
+    CHECK(FindTranslationalStretchInsideSpatialSupport(outside, supports, 3, tolerance)
+              .empty());
+    std::vector<Patch> inside = {spatial, Cell(6, 0, -1.0, -0.5), Cell(6, 0, -0.5, 0.0)};
+    inside[1].provenance.segment = inside[2].provenance.segment = 8;
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(inside, supports, 3, tolerance);
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().feature == 6);
+  }
+  // Idempotent: the placed cells are owned no further.
+  auto again = data.patches;
+  const auto repeat = ApplyContinuationOwnership(again, supports, 3, tolerance, R);
+  CHECK(repeat.owned_length == 0.0);
+}
+
+TEST_CASE("SurfaceResponseOperatorMeshAlignedSupportBoxIdentity",
+          "[surfaceresponseoperator][rotatedbox][Serial]")
+{
+  // Decision 715 (lane RB, T-RB2): for a MESH-ALIGNED patch frame (every axis a signed unit
+  // vector) the box in the patch frame is the mesh AABB up to axis permutation and sign,
+  // BITWISE, and the continuation ownership on the collected support equals, bitwise, the
+  // ownership on a hand-built support with identity axes and the same mesh bounds (the
+  // pre-715 arithmetic). The frame is a permuted, sign-flipped one (u = -y, v = +z,
+  // w = -x, right-handed) at an off-origin position with non-terminating coordinates; the
+  // claims and cells have non-terminating ends and straddle both faces along x.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.9;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  const std::array<double, 3> origin = {12.345678901234567, -7.890123456789012, 0.1234567};
+  const std::array<double, 3> axis_u = {0.0, -1.0, 0.0};
+  const std::array<double, 3> axis_v = {0.0, 0.0, 1.0};
+  const std::array<double, 3> axis_w = {-1.0, 0.0, 0.0};
+  config::ElectrostaticSolverData::ResponseCorrectionData data;
+  data.matching_radius = R;
+  data.models.emplace_back().idx = 1;
+  data.models.back().name = "isolated-edge";
+  data.models.emplace_back().idx = 2;
+  data.models.back().name = "spatialedgecluster_aligned";
+  data.models.back().spatial_basis = true;
+  Patch spatial;
+  spatial.model = 2;
+  spatial.origin = origin;
+  spatial.axis_u = axis_u;
+  spatial.axis_v = axis_v;
+  spatial.axis_w = axis_w;
+  spatial.provenance.feature = 9;
+  // Claims on the cells' own segment 7 along mesh x at the cells' y / z (the segment
+  // branch of the Continuation criterion), ending inside the box.
+  const double y = origin[1] + 0.3333333333333333, z = origin[2];
+  spatial.provenance.claims = {
+      Claim{7, {origin[0] - 2.123456789, y, z}, {origin[0] - 0.7777777777777778, y, z}}};
+  data.patches.push_back(spatial);
+  // Local corners with non-terminating offsets: the placed box spans mesh x in
+  // [origin_x - 1.9, origin_x + 2.7], y in [origin_y - 2.3, origin_y + 1.1],
+  // z in [origin_z - 1.7, origin_z + 1.3] (u = -y: local x -> -mesh y; w = -x).
+  std::vector<std::array<double, 3>> corners;
+  for (const double lu : {-1.1, 2.3})
+  {
+    for (const double lv : {-1.7, 1.3})
+    {
+      for (const double lw : {-2.7, 1.9})
+      {
+        corners.push_back({lu * 1.0000000001, lv * 0.9999999997, lw * 1.0000000003});
+      }
+    }
+  }
+  const std::vector<SpatialSupportBounds> collected = CollectSpatialSupports(
+      data, [&](int) -> const std::vector<std::array<double, 3>> * { return &corners; },
+      1.0, 3);
+  REQUIRE(collected.size() == 1);
+  const auto &support = collected.front();
+  SECTION("the frame box is the mesh AABB up to permutation and sign, bitwise")
+  {
+    CHECK(support.axes[0] == axis_u);
+    CHECK(support.axes[1] == axis_v);
+    CHECK(support.axes[2] == axis_w);
+    CHECK(support.frame_min[0] == -support.max[1]);
+    CHECK(support.frame_max[0] == -support.min[1]);
+    CHECK(support.frame_min[1] == support.min[2]);
+    CHECK(support.frame_max[1] == support.max[2]);
+    CHECK(support.frame_min[2] == -support.max[0]);
+    CHECK(support.frame_max[2] == -support.min[0]);
+  }
+  // Cells along mesh +x on segment 7 at (y, z), continuing the claim end origin_x - 0.78
+  // toward the face origin_x + 2.7: wholly inside, straddling the face, outside.
+  auto Cell = [&](double begin, double end)
+  {
+    Patch patch;
+    patch.model = 1;
+    patch.origin = {0.5 * (begin + end), y, z};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.weight = 0.1 * (end - begin);
+    patch.provenance.feature = 4;
+    patch.provenance.stretch = 0;
+    patch.provenance.segment = 7;
+    patch.provenance.s0 = 0.0;
+    patch.provenance.s1 = 7.0;
+    patch.provenance.quadrature_weight = (end - begin) / 7.0;
+    patch.maxwell_conductor_anchors = {patch.origin};
+    return patch;
+  };
+  const double x0 = origin[0] - 0.7777777777777778;
+  std::vector<Patch> cells = {
+      Cell(x0, x0 + 1.0101010101), Cell(x0 + 1.0101010101, x0 + 2.37),
+      Cell(x0 + 2.37, x0 + 3.9191919191), Cell(x0 + 3.9191919191, x0 + 5.0)};
+  SECTION("the ownership on the collected support is bitwise the ownership on the "
+          "hand-built mesh box (the pre-715 arithmetic)")
+  {
+    SpatialSupportBounds hand_built;
+    hand_built.patch = support.patch;
+    hand_built.claims = support.claims;
+    hand_built.SetMeshAlignedBox(support.min, support.max);
+    auto with_frame = cells, with_mesh = cells;
+    with_frame.insert(with_frame.begin(), spatial);
+    with_mesh.insert(with_mesh.begin(), spatial);
+    const auto frame_ownership =
+        ApplyContinuationOwnership(with_frame, collected, 3, tolerance, R);
+    const auto mesh_ownership =
+        ApplyContinuationOwnership(with_mesh, {hand_built}, 3, tolerance, R);
+    // The fixture exercises a wholly owned cell AND a clipped one (not vacuous).
+    REQUIRE(frame_ownership.cells.size() == 3);
+    CHECK(frame_ownership.wholly_owned_cells == 2);
+    CHECK(frame_ownership.clipped_cells == 1);
+    CHECK(frame_ownership.owned_length == mesh_ownership.owned_length);
+    REQUIRE(mesh_ownership.cells.size() == frame_ownership.cells.size());
+    for (std::size_t i = 0; i < frame_ownership.cells.size(); i++)
+    {
+      CHECK(frame_ownership.cells[i].patch == mesh_ownership.cells[i].patch);
+      CHECK(frame_ownership.cells[i].owned_length == mesh_ownership.cells[i].owned_length);
+      CHECK(frame_ownership.cells[i].attributed == mesh_ownership.cells[i].attributed);
+      CHECK(frame_ownership.cells[i].attributed_intervals ==
+            mesh_ownership.cells[i].attributed_intervals);
+    }
+    for (std::size_t i = 0; i < with_frame.size(); i++)
+    {
+      CHECK(with_frame[i].origin == with_mesh[i].origin);
+      CHECK(with_frame[i].longitudinal_cell == with_mesh[i].longitudinal_cell);
+      CHECK(with_frame[i].weight == with_mesh[i].weight);
+      CHECK(with_frame[i].provenance.quadrature_weight ==
+            with_mesh[i].provenance.quadrature_weight);
+      CHECK(with_frame[i].maxwell_conductor_anchors ==
+            with_mesh[i].maxwell_conductor_anchors);
+    }
+    // The stretch records (StretchStrictlyInside) read the same box: a stretch wholly
+    // inside is recorded by both, a stretch across the face by neither.
+    std::vector<Patch> inside = {spatial, Cell(x0, x0 + 1.0101010101),
+                                 Cell(x0 + 1.0101010101, x0 + 2.37)};
+    CHECK(FindTranslationalStretchInsideSpatialSupport(inside, collected, 3, tolerance)
+              .size() == 1);
+    CHECK(FindTranslationalStretchInsideSpatialSupport(inside, {hand_built}, 3, tolerance)
+              .size() == 1);
+    CHECK(FindTranslationalStretchInsideSpatialSupport(with_mesh, collected, 3, tolerance)
+              .empty());
+  }
+  SECTION("a frame tilted by 1e-3 rad is not the mesh AABB (the identity is not vacuous)")
+  {
+    const double phi = 1.0e-3;
+    data.patches.front().axis_u = {-std::sin(phi), -std::cos(phi), 0.0};
+    data.patches.front().axis_w = {-std::cos(phi), std::sin(phi), 0.0};
+    const auto tilted = CollectSpatialSupports(
+        data, [&](int) -> const std::vector<std::array<double, 3>> * { return &corners; },
+        1.0, 3);
+    REQUIRE(tilted.size() == 1);
+    CHECK(tilted.front().frame_max[2] - tilted.front().frame_min[2] !=
+          tilted.front().max[0] - tilted.front().min[0]);
+    CHECK(tilted.front().frame_max[0] - tilted.front().frame_min[0] !=
+          tilted.front().max[1] - tilted.front().min[1]);
+  }
+}
+
 TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
           "[surfaceresponseoperator][foreignctx][Serial]")
 {
@@ -8441,8 +8776,7 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
   {
     SpatialSupportBounds support;
     support.patch = 0;
-    support.min = {-3.0, -3.0, -2.0};
-    support.max = {1.5, 3.0, 2.0};
+    support.SetMeshAlignedBox({-3.0, -3.0, -2.0}, {1.5, 3.0, 2.0});
     support.claims = spatial.provenance.claims;
     support.has_support_box = spatial.provenance.has_support_box;
     support.support_box = spatial.provenance.support_box;
@@ -8787,8 +9121,7 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     two.push_back(coupon_b);
     SpatialSupportBounds support_b = Support(coupon_b);
     support_b.patch = 13;
-    support_b.min = {-3.5, -3.5, -2.5};
-    support_b.max = {2.0, 3.5, 2.5};
+    support_b.SetMeshAlignedBox({-3.5, -3.5, -2.5}, {2.0, 3.5, 2.5});
     const std::vector<SpatialSupportBounds> both = {support_b, supports[0]};
     const auto records =
         FindTranslationalStretchInsideSpatialSupport(two, both, 3, tolerance);
@@ -8876,8 +9209,7 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     owned_elsewhere.push_back(coupon_b);
     SpatialSupportBounds support_b = Support(coupon_b);
     support_b.patch = 3;
-    support_b.min = {-3.5, -3.5, -2.5};
-    support_b.max = {2.0, 3.5, 2.5};
+    support_b.SetMeshAlignedBox({-3.5, -3.5, -2.5}, {2.0, 3.5, 2.5});
     const std::vector<SpatialSupportBounds> both = {supports[0], support_b};
     const auto records =
         FindTranslationalStretchInsideSpatialSupport(owned_elsewhere, both, 3, tolerance);
@@ -8967,14 +9299,12 @@ TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
   const double y = -108.325;
   SpatialSupportBounds a, b;
   a.patch = 204;
-  a.min = {568.55, -128.2, 2.85};
-  a.max = {592.75, -102.625, 6.8};
+  a.SetMeshAlignedBox({568.55, -128.2, 2.85}, {592.75, -102.625, 6.8});
   a.claims = {Claim{494, {583.25, y, 4.8}, {583.55, y, 4.8}},
               Claim{514, {583.55, y, 4.8}, {587.05, y, 4.8}},
               Claim{520, {583.25, y, 4.8}, {583.25, -120.0, 4.8}}};
   b.patch = 205;
-  b.min = {583.05, -128.2, 2.85};
-  b.max = {607.25, -102.625, 6.8};
+  b.SetMeshAlignedBox({583.05, -128.2, 2.85}, {607.25, -102.625, 6.8});
   b.claims = {Claim{646, {589.95, y, 4.8}, {593.0, y, 4.8}},
               Claim{650, {593.0, y, 4.8}, {593.0, -120.0, 4.8}}};
   SECTION("a margins-only overlap is recorded with the S1p pair's 9.50 um")

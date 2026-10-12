@@ -1015,7 +1015,13 @@ smaller endpoint.
    listed under `Diagnostics.TranslationalStretchesInsideSpatialSupport` (feature, stretch,
    model, length, box, class) with a warning (`FindTranslationalStretchInsideSpatialSupport`;
    judged per stretch, never per cell). The spatial support's box is the bounding box of the
-   model's basis points placed by the patch frame = the cluster's claims + 3R past every
+   model's basis points IN THE CLUSTER'S PATCH FRAME (`SpatialSupportBounds::axes` /
+   `frame_min` / `frame_max`; decision 715, 2026-10-12: the mesh-axis-aligned bounding box of
+   the placed points, kept as `min` / `max` for the margin-overlap diagnostics and the Box
+   record, circumscribes a rotated frame's box and over-owned the continuation cells between
+   the coupon's face and the AABB's — S5 448693 at -52.8 deg lost 21.6 um of model-cell
+   length that no coupon covered; a mesh-aligned frame reads bitwise as before) = the
+   cluster's claims + 3R past every
    claim-cut end along its edge (the coupon generator's `coupon_bounds`: every claim-cut end
    continued STRAIGHT by 2R, then R of padding; transversely R + R of padding = 2R; a coupon
    exists only when the plan span of its box is <= 16 R — not "about R"), so the first cells
@@ -1105,6 +1111,8 @@ smaller endpoint.
    2026-10-02, `ApplyContinuationOwnership`): the cells of every translational stretch that
    continues a cluster's claim (the Continuation criterion above, judged on the whole
    stretch whether or not it lies inside the box) are OWNED by that coupon inside its box —
+   the box in the cluster's patch frame (decision 715: `LineInsideBox` projects the cell's
+   AxisW line onto the frame axes and clips in that frame) —
    the coupon's twins already carry the straight continuation of the claim to the box
    face — and CLIPPED exactly at the face: the kept part of a cell is the part outside
    EVERY box whose claims its stretch continues (a cell on the continuations of two coupons

@@ -18229,27 +18229,37 @@ ContinuedSupportClaimEnd(const TranslationalStretch &stretch,
   return std::nullopt;
 }
 
-// The offsets along the line origin + c axis strictly inside a box, intersected with the
-// interval [c0, c1]; nullopt when the interval does not enter the box (an interval touching
-// a face is not inside: 1e-12 x max(1, c1 - c0)).
+// The offsets along the line origin + c axis strictly inside a support's box, intersected
+// with the interval [c0, c1]; nullopt when the interval does not enter the box (an interval
+// touching a face is not inside: 1e-12 x max(1, c1 - c0)). The box is the support's box in
+// the cluster's patch frame (decision 715): the line is projected onto each frame axis
+// (dot(origin, axes[k]), dot(axis, axes[k])) and the slab test runs per frame axis against
+// frame_min / frame_max; for a mesh-aligned frame (every axis a signed unit vector) the
+// projections are the mesh coordinates up to sign and the arithmetic is bitwise the mesh
+// AABB's.
 std::optional<std::array<double, 2>>
 LineInsideBox(const std::array<double, 3> &origin, const std::array<double, 3> &axis,
               double c0, double c1, const SpatialSupportBounds &box, int dimension)
 {
   double lo = c0, hi = c1;
-  for (int d = 0; d < dimension; d++)
+  for (int k = 0; k < 3; k++)
   {
-    const double w = axis[d];
+    double o = 0.0, w = 0.0;
+    for (int d = 0; d < dimension; d++)
+    {
+      o += origin[d] * box.axes[k][d];
+      w += axis[d] * box.axes[k][d];
+    }
     if (std::abs(w) <= 1.0e-14)
     {
-      if (!(origin[d] > box.min[d] && origin[d] < box.max[d]))
+      if (!(o > box.frame_min[k] && o < box.frame_max[k]))
       {
         return std::nullopt;
       }
       continue;
     }
-    const double a = (box.min[d] - origin[d]) / w;
-    const double b = (box.max[d] - origin[d]) / w;
+    const double a = (box.frame_min[k] - o) / w;
+    const double b = (box.frame_max[k] - o) / w;
     lo = std::max(lo, std::min(a, b));
     hi = std::min(hi, std::max(a, b));
   }
@@ -18272,16 +18282,22 @@ std::optional<std::array<double, 2>> CellInsideBox(const ResponsePatchData &patc
 }
 
 // Every cell end of the stretch strictly inside the support's box (the ownership record's
-// containment: a stretch touching a face is not inside).
+// containment: a stretch touching a face is not inside), the box in the cluster's patch
+// frame like LineInsideBox.
 bool StretchStrictlyInside(const TranslationalStretch &stretch,
                            const SpatialSupportBounds &support, int dimension)
 {
   return std::all_of(stretch.ends.begin(), stretch.ends.end(),
                      [&](const std::array<double, 3> &end)
                      {
-                       for (int d = 0; d < dimension; d++)
+                       for (int k = 0; k < 3; k++)
                        {
-                         if (!(end[d] > support.min[d] && end[d] < support.max[d]))
+                         double c = 0.0;
+                         for (int d = 0; d < dimension; d++)
+                         {
+                           c += end[d] * support.axes[k][d];
+                         }
+                         if (!(c > support.frame_min[k] && c < support.frame_max[k]))
                          {
                            return false;
                          }
@@ -18612,17 +18628,35 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
       }
       continue;
     }
+    support.axes = {patch.axis_u, patch.axis_v, patch.axis_w};
     bool first = true;
     for (const auto &local : *points)
     {
+      std::array<double, 3> placed{};
       for (int d = 0; d < dimension; d++)
       {
         const double coordinate =
             patch.origin[d] + (local[0] * patch.axis_u[d] + local[1] * patch.axis_v[d] +
                                local[2] * patch.axis_w[d]) /
                                   coordinate_scale;
+        placed[d] = coordinate;
         support.min[d] = first ? coordinate : std::min(support.min[d], coordinate);
         support.max[d] = first ? coordinate : std::max(support.max[d], coordinate);
+      }
+      // The box in the patch frame (decision 715): the placed point projected onto each
+      // frame axis, the same placed coordinates the AABB reads (for a mesh-aligned frame
+      // the projection is the mesh coordinate up to sign, exactly).
+      for (int k = 0; k < 3; k++)
+      {
+        double projection = 0.0;
+        for (int d = 0; d < dimension; d++)
+        {
+          projection += placed[d] * support.axes[k][d];
+        }
+        support.frame_min[k] =
+            first ? projection : std::min(support.frame_min[k], projection);
+        support.frame_max[k] =
+            first ? projection : std::max(support.frame_max[k], projection);
       }
       first = false;
     }
@@ -18748,7 +18782,9 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
        "decision 236 (2026-10-01): a translational stretch (one feature side's maximal "
        "contiguous stretch along its chain, the patch provenance Feature / Stretch) whose "
        "every longitudinal cell lies strictly inside the box of a spatial support (the "
-       "bbox of the model's basis points placed by the patch frame: claims + 3R past every "
+       "box of the model's basis points IN THE CLUSTER'S PATCH FRAME, decision 715 — not "
+       "their mesh-axis-aligned bounding box, which circumscribes a rotated frame's box: "
+       "claims + 3R past every "
        "claim-cut end along its edge, the 2R continuation + R padding; 2R transversely) is "
        "recorded, never an abort. Continuation = the stretch continues a claimed portion "
        "of that cluster through the claim cut by the side's OWN edge (decision 252: a cell "
@@ -19710,7 +19746,8 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
        "a claim of a spatial cluster (the Continuation criterion of "
        "TranslationalStretchesInsideSpatialSupport, judged on the whole stretch) is owned "
        "by "
-       "that coupon inside its box: the kept part of the cell is the part outside EVERY "
+       "that coupon inside its box (the box in the cluster's patch frame, decision 715): "
+       "the kept part of the cell is the part outside EVERY "
        "box "
        "whose claims the stretch continues (symmetric for a cell on two coupons' "
        "continuations, exact, idempotent), the patch weight and quadrature weight scale by "

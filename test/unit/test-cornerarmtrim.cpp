@@ -2110,13 +2110,11 @@ TEST_CASE("SurfaceResponseOperator uncovered portions clipped by spatial support
   // R above and below the plane; a vertex coupon's box (no claims) containing the portion.
   SpatialSupportBounds cluster;
   cluster.patch = 2;
-  cluster.min = {0.2137, -0.3, 0.75};
-  cluster.max = {0.9, 0.3, 1.25};
+  cluster.SetMeshAlignedBox({0.2137, -0.3, 0.75}, {0.9, 0.3, 1.25});
   cluster.claims = {Claim{3, {0.5, 0.0, 1.0}, {0.9, 0.0, 1.0}}};
   SpatialSupportBounds corner = cluster;
   corner.patch = 5;
-  corner.min = {-0.1, -0.3, 0.75};
-  corner.max = {0.6, 0.3, 1.25};
+  corner.SetMeshAlignedBox({-0.1, -0.3, 0.75}, {0.6, 0.3, 1.25});
   corner.claims.clear();
 
   SECTION("no cluster box: bitwise untouched")
@@ -2176,16 +2174,13 @@ TEST_CASE("SurfaceResponseOperator uncovered portions clipped by spatial support
           "touched is not inside")
   {
     SpatialSupportBounds middle = cluster;
-    middle.min[0] = 0.15;
-    middle.max[0] = 0.3;
+    middle.SetMeshAlignedBox({0.15, -0.3, 0.75}, {0.3, 0.3, 1.25});
     SpatialSupportBounds whole = cluster;
     whole.patch = 9;
-    whole.min[0] = -0.5;
-    whole.max[0] = 0.6;
+    whole.SetMeshAlignedBox({-0.5, -0.3, 0.75}, {0.6, 0.3, 1.25});
     SpatialSupportBounds touching = cluster;
     touching.patch = 11;
-    touching.min[0] = 0.45;
-    touching.max[0] = 0.8;
+    touching.SetMeshAlignedBox({0.45, -0.3, 0.75}, {0.8, 0.3, 1.25});
     std::vector<Portion> portions = {portion, portion, portion};
     portions[1].feature = 8;
     portions[2].feature = 9;
@@ -2293,8 +2288,7 @@ TEST_CASE("SurfaceResponseOperator uncovered portions clipped by spatial support
     CHECK_THAT(kept_energy + removed_energy, WithinRel(whole, 1.0e-10));
     // Straddling: two kept pieces + the removed middle.
     SpatialSupportBounds middle = cluster;
-    middle.min[0] = 0.15;
-    middle.max[0] = 0.3;
+    middle.SetMeshAlignedBox({0.15, -0.3, 0.75}, {0.3, 0.3, 1.25});
     std::vector<Portion> pieces = {portion};
     ClipUncoveredPortionsBySpatialSupport(pieces, {middle}, 3);
     REQUIRE(pieces.size() == 2);
