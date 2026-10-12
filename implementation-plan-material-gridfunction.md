@@ -424,17 +424,23 @@ correctness, not iteration count.
    Gmsh v2.2 `$NodeData` (with `$Nodes`) and VTU ASCII point data; `BuildGridFunction` maps
    the points to a P1 grid function on the solve mesh by coordinate matching. Tests read
    both formats back and validate config parsing.
-6. **Preconditioner** field-awareness (or documented fallback). **DONE (documented
-   fallback)** — the p-multigrid preconditioner keeps constant material coefficients, which
-   affects only the iteration count, not the converged eigenvalue. A p-multigrid test with a
-   spatially-varying permittivity confirms it converges to the same mode as the direct
-   solve. Making the preconditioner field-aware (splitting the combined ε/μ⁻¹ mass
-   coefficients and adding two-field Q-function variants) is deferred.
+6. **Preconditioner** field-awareness (or documented fallback). **DONE** — the p-multigrid
+   preconditioner now uses the ε/μ⁻¹ fields at all levels. The combined `CurlCurlMass` /
+   `DiffusionMass` operators are split into separate curl-curl/diffusion and mass
+   integrators so each term carries its own field (reusing the existing field-aware
+   Q-functions), and `MaterialField` propagates the field to coarser geometric multigrid
+   meshes by restricting the nodal values. A p-multigrid test with a spatially-varying
+   permittivity now converges (previously GMRES stalled at ~0.87 reduction over 200
+   iterations). A geometric-multigrid test validates the propagation; the field-aware
+   geometric preconditioner is less effective for a strongly varying profile, which is
+   documented.
 7. **Docs / schema / CHANGELOG.** **DONE** — `Solver.BoundaryMode.MaterialFields` added to
    the config schema (SchemaVer 2-3-0) and `docs/src/guide/problem.md`, with a CHANGELOG
    entry.
-8. **Phase 2 follow-ups**: refinement propagation, 3D→2D parent projection, anisotropic
-   and vector fields, generalizing to other solvers.
+8. **Follow-ups**: 3D→2D parent-mesh projection, anisotropic and vector fields, and
+   generalizing beyond the 2D mode solver. (Field propagation through geometric multigrid
+   levels is done; the field-aware geometric preconditioner quality for strongly varying
+   profiles remains a possible improvement.)
 
 ## 7. Risks and mitigations
 

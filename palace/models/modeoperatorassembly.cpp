@@ -67,6 +67,7 @@ void AddScaledComplex(std::unique_ptr<mfem::HypreParMatrix> &real,
   AddScaled(imag, term_real, coefficient.imag());
   AddScaled(imag, term_imag, coefficient.real());
 }
+}  // namespace
 
 // Build the attribute-based coefficient for a material property. When a spatially-varying
 // field supplies the property, the material constant is replaced by a unit coefficient so
@@ -87,7 +88,6 @@ MaterialPropertyCoefficient MakeMaterialCoefficient(const mfem::Array<int> &attr
   }
   return MaterialPropertyCoefficient(attr_to_mat, unit, a);
 }
-}  // namespace
 
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,

@@ -3,6 +3,8 @@
 
 #include "materialfield.hpp"
 
+#include <array>
+#include <map>
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 
@@ -17,33 +19,80 @@ MaterialField::MaterialField(const mfem::ParGridFunction &gf, double scaling)
 
 MaterialField::~MaterialField()
 {
-  for (auto &[ceed, geom_map] : data)
+  for (auto &[key, d] : data)
   {
-    for (auto &[geom, d] : geom_map)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&d.data));
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&d.data_restr));
-    }
+    Ceed ceed = std::get<0>(key);
+    PalaceCeedCall(ceed, CeedVectorDestroy(&d.data));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&d.data_restr));
   }
 }
 
-CeedMaterialFieldData MaterialField::BuildData(Ceed ceed, mfem::Geometry::Type geom,
+const mfem::ParGridFunction &MaterialField::GetLevelGridFunction(const Mesh &mesh) const
+{
+  if (gf->ParFESpace()->GetMesh() == &mesh.Get())
+  {
+    return *gf;
+  }
+
+  auto it = level_fields.find(&mesh);
+  if (it == level_fields.end())
+  {
+    // Build a P1 grid function on the coarser mesh by copying the base grid function's
+    // nodal values to matching vertices (the coarse mesh of a nested uniform refinement is
+    // a subset of the fine mesh).
+    LevelGridFunction lf;
+    lf.fec = std::make_unique<mfem::H1_FECollection>(1, mesh.Dimension());
+    auto &pmesh = const_cast<mfem::ParMesh &>(mesh.Get());
+    lf.fes = std::make_unique<mfem::ParFiniteElementSpace>(&pmesh, lf.fec.get());
+    lf.gf = std::make_unique<mfem::ParGridFunction>(lf.fes.get());
+
+    const mfem::Mesh &base_mesh = *gf->ParFESpace()->GetMesh();
+    const int base_sdim = base_mesh.SpaceDimension();
+    std::map<std::array<double, 3>, double> lookup;
+    mfem::Array<int> base_dofs;
+    for (int v = 0; v < base_mesh.GetNV(); v++)
+    {
+      const double *x = base_mesh.GetVertex(v);
+      gf->FESpace()->GetVertexDofs(v, base_dofs);
+      lookup[{x[0], (base_sdim > 1) ? x[1] : 0.0, (base_sdim > 2) ? x[2] : 0.0}] =
+          (*gf)(base_dofs[0]);
+    }
+
+    const int sdim = mesh.SpaceDimension();
+    mfem::Array<int> dofs;
+    for (int v = 0; v < mesh.Get().GetNV(); v++)
+    {
+      const double *x = mesh.Get().GetVertex(v);
+      auto lit = lookup.find({x[0], (sdim > 1) ? x[1] : 0.0, (sdim > 2) ? x[2] : 0.0});
+      MFEM_VERIFY(lit != lookup.end(),
+                  "Coarse mesh vertex not found in the material field grid function!");
+      lf.fes->GetVertexDofs(v, dofs);
+      (*lf.gf)(dofs[0]) = lit->second;
+    }
+    lf.gf->ExchangeFaceNbrData();
+    it = level_fields.emplace(&mesh, std::move(lf)).first;
+  }
+  return *it->second.gf;
+}
+
+CeedMaterialFieldData MaterialField::BuildData(Ceed ceed, const Mesh &mesh,
+                                               mfem::Geometry::Type geom,
                                                const std::vector<int> &indices) const
 {
-  const mfem::Mesh &mesh = *gf->ParFESpace()->GetMesh();
-  const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
+  const mfem::ParGridFunction &field_gf = GetLevelGridFunction(mesh);
+  const mfem::Mesh &mfem_mesh = *field_gf.ParFESpace()->GetMesh();
+  const int q_order = fem::DefaultIntegrationOrder::Get(mfem_mesh, geom);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, q_order);
   const int num_qpts = ir.GetNPoints();
   const std::size_t num_elem = indices.size();
 
-  // Evaluate the grid function at the reference quadrature points of each element. The
-  // grid function is defined on the same mesh, so its element numbering matches the mesh.
+  // Evaluate the grid function at the reference quadrature points of each element.
   std::vector<double> values(num_elem * num_qpts);
   for (std::size_t e = 0; e < num_elem; e++)
   {
     for (int q = 0; q < num_qpts; q++)
     {
-      values[e * num_qpts + q] = scaling * gf->GetValue(indices[e], ir.IntPoint(q));
+      values[e * num_qpts + q] = scaling * field_gf.GetValue(indices[e], ir.IntPoint(q));
     }
   }
 
@@ -58,14 +107,15 @@ CeedMaterialFieldData MaterialField::BuildData(Ceed ceed, mfem::Geometry::Type g
   return d;
 }
 
-const CeedMaterialFieldData &MaterialField::GetData(Ceed ceed, mfem::Geometry::Type geom,
+const CeedMaterialFieldData &MaterialField::GetData(Ceed ceed, const Mesh &mesh,
+                                                    mfem::Geometry::Type geom,
                                                     const std::vector<int> &indices) const
 {
-  auto &geom_map = data[ceed];
-  auto it = geom_map.find(geom);
-  if (it == geom_map.end())
+  const auto key = std::make_tuple(ceed, &mesh, geom);
+  auto it = data.find(key);
+  if (it == data.end())
   {
-    it = geom_map.emplace(geom, BuildData(ceed, geom, indices)).first;
+    it = data.emplace(key, BuildData(ceed, mesh, geom, indices)).first;
   }
   return it->second;
 }
@@ -79,7 +129,7 @@ void MaterialField::WarmCache(Ceed ceed, const Mesh &mesh) const
   {
     if (mfem::Geometry::Dimension[geom] == mesh.Dimension())
     {
-      GetData(ceed, geom, geom_data.indices);
+      GetData(ceed, mesh, geom, geom_data.indices);
     }
   }
 }
