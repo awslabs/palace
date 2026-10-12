@@ -34,7 +34,31 @@ CORNER_CONVERGENCE = CORNER_ROOT / "run_probe_convergence.py"
 CORNER_RESOLVABILITY = CORNER_ROOT / "trace_resolvability.py"
 # Knots per ring of the corner trace basis rules (generate_corner_response.RULES: 2 crossings
 # + MetalInteriorKnots + FreeKnots; legacy = the recorded MetalRingsOnly rule).
-CORNER_TRACE_BASIS_RING_SIZES = {"legacy": 8, "all-rings-follow-metal": 16}
+CORNER_TRACE_BASIS_RING_SIZES = {
+    "legacy": 8,
+    "all-rings-follow-metal": 16,
+    # The metal-graded refinement (the concave-MS remedy, decisions 590 / 629 O-9; its DECIDE
+    # step): MetalKnotGrading (1/9, 1/3), MetalInteriorKnots 9, RingSize 20, 220 knots. Named
+    # here so that a corner build can request it explicitly; NOT the default (the adoption is
+    # a separate decision on the decide step's measurements).
+    "all-rings-follow-metal-metal-graded": 20,
+}
+# The CONVEXITY-CONDITIONAL selector (the 633 (1) follow-up; S7-DESIGN 3.2 R2, decision 739):
+# a corner build requesting it resolves PER NODE to the metal-graded rule on a CONCAVE node
+# (the metal-side chord of decision 590 is a property of the metal-interior knots under the
+# MS plane at a concave node) and to the refined default on a CONVEX node (whose metal interior
+# is the other side of the box: the 633 (b) convex MS drop cannot recur). Convexity is a
+# geometric class of every corner node, so the rule stays generic; the resolved rule is the
+# one the coupon spec, the generator and the records carry, so a convex node built under the
+# selector is the SAME coupon spec as the default build (its basis files byte-identical by
+# construction: test_corner_trace_basis_concave_graded_selector). Not the default.
+CORNER_TRACE_BASIS_CONCAVE_GRADED_SELECTOR = "all-rings-follow-metal-concave-graded"
+CORNER_TRACE_BASIS_SELECTORS = {
+    CORNER_TRACE_BASIS_CONCAVE_GRADED_SELECTOR: {
+        "concave": "all-rings-follow-metal-metal-graded",
+        "convex": "all-rings-follow-metal",
+    },
+}
 # The default rule of every corner coupon (corner-basis refinement 2026-09-30, USER decision
 # 161 (1)). The box trace basis is independent of CornerRadius: the fillet lies inside the
 # matching box (its tangency points at r / tan(angle / 2) < R from the apex) and the arms
@@ -1681,14 +1705,22 @@ def corner_resolvability_constant():
     return trace_resolvability.MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED
 
 
-def corner_trace_basis(coupon_id, args):
+def corner_trace_basis(coupon_id, args, topology="convex"):
     """The trace basis rule of a corner coupon: --corner-trace-basis when given, else the
     refined default. The rule does not depend on the corner radius (the box basis never
     sees the fillet; CORNER_TRACE_BASIS_DEFAULT): a rounded corner resolves exactly as the
-    sharp corner of its angle, and an explicit legacy request is honoured on either."""
+    sharp corner of its angle, and an explicit legacy request is honoured on either. A
+    convexity-conditional SELECTOR (CORNER_TRACE_BASIS_SELECTORS) resolves to the concrete
+    rule of the node's topology ("convex" / "concave")."""
     requested = getattr(args, "corner_trace_basis", None)
     if requested is None:
         return CORNER_TRACE_BASIS_DEFAULT
+    if requested in CORNER_TRACE_BASIS_SELECTORS:
+        if topology not in CORNER_TRACE_BASIS_SELECTORS[requested]:
+            raise ValueError(
+                f"{coupon_id}: the selector {requested!r} has no rule for topology {topology!r}"
+            )
+        return CORNER_TRACE_BASIS_SELECTORS[requested][topology]
     if requested not in CORNER_TRACE_BASIS_RING_SIZES:
         raise ValueError(f"{coupon_id}: unknown corner trace basis rule {requested!r}")
     return requested
@@ -1723,7 +1755,7 @@ def build_corner(coupon, args, parameters, cache):
     # events: no connectivity angle; the rule is independent of CornerRadius, decision 511),
     # the recorded MetalRingsOnly layout as "legacy" on request; part of the coupon spec and
     # Id. The ring size is the rule's (2 + MetalInteriorKnots + FreeKnots).
-    trace_basis = corner_trace_basis(coupon["Id"], args)
+    trace_basis = corner_trace_basis(coupon["Id"], args, topology)
     corner_ring_size = CORNER_TRACE_BASIS_RING_SIZES[trace_basis]
     if trace_basis != "legacy" and connectivity_angle is not None:
         raise ValueError(
@@ -2817,12 +2849,14 @@ def parse_args():
     parser.add_argument("--ring-size", type=int, default=8)
     parser.add_argument(
         "--corner-trace-basis",
-        choices=sorted(CORNER_TRACE_BASIS_RING_SIZES),
+        choices=sorted((*CORNER_TRACE_BASIS_RING_SIZES, *CORNER_TRACE_BASIS_SELECTORS)),
         default=None,
         help="trace basis rule of the corner coupons (generate_corner_response.py "
         "--trace-basis; the ring size is the rule's, --ring-size does not apply to corners); "
         f"default: {CORNER_TRACE_BASIS_DEFAULT} on every corner, sharp or rounded (the box "
-        "basis does not depend on CornerRadius)",
+        "basis does not depend on CornerRadius); "
+        f"{CORNER_TRACE_BASIS_CONCAVE_GRADED_SELECTOR} = the convexity-conditional selector "
+        "(the metal-graded rule on a concave node, the default on a convex node)",
     )
     parser.add_argument("--spatial-ring-size", type=int, default=16)
     parser.add_argument("--coupon-depth", type=float, default=1055.0)

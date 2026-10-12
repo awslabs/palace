@@ -11,6 +11,7 @@ support on the PEC part of the box contour. The 90-degree convex node reproduces
 8-knot layout byte-identically."""
 
 import importlib.util
+import itertools
 import json
 import subprocess
 import sys
@@ -735,8 +736,13 @@ class CornerRadiusIndependenceTest(unittest.TestCase):
     # the fillet-basis design (0.25, 0.526316 = S7's 1.0000004 um, 0.90 R).
     RADII_OVER_R = (0.25, 1.0000004 / RADIUS, 0.90)
 
+    # Both rules (the (B) 2.4 (i) test of decision 565 MAJOR-2, carried to the metal-graded rule of
+    # the concave-MS decide step): the recorded refined rule and the metal-graded rule (the fillet
+    # never reaches the box basis under either).
+    RULES = (("all-rings-follow-metal", "16", 176), ("all-rings-follow-metal-metal-graded", "20", 220))
+
     @staticmethod
-    def generate(output, topology, corner_radius):
+    def generate(output, topology, corner_radius, rule="all-rings-follow-metal", ring_size="16"):
         command = [
             sys.executable,
             str(ROOT / "generate_corner_response.py"),
@@ -746,8 +752,8 @@ class CornerRadiusIndependenceTest(unittest.TestCase):
             "--radius", repr(RADIUS),
             "--angle", "90",
             "--corner-radius", repr(corner_radius),
-            "--trace-basis", "all-rings-follow-metal",
-            "--ring-size", "16",
+            "--trace-basis", rule,
+            "--ring-size", ring_size,
             "--order", "3",
             "--metal-thickness", repr(THICKNESS),
             "--overetch-depth", repr(OVERETCH),
@@ -760,18 +766,19 @@ class CornerRadiusIndependenceTest(unittest.TestCase):
         return json.loads((output / "process-library.json").read_text())["Models"][0]
 
     def test_corner_basis_files_independent_of_corner_radius(self):
-        for topology in ("convex", "concave"):
+        for (rule, ring_size, knots), topology in itertools.product(self.RULES, ("convex", "concave")):
             with tempfile.TemporaryDirectory() as directory:
                 sharp_dir = Path(directory) / "r0"
-                sharp = self.generate(sharp_dir, topology, 0.0)
+                sharp = self.generate(sharp_dir, topology, 0.0, rule, ring_size)
                 sharp_files = {name: (sharp_dir / name).read_bytes() for name in self.BASIS_FILES}
                 self.assertEqual(sharp["CornerRadius"], 0.0)
+                self.assertEqual(len(sharp_files["basis-points.csv"].strip().splitlines()) - 1, knots, rule)
                 for radius_over_r in self.RADII_OVER_R:
                     corner_radius = radius_over_r * RADIUS
                     rounded_dir = Path(directory) / f"r{radius_over_r:g}"
-                    rounded = self.generate(rounded_dir, topology, corner_radius)
+                    rounded = self.generate(rounded_dir, topology, corner_radius, rule, ring_size)
                     for name in self.BASIS_FILES:
-                        with self.subTest(topology=topology, radius=radius_over_r, file=name):
+                        with self.subTest(rule=rule, topology=topology, radius=radius_over_r, file=name):
                             self.assertEqual((rounded_dir / name).read_bytes(), sharp_files[name])
                     differing = {key for key in sharp if sharp[key] != rounded.get(key)}
                     expected = {"Name", "CornerRadius", "CornerRadiusTolerance"}
@@ -784,6 +791,269 @@ class CornerRadiusIndependenceTest(unittest.TestCase):
                     self.assertEqual(rounded["TraceBasis"]["RingLayout"], "AllRingsFollowMetal")
                     self.assertEqual(rounded["ZeroTraceIndices"], sharp["ZeroTraceIndices"])
                     self.assertEqual(rounded["ContourGroups"], sharp["ContourGroups"])
+
+
+class MetalGradedRuleTest(unittest.TestCase):
+    """The metal-graded refinement of the refined rule (the concave-MS remedy; supervisor decisions
+    587 (1) / 590 / 629 O-9; MS DIAGNOSIS 4.2 / 6.2): the metal-interior knots graded from each
+    crossing into the metal arc exactly as the free knots are, MetalKnotGrading (1/9, 1/3) scaled
+    by min(1, MetalArc / the free side's reference arc), the 5 equal-fraction metal knots kept
+    (MetalInteriorKnots 9, RingSize 20, 220 knots, zero set 22). One generic rule for both
+    convexities; the recorded refined rule's records stay byte-identical (the new key is written
+    only for a metal-graded rule); a 20-knot ring is placed by its fractions alone."""
+
+    RULE = GENERATOR.METAL_GRADED_RULE
+    METAL_SLOTS = {"convex": range(9, 18), "concave": range(11, 20)}  # metal1..metal9 by slot
+
+    def test_rule_record_and_parameters(self):
+        rule = self.RULE
+        self.assertEqual((rule.layout, rule.metal_interior_knots, rule.free_knots, rule.ring_size),
+                         ("AllRingsFollowMetal", 9, 9, 20))
+        self.assertEqual(rule.free_knot_grading, (1.0 / 3.0, 2.0 / 3.0))
+        self.assertEqual(rule.metal_knot_grading, (1.0 / 9.0, 1.0 / 3.0))
+        self.assertEqual(rule.extra_levels_above_over_overetch, (1.0, 4.0))
+        self.assertEqual(GENERATOR.RULES["all-rings-follow-metal-metal-graded"], rule)
+        # the levels are the refined rule's (no new ring)
+        self.assertEqual(rule.levels(RADIUS, THICKNESS, OVERETCH), GENERATOR.REFINED_RULE.levels(RADIUS, THICKNESS, OVERETCH))
+        record = GENERATOR.trace_basis_rule(20, None, rule)
+        self.assertEqual(record["RingSize"], 20)
+        self.assertEqual(record["MetalInteriorKnots"], 9)
+        self.assertEqual(record["MetalKnotGrading"], [1.0 / 9.0, 1.0 / 3.0])
+        self.assertIn("MetalKnotGrading", record["Rule"])
+        self.assertNotIn("FreeKnotGradingReferenceFreeArcOverR", record)
+        self.assertEqual(GENERATOR.TraceBasisRule.from_record(record), rule)
+        # The recorded refined rule: no key, no clause, the same record as before.
+        refined = GENERATOR.trace_basis_rule(16, None, GENERATOR.REFINED_RULE)
+        self.assertNotIn("MetalKnotGrading", refined)
+        self.assertNotIn("MetalKnotGrading", refined["Rule"])
+        self.assertEqual(GENERATOR.TraceBasisRule.from_record(refined), GENERATOR.REFINED_RULE)
+        self.assertNotEqual(GENERATOR.REFINED_RULE, rule)
+        with self.assertRaises(ValueError):
+            GENERATOR.trace_basis_rule(16, None, rule)  # the ring size is the rule's
+        self.assertEqual(GENERATOR.zero_slots("convex", rule), list(range(8, 19)))
+        self.assertEqual(GENERATOR.zero_slots("concave", rule), [0] + list(range(10, 20)))
+
+    def test_invalid_metal_gradings_are_refused(self):
+        reference = GENERATOR.FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R
+        make = lambda metal, grading=(1.0 / 3.0, 2.0 / 3.0), count=9: GENERATOR.TraceBasisRule(  # noqa: E731
+            "AllRingsFollowMetal", count, 9, grading, (1, 4), reference if grading else None,
+            metal_knot_grading=metal,
+        )
+        with self.assertRaisesRegex(ValueError, "increasing positive"):
+            make((1.0 / 3.0, 1.0 / 9.0))
+        with self.assertRaisesRegex(ValueError, "increasing positive"):
+            make((0.0, 1.0 / 3.0))
+        with self.assertRaisesRegex(ValueError, "more graded metal knots"):
+            make((1.0 / 9.0, 1.0 / 3.0), count=3)
+        with self.assertRaisesRegex(ValueError, "graded free-knot layout"):
+            make((1.0 / 9.0, 1.0 / 3.0), grading=())
+        with self.assertRaisesRegex(ValueError, "outermost graded metal distance"):
+            make((1.0 / 9.0, 0.75))  # 2 x 0.75 > the reference 1.4226
+        with self.assertRaisesRegex(ValueError, "graded free-knot layout"):
+            GENERATOR.TraceBasisRule("MetalRingsOnly", 9, 5, metal_knot_grading=(1.0 / 9.0,))
+        self.assertEqual(make((1.0 / 9.0, 1.0 / 3.0)), self.RULE)
+
+    def test_layout_at_ninety_degrees(self):
+        for topology in ("convex", "concave"):
+            surface = GENERATOR.build_surface(
+                RADIUS, 20, THICKNESS, OVERETCH, angle_degrees=90.0, topology=topology, rule=self.RULE
+            )
+            points = np.asarray(surface.knot_points)
+            self.assertEqual(points.shape, (220, 3))
+            self.assertEqual(surface.contour_groups, [20] * 11)
+            self.assertEqual(sum(surface.knot_zero), 22)
+            zero_slots = GENERATOR.zero_slots(topology, self.RULE)
+            self.assertEqual(len(zero_slots), 11)
+            expected_zero = sorted(ring * 20 + slot for ring in (3, 4) for slot in zero_slots)  # z = 0 and t are the 4th / 5th levels
+            self.assertEqual(sorted(surface.zero_trace_indices()), expected_zero)
+            levels = self.RULE.levels(RADIUS, THICKNESS, OVERETCH)
+            first, second = GENERATOR.arm_crossing_fractions(RADIUS, 90.0)
+            metal, free = GENERATOR.metal_arc_fractions(RADIUS, 90.0, topology)
+            metal_arc = 8.0 * (metal[1] - metal[0])
+            for ring in range(11):
+                ring_points = points[ring * 20:(ring + 1) * 20]
+                half_width = RADIUS if ring < 9 else RADIUS / 3.0
+                z = levels[ring] if ring < 9 else (RADIUS, -RADIUS)[ring - 9]
+                self.assertTrue(np.allclose(ring_points[:, 2], z))
+                self.assertTrue(np.allclose(np.max(np.abs(ring_points[:, :2]), axis=1), half_width))
+                fractions = sorted(GENERATOR.square_perimeter_fraction(half_width, q) for q in ring_points)
+                if ring == 0:
+                    reference_fractions = fractions
+                else:
+                    self.assertTrue(np.allclose(fractions, reference_fractions), (topology, ring))
+                # the metal-side graded knots: on every ring two knots at R / 9 and two at R / 3 of
+                # perimeter from a crossing INTO the metal arc (R / 27, R / 9 on the inner cap rings);
+                # the free side keeps its R / 3, 2R / 3 grading, so R / 3 appears on both sides
+                into_metal = []
+                for f in fractions:
+                    for c, sign in ((metal[0], +1.0), (metal[1], -1.0)):
+                        d = ((sign * (f - c) + 0.5) % 1.0) - 0.5
+                        if 1e-12 < d < metal_arc / 8.0 / 2.0:
+                            into_metal.append(d * 8.0 * RADIUS)
+                into_metal.sort()
+                self.assertAlmostEqual(into_metal[0], RADIUS / 9.0, places=9, msg=(topology, ring))
+                self.assertAlmostEqual(into_metal[1], RADIUS / 9.0, places=9, msg=(topology, ring))
+                self.assertAlmostEqual(into_metal[2], RADIUS / 3.0, places=9, msg=(topology, ring))
+                self.assertAlmostEqual(into_metal[3], RADIUS / 3.0, places=9, msg=(topology, ring))
+            self.assertEqual(
+                GENERATOR.free_hat_pec_support(
+                    points, surface.contour_groups, surface.zero_trace_indices(),
+                    pec_mask(90.0, topology), surface.slaves,
+                ),
+                [],
+                topology,
+            )
+
+    def test_metal_knot_fractions_keep_the_recorded_rule_bit_for_bit(self):
+        # Without a metal grading the metal-interior knots are the expression of record (the
+        # recorded 176-knot models stay byte-identical): the same doubles as before the change.
+        for topology in ("convex", "concave"):
+            for angle in (48.75, 60.0, 90.0, 135.0, 180.0):
+                metal, _ = GENERATOR.metal_arc_fractions(RADIUS, angle, topology)
+                expected = [(metal[0] + (metal[1] - metal[0]) * m / 6) for m in range(1, 6)]
+                self.assertEqual(GENERATOR.metal_knot_fractions(metal, GENERATOR.REFINED_RULE), expected)
+                layout = GENERATOR.rule_ring_layout(RADIUS, angle, topology, GENERATOR.REFINED_RULE, True)
+                roles = GENERATOR.ring_role_order(topology, GENERATOR.REFINED_RULE)
+                by_slot = {slot: f for f, kind, slot in layout if kind != "slave"}
+                for m in range(1, 6):
+                    self.assertEqual(by_slot[roles.index(f"metal{m}")], GENERATOR.snap_fraction(expected[m - 1] % 1.0, 16))
+
+    def test_acute_convex_node_scales_the_graded_metal_distances(self):
+        # The (B) 2.4 (ii) test carried to the metal side (MS 6.2): on the convex 45-degree node
+        # (metal arc 1.0 R < the reference 1.4226 R) both graded metal distances (R/9, R/3) scale by
+        # MetalArc / Reference, the slot structure, like-to-like indices and the zero set are the
+        # 90-degree node's; the convex 60-degree node (metal arc = the reference arc) and every
+        # obtuse node are unscaled; the free side (arc >= 7 R on convex nodes) is never scaled.
+        scale = GENERATOR.metal_knot_grading_scale(1.0, self.RULE)
+        self.assertAlmostEqual(scale, 1.0 / GENERATOR.FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R)
+        reference = GENERATOR.build_surface(RADIUS, 20, THICKNESS, OVERETCH, angle_degrees=90.0, topology="convex", rule=self.RULE)
+        for angle, expected_scale in ((45.0, scale), (60.0, 1.0), (120.0, 1.0)):
+            surface = GENERATOR.build_surface(RADIUS, 20, THICKNESS, OVERETCH, angle_degrees=angle, topology="convex", rule=self.RULE)
+            self.assertEqual(len(surface.knot_points), 220)
+            self.assertEqual(surface.contour_groups, [20] * 11)
+            self.assertEqual(sorted(surface.zero_trace_indices()), sorted(reference.zero_trace_indices()))
+            layout = GENERATOR.rule_ring_layout(RADIUS, angle, "convex", self.RULE, True)
+            by_slot = {slot: (f, kind) for f, kind, slot in layout if kind != "slave"}
+            metal, free = GENERATOR.metal_arc_fractions(RADIUS, angle, "convex")
+            self.assertAlmostEqual(GENERATOR.metal_knot_grading_scale(8.0 * (metal[1] - metal[0]), self.RULE), expected_scale, places=9)
+            # convex slots: 0..7 free2..free9, 8 crossing1, 9..17 metal1..metal9, 18 crossing2, 19 free1
+            self.assertEqual(by_slot[8][1], "zero"); self.assertEqual(by_slot[18][1], "zero")
+            for slot, graded in ((9, 1.0 / 9.0), (10, 1.0 / 3.0)):
+                self.assertEqual(by_slot[slot][1], "zero")
+                distance = ((by_slot[slot][0] - metal[0]) % 1.0) * 8.0 * RADIUS
+                self.assertAlmostEqual(distance, graded * RADIUS * expected_scale, places=9, msg=(angle, slot))
+            for slot, graded in ((17, 1.0 / 9.0), (16, 1.0 / 3.0)):
+                distance = ((metal[1] - by_slot[slot][0]) % 1.0) * 8.0 * RADIUS
+                self.assertAlmostEqual(distance, graded * RADIUS * expected_scale, places=9, msg=(angle, slot))
+            record = GENERATOR.trace_basis_rule(
+                20, None, self.RULE, free_arc_over_r=8.0 * (free[1] - free[0]), metal_arc_over_r=8.0 * (metal[1] - metal[0])
+            )
+            self.assertEqual("FreeKnotGradingReferenceFreeArcOverR" in record, expected_scale < 1.0, angle)
+        # the concave 48.75 node scales the FREE grading (as the refined rule does) and not the metal one
+        metal, free = GENERATOR.metal_arc_fractions(RADIUS, 48.75, "concave")
+        self.assertLess(GENERATOR.free_knot_grading_scale(8.0 * (free[1] - free[0]), self.RULE), 1.0)
+        self.assertEqual(GENERATOR.metal_knot_grading_scale(8.0 * (metal[1] - metal[0]), self.RULE), 1.0)
+
+    def test_a_twenty_knot_ring_is_placed_by_its_fractions(self):
+        layout = GENERATOR.rule_ring_layout(RADIUS, 90.0, "concave", self.RULE, False)
+        points = GENERATOR.ring_points(RADIUS, -OVERETCH, layout, 20)
+        expected = np.asarray([GENERATOR.square_perimeter_point(RADIUS, -OVERETCH, f) for f, _, _ in layout])
+        self.assertTrue(np.array_equal(points, expected))
+        with self.assertRaises(ValueError):
+            GENERATOR.square_ring(RADIUS, 0.0, 20)
+        # the recorded 16-knot layouts keep the fixed-coordinate reuse (byte identity)
+        layout16 = GENERATOR.rule_ring_layout(RADIUS, 90.0, "concave", GENERATOR.REFINED_RULE, False)
+        points16 = GENERATOR.ring_points(RADIUS, -OVERETCH, layout16, 16)
+        fixed = GENERATOR.square_ring(RADIUS, -OVERETCH, 16)
+        for (fraction, _, _), point in zip(layout16, points16):
+            index = round(fraction * 16)
+            if abs(fraction - index / 16) <= GENERATOR.FIXED_FRACTION_IDENTITY:
+                self.assertEqual(tuple(point), tuple(fixed[index % 16]))
+
+    def test_generator_writes_a_220_knot_model(self):
+        for topology in ("convex", "concave"):
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                command = [
+                    sys.executable, str(ROOT / "generate_corner_response.py"),
+                    "--output", str(output), "--thin-mesh", str(output / "thin.msh"),
+                    "--fabricated-mesh", str(output / "fabricated.msh"), "--radius", repr(RADIUS),
+                    "--angle", "90", "--trace-basis", "all-rings-follow-metal-metal-graded",
+                    "--ring-size", "20", "--order", "3", "--metal-thickness", repr(THICKNESS),
+                    "--overetch-depth", repr(OVERETCH), "--sidewall-angle", "90", "--top-rounding", "0",
+                    "--trench-rounding", "0", "--topology", topology,
+                ]
+                subprocess.run(command, check=True, capture_output=True, text=True)
+                model = json.loads((output / "process-library.json").read_text())["Models"][0]
+                self.assertEqual(model["ContourGroups"], [20] * 11)
+                self.assertEqual(len(model["ZeroTraceIndices"]), 22)
+                self.assertEqual(model["TraceBasis"]["RingSize"], 20)
+                self.assertEqual(model["TraceBasis"]["MetalInteriorKnots"], 9)
+                self.assertEqual(model["TraceBasis"]["MetalKnotGrading"], [1.0 / 9.0, 1.0 / 3.0])
+                basis = (output / "basis-points.csv").read_text().strip().splitlines()
+                self.assertEqual(len(basis) - 1, 220)
+
+
+class ConcaveGradedSelectorTest(unittest.TestCase):
+    """The convexity-conditional selector (decision 739 / S7-DESIGN 3.2 R2; the 633 (1)
+    follow-up): on a CONVEX node it IS the refined rule — every basis file byte-identical and the
+    record equal (the convex class is unchanged BY CONSTRUCTION, the test of record the design
+    names); on a CONCAVE node it is the metal-graded rule (220 knots, the record key written)."""
+
+    def test_resolution(self):
+        resolve = GENERATOR.resolve_trace_basis
+        selector = GENERATOR.CONCAVE_GRADED_SELECTOR
+        self.assertEqual(selector, "all-rings-follow-metal-concave-graded")
+        self.assertEqual(resolve(selector, "convex"), "all-rings-follow-metal")
+        self.assertEqual(resolve(selector, "concave"), "all-rings-follow-metal-metal-graded")
+        for name in GENERATOR.RULES:
+            self.assertEqual(resolve(name, "convex"), name)
+            self.assertEqual(resolve(name, "concave"), name)
+        with self.assertRaisesRegex(ValueError, "no rule for topology"):
+            resolve(selector, "straight")
+        with self.assertRaisesRegex(ValueError, "unknown trace basis rule"):
+            resolve("fillet-knots", "convex")
+        self.assertNotIn(selector, GENERATOR.RULES)
+
+    def test_convex_node_under_the_selector_is_the_refined_rule_byte_for_byte(self):
+        files = CornerRadiusIndependenceTest.BASIS_FILES
+        for corner_radius in (0.0, 0.25 * RADIUS):
+            with tempfile.TemporaryDirectory() as directory:
+                refined_dir, selected_dir = Path(directory) / "refined", Path(directory) / "selected"
+                refined = CornerRadiusIndependenceTest.generate(
+                    refined_dir, "convex", corner_radius, "all-rings-follow-metal", "16")
+                selected = CornerRadiusIndependenceTest.generate(
+                    selected_dir, "convex", corner_radius, GENERATOR.CONCAVE_GRADED_SELECTOR, "16")
+                for name in files:
+                    with self.subTest(radius=corner_radius, file=name):
+                        self.assertEqual((selected_dir / name).read_bytes(), (refined_dir / name).read_bytes())
+                self.assertEqual(selected, refined)
+                self.assertNotIn("MetalKnotGrading", selected["TraceBasis"])
+                self.assertEqual(len((selected_dir / "basis-points.csv").read_text().strip().splitlines()) - 1, 176)
+                self.assertEqual(
+                    (selected_dir / "process-library.json").read_bytes(),
+                    (refined_dir / "process-library.json").read_bytes())
+
+    def test_concave_node_under_the_selector_is_the_metal_graded_rule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graded_dir, selected_dir = Path(directory) / "graded", Path(directory) / "selected"
+            graded = CornerRadiusIndependenceTest.generate(
+                graded_dir, "concave", 0.0, "all-rings-follow-metal-metal-graded", "20")
+            selected = CornerRadiusIndependenceTest.generate(
+                selected_dir, "concave", 0.0, GENERATOR.CONCAVE_GRADED_SELECTOR, "20")
+            for name in CornerRadiusIndependenceTest.BASIS_FILES:
+                self.assertEqual((selected_dir / name).read_bytes(), (graded_dir / name).read_bytes(), name)
+            self.assertEqual(selected, graded)
+            self.assertEqual(selected["TraceBasis"]["MetalKnotGrading"], [1.0 / 9.0, 1.0 / 3.0])
+            self.assertEqual(selected["TraceBasis"]["RingSize"], 20)
+            self.assertEqual(len((selected_dir / "basis-points.csv").read_text().strip().splitlines()) - 1, 220)
+
+    def test_selector_ring_size_is_the_resolved_rules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(subprocess.CalledProcessError) as failure:
+                CornerRadiusIndependenceTest.generate(
+                    Path(directory), "concave", 0.0, GENERATOR.CONCAVE_GRADED_SELECTOR, "16")
+            self.assertIn("all-rings-follow-metal-metal-graded rule's", failure.exception.stderr)
 
 
 if __name__ == "__main__":

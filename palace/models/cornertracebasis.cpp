@@ -170,39 +170,52 @@ bool OnMetalFootprint(const std::array<double, 3> &point, double angle_radians, 
   return !in_wedge || on_arm;
 }
 
-// The generator's free_knot_fractions: the graded knots at free_knot_grading x R from both
-// ends of the free arc (start, end) — scaled by FreeKnotGradingScale on a free arc shorter
-// than the rule's reference — the remaining at equal fractions between the innermost
-// graded ones (equal fractions of the whole arc without a grading).
-std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
-                                      const CornerTraceBasisRule &rule)
+// The generator's graded_arc_fractions: `count` knots on the arc (start, end) — without a
+// grading at equal fractions of the arc (the expression of record, bit for bit); with one,
+// the graded knots at grading x R from both ends, scaled by GradedKnotScale on an arc shorter
+// than the rule's reference, the remaining at equal fractions between the innermost graded
+// ones. The free knots (FreeKnotFractions) and the metal-interior knots (MetalKnotFractions)
+// share it.
+double GradedKnotScale(double arc_over_r, const std::vector<double> &grading,
+                       const CornerTraceBasisRule &rule)
+{
+  const double reference = rule.free_knot_grading_reference_free_arc_over_r;
+  if (grading.empty() || arc_over_r >= reference - kFreeKnotGradingReferenceToleranceOverR)
+  {
+    return 1.0;
+  }
+  return arc_over_r / reference;
+}
+
+std::vector<double> GradedArcFractions(const std::pair<double, double> &arc, int count,
+                                       const std::vector<double> &grading,
+                                       const CornerTraceBasisRule &rule)
 {
   std::vector<double> fractions;
-  const auto [start, end] = free;
-  if (rule.free_knot_grading.empty())
+  const auto [start, end] = arc;
+  if (grading.empty())
   {
-    for (int k = 1; k <= rule.free_knots; k++)
+    for (int k = 1; k <= count; k++)
     {
-      fractions.push_back(start + (end - start) * k / (rule.free_knots + 1));
+      fractions.push_back(start + (end - start) * k / (count + 1));
     }
     return fractions;
   }
   // A perimeter distance of g R is the fraction g / 8 (the perimeter is 8 R). The scale is
   // applied only below the reference so that every unscaled layout keeps its exact
   // floating-point expressions.
-  const double scale = FreeKnotGradingScale(8.0 * (end - start), rule);
+  const double scale = GradedKnotScale(8.0 * (end - start), grading, rule);
   auto Offset = [&](double g) { return scale < 1.0 ? (g / 8.0) * scale : g / 8.0; };
-  const double outermost = Offset(rule.free_knot_grading.back());
+  const double outermost = Offset(grading.back());
   const double inner_start = start + outermost, inner_end = end - outermost;
   MFEM_VERIFY(inner_end - inner_start > kKnotCoincidenceFraction,
-              "The corner trace basis free arc is too short for the free knot grading!");
-  for (const double g : rule.free_knot_grading)
+              "The corner trace basis arc is too short for the knot grading!");
+  for (const double g : grading)
   {
     fractions.push_back(start + Offset(g));
     fractions.push_back(end - Offset(g));
   }
-  const int remaining =
-      rule.free_knots - 2 * static_cast<int>(rule.free_knot_grading.size());
+  const int remaining = count - 2 * static_cast<int>(grading.size());
   for (int k = 1; k <= remaining; k++)
   {
     fractions.push_back(inner_start + (inner_end - inner_start) * k / (remaining + 1));
@@ -211,17 +224,28 @@ std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
   return fractions;
 }
 
+std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
+                                      const CornerTraceBasisRule &rule)
+{
+  return GradedArcFractions(free, rule.free_knots, rule.free_knot_grading, rule);
+}
+
+std::vector<double> MetalKnotFractions(const std::pair<double, double> &metal,
+                                       const CornerTraceBasisRule &rule)
+{
+  return GradedArcFractions(metal, rule.metal_interior_knots, rule.metal_knot_grading, rule);
+}
+
 }  // namespace
 
 double FreeKnotGradingScale(double free_arc_over_r, const CornerTraceBasisRule &rule)
 {
-  const double reference = rule.free_knot_grading_reference_free_arc_over_r;
-  if (rule.free_knot_grading.empty() ||
-      free_arc_over_r >= reference - kFreeKnotGradingReferenceToleranceOverR)
-  {
-    return 1.0;
-  }
-  return free_arc_over_r / reference;
+  return GradedKnotScale(free_arc_over_r, rule.free_knot_grading, rule);
+}
+
+double MetalKnotGradingScale(double metal_arc_over_r, const CornerTraceBasisRule &rule)
+{
+  return GradedKnotScale(metal_arc_over_r, rule.metal_knot_grading, rule);
 }
 
 CornerTraceBasisRule RefinedCornerTraceBasisRule()
@@ -234,6 +258,17 @@ CornerTraceBasisRule RefinedCornerTraceBasisRule()
   rule.free_knot_grading = {1.0 / 3.0, 2.0 / 3.0};
   rule.extra_levels_above_over_overetch = {1.0, 4.0};
   rule.free_knot_grading_reference_free_arc_over_r = kFreeKnotGradingReferenceFreeArcOverR;
+  return rule;
+}
+
+CornerTraceBasisRule MetalGradedCornerTraceBasisRule()
+{
+  // The grading distances 1 / 9 and 1 / 3 are IEEE-exact arithmetic: the same doubles as
+  // the generator's.
+  CornerTraceBasisRule rule = RefinedCornerTraceBasisRule();
+  rule.metal_interior_knots = 9;
+  rule.ring_size = 20;
+  rule.metal_knot_grading = {1.0 / 9.0, 1.0 / 3.0};
   return rule;
 }
 
@@ -302,6 +337,32 @@ std::string CheckCornerTraceBasisRule(const CornerTraceBasisRule &rule)
     {
       return "FreeKnotGradingReferenceFreeArcOverR must exceed twice the outermost "
              "FreeKnotGrading distance";
+    }
+  }
+  if (!rule.metal_knot_grading.empty())
+  {
+    if (!rule.AllRings() || rule.free_knot_grading.empty())
+    {
+      return "MetalKnotGrading is an option of a graded AllRingsFollowMetal layout (its "
+             "scale reuses FreeKnotGradingReferenceFreeArcOverR)";
+    }
+    if (2 * static_cast<int>(rule.metal_knot_grading.size()) > rule.metal_interior_knots)
+    {
+      return "MetalKnotGrading places more knots than MetalInteriorKnots";
+    }
+    for (std::size_t g = 0; g < rule.metal_knot_grading.size(); g++)
+    {
+      if (!(rule.metal_knot_grading[g] > 0.0) ||
+          (g > 0 && !(rule.metal_knot_grading[g] > rule.metal_knot_grading[g - 1])))
+      {
+        return "MetalKnotGrading must be increasing positive distances over R";
+      }
+    }
+    if (!(rule.free_knot_grading_reference_free_arc_over_r >
+          2.0 * rule.metal_knot_grading.back()))
+    {
+      return "FreeKnotGradingReferenceFreeArcOverR must exceed twice the outermost "
+             "MetalKnotGrading distance";
     }
   }
   return "";
@@ -418,12 +479,13 @@ std::vector<CornerRingVertex> CornerRuleRingLayout(double radius, double angle_r
   }
   std::map<std::string, double> roles = {{"crossing1", first},
                                          {"crossing2", WrapFraction(second)}};
-  for (int m = 1; m <= rule.metal_interior_knots; m++)
   {
-    roles["metal" + std::to_string(m)] =
-        SnapFraction(WrapFraction(metal.first + (metal.second - metal.first) * m /
-                                                    (rule.metal_interior_knots + 1)),
-                     rule.ring_size);
+    const auto fractions = MetalKnotFractions(metal, rule);
+    for (int m = 1; m <= rule.metal_interior_knots; m++)
+    {
+      roles["metal" + std::to_string(m)] =
+          SnapFraction(WrapFraction(fractions[m - 1]), rule.ring_size);
+    }
   }
   {
     const auto fractions = FreeKnotFractions(free, rule);

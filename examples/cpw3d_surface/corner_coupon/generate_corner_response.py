@@ -160,13 +160,22 @@ class TraceBasisRule:
     wedge; block (b) DESIGN A9 family 4, decision 318) they are scaled by
     min(1, FreeArc / Reference), so the sharper node keeps the reference node's layout
     proportions, the slot structure, like-to-like indices and zero set are unchanged and
-    every node whose free arc reaches the reference is bit-identical."""
+    every node whose free arc reaches the reference is bit-identical.
+    The METAL-interior knots are graded the same way when metal_knot_grading is non-empty
+    (the concave-MS remedy, decisions 590 / 629 O-9; MS DIAGNOSIS 4.2 / 6.2): perimeter
+    distances (over R) from each crossing INTO the metal arc carrying a knot, scaled by
+    min(1, MetalArc / Reference) with the SAME reference constant (the convex-theta metal arc
+    equals the concave-theta free arc by construction, so one constant serves both sides),
+    the remaining metal-interior knots at equal fractions between the innermost graded ones.
+    An empty grading keeps the recorded equal-fraction metal knots (every recorded model
+    reads unchanged: the record key MetalKnotGrading is written only when non-empty)."""
 
     LAYOUTS = ("MetalRingsOnly", "AllRingsFollowMetal")
 
     def __init__(self, layout, metal_interior_knots, free_knots, free_knot_grading=(),
                  extra_levels_above_over_overetch=(),
-                 free_knot_grading_reference_free_arc_over_r=None):
+                 free_knot_grading_reference_free_arc_over_r=None,
+                 metal_knot_grading=()):
         if layout not in self.LAYOUTS:
             raise ValueError(f"unknown trace basis layout {layout!r}")
         grading = tuple(float(g) for g in free_knot_grading)
@@ -174,11 +183,21 @@ class TraceBasisRule:
             raise ValueError("free knot grading must be increasing positive distances over R")
         if 2 * len(grading) > free_knots:
             raise ValueError("more graded knots than free knots")
+        metal_grading = tuple(float(g) for g in metal_knot_grading)
+        if any(g <= 0.0 for g in metal_grading) or list(metal_grading) != sorted(set(metal_grading)):
+            raise ValueError("metal knot grading must be increasing positive distances over R")
+        if 2 * len(metal_grading) > metal_interior_knots:
+            raise ValueError("more graded metal knots than metal-interior knots")
+        if metal_grading and not grading:
+            raise ValueError(
+                "the metal knot grading needs a graded free-knot layout (its scale reuses the "
+                "free knot grading reference free arc)"
+            )
         extra = tuple(float(k) for k in extra_levels_above_over_overetch)
         if any(k <= 0.0 for k in extra) or list(extra) != sorted(set(extra)):
             raise ValueError("extra levels must be increasing positive multiples of OveretchDepth")
-        if layout == "MetalRingsOnly" and (grading or extra):
-            raise ValueError("the MetalRingsOnly layout has no free knot grading and no extra levels")
+        if layout == "MetalRingsOnly" and (grading or extra or metal_grading):
+            raise ValueError("the MetalRingsOnly layout has no knot grading and no extra levels")
         if free_knot_grading_reference_free_arc_over_r is not None:
             reference = float(free_knot_grading_reference_free_arc_over_r)
             if not grading:
@@ -189,6 +208,11 @@ class TraceBasisRule:
                     "the free knot grading reference free arc must exceed twice the outermost "
                     "graded distance (over R)"
                 )
+            if metal_grading and not reference > 2.0 * metal_grading[-1]:
+                raise ValueError(
+                    "the free knot grading reference free arc must exceed twice the outermost "
+                    "graded metal distance (over R)"
+                )
             free_knot_grading_reference_free_arc_over_r = reference
         elif grading:
             raise ValueError("a graded layout needs its free knot grading reference free arc")
@@ -196,6 +220,12 @@ class TraceBasisRule:
         self.metal_interior_knots = int(metal_interior_knots)
         self.free_knots = int(free_knots)
         self.free_knot_grading = grading
+        # Graded metal-interior knots at these perimeter distances (over R) from each crossing
+        # into the metal arc (the concave-MS remedy MetalKnotGrading = (1/9, 1/3), MS DIAGNOSIS
+        # 3.1-3.4: the recorded equal-fraction metal knots leave ONE chord of length R from each
+        # crossing on the concave 90 node, over a potential that falls 8x within that R, 50 nm
+        # under the MS interface; the chord prescribes 2.9-3.6x the true potential there).
+        self.metal_knot_grading = metal_grading
         self.free_knot_grading_reference_free_arc_over_r = (
             free_knot_grading_reference_free_arc_over_r
         )
@@ -220,9 +250,11 @@ class TraceBasisRule:
             self.layout, self.metal_interior_knots, self.free_knots, self.free_knot_grading,
             self.extra_levels_above_over_overetch,
             self.free_knot_grading_reference_free_arc_over_r,
+            self.metal_knot_grading,
         ) == (other.layout, other.metal_interior_knots, other.free_knots, other.free_knot_grading,
               other.extra_levels_above_over_overetch,
-              other.free_knot_grading_reference_free_arc_over_r)
+              other.free_knot_grading_reference_free_arc_over_r,
+              other.metal_knot_grading)
 
     def levels(self, radius, metal_thickness, overetch_depth):
         """The outer ring heights: the fabrication planes that reach the box and the far
@@ -257,6 +289,8 @@ class TraceBasisRule:
             grading,
             record.get("ExtraLevelsAboveOverOveretch", ()),
             reference,
+            # Absent = (): every record written before the metal knot grading reads unchanged.
+            record.get("MetalKnotGrading", ()),
         )
 
 
@@ -283,7 +317,57 @@ REFINED_RULE = TraceBasisRule(
     "AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4),
     FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R,
 )
-RULES = {"legacy": LEGACY_RULE, "all-rings-follow-metal": REFINED_RULE}
+# The metal-graded refinement of the refined rule (the concave-MS remedy; decisions 587 (1) /
+# 590 / 626 (5) / 629 O-9; MS DIAGNOSIS 4.2 / 6.2): ONE generic rule for both convexities and
+# the rounded nodes — the refined rule with the metal-interior knots graded from each crossing
+# exactly as the free knots are: MetalKnotGrading = (1/9, 1/3) (one knot at R / 9 and one at
+# R / 3 of perimeter from EACH crossing into the metal arc, scaled by min(1, MetalArc / the
+# free side's reference arc 1.4226 R) on a short metal arc — the acute convex nodes — so NO new
+# constant enters), the recorded 5 equal-fraction metal knots kept between the innermost
+# graded ones (MetalInteriorKnots 5 -> 9; RingSize 20): 11 rings x 20 = 220 knots, the zero set
+# 14 -> 22 per metal ring pair. Measured basis (MS DIAGNOSIS A5-A7, the M-B r2.5p5 record):
+# 61 % of the concave sharp-90 MS at t_ref sits on the hats spanning the metal-side first
+# chord (length R on the concave 90 node, R / 3 on the convex 90), and the family's H1 MS
+# over-read follows the metal-side knot spacing on both convexities. Placed by R and the
+# crossings only. The recorded refined rule keeps its name and its byte-identical records.
+METAL_GRADED_RULE = TraceBasisRule(
+    "AllRingsFollowMetal", 9, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4),
+    FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R,
+    metal_knot_grading=(1.0 / 9.0, 1.0 / 3.0),
+)
+RULES = {
+    "legacy": LEGACY_RULE,
+    "all-rings-follow-metal": REFINED_RULE,
+    "all-rings-follow-metal-metal-graded": METAL_GRADED_RULE,
+}
+# The CONVEXITY-CONDITIONAL selector (the 633 (1) follow-up; S7-DESIGN 3.2 R2, decision 739):
+# resolved PER NODE before anything is laid out — the metal-graded rule on a CONCAVE node (the
+# metal-side chord of decision 590 lives on the metal-interior knots under the MS plane of a
+# concave node), the refined rule on a CONVEX node (its metal interior is the other side of the
+# box; the 633 (b) convex MS drop cannot recur). Convexity is a geometric class of every corner
+# node, so the rule stays generic. The RESOLVED rule is the one the records carry (no selector
+# name is ever recorded), so a convex node built under the selector writes files byte-identical
+# to the refined rule's (test_convex_node_under_the_selector_is_the_refined_rule_byte_for_byte).
+CONCAVE_GRADED_SELECTOR = "all-rings-follow-metal-concave-graded"
+SELECTORS = {
+    CONCAVE_GRADED_SELECTOR: {
+        "concave": "all-rings-follow-metal-metal-graded",
+        "convex": "all-rings-follow-metal",
+    },
+}
+
+
+def resolve_trace_basis(name, topology):
+    """The concrete rule name of a --trace-basis request on a node of the given topology
+    ("convex" / "concave"): a concrete rule is itself; a selector maps by topology."""
+    if name in SELECTORS:
+        try:
+            return SELECTORS[name][topology]
+        except KeyError:
+            raise ValueError(f"the selector {name!r} has no rule for topology {topology!r}")
+    if name not in RULES:
+        raise ValueError(f"unknown trace basis rule {name!r}")
+    return name
 # The held-out reference surface (option (c); USER decision 161 (2) and the supervisor's
 # decision of 2026-09-30, corner-basis-refinement-20260930 sections 5-9): its z-levels are
 # DECOUPLED from the basis so the self-check judges the vertical representation as well as
@@ -320,7 +404,7 @@ def heldout_reference_levels(radius, metal_thickness, overetch_depth):
 
 
 def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RULE,
-                     free_arc_over_r=None):
+                     free_arc_over_r=None, metal_arc_over_r=None):
     """The TraceBasis record. With a connectivity angle the coupon is a node of an
     interpolation SEGMENT of the corner family (corner-qualification block 2026-09-29): the
     bands next to its metal rings are triangulated in the merge order of the rule's layout at
@@ -332,7 +416,10 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RUL
     = the node's free arc (perimeter length over R, the same on every ring): a graded layout
     whose scaling is ACTIVE there (free arc below the rule's reference) records
     FreeKnotGradingReferenceFreeArcOverR; a record without the key reads the default reference
-    (decision 318), so nodes the scaling does not touch keep their byte-identical record."""
+    (decision 318), so nodes the scaling does not touch keep their byte-identical record.
+    `metal_arc_over_r` = the node's metal arc (over R; the free arc's complement): a
+    metal-graded layout whose scaling is ACTIVE there (an acute convex node) records the same
+    reference key."""
     if ring_size != rule.ring_size:
         raise ValueError(
             f"ring size {ring_size} is not the rule's 2 + MetalInteriorKnots + FreeKnots = "
@@ -366,7 +453,26 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RUL
             "ExtraLevelsAboveOverOveretch": list(rule.extra_levels_above_over_overetch),
             "CapCentre": "MeanOfCrossingKnots",
         }
-        if free_arc_over_r is not None and free_knot_grading_scale(free_arc_over_r, rule) < 1.0:
+        if rule.metal_knot_grading:
+            # Written only for a metal-graded rule: the recorded refined rule's records stay
+            # byte-identical (the key and this clause are absent there; absent reads as ()).
+            record["Rule"] += (
+                "; the metal-interior knots are graded from each crossing like the free knots: "
+                "MetalKnotGrading = perimeter distances over R from each crossing into the metal "
+                "arc, scaled by min(1, MetalArc / FreeKnotGradingReferenceFreeArcOverR) on a "
+                "metal arc shorter than the free side's reference arc, the rest at equal "
+                "fractions between the innermost graded ones (the concave-MS remedy, decisions "
+                "590 / 629)"
+            )
+            record["MetalKnotGrading"] = list(rule.metal_knot_grading)
+        free_scaled = (
+            free_arc_over_r is not None and free_knot_grading_scale(free_arc_over_r, rule) < 1.0
+        )
+        metal_scaled = (
+            metal_arc_over_r is not None
+            and metal_knot_grading_scale(metal_arc_over_r, rule) < 1.0
+        )
+        if free_scaled:
             record["Rule"] += (
                 "; the graded free-knot distances are scaled by min(1, FreeArc / "
                 "FreeKnotGradingReferenceFreeArcOverR) with FreeArc the ring's free arc over R "
@@ -374,6 +480,13 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RUL
                 "family's reference node (the concave 60-degree node) with the same slots, "
                 "like-to-like indices and zero set (block (b) DESIGN A9 family 4, decision 318)"
             )
+        if metal_scaled:
+            record["Rule"] += (
+                "; the graded metal-knot distances are scaled by min(1, MetalArc / "
+                "FreeKnotGradingReferenceFreeArcOverR) with MetalArc the ring's metal arc over R "
+                "(the same on every ring)"
+            )
+        if free_scaled or metal_scaled:
             record["FreeKnotGradingReferenceFreeArcOverR"] = (
                 rule.free_knot_grading_reference_free_arc_over_r
             )
@@ -502,13 +615,24 @@ def free_knot_grading_scale(free_arc_over_r, rule):
     ring whose free arc is `free_arc_over_r` (over R); exactly 1 for every ring whose free arc
     reaches the rule's reference within FREE_KNOT_GRADING_REFERENCE_TOLERANCE_OVER_R (the
     layout is then the unscaled one, bit for bit)."""
+    return graded_knot_scale(free_arc_over_r, rule.free_knot_grading, rule)
+
+
+def metal_knot_grading_scale(metal_arc_over_r, rule):
+    """min(1, MetalArc / Reference) for the rule's graded metal-knot distances: the SAME
+    reference constant as the free side (the convex-theta metal arc equals the concave-theta
+    free arc by construction); 1 without a metal grading."""
+    return graded_knot_scale(metal_arc_over_r, rule.metal_knot_grading, rule)
+
+
+def graded_knot_scale(arc_over_r, grading, rule):
     reference = rule.free_knot_grading_reference_free_arc_over_r
     if (
-        not rule.free_knot_grading
-        or free_arc_over_r >= reference - FREE_KNOT_GRADING_REFERENCE_TOLERANCE_OVER_R
+        not grading
+        or arc_over_r >= reference - FREE_KNOT_GRADING_REFERENCE_TOLERANCE_OVER_R
     ):
         return 1.0
-    return free_arc_over_r / reference
+    return arc_over_r / reference
 
 
 def free_knot_fractions(free_arc, rule):
@@ -516,17 +640,32 @@ def free_knot_fractions(free_arc, rule):
     knots at free_knot_grading x R from both ends (scaled by free_knot_grading_scale on a free
     arc shorter than the rule's reference), the remaining knots at equal fractions between the
     innermost graded ones (equal fractions of the whole arc without grading)."""
-    start, end = free_arc
-    if not rule.free_knot_grading:
-        return [start + (end - start) * k / (rule.free_knots + 1) for k in range(1, rule.free_knots + 1)]
-    offsets = [g / 8.0 for g in rule.free_knot_grading]  # perimeter fraction = distance / 8R
-    scale = free_knot_grading_scale(free_arc_over_radius(free_arc), rule)
+    return graded_arc_fractions(free_arc, rule.free_knots, rule.free_knot_grading, rule)
+
+
+def metal_knot_fractions(metal_arc, rule):
+    """Unwrapped fractions of the rule's metal-interior knots on the metal arc (start, end):
+    equal fractions of the arc (the recorded rules; the expression of record, bit for bit),
+    or with a metal_knot_grading the graded knots at metal_knot_grading x R from both
+    crossings (scaled by metal_knot_grading_scale on a short metal arc) and the rest at equal
+    fractions between the innermost graded ones."""
+    return graded_arc_fractions(
+        metal_arc, rule.metal_interior_knots, rule.metal_knot_grading, rule
+    )
+
+
+def graded_arc_fractions(arc, count, grading, rule):
+    start, end = arc
+    if not grading:
+        return [start + (end - start) * k / (count + 1) for k in range(1, count + 1)]
+    offsets = [g / 8.0 for g in grading]  # perimeter fraction = distance / 8R
+    scale = graded_knot_scale(free_arc_over_radius(arc), grading, rule)
     if scale < 1.0:
         offsets = [offset * scale for offset in offsets]
     inner_start, inner_end = start + offsets[-1], end - offsets[-1]
     if inner_end - inner_start <= KNOT_COINCIDENCE_FRACTION:
-        raise ValueError("the free arc is too short for the free knot grading")
-    remaining = rule.free_knots - 2 * len(offsets)
+        raise ValueError("the arc is too short for the knot grading")
+    remaining = count - 2 * len(offsets)
     fractions = [start + o for o in offsets] + [end - o for o in offsets]
     fractions += [
         inner_start + (inner_end - inner_start) * k / (remaining + 1)
@@ -552,11 +691,8 @@ def rule_ring_layout(radius, angle_degrees, topology, rule, metal_ring):
     first, second = arm_crossing_fractions(radius, angle_degrees)
     metal, free = metal_arc_fractions(radius, angle_degrees, topology)
     roles = {"crossing1": first, "crossing2": second % 1.0}
-    for m in range(1, rule.metal_interior_knots + 1):
-        roles[f"metal{m}"] = snap_fraction(
-            (metal[0] + (metal[1] - metal[0]) * m / (rule.metal_interior_knots + 1)) % 1.0,
-            ring_size,
-        )
+    for m, fraction in enumerate(metal_knot_fractions(metal, rule), start=1):
+        roles[f"metal{m}"] = snap_fraction(fraction % 1.0, ring_size)
     for k, fraction in enumerate(free_knot_fractions(free, rule), start=1):
         roles[f"free{k}"] = snap_fraction(fraction % 1.0, ring_size)
     order = ring_role_order(topology, rule)
@@ -621,6 +757,12 @@ def ring_points(half_width, z, layout, ring_size):
     fractions and to FIXED_FRACTION_IDENTITY x 8 R elsewhere; MatchCornerFamily checks the
     recorded files against the C++ rule at 1e-9 R (test_ring_points_agree_with_
     square_perimeter_point)."""
+    if ring_size % 8:
+        # No fixed layout exists for such a ring (square_ring needs a multiple of eight): every
+        # knot is placed by its fraction alone, as the C++ SquarePerimeterPoint places it (the two
+        # formulas agree to ~1e-15 R). The reuse path below is kept for the recorded layouts so
+        # that their files stay byte-identical.
+        return np.asarray([square_perimeter_point(half_width, z, fraction) for fraction, _, _ in layout])
     fixed = square_ring(half_width, z, ring_size)
     points = []
     for fraction, _, _ in layout:
@@ -1515,13 +1657,19 @@ def main():
     parser.add_argument("--corner-radius", type=float, default=0.0)
     parser.add_argument(
         "--trace-basis",
-        choices=sorted(RULES),
+        choices=sorted((*RULES, *SELECTORS)),
         default="legacy",
         help="the trace basis rule: legacy = MetalRingsOnly (RingSize 8, the recorded "
         "family; events, segment connectivity); all-rings-follow-metal = the refined rule "
         "(every ring follows the metal fractions, 5 metal-interior + 9 graded free knots, the "
         "extra rings at MetalThickness + OveretchDepth and MetalThickness + 4 OveretchDepth; "
-        "no events)",
+        "no events); all-rings-follow-metal-metal-graded = the refined rule with the "
+        "metal-interior knots graded from each crossing like the free knots (MetalKnotGrading "
+        "R / 9, R / 3 into the metal arc; 9 metal-interior + 9 free knots, RingSize 20, 220 "
+        "knots; the concave-MS remedy, decisions 590 / 629); "
+        "all-rings-follow-metal-concave-graded = the convexity-conditional selector (the "
+        "metal-graded rule on a concave node, the refined rule on a convex node; the resolved "
+        "rule is recorded)",
     )
     parser.add_argument("--ring-size", type=int, default=8)
     parser.add_argument("--order", type=int, default=1)
@@ -1556,6 +1704,7 @@ def main():
             "--connectivity-angle must lie strictly between zero and 180 degrees and is a "
             "sharp corner family option"
         )
+    args.trace_basis = resolve_trace_basis(args.trace_basis, args.topology)
     rule = RULES[args.trace_basis]
     if args.ring_size != rule.ring_size:
         parser.error(
@@ -1724,6 +1873,9 @@ def main():
             rule,
             free_arc_over_radius(
                 metal_arc_fractions(args.radius, args.angle, args.topology)[1]
+            ),
+            free_arc_over_radius(
+                metal_arc_fractions(args.radius, args.angle, args.topology)[0]
             ),
         ),
     )

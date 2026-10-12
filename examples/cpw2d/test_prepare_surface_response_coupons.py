@@ -914,6 +914,66 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             )[:2],
             ("all-rings-follow-metal", "16"),
         )
+        # The metal-graded rule (the concave-MS remedy's decide step, decisions 590 / 629 O-9)
+        # is requested by name on a sharp or a rounded corner (RingSize 20); it is NOT the
+        # default (the defaults above are unchanged).
+        for identifier, radius in (("sharp-90", 0.0), ("rounded-90", 0.5)):
+            graded = generator_command(
+                corner(identifier, radius),
+                arguments(corner_trace_basis="all-rings-follow-metal-metal-graded"),
+            )
+            self.assertEqual(graded[:2], ("all-rings-follow-metal-metal-graded", "20"))
+            self.assertEqual(
+                graded[2],
+                {
+                    "RingSize": 20,
+                    "TraceBasis": "all-rings-follow-metal-metal-graded",
+                    "TraceResolvability": resolvability,
+                },
+            )
+        self.assertEqual(PREPARE.CORNER_TRACE_BASIS_DEFAULT, "all-rings-follow-metal")
+        # The convexity-conditional SELECTOR (decision 739 / S7-DESIGN 3.2 R2): a CONVEX node
+        # resolves to the default rule (its coupon spec is the default build's: byte-identical
+        # basis files by construction); a CONCAVE node to the metal-graded rule (RingSize 20).
+        selector = PREPARE.CORNER_TRACE_BASIS_CONCAVE_GRADED_SELECTOR
+        self.assertEqual(selector, "all-rings-follow-metal-concave-graded")
+        for identifier, radius in (("sharp-90", 0.0), ("rounded-90", 0.5)):
+            convex_selected = generator_command(
+                corner(identifier, radius), arguments(corner_trace_basis=selector)
+            )
+            self.assertEqual(
+                convex_selected, generator_command(corner(identifier, radius), arguments())
+            )
+            concave_coupon = dict(corner(identifier, radius), Topology="ConcaveCorner")
+            concave_selected = generator_command(
+                concave_coupon, arguments(corner_trace_basis=selector)
+            )
+            self.assertEqual(
+                concave_selected,
+                generator_command(
+                    concave_coupon,
+                    arguments(corner_trace_basis="all-rings-follow-metal-metal-graded"),
+                ),
+            )
+            self.assertEqual(
+                concave_selected[:2], ("all-rings-follow-metal-metal-graded", "20")
+            )
+        self.assertEqual(
+            PREPARE.corner_trace_basis(
+                "c", SimpleNamespace(corner_trace_basis=selector), "concave"
+            ),
+            "all-rings-follow-metal-metal-graded",
+        )
+        self.assertEqual(
+            PREPARE.corner_trace_basis(
+                "c", SimpleNamespace(corner_trace_basis=selector), "convex"
+            ),
+            "all-rings-follow-metal",
+        )
+        with self.assertRaisesRegex(ValueError, "no rule for topology"):
+            PREPARE.corner_trace_basis(
+                "c", SimpleNamespace(corner_trace_basis=selector), "straight"
+            )
         with self.assertRaisesRegex(ValueError, "unknown corner trace basis rule"):
             PREPARE.corner_trace_basis(
                 "rounded-90", SimpleNamespace(corner_trace_basis="fillet-knots")

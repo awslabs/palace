@@ -62,6 +62,20 @@ namespace palace
 // the scaling is active and an absent key reads as that default, so records written before
 // the scaling existed (every free arc at or above the reference) are unchanged and the
 // family stays on one rule.
+//
+// MetalKnotGrading (the concave-MS remedy; decisions 587 (1) / 590 / 626 (5) / 629 O-9; MS
+// DIAGNOSIS 4.2 / 6.2): the metal-interior knots graded from each crossing INTO the metal
+// arc exactly as the free knots are from each crossing into the free arc — metal_knot_grading
+// lists perimeter distances (over R) from each crossing carrying a knot, scaled by
+// min(1, MetalArc / Reference) with the SAME reference (the convex-theta metal arc equals the
+// concave-theta free arc by construction, so one constant serves both sides), the remaining
+// metal-interior knots at equal fractions between the innermost graded ones. Measured basis:
+// the recorded equal-fraction metal knots leave ONE chord of length R from each crossing on
+// the concave 90-degree node (R / 3 on the convex 90), on the -OveretchDepth ring 50 nm under
+// the MS interface, over a potential that falls 8x within that R; 61 % of the concave MS at
+// the device trace sits on those hats and the family's MS over-read follows the metal-side
+// spacing on both convexities. An empty grading is the recorded equal-fraction rule, so
+// every record without the key MetalKnotGrading reads unchanged.
 
 // 2 - cot(60 deg) = 2 - 1 / sqrt(3), the free arc over R of every ring of the concave
 // 60-degree node (a decimal literal: the same double as the generator's
@@ -95,6 +109,10 @@ struct CornerTraceBasisRule
   // the default for a record without the key).
   double free_knot_grading_reference_free_arc_over_r =
       kFreeKnotGradingReferenceFreeArcOverR;
+  // Graded metal-interior knots at these perimeter distances (over R) from each crossing
+  // into the metal arc (empty = the recorded equal-fraction metal knots); scaled by
+  // free_knot_grading_reference_free_arc_over_r like the free grading.
+  std::vector<double> metal_knot_grading;
 
   bool AllRings() const { return ring_layout == CornerRingLayout::ALL_RINGS_FOLLOW_METAL; }
 
@@ -107,7 +125,8 @@ struct CornerTraceBasisRule
            free_knot_grading == other.free_knot_grading &&
            extra_levels_above_over_overetch == other.extra_levels_above_over_overetch &&
            free_knot_grading_reference_free_arc_over_r ==
-               other.free_knot_grading_reference_free_arc_over_r;
+               other.free_knot_grading_reference_free_arc_over_r &&
+           metal_knot_grading == other.metal_knot_grading;
   }
   bool operator!=(const CornerTraceBasisRule &other) const { return !(*this == other); }
 };
@@ -118,6 +137,11 @@ struct CornerTraceBasisRule
 // 176.
 CornerTraceBasisRule RefinedCornerTraceBasisRule();
 
+// The metal-graded refinement of the refined rule (the concave-MS remedy, decisions 590 /
+// 629 O-9; generate_corner_response.METAL_GRADED_RULE): MetalKnotGrading (1/9, 1/3), the 5
+// equal-fraction metal knots kept (MetalInteriorKnots 9, RingSize 20; 11 x 20 = 220 knots).
+CornerTraceBasisRule MetalGradedCornerTraceBasisRule();
+
 // The outer ring levels of an AllRingsFollowMetal coupon: -R, -R/3, -d, 0, t, t + k d for
 // the rule's k, R/3, R (sorted).
 std::vector<double> CornerRuleLevels(const CornerTraceBasisRule &rule, double radius,
@@ -126,13 +150,18 @@ std::vector<double> CornerRuleLevels(const CornerTraceBasisRule &rule, double ra
 // The reason a rule is invalid (RingSize = 2 + MetalInteriorKnots + FreeKnots, the
 // fraction parametrisation, an increasing positive grading fitting the free knots, no
 // grading on MetalRingsOnly, a grading reference above twice the outermost graded
-// distance), empty when valid.
+// distance; a metal knot grading increasing, positive, fitting the metal-interior knots, on
+// a graded AllRingsFollowMetal layout, below half the reference), empty when valid.
 std::string CheckCornerTraceBasisRule(const CornerTraceBasisRule &rule);
 
 // min(1, FreeArc / Reference) for a ring whose free arc is `free_arc_over_r` (over R): the
 // factor on the rule's graded free-knot distances, exactly 1 for a free arc that reaches
 // the rule's reference within kFreeKnotGradingReferenceToleranceOverR.
 double FreeKnotGradingScale(double free_arc_over_r, const CornerTraceBasisRule &rule);
+
+// min(1, MetalArc / Reference) for the rule's graded metal-knot distances (the same
+// reference as the free side); 1 without a metal knot grading.
+double MetalKnotGradingScale(double metal_arc_over_r, const CornerTraceBasisRule &rule);
 
 // A vertex of a ring that meets the metal: its perimeter fraction in [0, 1), whether it is
 // a PEC knot, a free knot or a slave (box corner), and for a knot its basis slot in the

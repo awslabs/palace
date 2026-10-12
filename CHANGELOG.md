@@ -105,6 +105,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     closure proceed) and refused by a solve on every rank alike. Response-geometry cache
     version 18 (the `ProbeSnaps` and `ProbeSnapsComputed` of every spatial patch; a
     version-17 cache is refused).
+  - Added the METAL-GRADED corner trace basis rule (the concave-MS remedy, supervisor
+    decisions 590 / 629 O-9; a decide-step branch, not adopted by this entry): the record key
+    `TraceBasis.MetalKnotGrading` grades the metal-interior knots from each metal-arm
+    crossing into the metal arc exactly as `FreeKnotGrading` grades the free knots (scaled by
+    `min(1, MetalArc / FreeKnotGradingReferenceFreeArcOverR)` on a short metal arc; the same
+    reference constant); the generator's `--trace-basis all-rings-follow-metal-metal-graded`
+    (MetalInteriorKnots 9, RingSize 20, 220 knots). An absent key is the recorded
+    equal-fraction rule, so every published model reads unchanged; the load-time file check
+    refuses a graded coupon whose record lacks the key. The planner's default rule is
+    unchanged. The identification `Conventions.CornerTraceBasisRule` text is a dated history
+    of the known rules asserting no per-model fact.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
