@@ -70,9 +70,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     materials define the background material properties. Several blocks can terminate the
     physical domain at different locations or with different parameters, with a stretch
     that is checked to be continuous across their interfaces. The uniaxial PML supports
-    anisotropic and lossy
-    background materials, graded conductivity, real stretch, and complex frequency shift
-    (CFS-PML) profiles, and automatic detection of the layer geometry. The stretch can be
+    anisotropic and lossy background materials, graded conductivity, real stretch, and
+    complex frequency shift (CFS-PML) profiles, and automatic detection of the layer
+    geometry. By default, the conductivity of each face is computed from the size of the
+    PML elements normal to the face and the finite element order, which bounds the change
+    of the stretch between neighboring elements, so that the absorption only depends on the
+    number of elements across the layer (or from a target reflection coefficient, if
+    specified). The stretch can be
     evaluated at a fixed reference frequency (static PML, the default, at the lowest
     frequency of interest, which keeps the system matrices frequency-independent) or at the
     solve frequency (`"FrequencyDependent"`), which for eigenmode simulations is the complex

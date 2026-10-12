@@ -122,16 +122,16 @@ mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &d
 MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
                                    const config::PeriodicBoundaryData &periodic,
                                    ProblemType problem_type, const Mesh &mesh,
-                                   const std::vector<config::PMLData> &pml)
+                                   const std::vector<config::PMLData> &pml, int fe_order)
   : mesh(mesh)
 {
   SetUpMaterialProperties(materials, periodic, problem_type, mesh);
-  SetUpPML(pml, materials, problem_type, mesh);
+  SetUpPML(pml, materials, problem_type, mesh, fe_order);
 }
 
 MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh)
   : MaterialOperator(iodata.domains.materials, iodata.boundaries.periodic,
-                     iodata.problem.type, mesh, iodata.domains.pml)
+                     iodata.problem.type, mesh, iodata.domains.pml, iodata.solver.order)
 {
 }
 
@@ -420,7 +420,8 @@ void MaterialOperator::SetUpMaterialProperties(
 
 void MaterialOperator::SetUpPML(const std::vector<config::PMLData> &pml,
                                 const std::vector<config::MaterialData> &materials,
-                                ProblemType problem_type, const mfem::ParMesh &mesh)
+                                ProblemType problem_type, const mfem::ParMesh &mesh,
+                                int fe_order)
 {
   attr_mat_bulk = attr_mat;
   if (pml.empty())
@@ -456,7 +457,7 @@ void MaterialOperator::SetUpPML(const std::vector<config::PMLData> &pml,
   for (const auto &data : pml)
   {
     pml_layers.emplace_back(data, pml_attributes, materials, this->mesh, attr_mat,
-                            mat_muinv, mat_epsilon, mat_epsilon_imag);
+                            mat_muinv, mat_epsilon, mat_epsilon_imag, fe_order);
   }
   pml::CheckStretchContinuity(pml_layers, this->mesh);
   for (int i = 0; i < attr_mat_bulk.Size(); i++)

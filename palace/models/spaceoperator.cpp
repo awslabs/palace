@@ -61,7 +61,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
         solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
-    mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back(), domains.pml),
+    mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back(), domains.pml,
+           solver.order),
     current_dipole_op(domains.current_dipole, units, *mesh.back()),
     farfield_op(boundaries.farfield, problem_type, mat_op, *mesh.back()),
     surf_sigma_op(boundaries.conductivity, problem_type, units, mat_op, *mesh.back()),
@@ -186,22 +187,27 @@ void SpaceOperator::PrintPML(const Units &units) const
     utils::PrettyPrint(layer.GetAttributes());
     if (p.frequency_dependent)
     {
-      Mpi::Print(" Frequency-dependent stretch\n");
+      Mpi::Print(" Frequency-dependent stretch");
     }
     else
     {
-      Mpi::Print(" Static stretch at f₀ = {:.3e} GHz\n",
+      Mpi::Print(" Static stretch at f₀ = {:.3e} GHz",
                  units.Dimensionalize<Units::ValueType::FREQUENCY>(
                      p.reference_frequency / (2.0 * std::numbers::pi)));
     }
+    Mpi::Print(", conductivity profile σ = σ_max r^{:d}\n", p.order);
+    const auto sigma = [&units](double s)
+    { return units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(s); };
     for (int f = 0; f < 6; f++)
     {
-      if (p.geometry.thickness[f] > 0.0)
+      if (p.geometry.thickness[f] <= 0.0)
       {
-        Mpi::Print("  {}: thickness = {:.3e}, σ_max = {:.3e} S/m\n", face_name[f],
-                   p.geometry.thickness[f] * length_scale,
-                   units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(p.sigma_max[f]));
+        continue;
       }
+      Mpi::Print("  {}: thickness = {:.3e}, element size = {:.3e}, ", face_name[f],
+                 p.geometry.thickness[f] * length_scale, p.element_size[f] * length_scale);
+      Mpi::Print("σ_max = {:.3e} S/m, theoretical reflection = {:.1e}\n",
+                 sigma(p.sigma_max[f]), pml::TheoreticalReflection(p, f));
     }
   }
 }
