@@ -1,0 +1,78 @@
+// M1: SaveField: false is overridden by the Save count. Sweep off, Save: 1, and the
+// excitation's SaveField is false. Expected per docs: no ParaView field for the
+// excitation. Actual: the excitation lands on step 0 < Save, so ShouldWriteFields(0)
+// is true regardless of SaveField, and the field is written anyway (Cycle000002).
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/out_m1"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/sheet_w_two_holes.msh",
+    "L0": 1.0e-6
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3, 4, 5, 6, 7]
+    },
+    "Superconductor":
+    [
+      {
+        "Attributes": [8],
+        "PenetrationDepth": 0.4,
+        "Thickness": 0.1
+      }
+    ],
+    "FluxLoop":
+    [
+      {
+        "Index": 1,
+        "FilmAttributes": [8],
+        "HoleAttributes": [9],
+        "FluxAmounts": [1.0],
+        "Direction": [0.0, 0.0, 1.0]
+      }
+    ],
+    "FluxLoopExcitation":
+    [
+      {
+        "Index": 2,
+        "FluxLoops": [1],
+        "FluxAmounts": [1.0],
+        "SaveField": false
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 1,
+      "FluxLoopMatrixSweep": false
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

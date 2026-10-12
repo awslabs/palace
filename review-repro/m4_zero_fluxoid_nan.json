@@ -1,0 +1,78 @@
+// M4: an all-zero excitation is a zero right-hand side. The CG convergence test is
+// res < max(rel_tol * 0, abs_tol) = 0, which fails, and the solver produces 0/0 = NaN
+// ("did NOT converge ... nan"). With the sweep off there are no other states, so the
+// skipped excitation also fails the run (M3: exit nonzero).
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/out_m4"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/sheet_w_two_holes.msh",
+    "L0": 1.0e-6
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3, 4, 5, 6, 7]
+    },
+    "Superconductor":
+    [
+      {
+        "Attributes": [8],
+        "PenetrationDepth": 0.4,
+        "Thickness": 0.1
+      }
+    ],
+    "FluxLoop":
+    [
+      {
+        "Index": 1,
+        "FilmAttributes": [8],
+        "HoleAttributes": [9],
+        "FluxAmounts": [1.0],
+        "Direction": [0.0, 0.0, 1.0]
+      }
+    ],
+    "FluxLoopExcitation":
+    [
+      {
+        "Index": 2,
+        "FluxLoops": [1],
+        "FluxAmounts": [0.0],
+        "SaveField": false
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 0,
+      "FluxLoopMatrixSweep": false
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

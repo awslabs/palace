@@ -1,0 +1,84 @@
+// M2: the final ParaView save overwrites a swept loop's field directory. Loops with
+// indices 1 and 3, excitation Index 2 driving loop 1, Save: 2. Writes: loop 1 ->
+// Cycle000001, loop 3 -> Cycle000003, excitation -> Cycle000002. The final save then
+// writes to GetCycle()+1 = 3, clobbering loop 3's directory (only Rank/Indicator remain).
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/out_m2"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/sheet_w_two_holes.msh",
+    "L0": 1.0e-6
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3, 4, 5, 6, 7]
+    },
+    "Superconductor":
+    [
+      {
+        "Attributes": [8],
+        "PenetrationDepth": 0.4,
+        "Thickness": 0.1
+      }
+    ],
+    "FluxLoop":
+    [
+      {
+        "Index": 1,
+        "FilmAttributes": [8],
+        "HoleAttributes": [9],
+        "FluxAmounts": [1.0],
+        "Direction": [0.0, 0.0, 1.0]
+      },
+      {
+        "Index": 3,
+        "FilmAttributes": [8],
+        "HoleAttributes": [10],
+        "FluxAmounts": [1.0],
+        "Direction": [0.0, 0.0, 1.0]
+      }
+    ],
+    "FluxLoopExcitation":
+    [
+      {
+        "Index": 2,
+        "FluxLoops": [1],
+        "FluxAmounts": [1.0],
+        "SaveField": true
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 2
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}
