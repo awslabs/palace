@@ -17,6 +17,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
+    eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
+    `"Attributes"` are the domains of the PML regions (the other parameters have suitable
+    defaults). The stretch can be evaluated at a fixed reference frequency or at the
+    solve frequency (`"FrequencyDependent"`). SchemaVer 6-1-0
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
 #### Bug Fixes
 
   - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a

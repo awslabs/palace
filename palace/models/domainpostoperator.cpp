@@ -23,7 +23,8 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const FiniteElementSpace &rt_fespace,
                                        const std::vector<const Operator *> &unit_mass)
 {
-  // Mass operators are always partially assembled.
+  // Mass operators are always partially assembled. The domain energies exclude the PML
+  // regions (see MaterialOperator::GetBulkAttributeToMaterial).
   const int dim = nd_fespace.Dimension();
   const auto curl_map = rt_fespace.GetFEColl().GetMapType(dim);
   MFEM_VERIFY(nd_fespace.GetFEColl().GetMapType(dim) == mfem::FiniteElement::H_CURL &&
@@ -36,7 +37,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     // for complex peak phasors, to its sum with the polarization forms of the
     // frequency-dependent materials. Only the real, symmetric permittivity contributes to
     // the real part of this quadratic form.
-    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetBulkAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm m(nd_fespace);
     m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
@@ -53,7 +54,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     {
       // Scalar curl (2D): need scalar μ⁻¹ (z-z component).
       // GetCurlCurlInvPermeability() returns 1x1 for 2D MaterialOperator.
-      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+      MaterialPropertyCoefficient muinv_func(mat_op.GetBulkAttributeToMaterial(),
                                              mat_op.GetCurlCurlInvPermeability());
       BilinearForm m(rt_fespace);
       m.AddDomainIntegrator<MassIntegrator>(muinv_func);
@@ -61,7 +62,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     }
     else
     {
-      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+      MaterialPropertyCoefficient muinv_func(mat_op.GetBulkAttributeToMaterial(),
                                              mat_op.GetInvPermeability());
       BilinearForm m(rt_fespace);
       m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
@@ -77,7 +78,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
   {
     std::unique_ptr<Operator> M_elec_i, M_mag_i;
     {
-      MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+      MaterialPropertyCoefficient epsilon_func(mat_op.GetBulkAttributeToMaterial(),
                                                mat_op.GetPermittivityReal());
       epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
       BilinearForm m(nd_fespace);
@@ -91,7 +92,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     {
       if (curl_map == mfem::FiniteElement::INTEGRAL)
       {
-        MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+        MaterialPropertyCoefficient muinv_func(mat_op.GetBulkAttributeToMaterial(),
                                                mat_op.GetCurlCurlInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(rt_fespace);
@@ -101,7 +102,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       }
       else
       {
-        MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+        MaterialPropertyCoefficient muinv_func(mat_op.GetBulkAttributeToMaterial(),
                                                mat_op.GetInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(rt_fespace);
@@ -131,7 +132,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
   {
     // H1 space for voltage and electric field energy.
     {
-      MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+      MaterialPropertyCoefficient epsilon_func(mat_op.GetBulkAttributeToMaterial(),
                                                mat_op.GetPermittivityReal());
       BilinearForm m(fespace);
       m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
@@ -144,7 +145,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     {
       std::unique_ptr<Operator> M_elec_i;
       {
-        MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+        MaterialPropertyCoefficient epsilon_func(mat_op.GetBulkAttributeToMaterial(),
                                                  mat_op.GetPermittivityReal());
         epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(fespace);
@@ -160,7 +161,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     // H(curl) space for magnetic vector potential and magnetic field energy.
     // (This is the magnetostatic case — creates curl-curl mass for B-field energy.)
     {
-      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+      MaterialPropertyCoefficient muinv_func(mat_op.GetBulkAttributeToMaterial(),
                                              mat_op.GetCurlCurlInvPermeability());
       BilinearForm m(fespace);
       m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
@@ -184,7 +185,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     {
       std::unique_ptr<Operator> M_mag_i;
       {
-        MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+        MaterialPropertyCoefficient muinv_func(mat_op.GetBulkAttributeToMaterial(),
                                                mat_op.GetCurlCurlInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(fespace);

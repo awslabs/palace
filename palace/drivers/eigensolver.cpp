@@ -4,6 +4,7 @@
 #include "eigensolver.hpp"
 
 #include <algorithm>
+#include <array>
 #include <complex>
 #include <functional>
 #include <numbers>
@@ -156,6 +157,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<ComplexOperator> Kp, Cp, Mp;
   std::unique_ptr<Interpolation> interp_op;
   std::unique_ptr<ComplexOperator> A2_0, A2_1, A2_2;
+  std::array<std::unique_ptr<ComplexOperator>, 3> A2_pml;
   NonlinearEigenSolver nonlinear_type = iodata.solver.eigenmode.nonlinear_type;
   // SLP is only realized through SLEPc's NEP path. Resolve it against the selected backend
   // here, before the HYBRID interpolation below: an ARPACK backend (or a build without
@@ -222,7 +224,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const auto &farfield_op = surface_terms.GetFarfieldOp();
     poles_only = space_op.GetWavePortOp().Size() == 0 &&
                  surface_terms.GetNumExtraSystemBdrMassTerms() == 0 &&
-                 (farfield_op.GetAttrList().Size() == 0 || farfield_op.GetOrder() < 2);
+                 (farfield_op.GetAttrList().Size() == 0 || farfield_op.GetOrder() < 2) &&
+                 !mat_op.HasFrequencyDependentPML();
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
       if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
@@ -334,77 +337,109 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (hybrid_seed)
   {
-    const double target_max = iodata.solver.eigenmode.target_upper;
-    // With the pole terms in the seed exactly, only the rest of A2 is interpolated.
+    // Frozen-stretch seed for frequency-dependent PML regions. Their A2(λ) terms are
+    // rational in λ through the stretch factors s(λ) = κ + σ / (α + λ), with a continuum of
+    // poles on the negative real axis (σ is graded across the layer). A quadratic fit over
+    // the interpolation window, up to the upper target, cannot represent them and seeds
+    // spurious, strongly damped modes. Instead, the PML stretch is frozen at the target:
+    // the PML terms of the seed pencil are those of a static PML with reference frequency
+    // equal to the target, which is exact at the target and a consistent PML (without
+    // spurious modes) elsewhere.
+    const bool freeze_pml = space_op.GetMaterialOp().HasFrequencyDependentPML();
+    // With the pole terms or the PML terms in the seed exactly, only the rest of A2 is
+    // interpolated.
     std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2_seed =
         funcA2;
-    if (seed_poles)
+    if (seed_poles || freeze_pml)
     {
-      funcA2_seed = [&space_op](std::complex<double> lambda)
+      funcA2_seed = [&space_op, seed_poles, freeze_pml](std::complex<double> lambda)
       {
         const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);
         return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO,
-                                             /*include_permittivity_poles=*/false);
+                                             /*include_permittivity_poles=*/!seed_poles,
+                                             /*include_pml=*/!freeze_pml);
       };
     }
-    auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2_seed, A2->Width());
-    interp->Interpolate(1i * target, 1i * target_max);
-    // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield
-    // ABC contributes pole terms g(λ)·M to A2(λ), with g(λ) = -0.5/λ next to constant
-    // materials (M includes the negative sign of β) and 0.5i/(λ r_k(-iλ)) next to
-    // frequency-dependent material k, that a polynomial (K' + λC' + λ²M') seed cannot fit
-    // accurately. AddFrozenPole removes each term's interpolated contribution and re-adds
-    // it frozen at the target into the K-block: next to a frequency-dependent material, the
-    // material factor 1/r_k is frozen with the pole, as the seed has no separate
-    // representation of it. The freeze is deliberately unconditional (no DetermineFrozen):
-    // the fit's pointwise window error is small (the pole at λ = 0 sits outside the
-    // window), but its curvature term injects a fictitious rank-deficient λ² contribution
-    // into the seed's M-block that displaces spurious roots into the unphysical half-plane
-    // — the failure mode is structural, not a pointwise approximation error, so the
-    // pointwise metric must not be allowed to choose the fit here.
-    for (auto &[M_ff, g] : space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO))
+    if (!freeze_pml || space_op.HasExtraSystemBdrTerms() ||
+        space_op.GetMaterialOp().HasFrequencyDependentPermittivityA2())
     {
-      interp->AddFrozenPole(std::move(M_ff), g, 1i * target);
+      const double target_max = iodata.solver.eigenmode.target_upper;
+      auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2_seed, A2->Width());
+      interp->Interpolate(1i * target, 1i * target_max);
+      // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield
+      // ABC contributes pole terms g(λ)·M to A2(λ), with g(λ) = -0.5/λ next to constant
+      // materials (M includes the negative sign of β) and 0.5i/(λ r_k(-iλ)) next to
+      // frequency-dependent material k, that a polynomial (K' + λC' + λ²M') seed cannot fit
+      // accurately. AddFrozenPole removes each term's interpolated contribution and re-adds
+      // it frozen at the target into the K-block: next to a frequency-dependent material,
+      // the material factor 1/r_k is frozen with the pole, as the seed has no separate
+      // representation of it. The freeze is deliberately unconditional (no
+      // DetermineFrozen): the fit's pointwise window error is small (the pole at λ = 0 sits
+      // outside the window), but its curvature term injects a fictitious rank-deficient λ²
+      // contribution into the seed's M-block that displaces spurious roots into the
+      // unphysical half-plane — the failure mode is structural, not a pointwise
+      // approximation error, so the pointwise metric must not be allowed to choose the fit
+      // here.
+      for (auto &[M_ff, g] : space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO))
+      {
+        interp->AddFrozenPole(std::move(M_ff), g, 1i * target);
+      }
+      // Fit-or-freeze seed for the frequency-dependent boundary mass terms with an exact
+      // split of their scale (rational impedance boundaries). Each such term contributes
+      // c(λ)·M_i to A2(λ) with c(λ) = P(λ) + R(λ), for a rational impedance boundary the
+      // Robin coefficient λ·D(λ)/N(λ) with the pole part R(λ)/N(λ). The polynomial part P
+      // is exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
+      // proper pole part R is a candidate for freezing (otherwise the whole coefficient).
+      // We freeze it at the target when that approximates c over the interpolation window
+      // better than the polynomial interpolant does; otherwise keep the fit. Terms without
+      // a split (finite conductivity) are left to the interpolant.
+      const auto &surface_terms = space_op.GetSurfaceTerms();
+      for (int i = 0; i < surface_terms.GetNumExtraSystemBdrMassTerms(); i++)
+      {
+        const auto split = surface_terms.GetExtraSystemBdrMassTermSplit(i);
+        if (!split)
+        {
+          continue;
+        }
+        const bool proper_split = (split->degree <= 2);
+        const auto &f_full = split->coefficient;
+        const auto &f_frozen = proper_split ? split->remainder : split->coefficient;
+        double fit_err, freeze_err;
+        if (interp->DetermineFrozen(f_full, f_frozen, 1i * target, fit_err, freeze_err))
+        {
+          Mpi::Print(" Freezing {} pole part in the NLEPS seed (fit error {:.2e} > freeze "
+                     "error {:.2e})\n",
+                     surface_terms.GetExtraSystemBdrMassTermName(i), fit_err, freeze_err);
+          auto M_i = space_op.GetExtraSystemBdrMassTermMatrix<ComplexOperator>(
+              i, Operator::DIAG_ZERO);
+          interp->AddFrozenPole(std::move(M_i), f_frozen, 1i * target);
+        }
+      }
+      A2_0 = interp->GetInterpolationOperator(0);
+      A2_1 = interp->GetInterpolationOperator(1);
+      A2_2 = interp->GetInterpolationOperator(2);
+      interp_op = std::move(interp);  // retain: A2_0/A2_1/A2_2 reference its operator DAG
     }
-    // Fit-or-freeze seed for the frequency-dependent boundary mass terms with an exact
-    // split of their scale (rational impedance boundaries). Each such term contributes
-    // c(λ)·M_i to A2(λ) with c(λ) = P(λ) + R(λ), for a rational impedance boundary the
-    // Robin coefficient λ·D(λ)/N(λ) with the pole part R(λ)/N(λ). The polynomial part P is
-    // exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
-    // proper pole part R is a candidate for freezing (otherwise the whole coefficient). We
-    // freeze it at the target when that approximates c over the interpolation window
-    // better than the polynomial interpolant does; otherwise keep the fit. Terms without a
-    // split (finite conductivity) are left to the interpolant.
-    const auto &surface_terms = space_op.GetSurfaceTerms();
-    for (int i = 0; i < surface_terms.GetNumExtraSystemBdrMassTerms(); i++)
+    if (freeze_pml)
     {
-      const auto split = surface_terms.GetExtraSystemBdrMassTermSplit(i);
-      if (!split)
-      {
-        continue;
-      }
-      const bool proper_split = (split->degree <= 2);
-      const auto &f_full = split->coefficient;
-      const auto &f_frozen = proper_split ? split->remainder : split->coefficient;
-      double fit_err, freeze_err;
-      if (interp->DetermineFrozen(f_full, f_frozen, 1i * target, fit_err, freeze_err))
-      {
-        Mpi::Print(" Freezing {} pole part in the NLEPS seed (fit error {:.2e} > freeze "
-                   "error {:.2e})\n",
-                   surface_terms.GetExtraSystemBdrMassTermName(i), fit_err, freeze_err);
-        auto M_i = space_op.GetExtraSystemBdrMassTermMatrix<ComplexOperator>(
-            i, Operator::DIAG_ZERO);
-        interp->AddFrozenPole(std::move(M_i), f_frozen, 1i * target);
-      }
+      Mpi::Print(" Freezing the frequency-dependent PML stretch at the target in the NLEPS "
+                 "seed\n");
+      A2_pml = space_op.GetFrozenPMLMatrices(target, Operator::DIAG_ZERO);
     }
-    A2_0 = interp->GetInterpolationOperator(0);
-    A2_1 = interp->GetInterpolationOperator(1);
-    A2_2 = interp->GetInterpolationOperator(2);
-    interp_op = std::move(interp);  // retain: A2_0/A2_1/A2_2 reference its operator DAG
-    Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {K.get(), A2_0.get()});
-    Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {C.get(), A2_1.get()});
-    Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {M.get(), A2_2.get()});
+    Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i, 1.0 + 0i},
+                             {K.get(), A2_0.get(), A2_pml[0].get()});
+    if (C || A2_1 || A2_pml[1])
+    {
+      Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i, 1.0 + 0i},
+                               {C.get(), A2_1.get(), A2_pml[1].get()});
+    }
+    Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i, 1.0 + 0i},
+                             {M.get(), A2_2.get(), A2_pml[2].get()});
   }
+
+  // The (seed) eigenvalue problem is quadratic in λ if it has a damping term, otherwise it
+  // is a linear generalized eigenvalue problem for μ = -λ² = ω².
+  const bool quadratic = hybrid_seed ? (Cp != nullptr) : (C || has_A2);
 
   const auto &Curl = space_op.GetCurlMatrix();
   SaveMetadata(space_op.GetNDSpaces());
@@ -426,7 +461,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
 #if defined(PALACE_WITH_ARPACK)
     Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
-    if (C || has_A2)
+    if (quadratic)
     {
       eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
@@ -452,7 +487,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else
     {
-      if (C || has_A2)
+      if (quadratic)
       {
         if (!iodata.solver.eigenmode.pep_linear)
         {
@@ -522,7 +557,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     if (hybrid_seed)
     {
-      eigen->SetOperators(*Kp, *Cp, *Mp, scale);
+      if (Cp)
+      {
+        eigen->SetOperators(*Kp, *Cp, *Mp, scale);
+      }
+      else
+      {
+        eigen->SetOperators(*Kp, *Mp, scale);
+      }
     }
     else if (C)
     {
@@ -548,7 +590,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.solver.eigenmode.mass_orthog)
   {
     Mpi::Print(" Basis uses M-inner product\n");
-    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get(), target);
     eigen->SetBMat(*KM);
 
     // Mpi::Print(" Basis uses (K + M)-inner product\n");
@@ -562,7 +604,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
       !space_op.GetMaterialOp().HasLondonDepth() &&
-      !space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
+      !space_op.GetMaterialOp().HasFrequencyDependentPermittivity() &&
+      !space_op.GetMaterialOp().HasPML())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
@@ -598,7 +641,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
-  const bool blocks = (C || has_A2);  // The linearization also takes the block λ x
+  const bool blocks = quadratic;  // The linearization also takes the block λ x
   const bool can_warm_start = eigenmode.init_v0 && type == EigenSolverBackend::SLEPC &&
                               nonlinear_type != NonlinearEigenSolver::SLP &&
                               (!blocks || eigenmode.pep_linear) &&
@@ -688,7 +731,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         (2 * std::numbers::pi);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
-  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
+  if (quadratic || nonlinear_type == NonlinearEigenSolver::SLP)
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
@@ -801,6 +844,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
                              iodata.solver.eigenmode.preconditioner_lag_tol);
     qn->SetMaxRestart(iodata.solver.eigenmode.max_restart);
+    qn->SetLinearEigenvalueSquared(!quadratic);
     qn->SetLinearSolver(*ksp);
     qn->SetShiftInvert(1i * target);
     eigen = std::move(qn);
@@ -825,7 +869,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Normalize every converged eigenvector with respect to the mass matrix (unit electric
     // field energy) even if they are not computed to be orthogonal with respect to it.
-    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get(), target);
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_report);
   }
@@ -914,6 +958,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     A2_0.reset();
     A2_1.reset();
     A2_2.reset();
+    for (auto &A2_pml_k : A2_pml)
+    {
+      A2_pml_k.reset();
+    }
     A2.reset();
     interp_op.reset();
     K.reset();

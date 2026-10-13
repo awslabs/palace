@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -36,6 +37,10 @@ private:
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, active_restr, interp_restr,
       interp_range_restr;
+
+  // Element restrictions for the elements of given (global) domain attributes, see
+  // Mesh::GetCeedGeomFactorData. Built on demand for each Ceed context.
+  mutable std::map<std::vector<int>, ceed::CeedObjectMap<CeedElemRestriction>> restr_attr;
 
   // Temporary storage for operator applications.
   mutable ComplexVector tx, lx, ly;
@@ -263,6 +268,13 @@ public:
   CeedElemRestriction GetCeedElemRestriction(
       Ceed ceed, mfem::Geometry::Type geom, const ceed::CeedGeomFactorData &data,
       ceed::CeedElementSubset subset = ceed::CeedElementSubset::Full) const;
+
+  // Return the element restriction object for the elements of the given geometry factor
+  // data restricted to the elements with the given (global, sorted) domain attributes (see
+  // Mesh::GetCeedGeomFactorData), or for the full element index list if attr_list is empty.
+  CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                             const ceed::CeedGeomFactorData &data,
+                                             const std::vector<int> &attr_list) const;
 
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restriction as given by GetCeedElemRestriction.
