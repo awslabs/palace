@@ -1414,6 +1414,21 @@ DomainBoundaryPortions CollectDomainBoundaryPortions(
 nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &portions,
                                               double coordinate_scale);
 
+// The integration intervals of one Maxwell response contour line (ConfigureMaxwellLines)
+// from the exact element intersection intervals gathered over the ranks (line parameter
+// in [0, 1]): the ends are snapped to 0 / 1 and the breakpoints uniqued at the parameter
+// tolerance 1e-10, every piece between breakpoints shorter than that is skipped, and a
+// remaining piece covered by no element interval fails closed (MFEM_VERIFY naming the line
+// and the parameter range: the line leaves the finite-element mesh).
+struct MaxwellLineCoverage
+{
+  std::vector<std::pair<double, double>> intervals;
+};
+MaxwellLineCoverage
+ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
+                           int line_index, const std::array<double, 3> &begin,
+                           const std::array<double, 3> &end);
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_RESPONSE_OPERATOR_HPP

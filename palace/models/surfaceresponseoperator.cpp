@@ -24277,6 +24277,60 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 #endif
 }
 
+MaxwellLineCoverage
+ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
+                           int line_index, const std::array<double, 3> &begin_point,
+                           const std::array<double, 3> &end_point)
+{
+  constexpr double parameter_tolerance = 1.0e-10;
+  MaxwellLineCoverage coverage;
+  std::vector<double> breakpoints = {0.0, 1.0};
+  for (auto &[begin, end] : element_intervals)
+  {
+    if (begin <= parameter_tolerance)
+    {
+      begin = 0.0;
+    }
+    if (end >= 1.0 - parameter_tolerance)
+    {
+      end = 1.0;
+    }
+    breakpoints.push_back(begin);
+    breakpoints.push_back(end);
+  }
+  std::sort(breakpoints.begin(), breakpoints.end());
+  breakpoints.erase(std::unique(breakpoints.begin(), breakpoints.end(),
+                                [](double a, double b)
+                                { return std::abs(a - b) <= parameter_tolerance; }),
+                    breakpoints.end());
+  for (std::size_t i = 0; i + 1 < breakpoints.size(); i++)
+  {
+    const double begin = breakpoints[i];
+    const double end = breakpoints[i + 1];
+    if (end - begin <= parameter_tolerance)
+    {
+      continue;
+    }
+    const double midpoint = 0.5 * (begin + end);
+    const bool covered =
+        std::any_of(element_intervals.begin(), element_intervals.end(),
+                    [&](const auto &interval)
+                    {
+                      return midpoint >= interval.first - parameter_tolerance &&
+                             midpoint <= interval.second + parameter_tolerance;
+                    });
+    MFEM_VERIFY(covered, "Maxwell response contour line "
+                             << line_index
+                             << " leaves the finite-element mesh over parameter " << begin
+                             << " to " << end << " (begin = " << begin_point[0] << ", "
+                             << begin_point[1] << ", " << begin_point[2]
+                             << "; end = " << end_point[0] << ", " << end_point[1] << ", "
+                             << end_point[2] << ")!");
+    coverage.intervals.emplace_back(begin, end);
+  }
+  return coverage;
+}
+
 void SurfaceResponseOperator::ConfigureMaxwellLines(
     const std::vector<MaxwellLineGeometry> &line_geometry)
 {
@@ -24320,7 +24374,6 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   const double box_tolerance =
       1.0e-11 * coordinate_scale +
       64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, coordinate_scale);
-  constexpr double parameter_tolerance = 1.0e-10;
 
   int exact_intersections = locator.SupportsExactSegmentIntersections() ? 1 : 0;
   Mpi::GlobalMin(1, &exact_intersections, comm);
@@ -24538,50 +24591,10 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     std::vector<std::pair<double, double>> integration_intervals;
     if (exact_intersections)
     {
-      std::vector<double> breakpoints = {0.0, 1.0};
-      for (auto &[begin, end] : line_intervals[line_index])
-      {
-        if (begin <= parameter_tolerance)
-        {
-          begin = 0.0;
-        }
-        if (end >= 1.0 - parameter_tolerance)
-        {
-          end = 1.0;
-        }
-        breakpoints.push_back(begin);
-        breakpoints.push_back(end);
-      }
-      std::sort(breakpoints.begin(), breakpoints.end());
-      breakpoints.erase(std::unique(breakpoints.begin(), breakpoints.end(),
-                                    [](double a, double b)
-                                    { return std::abs(a - b) <= parameter_tolerance; }),
-                        breakpoints.end());
-      for (std::size_t i = 0; i + 1 < breakpoints.size(); i++)
-      {
-        const double begin = breakpoints[i];
-        const double end = breakpoints[i + 1];
-        if (end - begin <= parameter_tolerance)
-        {
-          continue;
-        }
-        const double midpoint = 0.5 * (begin + end);
-        const bool covered = std::any_of(
-            line_intervals[line_index].begin(), line_intervals[line_index].end(),
-            [&](const auto &interval)
-            {
-              return midpoint >= interval.first - parameter_tolerance &&
-                     midpoint <= interval.second + parameter_tolerance;
-            });
-        MFEM_VERIFY(covered, "Maxwell response contour line "
-                                 << line_index
-                                 << " leaves the finite-element mesh over parameter "
-                                 << begin << " to " << end << " (begin = " << line.begin[0]
-                                 << ", " << line.begin[1] << ", " << line.begin[2]
-                                 << "; end = " << line.end[0] << ", " << line.end[1] << ", "
-                                 << line.end[2] << ")!");
-        integration_intervals.emplace_back(begin, end);
-      }
+      integration_intervals =
+          ResolveMaxwellLineCoverage(std::move(line_intervals[line_index]),
+                                     static_cast<int>(line_index), line.begin, line.end)
+              .intervals;
     }
     else
     {
