@@ -1853,7 +1853,14 @@ Hermitian domain- and surface-response quadratic forms.
 The corrected interface energy keeps the resolved raw energy outside the matching radius
 and replaces the complete thin core with the fabricated coupon response. The
 normalization energy receives the corresponding fabricated-minus-thin domain-response
-defect. Every 3D target interface must therefore enable `AutomaticEdges`; every 2D
+defect. A feature the library has no model for (`Missing` under `UnmatchedPolicy` `Warn`)
+keeps its RAW within-`R` surface energy in the corrected interface energies exactly as on
+the electrostatic path (fixed trace and fixed flux on the raw field, self-consistent on
+the corrected field); that share is reported per feature type in the Maxwell
+`surface-response-uncovered-energy.csv`, the electrostatic table's columns with the mode
+`m` (or `f (GHz)` for a driven solve) and `exc` in place of `source`, written only when
+something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. Every
+3D target interface must therefore enable `AutomaticEdges`; every 2D
 boundary-mode target must specify `EdgeAttributes` and `EdgeFrameNormal`. In both cases,
 `EdgeDistances` must include the library `MatchingRadius`.
 
