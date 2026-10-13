@@ -66,6 +66,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refinement. Both used the out-of-plane magnetic flux density scaled by the element
     Jacobian determinant, which could put `E_mag` off by orders of magnitude.
     [PR 1069](https://github.com/awslabs/palace/pull/1069).
+  - Fixed wave port modes depending on the mesh partitioning: for some partitionings, the
+    finite element spaces of the wave port cross-section were inconsistent between
+    processes, and the port eigenvalue problem gave spurious modes (for example with a
+    propagation constant set by the largest material permittivity and Z_PV ≈ 0), so
+    S-parameters and impedances were wrong. This was observed with nonconforming adaptive
+    mesh refinement on many processes. MFEM's `ParSubMesh` listed the shared entities of
+    its communication groups in an order which depended on the local numbering of the
+    groups of the parent mesh, which differs between processes for meshes distributed with
+    `mfem::MeshPartitioner` or with nonconforming refinement. This patches MFEM to order
+    them consistently.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
