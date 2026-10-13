@@ -22,6 +22,13 @@ R = 2.0
 # construction (J1-E10 / F-R3b-4; decision 616 MINOR-8; v3-f E-4).
 MIRROR_FORMED_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata", "mirror-formed-placement-o3-d7c875318447.json")
 LAW = '{"Type":"PEC"}'
+# The chord-vs-arc class of record (decisions 663 / 708 / 709 / 710; v3-g item 2): the three stored
+# placement records, each a fixture written by the lane tool make_placement_fixtures_v3g.py from
+# the inputs of record with main d73e7f7459's reading (PlacementOfRecord) beside.
+TESTDATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata")
+FIXTURE_0C94 = os.path.join(TESTDATA, "chord-vs-arc-placement-ctx003-c3-0c94ec951e10.json")
+FIXTURE_A596 = os.path.join(TESTDATA, "chord-vs-arc-placement-ctx003-c1-a596f5a4c303.json")
+FIXTURE_5339 = os.path.join(TESTDATA, "chord-vs-arc-placement-ctx003-c1-533962c48056-placeholder.json")
 
 
 def frame(origin, angle_degrees, mirror=False):
@@ -37,6 +44,24 @@ def frame(origin, angle_degrees, mirror=False):
 def patch(feature, model, origin, axes, segment=-1, index=0):
     return {"Patch": index, "Feature": feature, "Topology": "x", "Model": model, "ModelIndex": 0, "Weight": 1.0, "ModelWeight": 1.0,
             "QuadratureWeight": 1.0, "SideFactor": 1.0, "CouponDepth": 0.0, "Segment": segment, "S0": 0.0, "S1": 0.0, "Origin": origin, "Axes": axes}
+
+
+def load_fixture(path):
+    """(fixture, identification, library, radius, patch rows) of a stored placement record."""
+    import json
+    with open(path) as source:
+        fixture = json.load(source)
+    rows = []
+    for row in fixture["PatchRows"]:
+        entry = dict(row)
+        for key in ("Patch", "Feature", "ModelIndex", "Segment"):
+            entry[key] = int(row[key])
+        for key in ("Weight", "ModelWeight", "QuadratureWeight", "SideFactor", "CouponDepth", "S0", "S1"):
+            entry[key] = float(row[key])
+        entry["Origin"] = np.asarray([float(row[k]) for k in ("OriginX", "OriginY", "OriginZ")])
+        entry["Axes"] = np.asarray([[float(row[f"Axis{a}{d}"]) for d in "XYZ"] for a in "UVW"])
+        rows.append(entry)
+    return fixture, fixture["Identification"], fixture["Library"], float(fixture["MatchingRadius"]), rows
 
 
 class FingerEndCluster(unittest.TestCase):
@@ -507,6 +532,261 @@ class MirrorFormedPlacement(unittest.TestCase):
         self.assertEqual(by_name["A10-context"]["Detail"]["Examples"][0]["Defects"][0]["Point"], "mirror planes")
         self.assertIsNone(PC.mirror_plane_inside(identification, [0]))
 
+
+
+class ChordVsArcClass(unittest.TestCase):
+    """v3-g item 2 (decisions 663 / 708 / 709 / 710 / 729 M0a): the claimed arc range is
+    parameterised by the RUN's on-circle joints as the identification does (RunIndex) and the
+    cluster tolerance is the fit tolerance + the quantum terms (cluster_tolerance_over_r). The
+    three readings of record: 0c94 (C3 arc 42, a design-polygon arc sub-divided by the mesh:
+    FAIL 1.3716e-3 R of angular excess -> PASS), a596 (C1 large-R arcs: the junction vertex's
+    radial fit residual eps 8.97e-4 / 7.20e-4 R, PASS with the readings unchanged inside the
+    aligned bound), 5339 (the mirror-formed C1 placeholder whose in-binary A10-extended abort
+    1.0895502e-3 R is an IMAGE arc end read against the image CHORDS: labelled, PASS). A
+    misplaced model still fails."""
+
+    def gates(self, identification, rows, library, radius):
+        gates, summary = PC.placement_gates(identification, rows, library, radius)
+        return {g["Gate"]: g for g in gates}, summary
+
+    def test_tolerance_terms_are_the_identification_and_generator_constants(self):
+        spatial_coupon = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpw3d_surface", "spatial_coupon")
+        sys.path.insert(0, spatial_coupon)
+        try:
+            import cluster_signature_geometry as generator
+        finally:
+            sys.path.remove(spatial_coupon)
+        self.assertEqual(PC.ARC_FIT_TOLERANCE_OVER_R, generator.ARC_FIT_TOLERANCE_OVER_R)
+        self.assertEqual(PC.SIGNATURE_QUANTUM_OVER_R, generator.SIGNATURE_QUANTUM_OVER_R)
+        # The generator admits an ArcJoint snap up to ARC_JOINT_SNAP_OVER_R read inclusive to half a quantum (decision 708: 1.0025e-3 R).
+        tolerance, terms = PC.cluster_tolerance_over_r({})
+        self.assertAlmostEqual(terms["FitToleranceOverR"] + terms["JointSnapAdmissionOverR"], generator.ARC_JOINT_SNAP_OVER_R + generator.HALF_QUANTUM_OVER_R, places=15)
+        self.assertAlmostEqual(terms["SerialisationRoundingOverR"], math.sqrt(2.0) * 1.0e-6, places=15)
+        self.assertEqual(terms["QuantumNearMatchOverR"], 0.0)
+        self.assertAlmostEqual(tolerance, 1.0e-3 + 2.5e-6 + math.sqrt(2.0) * 1.0e-6, places=15)
+        # The manifest's Conventions govern; a quantum near-match adds sqrt(2) x MaxDeltaQuanta quanta (708: ~5.7e-6 R at 4 quanta).
+        identification = {"Conventions": {"ArcFitToleranceOverR": 2.0e-3, "SignatureLengthQuantumOverR": 2.0e-6}}
+        tolerance, terms = PC.cluster_tolerance_over_r(identification, {"Match": {"Status": "Matched", "QuantumNearMatch": {"MaxDeltaQuanta": 4}}})
+        self.assertAlmostEqual(tolerance, 2.0e-3 + 2.5 * 2.0e-6 + math.sqrt(2.0) * 2.0e-6 + math.sqrt(2.0) * 4 * 2.0e-6, places=15)
+        self.assertEqual(terms["QuantumNearMatchMaxDeltaQuanta"], 4.0)
+        self.assertAlmostEqual(PC.cluster_tolerance_over_r({}, {"Match": {"QuantumNearMatch": {"MaxDeltaQuanta": 4}}})[1]["QuantumNearMatchOverR"], 5.657e-6, places=9)
+
+    def test_0c94_run_joint_parameterisation_clears_the_angular_excess(self):
+        fixture, identification, library, radius, rows = load_fixture(FIXTURE_0C94)
+        feature = identification["Features"][0]
+        self.assertEqual((feature["Id"], feature["Hash"][:12], rows[0]["Model"]), (11, "0c94ec951e10", "spatialedgecluster_edgecount-3_f29b18140d16"))
+        of_record = fixture["PlacementOfRecord"]
+        self.assertEqual(of_record["Clusters"]["Status"], "FAIL")
+        self.assertAlmostEqual(of_record["Clusters"]["WorstDeviationOverR"], 1.3716456176048953e-3, places=15)
+        self.assertEqual(of_record["Clusters"]["Defects"][0]["Point"], "edge 0 begin")
+        # The claimed arc portion: segment 304 of record (a design chord of arc 42 sub-divided into 8 collinear mesh segments
+        # 304 -> 593, 28.34 um, sweep 0.143980 rad), cut at s1 = 1.1714767626 um from the on-circle joint (its Key[0]).
+        segments = identification["Segments"]
+        arc_portions = [(int(s), s0, s1) for s, s0, s1 in feature["Portions"] if "Arc" in segments[int(s)]]
+        self.assertEqual(len(arc_portions), 1)
+        index, s0, s1 = arc_portions[0]
+        self.assertEqual((segments[index]["SourceSegment"], s0), (304, 0.0))
+        self.assertAlmostEqual(s1, 1.1714767626, places=10)
+        runs = PC.RunIndex(identification, radius)
+        run = runs.run_segments(index)
+        self.assertEqual([segments[k]["SourceSegment"] for k in run], [304, 393, 413, 442, 504, 541, 564, 593])
+        self.assertAlmostEqual(runs.runs[index]["length"], 28.339570460206467, places=9)
+        arc = identification["Arcs"][int(segments[index]["Arc"])]
+        self.assertEqual((arc["SourceArc"], arc["Radius"], arc["Segments"], arc["Joints"]), (42, 197.0, 23, 4))
+        # The interior mesh vertex (Key[1]) lies 0.1216 R inside the circle; the joint (Key[0]) on it.
+        center = np.asarray(arc["Center"]); key = np.asarray(segments[index]["Key"])
+        self.assertAlmostEqual((np.linalg.norm(key[0] - center) - arc["Radius"]) / radius, 0.0, places=9)
+        self.assertAlmostEqual((np.linalg.norm(key[1] - center) - arc["Radius"]) / radius, -0.12158701112, places=9)
+        # The run convention (Identifier::RunPoint) puts the cut at 0.005951722080 rad from the joint = the
+        # identification's claim end (the 0c94 diagnosis record: the model reproduces it to 3.3e-7 R).
+        normal = np.asarray(feature["Frame"]["Axes"][2], dtype=float)
+        q = runs.arc_point(index, s1, center, float(arc["Radius"]), normal)
+        u = key[0] - center; u /= np.linalg.norm(u); v = np.cross(normal, u)
+        angle = math.atan2(float(np.dot(q - center, v)), float(np.dot(q - center, u)))
+        self.assertAlmostEqual(abs(angle), 0.005951722080254772, places=12)
+        self.assertAlmostEqual(np.linalg.norm(q - center), arc["Radius"], places=9)
+        # Aligned: PASS below 1e-3 R (pre-registered), the FAIL of record reproduced by the segment-key convention alone.
+        by_name, summary = self.gates(identification, rows, library, radius)
+        clusters = by_name["A10-placement-clusters"]
+        self.assertEqual(clusters["Status"], "PASS")
+        self.assertLess(clusters["Detail"]["WorstDeviationOverR"], 1.0e-3)
+        self.assertLess(clusters["Detail"]["WorstDeviationOverR"], 1.0e-6)
+        self.assertEqual(clusters["Detail"]["Checks"], of_record["Clusters"]["Checks"])
+        self.assertEqual(by_name["A10-context"]["Status"], "PASS")
+        self.assertAlmostEqual(by_name["A10-context"]["Detail"]["WorstDeviationOverR"], of_record["Context"]["WorstDeviationOverR"], places=15)
+        key_convention = PC.ClaimedGeometry(feature, segments, identification["Arcs"], normal, runs=None)
+        run_convention = PC.ClaimedGeometry(feature, segments, identification["Arcs"], normal, runs)
+        pairs, _ = PC.model_cluster_edges(library["Models"][0], float(library["MatchingRadius"]))
+        scale = radius / float(library["MatchingRadius"])
+        model_end = rows[0]["Origin"] + (scale * pairs[0][0]) @ rows[0]["Axes"]
+        self.assertAlmostEqual(key_convention.distance(model_end) / radius, of_record["Clusters"]["WorstDeviationOverR"], places=15)
+        self.assertLess(run_convention.distance(model_end) / radius, 1.0e-6)
+        # A misplaced model still fails: the frame offset by 0.01 R.
+        moved = dict(rows[0]); moved["Origin"] = rows[0]["Origin"] + 0.01 * radius * rows[0]["Axes"][1]
+        by_name, _ = self.gates(identification, [moved], library, radius)
+        self.assertEqual(by_name["A10-placement-clusters"]["Status"], "FAIL")
+        self.assertGreater(by_name["A10-placement-clusters"]["Detail"]["WorstDeviationOverR"], 0.009)
+
+    def test_a596_eps_readings_unchanged_inside_the_aligned_bound(self):
+        fixture, identification, library, radius, rows = load_fixture(FIXTURE_A596)
+        feature = identification["Features"][0]
+        self.assertEqual((feature["Id"], feature["Hash"][:12], rows[0]["Model"]), (23, "a596f5a4c303", "spatialedgecluster_edgecount-34_17ee51c67d9a"))
+        of_record = fixture["PlacementOfRecord"]
+        self.assertEqual((of_record["Clusters"]["Status"], of_record["Context"]["Status"]), ("PASS", "PASS"))
+        self.assertAlmostEqual(of_record["Clusters"]["WorstDeviationOverR"], 8.96747447577103e-4, places=15)
+        self.assertAlmostEqual(of_record["Context"]["WorstDeviationOverR"], 7.19574425816105e-4, places=15)
+        by_name, summary = self.gates(identification, rows, library, radius)
+        clusters, context = by_name["A10-placement-clusters"], by_name["A10-context"]
+        self.assertEqual((clusters["Status"], context["Status"]), ("PASS", "PASS"))
+        # The eps mechanism is not a parameterisation effect: the readings of record to the digit.
+        self.assertAlmostEqual(clusters["Detail"]["WorstDeviationOverR"], of_record["Clusters"]["WorstDeviationOverR"], places=15)
+        self.assertAlmostEqual(context["Detail"]["WorstDeviationOverR"], of_record["Context"]["WorstDeviationOverR"], places=15)
+        self.assertEqual((clusters["Detail"]["Checks"], context["Detail"]["Checks"]), (of_record["Clusters"]["Checks"], of_record["Context"]["Checks"]))
+        # The aligned bound (the manifest's Conventions: fit 1e-3, quantum 1e-6; an exact match): 1.003914e-3 R.
+        self.assertEqual(identification["Conventions"]["ArcFitToleranceOverR"], 1.0e-3)
+        self.assertAlmostEqual(clusters["Detail"]["ToleranceOverR"], 1.0e-3 + 2.5e-6 + math.sqrt(2.0) * 1.0e-6, places=15)
+        self.assertEqual(clusters["Detail"]["ToleranceOverR"], context["Detail"]["ToleranceOverR"])
+        self.assertEqual((clusters["Detail"]["QuantumNearMatchedFeatures"], clusters["Detail"]["MaxToleranceOverR"]), (0, clusters["Detail"]["ToleranceOverR"]))
+        self.assertEqual(summary["ClusterToleranceOverR"], clusters["Detail"]["ToleranceOverR"])
+        self.assertLess(clusters["Detail"]["WorstDeviationOverR"], 1.0e-3)
+        # A reading at the fit tolerance + 1 quantum (decision 708: "< 1e-3 R + ~1.4e-6 R, NOT strictly below the
+        # tolerance") passes the aligned bound; 1.1e-3 R fails; a quantum near-match of 4 quanta admits 5.7e-6 R more.
+        import copy
+        edges = library["Models"][0]["Edges"]
+        straight = next(k for k, edge in enumerate(edges) if edge["Interval"][1] - edge["Interval"][0] > 0.5 * float(library["MatchingRadius"]))
+        for shift_over_r, expected, near_match in ((1.0e-3 + 1.0e-6, "PASS", None), (1.0e-3 + 3.0e-6, "PASS", None), (1.0e-3 + 5.0e-6, "FAIL", None),
+                                                   (1.0e-3 + 9.0e-6, "PASS", 4), (1.0e-3 + 1.0e-5, "FAIL", 4), (1.1e-3, "FAIL", None), (0.01, "FAIL", None)):
+            moved_library = copy.deepcopy(library)
+            edge = moved_library["Models"][0]["Edges"][straight]
+            edge["Point"] = [p + shift_over_r * float(library["MatchingRadius"]) * g for p, g in zip(edge["Point"], edge["GapDirection"])]
+            moved_identification = copy.deepcopy(identification)
+            if near_match is not None:
+                moved_identification["Features"][0]["Match"]["QuantumNearMatch"] = {"MaxDeltaQuanta": near_match, "ModelKey": "m", "FeatureKey": "f"}
+            by_name, _ = self.gates(moved_identification, rows, moved_library, radius)
+            self.assertEqual(by_name["A10-placement-clusters"]["Status"], expected, (shift_over_r, near_match))
+            self.assertGreaterEqual(by_name["A10-placement-clusters"]["Detail"]["WorstDeviationOverR"], shift_over_r - 1.0e-9)
+            if near_match is not None:
+                self.assertEqual(by_name["A10-placement-clusters"]["Detail"]["QuantumNearMatchedFeatures"], 1)
+                self.assertAlmostEqual(by_name["A10-placement-clusters"]["Detail"]["MaxToleranceOverR"], 1.0e-3 + 2.5e-6 + math.sqrt(2.0) * 5.0e-6, places=15)
+
+    def test_5339_placeholder_in_binary_abort_is_an_image_arc_end_on_the_image_chords(self):
+        fixture, identification, library, radius, rows = load_fixture(FIXTURE_5339)
+        feature = identification["Features"][0]
+        model = library["Models"][0]
+        self.assertEqual((feature["Id"], feature["Hash"][:12], model["Name"]), (70, "533962c48056", "__preflight_placeholder_533962c480569ca5"))
+        self.assertEqual((feature["Mirror"]["Contract"]["RealPortions"], feature["Mirror"]["Contract"]["Planes"]), ([2, 4], [0, 4]))
+        self.assertEqual((len(model["Edges"]), len(model["Signature"]["Context"]), model["MirrorFormed"]["RealPortions"]), (52, 28, [2, 4]))
+        self.assertTrue(all("Arc" not in segment for segment in identification["ImageSegments"]))
+        # The patch row is the feature frame (a Signature-keyed model: M = identity).
+        np.testing.assert_allclose(rows[0]["Origin"], feature["Frame"]["Origin"])
+        np.testing.assert_allclose(rows[0]["Axes"], feature["Frame"]["Axes"])
+        in_binary = fixture["InBinaryReadingOfRecord"]
+        self.assertEqual((in_binary["DeviationOverR"], in_binary["Point"]), (1.0895502333436160e-03, "context 0 end"))
+        # The in-binary reading: the context 0 END against the device perimeter WITH the image segments (the binary's
+        # identification input carries the reflected band; its table has no Arc) reproduces to 1e-11 R ...
+        scale = radius / float(library["MatchingRadius"])
+        P = model["Signature"]["Context"][0]["P"]
+        q = rows[0]["Origin"] + (scale * np.asarray([P[2] * float(library["MatchingRadius"]), P[3] * float(library["MatchingRadius"]), 0.0])) @ rows[0]["Axes"]
+        with_images = dict(identification); with_images["Segments"] = identification["Segments"] + identification["ImageSegments"]
+        self.assertAlmostEqual(PC.device_perimeter_distance(with_images, q) / radius, in_binary["DeviationOverR"], places=11)
+        # ... while the end sits ON its context arc's circle and the nearest image CHORD (0.998 R long on a 69.1 R
+        # circle, sagitta up to 1.80e-3 R) is what it was read against: the chord-vs-arc class on the image side.
+        A = model["Signature"]["Context"][0]["Arc"]
+        center = rows[0]["Origin"] + (scale * np.asarray([A[0] * float(library["MatchingRadius"]), A[1] * float(library["MatchingRadius"]), 0.0])) @ rows[0]["Axes"]
+        mid = rows[0]["Origin"] + (scale * np.asarray([A[2] * float(library["MatchingRadius"]), A[3] * float(library["MatchingRadius"]), 0.0])) @ rows[0]["Axes"]
+        arc_radius = float(np.linalg.norm(mid - center))
+        self.assertAlmostEqual(arc_radius / radius, 69.12, places=1)
+        self.assertLess(abs(np.linalg.norm(q - center) - arc_radius) / radius, 1.0e-8)
+        nearest = min(identification["ImageSegments"], key=lambda s: PC._segment_distance(q, np.asarray(s["Key"][0]), np.asarray(s["Key"][1])))
+        chord = float(np.linalg.norm(np.asarray(nearest["Key"][1]) - np.asarray(nearest["Key"][0])))
+        self.assertAlmostEqual(chord / radius, 0.9978, places=3)
+        self.assertGreater(chord * chord / (8.0 * arc_radius) / radius, in_binary["DeviationOverR"])
+        for end in nearest["Key"]:
+            self.assertLess(abs(np.linalg.norm(np.asarray(end) - center) - arc_radius) / radius, 1.0e-5)
+        # The end is on the IMAGE side of both contract planes (a double image): the mirror-aware gate labels it and passes.
+        inside = PC.mirror_plane_inside(identification, feature["Mirror"]["Contract"]["Planes"])
+        self.assertLess(inside(q), -2.0 * radius)
+        by_name, summary = self.gates(identification, rows, library, radius)
+        self.assertEqual((by_name["A10-placement-clusters"]["Status"], by_name["A10-context"]["Status"]), ("PASS", "PASS"))
+        self.assertEqual(by_name["A10-context"]["Detail"]["ImageEnds"], 31)
+        self.assertEqual(by_name["A10-context"]["Detail"]["Checks"], 25)
+        self.assertEqual(by_name["A10-placement-clusters"]["Detail"]["ImageEdges"], 39)
+        _, context_entries = PC.context_gate(identification, rows, library, radius)
+        self.assertIn("context 0 end", context_entries[0]["ImageEnds"])
+        self.assertEqual(context_entries[0]["Defects"], [])
+        of_record = fixture["PlacementOfRecord"]
+        self.assertAlmostEqual(by_name["A10-placement-clusters"]["Detail"]["WorstDeviationOverR"], of_record["Clusters"]["WorstDeviationOverR"], places=15)
+        self.assertAlmostEqual(by_name["A10-context"]["Detail"]["WorstDeviationOverR"], of_record["Context"]["WorstDeviationOverR"], places=15)
+        self.assertEqual(summary["NotEvaluable"], [])
+
+    def test_run_index_on_a_design_polygon_arc_subdivided_by_the_mesh(self):
+        """A bend (r = 50 R) of 15-deg DESIGN chords, each sub-divided into 3 collinear mesh
+        segments (the 0c94 class: C3's arc 42 has 28-um chords of 8 segments on R 197 um): the
+        claim is cut inside a mesh segment of the second chord.
+        The claimed end by the run convention is the circle point at the angle the chord's
+        run maps the cut to (linear in the run parameter); a model serialised there passes,
+        the segment-key convention reads an angular excess."""
+        center = np.asarray([0.0, 0.0, 0.0])
+        r = 50.0 * R
+        segments, portions = [], []
+        for chord in range(6):
+            a0, a1 = math.radians(15.0 * chord), math.radians(15.0 * (chord + 1))
+            p0 = center + r * np.asarray([math.cos(a0), math.sin(a0), 0.0])
+            p1 = center + r * np.asarray([math.cos(a1), math.sin(a1), 0.0])
+            for k in range(3):
+                q0, q1 = p0 + (k / 3.0) * (p1 - p0), p0 + ((k + 1) / 3.0) * (p1 - p0)
+                segments.append({"Key": [q0.tolist(), q1.tolist()], "Length": float(np.linalg.norm(q1 - q0)), "Chain": 0, "Arc": 0})
+        # Claim: the second design chord's first mesh segment, cut at 0.7 of its length (segment 3), plus the first chord.
+        cut_segment, cut_fraction = 3, 0.7
+        for k in range(3):
+            portions.append([k, 0.0, segments[k]["Length"]])
+        portions.append([cut_segment, 0.0, cut_fraction * segments[cut_segment]["Length"]])
+        identification = {"MatchingRadius": R, "Segments": segments, "Arcs": [{"Center": center.tolist(), "Radius": r}], "Features": [
+            {"Id": 5, "Type": "SpatialEdgeCluster", "Hash": "h", "Chirality": 1, "Length": 1.0, "Portions": portions,
+             "Frame": {"Origin": [0.0, 0.0, 0.0], "Axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]}, "Match": {"Status": "Matched", "Model": "arc"}}]}
+        runs = PC.RunIndex(identification, R)
+        self.assertEqual(runs.run_segments(cut_segment), [3, 4, 5])
+        self.assertEqual(runs.run_segments(0), [0, 1, 2])
+        chord_length = float(np.linalg.norm(np.asarray(segments[5]["Key"][1]) - np.asarray(segments[3]["Key"][0])))
+        self.assertAlmostEqual(runs.runs[cut_segment]["length"], chord_length, places=12)
+        # The run convention: the cut at s_run = 0.7 x L_seg = 0.7 / 3 of the chord -> 15 deg + 0.7 / 3 x 15 deg.
+        normal = np.asarray([0.0, 0.0, 1.0])
+        q = runs.arc_point(cut_segment, cut_fraction * segments[cut_segment]["Length"], center, r, normal)
+        expected_angle = math.radians(15.0 + 15.0 * cut_fraction / 3.0)
+        self.assertAlmostEqual(math.atan2(q[1], q[0]), expected_angle, places=12)
+        self.assertAlmostEqual(np.linalg.norm(q - center), r, places=12)
+        # The segment-key convention interpolates between the segment's keys, the far one 2 / 3 along the chord
+        # (inside the circle): a different angle, by an angular excess above the tolerance on this coarse fillet.
+        claimed_keys = PC.ClaimedGeometry(identification["Features"][0], segments, identification["Arcs"], normal, runs=None)
+        claimed_runs = PC.ClaimedGeometry(identification["Features"][0], segments, identification["Arcs"], normal, runs)
+        self.assertLess(claimed_runs.distance(q), 1.0e-12 * R)
+        key0, key1 = (np.asarray(k) for k in segments[cut_segment]["Key"])
+        a0, a1 = math.atan2(key0[1], key0[0]), math.atan2(key1[1], key1[0])
+        wrong_angle = a0 + (a1 - a0) * cut_fraction
+        self.assertGreater(expected_angle - wrong_angle, 5.0e-3 * R / r)
+        self.assertAlmostEqual(claimed_keys.distance(q), r * (expected_angle - wrong_angle), places=9)
+        # A model whose arc portion ends at the identification's claim end (the run convention) passes the aligned
+        # gate; the same model under the segment-key convention would have failed on that end.
+        end_angle_deg = math.degrees(expected_angle)
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 1, "Portions": [
+            {"P": [50.0, 0.0, 50.0 * math.cos(expected_angle), 50.0 * math.sin(expected_angle)],
+             "Arc": [0.0, 0.0, 50.0 * math.cos(0.5 * expected_angle), 50.0 * math.sin(0.5 * expected_angle)], "GapRadial": 1, "Conductor": 1, "Interfaces": ["SA"], "Law": LAW}], "Vertices": []}
+        library = {"MatchingRadius": R, "Models": [{"Name": "arc", "Topology": "SpatialEdgeCluster", "Signature": signature}]}
+        origin, axes = frame((0.0, 0.0, 0.0), 0.0)
+        by_name, _ = self.gates(identification, [patch(5, "arc", origin, axes)], library, R)
+        clusters = by_name["A10-placement-clusters"]
+        self.assertEqual(clusters["Status"], "PASS")
+        self.assertLess(clusters["Detail"]["WorstDeviationOverR"], 1.0e-9)
+        self.assertGreater(end_angle_deg, 18.0)
+        # A model serialised at the segment-key angle (the wrong convention) FAILS the aligned gate.
+        signature["Portions"][0]["P"] = [50.0, 0.0, 50.0 * math.cos(wrong_angle), 50.0 * math.sin(wrong_angle)]
+        by_name, _ = self.gates(identification, [patch(5, "arc", origin, axes)], library, R)
+        self.assertEqual(by_name["A10-placement-clusters"]["Status"], "FAIL")
+        self.assertAlmostEqual(by_name["A10-placement-clusters"]["Detail"]["WorstDeviationOverR"], r * (expected_angle - wrong_angle) / R, places=9)
+        # Mesh-resolved arcs (every key a joint): a run is one segment and both conventions coincide (the
+        # FingerEndCluster readings above are unchanged).
+        resolved = {**identification, "Segments": [dict(s, Chain=k) for k, s in enumerate(segments)]}
+        self.assertEqual(PC.RunIndex(resolved, R).run_segments(cut_segment), [cut_segment])
 
 
 if __name__ == "__main__":
