@@ -2147,7 +2147,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   Mpi::Barrier(Mpi::World());
 
   // The electrostatic form of the case above (the same mesh, library, Region cells and
-  // UnmatchedPolicy), then its Maxwell form: an eigenmode problem with the lead PEC.
+  // UnmatchedPolicy) with the DomainBoundary mirror OFF (the Maxwell path runs no mirror:
+  // the like-for-like electrostatic comparator is the Mirror-Off operator, decision 743's
+  // identity comparator; here the mirror changes nothing, the two Missing corners are far
+  // from the cut), then its Maxwell form: an eigenmode problem with the same metal set, the
+  // lead and the cut face PEC (every other face natural: a PEC box would make the box edges
+  // metal perimeter and the lead's cut a non-manifold junction with Endpoint features).
   json config = IslandConfig();
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
@@ -2173,6 +2178,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["Library"] = edge_library_path.string();
   correction["UnmatchedPolicy"] = "Warn";
+  correction["DomainBoundary"] = {{"Mirror", "Off"}};
   IoData electrostatic_iodata(config, false);
   electrostatic_iodata.boundaries.cracked_attributes.insert(9);
   std::vector<std::unique_ptr<Mesh>> electrostatic_meshes;
@@ -2184,7 +2190,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   json maxwell_config = config;
   maxwell_config["Problem"]["Type"] = "Eigenmode";
   maxwell_config["Problem"]["Output"] = output_dir.string();
-  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
   maxwell_config["Boundaries"].erase("Terminal");
   maxwell_config["Solver"] = {{"Order", 1},
                               {"Eigenmode", {{"Target", 1.0}}},
@@ -2212,12 +2218,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(electrostatic_portions.size() == 8);
   CHECK(maxwell_portions.size() == electrostatic_portions.size());
   double maxwell_length = 0.0;
+  std::map<std::string, int> maxwell_portions_by_type;
   for (std::size_t i = 0;
        i < std::min(maxwell_portions.size(), electrostatic_portions.size()); i++)
   {
     const auto &maxwell = maxwell_portions[i];
     const auto &electrostatic = electrostatic_portions[i];
-    CHECK(maxwell.topology == "ConvexCorner");
+    maxwell_portions_by_type[maxwell.topology]++;
     CHECK(maxwell.topology == electrostatic.topology);
     CHECK(maxwell.feature == electrostatic.feature);
     CHECK(maxwell.segment == electrostatic.segment);
@@ -2231,6 +2238,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     maxwell_length += std::sqrt(length2);
   }
   CHECK_THAT(maxwell_length, WithinAbs(4.0 * R, 1.0e-9));
+  CHECK(maxwell_portions_by_type == std::map<std::string, int>{{"ConvexCorner", 8}});
   const json statistics = response->GetStatistics();
   const bool records_uncovered =
       statistics.contains("Diagnostics") && statistics["Diagnostics"].contains("Uncovered");
