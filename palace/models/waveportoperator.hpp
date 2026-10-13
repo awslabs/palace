@@ -12,6 +12,7 @@
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/lineintegrator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -163,21 +164,11 @@ private:
   int voltage_n_samples;
   bool has_voltage_coords = false;
 
-  // Cached quadrature locations on the embedded port submesh. Each point is owned by one
-  // rank and evaluated directly in port_E0t, avoiding any port-to-parent field transfer or
-  // duplicate flattened finite element space.
-  struct VoltageSample
-  {
-    int element;
-    mfem::IntegrationPoint point;
-    std::array<double, 3> weighted_tangent;
-  };
-  std::vector<VoltageSample> voltage_samples;
-
-  // Cached GSLIB point locator on the fixed parent mesh for driven-field voltage.
-#if defined(MFEM_USE_GSLIB)
-  std::unique_ptr<mfem::FindPointsGSLIB> voltage_gslib_op;
-#endif
+  // Element-aware quadrature for the voltage path on the embedded port submesh (the path
+  // projected onto the port plane). Both the modal and the driven-field voltages are
+  // integrated with it, the latter after restricting the field to the port, avoiding any
+  // point search on the full parent mesh.
+  std::unique_ptr<fem::LineIntegrator> voltage_integrator;
 
   void SetUpExcitationVoltagePath();
 

@@ -48,6 +48,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed coordinate-path line integrals (wave port `"VoltagePath"` and the `"Impedance"` and
+    `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) being inaccurate on
+    refined meshes, which made the wave port Z_PV oscillate under adaptive mesh
+    refinement. A single Gauss-Legendre rule of order `"NSamples"` was used over each path
+    segment, which cannot resolve the kinks and near-singular behavior of the discrete field
+    once elements near conductor edges become small compared to the sample spacing. Paths
+    are now split at element boundaries and each piece is integrated with a rule exact for
+    the discrete field on straight-sided elements, so the result no longer depends on
+    `"NSamples"` (now a minimum number of points per segment, for curved elements). The
+    wave port driven-field voltage no longer requires GSLIB or a point search over the full
+    3D mesh. SchemaVer 2-2-1.
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

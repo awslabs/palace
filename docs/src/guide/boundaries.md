@@ -162,12 +162,12 @@ for implementation details.
       + [`"VoltagePath"`](../config/reference.md#config-boundaries-waveport-voltagepath): an
         ordered list of coordinate points across the port face, directed signal → ground.
         The mode is flipped so that `\int E_{\text{mode}} \cdot dl > 0` along this path.
-        Also enables ``Z_{PV}`` postprocessing. Requires GSLIB.
+        Also enables ``Z_{PV}`` postprocessing.
       + [`"PolarityAttributes"`](../config/reference.md#config-boundaries-waveport-polarityattributes):
         a pair of parent-mesh boundary attributes `[signal, ground]` (e.g. distinct PEC
         attributes for the two terminals). The mode is flipped so that the modal E-field
         points from the signal attribute toward the ground attribute. Lightweight
-        polarity-only alternative to `"VoltagePath"` (no GSLIB).
+        polarity-only alternative to `"VoltagePath"`.
 
   - [`config["Boundaries"]["FloquetPort"]`](../config/reference.md#config-boundaries-floquetport) :
     Floquet ports are available for frequency domain driven simulations on periodic

@@ -17,6 +17,7 @@
 #include "fem/boundary_physical_trace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/lineintegrator.hpp"
 #include "fem/point_field_evaluator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -308,6 +309,7 @@ protected:
     bool has_voltage_coordinates = false;
     bool has_current_path = false;
     bool has_current = false;
+    std::shared_ptr<fem::LineIntegrator> voltage_integrator, current_integrator;
   };
   std::map<int, ImpedancePostproConfig> impedance_postpro;
 
@@ -318,6 +320,7 @@ protected:
     std::vector<mfem::Vector> voltage_path;
     int n_samples = 100;
     bool has_coordinates = false;
+    std::shared_ptr<fem::LineIntegrator> voltage_integrator;
   };
   std::map<int, VoltagePostproConfig> voltage_postpro;
 

@@ -881,12 +881,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
     voltage_n_samples = data.n_samples;
 
     SetUpExcitationVoltagePath();
-
-#if defined(MFEM_USE_GSLIB)
-    auto &parent_mesh = *nd_fespace.GetParMesh();
-    voltage_gslib_op = std::make_unique<mfem::FindPointsGSLIB>(parent_mesh.GetComm());
-    fem::SetupInterpolator(*voltage_gslib_op, parent_mesh);
-#endif
   }
 
   // Store polarity attributes [high, low]. The config parser enforces that this is
@@ -925,10 +919,10 @@ void WavePortData::SetUpExcitationVoltagePath()
                 "Wave port VoltagePath points must be three-dimensional!");
   }
 
-  // Use one physical point on the port to define its plane. All ranks need identical query
-  // coordinates for ParMesh::FindPoints, so broadcast it from the first rank that owns the
-  // port. Projecting the configured path onto this plane matches the previous flattened
-  // representation without introducing a second mesh or finite element space.
+  // Use one physical point on the port to define its plane. All ranks need identical path
+  // coordinates, so broadcast it from the first rank that owns the port. Projecting the
+  // configured path onto this plane matches the previous flattened representation without
+  // introducing a second mesh or finite element space.
   mfem::Vector plane_point(3);
   plane_point = 0.0;
   if (Mpi::Rank(port_submesh.GetComm()) == port_root)
@@ -951,86 +945,28 @@ void WavePortData::SetUpExcitationVoltagePath()
     projected_path.push_back(std::move(projected));
   }
 
-  const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, voltage_n_samples);
-  const int points_per_segment = rule.GetNPoints();
-  const int num_segments = static_cast<int>(projected_path.size()) - 1;
-  const int num_points = num_segments * points_per_segment;
-  mfem::DenseMatrix points(3, num_points);
-  std::vector<std::array<double, 3>> weighted_tangents(num_points);
-  int point_index = 0;
-  for (int segment = 0; segment < num_segments; segment++)
+  // Split the path at the port submesh element boundaries and integrate each piece with a
+  // Gauss rule exact for the field polynomial degree on straight-sided elements, so the
+  // voltage is the exact line integral of the discrete field regardless of the local mesh
+  // size. NSamples sets a minimum number of quadrature points per path segment (only
+  // relevant for curved elements).
+  const int field_order = port_nd_fespace->Get().GetMaxElementOrder();
+  const int mesh_order = port_submesh.GetNodes()
+                             ? port_submesh.GetNodes()->FESpace()->GetMaxElementOrder()
+                             : 1;
+  voltage_integrator = std::make_unique<fem::LineIntegrator>(
+      port_submesh, projected_path, false, 2 * (field_order + mesh_order),
+      voltage_n_samples);
+  const double rel_uncovered =
+      voltage_integrator->GetUncoveredLength() / voltage_integrator->GetPathLength();
+  MFEM_VERIFY(rel_uncovered < 1.0 - 1.0e-12,
+              "Wave port VoltagePath does not intersect the port surface!");
+  if (rel_uncovered > 1.0e-9)
   {
-    mfem::Vector tangent(projected_path[segment + 1]);
-    tangent -= projected_path[segment];
-    MFEM_VERIFY(tangent.Norml2() > 0.0,
-                "Wave port VoltagePath must contain nonzero tangential segments!");
-    for (int i = 0; i < points_per_segment; i++, point_index++)
-    {
-      const auto &ip = rule.IntPoint(i);
-      for (int d = 0; d < 3; d++)
-      {
-        points(d, point_index) = projected_path[segment](d) + ip.x * tangent(d);
-        weighted_tangents[point_index][d] = ip.weight * tangent(d);
-      }
-    }
-  }
-
-  // Point location is performed once for the fixed port/path. Check every local element
-  // rather than relying on Mesh::FindPoints, whose nearest-element search is documented as
-  // not completely reliable. If a point lies on a partition boundary, use the lowest-rank
-  // owner so its contribution is counted exactly once.
-  mfem::Array<int> elements(num_points);
-  mfem::Array<mfem::IntegrationPoint> reference_points(num_points);
-  elements = -1;
-  mfem::InverseElementTransformation inverse;
-  mfem::Vector physical_point(3);
-  for (int i = 0; i < num_points; i++)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      physical_point[d] = points(d, i);
-    }
-    for (int element = 0; element < port_submesh.GetNE(); element++)
-    {
-      inverse.SetTransformation(*port_submesh.GetElementTransformation(element));
-      if (inverse.Transform(physical_point, reference_points[i]) ==
-          mfem::InverseElementTransformation::Inside)
-      {
-        elements[i] = element;
-        break;
-      }
-    }
-  }
-
-  const int rank = Mpi::Rank(port_submesh.GetComm());
-  const int size = Mpi::Size(port_submesh.GetComm());
-  std::vector<int> owners(num_points);
-  for (int i = 0; i < num_points; i++)
-  {
-    owners[i] = elements[i] >= 0 ? rank : size;
-  }
-  Mpi::GlobalMin(num_points, owners.data(), port_submesh.GetComm());
-  int found = 0;
-  for (int i = 0; i < num_points; i++)
-  {
-    found += owners[i] < size;
-    if (owners[i] != rank)
-    {
-      elements[i] = owners[i] < size ? -2 : -1;
-    }
-  }
-  MFEM_VERIFY(found == num_points,
-              "Could not locate all WavePort VoltagePath quadrature points on the port "
-                  << "surface (found " << found << "/" << num_points << ")!");
-
-  voltage_samples.clear();
-  voltage_samples.reserve(num_points);
-  for (int i = 0; i < num_points; i++)
-  {
-    if (elements[i] >= 0)
-    {
-      voltage_samples.push_back({elements[i], reference_points[i], weighted_tangents[i]});
-    }
+    Mpi::Warning(port_submesh.GetComm(),
+                 "{:.3e}% of the wave port VoltagePath length lies outside the port "
+                 "surface mesh and does not contribute to the port voltage!\n",
+                 100.0 * rel_uncovered);
   }
 }
 
@@ -1657,30 +1593,18 @@ int WavePortData::GetModePolaritySign(int high_attr, int low_attr) const
 
 std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
 {
-  // Compute voltage V = ∫ E · dl along the configured path segments.
-  // Uses GSLIB interpolation on the 3D parent mesh E field.
+  // Compute voltage V = ∫ E · dl along the configured path segments. Only the tangential
+  // trace of E on the port enters, so restrict the field to the port submesh and use the
+  // same element-aware quadrature as the modal voltage.
   if (!has_voltage_coords)
   {
     return 0.0;
   }
   MFEM_VERIFY(E.HasImag(),
               "Wave ports expect complex-valued E field in port voltage calculation!");
-  std::complex<double> V(0.0, 0.0);
-#if defined(MFEM_USE_GSLIB)
-  // Reuse the cached point locator: E lives on the same parent mesh the op was Setup on.
-  for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
-  {
-    V.real(V.real() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
-                                               voltage_path[k + 1], E.Real(),
-                                               voltage_n_samples));
-    V.imag(V.imag() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
-                                               voltage_path[k + 1], E.Imag(),
-                                               voltage_n_samples));
-  }
-#else
-  MFEM_ABORT("Wave port VoltagePath computation requires MFEM_USE_GSLIB!");
-#endif
-  return V;
+  port_nd_transfer->Transfer(E.Real(), port_E->Real());
+  port_nd_transfer->Transfer(E.Imag(), port_E->Imag());
+  return voltage_integrator->Integrate(*port_E);
 }
 
 std::complex<double> WavePortData::GetExcitationVoltage() const
@@ -1690,24 +1614,9 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
     return 0.0;
   }
 
-  // The modal field already lives on the embedded port submesh. Evaluate it directly at
-  // the cached segment quadrature points instead of transferring it to the parent mesh or
-  // copying it into a duplicate flattened finite element space.
-  double voltage_real = 0.0, voltage_imag = 0.0;
-  mfem::Vector field_real(3), field_imag(3);
-  for (const auto &sample : voltage_samples)
-  {
-    port_E0t->Real().GetVectorValue(sample.element, sample.point, field_real);
-    port_E0t->Imag().GetVectorValue(sample.element, sample.point, field_imag);
-    for (int d = 0; d < 3; d++)
-    {
-      voltage_real += sample.weighted_tangent[d] * field_real[d];
-      voltage_imag += sample.weighted_tangent[d] * field_imag[d];
-    }
-  }
-  double voltage[2] = {voltage_real, voltage_imag};
-  Mpi::GlobalSum(2, voltage, port_mesh->GetComm());
-  return {voltage[0], voltage[1]};
+  // The modal field already lives on the embedded port submesh, so evaluate it directly
+  // at the cached quadrature points.
+  return voltage_integrator->Integrate(*port_E0t);
 }
 
 std::complex<double> WavePortData::GetCharacteristicImpedance() const

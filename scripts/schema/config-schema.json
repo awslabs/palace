@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-2-0",
+  "$id": "urn:palace:schema:2-2-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1427,7 +1427,7 @@
         },
         "VoltagePath": {
           "type": "array",
-          "description": "Open path of coordinate points across the port face, specified in mesh length units. Each entry is a floating point array of length equal to the spatial dimension. The path is **directed from the signal (high-potential) terminal to the ground (low-potential) terminal**, matching the lumped-port `\"Direction\"` convention. When specified, this: 1. Pins the wave-port mode polarity so that ``\\int E_{\\text{mode}} \\cdot dl`` along the path is real-positive (required for consistent S-parameter signs when mixing wave and lumped ports in a driven simulation; without it, cross-type S-parameters may be ``180^\\circ`` out of phase). 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port. For example, in a coaxial wave port the first point is on the inner conductor (signal) and the last point is on the outer conductor (ground); for a CPW port, the first point is on the center trace and the last point in the gap. Uses GSLIB interpolation.",
+          "description": "Open path of coordinate points across the port face, specified in mesh length units. Each entry is a floating point array of length equal to the spatial dimension. The path is **directed from the signal (high-potential) terminal to the ground (low-potential) terminal**, matching the lumped-port `\"Direction\"` convention. When specified, this: 1. Pins the wave-port mode polarity so that ``\\int E_{\\text{mode}} \\cdot dl`` along the path is real-positive (required for consistent S-parameter signs when mixing wave and lumped ports in a driven simulation; without it, cross-type S-parameters may be ``180^\\circ`` out of phase). 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port. For example, in a coaxial wave port the first point is on the inner conductor (signal) and the last point is on the outer conductor (ground); for a CPW port, the first point is on the center trace and the last point in the gap. The path is projected onto the port plane and split at the port mesh element boundaries, and each piece is integrated with a Gauss-Legendre rule exact for the finite element field on straight-sided elements, so the voltage is the exact line integral of the discrete field however finely the mesh is refined along the path.",
           "items": {
             "type": "array",
             "minItems": 2,
@@ -1439,13 +1439,13 @@
         },
         "NSamples": {
           "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based voltage line integral.",
+          "description": "Minimum number of Gauss-Legendre quadrature points per path segment for the coordinate-based line integral. The path is always split at element boundaries and each piece is integrated exactly for straight-sided elements, so this only affects the accuracy for curved (high-order) elements.",
           "minimum": 1,
           "default": 100
         },
         "PolarityAttributes": {
           "type": "array",
-          "description": "Pair of parent-mesh boundary attributes `[signal, ground]` (signal/high-potential terminal first, ground/low-potential terminal second). Same role as the polarity component of [VoltagePath](@ref config-boundaries-waveport-voltagepath): the mode is flipped so that the modal E-field points from the signal attribute toward the ground attribute. Ignored if `\"VoltagePath\"` is also specified. Lightweight alternative to `\"VoltagePath\"` when only polarity is needed (no ``Z_{PV}``, no GSLIB). Both attributes must be present as distinct boundary attributes in the input mesh, with edges that lie on the port face.",
+          "description": "Pair of parent-mesh boundary attributes `[signal, ground]` (signal/high-potential terminal first, ground/low-potential terminal second). Same role as the polarity component of [VoltagePath](@ref config-boundaries-waveport-voltagepath): the mode is flipped so that the modal E-field points from the signal attribute toward the ground attribute. Ignored if `\"VoltagePath\"` is also specified. Lightweight alternative to `\"VoltagePath\"` when only polarity is needed (no ``Z_{PV}``). Both attributes must be present as distinct boundary attributes in the input mesh, with edges that lie on the port face.",
           "minItems": 2,
           "maxItems": 2,
           "items": {
@@ -1781,7 +1781,7 @@
         },
         "VoltagePath": {
           "$ref": "#/$defs/CoordinatePath",
-          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units. Uses uniformly weighted GSLIB interpolation, which is less accurate than the attribute-based method but does not require modifying the mesh to include integration boundaries."
+          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units. The path is split at element boundaries and each piece is integrated exactly for straight-sided elements, so this is as accurate as the attribute-based method without requiring integration boundaries in the mesh."
         },
         "CurrentPath": {
           "$ref": "#/$defs/CoordinatePath",
@@ -1789,7 +1789,7 @@
         },
         "NSamples": {
           "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based line integrals (using GSLIB interpolation).",
+          "description": "Minimum number of Gauss-Legendre quadrature points per path segment for the coordinate-based line integrals. The path is always split at element boundaries and each piece is integrated exactly for straight-sided elements, so this only affects the accuracy for curved (high-order) elements.",
           "minimum": 1,
           "default": 100
         }
@@ -1816,7 +1816,7 @@
         },
         "NSamples": {
           "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based line integral (GSLIB interpolation).",
+          "description": "Minimum number of Gauss-Legendre quadrature points per path segment for the coordinate-based line integral. The path is always split at element boundaries and each piece is integrated exactly for straight-sided elements, so this only affects the accuracy for curved (high-order) elements.",
           "minimum": 1,
           "default": 100
         }
