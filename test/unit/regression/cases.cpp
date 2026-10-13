@@ -1334,7 +1334,7 @@ void RunPMLDrivenCase(std::string_view case_dir, const std::string &config,
   palace::test::RunRegressionCase(case_dir, config + ".json", config, opts);
 }
 
-TEST_CASE("pml_waveguide", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_waveguide", "[Serial][Parallel][GPU][Regression]")
 {
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
 }
@@ -1390,7 +1390,7 @@ palace::test::CustomCheck TestPMLBifurcation(double atol_ref, double atol_pml)
   };
 }
 
-TEST_CASE("pml_waveguide_bifurcation", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_waveguide_bifurcation", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
@@ -1458,12 +1458,14 @@ void RunPMLCavityCase(const std::string &config)
   palace::test::RunRegressionCase("pml_waveguide", config + ".json", config, opts);
 }
 
+// Omits [GPU]: the device code of the static PML is covered by the other GPU cases, and the
+// frequency-dependent case covers the PML eigenmode solve on GPU.
 TEST_CASE("pml_waveguide_iris_cavity", "[Serial][Parallel][Regression]")
 {
   RunPMLCavityCase("iris_cavity");
 }
 
-TEST_CASE("pml_waveguide_iris_cavity_fd", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_waveguide_iris_cavity_fd", "[Serial][Parallel][GPU][Regression]")
 {
   RunPMLCavityCase("iris_cavity_fd");
 }
@@ -1473,7 +1475,9 @@ TEST_CASE("pml_waveguide_iris_cavity_fd", "[Serial][Parallel][Regression]")
 // terms of the PROM are projected per frequency during the greedy sampling, fit with a
 // rational function (poles on the imaginary axis) for the online sweep, and realized with
 // auxiliary states in the synthesized circuit. The swept S-parameters match the reference
-// to the adaptive tolerance, and the synthesized S round-trips to the PROM S.
+// to the adaptive tolerance, and the synthesized S round-trips to the PROM S. Omits [GPU]
+// for its cost: the PML terms of the PROM on GPU are covered by pml_oblique_45_tm_adaptive,
+// and the rational fit and synthesis run on the host.
 TEST_CASE("pml_waveguide_fd_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1504,7 +1508,7 @@ TEST_CASE("pml_waveguide_fd_synth", "[Serial][Parallel][Regression]")
 // the +z PML: the stretch must be the same in both PML regions (σ_max from the smallest
 // refractive index of their materials), otherwise the quasi-TEM mode reflects at -23 dB
 // from the interface inside the layer, versus below -85 dB at 2, 5, and 8 GHz here.
-TEST_CASE("pml_layered", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_layered", "[Serial][Parallel][GPU][Regression]")
 {
   RunPMLDrivenCase("pml_layered", "pml_layered", "port-S.csv", -60.0);
 }
@@ -1513,7 +1517,7 @@ TEST_CASE("pml_layered", "[Serial][Parallel][Regression]")
 // cell), with the conductivity computed from a reflection target R = 1e-12: the reflection,
 // about R^cos θ (|S11| ~ -42 dB), grows towards grazing incidence like that of a continuous
 // PML.
-TEST_CASE("pml_oblique_grazing_80_te", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_oblique_grazing_80_te", "[Serial][Parallel][GPU][Regression]")
 {
   RunPMLDrivenCase("pml_oblique", "grazing_80_te", "port-floquet-S.csv", -38.0);
 }
@@ -1522,7 +1526,7 @@ TEST_CASE("pml_oblique_grazing_80_te", "[Serial][Parallel][Regression]")
 // frequency-dependent PML. With the Floquet wave vector, the PML terms of the PROM are not
 // symmetric: symmetrizing them drops the Floquet cross terms and the greedy sampling does
 // not converge. The TM reflection stays below -70 dB over the band.
-TEST_CASE("pml_oblique_45_tm_adaptive", "[Serial][Parallel][Regression]")
+TEST_CASE("pml_oblique_45_tm_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   RunPMLDrivenCase("pml_oblique", "oblique_45_tm_adaptive", "port-floquet-S.csv", -70.0);
 }

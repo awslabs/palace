@@ -238,7 +238,7 @@ TEST_CASE("CPU preconditioner quadrature data preserves the multigrid operators"
 }
 
 TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
-          "[spaceoperator][pml][Serial][Parallel]")
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
 {
   using namespace std::complex_literals;
 
@@ -414,7 +414,7 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
 }
 
 TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
-          "[spaceoperator][pml][Serial][Parallel]")
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
 {
   using namespace std::complex_literals;
 
@@ -772,7 +772,7 @@ TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
 }
 
 TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
-          "[spaceoperator][pml][Serial][Parallel]")
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
 {
   using namespace std::complex_literals;
 
@@ -937,7 +937,7 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
 }
 
 TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
-          "[spaceoperator][pml][Serial][Parallel]")
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
 {
   using namespace std::complex_literals;
 
