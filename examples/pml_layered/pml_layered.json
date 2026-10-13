@@ -76,7 +76,7 @@
     "Driven": {
       "MinFreq": 2.0,
       "MaxFreq": 8.0,
-      "FreqStep": 0.5,
+      "FreqStep": 3.0,
       "SaveStep": 0
     },
     "Linear": {
