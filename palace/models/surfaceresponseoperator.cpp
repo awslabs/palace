@@ -9667,6 +9667,37 @@ SnapProbeToDeviceChord(const IdentificationResult &identification,
   return snap;
 }
 
+std::optional<ProbeChordSnap> SnapProbeToDeviceChordAcrossMirror(
+    const IdentificationResult &identification, const std::array<double, 3> &q,
+    const std::vector<MirrorPlane> &planes, double band, double tolerance)
+{
+  if (planes.empty() || band <= 0.0)
+  {
+    return SnapProbeToDeviceChord(identification, q);
+  }
+  const auto reflected = ReflectIntoDomain(q, planes, band, tolerance);
+  if (!reflected || reflected->planes.empty())
+  {
+    // Inside every plane (q is returned unchanged), or a probe the solve does not reflect
+    // (beyond the band, or beyond a plane that does not mirror): read where it is.
+    return SnapProbeToDeviceChord(identification, q);
+  }
+  auto snap = SnapProbeToDeviceChord(identification, reflected->point);
+  if (!snap)
+  {
+    return snap;
+  }
+  // The displacement in the frame of the mapped probe: the composition's linear part is
+  // L_m ... L_1 (the planes in index order), its inverse L_1 ... L_m, applied last plane
+  // first. A reflection preserves the distance.
+  for (auto it = reflected->planes.rbegin(); it != reflected->planes.rend(); ++it)
+  {
+    snap->displacement =
+        planes[static_cast<std::size_t>(*it)].ReflectDirection(snap->displacement);
+  }
+  return snap;
+}
+
 namespace
 {
 
@@ -10992,10 +11023,16 @@ FeaturePatchSummary BuildFeaturePatches(
       // read the gap potential, 1.05e-4 at p5). Straight edges leave every probe where it
       // is; the snaps travel with the patch (the geometry cache) and are recorded by the
       // gate (ProbeSnaps). The trace mesh is in library units (coordinate_scale to mesh
-      // units); its vertex order is the gate's knot index. A model whose trace data is not
-      // readable here - a discovery PLACEHOLDER, whose BasisPoints name a file that does
-      // not exist (the geometry-only preflight places it and never solves it; the dry-run
-      // ownership record below reads the same predicate) - is placed with
+      // units); its vertex order is the gate's knot index. A probe of a mirror-formed
+      // coupon's IMAGE half lies beyond a Natural truncation plane, where the solve
+      // evaluates it at its reflection (the even extension within the global mirror band
+      // widened to the coupon's reach, ConfigurePointCommunication): it is snapped at that
+      // reflected position, the displacement carried back into the patch frame (decision
+      // 774; the 79c3 diagnosis of decision 771: four image-side arc edge ends evaluated on
+      // the fitted circle, one sagitta into the gap off the chord). A model whose trace
+      // data is not readable here - a discovery PLACEHOLDER, whose BasisPoints name a file
+      // that does not exist (the geometry-only preflight places it and never solves it; the
+      // dry-run ownership record below reads the same predicate) - is placed with
       // probe_snaps_computed = false, which a solve refuses (decision 632): the snaps are
       // never skipped silently on a solved patch.
       if (!ModelTraceDataReadable(model.response))
@@ -11031,6 +11068,13 @@ FeaturePatchSummary BuildFeaturePatches(
           trace_it = trace_meshes.emplace(model_index, std::move(trace_mesh)).first;
         }
         const std::array<Point3D, 3> frame = {patch.axis_u, patch.axis_v, patch.axis_w};
+        // The band the solve reflects this patch's probes within (mesh units): the global
+        // mirror band (0 under Maxwell / Mirror Off: no reflection at all), widened to the
+        // coupon's reach for a mirror-formed configuration (the solve's per-point band).
+        const double mirror_band = result.mirror_band_over_radius * R;
+        const double probe_band =
+            mirror_band > 0.0 ? std::max(mirror_band, patch.provenance.mirror_reach) : 0.0;
+        const double mirror_tolerance = kSignatureParameterToleranceOverRadius * R;
         const auto &vertices = trace_it->second.vertices;
         for (std::size_t v = 0; v < vertices.size(); v++)
         {
@@ -11040,8 +11084,9 @@ FeaturePatchSummary BuildFeaturePatches(
             continue;
           }
           const Point3D local = Scale(1.0 / coordinate_scale, vertices[v].point);
-          const auto snap = SnapProbeToDeviceChord(
-              identification, TransformLocalPoint(patch.origin, frame, local));
+          const auto snap = SnapProbeToDeviceChordAcrossMirror(
+              identification, TransformLocalPoint(patch.origin, frame, local),
+              mirror_planes, probe_band, mirror_tolerance);
           if (!snap)
           {
             continue;
