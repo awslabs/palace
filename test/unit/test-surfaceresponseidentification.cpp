@@ -5921,7 +5921,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     imaged.real_segments = static_cast<std::size_t>(chord);
     CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
   }
-  // 7. The geometry cache round trip of the record (version 18).
+  // 7. The geometry cache round trip of the record (version 19).
   {
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -5950,15 +5950,15 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     std::ifstream input(path);
     nlohmann::json cache = nlohmann::json::parse(input);
     input.close();
-    CHECK(cache["Version"] == 18);
+    CHECK(cache["Version"] == 19);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
     CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
     CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
-    // A version-18 cache written before decision 632 (no ProbeSnapsComputed) is refused by
-    // name, never read as computed.
+    // A current-version cache without ProbeSnapsComputed (the schema before decision 632)
+    // is refused by name, never read as computed.
     nlohmann::json uncomputed = cache;
     uncomputed["Patches"][0].erase("ProbeSnapsComputed");
-    const auto uncomputed_path = dir / "geometry-v18-no-computed.json";
+    const auto uncomputed_path = dir / "geometry-v19-no-computed.json";
     {
       std::ofstream output(uncomputed_path);
       output << uncomputed.dump(2) << "\n";
@@ -5980,7 +5980,192 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       ContainsSubstring("cache version 17") &&
-                          ContainsSubstring("version 18"));
+                          ContainsSubstring("version 19"));
+    // A version-18 cache (main before decision 774: the same schema, but a mirror-formed
+    // coupon's image-side probes recorded un-snapped) is refused by the version message
+    // (decision 781; the 527 rule), never read for its stale ProbeSnaps.
+    nlohmann::json eighteen = cache;
+    eighteen["Version"] = 18;
+    const auto eighteen_path = dir / "geometry-v18.json";
+    {
+      std::ofstream output(eighteen_path);
+      output << eighteen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
+                      ContainsSubstring("cache version 18") &&
+                          ContainsSubstring("version 19"));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationProbeChordSnapAcrossMirror",
+          "[surfaceresponseidentification][surfaceresponseoperator][conductorconsistency]"
+          "[Serial]")
+{
+  // Decision 774 (the GROUP B 79c3 diagnosis, decision 771): a conductor-consistency probe
+  // of a mirror-formed coupon's IMAGE half lies beyond a Natural truncation plane, and the
+  // solve evaluates it at its reflection into the domain (the even extension, within the
+  // coupon's reach). Its device chord is therefore the one at the REFLECTED position: the
+  // placement snaps it there, exactly as its real-side mirror knot is snapped, and carries
+  // the displacement back through the same reflections so that the stored displacement
+  // travels with the patch as every snap does and the solve's reflection of (probe +
+  // displacement) lands on the chord. Every probe the solve would not reflect is read as
+  // before, bitwise. The lane-P scene: the 10 x 6 island with 1-um fillets, R = 2.
+  const double R = 2.0;
+  const auto input = MakeInput({{RoundedRectangle(5.0, 3.0, 1.0, 4), 0, 1.0}}, R);
+  const auto result = IdentifyMetalPerimeter(input);
+  REQUIRE(result.arcs.size() == 4);
+  const std::array<double, 3> center = {4.0, 2.0, 0.0};
+  const double rho = 1.0;
+  const double sagitta = rho * (1.0 - std::cos(0.5 * 22.5 * std::acos(-1.0) / 180.0));
+  auto Circle = [&](double degrees, double radius)
+  {
+    const double t = degrees * std::acos(-1.0) / 180.0;
+    return std::array<double, 3>{center[0] + radius * std::cos(t),
+                                 center[1] + radius * std::sin(t), 0.0};
+  };
+  auto Moved = [](const std::array<double, 3> &p, const std::array<double, 3> &d)
+  { return std::array<double, 3>{p[0] + d[0], p[1] + d[1], p[2] + d[2]}; };
+  // The window's +x wall x = 6 (outward normal +x; the island occupies x <= 5) and its +y
+  // wall y = 4, both Natural, acting everywhere in plan view (the synthetic faces box).
+  auto Wall = [](const std::array<double, 3> &normal, double offset)
+  {
+    MirrorPlane plane;
+    plane.attribute = 7;
+    plane.normal = normal;
+    plane.offset = offset;
+    plane.faces = 1;
+    plane.status = "Natural";
+    plane.box_min = {-1.0e9, -1.0e9, -1.0e9};
+    plane.box_max = {1.0e9, 1.0e9, 1.0e9};
+    return plane;
+  };
+  const std::vector<MirrorPlane> wall = {Wall({1.0, 0.0, 0.0}, 6.0)};
+  const std::vector<MirrorPlane> corner = {Wall({1.0, 0.0, 0.0}, 6.0),
+                                           Wall({0.0, 1.0, 0.0}, 4.0)};
+  const double band = 3.0 * R, tolerance = 1.0e-3 * R;
+  auto Same =
+      [](const std::optional<ProbeChordSnap> &a, const std::optional<ProbeChordSnap> &b)
+  {
+    REQUIRE(a.has_value() == b.has_value());
+    if (a && b)
+    {
+      CHECK(a->segment == b->segment);
+      CHECK(a->arc == b->arc);
+      CHECK(a->displacement == b->displacement);
+      CHECK(a->distance == b->distance);
+    }
+  };
+
+  // The real-side knot: ON the fitted circle at the first chord's middle (the arc face-end
+  // knot of a coupon built on the circle), snapped by the sagitta (the lane-P case).
+  const auto q_real = Circle(11.25, rho);
+  const auto real = SnapProbeToDeviceChord(result, q_real);
+  REQUIRE(real.has_value());
+  CHECK_THAT(real->distance, WithinAbs(sagitta, 1.0e-12));
+  const auto &chord = result.segments[real->segment];
+  const auto foot_real = Moved(q_real, real->displacement);
+  REQUIRE(SegmentDistance(foot_real, chord.key[0], chord.key[1]) < 1.0e-12);
+
+  // Its IMAGE across the wall, 1.02 um beyond the plane (within the band): the knot of the
+  // coupon's image half. Main's reading (the real-only search at the mapped position): no
+  // real segment within the bound, no snap - the mechanism of decision 771 (c).
+  const auto q_image = wall[0].Reflect(q_real);
+  CHECK(q_image[0] > 6.0);
+  CHECK_FALSE(SnapProbeToDeviceChord(result, q_image).has_value());
+
+  // (i)-(iii) The mirror-aware snap: the image knot snaps like its real-side mirror (the
+  // same chord, arc and distance); the stored displacement is the real-side one reflected
+  // (the linear part: the x component flips); the solve's chain - the even extension of
+  // (probe + displacement) - lands on the chord, at the real-side foot.
+  {
+    const auto snap =
+        SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, band, tolerance);
+    REQUIRE(snap.has_value());
+    CHECK(snap->segment == real->segment);
+    CHECK(snap->arc == real->arc);
+    CHECK_THAT(snap->distance, WithinAbs(sagitta, 1.0e-12));
+    CHECK_THAT(snap->distance, WithinAbs(real->distance, 1.0e-15));
+    const auto expected = wall[0].ReflectDirection(real->displacement);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(snap->displacement[d], WithinAbs(expected[d], 1.0e-12));
+    }
+    CHECK_THAT(snap->displacement[0], WithinAbs(-real->displacement[0], 1.0e-12));
+    CHECK_THAT(snap->displacement[1], WithinAbs(real->displacement[1], 1.0e-12));
+    CHECK(snap->displacement[2] == 0.0);
+    CHECK_THAT(
+        std::hypot(snap->displacement[0], snap->displacement[1], snap->displacement[2]),
+        WithinAbs(snap->distance, 1.0e-15));
+    const auto evaluated =
+        ReflectIntoDomain(Moved(q_image, snap->displacement), wall, band, tolerance);
+    REQUIRE(evaluated.has_value());
+    CHECK(evaluated->planes == std::vector<int>{0});
+    CHECK(SegmentDistance(evaluated->point, chord.key[0], chord.key[1]) < 1.0e-12);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(evaluated->point[d], WithinAbs(foot_real[d], 1.0e-12));
+    }
+  }
+  // (iv) The real-side knot through the mirror-aware call: bitwise the plain reading (it
+  //      lies inside every plane; nothing is reflected).
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, wall, band, tolerance), real);
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, corner, band, tolerance), real);
+  // (v) A knot the solve would not reflect is read where it is, as on main: beyond the band
+  //     (band 0.5 um < its 1.02-um depth), or beyond a plane that does not mirror.
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, 0.5, tolerance),
+       SnapProbeToDeviceChord(result, q_image));
+  CHECK_FALSE(SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, 0.5, tolerance)
+                  .has_value());
+  {
+    auto unsupported = wall;
+    unsupported[0].status = "Unsupported";
+    Same(SnapProbeToDeviceChordAcrossMirror(result, q_image, unsupported, band, tolerance),
+         SnapProbeToDeviceChord(result, q_image));
+    CHECK_FALSE(
+        SnapProbeToDeviceChordAcrossMirror(result, q_image, unsupported, band, tolerance)
+            .has_value());
+  }
+  // (vi) No planes, or band 0 (Maxwell / Mirror Off): the plain reading.
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, {}, band, tolerance), real);
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, wall, 0.0, tolerance), real);
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, 0.0, tolerance),
+       SnapProbeToDeviceChord(result, q_image));
+  // (vii) Straight edges never move a knot, through the mirror as well: the image across
+  //       the +y wall of a knot a sagitta into the gap off the island's top edge y = 3.
+  {
+    const std::array<double, 3> gap_knot = {0.0, 3.0 + sagitta, 0.0};
+    CHECK_FALSE(SnapProbeToDeviceChord(result, gap_knot).has_value());
+    const auto image = corner[1].Reflect(gap_knot);
+    CHECK(image[1] > 4.0);
+    CHECK_FALSE(SnapProbeToDeviceChordAcrossMirror(result, image, corner, band, tolerance)
+                    .has_value());
+  }
+  // (viii) The double image at the window's corner (beyond both walls): snapped through
+  // both
+  //        reflections, the same chord / arc / distance; the solve's chain lands on the
+  //        chord.
+  {
+    const auto q_double = corner[1].Reflect(corner[0].Reflect(q_real));
+    CHECK(q_double[0] > 6.0);
+    CHECK(q_double[1] > 4.0);
+    CHECK_FALSE(SnapProbeToDeviceChord(result, q_double).has_value());
+    const auto snap =
+        SnapProbeToDeviceChordAcrossMirror(result, q_double, corner, band, tolerance);
+    REQUIRE(snap.has_value());
+    CHECK(snap->segment == real->segment);
+    CHECK(snap->arc == real->arc);
+    CHECK_THAT(snap->distance, WithinAbs(real->distance, 1.0e-15));
+    CHECK_THAT(snap->displacement[0], WithinAbs(-real->displacement[0], 1.0e-12));
+    CHECK_THAT(snap->displacement[1], WithinAbs(-real->displacement[1], 1.0e-12));
+    const auto evaluated =
+        ReflectIntoDomain(Moved(q_double, snap->displacement), corner, band, tolerance);
+    REQUIRE(evaluated.has_value());
+    CHECK(evaluated->planes == std::vector<int>{0, 1});
+    CHECK(SegmentDistance(evaluated->point, chord.key[0], chord.key[1]) < 1.0e-12);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(evaluated->point[d], WithinAbs(foot_real[d], 1.0e-12));
+    }
   }
 }
 

@@ -1099,7 +1099,10 @@ smaller endpoint.
    contract placement of every spatial patch — `MirrorFormedTopology`, `MirrorReach`,
    `MirrorEdgeWeights`, decision 557 (4) — and refuses a version-16 cache; version 18 adds the
    conductor-consistency probe snaps of every spatial patch — `ProbeSnaps`, the knots the
-   gate reads on the device's arc chord, decision 611 (2) — and refuses a version-17 cache). The Maxwell operator path
+   gate reads on the device's arc chord, decision 611 (2) — and refuses a version-17 cache;
+   version 19 snaps a mirror-formed coupon's image-side probes at their reflection into the
+   domain, decision 774, and refuses a version-18 cache, whose image probes are un-snapped,
+   decision 781). The Maxwell operator path
    (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
    inert there (it multiplies the Maxwell domain terms for uniformity only). The record
    runs in the operator constructor (metadata
@@ -2488,7 +2491,7 @@ arc-fit tolerance (1e-3 R) of the chord in the arc's plane, it is read at its in
 foot on the chord — the device the solve has. Straight device edges never move a knot,
 nor does a knot already on the chord at the signature's resolution (1e-6 R, a device
 joint). The snaps travel with the placed patch (`Provenance.ProbeSnaps`, response-geometry
-cache version 18; a version-17 cache is refused), the gate record carries `ProbeSnaps
+cache version 19; a version-17 or version-18 cache is refused), the gate record carries `ProbeSnaps
 {Count, MaxDisplacement, Knots[{Knot, Segment, Arc, Displacement}]}` per patch and
 excitation (mesh-file units), a snap naming a knot that is not a conductor vertex (a stale
 cache) fails closed on every rank alike, and the tolerance, the floor and the Python bar

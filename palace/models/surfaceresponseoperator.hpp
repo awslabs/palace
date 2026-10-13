@@ -861,6 +861,23 @@ std::optional<ProbeChordSnap>
 SnapProbeToDeviceChord(const IdentificationResult &identification,
                        const std::array<double, 3> &q);
 
+// The probe snap under the mirror rule (decision 774; the GROUP B 79c3 diagnosis of
+// decision 771): the solve evaluates a probe beyond a Natural truncation plane at its
+// reflection into the domain (ReflectIntoDomain: the even extension, the planes in index
+// order, within `band` = the global mirror band widened to a mirror-formed coupon's reach),
+// so the device chord such a probe must be read on is the one at its REFLECTED position -
+// the mapped position of an image-side knot lies beyond the plane, where no real segment
+// is. The snap is computed at the reflected position and its displacement carried back
+// through the same planes in reverse order (ReflectDirection, the linear part of each
+// reflection, its own inverse), so that the stored displacement is applied to the MAPPED
+// probe exactly as a real-side snap's is and the solve's reflection of (probe +
+// displacement) lands on the chord. A probe inside every plane, or one the solve would not
+// reflect (beyond the band, a plane that does not mirror, no planes, band 0), is read by
+// SnapProbeToDeviceChord at q, bitwise as before.
+std::optional<ProbeChordSnap> SnapProbeToDeviceChordAcrossMirror(
+    const IdentificationResult &identification, const std::array<double, 3> &q,
+    const std::vector<MirrorPlane> &planes, double band, double tolerance);
+
 void WriteResponseGeometryCache(
     const std::filesystem::path &path,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config);
