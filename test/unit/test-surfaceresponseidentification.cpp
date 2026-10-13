@@ -5272,6 +5272,464 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationFaceCrossingTilt",
+          "[surfaceresponseidentification][Serial]")
+{
+  // S7 R2, the face-crossing TILT rule T4 (decisions 762 / 766): on the T2-clean box every
+  // plan piece end ON a face crossing it above the THIN kind's largest built tilt (70 deg
+  // to the face normal: the mesher's THIN_FACE_END_TILT_BOUND, a cut the thin coupon
+  // refuses) moves the crossed face outward by the largest outward excursion of the piece's
+  // own continuation up to the adjacent face line, plus the R padding; a breach of the span
+  // cap is Unboxable by name. The SpatialSupportContract fixture (R = 2 um: pad A conductor
+  // 0 y <= 0, lead B conductor 1 |x| <= 1 from y = 1; the lead end's claims box x in
+  // [-12.873, 12.873], y in [-5, 12] um) plus one foreign loop (conductor 2). The record's
+  // faces are indexed in the cluster's canonical frame: they are read through DeviceFace.
+  const double R = 2.0;
+  const double pi = std::acos(-1.0);
+  const double x0 = -12.872984, y0 = -5.0, y1 = 12.0;  // the claims box, um
+  const double a18 = 18.0 * pi / 180.0;  // the strips' and the bar's crossing: 72 deg tilt
+  auto Identify = [&](const LoopSpec &foreign)
+  {
+    const std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                                         {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0},
+                                         foreign};
+    const auto input = MakeInput(loops, R);
+    auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    return std::make_pair(input, std::move(result));
+  };
+  const std::array<double, 2> probe = {0.0, 1.0};  // the lead's end edge: in the cluster
+  // The device face (0 = x0, 1 = y0, 2 = x1, 3 = y1 of the device-coordinate box) a frame
+  // face of the recorded box maps to.
+  auto DeviceFace = [&](const IdentifiedFeature &cluster, int f)
+  {
+    const auto &box = cluster.spatial_support.at("Box");
+    const auto device = DeviceBox(cluster, "Box", R);
+    const double mid_x = 0.5 * (box[0].get<double>() + box[2].get<double>()),
+                 mid_y = 0.5 * (box[1].get<double>() + box[3].get<double>());
+    const auto p = f % 2 == 0 ? DevicePoint(cluster, box[f].get<double>(), mid_y, R)
+                              : DevicePoint(cluster, mid_x, box[f].get<double>(), R);
+    int best = -1;
+    double best_distance = 1.0e300;
+    for (int k = 0; k < 4; k++)
+    {
+      const double distance = std::abs(p[k % 2] - device[static_cast<std::size_t>(k)]);
+      if (distance < best_distance)
+      {
+        best_distance = distance;
+        best = k;
+      }
+    }
+    REQUIRE(best_distance < 1.0e-6);
+    return best;
+  };
+  auto DeviceCrossings = [&](const IdentifiedFeature &cluster)
+  {
+    std::array<int, 4> crossings{};
+    for (int f = 0; f < 4; f++)
+    {
+      crossings[static_cast<std::size_t>(DeviceFace(cluster, f))] =
+          cluster.spatial_support["FaceRules"]["Crossings"][f].get<int>();
+    }
+    return crossings;
+  };
+  // A 1-um-wide strip of the given length with its corner A inside the box, running along
+  // the unit direction d (perp = the unit normal to d, the strip on that side), as a
+  // counter-clockwise loop.
+  auto Strip = [&](const Point2 &A, const Point2 &d, const Point2 &perp, double length)
+  {
+    std::vector<Point2> strip = {
+        A,
+        {A[0] + perp[0], A[1] + perp[1]},
+        {A[0] + perp[0] + length * d[0], A[1] + perp[1] + length * d[1]},
+        {A[0] + length * d[0], A[1] + length * d[1]}};
+    if (perp[0] * d[1] - perp[1] * d[0] < 0.0)
+    {
+      std::reverse(strip.begin(), strip.end());
+    }
+    return LoopSpec{strip, 2, 100.0};
+  };
+  // The on-face ends of the signature's Context, each with its tilt to the face's normal
+  // (the device face index).
+  auto ContextFaceTilts = [&](const IdentifiedFeature &cluster)
+  {
+    std::vector<std::pair<int, double>> tilts;
+    const auto &box = cluster.signature.at("Box");
+    for (const auto &entry : cluster.signature.at("Context"))
+    {
+      const auto &P = entry.at("P");
+      const Point2 a = {P[0].get<double>(), P[1].get<double>()},
+                   b = {P[2].get<double>(), P[3].get<double>()};
+      for (const auto &[e, other] : {std::make_pair(a, b), std::make_pair(b, a)})
+      {
+        Point2 t;
+        if (entry.contains("Arc"))
+        {
+          const double rx = e[0] - entry["Arc"][0].get<double>(),
+                       ry = e[1] - entry["Arc"][1].get<double>();
+          t = {-ry, rx};
+        }
+        else
+        {
+          t = {other[0] - e[0], other[1] - e[1]};
+        }
+        const double norm = std::hypot(t[0], t[1]);
+        for (int f = 0; f < 4; f++)
+        {
+          if (std::abs(e[f % 2] - box[f].get<double>()) <= 1.0e-3 + 0.5e-6)
+          {
+            tilts.emplace_back(DeviceFace(cluster, f),
+                               std::acos(std::min(std::abs(t[f % 2]) / norm, 1.0)) * 180.0 /
+                                   pi);
+          }
+        }
+      }
+    }
+    return tilts;
+  };
+  // The common reading of a record the rule left alone: the claims box, no key.
+  auto CheckSilent = [&](const IdentifiedFeature &cluster)
+  {
+    const auto &support = cluster.spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Growth"]["Grown"] == false);
+    CHECK(support["Box"] == support["ClaimsBox"]);
+    CHECK(!support.contains("FaceCrossingTilt"));
+    CHECK(support["Unboxable"].is_null());
+  };
+
+  // (d) The bound is the mesher's (the Python pin test ties the three sources).
+  CHECK(kSupportFaceCrossingTiltBoundDegrees == 70.0);
+
+  // (b) CONTROL at 65 degrees: a 20-um strip from A = (-12.3, 5.2) up and left at 25 deg
+  //     from the y axis; both long edges cross the LEFT face at 65 deg to its normal (sine
+  //     0.42: T2 passes) and the strip's far part lies outside, never re-entering. The rule
+  //     is silent: the claims box, no FaceCrossingTilt key (the identity where it does not
+  //     act).
+  std::string control_hash;
+  {
+    const double a = 25.0 * pi / 180.0;
+    const auto [input, result] = Identify(
+        Strip({-12.3, 5.2}, {-std::sin(a), std::cos(a)}, {std::cos(a), std::sin(a)}, 20.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CheckSilent(*cluster);
+    CHECK(DeviceCrossings(*cluster)[0] == 3);  // the pad edge + the strip's two edges
+    double max_tilt = 0.0;
+    for (const auto &[f, tilt] : ContextFaceTilts(*cluster))
+    {
+      max_tilt = std::max(max_tilt, tilt);
+    }
+    CHECK_THAT(max_tilt, WithinAbs(65.0, 1.0e-3));
+    control_hash = cluster->hash;
+  }
+
+  // (a) STEEP STRAIGHT at 72 degrees (the same strip at 18 deg from the y axis): T2 passes
+  //     (sine 0.309 >= 0.25) on the claims box, so the rule reads it; both strip edges
+  //     exit through the left face above the bound heading to the top face: shortfalls
+  //     (12 - 6.963) tan 18 = 1.637 um and (12 - 10.200) tan 18 = 0.585 um; the face moves
+  //     by the larger + R = 1.8185 R to x = -16.510 um, the other faces stay; both edges
+  //     then exit the top face at 18 deg; no T3 step; the key differs from the control's.
+  {
+    const auto [input, result] =
+        Identify(Strip({-12.3, 5.2}, {-std::sin(a18), std::cos(a18)},
+                       {std::cos(a18), std::sin(a18)}, 20.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Growth"]["Grown"] == true);
+    CHECK(support["LegacyEquivalent"] == false);
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      CHECK(steps.get<int>() == 0);
+    }
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(claims_box[0], WithinAbs(x0, 1.0e-5));
+    // The crossings of the two edges on x0 and the excursions of their lines to y1.
+    const double cross_1 = 5.2 + (-12.3 - x0) / std::tan(a18);
+    const double cross_2 =
+        5.2 + std::sin(a18) + (-12.3 + std::cos(a18) - x0) / std::tan(a18);
+    const double shortfall_1 = (y1 - cross_1) * std::tan(a18);
+    const double shortfall_2 = (y1 - cross_2) * std::tan(a18);
+    CHECK_THAT(cross_1, WithinAbs(6.963, 2.0e-3));
+    CHECK_THAT(cross_2, WithinAbs(10.200, 2.0e-3));
+    CHECK_THAT(shortfall_1, WithinAbs(1.637, 2.0e-3));
+    CHECK_THAT(shortfall_2, WithinAbs(0.585, 2.0e-3));
+    CHECK_THAT(box[0], WithinAbs(x0 - shortfall_1 - kSupportPaddingOverRadius * R, 1.0e-4));
+    CHECK_THAT(box[0], WithinAbs(-16.510, 2.0e-3));
+    CHECK_THAT(box[1], WithinAbs(y0, 1.0e-5));
+    CHECK_THAT(box[2], WithinAbs(-x0, 1.0e-5));
+    CHECK_THAT(box[3], WithinAbs(y1, 1.0e-5));
+    REQUIRE(support.contains("FaceCrossingTilt"));
+    const auto &tilt = support["FaceCrossingTilt"];
+    CHECK(tilt["BoundDegrees"] == 70.0);
+    CHECK_THAT(tilt["BoundSource"].get<std::string>(),
+               ContainsSubstring("THIN_FACE_END_TILT_BOUND"));
+    REQUIRE(tilt["Widenings"].size() == 2);
+    std::vector<double> shortfalls;
+    for (const auto &widening : tilt["Widenings"])
+    {
+      const int f = widening["Face"].get<int>();
+      CHECK(DeviceFace(*cluster, f) == 0);
+      CHECK(widening["Pass"] == 0);
+      CHECK_THAT(widening["TiltDegrees"].get<double>(), WithinAbs(72.0, 1.0e-3));
+      CHECK_THAT(widening["PaddingOverR"].get<double>(), WithinAbs(1.0, 0.0));
+      CHECK_THAT(widening["FaceLineOverR"][0].get<double>(),
+                 WithinAbs(support["ClaimsBox"][f].get<double>(), 1.0e-9));
+      CHECK_THAT(widening["FaceLineOverR"][1].get<double>(),
+                 WithinAbs(support["Box"][f].get<double>(), 1.0e-9));
+      shortfalls.push_back(widening["ShortfallOverR"].get<double>());
+    }
+    std::sort(shortfalls.begin(), shortfalls.end());
+    CHECK_THAT(shortfalls[0], WithinAbs(shortfall_2 / R, 1.0e-4));
+    CHECK_THAT(shortfalls[1], WithinAbs(shortfall_1 / R, 1.0e-4));
+    // The crossings of the widened box: the pad edge on x0 and x1; the lead's two edges and
+    // the strip's two on the top face; every on-face end of the Context now within the
+    // bound.
+    CHECK(DeviceCrossings(*cluster) == std::array<int, 4>{1, 0, 1, 4});
+    int top_face_strip_ends = 0;
+    for (const auto &[f, tilt_degrees] : ContextFaceTilts(*cluster))
+    {
+      CHECK(tilt_degrees <= 70.0);
+      if (f == 3 && std::abs(tilt_degrees - 18.0) < 1.0e-3)
+      {
+        top_face_strip_ends++;
+      }
+    }
+    CHECK(top_face_strip_ends == 2);
+    CHECK(support["Context"]["ForeignVertices"].size() == 2);  // the strip's near corners
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    CHECK(support["FaceRules"]["MinCrossingSine"].get<double>() >= 0.25);
+    CHECK(cluster->hash != control_hash);
+    CHECK(result.spatial_support.grown >= 1);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // (e) AN ARC, the 32dc558f4810 form (the S7 ground arc: a circle entering through a side
+  //     face above the bound whose continuation reaches its outward extreme before any
+  //     adjacent face): a 1-um bar along a circle of radius 30 um whose inner edge passes
+  //     through (x0, 7.5) at 72 deg to the left face's normal, curving right (centre at
+  //     (x0 + 30 cos 18, 7.5 - 30 sin 18)), from its lower end 0.8-1.8 um outside the face
+  //     (4.6 um above the pad: beyond the 2R interaction, its own cluster) to its upper
+  //     end above the box (5 um left of the lead; it exits the top face at 27 deg). Each
+  //     edge is a chorded polyline whose joints are vertices (every chord-run is a piece:
+  //     a joint within the clearance of a face line would fail T2 and grow the box as on
+  //     main; the chord before the first joint is a straight arm, not the arc), so the
+  //     face crossings lie between interior joints placed clear of the left and top face
+  //     lines by > 0.3 R, with chords of at most 8.4 deg (sagitta < the joint noise
+  //     resolution 0.05 R) and the end corners on the circles beyond the shell (the
+  //     least-squares bend of the arc rule needs four interior joints; T2 passes on the
+  //     claims box). The outer edge (radius 31) crosses the left face at 67.0 deg: below
+  //     the bound. The rule reads the inner edge's crossing: its
+  //     circle turns back at x = centre - 30, an excursion of 30 (1 - cos 18) = 1.468 um =
+  //     0.7342 R beyond the face, so the face moves by 1.7342 R to -16.341 um and the bar's
+  //     lower end is inside; every on-face end then reads within the bound (the exits at
+  //     the top face).
+  {
+    const double rho = 30.0;
+    const Point2 center = {x0 + rho * std::cos(a18), 7.5 - rho * std::sin(a18)};
+    auto OnCircle = [&](double radius, double degrees) -> Point2
+    {
+      return {center[0] + radius * std::cos(degrees * pi / 180.0),
+              center[1] + radius * std::sin(degrees * pi / 180.0)};
+    };
+    std::vector<Point2> bar;
+    for (const double degrees : {167.8, 166.3, 158.0, 150.6, 145.5, 141.5, 137.0})
+    {
+      bar.push_back(OnCircle(rho, degrees));
+    }
+    for (const double degrees : {136.0, 141.0, 146.0, 152.0, 160.4, 168.0})
+    {
+      bar.push_back(OnCircle(rho + 1.0, degrees));
+    }
+    const auto [input, result] = Identify({bar, 2, 100.0});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Growth"]["Grown"] == true);
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      CHECK(steps.get<int>() == 0);
+    }
+    const double excursion = rho * (1.0 - std::cos(a18));  // um
+    CHECK_THAT(excursion, WithinAbs(1.468, 1.0e-3));
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(box[0], WithinAbs(x0 - excursion - kSupportPaddingOverRadius * R, 1.0e-4));
+    CHECK_THAT(box[1], WithinAbs(y0, 1.0e-5));
+    CHECK_THAT(box[2], WithinAbs(-x0, 1.0e-5));
+    CHECK_THAT(box[3], WithinAbs(y1, 1.0e-5));
+    REQUIRE(support.contains("FaceCrossingTilt"));
+    REQUIRE(support["FaceCrossingTilt"]["Widenings"].size() == 1);
+    const auto &widening = support["FaceCrossingTilt"]["Widenings"][0];
+    CHECK(DeviceFace(*cluster, widening["Face"].get<int>()) == 0);
+    CHECK_THAT(widening["TiltDegrees"].get<double>(), WithinAbs(72.0, 1.0e-3));
+    CHECK_THAT(widening["ShortfallOverR"].get<double>(), WithinAbs(excursion / R, 1.0e-4));
+    const auto crossing = DevicePoint(*cluster, widening["P"][0], widening["P"][1], R);
+    CHECK_THAT(crossing[0], WithinAbs(x0, 1.0e-4));
+    CHECK_THAT(crossing[1], WithinAbs(7.5, 1.0e-4));
+    CHECK(DeviceCrossings(*cluster) == std::array<int, 4>{1, 0, 1, 4});
+    bool arc_context = false;
+    for (const auto &[f, tilt_degrees] : ContextFaceTilts(*cluster))
+    {
+      CHECK(tilt_degrees <= 70.0);
+    }
+    for (const auto &entry : cluster->signature["Context"])
+    {
+      arc_context = arc_context || (entry.contains("Arc") && entry["Chain"] == false);
+    }
+    CHECK(arc_context);
+    CHECK(support["Context"]["ForeignVertices"].size() == 2);  // the bar's lower end
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    CHECK(support["FaceRules"]["MinCrossingSine"].get<double>() >= 0.25);
+  }
+
+  // (c) SPAN-CAP REFUSAL: a 7-um strip from A = (-12.3, 11.4) DOWN and left at 18 deg from
+  //     the y axis (its far end 0.6 um outside the left face, 4.4 um above the pad): both
+  //     edges cross the left face at 72 deg heading to the BOTTOM face, the line of the
+  //     first from y = 9.64: an excursion of 14.64 tan 18 = 4.76 um = 2.378 R, so the
+  //     widening (+ R) would take the plan span to 16.25 R > 16 R: Unboxable by name, the
+  //     text naming the face, the tilt and the bound, the firing ends recorded.
+  {
+    const auto [input, result] =
+        Identify(Strip({-12.3, 11.4}, {-std::sin(a18), -std::cos(a18)},
+                       {std::cos(a18), -std::sin(a18)}, 7.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 0);
+    CHECK(cluster->signature["Unboxable"] == true);
+    CHECK(support["UnboxableReason"] == "SpanCapRefusedFaceCrossingTiltWidening");
+    REQUIRE(support["Unboxable"].is_string());
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("face-crossing tilt rule"));
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("above the bound 70"));
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("beyond the span cap 16"));
+    CHECK(support["Box"] == support["ClaimsBox"]);  // the refused widening is not applied
+    REQUIRE(support.contains("FaceCrossingTilt"));
+    REQUIRE(support["FaceCrossingTilt"]["Widenings"].size() == 2);
+    const double cross_1 = 11.4 - (-12.3 - x0) / std::tan(a18);
+    const double shortfall_1 = (cross_1 - y0) * std::tan(a18);
+    CHECK_THAT(shortfall_1 / R, WithinAbs(2.378, 1.0e-3));
+    double largest = 0.0;
+    for (const auto &widening : support["FaceCrossingTilt"]["Widenings"])
+    {
+      CHECK(DeviceFace(*cluster, widening["Face"].get<int>()) == 0);
+      CHECK_THAT(widening["TiltDegrees"].get<double>(), WithinAbs(72.0, 1.0e-3));
+      largest = std::max(largest, widening["ShortfallOverR"].get<double>());
+    }
+    CHECK_THAT(largest, WithinAbs(shortfall_1 / R, 1.0e-4));
+    for (const auto &widening : support["FaceCrossingTilt"]["Widenings"])
+    {
+      // The refused move of the face, recorded: the largest shortfall + the padding.
+      CHECK_THAT(std::abs(widening["FaceLineOverR"][1].get<double>() -
+                          widening["FaceLineOverR"][0].get<double>()),
+                 WithinAbs(largest + 1.0, 2.0e-6));
+    }
+    CHECK_THAT(12.872984 + largest + 1.0, WithinAbs(16.25, 1.0e-2));
+    CHECK(result.spatial_support.unboxable >= 1);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationFaceCrossingTiltFrameOfRecord",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 772: the face-crossing tilt rule reads the box of the FRAME OF RECORD only.
+  // The frame is chosen over the candidate frames of the claims (the portion tangents and
+  // perpendiculars) by the lexicographically smallest key text, which starts with the
+  // frame's "Box"; a rule acting inside every candidate's support would widen a candidate
+  // and could make its box text sort below the frame of record's ("-10.3..." < "-3.59..."),
+  // renaming a key whose own frame reads no steep crossing (the OSC-003 Matched key
+  // 56e7d233c0a7 of the s7r2 census). The pad of the SpatialSupportContract fixture with a
+  // lead tilted 20 deg from vertical (R = 2 um) has axis-aligned AND 70 / 160-deg candidate
+  // frames; its frame of record is axis-aligned (x along device y) with the claims box
+  // x in [-12.63, 12.88], y in [-5.59, 13.0] um. A 1-um foreign square at (-8, 8) inside
+  // the box makes the record contract 3 (the candidate loop runs). A 0.3-um-wide foreign
+  // strip 1.6 um ABOVE the record box, along -1.5 deg from the device x axis, is outside
+  // the record box and its clearance shell; in the 70-deg candidates it enters the box
+  // through the face normal to the 160-deg axis (tilt 18.5 deg) and leaves through the face
+  // normal to the 70-deg axis at 71.5 deg to its normal, 8.5 um from the box corner, with
+  // its line reaching the opposite face 3.76 R outward: the rule applied in that
+  // candidate would move its first box number to -10.17 R, and the per-candidate form would
+  // then choose that frame. The record must be the frame of record read without the
+  // strip: the same frame, box and KEY (the strip is not in its context), no widening.
+  const double R = 2.0;
+  const double pi = std::acos(-1.0);
+  const double a20 = 20.0 * pi / 180.0, a1p5 = -1.5 * pi / 180.0;
+  const Point2 d = {std::sin(a20), std::cos(a20)}, q = {std::cos(a20), -std::sin(a20)};
+  const std::vector<Point2> lead = {{q[0], 1.2 + q[1]},
+                                    {q[0] + 40.0 * d[0], 1.2 + q[1] + 40.0 * d[1]},
+                                    {-q[0] + 40.0 * d[0], 1.2 - q[1] + 40.0 * d[1]},
+                                    {-q[0], 1.2 - q[1]}};
+  const Point2 A = {-11.85, 14.88}, sd = {std::cos(a1p5), std::sin(a1p5)},
+               sp = {-std::sin(a1p5), std::cos(a1p5)};
+  std::vector<Point2> strip = {
+      A,
+      {A[0] + 10.0 * sd[0], A[1] + 10.0 * sd[1]},
+      {A[0] + 10.0 * sd[0] + 0.3 * sp[0], A[1] + 10.0 * sd[1] + 0.3 * sp[1]},
+      {A[0] + 0.3 * sp[0], A[1] + 0.3 * sp[1]}};
+  const std::array<double, 2> probe = {0.0, 1.2};  // the lead's end edge: in the cluster
+  auto Identify = [&](bool with_strip)
+  {
+    std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                                   {lead, 1, 100.0},
+                                   {Rectangle(-8.5, 7.5, -7.5, 8.5), 3, 100.0}};
+    if (with_strip)
+    {
+      loops.push_back({strip, 2, 100.0});
+    }
+    const auto input = MakeInput(loops, R);
+    auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    return std::make_pair(input, std::move(result));
+  };
+  const auto [control_input, control] = Identify(false);
+  const auto *reference = ClusterContaining(control, control_input, probe);
+  REQUIRE(reference != nullptr);
+  CHECK(reference->spatial_support["Contract"] == 3);
+  CHECK(reference->spatial_support["Context"]["ForeignPieces"] == 4);  // the square
+  // The frame of record: axis-aligned (x along device y, y along -device x).
+  CHECK_THAT(reference->axes[0][0], WithinAbs(0.0, 1.0e-12));
+  CHECK_THAT(reference->axes[0][1], WithinAbs(1.0, 1.0e-12));
+  CHECK_THAT(reference->axes[1][0], WithinAbs(-1.0, 1.0e-12));
+  const auto reference_box = DeviceBox(*reference, "Box", R);
+  CHECK_THAT(reference_box[0], WithinAbs(-12.63, 0.01));
+  CHECK_THAT(reference_box[3], WithinAbs(13.0, 0.01));
+  // The strip lies above the record box, beyond the clearance shell, at 71.5 deg to the
+  // normal of the 70-deg candidates' face (and would cross no face of the record box).
+  for (const auto &p : strip)
+  {
+    CHECK(p[1] > reference_box[3] + kSupportFaceClearanceOverRadius * R + 1.0);
+  }
+  CHECK_THAT(std::acos(std::abs(sd[0] * std::cos(70.0 * pi / 180.0) +
+                                sd[1] * std::sin(70.0 * pi / 180.0))) *
+                 180.0 / pi,
+             WithinAbs(71.5, 1.0e-9));
+
+  const auto [input, result] = Identify(true);
+  const auto *cluster = ClusterContaining(result, input, probe);
+  REQUIRE(cluster != nullptr);
+  CHECK(cluster->hash == reference->hash);
+  CHECK(cluster->signature == reference->signature);
+  CHECK(cluster->axes == reference->axes);
+  CHECK(cluster->origin == reference->origin);
+  CHECK(cluster->spatial_support["Box"] == reference->spatial_support["Box"]);
+  CHECK(cluster->spatial_support["Box"] == cluster->spatial_support["ClaimsBox"]);
+  CHECK(cluster->spatial_support["Growth"]["Grown"] == false);
+  CHECK(!cluster->spatial_support.contains("FaceCrossingTilt"));
+  CHECK(cluster->spatial_support["Contract"] == 3);
+  CHECK(cluster->spatial_support["Context"]["ForeignPieces"] == 4);
+  CHECK(result.spatial_support.grown == control.spatial_support.grown);
+}
+
 TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
           "[surfaceresponseidentification][surfaceresponseoperator][Serial]")
 {

@@ -534,7 +534,27 @@ CanonicalSignature CanonicalClusterSignature(
 // did not image, clipped into the box (SpatialSupport.MirrorCompletion); an image chain's
 // band cut is a continuing-edge split like a claim cut, never a device vertex; a band cut
 // inside the box that no reflection continues (the plane does not act there) makes the
-// cluster Unboxable by name (MirrorBandCutUncontinued).
+// cluster Unboxable by name (MirrorBandCutUncontinued). T4, the face-crossing TILT rule
+// (decisions 762 / 766, S7 R2): on the T2-clean box (where the coupon mesher reads its
+// face ends) every plan piece end ON a face crosses it at a tilt theta = acos|t . n| to
+// the face normal; a tilt above kSupportFaceCrossingTiltBoundDegrees (strictly, with the
+// mesher's 1e-9 relative slack) is a cut the THIN coupon kind refuses to build
+// (mesh_spatial_coupon.jl THIN_FACE_END_TILT_BOUND, the largest built thin tilt; not a
+// constant of this file: pinned to the mesher's by test), so the crossed face moves
+// outward by the SHORTFALL + kSupportPaddingOverRadius x R, quantised - the shortfall
+// being the largest outward excursion of the piece's own continuation (its line, or its
+// fitted circle) from the crossing point until it first reaches the line of the adjacent
+// face its outward tangent heads to (a circle that turns back first: its outward extreme),
+// the largest over the face's firing ends - and T2 / T3 re-run on the widened box; an
+// end whose continuation never leaves the face line (sin(theta) = 0) does not act. Every
+// widening moves a face by at least the padding, so the span cap bounds the loop; a
+// breach is Unboxable by name (SpanCapRefusedFaceCrossingTiltWidening). The rule reads
+// the FRAME OF RECORD only (decision 772): the frame is chosen over the claims' candidate
+// frames exactly as without the rule, then one support reading with the rule in that
+// frame makes the record and the key (a rule inside every candidate would widen a
+// candidate's box and could make its key text sort below the frame of record's, renaming
+// a key whose own frame reads no steep crossing). Recorded only where it acted
+// (SpatialSupport.FaceCrossingTilt), so every other record is unchanged.
 constexpr double kSupportContinuationOverRadius = 2.0;
 constexpr double kSupportPaddingOverRadius = 1.0;
 constexpr double kSupportEndCoincidenceOverRadius = 1.0e-5;
@@ -543,6 +563,7 @@ constexpr double kSupportFaceClearanceOverRadius = 0.25;
 constexpr double kSupportFaceGrowthStepOverRadius = 0.25;
 constexpr int kSupportFaceGrowthMaxSteps = 12;
 constexpr double kSupportSpanCapOverRadius = 16.0;
+constexpr double kSupportFaceCrossingTiltBoundDegrees = 70.0;
 
 // Validates a list of span-cap allowances (fail closed: a cap below
 // kSupportSpanCapOverRadius never lowers the cap; two allowances within 2 x

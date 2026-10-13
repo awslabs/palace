@@ -605,6 +605,20 @@ class ArcScopeGuardsTest(unittest.TestCase):
         for kind in ("fabricated", "thin"):
             self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[kind][0])
 
+    def test_identification_face_crossing_tilt_bound_is_the_mesher_s(self):
+        # S7 R2 (decisions 762 / 766): the identification's support-box tilt rule
+        # (Identifier::ClusterSupport T4) enforces the THIN kind's largest built face-end tilt at box
+        # time; its C++ constant is pinned to the mesher's THIN_FACE_END_TILT_BOUND and to this module's
+        # THIN_FACE_END_TILT_BOUND_DEGREES by name - the three sources read by regex, one number.
+        header = (HERE.parents[2] / "palace" / "models" / "surfaceresponseidentification.hpp").read_text()
+        cpp = re.search(r"constexpr double kSupportFaceCrossingTiltBoundDegrees = ([0-9.]+);", header)
+        self.assertIsNotNone(cpp, "kSupportFaceCrossingTiltBoundDegrees missing from the identification header")
+        source = (HERE / "mesh_spatial_coupon.jl").read_text()
+        thin = re.search(r"const THIN_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
+        self.assertEqual(float(cpp.group(1)), float(thin))
+        self.assertEqual(float(cpp.group(1)), THIN_FACE_END_TILT_BOUND_DEGREES)
+        self.assertEqual(float(cpp.group(1)), 70.0)
+
 
 if __name__ == "__main__":
     unittest.main()
