@@ -326,6 +326,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe",
                 when="@4.10:",
             ),
+            # Consistent ordering of the shared entities of ParSubMesh groups across
+            # ranks (mfem/mfem branch simlapointe/psubmesh-shared-entity-order). Vendored
+            # until it is available from an immutable URL.
+            patch("mfem_psubmesh_shared_entity_order.diff", when="@4.10:"),
         ],
     )
 

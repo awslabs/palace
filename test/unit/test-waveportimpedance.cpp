@@ -6,6 +6,8 @@
 #include <cmath>
 #include <complex>
 #include <numbers>
+#include <sstream>
+#include <tuple>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -454,6 +456,130 @@ TEST_CASE("WavePort anisotropic mode ordering", "[waveportimpedance][Serial][Par
   CAPTURE(kn, kn_ref);
   CHECK_THAT(kn.real(), WithinRel(kn_ref, 0.02));
   CHECK_THAT(kn.imag(), WithinAbs(0.0, 0.01 * kn_ref));
+}
+
+// The wave port cross-section problem lives on a boundary ParSubMesh, whose shared
+// entities are collected from those of the parent ParMesh. For a parent constructed from
+// the parts of an mfem::MeshPartitioner, as in mesh::DistributeMesh, the communication
+// groups of the parent are not numbered in the same order on all processes, and MFEM's
+// ParSubMesh used to pair different shared entities on different processes. The port
+// finite element spaces were then inconsistent and gave spurious modes for some
+// partitionings. Check that a deliberately fragmented partitioning gives the same TE10
+// modes as the default one. This needs at least 3 processes (with 2, the parent has a
+// single communication group); the chosen mesh and partitioning fail on 4 processes
+// without the fix.
+TEST_CASE("WavePort modes with a fragmented mesh partitioning",
+          "[waveportimpedance][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  // Rectangular waveguide along y, broadside a along x and narrow side b along z, with
+  // wave ports on the faces y=0 (attribute 2) and y=L (attribute 4), PEC elsewhere.
+  const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
+  const double f_GHz = 10.0;
+
+  auto solve = [&](bool fragmented)
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON, a_m, L_m, b_m));
+
+    Units units(1.0, 1.0);
+    IoData iodata(units);
+    iodata.model.L0 = 1.0;
+    iodata.model.Lc = 1.0;
+    auto &material = iodata.domains.materials.emplace_back();
+    material.attributes = {1};
+    material.epsilon_r.s = {1.0, 1.0, 1.0};
+    material.mu_r.s = {1.0, 1.0, 1.0};
+    iodata.boundaries.pec.attributes = {1, 3, 5, 6};
+    for (const auto &[index, attr, y] : {std::tuple{1, 2, 0.0}, std::tuple{2, 4, L_m}})
+    {
+      auto &wave = iodata.boundaries.waveport.try_emplace(index).first->second;
+      wave.attributes = {attr};
+      wave.mode_idx = 1;
+      wave.excitation = 0;
+      wave.active = true;
+      // Across the narrow side at the broadside center: Z_PV = 2 (b/a) Z_TE.
+      wave.voltage_path = {{a_m / 2.0, y, 0.0}, {a_m / 2.0, y, b_m}};
+      wave.eig_tol = 1.0e-10;
+      wave.ksp_tol = 1.0e-10;
+      wave.ksp_max_its = 200;
+      wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
+    }
+    iodata.solver.order = 2;
+    iodata.solver.linear.tol = 1.0e-10;
+    iodata.solver.linear.max_it = 200;
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.NondimensionalizeInputs(serial_mesh);
+    iodata.CheckConfiguration();
+
+    std::unique_ptr<mfem::ParMesh> par_mesh;
+    if (fragmented)
+    {
+      // Distribute the mesh as mesh::DistributeMesh does, in blocks of a few consecutive
+      // elements cycling over the processes.
+      const int size = Mpi::Size(comm);
+      mfem::Array<int> partitioning(serial_mesh->GetNE());
+      for (int e = 0; e < serial_mesh->GetNE(); e++)
+      {
+        partitioning[e] = (e / 5) % size;
+      }
+      mfem::MeshPartitioner partitioner(*serial_mesh, size, partitioning.GetData());
+      mfem::MeshPart part;
+      partitioner.ExtractPart(Mpi::Rank(comm), part);
+      std::stringstream fo;
+      fo.precision(16);
+      part.Print(fo);
+      par_mesh = std::make_unique<mfem::ParMesh>(comm, fo, true, false, false);
+    }
+    else
+    {
+      par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+    }
+    Mesh palace_mesh(std::move(par_mesh));
+    auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
+    FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
+    MaterialOperator mat_op(iodata, palace_mesh);
+    ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace.Get(),
+                                         h1_fespace.Get());
+    wave_port_op.SetSuppressOutput(true);
+    const double omega = 2.0 * std::numbers::pi *
+                         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    wave_port_op.Initialize(omega);
+    const double kn_scale =
+        1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    std::array<std::pair<double, double>, 2> modes;
+    for (int index : {1, 2})
+    {
+      const auto &port = wave_port_op.GetPort(index);
+      modes[index - 1] = {port.kn0.real() * kn_scale,
+                          port.GetCharacteristicImpedance().real() * electromagnetics::Z0_};
+    }
+    return modes;
+  };
+
+  const auto ref = solve(false);
+  const auto modes = solve(true);
+  const double k0 = 2.0 * std::numbers::pi * f_GHz * 1.0e9 / electromagnetics::c0_;
+  const double kc = std::numbers::pi / a_m;
+  const double Z_TE = electromagnetics::Z0_ * k0 / std::sqrt(k0 * k0 - kc * kc);
+  for (int i = 0; i < 2; i++)
+  {
+    const auto [kn_ref, Z_ref] = ref[i];
+    const auto [kn, Z] = modes[i];
+    CAPTURE(i, kn_ref, kn, Z_ref, Z);
+
+    // The default partitioning gives the TE10 mode, and the fragmented one gives the same
+    // discrete mode.
+    CHECK_THAT(kn_ref, WithinRel(std::sqrt(k0 * k0 - kc * kc), 0.01));
+    CHECK_THAT(Z_ref, WithinRel(2.0 * (b_m / a_m) * Z_TE, 0.01));
+    CHECK_THAT(kn, WithinRel(kn_ref, 1.0e-8));
+    CHECK_THAT(Z, WithinRel(Z_ref, 1.0e-6));
+  }
 }
 
 // Validate the COMPLEX-frequency wave-port cross-section solve
