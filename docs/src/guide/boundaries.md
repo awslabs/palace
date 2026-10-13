@@ -97,24 +97,6 @@ as a shell of a few elements around a box-shaped physical domain and to list its
 }
 ```
 
-The coordinate stretch is the same in all PML regions of a block: the PML is only
-reflectionless if the stretch is the same function of position in the whole layer. The
-domains extending into the layer, for example a substrate and the vacuum above it, must be
-PML regions in the layer, each with the background material properties of its material.
-Several blocks, each with its own parameters, can terminate the physical domain at different
-locations, for example at the ends of waveguides of different lengths, or with different
-parameters on different faces. The stretch must be continuous across the interfaces between
-the PML regions of different blocks, and must vanish at the interfaces with the physical
-region: blocks in contact must have the same stretch on their interfaces, and a layer must
-not extend into the physical region. Both conditions are checked on the faces of the mesh.
-
-The PML terms replace the bulk material terms of the PML regions in the system matrices.
-Otherwise, the PML regions have the material properties of their background material: for
-the postprocessed fields, the error estimators, and the boundary conditions on their
-boundaries, which are not transformed by the stretch (a warning is printed for boundary
-conditions other than PEC on the boundaries of the PML regions). The domain energies exclude
-the PML regions.
-
 The uniaxial PML terminates an axis-aligned, box-shaped physical domain by stretching the
 coordinate normal to each face of the box with the complex factor
 ``s = \kappa + \sigma / (\varepsilon_0 (\alpha + i\omega))``, where ``\kappa``,
@@ -148,27 +130,16 @@ thick layer of few elements is under-resolved, and reflects. In practice, choose
 size ``h`` from the wavelength and the order, as for the physical region, and the number of
 elements ``N`` from the required absorption: 4 to 8 elements are typically sufficient for
 second-order elements, with more for grazing incidence. The thickness ``d = N h`` follows.
-More elements increase the absorption exponentially, at a cost which grows linearly with
-``N`` on the faces of the box, but quadratically and cubically in its edge and corner
-regions, so that PML regions are best limited to the faces through which waves leave the
-domain. A structured (extruded) mesh of layers of elements, aligned with the faces of the
-box, is recommended in the PML regions. Alternatively, `"SigmaMax"` can be specified, or
-computed from a target theoretical reflection coefficient at normal incidence
-`"ReflectionTarget"` and the layer thickness (which can require a finer mesh in thin
-layers). The conductivity, element size, and theoretical reflection of each face are
-printed in the log.
+More elements increase the absorption but also increases the simulation time so that PML
+regions are best limited to the faces through which waves leave the domain. A structured
+(extruded) mesh of layers of elements, aligned with the faces of the box, is recommended
+in the PML regions.
 
 A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
 of the structures, which it distorts instead. The PML regions should therefore be placed at
 a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
-lowest frequency of interest. Closer, the PML mostly sees near fields, and absorbs them
-spuriously, which shows up for example as reduced quality factors of eigenmodes. For models
-much smaller than the wavelength, such as superconducting quantum processor chips at
-microwave frequencies, this distance is often impractical. If radiation is negligible, a PEC
-enclosure (a package) can then be adequate. Otherwise, a weaker absorption (a larger
-`"ReflectionTarget"`) reduces the spurious losses, at the cost of larger reflections of the
-propagating waves. First-order absorbing boundary conditions also absorb near fields
-spuriously.
+lowest frequency of interest. Otherwise, a weaker absorption (a largerv`"ReflectionTarget"`)
+reduces the spurious losses, at the cost of larger reflections of the propagating waves.
 
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
 frequency for driven simulations, or the target frequency for eigenmode simulations. This
@@ -176,34 +147,14 @@ static PML keeps the system matrices independent of frequency, and so eigenmode 
 remain linear, while the absorption in the layer grows with frequency. With
 `"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
 frequency, for an absorption independent of frequency, and a complex frequency shift
-`"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency. For eigenmode simulations, the solve frequency is the
-complex eigenfrequency, and the resulting nonlinear eigenvalue problem is solved with the
-nonlinear eigenvalue solver as for other frequency-dependent boundary conditions. For
-adaptive frequency sweeps, the frequency-dependent PML terms of the reduced-order model are
-evaluated from a rational fit on the frequency band, and for circuit synthesis they are
-approximated by a quadratic polynomial in frequency and, if required by the tolerance, poles
-on the imaginary frequency axis, which add decaying auxiliary states to the synthesized
-circuit.
+`"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency.
 
-The PML equations are difficult for the iterative solvers of *Palace*. In a strongly absorbing
-layer, where the conductivity exceeds about ``\omega \varepsilon_0``, the anisotropic PML
-tensors have components with complex phases of opposite signs, for which the polynomial
-smoothers of the geometric multigrid preconditioner do not converge. By default
+PML can cause convergence difficulties in iterative linear solvers. By default,
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
 the multigrid preconditioner is therefore complemented by a sparse direct solve of the
-equations of the unknowns of the PML elements (except those shared with the physical
-region), which restores the convergence of the multigrid preconditioner without PML. The
-real-valued coarse-level solve (`"ComplexCoarseSolve": false`) uses the PML terms with the
-magnitudes of the stretch factors, those of a real coordinate stretch, since the
-real-valued approximation of the PML terms of strongly absorbing layers is strongly
-indefinite. The PML subdomain solve is affordable when the PML regions hold a small fraction
-of the unknowns, as is typical when the mesh is coarse in the layer compared to the physical
-region. Otherwise, a sparse direct
-solve of the whole system (`"MGMaxLevels": 1` and `"ComplexCoarseSolve": true`) costs about
-as much. Simulations with PML regions
-therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS): the
-real-valued approximation of the system matrix used by the AMS solver is indefinite in
-strongly absorbing layers, and AMS is not supported with PML regions.
+PML regions, which restores the convergence of the multigrid preconditioner without PML.
+Simulations with PML regions therefore require a sparse direct solver (SuperLU_DIST,
+STRUMPACK, or MUMPS) and AMS is not supported with PML regions.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
