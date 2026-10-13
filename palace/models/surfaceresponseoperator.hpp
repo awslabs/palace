@@ -65,9 +65,13 @@ struct UncoveredSpatialSupportClipping
   std::map<int, double> removed_by_feature;  // feature id -> removed length
 };
 
-// F-DB-a (decisions 442 / 454, DESIGN 2.1): the raw claims of the DomainBoundary-excluded
-// patches as perimeter portions (see CollectDomainBoundaryPortions).
-struct DomainBoundaryPortions
+// The raw claims of EXCLUDED patches as perimeter portions, whose within-R raw energy the
+// drivers keep in the corrected interface energies: the DomainBoundary-excluded patches of
+// the placement (F-DB-a, decisions 442 / 454, DESIGN 2.1; CollectDomainBoundaryPortions)
+// and the conductor-consistency-excluded patches of the solve (S7diag R1, decision 758;
+// SurfaceResponseOperator::GetConductorConsistencyPortionRecord). One record shape, one
+// per-patch claim rule (AppendExcludedPatchClaim), one share per consumer.
+struct ExcludedPatchPortions
 {
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
       portions;
@@ -444,7 +448,20 @@ private:
   // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
-  DomainBoundaryPortions domain_boundary_portions;
+  ExcludedPatchPortions domain_boundary_portions;
+  // S7diag R1 (decision 758): the raw claim of every APPLIED patch the
+  // conductor-consistency gate can probe (its model has conductor vertices on the process
+  // plane), built at construction by the DomainBoundary rule (AppendExcludedPatchClaim) and
+  // keyed by the global patch index on every rank; the gate appends an EXCLUDED patch's
+  // claim to conductor_consistency_portions (replicated: the records are gathered first),
+  // which the electrostatic driver keeps raw in E_ft / E_ff / E_sc like the uncovered
+  // requirements and the DomainBoundary claims. The list only grows (an exclusion is
+  // sticky).
+  std::map<int, ExcludedPatchPortions> conductor_consistency_claims;
+  ExcludedPatchPortions conductor_consistency_portions;
+  // kSignatureParameterToleranceOverRadius x R (mesh units): the claim portions' length
+  // floor and deduplication tolerance (the DomainBoundary rule's).
+  double conductor_consistency_claim_tolerance = 0.0;
   // The domain-boundary containment result was reused from the first construction on the
   // cached automatic geometry rather than recomputed on this mesh (decision 734 F2).
   bool domain_boundary_containment_reused = false;
@@ -689,9 +706,27 @@ public:
   {
     return domain_boundary_portions.portions;
   }
-  const DomainBoundaryPortions &GetDomainBoundaryPortionRecord() const
+  const ExcludedPatchPortions &GetDomainBoundaryPortionRecord() const
   {
     return domain_boundary_portions;
+  }
+  // The raw claims of the patches the conductor-consistency gate has excluded so far
+  // (S7diag R1, decision 758; empty before the first exclusion and on every window with 0
+  // exclusions): kept in the corrected interface energies like the uncovered requirements
+  // and reported as the ConductorConsistency share. The gate runs on the electrostatic path
+  // only (ApplyConductorConsistencyGate refuses a Maxwell operator), so a Maxwell
+  // operator's list is empty by construction: the Maxwell path consumes no such term today
+  // (decision 763); when it gains the gate, it consumes this list as the electrostatic
+  // driver does.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetConductorConsistencyPortions() const
+  {
+    return conductor_consistency_portions.portions;
+  }
+  const ExcludedPatchPortions &GetConductorConsistencyPortionRecord() const
+  {
+    return conductor_consistency_portions;
   }
   // Whether this construction reused the first construction's domain-boundary containment
   // result through the cached automatic geometry (decision 734 F2; false on the first
@@ -1464,7 +1499,7 @@ std::array<double, 3>
 OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch,
                double c);
 
-DomainBoundaryPortions CollectDomainBoundaryPortions(
+ExcludedPatchPortions CollectDomainBoundaryPortions(
     const DomainBoundaryExclusions &exclusions,
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
         &patches,
@@ -1472,9 +1507,32 @@ DomainBoundaryPortions CollectDomainBoundaryPortions(
     const ContinuationOwnership &ownership,
     const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius);
 
+// The raw claim of ONE excluded patch appended to `result` by the rule above (the per-patch
+// step of CollectDomainBoundaryPortions, shared with the conductor-consistency consumer of
+// S7diag R1, decision 758): `translational` marks the own-edge interval of a cell; a
+// portion shorter than `tolerance` (kSignatureParameterToleranceOverRadius x R, mesh units)
+// is dropped; a portion of the same feature already in `result` within `tolerance` at both
+// ends folds the patch into that entry (DuplicatePatches).
+void AppendExcludedPatchClaim(
+    ExcludedPatchPortions &result, std::size_t patch_idx,
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double tolerance);
+void AppendExcludedPatchPortion(
+    ExcludedPatchPortions &result, std::size_t patch_idx,
+    const config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData
+        &portion,
+    bool translational, double tolerance);
+
 // The Diagnostics entry of the raw portions (count, geometric cells, duplicates, length,
-// per type and per feature, the portion list; mesh units scaled by coordinate_scale).
-nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &portions,
+// per type and per feature, the portion list; mesh units scaled by coordinate_scale) with
+// the consumer's rule text; DescribeDomainBoundaryPortions is the F-DB-a entry.
+nlohmann::json DescribeExcludedPatchPortions(const ExcludedPatchPortions &portions,
+                                             double coordinate_scale,
+                                             const std::string &rule);
+nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &portions,
                                               double coordinate_scale);
 
 // The integration intervals of one Maxwell response contour line (ConfigureMaxwellLines)
