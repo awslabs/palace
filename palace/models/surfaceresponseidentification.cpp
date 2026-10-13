@@ -2401,6 +2401,20 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
   return best;
 }
 
+nlohmann::json SignatureWithSupportInFrame(const std::vector<SignaturePortion> &portions,
+                                           const std::vector<SignatureVertex> &vertices,
+                                           const Point3D &origin, const Point3D &x,
+                                           const Point3D &y, double radius,
+                                           const FrameSupport &support)
+{
+  nlohmann::json serialized = SerializeInFrame(portions, vertices, origin, x, y, radius);
+  serialized["Box"] = BoxJson(support.box);
+  std::map<int, int> labels = PortionLabelMap(portions, origin, x, y, radius);
+  serialized["Context"] =
+      SerializeContextInFrame(support.context, origin, x, y, radius, labels);
+  return serialized;
+}
+
 std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
     const std::vector<SignaturePortion> &portions,
     const std::vector<SignatureVertex> &vertices, const Point3D &process_normal,
@@ -2434,12 +2448,8 @@ std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
       }
       // The dump of a complete JSON object starts with its "Box" entry (keys sorted), so a
       // frame whose box dump exceeds the best frame's cannot serialise below it.
-      nlohmann::json serialized =
-          SerializeInFrame(portions, vertices, origin, x, y, radius);
-      serialized["Box"] = BoxJson(frame_support->box);
-      std::map<int, int> labels = PortionLabelMap(portions, origin, x, y, radius);
-      serialized["Context"] =
-          SerializeContextInFrame(frame_support->context, origin, x, y, radius, labels);
+      nlohmann::json serialized = SignatureWithSupportInFrame(portions, vertices, origin, x,
+                                                              y, radius, *frame_support);
       const std::string key = serialized.dump();
       if (!have || key < best_key)
       {
@@ -3665,11 +3675,19 @@ private:
   };
   // `span_cap_over_R`: the plan span cap of this cluster (kSupportSpanCapOverRadius, or the
   // resolved per-case allowance of block (b) DESIGN section 3 (a) / A4).
+  // `face_crossing_tilt_rule`: whether T4, the face-crossing tilt rule (decisions 762 /
+  // 766 / 772), reads the T2-clean box. OFF in the candidate-frame loop that chooses the
+  // frame of record (the frame is chosen exactly as without the rule: the rule changes a
+  // frame's box, and the frame minimisation compares the keys' text, so a widened
+  // candidate could otherwise win over the frame of record and rename a built key); ON for
+  // the one call in the chosen frame that produces the record and the key, where the
+  // coupon generator reads its box.
   ClusterSupportResult ClusterSupport(std::size_t c,
                                       const std::vector<SignaturePortion> &portions,
                                       const std::vector<SignatureVertex> &vertices,
                                       const Point3D &origin, const Point3D &x,
-                                      const Point3D &y, double span_cap_over_R) const;
+                                      const Point3D &y, double span_cap_over_R,
+                                      bool face_crossing_tilt_rule) const;
   // Mirror band (decision 732, F-M1; built by BuildMirrorImageIndex): every non-empty
   // subset of the mirroring planes of input.mirror_planes (ascending members, the
   // extension's own subset order) and, per REAL segment, the subsets it was imaged through
@@ -10458,7 +10476,7 @@ Identifier::ClusterSupportResult
 Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &portions,
                            const std::vector<SignatureVertex> &vertices,
                            const Point3D &origin, const Point3D &x, const Point3D &y,
-                           double span_cap_over_R) const
+                           double span_cap_over_R, bool face_crossing_tilt_rule) const
 {
   using Point2 = std::array<double, 2>;
   ClusterSupportResult out;
@@ -11152,6 +11170,125 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   };
   auto ClipPlan = [&]() { return ClipPlanTo(box, true); };
 
+  // Unit tangent of a piece's geometry at an end, in the frame, in the direction of travel
+  // a -> b (an arc's fitted tangent; a straight piece's chord).
+  auto PieceEndTangent = [&](const CurvePiece &geometry, bool at_a) -> Point2
+  {
+    if (geometry.arc)
+    {
+      const double theta = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
+      return LocalDirection(geometry.arc->Tangent(theta));
+    }
+    const Point2 a = Local(geometry.a), b = Local(geometry.b);
+    const Point2 d = {b[0] - a[0], b[1] - a[1]};
+    const double norm = std::hypot(d[0], d[1]);
+    return norm > 0.0 ? Point2{d[0] / norm, d[1] / norm} : Point2{0.0, 0.0};
+  };
+
+  // T4, the face-crossing tilt rule (decisions 762 / 766, S7 R2; the header's contract):
+  // the tilt of an on-face piece end against the face's normal, and the SHORTFALL its own
+  // continuation (its line, or its fitted circle) would need the face to move outward by so
+  // that it leaves through the adjacent face its outward tangent heads to instead: the
+  // largest outward excursion along that path (a line: at the adjacent face line; a circle:
+  // there, or its outward extreme when the circle turns back before reaching it). Zero
+  // where the continuation never leaves the face line (an edge along the face) or the end
+  // already sits on the adjacent face (a box corner).
+  struct FaceCrossingTiltReading
+  {
+    double theta_degrees = 0.0;
+    double shortfall_over_R = 0.0;
+  };
+  auto ReadFaceCrossingTilt = [&](const CurvePiece &geometry, bool at_a, int f,
+                                  const Point2 &e) -> FaceCrossingTiltReading
+  {
+    const int axis = FaceAxis(f), other = 1 - axis;
+    const double sigma = f < 2 ? -1.0 : 1.0;  // the face's outward sense along its axis
+    const double line = FaceLine(f);
+    const Point2 travel = PieceEndTangent(geometry, at_a);
+    FaceCrossingTiltReading reading;
+    reading.theta_degrees = std::acos(std::min(std::abs(travel[axis]), 1.0)) * 180.0 / pi;
+    // The outward direction of the continuation: against the travel at the start, along
+    // it at the end.
+    const Point2 d = at_a ? Point2{-travel[0], -travel[1]} : travel;
+    if (sigma * d[axis] <= 1.0e-12 || std::abs(d[other]) <= 1.0e-12)
+    {
+      return reading;  // along the face (no outward excursion), or straight out of it
+    }
+    const double adjacent = d[other] > 0.0 ? box[static_cast<std::size_t>(other + 2)]
+                                           : box[static_cast<std::size_t>(other)];
+    if (AtMostSnap(std::abs(e[other] - adjacent)))
+    {
+      return reading;  // on the adjacent face already
+    }
+    if (!geometry.arc)
+    {
+      const double t_hit = std::max((adjacent - e[other]) / d[other], 0.0);
+      reading.shortfall_over_R = t_hit * sigma * d[axis];
+      return reading;
+    }
+    // The circle from the end in the outward angular sense: coordinate k reads
+    // c_k + r A_k cos(theta - phi_k); its outward extreme along the face axis, its first
+    // hit of the adjacent face line and its return to the crossed face line (the other
+    // root of that line; the end itself is the nearer root).
+    const ArcLocal arc = ArcInFrame(*geometry.arc);
+    const double two_pi = 2.0 * pi;
+    const double omega =
+        (geometry.arc->theta1 >= geometry.arc->theta0 ? 1.0 : -1.0) * (at_a ? -1.0 : 1.0);
+    const double theta_e = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
+    auto Amplitude = [&](int k) { return k == 0 ? arc.amplitude_x : arc.amplitude_y; };
+    auto Phase = [&](int k) { return k == 0 ? arc.phi_x : arc.phi_y; };
+    auto Coordinate = [&](int k, double theta)
+    { return arc.center[k] + arc.radius * Amplitude(k) * std::cos(theta - Phase(k)); };
+    auto Advance = [&](double theta)  // outward angular distance from the end, [0, 2 pi)
+    {
+      double delta = std::fmod(omega * (theta - theta_e), two_pi);
+      return delta < 0.0 ? delta + two_pi : delta;
+    };
+    auto Roots = [&](int k, double value) -> std::vector<double>
+    {
+      if (arc.radius * Amplitude(k) <= 0.0)
+      {
+        return {};
+      }
+      const double cosine = (value - arc.center[k]) / (arc.radius * Amplitude(k));
+      if (std::abs(cosine) > 1.0 + 1.0e-12)
+      {
+        return {};
+      }
+      const double delta = std::acos(std::clamp(cosine, -1.0, 1.0));
+      return {Phase(k) + delta, Phase(k) - delta};
+    };
+    double advance_end = two_pi;
+    for (const double root : Roots(other, adjacent))
+    {
+      advance_end = std::min(advance_end, Advance(root));
+    }
+    {
+      // The return to the crossed face line: the root farther from the end in angle.
+      const std::vector<double> roots = Roots(axis, line);
+      if (roots.size() == 2)
+      {
+        auto Apart = [&](double theta)
+        {
+          const double delta = std::abs(std::fmod(theta - theta_e, two_pi));
+          return std::min(delta, two_pi - delta);
+        };
+        const double far = Apart(roots[0]) >= Apart(roots[1]) ? roots[0] : roots[1];
+        if (Apart(far) > 1.0e-9)
+        {
+          advance_end = std::min(advance_end, Advance(far));
+        }
+      }
+    }
+    const double extreme_theta = sigma > 0.0 ? Phase(axis) : Phase(axis) + pi;
+    const double excursion =
+        Advance(extreme_theta) < advance_end
+            ? sigma * (arc.center[axis] - line) + arc.radius * Amplitude(axis)
+            : sigma * (Coordinate(axis, theta_e + omega * advance_end) - line);
+    reading.shortfall_over_R = std::max(excursion, 0.0);
+    return reading;
+  };
+
   // T2 on the current box and pieces: the failing faces and the record of the pass.
   struct FaceCheck
   {
@@ -11207,16 +11344,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       }
       // Tangent (direction of travel a -> b) and gap direction at an end.
       auto EndTangent = [&](bool at_a) -> Point2
-      {
-        if (geometry.arc)
-        {
-          const double theta = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
-          return LocalDirection(geometry.arc->Tangent(theta));
-        }
-        const Point2 d = {b[0] - a[0], b[1] - a[1]};
-        const double norm = std::hypot(d[0], d[1]);
-        return norm > 0.0 ? Point2{d[0] / norm, d[1] / norm} : Point2{0.0, 0.0};
-      };
+      { return PieceEndTangent(geometry, at_a); };
       auto EndGap = [&](bool at_a) -> Point2
       {
         if (geometry.arc)
@@ -11580,6 +11708,9 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   std::vector<Piece> pieces;
   FaceCheck check;
   std::optional<std::string> unboxable, unboxable_reason;
+  // T4 (decisions 762 / 766): the widenings of the face-crossing tilt rule, one entry per
+  // firing end of every T2-clean box it read (empty on the records the rule leaves alone).
+  nlohmann::json tilt_widenings = nlohmann::json::array();
   for (;;)
   {
     pieces = ClipPlan();
@@ -11665,7 +11796,90 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     }
     if (std::none_of(check.failing.begin(), check.failing.end(), [](bool b) { return b; }))
     {
-      break;
+      if (!face_crossing_tilt_rule)
+      {
+        break;  // the frame-choice reading (decision 772): the clean box as without T4
+      }
+      // T4: the T2-clean box is the one the coupon mesher reads. Every on-face piece end
+      // crossing its face above the tilt bound (strictly, the mesher's relative slack) asks
+      // the face to move outward by its shortfall; the face takes the largest, plus the
+      // padding, and T2 / T3 re-read the widened box.
+      std::array<double, 4> widening{};
+      nlohmann::json firing = nlohmann::json::array();
+      for (const Piece &piece : pieces)
+      {
+        const CurvePiece geometry = PieceCurve(piece, piece.s.first, piece.s.second);
+        const Point2 a = Local(geometry.a), b = Local(geometry.b);
+        for (const bool at_a : {true, false})
+        {
+          const Point2 &e = at_a ? a : b;
+          for (int f = 0; f < 4; f++)
+          {
+            if (!AtMostSnap(std::abs(e[FaceAxis(f)] - FaceLine(f))))
+            {
+              continue;
+            }
+            const FaceCrossingTiltReading reading =
+                ReadFaceCrossingTilt(geometry, at_a, f, e);
+            if (!(reading.theta_degrees * (1.0 - 1.0e-9) >
+                  kSupportFaceCrossingTiltBoundDegrees) ||
+                reading.shortfall_over_R <= half_quantum)
+            {
+              continue;
+            }
+            widening[static_cast<std::size_t>(f)] =
+                std::max(widening[static_cast<std::size_t>(f)], reading.shortfall_over_R);
+            firing.push_back({{"Pass", passes.size() - 1},
+                              {"Face", f},
+                              {"P", {Q(e[0]), Q(e[1])}},
+                              {"TiltDegrees", RoundTo(reading.theta_degrees, 1.0e-3)},
+                              {"ShortfallOverR", Q(reading.shortfall_over_R)},
+                              {"PaddingOverR", kSupportPaddingOverRadius},
+                              {"FaceLineOverR", {Q(FaceLine(f)), nullptr}}});
+          }
+        }
+      }
+      if (std::none_of(widening.begin(), widening.end(), [](double w) { return w > 0.0; }))
+      {
+        break;
+      }
+      std::array<double, 4> widened = box;
+      for (int f = 0; f < 4; f++)
+      {
+        if (widening[static_cast<std::size_t>(f)] > 0.0)
+        {
+          widened[static_cast<std::size_t>(f)] =
+              Q(box[static_cast<std::size_t>(f)] +
+                (f < 2 ? -1.0 : 1.0) *
+                    (widening[static_cast<std::size_t>(f)] + kSupportPaddingOverRadius));
+        }
+      }
+      for (auto &entry : firing)
+      {
+        entry["FaceLineOverR"][1] = widened[entry["Face"].get<std::size_t>()];
+        tilt_widenings.push_back(entry);
+      }
+      const double widened_span =
+          std::max(widened[2] - widened[0], widened[3] - widened[1]);
+      if (widened_span > span_cap * (1.0 + 1.0e-12))
+      {
+        std::ostringstream what;
+        what << "the face-crossing tilt rule (";
+        for (std::size_t k = 0; k < firing.size(); k++)
+        {
+          what << (k == 0 ? "" : "; ") << "face " << firing[k]["Face"].get<int>()
+               << " crossed at " << firing[k]["TiltDegrees"].get<double>()
+               << " degrees above the bound " << kSupportFaceCrossingTiltBoundDegrees;
+        }
+        what << ") takes the plan span to " << widened_span << " R beyond the span cap "
+             << span_cap << " R";
+        unboxable = what.str();
+        unboxable_reason = "SpanCapRefusedFaceCrossingTiltWidening";
+        break;
+      }
+      box = widened;
+      out.grown = true;
+      continue;
     }
     std::array<double, 4> grown = box;
     for (int f = 0; f < 4; f++)
@@ -12238,6 +12452,15 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         {"ChainPieces", mirror_completion_chain_pieces},
         {"LengthOverR", Q(mirror_completion_length / R)}};
   }
+  // T4 (decisions 762 / 766): the face-crossing tilt rule's widenings. Written only where
+  // the rule acted, so that every other record is unchanged.
+  if (!tilt_widenings.empty())
+  {
+    out.record["FaceCrossingTilt"] = {
+        {"BoundDegrees", kSupportFaceCrossingTiltBoundDegrees},
+        {"BoundSource", "mesh_spatial_coupon.jl THIN_FACE_END_TILT_BOUND"},
+        {"Widenings", tilt_widenings}};
+  }
   if (!unboxable)
   {
     out.support = std::move(support);
@@ -12422,19 +12645,22 @@ void Identifier::EmitClusters()
                    "SpanCapOverR replaces the plan span cap for this cluster's box growth "
                    "and ExceedsSpanCap reading (never below the default cap)"}};
     }
+    // The frame of record is chosen WITHOUT T4, the face-crossing tilt rule (decision
+    // 772): the claims frame when its support is legacy-equivalent, else the frame
+    // minimised over the candidates with the support of each; then ONE ClusterSupport call
+    // WITH the rule in that frame produces the record, and the key is serialised from it
+    // (unchanged where the rule is silent; Box + Context of the widened box where it acted;
+    // Unboxable where its widening breached the span cap).
     ClusterSupportResult support =
         ClusterSupport(c, portions, vertices, canonical.origin, canonical.axes[0],
-                       canonical.axes[1], span_cap_over_R);
+                       canonical.axes[1], span_cap_over_R, false);
     nlohmann::json signature;
     int chirality = canonical.chirality;
     Point3D origin = canonical.origin;
     std::array<Point3D, 3> axes = canonical.axes;
     int contract = 2;
-    if (support.support && support.legacy_equivalent)
-    {
-      signature = canonical.signature;
-    }
-    else
+    bool boxable = support.support.has_value();
+    if (!(support.support && support.legacy_equivalent))
     {
       const auto v3 = CanonicalClusterSignatureWithSupport(
           portions, vertices, n_cluster, R,
@@ -12442,7 +12668,7 @@ void Identifier::EmitClusters()
               const Point3D &y) -> std::optional<FrameSupport>
           {
             ClusterSupportResult frame_support =
-                ClusterSupport(c, portions, vertices, o, x, y, span_cap_over_R);
+                ClusterSupport(c, portions, vertices, o, x, y, span_cap_over_R, false);
             return frame_support.support;
           },
           [&](std::size_t done, std::size_t total)
@@ -12451,23 +12677,40 @@ void Identifier::EmitClusters()
                            "support frames of cluster " + std::to_string(c) + " / " +
                                std::to_string(cluster_claimed.size()));
           });
+      boxable = v3.has_value();
       if (v3)
       {
         contract = 3;
-        signature = v3->signature;
         chirality = v3->chirality;
         origin = v3->origin;
         axes = v3->axes;
-        // The record of the frame the key was formed in.
-        support = ClusterSupport(c, portions, vertices, origin, axes[0], axes[1],
-                                 span_cap_over_R);
+      }
+    }
+    if (boxable)
+    {
+      // The record of the frame of record, with T4.
+      support = ClusterSupport(c, portions, vertices, origin, axes[0], axes[1],
+                               span_cap_over_R, true);
+      if (!support.support)
+      {
+        boxable = false;  // the tilt widening breached the span cap
+      }
+      else if (contract == 2 && support.legacy_equivalent)
+      {
+        signature = canonical.signature;
       }
       else
       {
-        contract = 0;
-        signature = canonical.signature;
-        signature["Unboxable"] = true;
+        contract = 3;
+        signature = SignatureWithSupportInFrame(portions, vertices, origin, axes[0],
+                                                axes[1], R, *support.support);
       }
+    }
+    if (!boxable)
+    {
+      contract = 0;
+      signature = canonical.signature;
+      signature["Unboxable"] = true;
     }
     signature_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - signature_started)

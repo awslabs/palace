@@ -1468,7 +1468,32 @@ per-case override, decision 244 (i), decide as before) but may not grow (decisio
 cap bites through growth only); a cluster no box satisfies is an `UnboxableFeature`: its
 signature carries `"Unboxable": true` (a Missing placeholder no builder makes — never a
 knife-edge coupon) and the record names the face and the reason (`Unboxable` text,
-`UnboxableReason` = `GrowthStepsExhausted` | `SpanCapRefusedGrowth`). The two thresholds of
+`UnboxableReason` = `GrowthStepsExhausted` | `SpanCapRefusedGrowth` | `MirrorBandCutUncontinued` |
+`SpanCapRefusedFaceCrossingTiltWidening`). T4, the face-crossing TILT rule (decisions 762 / 766, S7
+R2): the T2-clean box is the one the coupon mesher reads, and the THIN kind refuses a face end
+whose cut tilt against the face normal exceeds the largest built thin tilt
+(`mesh_spatial_coupon.jl` `THIN_FACE_END_TILT_BOUND` = 70 deg; pinned to the C++
+`kSupportFaceCrossingTiltBoundDegrees` by test, not a constant of the identification); so every
+plan piece end ON a face of the clean box crossing it above that bound (strictly, the mesher's
+1e-9 relative slack) moves the crossed face outward by its SHORTFALL — the largest outward
+excursion of the piece's own continuation (its line, or its fitted circle) from the crossing
+point until it first reaches the line of the adjacent face its outward tangent heads to (a
+circle that turns back first: its outward extreme) — the face taking the largest over its
+firing ends, plus the R padding, quantised; T2 / T3 then re-read the widened box and the rule
+reads again (every widening moves a face by at least R, so the span cap bounds it; a breach is
+`SpanCapRefusedFaceCrossingTiltWidening`). An end whose continuation never leaves the face line
+(an edge along the face, sin theta = 0) does not act: T2 reads it as before. The rule reads the
+FRAME OF RECORD only (decision 772): the frame is chosen over the candidate frames of the claims
+exactly as without the rule (the claims frame when its support is legacy-equivalent, else the
+lexicographically smallest key text with the support of each candidate), then one support
+reading WITH the rule in that frame makes the record and the key — a rule acting inside every
+candidate would widen a candidate's box and could make its key text sort below the frame of
+record's ("-10.3..." before "-2.9..."), renaming a key whose own frame reads no steep crossing
+(the s7r2 census: a Matched OSC-003 key). Recorded ONLY where
+the rule fired (`SpatialSupport.FaceCrossingTilt` = {`BoundDegrees`, `BoundSource`, `Widenings`
+[{`Pass` (the T2 pass whose clean box was read), `Face`, `P`, `TiltDegrees`, `ShortfallOverR`,
+`PaddingOverR`, `FaceLineOverR` [from, to]}]}; `Growth.Grown` true), so every other record is
+unchanged. The two thresholds of
 the box rule itself (the 1e-5 end coincidence, the 2R continuation of a connected row end at
 R) are read within the knife-edge band too (`FaceRules.BoxRuleThresholdBandHits`). The
 perimeter segments inside the box excluded before the identification (a port cut, an
@@ -3074,7 +3099,8 @@ matching pass). The new top-level `Identification` object carries the contract:
                                                 "ForeignVertices": [...]},
                                     "LegacyContinuation": {"StraightContinuationLengthOverR": L, "FictitiousContinuationLengthOverR": L},
                                     "Truncation": {"Segments": n, "LengthOverR": L},
-                                    "Unboxable": null | "reason", "UnboxableReason": null | "GrowthStepsExhausted" | "SpanCapRefusedGrowth",
+                                    "Unboxable": null | "reason", "UnboxableReason": null | "GrowthStepsExhausted" | "SpanCapRefusedGrowth" | "MirrorBandCutUncontinued" | "SpanCapRefusedFaceCrossingTiltWidening",
+                                    "FaceCrossingTilt": {"BoundDegrees": 70.0, "BoundSource": "mesh_spatial_coupon.jl THIN_FACE_END_TILT_BOUND", "Widenings": [{"Pass": p, "Face": f, "P": [x, y], "TiltDegrees": t, "ShortfallOverR": s, "PaddingOverR": 1.0, "FaceLineOverR": [from, to]}, ...]} (only where the T4 tilt rule fired),
                                     "SpanCapAllowance": {"Label", "SpanCapOverR", "Reason", "Approval", "MatchedQuanta", "DifferingNumbers", "Rule"} (resolved, block (b)),
                                     "ClaimsSignature": {...} (a refused cluster's claims-only signature: the SpanCapAllowances entry's object)}
                                    (SpatialEdgeCluster only; units of R in the feature's frame; the spatial-support contract v3 below),
