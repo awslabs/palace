@@ -286,8 +286,8 @@ protected:
     };
     // Per target interface, the uncovered requirements' and the DomainBoundary claims' raw
     // within-R energy of the raw field (fixed trace / fixed flux) and of the corrected
-    // field (self-consistent), in total and per feature type (the
-    // surface-response-uncovered- energy.csv and -domain-boundary-energy.csv rows).
+    // field (self-consistent), in total and per feature type: the rows of
+    // surface-response-uncovered-energy.csv and -domain-boundary-energy.csv.
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> uncovered;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> self_consistent_uncovered;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> domain_boundary;
