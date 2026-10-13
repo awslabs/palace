@@ -1248,3 +1248,53 @@ class LegacyByteIdentityTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             for name in ("mesh-signature.csv", "plan-view-mask.csv", "plan-view-boundary.csv"):
                 self.assertEqual((tmp / name).read_bytes(), (fixture / name).read_bytes(), name)
+
+
+class MirrorBandCutPlanTest(unittest.TestCase):
+    """The v3-g M1 synthetic minimal case (DIAGNOSIS section 2, decision 732 T2): the generator's face-vote stop is the correct fail-closed
+    reading of a plan with a FREE chain end inside the box (the mirror band cut of a mirror-formed cluster before F-M1), and completing the
+    plan is sufficient. One straight trace of conductor 1 (width 1 R) crossing a 12 R x 12 R box along x: claims on x in [-1, 1], Chain: true
+    context to the face x = -6 and, on the +x side, (a) to x = +3.7 only (a free end inside the box) or (b) to the face x = +6. Only the two
+    Context P[2] values differ. F-M1 is a C++ identification change: the generator is UNCHANGED and this test reads the same before and after."""
+
+    @staticmethod
+    def _record(right_end):
+        interfaces = ["MA", "MS", "SA"]
+
+        def entry(x0, y0, x1, y1, gap, chain=None):
+            e = {"Conductor": 1, "Gap": gap, "Interfaces": interfaces, "Law": LAW, "P": [x0, y0, x1, y1]}
+            if chain is not None:
+                e["Chain"] = chain
+            return e
+
+        signature = {
+            "Box": [-6.0, -6.0, 6.0, 6.0],
+            "EdgeCount": 2,
+            "Type": "SpatialEdgeCluster",
+            "Portions": [entry(-1.0, -0.5, 1.0, -0.5, [0.0, -1.0]), entry(-1.0, 0.5, 1.0, 0.5, [0.0, 1.0])],
+            "Vertices": [],
+            "Context": [entry(-6.0, -0.5, -1.0, -0.5, [0.0, -1.0], True), entry(-6.0, 0.5, -1.0, 0.5, [0.0, 1.0], True),
+                        entry(1.0, -0.5, right_end, -0.5, [0.0, -1.0], True), entry(1.0, 0.5, right_end, 0.5, [0.0, 1.0], True)]}
+        return {"Hash": f"synthetic-{right_end}", "Signature": signature, "BoundaryCondition": {"Type": "PEC"},
+                "Interfaces": [{"Slot": 0, "Target": 3, "Type": "MA"}, {"Slot": 0, "Target": 2, "Type": "MS"},
+                               {"Slot": 0, "Target": 1, "Type": "SA"}],
+                "Topology": "SpatialEdgeCluster"}
+
+    def test_a_free_chain_end_inside_the_box_is_refused_verbatim(self):
+        with self.assertRaisesRegex(csg.SignatureGeometryError,
+                                    "^the chain segments bounding a face disagree on its metal side$"):
+            csg.cluster_coupon(self._record(3.7), 1.9, 0.1, 0.05)
+
+    def test_the_completed_plan_builds(self):
+        record = self._record(6.0)
+        coupon, model_edges = csg.cluster_coupon(record, 1.9, 0.1, 0.05)
+        R = 1.9
+        faces = csg.plan_view_faces(
+            [{"P0": np.asarray(e["P"][:2]) * R, "P1": np.asarray(e["P"][2:]) * R, "Gap": np.asarray(e["Gap"]), "Conductor": 1}
+             for e in record["Signature"]["Portions"] + record["Signature"]["Context"]],
+            ((-6.0 * R, -6.0 * R), (6.0 * R, 6.0 * R)), R)
+        self.assertEqual(len(faces), 3)
+        self.assertEqual(sum(1 for _, metal, _ in faces if metal), 1)
+        self.assertEqual(len(coupon["Geometry"]["PlanViewFacets"]), 2)
+        self.assertEqual(len(coupon["Geometry"]["Edges"]), 6)
+        self.assertEqual(len(model_edges), 2)

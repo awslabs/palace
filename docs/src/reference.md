@@ -1437,6 +1437,23 @@ The excluded cell length is the surface left uncorrected and is reported in the 
 `Summary` next to `Missing` for the coverage bound; the matched inventory (`Exact`) is
 unchanged and still contains the excluded cells.
 
+Across the AMR cycles of an electrostatic solve the operator is rebuilt on every refined
+mesh, but two of its setup terms depend on the models and the device domain only, not on the
+mesh, and are cached per process from the first construction on. The derived model matrices
+(the unit-scaled fabricated and thin domain matrices, their defect, the fixed-flux transform
+and defect, and the per-interface surface sums: a dense eigensolve and products on each
+model's basis) are keyed on the model's source files (path, size, write time), its blend
+weights, its `ZeroTraceIndices`, its interface mappings and the unit scale factors; a hit
+returns the first computation's bits, so every output is identical to a run without the
+cache. `PALACE_RESPONSE_DERIVED_CACHE=0` recomputes every hit and aborts unless the
+recomputation equals the cached matrices bit for bit. The domain-boundary containment result
+is kept with the automatic geometry the solver retains across cycles and reused on a
+first-order mesh (h-refinement leaves the domain boundary in place) whose tested patches are
+the first construction's; a curved mesh recomputes it, and
+`PALACE_RESPONSE_CONTAINMENT_RECHECK=1` recomputes it on every cycle and aborts on any
+difference in the classification or in the tested patches. Both act from the second
+construction on; the log reports the cache hits and the reuse per construction.
+
 A spatial coupon holds its metal cross-sections on its box faces at the conductor
 potentials while the device trace is imposed around them. At solve time, before any energy
 of an excitation is formed, the conductor-consistency gate samples the device potential at
