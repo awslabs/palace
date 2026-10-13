@@ -1687,8 +1687,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto metadata = json::parse(metadata_input);
     return metadata.at("SurfaceResponse").at("Diagnostics");
   };
-  // The Total row of a portion-energy table (uncovered / DomainBoundary raw claims) on the
-  // raw field (evaluation 0); 0 when the table was not written (no such portions).
+  // The Total row of a portion-energy table (uncovered / DomainBoundary /
+  // ConductorConsistency raw claims) on the raw field (evaluation 0); 0 when the table was
+  // not written (no such portions).
   auto PortionTableTotal = [&](const fs::path &path)
   {
     if (!fs::exists(path))
@@ -1726,11 +1727,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const double ft =
         ColumnByHeader(corrected, "E_surf postprocessed fixed-trace[4] (J)").data[0];
     // Outside + models (+ the DomainBoundary raw claims of the cut lead end, if any: the
-    // F-DB-a term of the same identity).
+    // F-DB-a term of the same identity; + the raw claims of the corner coupons the
+    // conductor-consistency gate excludes on this lead: the S7diag R1 term, decision 758).
     const double domain_boundary =
         PortionTableTotal(full_dir / "surface-response-domain-boundary-energy.csv");
+    const double conductor_consistency =
+        PortionTableTotal(full_dir / "surface-response-conductor-consistency-energy.csv");
     CHECK_THAT(ft, WithinRel(OutsideEnergy(full_dir) + ModelEnergySum(full_dir, 0) +
-                                 domain_boundary,
+                                 domain_boundary + conductor_consistency,
                              1.0e-10));
     const auto diagnostics = ExtensionRecord(full_dir);
     CHECK(diagnostics.at("Uncovered").at("Count").get<int>() == 0);
@@ -1792,10 +1796,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       ColumnByHeader(corrected, "E_surf postprocessed fixed-trace[4] (J)").data[0];
   CHECK_THAT(
       ft,
-      WithinRel(
-          OutsideEnergy(corner_dir) + ModelEnergySum(corner_dir, 0) + uncovered_ft +
-              PortionTableTotal(corner_dir / "surface-response-domain-boundary-energy.csv"),
-          1.0e-10));
+      WithinRel(OutsideEnergy(corner_dir) + ModelEnergySum(corner_dir, 0) + uncovered_ft +
+                    PortionTableTotal(corner_dir /
+                                      "surface-response-domain-boundary-energy.csv") +
+                    PortionTableTotal(corner_dir /
+                                      "surface-response-conductor-consistency-energy.csv"),
+                1.0e-10));
   // The uncovered energy = the raw within-R energy of the straight runs from the exits
   // (regions 5-7), = their parts up to the claim ends (8-10) + the four stretches (11-14).
   const double to_exits =
