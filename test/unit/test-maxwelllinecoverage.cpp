@@ -93,9 +93,9 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageCrack",
     CHECK(coverage.intervals[1] == Interval{crack.gap_end, 1.0});
     CHECK(coverage.closed_crack_count == 1);
     CHECK_THAT(coverage.max_closed_crack, WithinRel(gap * crack.line.length, 1.0e-12));
-    CHECK(coverage.max_closed_crack <
-          kMaxwellLineCrackUlps * std::numeric_limits<double>::epsilon() *
-              crack.coordinate_scale);
+    CHECK(coverage.max_closed_crack < kMaxwellLineCrackUlps *
+                                          std::numeric_limits<double>::epsilon() *
+                                          crack.coordinate_scale);
   }
 }
 
@@ -113,16 +113,18 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageTrueGap",
                                       "finite-element mesh over parameter"));
 
   // The boundary of the rule in physical length: a gap of 1.5 x the tolerance fails closed
-  // (with the gap and the tolerance named), a gap of 0.5 x the tolerance is a crack; and the
-  // tolerance is PHYSICAL: the same 1.5 x gap in parameter on a 100x longer line is 150 x
-  // the tolerance and fails too, while the 0.5 x crack on a 100x shorter line still closes.
+  // (with the gap and the tolerance named), a gap of 0.5 x the tolerance is a crack; and
+  // the tolerance is PHYSICAL: the same 1.5 x gap in parameter on a 100x longer line is 150
+  // x the tolerance and fails too, while the 0.5 x crack on a 100x shorter line still
+  // closes.
   const double coordinate_scale = 6.75;
   const double tolerance =
       kMaxwellLineCrackUlps * std::numeric_limits<double>::epsilon() * coordinate_scale;
   const double split = 0.3;
   auto Gapped = [&](double gap_length, double line_length)
   {
-    std::vector<Interval> intervals = {{0.0, split}, {split + gap_length / line_length, 1.0}};
+    std::vector<Interval> intervals = {{0.0, split},
+                                       {split + gap_length / line_length, 1.0}};
     return intervals;
   };
   CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(1.5 * tolerance, line.length),
@@ -130,9 +132,9 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageTrueGap",
                                                line.begin, line.end),
                     ContainsSubstring("above the floating-point crack tolerance"));
   MaxwellLineCoverage coverage;
-  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(Gapped(0.5 * tolerance, line.length),
-                                                        line.length, coordinate_scale, 297,
-                                                        line.begin, line.end));
+  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(
+                      Gapped(0.5 * tolerance, line.length), line.length, coordinate_scale,
+                      297, line.begin, line.end));
   CHECK(coverage.closed_crack_count == 1);
   // (1e-6: the fixture's split + gap / L - split rounds at eps x split / (gap / L) ~ 3e-9.)
   CHECK_THAT(coverage.max_closed_crack, WithinRel(0.5 * tolerance, 1.0e-6));
@@ -143,9 +145,9 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageTrueGap",
                                                longer.begin, longer.end),
                     ContainsSubstring("above the floating-point crack tolerance"));
   const auto shorter = VerticalLine(line.begin[0], line.begin[1], 0.0, 0.01 * line.length);
-  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(Gapped(0.5 * tolerance, line.length),
-                                                        shorter.length, coordinate_scale, 297,
-                                                        shorter.begin, shorter.end));
+  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(
+                      Gapped(0.5 * tolerance, line.length), shorter.length,
+                      coordinate_scale, 297, shorter.begin, shorter.end));
   CHECK(coverage.closed_crack_count == 1);
 }
 
@@ -156,9 +158,10 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageBitwise",
   // ends within 1e-10 of 0 / 1 snap, breakpoints within 1e-10 of the last kept one are
   // dropped, overlaps and duplicates resolve to the breakpoint pieces.
   const auto line = VerticalLine(0.5, 0.25, 0.0, 2.0);
-  std::vector<Interval> element_intervals = {
-      {3.0e-11, 0.5 + 2.0e-11}, {0.5 - 4.0e-11, 1.0 - 2.0e-11}, {0.5 - 4.0e-11, 0.75},
-      {0.75, 0.75 + 5.0e-11}};
+  std::vector<Interval> element_intervals = {{3.0e-11, 0.5 + 2.0e-11},
+                                             {0.5 - 4.0e-11, 1.0 - 2.0e-11},
+                                             {0.5 - 4.0e-11, 0.75},
+                                             {0.75, 0.75 + 5.0e-11}};
   MaxwellLineCoverage coverage;
   REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(element_intervals, line.length, 2.0,
                                                         7, line.begin, line.end));

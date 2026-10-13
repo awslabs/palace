@@ -24330,17 +24330,16 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
       coverage.max_closed_crack = std::max(coverage.max_closed_crack, gap);
       continue;
     }
-    MFEM_VERIFY(covered, "Maxwell response contour line "
-                             << line_index
-                             << " leaves the finite-element mesh over parameter " << begin
-                             << " to " << end << " (begin = " << begin_point[0] << ", "
-                             << begin_point[1] << ", " << begin_point[2]
-                             << "; end = " << end_point[0] << ", " << end_point[1] << ", "
-                             << end_point[2] << ")! The gap is " << gap
-                             << " mesh units, above the floating-point crack tolerance "
-                             << crack_tolerance << " (" << kMaxwellLineCrackUlps
-                             << " ULP of the coordinate scale " << coordinate_scale
-                             << ").");
+    MFEM_VERIFY(covered,
+                "Maxwell response contour line "
+                    << line_index << " leaves the finite-element mesh over parameter "
+                    << begin << " to " << end << " (begin = " << begin_point[0] << ", "
+                    << begin_point[1] << ", " << begin_point[2]
+                    << "; end = " << end_point[0] << ", " << end_point[1] << ", "
+                    << end_point[2] << ")! The gap is " << gap
+                    << " mesh units, above the floating-point crack tolerance "
+                    << crack_tolerance << " (" << kMaxwellLineCrackUlps
+                    << " ULP of the coordinate scale " << coordinate_scale << ").");
     coverage.intervals.emplace_back(begin, end);
   }
   return coverage;
@@ -24648,14 +24647,14 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   Mpi::GlobalMax(1, &max_closed_crack, comm);
   if (closed_crack_count > 0)
   {
-    Mpi::Print(comm,
-               " Closed {:d} floating-point crack{} between adjacent element intersections "
-               "of the Maxwell contour lines (largest {:.3e} mesh units = {:.1f} ULP of the "
-               "coordinate scale {:.3e}; the tolerance is {:.0f} ULP)\n",
-               closed_crack_count, closed_crack_count > 1 ? "s" : "", max_closed_crack,
-               max_closed_crack /
-                   (std::numeric_limits<double>::epsilon() * coordinate_scale),
-               coordinate_scale, kMaxwellLineCrackUlps);
+    Mpi::Print(
+        comm,
+        " Closed {:d} floating-point crack{} between adjacent element intersections "
+        "of the Maxwell contour lines (largest {:.3e} mesh units = {:.1f} ULP of the "
+        "coordinate scale {:.3e}; the tolerance is {:.0f} ULP)\n",
+        closed_crack_count, closed_crack_count > 1 ? "s" : "", max_closed_crack,
+        max_closed_crack / (std::numeric_limits<double>::epsilon() * coordinate_scale),
+        coordinate_scale, kMaxwellLineCrackUlps);
   }
 
   mfem::Vector xyz(dimension * pending_points.size());
