@@ -17378,7 +17378,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 18},
+  nlohmann::json cache = {{"Version", 19},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -17532,10 +17532,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 18,
+      data.value("Version", 0) == 19,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 18 carries the feature, mesh segment, chain stretch, own-edge "
+          << " (version 19 carries the feature, mesh segment, chain stretch, own-edge "
              "offset and own-cell pre-image (decision 537) of every patch, the claims, "
              "support box, chain and foreign (Chain: false, decision 553) context pieces "
              "of every spatial cluster patch, the raw claims of every vertex coupon "
@@ -17559,7 +17559,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "conductor-consistency probe snaps of every spatial patch (ProbeSnaps: the "
              "conductor knots read on the device arc chords, decision 611 (2); "
              "ProbeSnapsComputed: false for a placed model without readable trace data, "
-             "which a solve refuses, decision 632); delete a stale cache)!");
+             "which a solve refuses, decision 632); version 19 reads a mirror-formed "
+             "coupon's image-side probes at their reflection into the domain before the "
+             "chord snap (decision 774): a version-18 cache carries that coupon's image "
+             "probes un-snapped (decision 781); delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -17768,7 +17771,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
            snap.at("Distance").get<double>()});
     }
     MFEM_VERIFY(entry.contains("ProbeSnapsComputed"),
-                "Response-geometry cache version 18 patch of model "
+                "Response-geometry cache version 19 patch of model "
                     << patch.model
                     << " carries no ProbeSnapsComputed (a cache written before decision "
                        "632); delete the stale cache!");
@@ -22106,7 +22109,7 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
         "MaxDisplacement and the Knots (Knot = trace vertex, Segment / Arc of the "
         "identification, Displacement in mesh-file units) are recorded per patch; the "
         "snaps are computed at the placement and travel with the geometry cache "
-        "(version 18); a spatial patch placed WITHOUT them (the model's trace data not "
+        "(version 19); a spatial patch placed WITHOUT them (the model's trace data not "
         "readable at the placement - a discovery placeholder, which the geometry-only "
         "preflight places and never solves; ProbeSnapsComputed false) is refused by a "
         "solve on every rank alike (decision 632). Tolerance and AmplitudeFloor are "

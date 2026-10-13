@@ -104,7 +104,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     snaps (`ProbeSnapsComputed` false; the geometry-only preflight and the discovery
     closure proceed) and refused by a solve on every rank alike. Response-geometry cache
     version 18 (the `ProbeSnaps` and `ProbeSnapsComputed` of every spatial patch; a
-    version-17 cache is refused).
+    version-17 cache is refused). A probe of a mirror-formed coupon's image half, which
+    the solve evaluates at its reflection into the domain, is snapped at that reflected
+    position (the displacement carried back through the same mirror planes); every other
+    probe is read as before. Response-geometry cache version 19 (a version-18 cache, whose
+    image-side probes are un-snapped, is refused).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

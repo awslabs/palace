@@ -5921,7 +5921,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     imaged.real_segments = static_cast<std::size_t>(chord);
     CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
   }
-  // 7. The geometry cache round trip of the record (version 18).
+  // 7. The geometry cache round trip of the record (version 19).
   {
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -5950,15 +5950,15 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     std::ifstream input(path);
     nlohmann::json cache = nlohmann::json::parse(input);
     input.close();
-    CHECK(cache["Version"] == 18);
+    CHECK(cache["Version"] == 19);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
     CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
     CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
-    // A version-18 cache written before decision 632 (no ProbeSnapsComputed) is refused by
-    // name, never read as computed.
+    // A current-version cache without ProbeSnapsComputed (the schema before decision 632)
+    // is refused by name, never read as computed.
     nlohmann::json uncomputed = cache;
     uncomputed["Patches"][0].erase("ProbeSnapsComputed");
-    const auto uncomputed_path = dir / "geometry-v18-no-computed.json";
+    const auto uncomputed_path = dir / "geometry-v19-no-computed.json";
     {
       std::ofstream output(uncomputed_path);
       output << uncomputed.dump(2) << "\n";
@@ -5980,7 +5980,20 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       ContainsSubstring("cache version 17") &&
-                          ContainsSubstring("version 18"));
+                          ContainsSubstring("version 19"));
+    // A version-18 cache (main before decision 774: the same schema, but a mirror-formed
+    // coupon's image-side probes recorded un-snapped) is refused by the version message
+    // (decision 781; the 527 rule), never read for its stale ProbeSnaps.
+    nlohmann::json eighteen = cache;
+    eighteen["Version"] = 18;
+    const auto eighteen_path = dir / "geometry-v18.json";
+    {
+      std::ofstream output(eighteen_path);
+      output << eighteen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
+                      ContainsSubstring("cache version 18") &&
+                          ContainsSubstring("version 19"));
   }
 }
 
