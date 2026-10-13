@@ -6943,8 +6943,27 @@ TEST_CASE("SurfaceResponseIdentificationMirrorCompleteSupport",
                ContainsSubstring("plane 0 does not act"));
     CHECK_THAT(feature.spatial_support.at("Unboxable").get<std::string>(),
                ContainsSubstring("has no reflected continuation"));
-    CHECK_FALSE(
-        (feature.spatial_support.contains("MirrorCompletion") &&
-         feature.spatial_support.at("MirrorCompletion").at("Pieces").get<int>() == 4));
+    // The refused pass's record carries EXACTLY the three continued chains: the fourth (the
+    // lowest band cut's, 0.840746 R from the +x face: main's MinClearanceOverR reading) has
+    // no reflected piece, and its deficit is what the legacy census still reads as
+    // fictitious continuation; the two sum to the complete fixture's 9.337219 R.
+    const auto full = Configurations(merged);
+    REQUIRE(full.size() == 1);
+    const double complete_length =
+        full[0]->spatial_support.at("MirrorCompletion").at("LengthOverR").get<double>();
+    REQUIRE(feature.spatial_support.contains("MirrorCompletion"));
+    const nlohmann::json &partial_completion =
+        feature.spatial_support.at("MirrorCompletion");
+    CHECK(partial_completion.at("Planes") == std::vector<int>{0});
+    CHECK(partial_completion.at("Pieces").get<int>() == 3);
+    CHECK(partial_completion.at("ChainPieces").get<int>() == 3);
+    CHECK_THAT(partial_completion.at("LengthOverR").get<double>(),
+               WithinAbs(8.496473, 1.0e-5));
+    const double uncontinued = feature.spatial_support.at("LegacyContinuation")
+                                   .at("FictitiousContinuationLengthOverR")
+                                   .get<double>();
+    CHECK_THAT(uncontinued, WithinAbs(0.840746, 1.0e-5));
+    CHECK_THAT(partial_completion.at("LengthOverR").get<double>() + uncontinued,
+               WithinAbs(complete_length, 1.0e-5));
   }
 }
