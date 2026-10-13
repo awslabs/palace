@@ -45,20 +45,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+  - Removed the `"NSamples"` option of the wave port `"VoltagePath"` and of the
+    `"Impedance"` and `"Voltage"` boundary postprocessing paths. Coordinate-path line
+    integrals are now exact for the discrete field, so the number of samples no longer has
+    any effect, and configurations specifying it must be updated. SchemaVer 3-0-0
+    [PR 1049](https://github.com/awslabs/palace/pull/1049).
 
 #### Bug Fixes
 
-  - Fixed coordinate-path line integrals (wave port `"VoltagePath"` and the `"Impedance"` and
-    `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) being inaccurate on
-    refined meshes, which made the wave port Z_PV oscillate under adaptive mesh
-    refinement. A single Gauss-Legendre rule of order `"NSamples"` was used over each path
-    segment, which cannot resolve the kinks and near-singular behavior of the discrete field
-    once elements near conductor edges become small compared to the sample spacing. Paths
-    are now split at element boundaries and each piece is integrated with a rule exact for
-    the discrete field on straight-sided elements, so the result no longer depends on
-    `"NSamples"` (now a minimum number of points per segment, for curved elements). The
-    wave port driven-field voltage no longer requires GSLIB or a point search over the full
-    3D mesh. SchemaVer 2-2-1.
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
@@ -136,6 +130,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux
     error estimators on processes without elements of a submesh.
     [PR 1022](https://github.com/awslabs/palace/pull/1022).
+  - Fixed coordinate-path line integrals (wave port `"VoltagePath"` and the `"Impedance"`
+    and `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) being inaccurate
+    on refined meshes, which made the wave port Z_PV oscillate under adaptive mesh
+    refinement. Paths are now split at element boundaries, located on the exact geometry of
+    curved elements, and each piece is integrated with a rule exact for the discrete field
+    on straight-sided elements. The wave port driven-field voltage no longer requires GSLIB
+    or a point search over the full 3D mesh.
+    [PR 1049](https://github.com/awslabs/palace/pull/1049).
 
 #### Performance Improvements
 

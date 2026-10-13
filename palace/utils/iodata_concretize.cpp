@@ -343,8 +343,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"KSPTol", wp.ksp_tol},
                             {"EigenTol", wp.eig_tol},
                             {"MaxSize", wp.max_size},
-                            {"Verbose", wp.verbose},
-                            {"NSamples", wp.n_samples}});
+                            {"Verbose", wp.verbose}});
     }
   }
 
@@ -427,26 +426,6 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                    {
                      ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
                                             {"LossTan", it->second.tandelta}});
-                   }
-                 });
-
-    ApplyIndexed("Impedance",
-                 [&](int idx, json &j_entry)
-                 {
-                   auto it = pp.impedance.find(idx);
-                   if (it != pp.impedance.end())
-                   {
-                     Concretize(j_entry, "NSamples", it->second.n_samples);
-                   }
-                 });
-
-    ApplyIndexed("Voltage",
-                 [&](int idx, json &j_entry)
-                 {
-                   auto it = pp.voltage.find(idx);
-                   if (it != pp.voltage.end())
-                   {
-                     Concretize(j_entry, "NSamples", it->second.n_samples);
                    }
                  });
   }

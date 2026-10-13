@@ -125,15 +125,11 @@ TEST_CASE("LineIntegrator 2D exact for discrete fields",
 
   auto Check = [&](const std::vector<mfem::Vector> &path, bool closed)
   {
-    // NSamples-type minimum point count must not change the result.
-    for (int min_points : {0, 37})
-    {
-      fem::LineIntegrator integrator(mesh, path, closed, 2 * order, min_points);
-      const double ref = ReferenceLineIntegral(F, path, closed, 2);
-      CAPTURE(min_points, ref);
-      CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));
-      CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(0.0, 1.0e-12));
-    }
+    fem::LineIntegrator integrator(mesh, path, closed, 2 * order);
+    const double ref = ReferenceLineIntegral(F, path, closed, 2);
+    CAPTURE(ref);
+    CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));
+    CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(0.0, 1.0e-12));
   };
 
   SECTION("Oblique path through the refined region")

@@ -305,7 +305,6 @@ protected:
     mfem::Array<int> current_marker;
     std::vector<mfem::Vector> voltage_path;
     std::vector<mfem::Vector> current_path;
-    int n_samples = 100;
     bool has_voltage_coordinates = false;
     bool has_current_path = false;
     bool has_current = false;
@@ -318,7 +317,6 @@ protected:
   {
     mfem::Array<int> voltage_marker;
     std::vector<mfem::Vector> voltage_path;
-    int n_samples = 100;
     bool has_coordinates = false;
     std::shared_ptr<fem::LineIntegrator> voltage_integrator;
   };

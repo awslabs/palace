@@ -161,7 +161,6 @@ private:
 
   // Voltage path for line integral (optional, for impedance postprocessing).
   std::vector<mfem::Vector> voltage_path;
-  int voltage_n_samples;
   bool has_voltage_coords = false;
 
   // Element-aware quadrature for the voltage path on the embedded port submesh (the path

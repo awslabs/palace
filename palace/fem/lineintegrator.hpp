@@ -65,11 +65,9 @@ public:
   // Build the quadrature for the path given by consecutive points (each of size equal to
   // the mesh space dimension). When closed is true, a segment from the last point back to
   // the first is added. Each sub-interval is integrated with a Gauss-Legendre rule of the
-  // given polynomial order. When min_points_per_segment > 0, every segment is additionally
-  // split uniformly so that it receives at least this many quadrature points, which can
-  // help for curved (high-order) elements where the integrand is not polynomial.
+  // given polynomial order.
   LineIntegrator(const mfem::ParMesh &mesh, const std::vector<mfem::Vector> &path,
-                 bool closed, int order, int min_points_per_segment = 0);
+                 bool closed, int order);
 
   // Integrate the given vector field on the mesh along the path. The result is summed over
   // all processes of the mesh communicator (collective).

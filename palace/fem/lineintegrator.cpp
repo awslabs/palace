@@ -358,7 +358,7 @@ void IntersectSegment(mfem::ElementTransformation &T,
 
 LineIntegrator::LineIntegrator(const mfem::ParMesh &mesh_,
                                const std::vector<mfem::Vector> &path, bool closed,
-                               int order, int min_points_per_segment)
+                               int order)
   : comm(mesh_.GetComm()), sdim(mesh_.SpaceDimension()), mesh_ptr(&mesh_)
 {
   // Non-const access is required for element transformations only.
@@ -443,14 +443,6 @@ LineIntegrator::LineIntegrator(const mfem::ParMesh &mesh_,
         intervals.push_back({a, b, e});
         breakpoints.push_back(a);
         breakpoints.push_back(b);
-      }
-    }
-    if (min_points_per_segment > 0)
-    {
-      const int n_split = (min_points_per_segment + nq - 1) / nq;
-      for (int k = 1; k < n_split; k++)
-      {
-        breakpoints.push_back(static_cast<double>(k) / n_split);
       }
     }
 
