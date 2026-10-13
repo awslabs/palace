@@ -165,7 +165,7 @@ sweep with circuit synthesis, eigenmode simulations of a cavity coupled to the w
 through an iris, and an E-plane bifurcation whose arms of different lengths are terminated
 by two PML blocks), a layered substrate and vacuum parallel-plate waveguide whose material
 interface crosses the PML, and a periodic cell with a Floquet port for plane-wave absorption
-at oblique incidence (at a single frequency and with an adaptive sweep).
+at oblique incidence (at grazing incidence, and with an adaptive sweep at 45°).
 
 ## Finite conductivity boundary
 

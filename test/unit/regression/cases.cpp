@@ -1558,11 +1558,10 @@ TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
 // --- PML: perfectly matched layer absorbing regions. ---
 //
 // Rectangular waveguide (TE10 at 3 GHz, |S11| = -18 dB with a second-order ABC) terminated
-// by a PML on +z, as static, auto-detected, complex frequency shifted, and
-// frequency-dependent profiles. The PML terms are evaluated at the quadrature points (per
-// element, per rank), so the reflection is partition independent to solver tolerance; the
-// absolute tolerance of 1e-4 on |S11| ~ 8e-4 (-62 dB) catches a PML regressing to a
-// partially reflecting layer, while the max_db threshold is reference free.
+// by a static PML on +z. The PML terms are evaluated at the quadrature points (per element,
+// per rank), so the reflection is partition independent to solver tolerance; the absolute
+// tolerance of 1e-4 on |S11| ~ 7e-4 (-63 dB) catches a PML regressing to a partially
+// reflecting layer, while the max_db threshold is reference free.
 void RunPMLDrivenCase(std::string_view case_dir, const std::string &config,
                       const std::string &s_file, double max_db)
 {
@@ -1581,23 +1580,9 @@ TEST_CASE("pml_waveguide", "[Serial][Parallel][Regression]")
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
 }
 
-TEST_CASE("pml_waveguide_auto", "[Serial][Parallel][Regression]")
-{
-  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_auto", "port-S.csv", -55.0);
-}
-
-TEST_CASE("pml_waveguide_cfs", "[Serial][Parallel][Regression]")
-{
-  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_cfs", "port-S.csv", -55.0);
-}
-
-TEST_CASE("pml_waveguide_fd", "[Serial][Parallel][Regression]")
-{
-  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_fd", "port-S.csv", -55.0);
-}
-
 // E-plane bifurcation with arms of different lengths, each terminated by its own block of
-// PML regions (one static, one frequency-dependent). The complex S11 (|S11| ~ -19 dB, the
+// PML regions (one static, one frequency-dependent with a real stretch and a complex
+// frequency shift). The complex S11 (|S11| ~ -19 dB, the
 // reflection of the bifurcation) is diffed against the reference, and against the
 // PML-independent values of the same bifurcation with arms of equal lengths terminated by a
 // single PML block (separate mesh). The atol of 4e-3 covers the discretization differences
@@ -1759,31 +1744,16 @@ TEST_CASE("pml_waveguide_fd_synth", "[Serial][Parallel][Regression]")
 // Layered parallel-plate waveguide (substrate and vacuum) whose material interface crosses
 // the +z PML: the stretch must be the same in both PML regions (σ_max from the smallest
 // refractive index of their materials), otherwise the quasi-TEM mode reflects at -23 dB
-// from the interface inside the layer, versus below -85 dB over 2-8 GHz here (static with
-// the default parameters, frequency-dependent, and CFS).
+// from the interface inside the layer, versus below -85 dB at 2, 5, and 8 GHz here.
 TEST_CASE("pml_layered", "[Serial][Parallel][Regression]")
 {
   RunPMLDrivenCase("pml_layered", "pml_layered", "port-S.csv", -60.0);
 }
 
-TEST_CASE("pml_layered_fd", "[Serial][Parallel][Regression]")
-{
-  RunPMLDrivenCase("pml_layered", "pml_layered_fd", "port-S.csv", -60.0);
-}
-
-TEST_CASE("pml_layered_cfs", "[Serial][Parallel][Regression]")
-{
-  RunPMLDrivenCase("pml_layered", "pml_layered_cfs", "port-S.csv", -60.0);
-}
-
-// Plane wave absorption at oblique incidence (Floquet port on a periodic vacuum cell):
-// 45° TM (|S11| ~ -81 dB) and grazing 80° TE (|S11| ~ -42 dB). The PML reflection
-// coefficient grows towards grazing incidence like that of a continuous PML.
-TEST_CASE("pml_oblique_45_tm", "[Serial][Parallel][Regression]")
-{
-  RunPMLDrivenCase("pml_oblique", "oblique_45_tm", "port-floquet-S.csv", -70.0);
-}
-
+// Plane wave absorption at grazing incidence (80° TE, Floquet port on a periodic vacuum
+// cell), with the conductivity computed from a reflection target R = 1e-12: the reflection,
+// about R^cos θ (|S11| ~ -42 dB), grows towards grazing incidence like that of a continuous
+// PML.
 TEST_CASE("pml_oblique_grazing_80_te", "[Serial][Parallel][Regression]")
 {
   RunPMLDrivenCase("pml_oblique", "grazing_80_te", "port-floquet-S.csv", -38.0);

@@ -5,8 +5,9 @@
   // longer arm ends at the bounding box of the mesh, so that its layer geometry is detected
   // from the mesh, while the layer of the shorter arm is specified with its direction and
   // thickness, measured from the end of its PML region. The blocks have different
-  // parameters: a static stretch for the longer arm, and a frequency-dependent stretch for
-  // the shorter arm. With the arms matched by the PMLs, the reflection of the bifurcation
+  // parameters: a static stretch for the longer arm, and a frequency-dependent stretch with
+  // a real stretch (KappaMax) and a complex frequency shift (CFS-PML, AlphaMax) for the
+  // shorter arm. With the arms matched by the PMLs, the reflection of the bifurcation
   // (|S11| ≈ -19 dB) is independent of the lengths of the arms.
   "Problem":
   {
@@ -29,6 +30,8 @@
         "Attributes": [3],
         "Direction": ["+Z"],
         "Thickness": 0.1,
+        "KappaMax": 2.0,
+        "AlphaMax": 0.1,
         "FrequencyDependent": true
       }
     ]
