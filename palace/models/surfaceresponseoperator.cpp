@@ -21692,136 +21692,152 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
       diagnostics["WallTime"].get<double>(), lines);
 }
 
-DomainBoundaryPortions CollectDomainBoundaryPortions(
+void AppendExcludedPatchPortion(ExcludedPatchPortions &result, std::size_t patch_idx,
+                                const ResponseCorrectionData::UncoveredPortionData &portion,
+                                bool translational, double tolerance)
+{
+  const double length = Norm(Subtract(portion.p1, portion.p0));
+  if (length <= tolerance)
+  {
+    return;
+  }
+  auto SameInterval = [&](const ResponseCorrectionData::UncoveredPortionData &a)
+  {
+    return (Norm(Subtract(a.p0, portion.p0)) <= tolerance &&
+            Norm(Subtract(a.p1, portion.p1)) <= tolerance) ||
+           (Norm(Subtract(a.p0, portion.p1)) <= tolerance &&
+            Norm(Subtract(a.p1, portion.p0)) <= tolerance);
+  };
+  for (std::size_t i = 0; i < result.portions.size(); i++)
+  {
+    if (result.portions[i].feature == portion.feature && SameInterval(result.portions[i]))
+    {
+      // A co-located first-order split patch (isolated-edge + curvature blend) of the
+      // same cell: one interval, counted once.
+      result.patches[i].push_back(patch_idx);
+      result.duplicate_patches++;
+      return;
+    }
+  }
+  result.portions.push_back(portion);
+  result.patches.push_back({patch_idx});
+  result.translational.push_back(translational);
+  result.length += length;
+  if (translational)
+  {
+    result.geometric_cells++;
+  }
+}
+
+void AppendExcludedPatchClaim(ExcludedPatchPortions &result, std::size_t patch_idx,
+                              const std::vector<ResponsePatchData> &patches,
+                              const ResponseCorrectionData &config,
+                              const ContinuationOwnership &ownership,
+                              const UncoveredSpatialSupportClipping &uncovered_clipping,
+                              double tolerance)
+{
+  const auto &patch = patches[patch_idx];
+  const auto &provenance = patch.provenance;
+  const auto model =
+      std::find_if(config.models.begin(), config.models.end(),
+                   [&](const auto &entry) { return entry.idx == patch.model; });
+  MFEM_VERIFY(model != config.models.end(),
+              "Excluded response-correction patch refers to an unknown model index!");
+  const std::string &topology = model->topology;
+  auto Append = [&](int segment, const Point3D &p0, const Point3D &p1, bool translational)
+  {
+    AppendExcludedPatchPortion(result, patch_idx,
+                               {provenance.feature, topology, segment, p0, p1},
+                               translational, tolerance);
+  };
+  const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+  if (provenance.coupon_depth > 0.0 && c1 > c0)
+  {
+    // A translational cell: its own-edge interval = the cell's recorded pre-image on the
+    // side's own segment (decision 537, DESIGN ERRATA-8; every features-path patch). The
+    // frame reconstruction origin + EdgeOffset AxisU + cell AxisW (kept for a legacy
+    // patch without the record) leaves a pair's / stack's member edge wherever the sides
+    // are not exactly parallel: AxisW follows the partner side's chord.
+    std::array<Point3D, 2> ends;
+    if (provenance.has_own_cell)
+    {
+      ends = provenance.own_cell;
+    }
+    else
+    {
+      for (int k = 0; k < 2; k++)
+      {
+        ends[k] = patch.origin;
+        for (int d = 0; d < 3; d++)
+        {
+          ends[k][d] += provenance.edge_offset * patch.axis_u[d] +
+                        (k == 0 ? c0 : c1) * patch.axis_w[d];
+        }
+      }
+    }
+    Append(provenance.segment, ends[0], ends[1], true);
+    return;
+  }
+  if (!provenance.claims.empty() || provenance.has_support_box)
+  {
+    // A spatial cluster coupon: its claims, the continuation-owned cell parts attributed
+    // to it and the uncovered portions clipped by its box. A mirror-formed
+    // configuration's coupon (decision 557 (4)) claims the REAL portions the touched real
+    // features' cells tile (decision 481): those cells, owned by the coupon, carry the
+    // raw footprint; its claims would count it twice.
+    if (provenance.mirror_formed_topology < 0)
+    {
+      for (const auto &claim : provenance.claims)
+      {
+        Append(claim.segment, claim.p0, claim.p1, false);
+      }
+    }
+    for (const auto &cell : ownership.cells)
+    {
+      for (std::size_t i = 0; i < cell.owners.size(); i++)
+      {
+        if (cell.owners[i] == patch_idx && i < cell.attributed_intervals.size())
+        {
+          Append(-1, cell.attributed_intervals[i][0], cell.attributed_intervals[i][1],
+                 false);
+        }
+      }
+    }
+    for (const auto &clip : uncovered_clipping.clips)
+    {
+      if (clip.spatial_patch == patch_idx)
+      {
+        Append(clip.segment, clip.p0, clip.p1, false);
+      }
+    }
+    return;
+  }
+  // A vertex coupon: its recorded raw footprint.
+  for (const auto &claim : provenance.raw_claims)
+  {
+    Append(claim.segment, claim.p0, claim.p1, false);
+  }
+}
+
+ExcludedPatchPortions CollectDomainBoundaryPortions(
     const DomainBoundaryExclusions &exclusions,
     const std::vector<ResponsePatchData> &patches, const ResponseCorrectionData &config,
     const ContinuationOwnership &ownership,
     const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius)
 {
-  DomainBoundaryPortions result;
-  std::unordered_map<int, const ResponseModelData *> models;
-  for (const auto &model : config.models)
-  {
-    models.emplace(model.idx, &model);
-  }
+  ExcludedPatchPortions result;
   const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
-  auto SameInterval = [&](const ResponseCorrectionData::UncoveredPortionData &a,
-                          const Point3D &p0, const Point3D &p1)
-  {
-    return (Norm(Subtract(a.p0, p0)) <= tolerance &&
-            Norm(Subtract(a.p1, p1)) <= tolerance) ||
-           (Norm(Subtract(a.p0, p1)) <= tolerance && Norm(Subtract(a.p1, p0)) <= tolerance);
-  };
-  auto Append = [&](std::size_t patch_idx, int feature, const std::string &topology,
-                    int segment, const Point3D &p0, const Point3D &p1, bool translational)
-  {
-    const double length = Norm(Subtract(p1, p0));
-    if (length <= tolerance)
-    {
-      return;
-    }
-    for (std::size_t i = 0; i < result.portions.size(); i++)
-    {
-      if (result.portions[i].feature == feature && SameInterval(result.portions[i], p0, p1))
-      {
-        // A co-located first-order split patch (isolated-edge + curvature blend) of the
-        // same cell: one interval, counted once.
-        result.patches[i].push_back(patch_idx);
-        result.duplicate_patches++;
-        return;
-      }
-    }
-    result.portions.push_back({feature, topology, segment, p0, p1});
-    result.patches.push_back({patch_idx});
-    result.translational.push_back(translational);
-    result.length += length;
-    if (translational)
-    {
-      result.geometric_cells++;
-    }
-  };
   for (const auto &exclusion : exclusions.patches)
   {
-    const auto &patch = patches[exclusion.patch];
-    const auto &provenance = patch.provenance;
-    const std::string &topology = models.at(patch.model)->topology;
-    const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
-    if (provenance.coupon_depth > 0.0 && c1 > c0)
-    {
-      // A translational cell: its own-edge interval = the cell's recorded pre-image on the
-      // side's own segment (decision 537, DESIGN ERRATA-8; every features-path patch). The
-      // frame reconstruction origin + EdgeOffset AxisU + cell AxisW (kept for a legacy
-      // patch without the record) leaves a pair's / stack's member edge wherever the sides
-      // are not exactly parallel: AxisW follows the partner side's chord.
-      std::array<Point3D, 2> ends;
-      if (provenance.has_own_cell)
-      {
-        ends = provenance.own_cell;
-      }
-      else
-      {
-        for (int k = 0; k < 2; k++)
-        {
-          ends[k] = patch.origin;
-          for (int d = 0; d < 3; d++)
-          {
-            ends[k][d] += provenance.edge_offset * patch.axis_u[d] +
-                          (k == 0 ? c0 : c1) * patch.axis_w[d];
-          }
-        }
-      }
-      Append(exclusion.patch, provenance.feature, topology, provenance.segment, ends[0],
-             ends[1], true);
-      continue;
-    }
-    if (!provenance.claims.empty() || provenance.has_support_box)
-    {
-      // A spatial cluster coupon: its claims, the continuation-owned cell parts attributed
-      // to it and the uncovered portions clipped by its box. A mirror-formed
-      // configuration's coupon (decision 557 (4)) claims the REAL portions the touched real
-      // features' cells tile (decision 481): those cells, owned by the coupon, carry the
-      // raw footprint; its claims would count it twice.
-      if (provenance.mirror_formed_topology < 0)
-      {
-        for (const auto &claim : provenance.claims)
-        {
-          Append(exclusion.patch, provenance.feature, topology, claim.segment, claim.p0,
-                 claim.p1, false);
-        }
-      }
-      for (const auto &cell : ownership.cells)
-      {
-        for (std::size_t i = 0; i < cell.owners.size(); i++)
-        {
-          if (cell.owners[i] == exclusion.patch && i < cell.attributed_intervals.size())
-          {
-            Append(exclusion.patch, provenance.feature, topology, -1,
-                   cell.attributed_intervals[i][0], cell.attributed_intervals[i][1], false);
-          }
-        }
-      }
-      for (const auto &clip : uncovered_clipping.clips)
-      {
-        if (clip.spatial_patch == exclusion.patch)
-        {
-          Append(exclusion.patch, provenance.feature, topology, clip.segment, clip.p0,
-                 clip.p1, false);
-        }
-      }
-      continue;
-    }
-    // A vertex coupon: its recorded raw footprint.
-    for (const auto &claim : provenance.raw_claims)
-    {
-      Append(exclusion.patch, provenance.feature, topology, claim.segment, claim.p0,
-             claim.p1, false);
-    }
+    AppendExcludedPatchClaim(result, exclusion.patch, patches, config, ownership,
+                             uncovered_clipping, tolerance);
   }
   return result;
 }
 
-nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &portions,
-                                              double coordinate_scale)
+nlohmann::json DescribeExcludedPatchPortions(const ExcludedPatchPortions &portions,
+                                             double coordinate_scale,
+                                             const std::string &rule)
 {
   nlohmann::json entries = nlohmann::json::array();
   std::map<std::string, std::pair<int, double>> by_type;
@@ -21865,17 +21881,24 @@ nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &port
           {"ByType", std::move(types)},
           {"ByFeature", std::move(features)},
           {"Portions", std::move(entries)},
-          {"Rule",
-           "F-DB-a (decisions 442 / 454; DESIGN 2.1): a DomainBoundary-excluded patch is "
-           "never dropped. Its raw claim - a translational cell's own-edge interval (the "
-           "co-located first-order split patches of one cell counted once), a vertex "
-           "coupon's arm windows (R along each arm; a trimmed corner's second arm up to "
-           "s), a spatial cluster's claims plus the cell parts and uncovered portions its "
-           "box removed from others - keeps the device's raw within-R energy in every "
-           "corrected interface energy (fixed trace / fixed flux on the raw field, "
-           "self-consistent on the corrected field), reported per type in "
-           "surface-response-domain-boundary-energy.csv as the DomainBoundary share: ft "
-           "= E_out + models + uncovered + domainboundary"}};
+          {"Rule", rule}};
+}
+
+nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &portions,
+                                              double coordinate_scale)
+{
+  return DescribeExcludedPatchPortions(
+      portions, coordinate_scale,
+      "F-DB-a (decisions 442 / 454; DESIGN 2.1): a DomainBoundary-excluded patch is "
+      "never dropped. Its raw claim - a translational cell's own-edge interval (the "
+      "co-located first-order split patches of one cell counted once), a vertex "
+      "coupon's arm windows (R along each arm; a trimmed corner's second arm up to "
+      "s), a spatial cluster's claims plus the cell parts and uncovered portions its "
+      "box removed from others - keeps the device's raw within-R energy in every "
+      "corrected interface energy (fixed trace / fixed flux on the raw field, "
+      "self-consistent on the corrected field), reported per type in "
+      "surface-response-domain-boundary-energy.csv as the DomainBoundary share: ft "
+      "= E_out + models + uncovered + domainboundary");
 }
 
 void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel &model)
@@ -22313,6 +22336,21 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
           assignment.weight = 0.0;
         }
       }
+      // S7diag R1 (decision 758): the excluded patch's raw claim (built at construction
+      // by the DomainBoundary rule; replicated like the records) is served raw from this
+      // excitation on: the electrostatic driver keeps its within-R energy in E_ft / E_ff /
+      // E_sc as the ConductorConsistency share, never dropped.
+      const auto claim = conductor_consistency_claims.find(record.patch);
+      MFEM_VERIFY(claim != conductor_consistency_claims.end(),
+                  "Conductor-consistency gate excluded patch "
+                      << record.patch << " (" << model_names.at(record.model)
+                      << ") without a raw claim record!");
+      for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+      {
+        AppendExcludedPatchPortion(
+            conductor_consistency_portions, record.patch, claim->second.portions[i],
+            claim->second.translational[i], conductor_consistency_claim_tolerance);
+      }
     }
     if (record.max_ratio > max_ratio || max_patch < 0)
     {
@@ -22325,6 +22363,28 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   diagnostics["CellLength"] = diagnostics["CellLength"].get<double>() + excluded_cells;
   diagnostics["TestedPatches"] =
       diagnostics["TestedPatches"].get<int>() + static_cast<int>(records.size());
+  if (!conductor_consistency_portions.portions.empty())
+  {
+    // Written only once something is excluded: a solve with 0 exclusions records nothing
+    // new here (its palace.json is unchanged).
+    diagnostics["RawPortions"] = DescribeExcludedPatchPortions(
+        conductor_consistency_portions, mesh_coordinate_scale,
+        "S7diag R1 (decision 758): a conductor-consistency-excluded patch is never "
+        "dropped. "
+        "Its raw claim, by the DomainBoundary rule (a translational cell's own-edge "
+        "interval; a vertex coupon's arm windows, R along each arm and a trimmed corner's "
+        "second arm up to s = R / cos(theta / 2), the vertex sector by nearest-point "
+        "ownership of the integrator; a spatial cluster's claims plus the cell parts and "
+        "uncovered portions its box removed from others), is served RAW from the excluding "
+        "excitation on: the device's raw within-R energy of these portions is kept in "
+        "every corrected interface energy (fixed trace / fixed flux on the raw field, "
+        "self-consistent on the corrected field), reported per type in "
+        "surface-response-conductor-consistency-energy.csv as the ConductorConsistency "
+        "share beside Missing (uncovered) and DomainBoundary: ft = E_out + models + "
+        "uncovered + domainboundary + conductorconsistency. The response operator is "
+        "unchanged (weight 0 stands). An excitation evaluated before the exclusion kept "
+        "the model (its row reads 0). Portions in mesh-file units");
+  }
   if (!records.empty())
   {
     Mpi::Print(" Conductor-consistency gate (decision 277), excitation {:d}: {:d} spatial "
@@ -22369,6 +22429,14 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
             record.worst_point[2] * mesh_coordinate_scale,
             record.claim_length * mesh_coordinate_scale);
       }
+    }
+    if (excluded_count > 0)
+    {
+      Mpi::Print("  the excluded patches' raw claims are served RAW (S7diag R1, decision "
+                 "758): {:d} portion(s), {:.6e} mesh-file units so far, kept in the "
+                 "corrected interface energies as the ConductorConsistency share\n",
+                 static_cast<int>(conductor_consistency_portions.portions.size()),
+                 conductor_consistency_portions.length * mesh_coordinate_scale);
     }
   }
   return records;
@@ -23447,6 +23515,29 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           uncovered_spatial_support_clipping, config->matching_radius);
       ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
+      // S7diag R1 (decision 758): the raw claim of every applied patch the
+      // conductor-consistency gate can probe, by the same rule, kept for the gate (which
+      // runs per excitation, when `placed_patches` is gone) on every rank.
+      conductor_consistency_claim_tolerance =
+          kSignatureParameterToleranceOverRadius * config->matching_radius;
+      for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
+      {
+        const auto &patch_config = placed_patches[patch_idx];
+        if (spatially_owned_patches.count(patch_idx) || patch_config.weight <= 0.0)
+        {
+          continue;
+        }
+        const auto model_it = model_indices.find(patch_config.model);
+        if (model_it == model_indices.end() ||
+            models[model_it->second].plane_conductor_vertices.empty())
+        {
+          continue;
+        }
+        AppendExcludedPatchClaim(conductor_consistency_claims[static_cast<int>(patch_idx)],
+                                 patch_idx, placed_patches, *config, ownership,
+                                 uncovered_spatial_support_clipping,
+                                 conductor_consistency_claim_tolerance);
+      }
       if (!config->mirror_band.empty())
       {
         ownership_diagnostics["MirrorBand"] = nlohmann::json::parse(config->mirror_band);
