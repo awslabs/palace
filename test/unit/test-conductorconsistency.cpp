@@ -81,6 +81,7 @@ enum class CouponVariant
 
 struct CouponFiles
 {
+  std::string tag;  // the variant's name in the file names and the model name
   fs::path basis_points, trace_vertices, trace_triangles, fabricated, thin, cache;
   fs::path fabricated_surface, thin_surface;  // the within-R pair of coupon interface 1
   int contour_size = 0;
@@ -90,6 +91,65 @@ struct CouponFiles
 
 constexpr double kHalfU = 0.2, kHalfV = 0.25, kHalfW = 0.2, kMetalEdgeV = 0.125;
 constexpr double kChordOffset = 0.02;
+
+// The coupon model of a variant's files at library index `idx` (the response-geometry
+// cache replaces the library matching).
+config::ElectrostaticSolverData::ResponseCorrectionModelData
+CouponModel(const CouponFiles &files, CouponVariant variant, int idx)
+{
+  config::ElectrostaticSolverData::ResponseCorrectionModelData model;
+  model.idx = idx;
+  model.name = "gap-junction-" + files.tag;
+  model.topology = "SpatialEdgeCluster";
+  model.fabricated_matrix = files.fabricated.string();
+  model.thin_matrix = files.thin.string();
+  model.fabricated_surface_matrix = files.fabricated_surface.string();
+  model.thin_surface_matrix = files.thin_surface.string();
+  model.interfaces = {{4, 1}};
+  model.basis_points = files.basis_points.string();
+  model.trace_vertices = files.trace_vertices.string();
+  model.trace_triangles = files.trace_triangles.string();
+  model.spatial_basis = true;
+  model.interior_trace_count = 2;
+  model.conductor_state_count = variant == CouponVariant::NO_CONDUCTOR ? 0 : 1;
+  return model;
+}
+
+// The coupon of model `model` placed across the gap at height z (origin (1.0, 0.5, z); u =
+// +z, v = +x, w = +y). The claimed portions: 0.4 along each island's facing edge (z in [z
+// - 0.2, z + 0.2]) as the identification writes them, one portion per MESH segment (h =
+// 0.125: the pieces [-0.2, -0.125], [-0.125, 0], [0, 0.125], [0.125, 0.2] about z;
+// segments first_segment.. on island 1's edge x = 0.875, first_segment + 4.. on island 2's
+// x = 1.125) - the postoperator serves a portion on the one perimeter mesh segment nearest
+// to its midpoint.
+config::ElectrostaticSolverData::ResponseCorrectionPatchData
+CouponPatch(CouponVariant variant, int model, double z, int feature, int first_segment)
+{
+  config::ElectrostaticSolverData::ResponseCorrectionPatchData patch;
+  patch.model = model;
+  patch.origin = {1.0, 0.5, z};
+  patch.axis_u = {0.0, 0.0, 1.0};
+  patch.axis_v = {1.0, 0.0, 0.0};
+  patch.axis_w = {0.0, 1.0, 0.0};
+  patch.conductor_references = {{0.0, -0.2, 0.0}, {0.0, 0.2, 0.0}};
+  if (variant == CouponVariant::NO_CONDUCTOR)
+  {
+    patch.conductor_references.pop_back();
+  }
+  patch.weight = 1.0;
+  patch.provenance.feature = feature;
+  for (int edge = 0; edge < 2; edge++)
+  {
+    const double x = edge == 0 ? 0.875 : 1.125;
+    int segment = first_segment + 4 * edge;
+    for (const auto &[u0, u1] : {std::make_pair(-0.2, -0.125), std::make_pair(-0.125, 0.0),
+                                 std::make_pair(0.0, 0.125), std::make_pair(0.125, 0.2)})
+    {
+      patch.provenance.claims.push_back({segment++, {x, 0.5, z + u0}, {x, 0.5, z + u1}});
+    }
+  }
+  return patch;
+}
 
 CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
 {
@@ -102,6 +162,7 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
   const bool chord_offset = variant == CouponVariant::CHORD_OFFSET ||
                             variant == CouponVariant::CHORD_OFFSET_SNAPPED;
   CouponFiles files;
+  files.tag = tag;
   files.basis_points = dir / ("conductor-consistency-" + tag + "-basis-points.csv");
   files.trace_vertices = dir / ("conductor-consistency-" + tag + "-trace-vertices.csv");
   files.trace_triangles = dir / ("conductor-consistency-" + tag + "-trace-triangles.csv");
@@ -254,52 +315,12 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
         }
       }
     }
-    // The placed geometry (the response-geometry cache replaces the library matching).
+    // The placed geometry (the response-geometry cache replaces the library matching): the
+    // coupon at the gap centre z = 1.0, feature 7, claims on segments 3-10.
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = kHalfU;
-    auto &model = data.models.emplace_back();
-    model.idx = 1;
-    model.name = "gap-junction-" + tag;
-    model.topology = "SpatialEdgeCluster";
-    model.fabricated_matrix = files.fabricated.string();
-    model.thin_matrix = files.thin.string();
-    model.fabricated_surface_matrix = files.fabricated_surface.string();
-    model.thin_surface_matrix = files.thin_surface.string();
-    model.interfaces = {{4, 1}};
-    model.basis_points = files.basis_points.string();
-    model.trace_vertices = files.trace_vertices.string();
-    model.trace_triangles = files.trace_triangles.string();
-    model.spatial_basis = true;
-    model.interior_trace_count = 2;
-    model.conductor_state_count = variant == CouponVariant::NO_CONDUCTOR ? 0 : 1;
-    auto &patch = data.patches.emplace_back();
-    patch.model = 1;
-    patch.origin = {1.0, 0.5, 1.0};
-    patch.axis_u = {0.0, 0.0, 1.0};
-    patch.axis_v = {1.0, 0.0, 0.0};
-    patch.axis_w = {0.0, 1.0, 0.0};
-    patch.conductor_references = {{0.0, -0.2, 0.0}, {0.0, 0.2, 0.0}};
-    if (variant == CouponVariant::NO_CONDUCTOR)
-    {
-      patch.conductor_references.pop_back();
-    }
-    patch.weight = 1.0;
-    patch.provenance.feature = 7;
-    // The claimed portions: 0.4 along each island's facing edge (z in [0.8, 1.2]) as the
-    // identification writes them, one portion per MESH segment (h = 0.125: the pieces
-    // [0.8, 0.875], [0.875, 1.0], [1.0, 1.125], [1.125, 1.2]; segments 3-6 on island 1's
-    // edge x = 0.875, 7-10 on island 2's x = 1.125) - the postoperator serves a portion on
-    // the one perimeter mesh segment nearest to its midpoint.
-    for (int edge = 0; edge < 2; edge++)
-    {
-      const double x = edge == 0 ? 0.875 : 1.125;
-      int segment = 3 + 4 * edge;
-      for (const auto &[z0, z1] : {std::make_pair(0.8, 0.875), std::make_pair(0.875, 1.0),
-                                   std::make_pair(1.0, 1.125), std::make_pair(1.125, 1.2)})
-      {
-        patch.provenance.claims.push_back({segment++, {x, 0.5, z0}, {x, 0.5, z1}});
-      }
-    }
+    data.models.push_back(CouponModel(files, variant, 1));
+    auto &patch = data.patches.emplace_back(CouponPatch(variant, 1, 1.0, 7, 3));
     if (variant == CouponVariant::CHORD_OFFSET_SNAPPED)
     {
       // The placement's record for a knot kChordOffset off a device arc chord (segment 3
@@ -314,6 +335,78 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
   }
   Mpi::Barrier(Mpi::World());
   return files;
+}
+
+// The two-coupon cache of the swap-detecting driver run (decision 773, review d769
+// MINOR-3): the INCONSISTENT coupon at z = 1.0 (patch 0, model 1, feature 7, segments 3-10:
+// excluded by the gate, its claim served) and the CONSISTENT coupon at z = 2.0 (patch 1,
+// model 2, feature 8, segments 11-18: applied, so the self-consistent solve differs from
+// the raw one), 3R apart on the gap of the long islands (MakeSerialLongGapIslandMesh).
+fs::path WriteTwoCouponCache(const fs::path &dir, const CouponFiles &inconsistent,
+                             const CouponFiles &consistent)
+{
+  const fs::path cache = dir / "conductor-consistency-two-coupon-geometry.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    config::ElectrostaticSolverData::ResponseCorrectionData data;
+    data.matching_radius = kHalfU;
+    data.models.push_back(CouponModel(inconsistent, CouponVariant::INCONSISTENT, 1));
+    data.models.push_back(CouponModel(consistent, CouponVariant::CONSISTENT, 2));
+    data.patches.push_back(CouponPatch(CouponVariant::INCONSISTENT, 1, 1.0, 7, 3));
+    data.patches.push_back(CouponPatch(CouponVariant::CONSISTENT, 2, 2.0, 8, 11));
+    WriteResponseGeometryCache(cache, data);
+  }
+  Mpi::Barrier(Mpi::World());
+  return cache;
+}
+
+// The island pair of MakeSerialIslandMesh(neighboring_island) with both islands extended
+// along the gap: a 2 x 1 x 3 box of 16 x 4 x 24 hexahedra (h = 0.125 in the plane), island
+// 1 (attribute 9) x in [0.375, 0.875] and island 2 (attribute 10) x in [1.125, 1.625], both
+// z in [0.75, 2.25] on the plane y = 0.5, so the gap carries the two coupons of
+// WriteTwoCouponCache (z = 1.0 and 2.0) without overlap.
+mfem::Mesh MakeSerialLongGapIslandMesh()
+{
+  constexpr double tolerance = 1.0e-12;
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(16, 4, 24, mfem::Element::HEXAHEDRON, 2.0, 1.0, 3.0);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = 2.0, xmax = 0.0, zmin = 3.0, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < tolerance;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    if (!on_plane || zmin < 0.75 - tolerance || zmax > 2.25 + tolerance)
+    {
+      continue;
+    }
+    const bool island_1 = xmin >= 0.375 - tolerance && xmax <= 0.875 + tolerance;
+    const bool island_2 = xmin >= 1.125 - tolerance && xmax <= 1.625 + tolerance;
+    if (!island_1 && !island_2)
+    {
+      continue;
+    }
+    serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+    serial.SetBdrAttribute(serial.GetNBE() - 1, island_1 ? 9 : 10);
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return serial;
 }
 
 }  // namespace
@@ -892,6 +985,30 @@ TEST_CASE_METHOD(
     config["Problem"]["Output"] = applied_dir.string();
     test::RunElectrostatic(config);
   }
+  // The swap-detecting run (decision 773, review d769 MINOR-3): the INCONSISTENT coupon
+  // beside an APPLIED consistent coupon 3R along the gap of the long islands, so the
+  // self-consistent field differs from the raw one and the served term on the corrected
+  // field from the served term on the raw one - each table column is read against its own
+  // field (the Region bracket of the raw field holds on the fixed-trace row alone, the
+  // bracket of the corrected field on the self-consistent row alone).
+  const fs::path long_mesh_path = temp.temp_dir / "conductor-consistency-long-islands.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialLongGapIslandMesh();
+    std::ofstream output(long_mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const fs::path two_coupon_cache =
+      WriteTwoCouponCache(temp.temp_dir, inconsistent, consistent);
+  const fs::path two_coupon_dir = temp.temp_dir / "cc-two-coupon";
+  {
+    test::GeometryCacheEnvGuard cache_env(two_coupon_cache.string(), false);
+    json long_config = config;
+    long_config["Model"]["Mesh"] = long_mesh_path.string();
+    long_config["Problem"]["Output"] = two_coupon_dir.string();
+    test::RunElectrostatic(long_config);
+  }
   Mpi::Barrier(Mpi::World());
   if (!Mpi::Root(Mpi::World()))
   {
@@ -1138,6 +1255,105 @@ TEST_CASE_METHOD(
       // ... and by the within-R energy of the whole interface, which the served term
       // cannot exceed.
       CHECK(cc_ft < RawEnergy(excluded_dir, source, 4) - outside);
+    }
+  }
+
+  // The two-coupon run (decision 773): the inconsistent coupon (patch 0) excluded at source
+  // 1 and served, the consistent coupon (patch 1) applied at both sources.
+  REQUIRE(fs::is_regular_file(two_coupon_dir /
+                              "surface-response-conductor-consistency-energy.csv"));
+  {
+    const auto metadata = Metadata(two_coupon_dir);
+    const auto &record =
+        metadata.at("SurfaceResponse").at("Diagnostics").at("ConductorConsistency");
+    CHECK(record.at("Count").get<int>() == 1);
+    REQUIRE(record.at("ExcludedPatches").size() == 1);
+    CHECK(record.at("ExcludedPatches")[0].at("Patch").get<int>() == 0);
+    // Both coupons probed at source 1, the applied one again at source 2.
+    CHECK(record.at("TestedPatches").get<int>() == 3);
+    REQUIRE(record.contains("RawPortions"));
+    const auto &raw = record.at("RawPortions");
+    CHECK(raw.at("Count").get<int>() == 8);
+    CHECK_THAT(raw.at("Length").get<double>(), WithinAbs(0.8, 1.0e-12));
+    REQUIRE(raw.at("ByFeature").size() == 1);
+    CHECK(raw.at("ByFeature")[0].at("Feature").get<int>() == 7);
+    const TypeTable cc =
+        ReadTypeTable(two_coupon_dir / "surface-response-conductor-consistency-energy.csv",
+                      "conductorconsistency", "geometric cells");
+    REQUIRE(cc.rows.size() == 12);
+    // The Region energies of a field: the regions are not response targets, so their
+    // columns of surface-Q-corrected.csv carry the plain interface energy of each field.
+    const Table corrected = test::LoadCsv(two_coupon_dir / "surface-Q-corrected.csv");
+    REQUIRE(corrected.n_rows() == 2);
+    auto RegionEnergy = [&](const char *field, int source, int region)
+    {
+      return test::ColumnByHeader(corrected,
+                                  fmt::format("E_surf {}[{}] (J)", field, region))
+          .data[SourceRow(corrected, "i", source)];
+    };
+    for (int source = 1; source <= 2; source++)
+    {
+      INFO("source " << source);
+      CHECK(std::stoi(cc.rows.at({source, 0, "SpatialEdgeCluster"})[cc.portions]) == 8);
+      const double cc_ft = std::stod(cc.rows.at({source, 0, "Total"})[cc.energy]);
+      const double cc_ff = std::stod(cc.rows.at({source, 1, "Total"})[cc.energy]);
+      const double cc_sc = std::stod(cc.rows.at({source, 2, "Total"})[cc.energy]);
+      const auto energies = CorrectedEnergies(two_coupon_dir, source);
+      const double outside = OutsideEnergy(two_coupon_dir, source);
+      const double models_ft = ModelEnergySum(two_coupon_dir, source, 0);
+      const double models_ff = ModelEnergySum(two_coupon_dir, source, 1);
+      const double models_sc = ModelEnergySum(two_coupon_dir, source, 2);
+      REQUIRE(std::isfinite(energies[2]));
+      INFO(fmt::format(
+          "E_ft {:.6e} E_sc {:.6e} models ft {:.6e} sc {:.6e} served ft "
+          "{:.6e} sc {:.6e} central ft {:.6e} sc {:.6e} whole ft {:.6e} sc "
+          "{:.6e}",
+          energies[0], energies[2], models_ft, models_sc, cc_ft, cc_sc,
+          RegionEnergy("raw", source, 5) + RegionEnergy("raw", source, 6),
+          RegionEnergy("corrected", source, 5) + RegionEnergy("corrected", source, 6),
+          RegionEnergy("raw", source, 7) + RegionEnergy("raw", source, 8),
+          RegionEnergy("corrected", source, 7) + RegionEnergy("corrected", source, 8)));
+      // The consistent coupon is applied: the models' energy is kept in every evaluation.
+      CHECK(models_ft > 0.0);
+      CHECK(models_sc > 0.0);
+      CHECK(cc_ft > 0.0);
+      CHECK(cc_ff == cc_ft);
+      // The fixed-trace / fixed-flux identities (the fixture's model energies dwarf its
+      // field energies, so these are blind to the served term here: the swap detectors are
+      // the own-field brackets below).
+      CHECK_THAT(energies[0], WithinRel(outside + models_ft + cc_ft, 1.0e-10));
+      CHECK_THAT(energies[1], WithinRel(outside + models_ff + cc_ff, 1.0e-10));
+      // The applied coupon's self-consistent solve differs from the raw one, and the served
+      // term on the corrected field from the served term on the raw one: the two maps are
+      // distinguishable.
+      CHECK(std::abs(energies[2] - energies[0]) > 1.0e-6 * energies[0]);
+      CHECK(std::abs(cc_sc - cc_ft) > 1.0e-6 * std::max(cc_sc, cc_ft));
+      // Each map against its own field: the Region bracket of the A1 form read on the
+      // corrected field for the self-consistent row and on the raw field for the
+      // fixed-trace row ...
+      const double central_ft =
+          RegionEnergy("raw", source, 5) + RegionEnergy("raw", source, 6);
+      const double whole_ft =
+          RegionEnergy("raw", source, 7) + RegionEnergy("raw", source, 8);
+      const double central_sc =
+          RegionEnergy("corrected", source, 5) + RegionEnergy("corrected", source, 6);
+      const double whole_sc =
+          RegionEnergy("corrected", source, 7) + RegionEnergy("corrected", source, 8);
+      CHECK(central_ft > 0.0);
+      CHECK(cc_ft > central_ft);
+      CHECK(cc_ft < whole_ft);
+      CHECK(central_sc > 0.0);
+      CHECK(cc_sc > central_sc);
+      CHECK(cc_sc < whole_sc);
+      // ... and neither value lies in the other field's bracket: a swap of the two maps
+      // fails the brackets above.
+      CHECK_FALSE((cc_ft > central_sc && cc_ft < whole_sc));
+      CHECK_FALSE((cc_sc > central_ft && cc_sc < whole_ft));
+      // Each share against its own evaluation's interface energy.
+      CHECK_THAT(std::stod(cc.rows.at({source, 0, "Total"})[cc.share]),
+                 WithinRel(cc_ft / energies[0], 1.0e-9));
+      CHECK_THAT(std::stod(cc.rows.at({source, 2, "Total"})[cc.share]),
+                 WithinRel(cc_sc / energies[2], 1.0e-9));
     }
   }
 #endif
