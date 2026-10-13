@@ -112,13 +112,12 @@ struct DrivenSubstructureModel
   // Number of complete records in the file.
   int NumRecords(const std::string &path) const;
 
-  // Whether fingerprints agree, to a relative tolerance. The environment's (two counts,
-  // then complex quadratic forms) entry by entry. A source's (a nonzero flag, then complex
-  // pairings with the fingerprint fields, kSourceFp entries) relative to its largest
-  // pairing: a pairing can vanish up to rounding, which depends on the partition (for a
-  // source in a plane where a fingerprint field is normal to it). The sources of lumped
-  // ports are exact; those of wave ports follow their modes, computed to the tolerance of
-  // an eigensolver.
+  // Whether fingerprints agree, to a relative tolerance: the environment's (two counts,
+  // then complex quadratic forms) entry by entry, a source's (a nonzero flag, then complex
+  // pairings with the fingerprint fields) relative to its largest pairing, since a pairing
+  // can vanish up to a rounding that depends on the partition. The default tol suits the
+  // exact sources of lumped ports; those of wave ports follow their modes, to the
+  // tolerance of their eigensolver.
   static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
   static bool SameSource(const double *a, const double *b, double tol = 1.0e-10);
 

@@ -242,7 +242,7 @@ std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, i
   return S;
 }
 
-// The index of each value of x in y (relative tolerance tol), -1 if none.
+// The index of x in y (relative tolerance tol), -1 if none.
 int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10)
 {
   for (std::size_t j = 0; j < y.size(); j++)
@@ -775,8 +775,8 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
         "memory = {:d}/{:d}\n",
         (memory < memory_size) ? " reached maximum" : " converged with", model.omega.size(),
         errors.back(), tol, memory, memory_size);
-    // Passivity between the samples (Im S_E positive semidefinite, §10.4): a violation
-    // beyond the tolerance adds a sample where it is largest.
+    // Passivity between the samples (Im S_E positive semidefinite): a violation beyond the
+    // tolerance adds a sample where it is largest.
     double passivity = 0.0;
     while (true)
     {

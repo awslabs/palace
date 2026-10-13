@@ -755,9 +755,7 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::DRIVEN)
     {
-      // Complex symmetric direct factorizations, exact per frequency or at the samples of
-      // an adaptive sweep (wave ports border them with their modal terms). Floquet ports
-      // and periodic boundaries make the system non-symmetric.
+      // Floquet ports and periodic boundaries make the system non-symmetric.
       MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
       MFEM_VERIFY(boundaries.floquetport.empty() &&

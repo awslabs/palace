@@ -175,14 +175,14 @@ interface are unchanged. The online field is known in the region and on the inte
     environment's ports, and the voltage of its wave ports, are not available);
   - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
 
-The offline sweep also writes a mesh of the region next to the model (`<model>_region.mesh`
-for `"SaveModel": "<model>.bin"`), with the few environment elements at the environment's
-ports and along the boundary conditions of the environment that reach the interface. An
-online sweep on it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and
-partitions the region only, which on large designs is most of the time of an online sweep
-on the full mesh. The environment is then that of the model, and its fingerprint is not
-checked; the interface is found from the saved interface DOFs, and the nondimensionalization
-is that of the model.
+The offline sweep also writes a mesh of the region next to the model (`<model>_region.mesh` for
+`"SaveModel": "<model>.bin"`), with the few environment elements at the environment's ports and
+along the boundary conditions of the environment that reach the interface. An online sweep on it
+(`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and partitions the region
+only: on large designs, reading and partitioning the full mesh take most of an online sweep's
+time. The environment is then that of the model, and its fingerprint is not checked; the
+interface is found from the saved interface DOFs, and the nondimensionalization is that of the
+model.
 
 An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain) (nonzero
 `"AdaptiveTol"`) instead condenses the environment at frequencies chosen greedily, as the
@@ -206,9 +206,8 @@ voltage would then depend on both sides.
     Driven substructuring needs MUMPS. Floquet ports and periodic boundaries (which make the
     system non-symmetric), inactive wave ports, restarts and `"AdaptiveCircuitSynthesis"` are
     not supported yet, nor, from a model, surface flux, interface dielectric, far-field and
-    probe postprocessing. The
-    model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes
-    per entry of its lower triangle).
+    probe postprocessing. The model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per
+    frequency or sample (16 bytes per entry of its lower triangle).
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 
@@ -351,6 +350,6 @@ The sweep resolves the resonance of resonator 6 near 18.29 GHz in the transmissi
 ports of the middle feedline (`port-S.csv`), and the runs agree to the tolerance of the regular
 simulation's linear solver. The redesign moves the resonance to 18.255 GHz, as a regular
 simulation of the redesigned device does. Each online frequency factors only the region: on a
-192-core node, an online sweep is about 7 times faster than a regular one at the example's
+192-core node, an online sweep is about 8 times faster than a regular one at the example's
 linear solver tolerance, 5 times at Palace's default. The mesh has about 1.7 million unknowns,
 so the runs are best on a cluster node.

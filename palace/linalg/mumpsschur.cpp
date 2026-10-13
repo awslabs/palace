@@ -408,9 +408,8 @@ void MumpsSchurSolverT<T>::Factor()
 {
   // Factorization (+ Schur). The workspace estimate from the analysis can be too small
   // (the dense Schur root sits on one rank): on a workspace failure (INFOG(1) = -8, -9,
-  // -20) raise the relaxation and retry, as the MUMPS user guide recommends. The missing
-  // workspace (INFOG(2)) shrinks linearly with the relaxation ICNTL(14), whose base can be
-  // small next to the Schur root, so the relaxation is extrapolated from two attempts.
+  // -20) raise the relaxation ICNTL(14) and retry. The missing workspace (INFOG(2)) shrinks
+  // linearly with the relaxation, so it is extrapolated from two attempts.
   if (rank == 0 && n_schur > 0 && schur.empty())
   {
     // (Again after ReleaseSchur.)

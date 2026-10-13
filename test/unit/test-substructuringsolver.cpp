@@ -2290,7 +2290,7 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
   // The driven operators assembled on the region and on the environment add up to the
   // full operators, and neither side couples to the other side's interior DOFs: lumped
   // ports on both sides, a lossy dielectric region, a conducting environment, a
-  // second-order absorbing boundary on both sides and an impedance sheet crossing Gamma.
+  // second-order absorbing boundary on both sides and an impedance sheet crossing Γ.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   json config = {

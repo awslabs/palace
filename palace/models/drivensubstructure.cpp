@@ -44,9 +44,8 @@ class MumpsSchurSolverT
 namespace
 {
 
-// BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization of these
-// complex symmetric operators is several times faster than its full-rank one even
-// without compression, at no loss of accuracy.
+// BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization is faster
+// than its full-rank one here, at no loss of accuracy.
 constexpr double kBlrTol = 1.0e-14;
 
 // Free a vector's storage (v = {} empties it but keeps its capacity).
@@ -1114,17 +1113,15 @@ DrivenSubstructure::BoundaryTrueDofs(const std::vector<int> &bdr_attributes) con
 namespace
 {
 
-// A serial mesh of the region without the boundary elements duplicated by the cracking of
-// interior boundaries in the mesh preprocessing (a second one on a face, of the side now
-// outside the region), which a mesh read from file may not have: the preprocessing of the
-// online run cracks its interior boundaries again.
+// A serial mesh of the region, written without the boundary elements duplicated by the
+// cracking of interior boundaries (the online run cracks them again).
 class SerialRegionMesh : public mfem::Mesh
 {
 public:
   explicit SerialRegionMesh(mfem::Mesh &&mesh) : mfem::Mesh(std::move(mesh)) {}
 
-  // Attributes above shift back by shift, and without the duplicated boundary elements;
-  // only for writing the mesh (its boundary tables are not updated).
+  // Shift the attributes above shift back and drop the duplicated boundary elements (for
+  // writing only: the boundary tables are not updated).
   void Finalize(int shift)
   {
     for (int e = 0; e < GetNE(); e++)
@@ -1162,11 +1159,10 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
                                          const std::vector<int> &port_attributes,
                                          double length_scale) const
 {
-  // On a copy of the mesh, the environment elements touching the ports' DOFs (with the
-  // boundary conditions at their edges, as the PEC around a lumped port), and the Dirichlet
-  // DOFs of the region (on Γ, from boundary conditions in the environment), take a new
-  // attribute, for the domain submesh of the region and these elements, which get their
-  // attributes back.
+  // The region, and the environment elements touching the DOFs of the environment's ports
+  // or the region's Dirichlet DOFs (on Γ, set by boundary conditions of the environment),
+  // with their boundary elements. On a copy of the mesh, these environment elements take
+  // shifted attributes for the domain submesh, and get theirs back in the written mesh.
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get());
   const auto &parent = *fes.GetParMesh();
   mfem::Vector tmark(fes.GetTrueVSize()), lmark(fes.GetVSize());
@@ -1219,9 +1215,9 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
     attrs.Append(a + shift);
   }
 
-  // The submesh is extracted from the whole mesh on rank 0 (a parallel submesh can lose
-  // the entities shared between ranks that hold few of its elements), and written in mesh
-  // length units.
+  // The submesh is extracted from the whole mesh on rank 0 (gathering a parallel submesh
+  // can duplicate entities shared between ranks that hold few of its elements), and
+  // written in mesh length units.
   MPI_Comm comm = parent.GetComm();
   auto write = [&](mfem::Mesh &smesh)
   {
@@ -1348,7 +1344,8 @@ std::vector<double> DrivenSubstructure::SourceFingerprint(const ComplexVector &b
 {
   const auto &fes = space_op.GetNDSpace().Get();
   const double *br = b.Real().HostRead(), *bi = b.Imag().HostRead();
-  double v[7] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  constexpr int nfp = DrivenSubstructureModel::kSourceFp;
+  double v[nfp] = {};
   for (int i = 0; i < fes.GetTrueVSize(); i++)
   {
     v[0] = std::max(v[0], (is_env_int[i] && (br[i] != 0.0 || bi[i] != 0.0)) ? 1.0 : 0.0);
@@ -1367,8 +1364,8 @@ std::vector<double> DrivenSubstructure::SourceFingerprint(const ComplexVector &b
     }
   }
   Mpi::GlobalMax(1, v, space_op.GetComm());
-  Mpi::GlobalSum(6, v + 1, space_op.GetComm());
-  return {v, v + 7};
+  Mpi::GlobalSum(nfp - 1, v + 1, space_op.GetComm());
+  return {v, v + nfp};
 }
 
 namespace
