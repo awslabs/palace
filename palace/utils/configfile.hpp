@@ -593,7 +593,6 @@ public:
   // Optional coordinate path for voltage line integral on the port face.
   // When non-empty, enables GetVoltage(). List of points [x, y, z].
   std::vector<std::vector<double>> voltage_path = {};
-  int n_samples = 100;
 
   // Optional pair of parent-mesh boundary attributes [high, low] (signal terminal first,
   // ground terminal second) used solely to fix the mode polarity (no GSLIB / no Z_PV).
@@ -728,11 +727,6 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
   std::vector<std::vector<double>> current_path = {};
 
-  // Quadrature order for the coordinate-based line integral. Higher values give more
-  // integration points and better accuracy near field singularities at conductor edges.
-  // Default 100 gives ~50 Gauss-Legendre points, sufficient for typical geometries.
-  int n_samples = 100;
-
   ModeImpedanceData() = default;
   ModeImpedanceData(const json &imp);
 };
@@ -747,9 +741,6 @@ public:
   // attributes). A list of points [x, y(, z)]. The voltage is integrated along the open
   // path V = integral of E . dl from first to last point.
   std::vector<std::vector<double>> voltage_path = {};
-
-  // Quadrature order for the coordinate-based line integral.
-  int n_samples = 100;
 
   ModeVoltageData() = default;
   ModeVoltageData(const json &volt);

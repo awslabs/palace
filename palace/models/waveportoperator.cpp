@@ -901,8 +901,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
       }
       voltage_path.push_back(std::move(p));
     }
-    voltage_n_samples = data.n_samples;
-
     SetUpExcitationVoltagePath();
   }
 
@@ -971,15 +969,13 @@ void WavePortData::SetUpExcitationVoltagePath()
   // Split the path at the port submesh element boundaries and integrate each piece with a
   // Gauss rule exact for the field polynomial degree on straight-sided elements, so the
   // voltage is the exact line integral of the discrete field regardless of the local mesh
-  // size. NSamples sets a minimum number of quadrature points per path segment (only
-  // relevant for curved elements).
+  // size.
   const int field_order = port_nd_fespace->Get().GetMaxElementOrder();
   const int mesh_order = port_submesh.GetNodes()
                              ? port_submesh.GetNodes()->FESpace()->GetMaxElementOrder()
                              : 1;
   voltage_integrator = std::make_unique<fem::LineIntegrator>(
-      port_submesh, projected_path, false, 2 * (field_order + mesh_order),
-      voltage_n_samples);
+      port_submesh, projected_path, false, 2 * (field_order + mesh_order));
   const double rel_uncovered =
       voltage_integrator->GetUncoveredLength() / voltage_integrator->GetPathLength();
   MFEM_VERIFY(rel_uncovered < 1.0 - 1.0e-12,

@@ -599,7 +599,6 @@ WavePortData::WavePortData(const json &port)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = port.value("NSamples", n_samples);
   if (auto it = port.find("PolarityAttributes"); it != port.end())
   {
     auto pa = it->get<std::vector<int>>();
@@ -734,7 +733,6 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
       current_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = imp.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Impedance boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
@@ -760,7 +758,6 @@ ModeVoltageData::ModeVoltageData(const json &volt)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = volt.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Voltage boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
