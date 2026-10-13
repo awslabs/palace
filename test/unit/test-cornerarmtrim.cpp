@@ -29,6 +29,8 @@
 #include "fem/mesh.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -2076,6 +2078,312 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(record.at("Features").get<int>() == 2);
     CHECK_THAT(record.at("Length").get<double>(), WithinAbs(4.0 * R, 1.0e-9));
     CHECK(record.at("ByType").at("ConvexCorner").at("Portions").get<int>() == 8);
+  }
+#endif
+}
+
+// Decisions 751 / 752 (the maxwellop diagnosis): the Maxwell path's corrected interface
+// energy was E_out + E_fab alone (postoperator.cpp MeasureSurfaceResponseCorrection), so
+// the raw within-R energy of every UNMATCHED feature was dropped, while the electrostatic
+// path keeps it (decision 394 F2; the case above). The Maxwell analogue of that case on the
+// same lead, library and decision-366 Region partition, through a directly constructed
+// eigenmode PostOperator fed E = -grad V (any curl-free field exercises the same assembly;
+// the corrected field is the raw field, so the self-consistent column equals the fixed
+// trace): (a) the Maxwell-configured operator's uncovered portions are the electrostatic
+// operator's; (b) the identity: the raw within-R energy of the corner windows (raw minus
+// outside minus the three isolated-edge cells) is the uncovered energy, and the corrected
+// energy with the model term removed and the covered cells put back is the raw energy
+// (nothing within R is dropped); (c) fixed trace / fixed flux / self-consistent = outside +
+// model + uncovered; (d) the Maxwell surface-response-uncovered-energy.csv carries the
+// ConvexCorner and Total rows for the three evaluations, and the operator's statistics
+// record the portions.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell uncovered requirements keep their raw energy",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "maxwell-uncovered-lead.mesh";
+  const auto basis_path = temp.temp_dir / "maxwell-uncovered-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-maxwell-uncovered-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-maxwell-uncovered-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    REQUIRE(models.size() == 1);
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  // The electrostatic form of the case above (the same mesh, library, Region cells and
+  // UnmatchedPolicy), then its Maxwell form: an eigenmode problem with the lead PEC.
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+  const json target = dielectric[0];
+  int index = 5;
+  for (const std::array<double, 6> &segment :
+       {std::array<double, 6>{0.25, 0.5, 0.0, 0.25, 0.5, 0.5 - R},
+        std::array<double, 6>{0.25 + R, 0.5, 0.5, 0.75 - R, 0.5, 0.5},
+        std::array<double, 6>{0.75, 0.5, 0.0, 0.75, 0.5, 0.5 - R}})
+  {
+    json cell = target;
+    cell["Index"] = index++;
+    cell.erase("AutomaticEdges");
+    cell.erase("EdgeDistances");
+    cell.erase("EdgeFrameNormal");
+    cell["Region"] = {
+        {"Segments", {segment}}, {"Distance", R}, {"Normal", {0.0, 1.0, 0.0}}};
+    dielectric.push_back(cell);
+  }
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = edge_library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  IoData electrostatic_iodata(config, false);
+  electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> electrostatic_meshes;
+  electrostatic_meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  LaplaceOperator laplace_op(electrostatic_iodata, electrostatic_meshes);
+  SurfaceResponseOperator electrostatic_response(electrostatic_iodata, laplace_op);
+
+  const fs::path output_dir = temp.temp_dir / "maxwell-uncovered";
+  json maxwell_config = config;
+  maxwell_config["Problem"]["Type"] = "Eigenmode";
+  maxwell_config["Problem"]["Output"] = output_dir.string();
+  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  maxwell_config["Boundaries"].erase("Terminal");
+  maxwell_config["Solver"] = {{"Order", 1},
+                              {"Eigenmode", {{"Target", 1.0}}},
+                              {"SurfaceResponseCorrection",
+                               {{"Library", edge_library_path.string()},
+                                {"TargetInterfaces", {4}},
+                                {"UnmatchedPolicy", "Warn"},
+                                {"CorrectionMode", "Both"}}}};
+  IoData iodata(maxwell_config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->GetTargetInterfaces() == std::set<int>{4});
+
+  // (a) The Maxwell operator lists the two Missing corners' portions as the electrostatic
+  // operator does: 2 corners x 2 arms x 2 mesh segments (h = 0.125) of R along each arm.
+  const auto &maxwell_portions = response->GetUncoveredPortions();
+  const auto &electrostatic_portions = electrostatic_response.GetUncoveredPortions();
+  REQUIRE(electrostatic_portions.size() == 8);
+  REQUIRE(maxwell_portions.size() == electrostatic_portions.size());
+  double maxwell_length = 0.0;
+  for (std::size_t i = 0; i < maxwell_portions.size(); i++)
+  {
+    const auto &maxwell = maxwell_portions[i];
+    const auto &electrostatic = electrostatic_portions[i];
+    CHECK(maxwell.topology == "ConvexCorner");
+    CHECK(maxwell.topology == electrostatic.topology);
+    CHECK(maxwell.feature == electrostatic.feature);
+    CHECK(maxwell.segment == electrostatic.segment);
+    double length2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(maxwell.p0[d], WithinAbs(electrostatic.p0[d], 1.0e-12));
+      CHECK_THAT(maxwell.p1[d], WithinAbs(electrostatic.p1[d], 1.0e-12));
+      length2 += (maxwell.p1[d] - maxwell.p0[d]) * (maxwell.p1[d] - maxwell.p0[d]);
+    }
+    maxwell_length += std::sqrt(length2);
+  }
+  CHECK_THAT(maxwell_length, WithinAbs(4.0 * R, 1.0e-9));
+  const json statistics = response->GetStatistics();
+  REQUIRE(statistics.contains("Diagnostics"));
+  REQUIRE(statistics["Diagnostics"].contains("Uncovered"));
+  CHECK(statistics["Diagnostics"]["Uncovered"]["Count"].get<int>() == 8);
+  CHECK(statistics["Diagnostics"]["Uncovered"]["Features"].get<int>() == 2);
+  CHECK_THAT(statistics["Diagnostics"]["Uncovered"]["Length"].get<double>(),
+             WithinAbs(4.0 * R, 1.0e-9));
+
+  // The raw field E = -grad V of a smooth potential, measured and printed as mode 1; the
+  // corrected field is the same field.
+  mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[1]) + 0.3 * x[2] * x[2]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                           &space_op.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(space_op.GetNDSpace(), true);
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  e.Imag() = 0.0;
+  field.Real().SetFromTrueDofs(e.Real());
+  field.Imag() = 0.0;
+  field.Real().ExchangeFaceNbrData();
+  field.Imag().ExchangeFaceNbrData();
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  post_op.SetSurfaceResponseCorrectedField(e, nullptr, omega, 1.0);
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+
+  // The terms of the assembly, each from its own evaluation of the same field.
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto RawEnergy = [&](int interface)
+  { return surf_post_op.GetInterfaceElectricFieldEnergy(interface, field, nullptr); };
+  const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(4, field);
+  REQUIRE(edge_energies.size() == 1);
+  CHECK_THAT(edge_energies[0].distance, WithinAbs(R, 1.0e-12));
+  const double outside = edge_energies[0].energy_outside;
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+  for (const auto &portion : maxwell_portions)
+  {
+    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+  }
+  const auto uncovered_energies =
+      surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, perimeter);
+  REQUIRE(uncovered_energies.size() == 1);
+  const double uncovered = uncovered_energies.at(4).energy;
+  const auto maxwell_response = response->GetMaxwellResponse(field, omega);
+  const double model_ft = maxwell_response.fabricated_surface_energy.at(4);
+  const double model_ff = maxwell_response.fabricated_surface_energy_fixed_flux.at(4);
+  const double raw = RawEnergy(4);
+  const double cells = RawEnergy(5) + RawEnergy(6) + RawEnergy(7);
+  CHECK(uncovered > 0.0);
+  CHECK(raw - outside > cells);
+  // (b) The decision-366 partition: the corner windows' raw within-R energy is the
+  // uncovered energy.
+  CHECK_THAT(uncovered, WithinRel(raw - outside - cells, 1.0e-9));
+
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Joule = [&](double energy)
+  { return iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy); };
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  const TextCsv corrected_table = ReadTrimmedCsv(output_dir / "surface-Q-corrected.csv");
+  const std::size_t interface_column = corrected_table.Column("interface");
+  const auto corrected_row =
+      std::find_if(corrected_table.rows.begin(), corrected_table.rows.end(),
+                   [&](const auto &row) { return std::stoi(row[interface_column]) == 4; });
+  REQUIRE(corrected_row != corrected_table.rows.end());
+  const double csv_raw =
+      std::stod((*corrected_row)[corrected_table.Column("E_surf raw (J)")]);
+  const double csv_ft =
+      std::stod((*corrected_row)[corrected_table.Column("E_surf corrected (J)")]);
+  const double csv_ff = std::stod(
+      (*corrected_row)[corrected_table.Column("E_surf corrected fixed-flux (J)")]);
+  const double csv_sc =
+      std::stod((*corrected_row)[corrected_table.Column("E_surf self-consistent (J)")]);
+  CHECK_THAT(csv_raw, WithinRel(Joule(raw), 1.0e-10));
+  // (c) Fixed trace / fixed flux / self-consistent: outside + model + uncovered.
+  CHECK_THAT(csv_ft, WithinRel(Joule(outside + model_ft + uncovered), 1.0e-10));
+  CHECK_THAT(csv_ff, WithinRel(Joule(outside + model_ff + uncovered), 1.0e-10));
+  REQUIRE(std::isfinite(csv_sc));
+  CHECK_THAT(csv_sc, WithinRel(csv_ft, 1.0e-10));
+  // (b) The identity: the corrected energy with the model term removed and the covered
+  // cells put back is the raw energy.
+  CHECK_THAT(csv_ft - Joule(model_ft) + Joule(cells), WithinRel(Joule(raw), 1.0e-10));
+
+  // (d) The Maxwell uncovered table: (ConvexCorner, Total) x (fixed trace, fixed flux,
+  // self-consistent) for mode 1, excitation 0.
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-uncovered-energy.csv"));
+  const TextCsv uncovered_table =
+      ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy.csv");
+  const std::size_t mode_column = uncovered_table.Column("m");
+  const std::size_t excitation_column = uncovered_table.Column("exc");
+  const std::size_t evaluation_column = uncovered_table.Column("evaluation");
+  const std::size_t type_column = uncovered_table.Column("type");
+  const std::size_t portions_column = uncovered_table.Column("portions");
+  const std::size_t length_column = uncovered_table.Column("length (m)");
+  const std::size_t clipped_column =
+      uncovered_table.Column("clipped by spatial support (m)");
+  const std::size_t energy_column = uncovered_table.Column("uncovered raw energy[4] (J)");
+  const std::size_t share_column = uncovered_table.Column("uncovered share[4]");
+  REQUIRE(uncovered_table.rows.size() == 6);
+  std::map<std::pair<int, std::string>, std::vector<std::string>> by_key;
+  for (const auto &row : uncovered_table.rows)
+  {
+    CHECK(std::stoi(row[mode_column]) == 1);
+    CHECK(std::stoi(row[excitation_column]) == 0);
+    by_key[{std::stoi(row[evaluation_column]), row[type_column]}] = row;
+  }
+  REQUIRE(by_key.size() == 6);
+  const std::array<double, 3> corrected_by_evaluation = {csv_ft, csv_ff, csv_sc};
+  for (int evaluation = 0; evaluation < 3; evaluation++)
+  {
+    for (const char *type : {"ConvexCorner", "Total"})
+    {
+      REQUIRE(by_key.count({evaluation, type}) == 1);
+      const auto &row = by_key.at({evaluation, type});
+      CHECK(std::stoi(row[portions_column]) == 8);
+      CHECK_THAT(std::stod(row[length_column]), WithinAbs(4.0 * R, 1.0e-9));
+      CHECK(std::stod(row[clipped_column]) == 0.0);
+      CHECK_THAT(std::stod(row[energy_column]), WithinRel(Joule(uncovered), 1.0e-10));
+      CHECK_THAT(std::stod(row[share_column]),
+                 WithinRel(Joule(uncovered) / corrected_by_evaluation[evaluation], 1.0e-9));
+    }
   }
 #endif
 }
