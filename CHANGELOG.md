@@ -96,6 +96,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
     conditions of the cross-section.
     [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed a memory leak in the AMS preconditioner at order 1, including the lowest-order
+    level of p-multigrid: the interpolation matrices that hypre builds from the vertex
+    coordinates were never freed, so memory grew at every operator update, such as each
+    frequency of a driven sweep (about 1.9 GiB per frequency for 3.9M unknowns on GPU).
+    [PR 1038](https://github.com/awslabs/palace/pull/1038).
   - Fixed integer range expansion in configuration files rewriting brackets inside strings,
     so a path such as `"mesh[1-3].msh"` is no longer read as `"mesh[1,2,3].msh"`, in both
     Palace and `scripts/validate-config`. [PR 970](https://github.com/awslabs/palace/pull/970).
