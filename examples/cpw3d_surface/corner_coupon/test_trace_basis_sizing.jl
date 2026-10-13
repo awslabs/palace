@@ -3,14 +3,14 @@
 using Test
 include(joinpath(@__DIR__, "mesh_corner_coupon.jl"))
 
-# The trace-basis knot sizing law (supervisor decisions 328 (2), 783 / 787): around every free
-# knot the mesh size is min(the knot's along-ring gap, the across-ring spacing of its ring to
-# the neighbouring rings), both read from the trace layout itself. A hat on the extra ring
-# levels above the metal has a support of gap x spacing; when gap > spacing the along-ring
-# gap alone no longer puts two elements across the hat (the concave 75-degree node of decision
-# 783: hat 105 at 79 active nodes vs 80 on the h-2 calibration mesh), so the size must read
-# the spacing too. The test builds the sizing fields on a synthetic layout (no mesh) and reads
-# every knot's size back from the Threshold / Distance fields.
+# The trace-basis knot sizing law (supervisor decisions 328 (2), 783 / 787): around every
+# free knot the mesh size is min(the knot's along-ring gap, the across-ring spacing of its
+# ring to the neighbouring rings), both read from the trace layout itself. A hat on the
+# extra ring levels above the metal has a support of gap x spacing; when gap > spacing the
+# along-ring gap alone no longer puts two elements across the hat (the concave 75-degree
+# node of decision 783: hat 105 at 79 active nodes vs 80 on the h-2 calibration mesh), so
+# the size must read the spacing too. The test builds the sizing fields on a synthetic
+# layout (no mesh) and reads every knot's size back from the Threshold / Distance fields.
 
 const R = 2.0
 const TOLERANCE = 1.0e-9
@@ -89,11 +89,12 @@ end
 
 @testset "trace basis sizing law (decision 787 R-A)" begin
 @testset "the knot size reads the across-ring spacing" begin
-    # The layout: the box |x|, |y|, |z| <= R. Side rings (half width R) at z = -R (the bottom
-    # edge ring, 8 knots: gap R), z = 0 and z = 0.05 R (32 knots each: gap 0.25 R, four PEC
-    # knots on z = 0), z = +R (the top edge ring, 32 knots: gap 0.25 R). Cap rings (half width
-    # R / 3) at z = +R with a cap centre and at z = -R without one (4 knots each, at the side
-    # midpoints: the along-ring gap is the chord sqrt(2) R / 3 across the corner).
+    # The layout: the box |x|, |y|, |z| <= R. Side rings (half width R) at z = -R (the
+    # bottom edge ring, 8 knots: gap R), z = 0 and z = 0.05 R (32 knots each: gap 0.25 R,
+    # four PEC knots on z = 0), z = +R (the top edge ring, 32 knots: gap 0.25 R). Cap rings
+    # (half width R / 3) at z = +R with a cap centre and at z = -R without one (4 knots
+    # each, at the side midpoints: the along-ring gap is the chord sqrt(2) R / 3 across the
+    # corner).
     rows = vcat(
         square_ring_vertices(R, -R, 8),
         square_ring_vertices(R, 0.0, 32; conductor_of = index -> index % 8 == 0 ? 1 : 0),
@@ -107,8 +108,9 @@ end
     @test length(sizes) == 8 + 28 + 32 + 32 + 4 + 4
 
     # The hat whose support is gap x spacing with gap > spacing: the two side rings 0.05 R
-    # apart with knots 0.25 R apart along the ring get a size <= the spacing (the law of record
-    # gave the along-ring gap 0.25 R: this is the assertion that FAILS on the old law).
+    # apart with knots 0.25 R apart along the ring get a size <= the spacing (the law of
+    # record gave the along-ring gap 0.25 R: this is the assertion that FAILS on the old
+    # law).
     for z in (0.0, 0.05R)
         ring = sizes_on_ring(sizes, R, z)
         @test length(ring) == (z == 0.0 ? 28 : 32)
@@ -117,23 +119,26 @@ end
     end
     @test isapprox(smallest, 0.05R; atol = TOLERANCE)
 
-    # A knot whose along-ring gap is already the smaller keeps its gap: the top edge ring (gap
-    # 0.25 R; spacings 0.95 R to the side ring, 2 R / 3 to the cap ring).
+    # A knot whose along-ring gap is already the smaller keeps its gap: the top edge ring
+    # (gap 0.25 R; spacings 0.95 R to the side ring, 2 R / 3 to the cap ring).
     @test all(size -> isapprox(size, 0.25R; atol = TOLERANCE), sizes_on_ring(sizes, R, R))
-    # The bottom cap ring has no cap centre: its only neighbour is the edge ring 2 R / 3 away,
-    # more than its gap sqrt(2) R / 3, so its size is unchanged.
+    # The bottom cap ring has no cap centre: its only neighbour is the edge ring 2 R / 3
+    # away, more than its gap sqrt(2) R / 3, so its size is unchanged.
     @test all(
         size -> isapprox(size, sqrt(2.0) * R / 3; atol = TOLERANCE),
         sizes_on_ring(sizes, R / 3, -R)
     )
 
-    # The edge ring belongs to both groups and takes the smaller spacing: the bottom edge ring
-    # (gap R) has the side ring z = 0 at R and the cap ring at 2 R / 3 -> 2 R / 3.
+    # The edge ring belongs to both groups and takes the smaller spacing: the bottom edge
+    # ring (gap R) has the side ring z = 0 at R and the cap ring at 2 R / 3 -> 2 R / 3.
     @test all(size -> isapprox(size, 2R / 3; atol = TOLERANCE), sizes_on_ring(sizes, R, -R))
 
-    # The cap centre counts as the innermost cap level: the top cap ring (gap sqrt(2) R / 3) is
-    # R / 3 from the centre -> R / 3.
-    @test all(size -> isapprox(size, R / 3; atol = TOLERANCE), sizes_on_ring(sizes, R / 3, R))
+    # The cap centre counts as the innermost cap level: the top cap ring (gap sqrt(2) R / 3)
+    # is R / 3 from the centre -> R / 3.
+    @test all(
+        size -> isapprox(size, R / 3; atol = TOLERANCE),
+        sizes_on_ring(sizes, R / 3, R)
+    )
 
     # free_knot_gaps still reads the along-ring gaps alone.
     vertices = read_trace_vertices(

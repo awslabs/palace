@@ -230,22 +230,28 @@ function on_outer_box(bounds, center, radius, tolerance)
 end
 
 # Trace RESOLVABILITY (block (b) family 4 round 2, supervisor decision 328 (2), 2026-10-05).
-# The coupon solve prescribes every trace hat by nodal interpolation onto the boundary degrees
-# of freedom of the order-p space, so a hat whose support holds no boundary node is a zero
-# response row (the concave 48.75-degree coupon of decision 325: five free knots of the z = -R
-# cap ring 7.4 nm apart on the 300-nm far mesh) and a hat sampled by one or two nodes is a
-# response of the wrong magnitude. Given the generator's trace mesh (`--trace-mesh DIR` with
-# trace-vertices.csv), the mesher sizes the coupon mesh to RESOLVE the basis, whatever the
-# layout: around every free knot the mesh size is the knot's smaller gap to its ring
-# neighbours (one element per trace edge, so a hat's support spans two elements and the
-# order-p lattice samples it across as well as along), growing with the distance at gradation
-# TRACE_SIZE_GRADATION to the recipe's far size — one Distance / Threshold field per distinct
-# gap, joined to the recipe's background by a Min field. The knots are OCC points used as the
-# Distance sources only (not embedded: Gmsh's surface mesher does not recover 7-nm embedded
-# edges or points inside 300-nm faces; the points are not saved, Mesh.SaveAll = 0). Nothing
-# here is a case constant: the sizes come from the knot gaps alone, so a layout whose knots the
-# background already resolves (the near-metal rings at lc_fine) is unchanged. The planner's
-# trace_resolvability.py gate then verifies the count of active boundary nodes per free hat.
+# The coupon solve prescribes every trace hat by nodal interpolation onto the boundary
+# degrees of freedom of the order-p space, so a hat whose support holds no boundary node is
+# a zero response row (the concave 48.75-degree coupon of decision 325: five free knots of
+# the z = -R cap ring 7.4 nm apart on the 300-nm far mesh) and a hat sampled by one or two
+# nodes is a response of the wrong magnitude. Given the generator's trace mesh
+# (`--trace-mesh DIR` with trace-vertices.csv), the mesher sizes the coupon mesh to RESOLVE
+# the basis, whatever the layout: around every free knot the mesh size is the smaller of the
+# knot's gap to its ring neighbours and its ring's spacing to the neighbouring rings (one
+# element per trace edge along the ring and one per ring spacing across it, so a hat's
+# support, gap x spacing, spans two elements in both directions and the order-p lattice
+# samples it across as well as along; decisions 783 / 787: on the extra levels above the
+# metal the spacing, 50 nm, is smaller than the 126-nm along-ring gaps, and the along-ring
+# gap alone left the concave 75-degree node's hat 105 at 79 active nodes of 80 on the h-2
+# calibration mesh), growing with the distance at gradation TRACE_SIZE_GRADATION to the
+# recipe's far size — one Distance / Threshold field per distinct size, joined to the
+# recipe's background by a Min field. The knots are OCC points used as the Distance sources
+# only (not embedded: Gmsh's surface mesher does not recover 7-nm embedded edges or points
+# inside 300-nm faces; the points are not saved, Mesh.SaveAll = 0). Nothing here is a case
+# constant: the sizes come from the knot gaps and the ring spacings alone, so a layout whose
+# knots the background already resolves (the near-metal rings at lc_fine) is unchanged. The
+# planner's trace_resolvability.py gate then verifies the count of active boundary nodes per
+# free hat.
 const TRACE_SIZE_GRADATION = 0.5
 # Knot gaps are grouped by this resolution (over R) into size classes (one field pair each).
 const TRACE_GAP_CLASS_RESOLUTION = 1.0e-3
@@ -351,19 +357,94 @@ function free_knot_gaps(vertices, rings, radius)
     return gaps
 end
 
+# The across-ring spacing of every ring (ring position in `rings` => spacing): the distance
+# to the nearest other ring of its surface group, read from the layout itself. The side
+# rings (half width `radius`) are the levels in height; the cap rings (height +-radius) are
+# the levels in half width on their cap, the cap centre vertex (half width 0), when the
+# layout has one, being the innermost level. The box edge rings (height and half width both
+# `radius`) belong to both groups and take the smaller. A ring on neither surface, or two
+# rings at one level, is an error; a ring alone in its group has spacing Inf.
+function ring_spacings(vertices, rings, radius)
+    tolerance = 1.0e-7radius
+    heights = Float64[]
+    half_widths = Float64[]
+    for ring in rings
+        x, y, z = vertices[first(ring)].point
+        push!(heights, z)
+        push!(half_widths, max(abs(x), abs(y)))
+    end
+    centre_heights = [
+        vertex.point[3] for
+        vertex in vertices if max(abs(vertex.point[1]), abs(vertex.point[2])) <= tolerance
+    ]
+    spacings = fill(Inf, length(rings))
+    classified = falses(length(rings))
+    function nearest_level!(members, levels)
+        for (position, level) in zip(members, levels)
+            for (other, other_level) in zip(members, levels)
+                other == position && continue
+                distance = abs(level - other_level)
+                distance > tolerance ||
+                    error("Trace rings $position and $other lie at the same level")
+                spacings[position] = min(spacings[position], distance)
+            end
+            classified[position] = true
+        end
+    end
+    side = filter(eachindex(rings)) do position
+        return abs(half_widths[position] - radius) <= tolerance
+    end
+    nearest_level!(side, heights[side])
+    for cap in (-radius, radius)
+        members = filter(eachindex(rings)) do position
+            return abs(heights[position] - cap) <= tolerance
+        end
+        levels = half_widths[members]
+        if any(height -> abs(height - cap) <= tolerance, centre_heights)
+            # The cap centre is a level of the cap group, not a ring: its distance only.
+            for (position, level) in zip(members, levels)
+                spacings[position] = min(spacings[position], level)
+            end
+        end
+        nearest_level!(members, levels)
+    end
+    for position in eachindex(rings)
+        classified[position] || error(
+            "Trace ring $position (height $(heights[position]), half width " *
+            "$(half_widths[position])) lies on neither the sides nor the caps of the " *
+            "matching box of radius $radius"
+        )
+    end
+    return spacings
+end
+
+# The size of every free knot (vertex index => size): the smaller of its along-ring gap and
+# its ring's across-ring spacing (see the TRACE_SIZE_GRADATION note).
+function free_knot_sizes(vertices, rings, radius)
+    gaps = free_knot_gaps(vertices, rings, radius)
+    spacings = ring_spacings(vertices, rings, radius)
+    sizes = Dict{Int, Float64}()
+    for (position, ring) in enumerate(rings), index in ring
+        haskey(gaps, index) || continue
+        sizes[index] = min(gaps[index], spacings[position])
+    end
+    return sizes
+end
+
 # The knot-gap size fields (see the TRACE_SIZE_GRADATION note); returns the Threshold field
 # tags (from `first_field` on) and the smallest knot size.
 function trace_basis_size_fields(occ, trace_directory, radius, lc_far, first_field)
     vertices = read_trace_vertices(trace_directory)
-    gaps = free_knot_gaps(vertices, trace_rings(vertices, radius), radius)
-    class_of(gap) = max(round(Int, gap / (TRACE_GAP_CLASS_RESOLUTION * radius)), 1)
+    rings = trace_rings(vertices, radius)
+    sizes = free_knot_sizes(vertices, rings, radius)
+    class_of(size) = max(round(Int, size / (TRACE_GAP_CLASS_RESOLUTION * radius)), 1)
     classes = Dict{Int, Vector{Int32}}()
     class_size = Dict{Int, Float64}()
-    for (index, gap) in gaps
+    for (index, size) in sizes
         x, y, z = vertices[index].point
-        class = class_of(gap)
+        class = class_of(size)
         push!(get!(classes, class, Int32[]), occ.addPoint(x, y, z))
-        class_size[class] = min(get(class_size, class, Inf), gap)
+        class_size[class] = min(get(class_size, class, Inf), size)
     end
     occ.synchronize()
     fields = Int32[]
@@ -387,8 +468,9 @@ function trace_basis_size_fields(occ, trace_directory, radius, lc_far, first_fie
     end
     smallest = minimum(values(class_size))
     println(
-        "Trace basis sizing: $(length(gaps)) free knots in $(length(fields)) knot-gap size " *
-        "classes, smallest knot size $(smallest) um (gradation $(TRACE_SIZE_GRADATION))"
+        "Trace basis sizing: $(length(sizes)) free knots in $(length(fields)) knot size " *
+        "classes (min of the along-ring gap and the across-ring spacing), smallest knot " *
+        "size $(smallest) um (gradation $(TRACE_SIZE_GRADATION))"
     )
     return fields, smallest
 end
