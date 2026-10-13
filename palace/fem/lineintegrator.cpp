@@ -46,150 +46,312 @@ inline double Norm(const Vec3 &a)
   return std::sqrt(Dot(a, a));
 }
 
-// Geometry of a straight-sided (planar, convex) polygonal element used for clipping. For
-// curved elements the vertices are exact and the edges are approximated as straight.
-struct ElementPolygon
+// Boundary of a (possibly curved) planar element, as a closed polyline of points on the
+// true element boundary. Straight edges are a single piece, curved edges are split into
+// several pieces, and the crossings of a path segment with curved pieces are refined with
+// Newton's method on the exact edge parametrization.
+struct ElementBoundary
 {
+  std::vector<Vec3> x;                       // Polyline points, x.back() == x.front()
+  std::vector<int> edge;                     // Element edge of each piece
+  std::vector<double> s0, s1;                // Edge parameter range of each piece
+  std::array<mfem::IntegrationPoint, 4> rv;  // Reference vertices
   int nv = 0;
-  std::array<Vec3, 4> x;  // Vertices
-  std::array<Vec3, 4> n;  // Unit in-plane outward normals of edges (x[i], x[i + 1])
-  Vec3 normal;            // Unit element normal (z for 2D meshes)
-  Vec3 bb_min, bb_max;    // Bounding box
-  double h = 0.0;         // Maximum edge length
+  bool curved = false;
+  Vec3 normal;          // Unit element normal (z for 2D meshes)
+  Vec3 e1, e2;          // Unit in-plane basis
+  Vec3 bb_min, bb_max;  // Bounding box of the polyline points
+  double h = 0.0;       // Maximum polyline extent
 };
 
-ElementPolygon GetElementPolygon(mfem::ParMesh &mesh, int e)
+ElementBoundary GetElementBoundary(mfem::ParMesh &mesh, int e, int pieces_per_edge)
 {
   const int sdim = mesh.SpaceDimension();
   const auto geom = mesh.GetElementBaseGeometry(e);
   MFEM_VERIFY(geom == mfem::Geometry::TRIANGLE || geom == mfem::Geometry::SQUARE,
               "LineIntegrator only supports triangle and quadrilateral elements!");
-  ElementPolygon poly;
-  poly.nv = mfem::Geometry::NumVerts[geom];
+  ElementBoundary bdr;
+  bdr.nv = mfem::Geometry::NumVerts[geom];
+  bdr.curved = (pieces_per_edge > 1);
   const auto *ref_verts = mfem::Geometries.GetVertices(geom);
+  for (int i = 0; i < bdr.nv; i++)
+  {
+    bdr.rv[i] = ref_verts->IntPoint(i);
+  }
   auto &T = *mesh.GetElementTransformation(e);
   mfem::Vector xv(sdim);
-  for (int i = 0; i < poly.nv; i++)
+  mfem::IntegrationPoint ip;
+  for (int k = 0; k < bdr.nv; k++)
   {
-    T.Transform(ref_verts->IntPoint(i), xv);
-    poly.x[i] = {xv(0), xv(1), (sdim == 3) ? xv(2) : 0.0};
+    const auto &ra = bdr.rv[k], &rb = bdr.rv[(k + 1) % bdr.nv];
+    for (int j = 0; j < pieces_per_edge; j++)
+    {
+      const double sv = static_cast<double>(j) / pieces_per_edge;
+      ip.Set2(ra.x + sv * (rb.x - ra.x), ra.y + sv * (rb.y - ra.y));
+      T.Transform(ip, xv);
+      bdr.x.push_back({xv(0), xv(1), (sdim == 3) ? xv(2) : 0.0});
+      bdr.edge.push_back(k);
+      bdr.s0.push_back(sv);
+      bdr.s1.push_back(static_cast<double>(j + 1) / pieces_per_edge);
+    }
+  }
+  bdr.x.push_back(bdr.x.front());
+  for (int d = 0; d < 3; d++)
+  {
+    bdr.bb_min[d] = bdr.bb_max[d] = bdr.x[0][d];
+    for (const auto &x : bdr.x)
+    {
+      bdr.bb_min[d] = std::min(bdr.bb_min[d], x[d]);
+      bdr.bb_max[d] = std::max(bdr.bb_max[d], x[d]);
+    }
   }
   for (int d = 0; d < 3; d++)
   {
-    poly.bb_min[d] = poly.bb_max[d] = poly.x[0][d];
-    for (int i = 1; i < poly.nv; i++)
-    {
-      poly.bb_min[d] = std::min(poly.bb_min[d], poly.x[i][d]);
-      poly.bb_max[d] = std::max(poly.bb_max[d], poly.x[i][d]);
-    }
+    bdr.h = std::max(bdr.h, bdr.bb_max[d] - bdr.bb_min[d]);
   }
+  MFEM_VERIFY(bdr.h > 0.0, "Degenerate element in LineIntegrator!");
 
-  // Element normal from the diagonals (quadrilateral) or two edges (triangle).
+  // Element normal and in-plane basis, from the vertices.
+  const auto &x0 = bdr.x[0];
+  const auto &x1 = bdr.x[pieces_per_edge];
+  const auto &x2 = bdr.x[2 * pieces_per_edge];
   if (sdim == 2)
   {
-    poly.normal = {0.0, 0.0, 1.0};
+    bdr.normal = {0.0, 0.0, 1.0};
+    bdr.e1 = {1.0, 0.0, 0.0};
+    bdr.e2 = {0.0, 1.0, 0.0};
   }
   else
   {
-    const Vec3 a = (poly.nv == 4) ? Sub(poly.x[2], poly.x[0]) : Sub(poly.x[1], poly.x[0]);
-    const Vec3 b = (poly.nv == 4) ? Sub(poly.x[3], poly.x[1]) : Sub(poly.x[2], poly.x[0]);
-    poly.normal = Cross(a, b);
-    const double s = Norm(poly.normal);
-    MFEM_VERIFY(s > 0.0, "Degenerate element in LineIntegrator!");
-    for (auto &c : poly.normal)
+    const Vec3 a = (bdr.nv == 4) ? Sub(x2, x0) : Sub(x1, x0);
+    const Vec3 b = (bdr.nv == 4) ? Sub(bdr.x[3 * pieces_per_edge], x1) : Sub(x2, x0);
+    bdr.normal = Cross(a, b);
+    const double n = Norm(bdr.normal);
+    MFEM_VERIFY(n > 0.0, "Degenerate element in LineIntegrator!");
+    for (auto &c : bdr.normal)
     {
-      c /= s;
+      c /= n;
     }
+    bdr.e1 = Sub(x1, x0);
+    const double n1 = Norm(bdr.e1);
+    for (auto &c : bdr.e1)
+    {
+      c /= n1;
+    }
+    bdr.e2 = Cross(bdr.normal, bdr.e1);
   }
-
-  // In-plane outward edge normals.
-  Vec3 c = {0.0, 0.0, 0.0};
-  for (int i = 0; i < poly.nv; i++)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      c[d] += poly.x[i][d] / poly.nv;
-    }
-  }
-  for (int i = 0; i < poly.nv; i++)
-  {
-    const Vec3 t = Sub(poly.x[(i + 1) % poly.nv], poly.x[i]);
-    poly.h = std::max(poly.h, Norm(t));
-    Vec3 n = Cross(t, poly.normal);
-    const double s = Norm(n);
-    MFEM_VERIFY(s > 0.0, "Degenerate element edge in LineIntegrator!");
-    for (auto &v : n)
-    {
-      v /= s;
-    }
-    if (Dot(n, Sub(c, poly.x[i])) > 0.0)
-    {
-      for (auto &v : n)
-      {
-        v = -v;
-      }
-    }
-    poly.n[i] = n;
-  }
-  return poly;
+  return bdr;
 }
 
-// Clip the segment x(t) = p0 + t d, t ∈ [0, 1], against a convex element polygon. Returns
-// false if the intersection is empty or degenerate, otherwise the parameter interval
-// [t_lo, t_hi]. Segments lying on an element edge (within a small tolerance) are considered
-// to intersect the element, so both neighbors of the edge report the interval and the
-// caller resolves ownership.
-bool ClipSegment(const ElementPolygon &poly, const Vec3 &p0, const Vec3 &d, double &t_lo,
-                 double &t_hi)
+// In-plane cross product.
+inline double Cross2(const ElementBoundary &bdr, const Vec3 &a, const Vec3 &b)
 {
-  const double len = Norm(d);
-  if (len == 0.0)
+  return Dot(bdr.normal, Cross(a, b));
+}
+
+// Refine the crossing of the segment x(t) = p0 + t d with a curved element edge using
+// Newton's method on the exact edge parametrization X(s), starting from the crossing with
+// the polyline piece. Returns false if Newton does not converge near the initial guess.
+bool RefineCrossing(mfem::ElementTransformation &T, const ElementBoundary &bdr, int piece,
+                    const Vec3 &p0, const Vec3 &d, double &s, double &t)
+{
+  const int sdim = T.GetSpaceDim();
+  const auto &ra = bdr.rv[bdr.edge[piece]], &rb = bdr.rv[(bdr.edge[piece] + 1) % bdr.nv];
+  const double dr[2] = {rb.x - ra.x, rb.y - ra.y};
+  const double ds_piece = bdr.s1[piece] - bdr.s0[piece];
+  mfem::IntegrationPoint ip;
+  mfem::Vector xv(sdim);
+  for (int it = 0; it < 20; it++)
+  {
+    ip.Set2(ra.x + s * dr[0], ra.y + s * dr[1]);
+    T.SetIntPoint(&ip);
+    T.Transform(ip, xv);
+    const auto &J = T.Jacobian();
+    Vec3 F = {0.0, 0.0, 0.0}, dX = {0.0, 0.0, 0.0};
+    for (int k = 0; k < sdim; k++)
+    {
+      F[k] = xv(k) - p0[k] - t * d[k];
+      dX[k] = J(k, 0) * dr[0] + J(k, 1) * dr[1];
+    }
+    // Solve [dX, -d] [δs, δt]^T = -F in the element plane.
+    const double a11 = Dot(dX, bdr.e1), a12 = -Dot(d, bdr.e1);
+    const double a21 = Dot(dX, bdr.e2), a22 = -Dot(d, bdr.e2);
+    const double det = a11 * a22 - a12 * a21;
+    if (std::abs(det) <= std::numeric_limits<double>::epsilon() * Norm(dX) * Norm(d))
+    {
+      return false;
+    }
+    const double b1 = -Dot(F, bdr.e1), b2 = -Dot(F, bdr.e2);
+    const double delta_s = (b1 * a22 - a12 * b2) / det;
+    const double delta_t = (a11 * b2 - a21 * b1) / det;
+    s += delta_s;
+    t += delta_t;
+    if (s < bdr.s0[piece] - ds_piece || s > bdr.s1[piece] + ds_piece)
+    {
+      return false;
+    }
+    if (std::abs(delta_s) < 1.0e-14 && std::abs(delta_t) < 1.0e-14)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether the physical point x lies in the element (on its boundary within a tolerance),
+// using the exact (possibly curved) element geometry.
+bool InElement(mfem::InverseElementTransformation &inv, mfem::ElementTransformation &T,
+               const ElementBoundary &bdr, const mfem::Vector &x)
+{
+  mfem::IntegrationPoint ip;
+  const int res = inv.Transform(x, ip);
+  if (res == mfem::InverseElementTransformation::Inside)
+  {
+    return true;
+  }
+  if (res == mfem::InverseElementTransformation::Unknown)
   {
     return false;
   }
+  mfem::Vector y(x.Size());
+  T.Transform(ip, y);
+  return y.DistanceTo(x) <= ON_EDGE_TOL * bdr.h;
+}
+
+// Compute the parameter intervals of the segment x(t) = p0 + t d, t ∈ [0, 1], lying in the
+// element (curved elements are not necessarily convex, so there may be several). Segments
+// lying on an element edge (within a small tolerance) are considered to be in the element,
+// so both neighbors of the edge report the interval and the caller resolves ownership.
+void IntersectSegment(mfem::ElementTransformation &T,
+                      mfem::InverseElementTransformation &inv, const ElementBoundary &bdr,
+                      const Vec3 &p0, const Vec3 &d,
+                      std::vector<std::pair<double, double>> &out)
+{
+  out.clear();
+  const int sdim = T.GetSpaceDim();
+  const double len = Norm(d);
 
   // The segment must lie in the plane of the element (only relevant for surface meshes).
   {
-    const double d0 = Dot(poly.normal, Sub(p0, poly.x[0]));
-    const double d1 = d0 + Dot(poly.normal, d);
-    if (std::abs(d0) > PLANE_TOL * poly.h || std::abs(d1) > PLANE_TOL * poly.h)
+    const double d0 = Dot(bdr.normal, Sub(p0, bdr.x[0]));
+    const double d1 = d0 + Dot(bdr.normal, d);
+    if (std::abs(d0) > PLANE_TOL * bdr.h || std::abs(d1) > PLANE_TOL * bdr.h)
     {
-      return false;
+      return;
     }
   }
 
-  t_lo = 0.0;
-  t_hi = 1.0;
-  for (int i = 0; i < poly.nv; i++)
+  // Quick rejection: the element lies entirely on one side of the segment's line. Curved
+  // edges may bulge slightly beyond the polyline points between them.
   {
-    // Inside: n · (p0 + t d - x_i) ≤ 0  ⇔  t (n · d) ≤ n · (x_i - p0).
-    const double num = Dot(poly.n[i], Sub(poly.x[i], p0));
-    const double den = Dot(poly.n[i], d);
-    if (std::abs(den) <= PARALLEL_TOL * len)
+    const double margin = (bdr.curved ? 0.05 : ON_EDGE_TOL) * bdr.h * len;
+    bool left = true, right = true;
+    for (const auto &x : bdr.x)
     {
-      // Parallel to this edge: either entirely inside its half-plane (or on the edge
-      // itself), or entirely outside.
-      if (num < -ON_EDGE_TOL * poly.h)
+      const double c = Cross2(bdr, d, Sub(x, p0));
+      left = left && (c > margin);
+      right = right && (c < -margin);
+    }
+    if (left || right)
+    {
+      return;
+    }
+  }
+
+  // Crossings of the segment with the element boundary.
+  std::vector<double> t = {0.0, 1.0};
+  const int npieces = static_cast<int>(bdr.x.size()) - 1;
+  for (int j = 0; j < npieces; j++)
+  {
+    const Vec3 &A = bdr.x[j];
+    const Vec3 w = Sub(bdr.x[j + 1], A);
+    const double wlen = Norm(w);
+    const Vec3 r = Sub(A, p0);
+    const double den = Cross2(bdr, d, w);
+    if (std::abs(den) <= PARALLEL_TOL * len * wlen)
+    {
+      // Parallel: if collinear, the overlap endpoints are crossings.
+      if (std::abs(Cross2(bdr, r, d)) <= ON_EDGE_TOL * bdr.h * len)
       {
-        return false;
+        for (const auto &P : {A, bdr.x[j + 1]})
+        {
+          const double tp = Dot(Sub(P, p0), d) / (len * len);
+          if (tp > 0.0 && tp < 1.0)
+          {
+            t.push_back(tp);
+          }
+        }
       }
       continue;
     }
-    const double t = num / den;
-    if (den > 0.0)
+    double tc = Cross2(bdr, r, w) / den;
+    const double u = Cross2(bdr, r, d) / den;
+    if (bdr.curved)
     {
-      t_hi = std::min(t_hi, t);
+      // Refine on the exact edge, accepting crossings slightly outside the piece which
+      // the polyline may miss.
+      if (u < -0.5 || u > 1.5)
+      {
+        continue;
+      }
+      double sc = bdr.s0[j] + u * (bdr.s1[j] - bdr.s0[j]);
+      double tn = tc;
+      if (RefineCrossing(T, bdr, j, p0, d, sc, tn) && sc >= 0.0 && sc <= 1.0)
+      {
+        tc = tn;
+      }
+      else if (u < 0.0 || u > 1.0)
+      {
+        continue;
+      }
     }
-    else
+    else if (u < -ON_EDGE_TOL || u > 1.0 + ON_EDGE_TOL)
     {
-      t_lo = std::max(t_lo, t);
+      continue;
     }
-    if (t_hi - t_lo <= T_TOL)
+    if (tc > 0.0 && tc < 1.0)
     {
-      return false;
+      t.push_back(tc);
     }
   }
-  return (t_hi - t_lo > T_TOL);
+  std::sort(t.begin(), t.end());
+
+  // Classify the pieces between consecutive crossings by testing their midpoints with the
+  // exact geometry, and merge consecutive pieces inside the element.
+  mfem::Vector xm(sdim);
+  double a = -1.0, b = -1.0;
+  for (std::size_t i = 0; i + 1 < t.size(); i++)
+  {
+    if (t[i + 1] - t[i] <= T_TOL)
+    {
+      continue;
+    }
+    const double tm = 0.5 * (t[i] + t[i + 1]);
+    bool in_bb = true;
+    for (int k = 0; k < sdim; k++)
+    {
+      xm(k) = p0[k] + tm * d[k];
+      in_bb = in_bb && (xm(k) >= bdr.bb_min[k] - 0.05 * bdr.h) &&
+              (xm(k) <= bdr.bb_max[k] + 0.05 * bdr.h);
+    }
+    if (in_bb && InElement(inv, T, bdr, xm))
+    {
+      if (a < 0.0)
+      {
+        a = t[i];
+      }
+      b = t[i + 1];
+    }
+    else if (a >= 0.0)
+    {
+      out.emplace_back(a, b);
+      a = b = -1.0;
+    }
+  }
+  if (a >= 0.0)
+  {
+    out.emplace_back(a, b);
+  }
 }
 
 }  // namespace
@@ -213,19 +375,24 @@ LineIntegrator::LineIntegrator(const mfem::ParMesh &mesh_,
   const int nq = ir.GetNPoints();
   const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
 
-  // Precompute the element polygons once for all segments.
+  // Precompute the element boundaries once for all segments. Curved (high-order) mesh
+  // elements use several polyline pieces per edge.
   const int ne = mesh.GetNE();
-  std::vector<ElementPolygon> polys;
-  polys.reserve(ne);
+  const int mesh_order =
+      mesh.GetNodes() ? mesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
+  const int pieces_per_edge = (mesh_order > 1) ? 2 * mesh_order : 1;
+  std::vector<ElementBoundary> bdrs;
+  bdrs.reserve(ne);
   for (int e = 0; e < ne; e++)
   {
-    polys.push_back(GetElementPolygon(mesh, e));
+    bdrs.push_back(GetElementBoundary(mesh, e, pieces_per_edge));
   }
 
   mfem::InverseElementTransformation inv;
   inv.SetInitialGuessType(mfem::InverseElementTransformation::ClosestPhysNode);
   inv.SetSolverType(mfem::InverseElementTransformation::NewtonElementProject);
   mfem::Vector x(sdim);
+  std::vector<std::pair<double, double>> element_intervals;
 
   const int num_segments =
       static_cast<int>(path.size()) - ((closed && path.size() > 2) ? 0 : 1);
@@ -256,16 +423,22 @@ LineIntegrator::LineIntegrator(const mfem::ParMesh &mesh_,
     std::vector<double> breakpoints = {0.0, 1.0};
     for (int e = 0; e < ne; e++)
     {
-      const auto &poly = polys[e];
-      const double tol = ON_EDGE_TOL * poly.h + PLANE_TOL * poly.h;
+      const auto &bdr = bdrs[e];
+      const double tol = 0.05 * bdr.h;
       bool overlap = true;
       for (int k = 0; k < 3; k++)
       {
-        overlap = overlap && (poly.bb_min[k] <= bb_max[k] + tol) &&
-                  (poly.bb_max[k] >= bb_min[k] - tol);
+        overlap = overlap && (bdr.bb_min[k] <= bb_max[k] + tol) &&
+                  (bdr.bb_max[k] >= bb_min[k] - tol);
       }
-      double a, b;
-      if (overlap && ClipSegment(poly, p0, d, a, b))
+      if (!overlap)
+      {
+        continue;
+      }
+      auto &T = *mesh.GetElementTransformation(e);
+      inv.SetTransformation(T);
+      IntersectSegment(T, inv, bdr, p0, d, element_intervals);
+      for (const auto &[a, b] : element_intervals)
       {
         intervals.push_back({a, b, e});
         breakpoints.push_back(a);
