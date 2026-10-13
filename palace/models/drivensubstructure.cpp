@@ -12,8 +12,11 @@
 #include <utility>
 #include <Eigen/Dense>
 #include "fem/substructure.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/slepc.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -1079,6 +1082,226 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
   }
 #endif
   return red;
+}
+
+#if defined(PALACE_WITH_SLEPC)
+namespace
+{
+
+// An operator on the interior DOFs of a side, R A R, and the identity on the other DOFs if
+// pinned (whose eigenvalues are then at infinity).
+class InteriorOperator : public ComplexOperator
+{
+  const ComplexOperator &A;
+  const std::vector<char> &in;
+  bool pin;
+
+  void Apply(const ComplexVector &x, ComplexVector &y, std::complex<double> a,
+             bool herm) const
+  {
+    const ComplexVector t = Masked(x, in);
+    ComplexVector u(t.Size());
+    u = 0.0;
+    herm ? A.MultHermitianTranspose(t, u) : A.Mult(t, u);
+    y.AXPY(a, Masked(u, in));
+    if (pin)
+    {
+      y.AXPY(a, x);
+      y.AXPY(-a, t);
+    }
+  }
+
+public:
+  InteriorOperator(const ComplexOperator &A, const std::vector<char> &in, bool pin)
+    : ComplexOperator(A.Height(), A.Width()), A(A), in(in), pin(pin)
+  {
+  }
+  bool IsReal() const override { return A.IsReal(); }
+  bool IsImag() const override { return A.IsImag(); }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    Apply(x, y, 1.0, false);
+  }
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    Apply(x, y, a, false);
+  }
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    Apply(x, y, 1.0, true);
+  }
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a = 1.0) const override
+  {
+    Apply(x, y, a, true);
+  }
+};
+
+// The inverse of an InteriorOperator pinned on the environment's other DOFs, A_EE(ω)^-1
+// from the environment factorization at ω.
+class InteriorSolver : public Solver<ComplexOperator>
+{
+  DrivenSubstructure &ds;
+  const std::vector<char> &in;
+
+public:
+  InteriorSolver(DrivenSubstructure &ds, const std::vector<char> &in) : ds(ds), in(in) {}
+  void SetOperator(const ComplexOperator &op) override
+  {
+    height = op.Height();
+    width = op.Width();
+  }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    const ComplexVector xe = Masked(x, in);
+    std::vector<ComplexVector> X;
+    ds.CondenseEnvironment({&xe}, &X);
+    y = x;
+    y.AXPY(-1.0, xe);
+    y += X[0];
+  }
+};
+
+// The preconditioner alone, an exact solver.
+class ExactSolver : public IterativeSolver<ComplexOperator>
+{
+public:
+  ExactSolver(MPI_Comm comm) : IterativeSolver<ComplexOperator>(comm, 0)
+  {
+    SetRelTol(1.0e-12);
+    SetMaxIter(1);
+  }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    B->Mult(x, y);
+    converged = true;
+    final_it = 1;
+    initial_res = 1.0;
+    final_res = 0.0;
+  }
+};
+
+}  // namespace
+#endif
+
+std::vector<DrivenSubstructure::EnvironmentPole>
+DrivenSubstructure::EnvironmentPoles(double omega, int num, int num_vec, double tol,
+                                     bool magnitude, int &num_solves)
+{
+  std::vector<EnvironmentPole> poles;
+#if defined(PALACE_WITH_SLEPC)
+  MFEM_VERIFY(!online && env.wave_ports.empty() && !env.extra,
+              "EnvironmentPoles needs an offline environment without wave ports or A2!");
+  MPI_Comm comm = space_op.GetComm();
+  const int nt = static_cast<int>(is_env_int.size());
+  std::unique_ptr<ComplexOperator> K, C, M;
+  {
+    SpaceOperator::AssemblyRestriction restriction(space_op, env.attrs);
+    K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  }
+  MFEM_VERIFY(K && C && M, "EnvironmentPoles needs K, C and M!");
+  InteriorOperator Ki(*K, is_env_int, true), Ci(*C, is_env_int, false),
+      Mi(*M, is_env_int, false);
+  ComplexKspSolver ksp(std::make_unique<ExactSolver>(comm),
+                       std::make_unique<InteriorSolver>(*this, is_env_int));
+  ksp.SetOperators(Ki, Ki);
+  slepc::SlepcPEPSolver eig(comm, 1);
+  eig.SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
+  eig.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+  eig.SetOperators(Ki, Ci, Mi, EigenvalueSolver::ScaleType::NORM_2);
+  eig.SetNumModes(num, num_vec);
+  eig.SetTol(tol);
+  eig.SetMaxIter(1000);
+  eig.SetShiftInvert(std::complex<double>(0.0, omega));
+  eig.SetWhichEigenpairs(magnitude ? EigenvalueSolver::WhichType::TARGET_MAGNITUDE
+                                   : EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+  eig.SetLinearSolver(ksp);
+  ComplexVector v0(nt);
+  space_op.GetRandomInitialVector(v0);
+  {
+    // Consistency of the shift-invert solve with the operators: ‖P(iω) P(iω)^-1 v - v‖/‖v‖.
+    const std::complex<double> s(0.0, omega);
+    ComplexVector v = Masked(v0, is_env_int), y(nt), r(nt);
+    ksp.Mult(v, y);
+    r = 0.0;
+    Ki.AddMult(y, r, 1.0);
+    Ci.AddMult(y, r, s);
+    Mi.AddMult(y, r, s * s);
+    r -= v;
+    Mpi::Print(" Shift-invert solve: relative residual {:.2e}\n",
+               linalg::Norml2(comm, r) / linalg::Norml2(comm, v));
+  }
+  eig.SetInitialSpace(Masked(v0, is_env_int));
+  const int nconv = eig.Solve();
+  num_solves = ksp.NumTotalMult();
+
+  auto bilinear = [&](const ComplexVector &u, const ComplexVector &v)
+  {
+    auto d = u.TransposeDot(v);
+    Mpi::GlobalSum(1, &d, comm);
+    return d;
+  };
+  auto norm = [&](const ComplexVector &u)
+  {
+    const ComplexVector ui = Masked(u, is_env_int);
+    return linalg::Norml2(comm, ui);
+  };
+  const bool root = Mpi::Root(comm);
+  const int nG = InterfaceSize();
+  for (int i = 0; i < nconv; i++)
+  {
+    EnvironmentPole p;
+    ComplexVector x(nt), kx(nt), cx(nt), mx(nt);
+    eig.GetEigenvector(i, x);
+    x = Masked(x, is_env_int);
+    kx = 0.0;
+    cx = 0.0;
+    mx = 0.0;
+    K->Mult(x, kx);
+    C->Mult(x, cx);
+    M->Mult(x, mx);
+    // The root of q2 λ² + q1 λ + q0 = φᵀ (K + λC + λ²M) φ nearest the eigenvalue (λ = iω).
+    const auto q0 = bilinear(x, kx), q1 = bilinear(x, cx), q2 = bilinear(x, mx);
+    const auto lam0 = eig.GetEigenvalue(i), disc = std::sqrt(q1 * q1 - 4.0 * q2 * q0);
+    const auto r1 = (-q1 + disc) / (2.0 * q2), r2 = (-q1 - disc) / (2.0 * q2);
+    const auto lam = (std::abs(r1 - lam0) < std::abs(r2 - lam0)) ? r1 : r2;
+    p.omega = lam / std::complex<double>(0.0, 1.0);
+    p.error = eig.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    ComplexVector y(kx);
+    y.AXPY(lam, cx);
+    y.AXPY(lam * lam, mx);
+    p.residual = norm(y) / (norm(kx) + std::abs(lam) * norm(cx) +
+                            std::abs(lam) * std::abs(lam) * norm(mx));
+    // n = φᵀ (iC - 2ωM) φ.
+    const auto sqrt_n =
+        std::sqrt(std::complex<double>(0.0, 1.0) * q1 - 2.0 * p.omega * q2);
+    x *= 1.0 / sqrt_n;
+    y *= 1.0 / sqrt_n;
+    p.phi = std::move(x);
+    std::vector<std::complex<double>> mine;
+    const double *yr = y.Real().HostRead(), *yi = y.Imag().HostRead();
+    for (int d = 0; d < nt; d++)
+    {
+      if (is_gamma[d])
+      {
+        mine.emplace_back(yr[d], yi[d]);
+      }
+    }
+    p.a.resize(root ? nG : 0);
+    MPI_Gatherv(mine.data(), static_cast<int>(mine.size()), MPI_C_DOUBLE_COMPLEX,
+                root ? p.a.data() : nullptr, gamma_cnt.data(), gamma_disp.data(),
+                MPI_C_DOUBLE_COMPLEX, 0, comm);
+    poles.push_back(std::move(p));
+  }
+#else
+  MFEM_ABORT("EnvironmentPoles needs SLEPc!");
+#endif
+  return poles;
 }
 
 std::vector<char>

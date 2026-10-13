@@ -5,7 +5,10 @@
 
 #include <complex>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <numbers>
 #include <Eigen/Dense>
@@ -709,6 +712,87 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     const double tol = iodata.solver.driven.adaptive_tol;
     const std::size_t max_samples = iodata.solver.driven.adaptive_max_size,
                       memory_size = iodata.solver.driven.adaptive_memory;
+    // PROTOTYPE: the poles of the environment with Γ clamped nearest the band center, and
+    // the factors of their residues (a, s, t: -a aᵀ in S_E, -a sᵀ in g, -a tᵀ in h, t sᵀ
+    // in c), written to <model>.poles.
+    if (const char *probe = std::getenv("PALACE_PROBE_POLES"))
+    {
+      const double omega_c = 0.5 * (omega_sample.front() + omega_sample.back());
+      const double t0 = MPI_Wtime();
+      ds->Condense(omega_c, false);
+      const double t1 = MPI_Wtime();
+      int num_solves = 0;
+      // PALACE_PROBE_POLES = "num,num_vec,tol,exit,magnitude".
+      int num = 30, num_vec = 60, stop = 0, magnitude = 0;
+      double tol = 1.0e-10;
+      std::sscanf(probe, "%d,%d,%lf,%d,%d", &num, &num_vec, &tol, &stop, &magnitude);
+      auto poles =
+          ds->EnvironmentPoles(omega_c, num, num_vec, tol, magnitude != 0, num_solves);
+      const double t2 = MPI_Wtime();
+      std::vector<const ComplexVector *> B(ne);
+      for (int e = 0; e < ne; e++)
+      {
+        const int k = static_cast<int>(std::ranges::find(ex_idx, model.excitations[e]) -
+                                       ex_idx.begin());
+        space_op.GetExcitationVector(ex_idx[k], omega_c, rhs[k]);
+        B[e] = &rhs[k];
+      }
+      const auto L = port_functionals(omega_c);
+      auto bilinear = [&](const ComplexVector &u, const ComplexVector &v)
+      {
+        auto d = u.TransposeDot(v);
+        Mpi::GlobalSum(1, &d, comm);
+        return d;
+      };
+      std::ofstream f;
+      if (root)
+      {
+        f.open(model_path + ".poles", std::ios::binary);
+        const int head[4] = {nG, ne, np, static_cast<int>(poles.size())};
+        f.write(reinterpret_cast<const char *>(head), sizeof(head));
+      }
+      Mpi::Print("\nPoles of the environment with Γ clamped nearest {:.6e} GHz:\n",
+                 omega_c * unit_GHz);
+      for (std::size_t k = 0; k < poles.size(); k++)
+      {
+        const auto &p = poles[k];
+        std::vector<std::complex<double>> s(ne), t(np);
+        for (int e = 0; e < ne; e++)
+        {
+          // Lumped port excitations are linear in ω.
+          s[e] = (p.omega / omega_c) * bilinear(p.phi, *B[e]);
+        }
+        for (int j = 0; j < np; j++)
+        {
+          t[j] = bilinear(p.phi, *L[j]);
+        }
+        Mpi::Print(" {:3d}: f = {:.9e} {:+.3e}i GHz, Q = {:.3e}, residual = {:.2e}, "
+                   "error = {:.2e}\n",
+                   k, p.omega.real() * unit_GHz, p.omega.imag() * unit_GHz,
+                   p.omega.real() / (2.0 * std::abs(p.omega.imag())), p.residual, p.error);
+        if (root)
+        {
+          const double v[4] = {p.omega.real(), p.omega.imag(), p.residual, p.error};
+          f.write(reinterpret_cast<const char *>(v), sizeof(v));
+          f.write(reinterpret_cast<const char *>(p.a.data()),
+                  sizeof(std::complex<double>) * nG);
+          f.write(reinterpret_cast<const char *>(s.data()),
+                  sizeof(std::complex<double>) * ne);
+          f.write(reinterpret_cast<const char *>(t.data()),
+                  sizeof(std::complex<double>) * np);
+        }
+      }
+      Mpi::Print(" Factorization {:.1f} s; eigensolve {:.1f} s, {:d} solves ({:.2f} s "
+                 "each)\n",
+                 t1 - t0, t2 - t1, num_solves, (t2 - t1) / std::max(num_solves, 1));
+      if (stop)
+      {
+        f.close();
+        MPI_Barrier(comm);
+        std::fflush(stdout);
+        std::_Exit(0);
+      }
+    }
     Mpi::Print("\nAdaptive sampling of the condensed environment (tol = {:.3e}, at most "
                "{:d} frequencies):\n",
                tol, max_samples);

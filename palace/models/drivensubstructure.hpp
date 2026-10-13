@@ -177,6 +177,23 @@ public:
   CondenseEnvironment(const std::vector<const ComplexVector *> &b,
                       std::vector<ComplexVector> *x = nullptr);
 
+  // PROTOTYPE: the poles ω_k of A_EE(ω)^-1 nearest ω (the damped resonances of the
+  // environment with Γ clamped), from a shift-invert eigensolve through the environment
+  // factorization of the last condensation (at ω), refined by the Rayleigh functional φᵀ A_EE(ω_k) φ = 0. With
+  // n = φᵀ A_EE'(ω_k) φ, the residue of A_EE^-1 is φ̂ φ̂ᵀ, φ̂ = φ / √n, and that of S_E
+  // is -a aᵀ, a = A_ΓE(ω_k) φ̂ (on rank 0, in interface order). Offline, without wave ports
+  // or A2(ω) in the environment. Collective.
+  struct EnvironmentPole
+  {
+    std::complex<double> omega;
+    double residual, error;
+    ComplexVector phi;
+    std::vector<std::complex<double>> a;
+  };
+  std::vector<EnvironmentPole> EnvironmentPoles(double omega, int num, int num_vec,
+                                                double tol, bool magnitude,
+                                                int &num_solves);
+
   // On rank 0, after Solve: the condensation of the environment's sources (|Γ| x |rhs|,
   // offline) and the interface solution (|Γ| x |rhs|), column-major.
   const std::vector<std::complex<double>> &EnvironmentSourceCondensation() const
