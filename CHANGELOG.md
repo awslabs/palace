@@ -34,30 +34,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
     eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
     `"Attributes"` are the domains of the PML regions (the other parameters have suitable
-    defaults). The coordinate stretch is the same in all PML regions of a block, and their
-    materials define the background material properties. Several blocks can terminate the
-    physical domain at different locations or with different parameters, with a stretch
-    that is checked to be continuous across their interfaces. The uniaxial PML supports
-    anisotropic and lossy background materials, graded conductivity, real stretch, and
-    complex frequency shift (CFS-PML) profiles, and automatic detection of the layer
-    geometry. By default, the conductivity of each face is computed from the size of the
-    PML elements normal to the face and the finite element order, which bounds the change
-    of the stretch between neighboring elements, so that the absorption only depends on the
-    number of elements across the layer (or from a target reflection coefficient, if
-    specified). The stretch can be
-    evaluated at a fixed reference frequency (static PML, the default, at the lowest
-    frequency of interest, which keeps the system matrices frequency-independent) or at the
-    solve frequency (`"FrequencyDependent"`), which for eigenmode simulations is the complex
-    eigenfrequency of the nonlinear eigenvalue problem. Adaptive frequency sweeps and
-    circuit synthesis support both formulations: frequency-dependent PML terms are fit with
-    matrix-valued rational functions with poles on the imaginary axis, realized with
-    decaying auxiliary states in the synthesized circuit. For iterative solvers, the
-    geometric multigrid preconditioner is by default complemented with a sparse direct solve
-    on the PML subdomain (`config["Solver"]["Linear"]["PMLSubdomainSolver"]`), since its
-    polynomial smoothers do not converge on the PML equations of strongly absorbing layers,
-    and its real-valued coarse-level solve uses the PML terms with the magnitudes of the
-    stretch factors (the AMS solver is not supported with PML regions). SchemaVer 2-3-0 [PR
-    XXX](https://github.com/awslabs/palace/pull/XXX).
+    defaults). The stretch can be evaluated at a fixed reference frequency or at the
+    solve frequency (`"FrequencyDependent"`). SchemaVer 2-3-0
+    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes
 
