@@ -24279,10 +24279,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
 MaxwellLineCoverage
 ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
-                           int line_index, const std::array<double, 3> &begin_point,
+                           double line_length, double coordinate_scale, int line_index,
+                           const std::array<double, 3> &begin_point,
                            const std::array<double, 3> &end_point)
 {
   constexpr double parameter_tolerance = 1.0e-10;
+  const double crack_tolerance = kMaxwellLineCrackUlps *
+                                 std::numeric_limits<double>::epsilon() *
+                                 std::max(coordinate_scale, line_length);
   MaxwellLineCoverage coverage;
   std::vector<double> breakpoints = {0.0, 1.0};
   for (auto &[begin, end] : element_intervals)
@@ -24319,13 +24323,24 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
                       return midpoint >= interval.first - parameter_tolerance &&
                              midpoint <= interval.second + parameter_tolerance;
                     });
+    const double gap = (end - begin) * line_length;
+    if (!covered && gap <= crack_tolerance)
+    {
+      coverage.closed_crack_count++;
+      coverage.max_closed_crack = std::max(coverage.max_closed_crack, gap);
+      continue;
+    }
     MFEM_VERIFY(covered, "Maxwell response contour line "
                              << line_index
                              << " leaves the finite-element mesh over parameter " << begin
                              << " to " << end << " (begin = " << begin_point[0] << ", "
                              << begin_point[1] << ", " << begin_point[2]
                              << "; end = " << end_point[0] << ", " << end_point[1] << ", "
-                             << end_point[2] << ")!");
+                             << end_point[2] << ")! The gap is " << gap
+                             << " mesh units, above the floating-point crack tolerance "
+                             << crack_tolerance << " (" << kMaxwellLineCrackUlps
+                             << " ULP of the coordinate scale " << coordinate_scale
+                             << ").");
     coverage.intervals.emplace_back(begin, end);
   }
   return coverage;
@@ -24581,6 +24596,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     std::array<double, 3> weighted_tangent{};
   };
   std::vector<PendingQuadraturePoint> pending_points;
+  int closed_crack_count = 0;
+  double max_closed_crack = 0.0;
   const auto &line_rule =
       mfem::IntRules.Get(mfem::Geometry::SEGMENT, maxwell_quadrature_order);
   for (std::size_t line_index = 0; line_index < line_geometry.size(); line_index++)
@@ -24588,24 +24605,26 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     const auto &line = line_geometry[line_index];
     auto &functional = maxwell_lines[line_index];
     functional.point_offset = static_cast<int>(pending_points.size());
+    std::array<double, 3> tangent{};
+    for (int d = 0; d < dimension; d++)
+    {
+      tangent[d] = line.end[d] - line.begin[d];
+    }
     std::vector<std::pair<double, double>> integration_intervals;
     if (exact_intersections)
     {
-      integration_intervals =
-          ResolveMaxwellLineCoverage(std::move(line_intervals[line_index]),
-                                     static_cast<int>(line_index), line.begin, line.end)
-              .intervals;
+      auto coverage = ResolveMaxwellLineCoverage(
+          std::move(line_intervals[line_index]), Norm(tangent), coordinate_scale,
+          static_cast<int>(line_index), line.begin, line.end);
+      integration_intervals = std::move(coverage.intervals);
+      closed_crack_count += coverage.closed_crack_count;
+      max_closed_crack = std::max(max_closed_crack, coverage.max_closed_crack);
     }
     else
     {
       integration_intervals = std::move(line_intervals[line_index]);
     }
 
-    std::array<double, 3> tangent{};
-    for (int d = 0; d < dimension; d++)
-    {
-      tangent[d] = line.end[d] - line.begin[d];
-    }
     for (const auto &[begin, end] : integration_intervals)
     {
       const double interval_length = end - begin;
@@ -24624,6 +24643,19 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     }
     functional.point_count =
         static_cast<int>(pending_points.size()) - functional.point_offset;
+  }
+  Mpi::GlobalSum(1, &closed_crack_count, comm);
+  Mpi::GlobalMax(1, &max_closed_crack, comm);
+  if (closed_crack_count > 0)
+  {
+    Mpi::Print(comm,
+               " Closed {:d} floating-point crack{} between adjacent element intersections "
+               "of the Maxwell contour lines (largest {:.3e} mesh units = {:.1f} ULP of the "
+               "coordinate scale {:.3e}; the tolerance is {:.0f} ULP)\n",
+               closed_crack_count, closed_crack_count > 1 ? "s" : "", max_closed_crack,
+               max_closed_crack /
+                   (std::numeric_limits<double>::epsilon() * coordinate_scale),
+               coordinate_scale, kMaxwellLineCrackUlps);
   }
 
   mfem::Vector xyz(dimension * pending_points.size());

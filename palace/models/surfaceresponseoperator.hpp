@@ -1418,15 +1418,33 @@ nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &port
 // from the exact element intersection intervals gathered over the ranks (line parameter
 // in [0, 1]): the ends are snapped to 0 / 1 and the breakpoints uniqued at the parameter
 // tolerance 1e-10, every piece between breakpoints shorter than that is skipped, and a
-// remaining piece covered by no element interval fails closed (MFEM_VERIFY naming the line
-// and the parameter range: the line leaves the finite-element mesh).
+// remaining piece covered by no element interval is either a FLOATING-POINT CRACK or a
+// true gap (decision 745 (1), lane contourcover). Two tets sharing the face the line
+// crosses clip it independently from their own vertex arithmetic; the barycentric
+// coordinates carry a rounding error of O(eps x coordinate magnitude / altitude), so the
+// two clips of one face differ by a few tens of ULP of the coordinate magnitude in PHYSICAL
+// length (measured 20 / 68 x eps x coordinate_scale on the two cracks of record), a gap
+// or an overlap at random; in parameter space that is ~2e-10 on a 158-nm line, above the
+// 1e-10 constant, and the Maxwell driven runs aborted at AMR depth. A crack is closed
+// (dropped from the integration like the < 1e-10 pieces, counted and its length kept) iff
+// its physical length (piece x line_length) <= kMaxwellLineCrackUlps x eps x
+// max(coordinate_scale, line_length), i.e. 2^12 ULP of the coordinate magnitude: >= 60x
+// the measured cracks and a near-tangential face crossing's 1 / sin(theta) down to ~1 deg,
+// while 3 orders below a mesher's geometric tolerance (1e-8 x Lc), so a line that leaves
+// the mesh over any geometric length still fails closed (MFEM_VERIFY naming the line, the
+// parameter range, the gap and the tolerance). Where no uncovered piece occurs the
+// intervals are the pre-existing ones to the bit.
+constexpr double kMaxwellLineCrackUlps = 4096.0;
 struct MaxwellLineCoverage
 {
   std::vector<std::pair<double, double>> intervals;
+  int closed_crack_count = 0;
+  double max_closed_crack = 0.0;  // Mesh units.
 };
 MaxwellLineCoverage
 ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
-                           int line_index, const std::array<double, 3> &begin,
+                           double line_length, double coordinate_scale, int line_index,
+                           const std::array<double, 3> &begin,
                            const std::array<double, 3> &end);
 
 }  // namespace palace
