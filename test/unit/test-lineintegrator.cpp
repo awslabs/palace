@@ -282,4 +282,94 @@ TEST_CASE("LineIntegrator exact for discrete gradient fields",
   }
 }
 
+TEST_CASE("LineIntegrator on curved elements", "[lineintegrator][Serial][Parallel]")
+{
+  // Quarter annulus a < r < b with a curved (cubic) mesh. Straight paths ending next to
+  // the curved boundaries cross curved elements and end between mesh vertices, where the
+  // straight chords of the boundary elements would cut off part of the path. The line
+  // integral of E = ∇φ must still be φ(p1) - φ(p0).
+  MPI_Comm comm = Mpi::World();
+  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  CAPTURE(type);
+  const double a = 0.5, b = 2.0;
+  auto smesh = mfem::Mesh::MakeCartesian2D(3, 8, type, false, 1.0, 1.0);
+  smesh.SetCurvature(3);
+  smesh.Transform(
+      [&](const mfem::Vector &u, mfem::Vector &x)
+      {
+        const double r = a + (b - a) * u(0), theta = 0.5 * M_PI * u(1);
+        x(0) = r * std::cos(theta);
+        x(1) = r * std::sin(theta);
+      });
+  mfem::ParMesh mesh(comm, smesh);
+
+  const int order = 2;
+  mfem::H1_FECollection h1_fec(order, 2);
+  mfem::ND_FECollection nd_fec(order, 2);
+  mfem::ParFiniteElementSpace h1_fespace(&mesh, &h1_fec), nd_fespace(&mesh, &nd_fec);
+  mfem::FunctionCoefficient phi_coeff(
+      [](const mfem::Vector &x) { return std::sin(1.3 * x(0)) * std::cosh(0.7 * x(1)); });
+  mfem::ParGridFunction phi(&h1_fespace), E(&nd_fespace);
+  phi.ProjectCoefficient(phi_coeff);
+  {
+    mfem::ParDiscreteLinearOperator grad(&h1_fespace, &nd_fespace);
+    grad.AddDomainInterpolator(new mfem::GradientInterpolator);
+    grad.Assemble();
+    grad.Finalize();
+    grad.Mult(phi, E);
+  }
+
+  // Evaluate φ at a point (collective), searching all elements with the exact curved
+  // geometry (points on the curved boundary between vertices lie outside the straight
+  // chords used by a bounding-box search).
+  auto Phi = [&](const mfem::Vector &x)
+  {
+    mfem::InverseElementTransformation inv;
+    inv.SetSolverType(mfem::InverseElementTransformation::NewtonElementProject);
+    mfem::IntegrationPoint ip;
+    mfem::Vector y(2);
+    double val = 0.0;
+    int found = Mpi::Size(comm);
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      auto &T = *mesh.GetElementTransformation(e);
+      inv.SetTransformation(T);
+      if (inv.Transform(x, ip) == mfem::InverseElementTransformation::Unknown)
+      {
+        continue;
+      }
+      T.Transform(ip, y);
+      if (y.DistanceTo(x) < 1.0e-12)
+      {
+        val = phi.GetValue(e, ip);
+        found = Mpi::Rank(comm);
+        break;
+      }
+    }
+    int owner = found;
+    Mpi::GlobalMin(1, &owner, comm);
+    REQUIRE(owner < Mpi::Size(comm));
+    val = (owner == Mpi::Rank(comm)) ? val : 0.0;
+    Mpi::GlobalSum(1, &val, comm);
+    return val;
+  };
+
+  // Endpoints just inside the mesh, which only approximates the circles between nodes, but
+  // well within the gap between the curved boundary and its straight chords.
+  const double th0 = 0.37 * 0.5 * M_PI, th1 = 0.81 * 0.5 * M_PI;
+  const double ra = a + 1.0e-3, rb = b - 1.0e-3;
+  for (const auto &path :
+       {std::vector<mfem::Vector>{Point({ra * std::cos(th0), ra * std::sin(th0)}),
+                                  Point({rb * std::cos(th0), rb * std::sin(th0)})},
+        std::vector<mfem::Vector>{Point({rb * std::cos(th0), rb * std::sin(th0)}),
+                                  Point({rb * std::cos(th1), rb * std::sin(th1)})}})
+  {
+    fem::LineIntegrator integrator(mesh, path, false, 2 * (order + 3));
+    const double ref = Phi(path.back()) - Phi(path.front());
+    CAPTURE(ref);
+    CHECK_THAT(integrator.Integrate(E), WithinAbs(ref, 1.0e-8 * (1.0 + std::abs(ref))));
+    CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(0.0, 1.0e-12));
+  }
+}
+
 }  // namespace palace

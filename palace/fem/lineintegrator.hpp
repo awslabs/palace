@@ -30,7 +30,9 @@ namespace fem
 // single Gauss-Legendre rule over the whole segment, whose error grows as elements become
 // small compared to the sample spacing, as happens under adaptive refinement near metal
 // edges where the field is singular, and which makes the result change erratically from
-// one mesh to the next.
+// one mesh to the next. For curved (high-order) elements, the crossings with the element
+// boundaries are located on the exact curved edges, and the (no longer polynomial)
+// integrand on each piece is integrated with the given rule.
 //
 // Sub-intervals which lie on an edge shared by two elements (a path running along element
 // edges) are owned by exactly one element on one rank, so nothing is counted twice. The
