@@ -785,6 +785,19 @@ double ArcChordDistance(const std::array<double, 3> &q, const std::array<double,
 double DevicePerimeterDistance(const IdentificationResult &identification,
                                const std::array<double, 3> &q);
 
+// The same distance on the MIRROR-COMPLETE plan (decisions 732 / 733, F-M1): a point beyond
+// an acting Natural mirror plane (within `band` of it; outside the domain, where the plan
+// is the reflected real plan) is reflected back into the domain through the planes it lies
+// beyond (ReflectIntoDomain) and read there as well; the smaller of the two distances. The
+// A10 check extended to the context reads it with the support box span as the band: a
+// reflected continuation piece ends on a box face beyond the mirror band, on no image
+// segment. Without planes, or for a point inside the domain, exactly
+// DevicePerimeterDistance.
+double MirrorCompletePerimeterDistance(const IdentificationResult &identification,
+                                       const std::array<double, 3> &q,
+                                       const std::vector<MirrorPlane> &planes, double band,
+                                       double tolerance);
+
 // The conductor-consistency probe snap (decision 611 (2); the R1 conductor diagnosis
 // section 6): the nearest REAL device perimeter segment to q (every segment read as the
 // straight chord of its key, the image segments of a mirror band excluded; a segment of

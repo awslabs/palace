@@ -1784,6 +1784,25 @@ collinear with the centre falls back to the chord), exact and chord-independent 
 context entry's end cut at a box face lies on the fitted circle, up to the chord sagitta
 (1.6e-3..5.4e-2 R on the census) from the device polyline; `placement_check.py` mirrors it
 (`device_perimeter_distance`) and gates every placed context entry end (`A10-context`).
+`placement_check.py`'s claimed-geometry rendering (`ClaimedGeometry`, the A10 clusters /
+corners gates) parameterises a claim cut inside an arc segment as the identification does
+(`RunPoint`: linearly in the angle of the collinear RUN between its two on-circle joints,
+reconstructed from the manifest's `Segments[].Chain` / `Arc` / `Key` by `RunIndex` with the
+`DirectionQuantum` collinearity rule), not between the mesh segment's own keys — on a
+design-polygon arc sub-divided by the mesh (C3's arc 42: 28-um chords of 8 segments, interior
+vertices up to 0.27 R inside the circle) the key convention read 1.37e-3 R of angular excess with
+the model at the identification's claim end to 3.3e-7 R (decision 710, 0c94). Its cluster /
+context tolerance (`cluster_tolerance_over_r`) is the manifest's `ArcFitToleranceOverR` (a
+placed arc end reads its junction vertex's radial fit residual, strictly below it: decision
+708, a596 8.97e-4 R) + the builder's ArcJoint snap admission (2 quanta + the half-quantum
+inclusive read) + the two serialisation roundings (sqrt(2) quanta) + sqrt(2) x
+`Match.QuantumNearMatch.MaxDeltaQuanta` quanta for a near-matched feature (1.003914e-3 R for
+an exact match at the defaults); corners / stacks / pairs keep the signature tolerance. The
+in-binary A10-extended check (above) keeps `kSignatureParameterToleranceOverRadius` strictly and
+reads the image band's reflected segments as chords (no arc record): decision 663's abort on the
+mirror-formed C1 placeholder 533962c48056 (1.0895502e-3 R) is its context 0 end — on its arc's
+circle — read against an image chord of 0.998 R on a 69.1 R circle (sagitta up to 1.80e-3 R), an
+image-side member of the chord-vs-arc class; the offline tool labels image-side ends by name.
 `VerifySpatialEdgesInSignatureFrame` compares a model's chord rows with its signature's arc at
 `kArcFitToleranceOverRadius` + 2 quanta, inclusive (A1 (5)). The builder
 (`cluster_signature_geometry`) fixes an arc entry's ENDS first — the serialised ends, each

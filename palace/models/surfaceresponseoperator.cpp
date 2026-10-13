@@ -9566,6 +9566,24 @@ double DevicePerimeterDistance(const IdentificationResult &identification,
   return best;
 }
 
+double MirrorCompletePerimeterDistance(const IdentificationResult &identification,
+                                       const std::array<double, 3> &q,
+                                       const std::vector<MirrorPlane> &planes, double band,
+                                       double tolerance)
+{
+  double distance = DevicePerimeterDistance(identification, q);
+  if (distance > tolerance && !planes.empty())
+  {
+    const auto reflected = ReflectIntoDomain(q, planes, band, tolerance);
+    if (reflected && !reflected->planes.empty())
+    {
+      distance =
+          std::min(distance, DevicePerimeterDistance(identification, reflected->point));
+    }
+  }
+  return distance;
+}
+
 std::optional<ProbeChordSnap>
 SnapProbeToDeviceChord(const IdentificationResult &identification,
                        const std::array<double, 3> &q)
@@ -10005,7 +10023,8 @@ FeaturePatchSummary BuildFeaturePatches(
     double coordinate_scale,
     const std::map<int, FeatureCurvatureMatch> &curved_matches = {},
     const std::map<int, FeatureCornerMatch> &corner_matches = {},
-    const std::vector<EdgeSegment3D> &image_segments = {})
+    const std::vector<EdgeSegment3D> &image_segments = {},
+    const std::vector<MirrorPlane> &mirror_planes = {})
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -10936,13 +10955,22 @@ FeaturePatchSummary BuildFeaturePatches(
         }
         // The ENDS of every context entry are device vertices or face crossings of device
         // edges (an arc entry's chords lie on the fitted circle, the device polyline up to
-        // its chord sagitta away: its ends are the test).
+        // its chord sagitta away: its ends are the test). An end lying beyond an acting
+        // Natural mirror plane lies on the MIRROR-COMPLETE plan (decisions 732 / 733, F-M1:
+        // the image side's plan is the reflected real plan): it is reflected back into the
+        // domain through the planes it lies beyond (within the box span: the end is inside
+        // the box the plane crosses) and read against the device perimeter there. Where no
+        // end lies beyond a plane the reading is the first test's, unchanged.
+        const auto &support_box = patch.provenance.support_box;
+        const double span_band =
+            std::max(support_box[2] - support_box[0], support_box[3] - support_box[1]) * R;
         for (const auto &entry : signature.at("Context"))
         {
           const auto P = entry.at("P").get<std::array<double, 4>>();
           for (const auto &q : {Global(P[0], P[1]), Global(P[2], P[3])})
           {
-            const double distance = DevicePerimeterDistance(identification, q);
+            const double distance = MirrorCompletePerimeterDistance(
+                identification, q, mirror_planes, span_band, tolerance);
             MFEM_VERIFY(distance <= tolerance,
                         "Context piece of model \""
                             << model.name << "\" placed for feature " << feature.id
@@ -12185,7 +12213,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     const auto summary = BuildFeaturePatches(
         library, identification, global_segments, quadrature,
         requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
-        curved_matches, corner_matches, mirror_band.image_frames);
+        curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     // Legacy-contract aliases resolved by the matching pass (USER decision 283): one record
     // per alias with the features it served, carried into the operator record and the

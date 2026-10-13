@@ -36,7 +36,10 @@ portion lengths in Diagnostics.DomainBoundaryExclusions.Patches; the manifest Su
 the excluded CELL length next to Missing (TotalEdgeLengths.DomainBoundary; not a library gap).
 Placement (A10, placement_check.py): with the library the preflight ran with (``Library.Path``
 or --library), every matched cluster / corner / stack / pair model mapped through its dry-run
-patch frame lands on the feature's claimed portions within the signature tolerance.
+patch frame lands on the feature's claimed portions within the signature tolerance (a cluster
+model within the identification's arc-fit tolerance + the quantum terms, the claimed arc range
+parameterised by the run's on-circle joints: placement_check.cluster_tolerance_over_r /
+RunIndex).
 """
 
 import argparse
