@@ -24384,6 +24384,49 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
   }
+  const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+
+  // Uncovered requirements (decision 394 F2) in the Maxwell operator record exactly as the
+  // electrostatic constructor records them (decision 751): the identification's uncovered
+  // portions, clipped by the matched clusters' support boxes (decision 399 MAJOR-1), keep
+  // their raw within-R energy in the postoperator's corrected interface energies
+  // (GetUncoveredPortions; PostOperator::MeasureSurfaceResponseCorrection).
+  if (dimension == 3)
+  {
+    std::vector<std::string> skipped;
+    const auto boxes = CollectSpatialSupports(
+        config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+        { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale, dimension,
+        &skipped);
+    uncovered_portions = config.uncovered_portions;
+    uncovered_spatial_support_clipping =
+        ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
+    ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
+        uncovered_portions, &uncovered_spatial_support_clipping, config, coordinate_scale);
+    if (!uncovered_portions.empty())
+    {
+      Mpi::Warning(fespace.GetComm(),
+                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
+                   "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
+                   "surface energy in the corrected interface energies (reported per type "
+                   "in surface-response-uncovered-energy.csv)!\n",
+                   ownership_diagnostics["Uncovered"]["Count"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Features"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Length"].get<double>());
+    }
+    if (uncovered_spatial_support_clipping.clipped_portions > 0)
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Uncovered requirements inside matched clusters' support boxes (decision "
+          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
+          "portions ({:d} wholly inside, {:d} split)\n",
+          uncovered_spatial_support_clipping.clipped_portions,
+          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
+          uncovered_spatial_support_clipping.removed_portions,
+          uncovered_spatial_support_clipping.split_portions);
+    }
+  }
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
@@ -24436,7 +24479,6 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   maxwell_contours.reserve(local_patch_capacity);
   maxwell_conductor_anchors.reserve(local_patch_capacity);
   maxwell_paths.reserve(local_patch_capacity);
-  const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   for (std::size_t patch_index = 0; patch_index < applied_patches.size(); patch_index++)
   {
     const auto &patch_config = applied_patches[patch_index];
@@ -24535,7 +24577,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
     patches.push_back(Patch{static_cast<int>(patches.size()), model_it->second, 0,
                             basis_size, 0, patch_config.longitudinal_cell, 1, 0.0,
-                            patch_config.weight});
+                            patch_config.weight, patch_config.domain_weight});
     basis_size += model.basis_size;
   }
 

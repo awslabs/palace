@@ -255,6 +255,14 @@ protected:
   // Optional Maxwell surface response correction. The ordinary measurement cache,
   // surface-Q.csv, and primary E/D fields remain the raw thin-metal result.
   std::unique_ptr<SurfaceResponseOperator> surface_response_op;
+  // The uncovered requirements (decision 394 F2) and the DomainBoundary raw claims (F-DB-a)
+  // of the response operator as the surface postoperator's perimeter portions: their raw
+  // within-R interface energy is kept in the corrected interface energies as the
+  // electrostatic driver keeps it (decision 751; the DomainBoundary portions are empty on
+  // the Maxwell path today, which runs no containment pass).
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> surface_response_uncovered;
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+      surface_response_domain_boundary;
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
   std::unique_ptr<GridFunction> surface_response_corrected_field;
@@ -276,6 +284,14 @@ protected:
       double trace_closure_spread = 0.0;
       double loss_tangent = 0.0;
     };
+    // Per target interface, the uncovered requirements' and the DomainBoundary claims' raw
+    // within-R energy of the raw field (fixed trace / fixed flux) and of the corrected
+    // field (self-consistent), in total and per feature type (the
+    // surface-response-uncovered- energy.csv and -domain-boundary-energy.csv rows).
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> uncovered;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> self_consistent_uncovered;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> domain_boundary;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> self_consistent_domain_boundary;
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;
@@ -293,6 +309,11 @@ protected:
   mutable std::unique_ptr<TableWithCSVFile> surface_Q_corrected;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_confidence;
   mutable bool surface_response_warning_printed = false;
+  mutable bool surface_response_portion_tables_started = false;
+  // The per-type portion tables of the Maxwell correction (decision 751): the uncovered
+  // requirements' and the DomainBoundary claims' raw within-R energies and shares per
+  // evaluation, written like the electrostatic driver's tables of the same names.
+  void PrintSurfaceResponsePortionEnergies(double output_index, int excitation) const;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
