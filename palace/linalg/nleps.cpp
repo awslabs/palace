@@ -754,6 +754,16 @@ int QuasiNewtonSolver::Solve()
     }
   }
   nev = k;  // in case some guesses did not converge
+  if (nev == 0)
+  {
+    // No eigenpair converged: there is no invariant pair to extract eigenpairs from (and
+    // the Schur decomposition does not support an empty matrix).
+    eigenvalues.clear();
+    eigenvectors.clear();
+    perm = std::make_unique<int[]>(0);
+    RescaleEigenvectors(0);
+    return 0;
+  }
 
   // Eigenpair extraction from the invariant pair (X, H).
   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;

@@ -67,6 +67,7 @@ endif()
 if(PALACE_WITH_LIBXSMM)
   list(APPEND LIBCEED_OPTIONS
     "XSMM_DIR=${CMAKE_INSTALL_PREFIX}"
+    "PKGCONF=pkg-config"  # Not every system provides the pkgconf command
   )
   # LIBXSMM can require linkage with BLAS for fallback
   if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")

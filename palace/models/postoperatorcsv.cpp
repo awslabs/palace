@@ -279,8 +279,27 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::VOLTAGE>(
       dim_measurement_cache.farfield.E_field);
 
-  // Mode analysis data is already in SI units (computed dimensional).
-  measurement_cache.mode_data = dim_measurement_cache.mode_data;  // NONE
+  // Mode analysis data: inverse of the conversion in Dimensionalize.
+  measurement_cache.mode_data = dim_measurement_cache.mode_data;
+  {
+    auto &mode_data = measurement_cache.mode_data;
+    mode_data.kn *= units.GetScaleFactor<Units::ValueType::LENGTH>();  // 1/m → nondim
+    for (auto &[idx, vr] : mode_data.voltage)
+    {
+      vr.V = units.Nondimensionalize<Units::ValueType::VOLTAGE>(vr.V);
+    }
+    for (auto &[idx, result] : mode_data.impedance)
+    {
+      if (result.has_impedance)
+      {
+        result.Z0 = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(result.Z0);
+      }
+      if (result.has_vi_impedance)
+      {
+        result.Z_VI = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(result.Z_VI);
+      }
+    }
+  }
 
   return measurement_cache;
 }

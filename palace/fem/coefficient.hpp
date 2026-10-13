@@ -171,6 +171,10 @@ private:
   bool two_sided;
   const mfem::Vector &x0;
   const mfem::Vector *ref_dir;  // Optional reference direction for normal orientation
+  // ELECTRIC flux with Im{ε} instead of Re{ε}, for assembling the complex D = ε E of a
+  // lossy dielectric from real-valued evaluations (see
+  // SurfacePostOperator::GetSurfaceFlux).
+  bool imag_permittivity;
 
   void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
 
@@ -185,11 +189,13 @@ public:
   // Constructor with center-based orientation
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
-                            const mfem::Vector &x0, double scaling = 1.0)
+                            const mfem::Vector &x0, double scaling = 1.0,
+                            bool imag_permittivity = false)
     : mfem::Coefficient(),
       BdrGridFunctionCoefficient(
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
-      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), ref_dir(nullptr)
+      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), ref_dir(nullptr),
+      imag_permittivity(imag_permittivity)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -205,7 +211,8 @@ public:
       BdrGridFunctionCoefficient(
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(reference_direction),
-      ref_dir(mode == OrientationMode::DIRECTION_BASED ? &reference_direction : nullptr)
+      ref_dir(mode == OrientationMode::DIRECTION_BASED ? &reference_direction : nullptr),
+      imag_permittivity(false)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -286,11 +293,18 @@ template <>
 inline void BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
-  // Flux D.
+  // Flux D = ε E, with the real or imaginary part of the permittivity.
   double W_data[3];
   mfem::Vector W(W_data, T.GetSpaceDim());
   E->GetVectorValue(T, T.GetIntPoint(), W);
-  mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
+  if (imag_permittivity)
+  {
+    mat_op.GetPermittivityImag(T.Attribute).Mult(W, V);
+  }
+  else
+  {
+    mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
+  }
   V *= scaling;
 }
 

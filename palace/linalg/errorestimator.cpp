@@ -209,6 +209,10 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   Vector estimates(mesh.GetNE());
   estimates.UseDevice(true);
   estimates = 0.0;
+  if (mesh.GetNE() == 0)  // Possible for a submesh, with an empty libCEED operator
+  {
+    return estimates;
+  }
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];

@@ -11,6 +11,7 @@ set(LIBXSMM_DEPENDENCIES)
 set(LIBXSMM_OPTIONS
   # "PREFIX=${CMAKE_INSTALL_PREFIX}"  # Don't use install step, see comment below
   "OUTDIR=${CMAKE_INSTALL_PREFIX}/lib"
+  "PINCDIR=${CMAKE_INSTALL_PREFIX}/include"  # pkg-config includedir (headers installed below)
   "DIRSTATE=."
   "CC=${CMAKE_C_COMPILER}"
   "CXX=${CMAKE_CXX_COMPILER}"
@@ -47,6 +48,8 @@ message(STATUS "LIBXSMM_OPTIONS: ${LIBXSMM_OPTIONS_PRINT}")
 # Don't use LIBXSMM install step, since it just copies shared libraries and doesn't modify
 # the dependency locations directly (doesn't use RPATH). Just build directly into the
 # installation directory instead. See https://github.com/libxsmm/libxsmm/issues/883.
+# The build itself writes pkg-config and CMake config files to lib/pkgconfig and
+# lib/cmake/libxsmm.
 set(LIBXSMM_INSTALL_HEADERS
   libxsmm.h
   libxsmm_config.h
@@ -63,16 +66,6 @@ set(LIBXSMM_INSTALL_HEADERS
   libxsmm_typedefs.h
 )
 list(TRANSFORM LIBXSMM_INSTALL_HEADERS PREPEND <SOURCE_DIR>/include/)
-set(LIBXSMM_INSTALL_PKGCONFIG
-  libxsmm.pc
-  libxsmmext.pc
-  libxsmmnoblas.pc
-  libxsmm-shared.pc
-  libxsmmext-shared.pc
-  libxsmmnoblas-shared.pc
-  libxsmm.env
-)
-list(TRANSFORM LIBXSMM_INSTALL_PKGCONFIG PREPEND ${CMAKE_INSTALL_PREFIX}/lib/)
 
 include(ExternalProject)
 ExternalProject_Add(libxsmm
@@ -90,11 +83,10 @@ ExternalProject_Add(libxsmm
     ${CMAKE_COMMAND} -E echo "LIBXSMM installing interface..." &&
     ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/include &&
     ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_HEADERS} ${CMAKE_INSTALL_PREFIX}/include &&
-    ${CMAKE_COMMAND} -E echo "LIBXSMM installing pkg-config and module files..." &&
-    ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig &&
-    ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_PKGCONFIG} ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig ||
-    ${CMAKE_COMMAND} -E true &&  # No error if files don't exist
-    ${CMAKE_COMMAND} -E rm -f ${LIBXSMM_INSTALL_PKGCONFIG} &&
-    ${CMAKE_COMMAND} -E rm -f ${CMAKE_INSTALL_PREFIX}/lib/.make
+    ${CMAKE_COMMAND} -E rm -f
+      ${CMAKE_INSTALL_PREFIX}/lib/libxsmm.env
+      ${CMAKE_INSTALL_PREFIX}/lib/.make
+      ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig/.make
+      ${CMAKE_INSTALL_PREFIX}/lib/cmake/libxsmm/.make
   TEST_COMMAND      ""
 )

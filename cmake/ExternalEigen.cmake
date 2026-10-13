@@ -11,6 +11,7 @@ list(APPEND EIGEN_OPTIONS
   "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
   "-DEIGEN_BUILD_DOC=OFF"
   "-DBUILD_TESTING=OFF"
+  "-DEIGEN_PRERELEASE_VERSION=" # Release tarballs otherwise report "-dev"
   "-DCMAKE_Fortran_COMPILER=" # Unneeded
 )
 

@@ -776,6 +776,28 @@ TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
   CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 2}, {"Save", -1}}).n_post == 0);
 }
 
+TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
+{
+  // The quasi-Newton iterations of the hybrid nonlinear eigenvalue solver have their own
+  // limit, independent of the (large by default) eigenvalue solver iteration limit.
+  const config::EigenSolverData defaults(json{{"Target", 1.0}});
+  CHECK(defaults.max_it == 1'000'000);
+  CHECK(defaults.nonlinear_max_it == 100);
+
+  const config::EigenSolverData linear(json{{"Target", 1.0}, {"MaxIts", 200}});
+  CHECK(linear.max_it == 200);
+  CHECK(linear.nonlinear_max_it == 100);
+
+  const config::EigenSolverData both(
+      json{{"Target", 1.0}, {"MaxIts", 200}, {"NonlinearMaxIts", 30}});
+  CHECK(both.max_it == 200);
+  CHECK(both.nonlinear_max_it == 30);
+
+  const config::EigenSolverData nonlinear(json{{"Target", 1.0}, {"NonlinearMaxIts", 500}});
+  CHECK(nonlinear.max_it == 1'000'000);
+  CHECK(nonlinear.nonlinear_max_it == 500);
+}
+
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
   auto MixedConfig = []()
@@ -1602,6 +1624,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata2.solver.eigenmode.target_upper == iodata1.solver.eigenmode.target_upper);
     CHECK(iodata2.solver.eigenmode.max_it == iodata1.solver.eigenmode.max_it);
     CHECK(iodata2.solver.eigenmode.max_size == iodata1.solver.eigenmode.max_size);
+    CHECK(iodata2.solver.eigenmode.nonlinear_max_it ==
+          iodata1.solver.eigenmode.nonlinear_max_it);
 
     // Coverage gate: every optional schema property under Solver.Eigenmode must be
     // emitted by ConcretizeDefaults. A schema addition without a Concretize update

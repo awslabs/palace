@@ -93,7 +93,8 @@ file. These include:
   - [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/reference.md#config-boundaries-postprocessing-surfaceflux) :
     Postprocess the integrated flux through a surface defined by a list of boundary
     attributes. Electric, magnetic, and power flux are all supported. Surface capacitance
-    can be computed by dividing the computed electric flux by the excitation voltage, while
+    can be computed by dividing the computed electric flux by the excitation voltage (for a
+    lossy dielectric the flux uses the complex permittivity, so take the real part), while
     inductance can be computed by dividing the computed magnetic flux by the excitation
     current. The resulting fluxes are written to `surface-F.csv` in the specified output
     directory.
@@ -178,7 +179,9 @@ continuous. Similarly, at a material interface:
     component can jump.
   - ``\bm{D} = \bm{\epsilon}\bm{E}`` and
     ``\bm{H} = \bm{\mu}^{-1}\bm{B}`` inherit jumps from both the fields and the material
-    tensors.
+    tensors. For a lossy dielectric in the frequency domain, ``\bm{\epsilon}`` is the complex
+    permittivity ``\bm{\epsilon}_r(1 - i\tan\delta)``, so the electric flux and surface
+    charge of the complex field include the lagging polarization.
   - Surface charge ``Q_s = \bm{D} \cdot \bm{n}`` and surface current
     ``\bm{J}_s = \bm{n} \times \bm{H}`` are side-dependent traces when the corresponding
     interface charge or current is nonzero.
@@ -212,7 +215,7 @@ collection is only available for the ParaView output format.
 The boundary data collection includes the 3D field values sampled on the boundary mesh as
 well as:
 
-  - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (Wb/m²)
+  - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (C/m²)
   - Surface current density: `J_s`, `J_s_real`, `J_s_imag` (A/m)
   - Wave port boundary mode electric field: `E0_real`, `E0_imag` (V/m)
 

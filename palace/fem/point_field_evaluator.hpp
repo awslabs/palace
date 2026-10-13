@@ -62,13 +62,16 @@ public:
                       std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache = nullptr,
                       std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle = nullptr);
 
-  // Boundary material-dependent evaluator for Q_s, J_s, U_e, or U_m.
+  // Boundary material-dependent evaluator for Q_s, J_s, U_e, or U_m. For Q_s,
+  // imag_permittivity evaluates Im{ε} E ⋅ n instead of Re{ε} E ⋅ n (never served by the
+  // fused bundle, which handles the complex permittivity itself).
   PointFieldEvaluator(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                       const mfem::ParFiniteElementSpace &fespace,
                       const MaterialOperator &mat_op, int lod, double scaling,
                       std::shared_ptr<const FaceSamplingPlan> sampling_plan = nullptr,
                       std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache = nullptr,
-                      std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle = nullptr);
+                      std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle = nullptr,
+                      bool imag_permittivity = false);
 
   // Boundary Poynting vector evaluator.
   PointFieldEvaluator(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,

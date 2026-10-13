@@ -40,6 +40,9 @@ jobs:
 
   build-and-test-linux:
     needs: filter
+    permissions:
+      contents: write
+      id-token: write  # Codecov OIDC upload
     strategy:
       fail-fast: false
       matrix:
@@ -432,6 +435,15 @@ jobs:
         with:
           name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
           path: palace-build/coverage_html/
+
+      - name: Upload coverage to Codecov
+        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: palace-build/coverage_filtered.info
+          disable_search: true
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+          fail_ci_if_error: false
 
       - name: Run regression tests
         if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers

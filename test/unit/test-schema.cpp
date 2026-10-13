@@ -653,6 +653,30 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Range Expans
   CHECK(err.empty());
 }
 
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "Schema Validation - Range Expansion Strings", "[schema][Serial]")
+{
+  // Brackets inside strings (e.g. file paths) are not integer arrays and must pass through
+  // unchanged, including after an escaped quote, while real arrays still expand.
+  auto temp_path = temp_dir / "palace_test_range_strings.json";
+  {
+    std::ofstream f(temp_path);
+    f << R"({
+      "Problem": { "Type": "Eigenmode", "Output": "postpro/run[2024-09]\"[1-2]\"" },
+      "Model": { "Mesh": "mesh[1-3].msh" },
+      "Domains": { "Materials": [{ "Attributes": [1-3] }] },
+      "Boundaries": {},
+      "Solver": { "Eigenmode": { "Target": 1.0 } }
+    })";
+  }
+
+  std::stringstream buffer = PreprocessFile(temp_path.c_str());
+  json config = json::parse(buffer);
+  CHECK(config["Model"]["Mesh"] == "mesh[1-3].msh");
+  CHECK(config["Problem"]["Output"] == "postpro/run[2024-09]\"[1-2]\"");
+  CHECK(config["Domains"]["Materials"][0]["Attributes"] == json({1, 2, 3}));
+}
+
 TEST_CASE("Schema Validation - Required Field Checks", "[schema][Serial]")
 {
 

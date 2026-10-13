@@ -489,11 +489,14 @@ bool WavePortReducedModel::SolveFromGram(
     {
       continue;
     }
-    candidates.push_back({lambda, kn, std::move(y), eta, std::abs(kn.real() - kn_target)});
+    candidates.push_back(
+        {lambda, kn, std::move(y), eta, mode_assembly::TargetDistance(kn, kn_target)});
   }
 
-  std::ranges::sort(candidates, [](const Candidate &a, const Candidate &b)
-                    { return a.distance < b.distance; });
+  // Rank with the same complex target distance as the exact solve (ModeEigenSolver::Solve)
+  // so that both select the same mode.
+  std::ranges::stable_sort(candidates, [](const Candidate &a, const Candidate &b)
+                           { return a.distance < b.distance; });
   if (candidates.size() < static_cast<std::size_t>(num_modes))
   {
     return false;
