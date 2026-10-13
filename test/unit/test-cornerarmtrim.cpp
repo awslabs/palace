@@ -2278,15 +2278,23 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(edge_energies.size() == 1);
   CHECK_THAT(edge_energies[0].distance, WithinAbs(R, 1.0e-12));
   const double outside = edge_energies[0].energy_outside;
-  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
-  for (const auto &portion : maxwell_portions)
+  // The uncovered energy of the corner windows from the electrostatic operator's portions
+  // (the reference set of (a)); the Maxwell operator's portions give the same energy.
+  auto UncoveredEnergy = [&](const auto &portions)
   {
-    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
-  }
-  const auto uncovered_energies =
-      surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, perimeter);
-  REQUIRE(uncovered_energies.size() == 1);
-  const double uncovered = uncovered_energies.at(4).energy;  // 0 without portions
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+    for (const auto &portion : portions)
+    {
+      perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    const auto energies =
+        surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, perimeter);
+    REQUIRE(energies.size() == 1);
+    return energies.at(4).energy;
+  };
+  const double uncovered = UncoveredEnergy(electrostatic_portions);
+  CHECK(uncovered > 0.0);
+  CHECK_THAT(UncoveredEnergy(maxwell_portions), WithinRel(uncovered, 1.0e-12));
   const auto maxwell_response = response->GetMaxwellResponse(field, omega);
   const double model_ft = maxwell_response.fabricated_surface_energy.at(4);
   const double model_ff = maxwell_response.fabricated_surface_energy_fixed_flux.at(4);
