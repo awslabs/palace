@@ -161,6 +161,30 @@ std::vector<double> Exchange(const std::vector<std::vector<double>> &send, MPI_C
   return rbuf;
 }
 
+// Barycentric test that p lies in the face with vertex coordinates x (orthogonal
+// projection onto each triangle of the face).
+bool FaceContains(const std::vector<std::array<double, 3>> &x, const double *p)
+{
+  auto in_triangle = [p](const auto &a, const auto &b, const auto &c)
+  {
+    double v0[3], v1[3], v2[3];
+    for (int d = 0; d < 3; d++)
+    {
+      v0[d] = b[d] - a[d];
+      v1[d] = c[d] - a[d];
+      v2[d] = p[d] - a[d];
+    }
+    auto dot = [](const double *u, const double *v)
+    { return u[0] * v[0] + u[1] * v[1] + u[2] * v[2]; };
+    const double d00 = dot(v0, v0), d01 = dot(v0, v1), d11 = dot(v1, v1), d20 = dot(v2, v0),
+                 d21 = dot(v2, v1), det = d00 * d11 - d01 * d01;
+    const double b1 = (d11 * d20 - d01 * d21) / det, b2 = (d00 * d21 - d01 * d20) / det;
+    constexpr double eps = 1.0e-8;
+    return b1 >= -eps && b2 >= -eps && b1 + b2 <= 1.0 + eps;
+  };
+  return in_triangle(x[0], x[1], x[2]) || (x.size() == 4 && in_triangle(x[0], x[2], x[3]));
+}
+
 }  // namespace
 
 SuperconductorSheetOperator::SuperconductorSheetOperator(
@@ -521,6 +545,172 @@ std::unique_ptr<mfem::HypreParMatrix> SuperconductorSheetOperator::BuildTwoPortC
   // C = Pᵀ C_l P maps to the true DOFs, including shared and nonconforming (slave) DOFs.
   return std::unique_ptr<mfem::HypreParMatrix>(
       mfem::RAP(&C_l, nd_fespace.Dof_TrueDof_Matrix()));
+}
+
+int SuperconductorSheetOperator::MatchTwoSidedRefinement(
+    const std::vector<config::SuperconductorData> &superconductor, mfem::ParMesh &mesh,
+    int nc_limit)
+{
+  std::unordered_set<int> attrs;
+  for (const auto &data : superconductor)
+  {
+    if (data.two_sided)
+    {
+      attrs.insert(data.attributes.begin(), data.attributes.end());
+    }
+  }
+  if (attrs.empty())
+  {
+    return 0;
+  }
+  MPI_Comm comm = mesh.GetComm();
+  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+  const auto initial_elem_count = mesh.GetGlobalNE();
+
+  // Refining the elements of one face leaves its twin coarser. A film face with no
+  // coincident twin is coarse if a smaller face of the other side lies inside it: such a
+  // face touches one of its vertices, so faces are routed by vertex key and compared
+  // there. Record layout: vertex key | face key | nv | 4 × 3 vertex coordinates | rank |
+  // element.
+  constexpr int nk = std::tuple_size_v<FaceKey>, o_face = 3, o_nv = o_face + nk,
+                o_x = o_nv + 1, o_rank = o_x + 12, o_elem = o_rank + 1, rec = o_elem + 1;
+  std::array<int, 4> canon;
+  mfem::Array<int> vids;
+  while (true)
+  {
+    const double tol = GetKeyTolerance(mesh, attrs);
+    std::vector<std::vector<double>> send(nranks);
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      if (!attrs.contains(mesh.GetBdrAttribute(be)))
+      {
+        continue;
+      }
+      const FaceKey key = GetFaceKey(mesh, be, tol, canon);
+      mesh.GetBdrElementVertices(be, vids);
+      int elem, info;
+      mesh.GetBdrElementAdjacentElement(be, elem, info);
+      std::vector<double> r(rec, 0.0);
+      std::copy(key.begin(), key.end(), r.begin() + o_face);
+      r[o_nv] = vids.Size();
+      for (int k = 0; k < vids.Size(); k++)
+      {
+        std::copy(mesh.GetVertex(vids[k]), mesh.GetVertex(vids[k]) + 3,
+                  r.begin() + o_x + 3 * k);
+      }
+      r[o_rank] = rank;
+      r[o_elem] = elem;
+      for (int k = 0; k < vids.Size(); k++)
+      {
+        const VertexKey vk = GetVertexKey(mesh.GetVertex(vids[k]), tol);
+        std::copy(vk.begin(), vk.end(), r.begin());
+        auto &buf = send[GetKeyRank(vk, nranks)];
+        buf.insert(buf.end(), r.begin(), r.end());
+      }
+    }
+    const std::vector<double> recv = Exchange(send, comm);
+
+    // At each vertex, mark every unmatched face that contains a smaller face of the other
+    // side. Unmatched faces are counted once, at their first canonical vertex.
+    std::map<VertexKey, std::vector<std::size_t>> by_vertex;
+    for (std::size_t r = 0; r < recv.size(); r += rec)
+    {
+      by_vertex[{static_cast<std::int64_t>(recv[r]), static_cast<std::int64_t>(recv[r + 1]),
+                 static_cast<std::int64_t>(recv[r + 2])}]
+          .push_back(r);
+    }
+    auto face_key = [&recv](std::size_t r)
+    {
+      FaceKey key;
+      std::copy(recv.begin() + r + o_face, recv.begin() + r + o_face + nk, key.begin());
+      return key;
+    };
+    // Centroid c and normal n of a face, with |n| twice its area: the cross product of two
+    // edges of a triangle, or of the diagonals of a quadrilateral.
+    auto face_geometry = [&recv](std::size_t r, double *c, double *n)
+    {
+      const int nv = static_cast<int>(recv[r + o_nv]);
+      const double *x = recv.data() + r + o_x;
+      double u[3], v[3];
+      for (int d = 0; d < 3; d++)
+      {
+        u[d] = (nv == 4) ? x[6 + d] - x[d] : x[3 + d] - x[d];
+        v[d] = (nv == 4) ? x[9 + d] - x[3 + d] : x[6 + d] - x[d];
+        c[d] = 0.0;
+        for (int k = 0; k < nv; k++)
+        {
+          c[d] += x[3 * k + d] / nv;
+        }
+      }
+      n[0] = u[1] * v[2] - u[2] * v[1];
+      n[1] = u[2] * v[0] - u[0] * v[2];
+      n[2] = u[0] * v[1] - u[1] * v[0];
+    };
+    auto norm = [](const double *n)
+    { return std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]); };
+    std::vector<std::vector<double>> marks(nranks);
+    int n_unmatched = 0;
+    for (const auto &[vk, recs] : by_vertex)
+    {
+      for (auto G : recs)
+      {
+        const FaceKey key_G = face_key(G);
+        bool matched = false;
+        for (auto F : recs)
+        {
+          matched |= (F != G && face_key(F) == key_G);
+        }
+        if (matched)
+        {
+          continue;
+        }
+        n_unmatched += (std::equal(vk.begin(), vk.end(), key_G.begin() + 1));
+        double c_G[3], n_G[3];
+        face_geometry(G, c_G, n_G);
+        const int nv = static_cast<int>(recv[G + o_nv]);
+        std::vector<std::array<double, 3>> x_G(nv);
+        for (int k = 0; k < nv; k++)
+        {
+          std::copy(recv.begin() + G + o_x + 3 * k, recv.begin() + G + o_x + 3 * k + 3,
+                    x_G[k].begin());
+        }
+        for (auto F : recs)
+        {
+          double c_F[3], n_F[3];
+          face_geometry(F, c_F, n_F);
+          const double a_F = norm(n_F), a_G = norm(n_G),
+                       cos_FG = (n_F[0] * n_G[0] + n_F[1] * n_G[1] + n_F[2] * n_G[2]) /
+                                (a_F * a_G);
+          if (F != G && a_F < 0.75 * a_G && std::abs(cos_FG) > 0.5 &&
+              FaceContains(x_G, c_F))
+          {
+            marks[static_cast<int>(recv[G + o_rank])].push_back(recv[G + o_elem]);
+            break;
+          }
+        }
+      }
+    }
+    Mpi::GlobalSum(1, &n_unmatched, comm);
+    if (n_unmatched == 0)
+    {
+      break;
+    }
+    const std::vector<double> marked = Exchange(marks, comm);
+    std::set<int> unique(marked.begin(), marked.end());
+    mfem::Array<int> refine;
+    for (int e : unique)
+    {
+      refine.Append(e);
+    }
+    int n_marked = refine.Size();
+    Mpi::GlobalSum(1, &n_marked, comm);
+    MFEM_VERIFY(n_marked > 0, "Two-sided superconductor sheet has "
+                                  << n_unmatched
+                                  << " face(s) whose twin is refined differently; the two "
+                                     "faces of the film must refine alike!");
+    mesh.GeneralRefinement(refine, -1, nc_limit);
+  }
+  return static_cast<int>(mesh.GetGlobalNE() - initial_elem_count);
 }
 
 mfem::Array<int> SuperconductorSheetOperator::GetAttrList() const

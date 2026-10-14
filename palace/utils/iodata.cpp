@@ -480,6 +480,21 @@ void IoData::CheckConfiguration()
         "conditions!\n");
   }
 
+  // Two-sided films need cracked, matching faces: cracking gives each face its own DOFs,
+  // and only nonconformal refinement can keep the two faces alike.
+  for (const auto &data : boundaries.superconductor)
+  {
+    if (!data.two_sided)
+    {
+      continue;
+    }
+    MFEM_VERIFY(model.crack_bdr_elements, "Superconductor boundary \"TwoSided\" requires "
+                                          "\"CrackInternalBoundaryElements\"!");
+    MFEM_VERIFY(model.refinement.max_it == 0 || model.refinement.nonconformal,
+                "Superconductor boundary \"TwoSided\" requires nonconformal adaptive mesh "
+                "refinement!");
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
