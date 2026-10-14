@@ -313,7 +313,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       UpdateAfterMeshChange(fine_mesh);
       // The two faces of a two-sided superconductor film must stay coincident.
       const int matched = SuperconductorSheetOperator::MatchTwoSidedRefinement(
-          iodata.boundaries.superconductor, fine_mesh, refinement.max_nc_levels);
+          iodata.boundaries.superconductor, fine_mesh, refinement.max_nc_levels,
+          [&]() { UpdateAfterMeshChange(fine_mesh); });
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
