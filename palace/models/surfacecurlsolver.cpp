@@ -23,6 +23,16 @@ namespace palace
 namespace
 {
 
+// Whether any rank's mesh has hanging (slave) edges.
+bool HasHangingEdges(mfem::ParMesh &pmesh)
+{
+  int n = (pmesh.Nonconforming() && pmesh.ncmesh)
+              ? pmesh.ncmesh->GetEdgeList().slaves.Size()
+              : 0;
+  Mpi::GlobalMax(1, &n, pmesh.GetComm());
+  return n > 0;
+}
+
 // Build the London drive a_h as a 3D curl-free cohomology generator carrying the hole
 // fluxoid ∮_∂hole a_h·dl = Φ, about the flux line L along the loop Direction n through the
 // hole centroid. L threads the hole opening off the film Σ, so a_h|Σ is curl-free with
@@ -34,12 +44,13 @@ namespace
 // n = ±ẑ. a_h is the cut cochain a_h = Grad ψ − a_angle: a lowest-order (Whitney) edge DOF
 // of ±Φ across the cut half-plane bounded by L, projected into the order-p ND space
 // (ND_1 ⊂ ND_p). It is formed as the discrete gradient of a conformed nodal branch
-// potential ψ minus the smooth angle interpolant a_angle so it is non-conformal-safe (see
-// below). The cut shape and overall sign are irrelevant to L: the downstream normalization
-// rescales a_h so cᵀa_h = Φ.
+// potential ψ minus the smooth angle interpolant a_angle, which keeps the O(1) step exact
+// when conformed (see below). The cut shape and overall sign are irrelevant to L: the
+// downstream normalization rescales a_h so cᵀa_h = Φ.
 Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
                                    const mfem::ParFiniteElementSpace &ndp_fespace,
-                                   const Mesh &mesh)
+                                   const Mesh &mesh, CohomologyGeneratorCache *cache,
+                                   int key)
 {
   auto &pmesh = const_cast<mfem::ParMesh &>(mesh.Get());
   MPI_Comm comm = pmesh.GetComm();
@@ -175,7 +186,7 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
 
   // Nodal branch-cut potential ψ = (Φ/2π)·atan2(d, -s), whose branch discontinuity is
   // exactly the cut half-plane, so cut = Grad ψ - a_angle. Carrying the O(1) step as a
-  // discrete gradient is what makes this non-conformal-safe: Grad of a *conformed* H1
+  // discrete gradient keeps it exact on nonconforming meshes: Grad of a *conformed* H1
   // function is exactly conforming and exactly curl-free, whereas a step written on edges
   // is neither, and cᵀGrad = 0 identically, so ψ cannot perturb the circulation.
   mfem::H1_FECollection h1_fec(1, sdim);
@@ -223,11 +234,10 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
 
   // Conform the cochain before projecting. Grad ψ is a discrete gradient of a conformed H1
   // function, so it survives the round trip exactly (circulation and curl-free-on-Σ
-  // intact); only the smooth a_angle term is re-interpolated onto slaves. On a
-  // non-conformal mesh that leaves a small residual curl on Σ near graded refinement, an
-  // O(h) discretization error that vanishes under refinement while the downstream cᵀa_h = Φ
-  // normalization keeps the fluxoid exact; on a conformal mesh a_h is the exact integer
-  // step, curl-free.
+  // intact); only the smooth a_angle term is re-interpolated onto slaves. With hanging
+  // edges that leaves a residual curl on Σ (ψ is interpolated at hanging vertices while
+  // a_angle uses exact edge angles), which biases the inductance; without them a_h is the
+  // exact integer step, curl-free.
   {
     mfem::Vector t(nd1_fespace.GetTrueVSize());
     t.UseDevice(false);
@@ -235,11 +245,31 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     ah1.SetFromTrueDofs(t);
   }
 
+  // Keep the exact cochain for later nonconforming refinements, which prolong it exactly
+  // (curl-free on Σ), and use the kept one when there are hanging edges.
+  const mfem::ParGridFunction *ah = &ah1;
+  if (HasHangingEdges(pmesh))
+  {
+    if (const auto *kept = cache ? cache->Find(key, pmesh) : nullptr)
+    {
+      ah = kept;
+    }
+    else
+    {
+      Mpi::Warning(comm, "London flux loop generator built on a mesh with hanging edges; "
+                         "its residual curl on the film may bias the inductance!\n");
+    }
+  }
+  else if (cache && pmesh.Nonconforming())
+  {
+    cache->Store(key, ah1);
+  }
+
   // Project the ND_1 cut field exactly into the order-p ND space. The per-element field is
   // a degree-1 polynomial, integrated exactly by the ND_p DOF functionals, so ND_1 ⊂ ND_p
   // is reproduced and tangential continuity (hence curl-free-on-Σ, circulation Φ) is
   // preserved.
-  mfem::VectorGridFunctionCoefficient ah1_coeff(&ah1);
+  mfem::VectorGridFunctionCoefficient ah1_coeff(ah);
   mfem::ParGridFunction ahp(const_cast<mfem::ParFiniteElementSpace *>(&ndp_fespace));
   ahp.UseDevice(false);
   ahp = 0.0;
@@ -282,23 +312,77 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
 
 }  // namespace
 
+CohomologyGeneratorCache::CohomologyGeneratorCache() = default;
+
+CohomologyGeneratorCache::~CohomologyGeneratorCache() = default;
+
+const mfem::ParGridFunction *CohomologyGeneratorCache::Find(int key,
+                                                            const mfem::ParMesh &mesh) const
+{
+  auto it = entries.find(key);
+  return (it != entries.end() && it->second.mesh == &mesh &&
+          it->second.sequence == mesh.GetSequence())
+             ? it->second.a.get()
+             : nullptr;
+}
+
+void CohomologyGeneratorCache::Store(int key, const mfem::ParGridFunction &a)
+{
+  auto &mesh = *a.ParFESpace()->GetParMesh();
+  const int sdim = mesh.SpaceDimension();
+  auto &entry = entries[key];
+  entry.a.reset();
+  entry.fespace.reset();
+  entry.mesh = &mesh;
+  entry.sequence = mesh.GetSequence();
+  entry.fec = std::make_unique<mfem::L2_FECollection>(1, mesh.Dimension());
+  entry.fespace =
+      std::make_unique<mfem::ParFiniteElementSpace>(&mesh, entry.fec.get(), sdim);
+  entry.a = std::make_unique<mfem::ParGridFunction>(entry.fespace.get());
+  mfem::VectorGridFunctionCoefficient a_coeff(&a);
+  entry.a->ProjectCoefficient(a_coeff);
+}
+
+void CohomologyGeneratorCache::Update(mfem::ParMesh &mesh)
+{
+  // MFEM transfers a space across exactly one mesh modification; conformal meshes rebuild
+  // the exact generator and do not need it.
+  std::erase_if(entries,
+                [&mesh](const auto &kv)
+                {
+                  const auto &entry = kv.second;
+                  return entry.mesh != &mesh || !mesh.Nonconforming() ||
+                         mesh.GetSequence() > entry.sequence + 1;
+                });
+  for (auto &[key, entry] : entries)
+  {
+    if (mesh.GetSequence() == entry.sequence + 1)
+    {
+      entry.fespace->Update();
+      entry.a->Update();
+      entry.sequence = mesh.GetSequence();
+    }
+  }
+}
+
 Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
                                const FiniteElementSpace &nd_fespace,
-                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op)
+                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+                               CohomologyGeneratorCache *cache, int key)
 {
   Vector result;
-  SolveSurfaceCurlProblem(flux_data, mesh, nd_fespace, post_op, result);
+  SolveSurfaceCurlProblem(flux_data, mesh, nd_fespace, post_op, result, cache, key);
   return result;
 }
 
 void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
                              const FiniteElementSpace &nd_fespace,
                              PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                             Vector &result)
+                             Vector &result, CohomologyGeneratorCache *cache, int key)
 {
   // London drive: build a_h directly on the 3D ND space as a curl-free cohomology generator
   // via a topological cut cochain (gauge-invariant; see BuildCutCohomologyGenerator).
-  result = BuildCutCohomologyGenerator(flux_data, nd_fespace.Get(), mesh);
+  result = BuildCutCohomologyGenerator(flux_data, nd_fespace.Get(), mesh, cache, key);
   // Populate the post_op A buffer (used only as scratch downstream).
   auto &A_3d = post_op.GetAGridFunction().Real();
   A_3d.SetFromTrueDofs(result);
