@@ -464,11 +464,12 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe
 )
 
-# Order the shared entities of ParSubMesh groups consistently across ranks, see
-# mfem/mfem branch simlapointe/psubmesh-shared-entity-order. Vendored in the Spack package
-# directory (shared with the Spack build) until it is available from an immutable URL.
-list(APPEND MFEM_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/spack_repo/local/packages/palace/mfem_psubmesh_shared_entity_order.diff"
+# https://github.com/mfem/mfem/pull/5639
+# Consistent order of the shared entities of ParSubMesh groups across ranks.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5639.diff
+  "https://github.com/mfem/mfem/commit/864d476acf25135d2059d3379d208e635823f26c.diff"
+  9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03
 )
 
 include(ExternalProject)
