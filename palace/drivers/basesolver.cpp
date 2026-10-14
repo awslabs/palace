@@ -14,6 +14,7 @@
 #include "models/domainpostoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
+#include "models/superconductorsheetoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
@@ -309,11 +310,20 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      // The two faces of a two-sided superconductor film must stay coincident.
+      const int matched = SuperconductorSheetOperator::MatchTwoSidedRefinement(
+          iodata.boundaries.superconductor, fine_mesh, refinement.max_nc_levels);
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
                  final_elem_count - initial_elem_count, initial_elem_count,
                  final_elem_count);
+      if (matched > 0)
+      {
+        Mpi::Print(" {:d} of them keep the faces of two-sided superconductor films "
+                   "coincident\n",
+                   matched);
+      }
     }
 
     // Optionally rebalance and write the adapted mesh to file.
