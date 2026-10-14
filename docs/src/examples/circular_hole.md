@@ -71,7 +71,9 @@ Whether a film screens perfectly or penetrates is set by how its attribute is de
     when ``d \gtrsim \lambda``; with equal fields on both faces this reduces to a single sheet of
     ``\tfrac{1}{2}\mu_0\lambda\coth(d/2\lambda)``. The single-sheet form above suffices when the film screens on one
     side (e.g. a film over a ground plane); the two-sided form matters for a film with different
-    fields on its two faces, such as a shared ground plane in a multilayer stack.
+    fields on its two faces, such as a shared ground plane in a multilayer stack. A two-sided
+    film needs `"CrackInternalBoundaryElements"` (the default), and adaptive mesh refinement
+    must be nonconformal with triangular film faces, so that the two faces refine alike.
 
 Because a flux loop is enforced through a single scalar fluxoid constraint, **each hole must be
 its own flux loop** (one entry in `"HoleAttributes"`); several holes are modeled as several
