@@ -74,7 +74,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the `FluxLoop` inductance of `Superconductor` films under nonconformal adaptive
     mesh refinement, which could move away from the converged value after a refinement: the
     London drive is now built on the mesh before hanging nodes appear and carried through
-    later refinements, instead of being rebuilt with a spurious curl on the film.
+    later refinements, instead of being rebuilt with a spurious curl on the film. The London
+    magnetostatic preconditioner now also uses auxiliary-space multigrid smoothing by
+    default, cutting PCG iterations several-fold (e.g. 189 → 25 on `narrow_ring`).
+    SchemaVer 2-2-1
     [Issue 993](https://github.com/awslabs/palace/issues/993).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute

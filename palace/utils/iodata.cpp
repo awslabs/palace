@@ -603,8 +603,17 @@ void IoData::CheckConfiguration()
   // rather than stored on LinearSolverData.
   if (solver.linear.mg_smooth_aux < 0)
   {
-    if (problem.type == ProblemType::ELECTROSTATIC ||
-        problem.type == ProblemType::MAGNETOSTATIC)
+    // A London sheet's shifted preconditioner lifts the gradients off the curl-curl kernel,
+    // so they need the distributive relaxation that the pure curl-curl problem does not.
+    const bool london_pc =
+        problem.type == ProblemType::MAGNETOSTATIC && solver.linear.london_pc_shift > 0.0 &&
+        (!boundaries.superconductor.empty() || !boundaries.fluxloop.empty());
+    if (london_pc)
+    {
+      solver.linear.mg_smooth_aux = 1;
+    }
+    else if (problem.type == ProblemType::ELECTROSTATIC ||
+             problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Disable auxiliary space smoothing using distributive relaxation by default for
       // problems which don't need it.
