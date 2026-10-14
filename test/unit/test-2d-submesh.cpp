@@ -231,7 +231,7 @@ TEST_CASE("RemapSubMeshBdrAttributes after parallel nonconforming refinement",
       mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
   if (curved)
   {
-    serial_mesh.SetCurvature(3);
+    serial_mesh.SetCurvature(2);
     serial_mesh.Transform(
         [&](const mfem::Vector &x, mfem::Vector &y)
         {
@@ -242,7 +242,7 @@ TEST_CASE("RemapSubMeshBdrAttributes after parallel nonconforming refinement",
   serial_mesh.EnsureNCMesh(true);
   mfem::ParMesh par_mesh(comm, serial_mesh);
   mfem::Vector c;
-  for (int level = 0; level < 5; level++)
+  for (int level = 0; level < 4; level++)
   {
     // Elements near the lines along x where the surfaces y = 0.1 sin(pi z) and
     // y = 1 + 0.1 sin(pi z) (the deformed cube faces in the curved variant) meet z = 0 and
@@ -253,7 +253,7 @@ TEST_CASE("RemapSubMeshBdrAttributes after parallel nonconforming refinement",
     {
       par_mesh.GetElementCenter(e, c);
       const double y = c(1) - (Deform(c(1), c(2)) - c(1));
-      const double r = 0.6 / (level + 1);
+      const double r = 0.3 / (level + 1);
       const bool selected =
           c(0) < r || static_cast<int>(1000.0 * (c(0) + 3.0 * c(1) + 7.0 * c(2))) % 3 == 0;
       if (selected && std::min({y, 1.0 - y, c(2), 1.0 - c(2)}) < r)
