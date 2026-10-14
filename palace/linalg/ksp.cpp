@@ -14,6 +14,7 @@
 #include "linalg/strumpack.hpp"
 #include "linalg/strumpackcomplex.hpp"
 #include "linalg/superlu.hpp"
+#include "linalg/superlucomplex.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -149,10 +150,10 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
   if (type != LinearSolver::SUPERLU && type != LinearSolver::STRUMPACK &&
       type != LinearSolver::MUMPS && type != LinearSolver::CUDSS)
   {
-#if defined(MFEM_USE_STRUMPACK)
-    type = LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_SUPERLU)
+#if defined(MFEM_USE_SUPERLU)
     type = LinearSolver::SUPERLU;
+#elif defined(MFEM_USE_STRUMPACK)
+    type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
     type = LinearSolver::MUMPS;
 #else
@@ -171,9 +172,17 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
   {
     case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
-      pc = MakeWrapperSolver<ComplexOperator, SuperLUSolver>(
-          linear_pml, comm, linear.sym_factorization, linear.superlu_3d,
-          linear.reorder_reuse, print, true);
+      if (!linear.superlu_3d)
+      {
+        pc = std::make_unique<SuperLUComplexSolver>(comm, linear.sym_factorization,
+                                                    linear.reorder_reuse, print, true);
+      }
+      else
+      {
+        pc = MakeWrapperSolver<ComplexOperator, SuperLUSolver>(
+            linear_pml, comm, linear.sym_factorization, linear.superlu_3d,
+            linear.reorder_reuse, print, true);
+      }
 #endif
       break;
     case LinearSolver::STRUMPACK:
@@ -235,6 +244,18 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        // A complex-valued coarse solve (2D process grid) is factored in complex
+        // arithmetic.
+        if (linear.complex_coarse_solve && !linear.pc_mat_real &&
+            !linear.drop_small_entries && !linear.superlu_3d)
+        {
+          pc = std::make_unique<SuperLUComplexSolver>(comm, linear.sym_factorization,
+                                                      linear.reorder_reuse, print);
+          break;
+        }
+      }
       pc = MakeWrapperSolver<OperType, SuperLUSolver>(
           linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
           print);

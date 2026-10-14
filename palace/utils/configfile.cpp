@@ -1649,11 +1649,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   // Preconditioner-specific options.
   pc_mat_real = linear.value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
-  if (auto it = linear.find("ComplexCoarseSolve"); it != linear.end())
-  {
-    complex_coarse_solve = it->get<bool>();
-    complex_coarse_solve_specified = true;
-  }
+  complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
   pml_subdomain_solver = linear.value("PMLSubdomainSolver", pml_subdomain_solver);
   pml_subdomain_threshold = linear.value("PMLSubdomainThreshold", pml_subdomain_threshold);
