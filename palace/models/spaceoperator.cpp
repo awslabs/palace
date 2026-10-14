@@ -46,7 +46,6 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                solver.linear.type == LinearSolver::BOOMER_AMG),
     complex_coarse_solve(solver.linear.complex_coarse_solve),
     pml_subdomain(solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DIRECT),
-    pml_subdomain_threshold(solver.linear.pml_subdomain_threshold),
     pml_smoother_threshold(solver.linear.pml_smoother_threshold), print_hdr(true),
     print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -2101,8 +2100,7 @@ void SpaceOperator::SelectPMLTrueDofs(std::complex<double> omega)
   // elements: the Jacobi-scaled operator has eigenvalues near the imaginary axis and in the
   // left half-plane, which the Chebyshev polynomials amplify. The DOFs of these elements
   // are instead only updated by the coarse-level correction and the PML subdomain
-  // correction, whose subdomain contains the smoother masks with a margin of moderately
-  // stretched elements.
+  // correction, whose subdomain (all of the PML elements) contains the smoother masks.
   if (pml_dofs_selected)
   {
     return;
@@ -2112,13 +2110,11 @@ void SpaceOperator::SelectPMLTrueDofs(std::complex<double> omega)
   const auto n_levels = nd_fespaces.GetNumLevels();
   const auto &fespace = nd_fespaces.GetFinestFESpace();
   const auto m = GetPMLStretchMagnitudes(fespace.GetMesh(), mat_op, omega);
-  pml_subdomain_tdofs = GetPMLTrueDofs(fespace, m, pml_subdomain_threshold);
+  pml_subdomain_tdofs = GetPMLTrueDofs(fespace, m, 0.0);
   pml_smoother_masks.clear();
   pml_aux_smoother_masks.clear();
   if (pml_smoother_threshold > 0.0)
   {
-    MFEM_VERIFY(pml_smoother_threshold >= pml_subdomain_threshold,
-                "The PML smoother threshold must be at least the PML subdomain threshold!");
     pml_smoother_masks.resize(n_levels);
     pml_aux_smoother_masks.resize(n_levels);
     for (std::size_t l = 1; l < n_levels; l++)

@@ -2482,7 +2482,7 @@
         },
         {
           "const": "Direct",
-          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`, and in double precision unless `\"PMLSubdomainSinglePrecision\"`), in complex arithmetic with STRUMPACK and SuperLU_DIST (without `\"SuperLU3DCommunicator\"`), otherwise as the equivalent real-valued system of twice the size."
+          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`, and in double precision unless `\"PMLSubdomainSinglePrecision\"`), in complex arithmetic with SuperLU_DIST (without `\"SuperLU3DCommunicator\"`), STRUMPACK, and MUMPS, otherwise as the equivalent real-valued system of twice the size."
         }
       ]
     },
@@ -3214,7 +3214,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation. With `\"Type\": \"STRUMPACK\"` (without compression) or `\"SuperLU\"` (without `\"SuperLU3DCommunicator\"`), the complex-valued matrix is factored in complex arithmetic, otherwise as the equivalent real-valued system of twice the size.",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation. With `\"Type\": \"SuperLU\"` (without `\"SuperLU3DCommunicator\"`), `\"STRUMPACK\"` (without compression), or `\"MUMPS\"`, the complex-valued matrix is factored in complex arithmetic, otherwise as the equivalent real-valued system of twice the size.",
           "default": false
         },
         "DropSmallEntries": {
@@ -3224,18 +3224,12 @@
         },
         "PMLSubdomainSolver": {
           "$ref": "#/$defs/PMLSubdomainSolver",
-          "description": "For frequency domain problems with PML regions, solver for a subdomain correction on the unknowns of the strongly stretched PML elements (see `\"PMLSubdomainThreshold\"`, except those shared with other elements), applied once per cycle at the finest level of the geometric multigrid preconditioner. The polynomial multigrid smoothers do not converge on the PML equations for strongly absorbing layers (when the PML conductivity σ exceeds about ωε₀), so that multigrid preconditioning without this correction can require many iterations. Only used when geometric multigrid is enabled, and by default whenever the problem has PML regions.",
-          "x-palace-advanced": true
-        },
-        "PMLSubdomainThreshold": {
-          "type": "number",
-          "description": "Threshold of the PML stretch magnitude max |s| (the largest magnitude of the stretch factors at the vertices of an element) above which the unknowns of a PML element are in the PML subdomain of `\"PMLSubdomainSolver\"`. A value of 1 or less selects all of the PML elements. A larger value reduces the cost of the factorization of the PML subdomain matrix, but can increase the number of iterations of the linear solver.",
-          "default": 1.0,
+          "description": "For frequency domain problems with PML regions, solver for a subdomain correction on the unknowns of the PML elements (except those shared with the physical region), applied once per cycle at the finest level of the geometric multigrid preconditioner. The polynomial multigrid smoothers do not converge on the PML equations for strongly absorbing layers (when the PML conductivity σ exceeds about ωε₀), so that multigrid preconditioning without this correction can require many iterations. A direct solve on the PML subdomain is affordable when the PML regions hold a small fraction of the unknowns, and otherwise costs about as much as a direct solve of the whole system (`\"MGMaxLevels\": 1` and `\"ComplexCoarseSolve\": true`). Only used when geometric multigrid is enabled, and by default whenever the problem has PML regions.",
           "x-palace-advanced": true
         },
         "PMLSmootherThreshold": {
           "type": "number",
-          "description": "Threshold of the PML stretch magnitude max |s| above which the multigrid smoothers do not update the unknowns of a PML element, which are then only updated by the coarse-level correction and by the PML subdomain correction: in strongly stretched elements, the polynomial smoothers amplify the error instead of reducing it. Only used with the PML subdomain correction (see `\"PMLSubdomainSolver\"`), and must be at least `\"PMLSubdomainThreshold\"`. A value of 0 disables it.",
+          "description": "Threshold of the PML stretch magnitude max |s| (the largest magnitude of the stretch factors at the vertices of an element) above which the multigrid smoothers do not update the unknowns of a PML element (except those shared with other elements), which are then only updated by the coarse-level correction and by the PML subdomain correction: in strongly stretched elements, the polynomial smoothers amplify the error instead of reducing it. Only used with the PML subdomain correction (see `\"PMLSubdomainSolver\"`). A value of 0 disables it.",
           "default": 2.0,
           "x-palace-advanced": true
         },
