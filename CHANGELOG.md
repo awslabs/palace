@@ -61,8 +61,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mesh refinement on many processes. MFEM's `ParSubMesh` listed the shared entities of
     its communication groups in an order which depended on the local numbering of the
     groups of the parent mesh, which differs between processes for meshes distributed with
-    `mfem::MeshPartitioner` or with nonconforming refinement. This patches MFEM to order
-    them consistently.
+    `mfem::MeshPartitioner` or with nonconforming refinement. This patches MFEM with
+    [mfem/mfem#5639](https://github.com/mfem/mfem/pull/5639) to order them consistently.
     [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
   - Fixed wave port boundary conditions after nonconforming adaptive mesh refinement in
     parallel: the boundary edges of the port cross-section could miss the attribute of the
