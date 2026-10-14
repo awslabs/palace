@@ -2401,6 +2401,20 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
   return best;
 }
 
+nlohmann::json SignatureWithSupportInFrame(const std::vector<SignaturePortion> &portions,
+                                           const std::vector<SignatureVertex> &vertices,
+                                           const Point3D &origin, const Point3D &x,
+                                           const Point3D &y, double radius,
+                                           const FrameSupport &support)
+{
+  nlohmann::json serialized = SerializeInFrame(portions, vertices, origin, x, y, radius);
+  serialized["Box"] = BoxJson(support.box);
+  std::map<int, int> labels = PortionLabelMap(portions, origin, x, y, radius);
+  serialized["Context"] =
+      SerializeContextInFrame(support.context, origin, x, y, radius, labels);
+  return serialized;
+}
+
 std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
     const std::vector<SignaturePortion> &portions,
     const std::vector<SignatureVertex> &vertices, const Point3D &process_normal,
@@ -2434,12 +2448,8 @@ std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
       }
       // The dump of a complete JSON object starts with its "Box" entry (keys sorted), so a
       // frame whose box dump exceeds the best frame's cannot serialise below it.
-      nlohmann::json serialized =
-          SerializeInFrame(portions, vertices, origin, x, y, radius);
-      serialized["Box"] = BoxJson(frame_support->box);
-      std::map<int, int> labels = PortionLabelMap(portions, origin, x, y, radius);
-      serialized["Context"] =
-          SerializeContextInFrame(frame_support->context, origin, x, y, radius, labels);
+      nlohmann::json serialized = SignatureWithSupportInFrame(portions, vertices, origin, x,
+                                                              y, radius, *frame_support);
       const std::string key = serialized.dump();
       if (!have || key < best_key)
       {
@@ -2996,6 +3006,7 @@ public:
     input.vertices = input_.vertices;
     input.log = input_.log;
     input.span_cap_allowances = input_.span_cap_allowances;
+    input.mirror_planes = input_.mirror_planes;
     ValidateSpanCapAllowances(input.span_cap_allowances);
   }
   // The same perimeter identified at another matching radius, silently and without a
@@ -3007,6 +3018,7 @@ public:
     input.radius = radius;
     input.segments = input_.segments;
     input.vertices = input_.vertices;
+    input.mirror_planes = input_.mirror_planes;
   }
 
   IdentificationResult Identify();
@@ -3663,11 +3675,26 @@ private:
   };
   // `span_cap_over_R`: the plan span cap of this cluster (kSupportSpanCapOverRadius, or the
   // resolved per-case allowance of block (b) DESIGN section 3 (a) / A4).
+  // `face_crossing_tilt_rule`: whether T4, the face-crossing tilt rule (decisions 762 /
+  // 766 / 772), reads the T2-clean box. OFF in the candidate-frame loop that chooses the
+  // frame of record (the frame is chosen exactly as without the rule: the rule changes a
+  // frame's box, and the frame minimisation compares the keys' text, so a widened
+  // candidate could otherwise win over the frame of record and rename a built key); ON for
+  // the one call in the chosen frame that produces the record and the key, where the
+  // coupon generator reads its box.
   ClusterSupportResult ClusterSupport(std::size_t c,
                                       const std::vector<SignaturePortion> &portions,
                                       const std::vector<SignatureVertex> &vertices,
                                       const Point3D &origin, const Point3D &x,
-                                      const Point3D &y, double span_cap_over_R) const;
+                                      const Point3D &y, double span_cap_over_R,
+                                      bool face_crossing_tilt_rule) const;
+  // Mirror band (decision 732, F-M1; built by BuildMirrorImageIndex): every non-empty
+  // subset of the mirroring planes of input.mirror_planes (ascending members, the
+  // extension's own subset order) and, per REAL segment, the subsets it was imaged through
+  // (the image segments' mirror_planes, read back from image_of: exact, whatever the band).
+  std::vector<std::vector<int>> mirror_subsets;
+  std::vector<std::vector<std::vector<int>>> image_subsets_of_segment;
+  void BuildMirrorImageIndex();
   // Sites (vertex features) incident to every run, for the context's vertex census.
   std::multimap<std::size_t, std::size_t> sites_by_run;
   // Every cluster's claimed intervals per run (interval, cluster): the context pieces of a
@@ -10449,7 +10476,7 @@ Identifier::ClusterSupportResult
 Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &portions,
                            const std::vector<SignatureVertex> &vertices,
                            const Point3D &origin, const Point3D &x, const Point3D &y,
-                           double span_cap_over_R) const
+                           double span_cap_over_R, bool face_crossing_tilt_rule) const
 {
   using Point2 = std::array<double, 2>;
   ClusterSupportResult out;
@@ -10483,6 +10510,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     return norm > 0.0 ? Point2{v[0] / norm, v[1] / norm} : Point2{0.0, 0.0};
   };
   auto Q = [](double v) { return RoundTo(v, kSignatureLengthQuantumOverRadius); };
+  // Context pieces join the claims (and each other) within the signature tolerance.
+  const double join = kSignatureParameterToleranceOverRadius * R;
 
   // Rule B2: the claims-derived box from the claims serialised in this frame.
   const nlohmann::json claims = SerializeInFrame(portions, vertices, origin, x, y, R);
@@ -10498,6 +10527,24 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   for (auto &[r, intervals] : claimed_by_run)
   {
     intervals = MergeIntervals(std::move(intervals), Tol());
+  }
+  // Mirror band (decision 732, F-M1): the extension's face tolerance (a plane acts on a
+  // segment with an end within it of the plane's faces) and the band-cut vertices on the
+  // cluster's plane - the image chain ends where the band ends, which the reflected real
+  // plan continues.
+  const double mirror_tolerance = kSignatureParameterToleranceOverRadius * R;
+  const Point3D cluster_normal = Normalize(Cross(x, y));
+  std::vector<Point3D> band_cuts;
+  if (!mirror_subsets.empty())
+  {
+    for (const auto &vertex : input.vertices)
+    {
+      if (vertex.image_band_cut &&
+          std::abs(Dot(Sub(vertex.coordinate, origin), cluster_normal)) <= 2.0 * Tol())
+      {
+        band_cuts.push_back(vertex.coordinate);
+      }
+    }
   }
 
   // Face f: 0 = x0, 1 = y0, 2 = x1, 3 = y1; its line coordinate, axis (0 = x, 1 = y) and
@@ -10527,10 +10574,69 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     std::size_t segment = kExcludedRun;  // the excluded segment of a kExcludedRun piece
     // The end at s.first / s.second exists only because another cluster's claim cut split
     // the run there (nothing geometric: the device edge continues): exempt from the T2
-    // end tests (R1 final review MINOR-1), still a crossing when it lies on a face.
+    // end tests (R1 final review MINOR-1), still a crossing when it lies on a face. A
+    // mirror band cut (decision 732, F-M1) is the same kind of end: the image chain stops
+    // where the band ends and the reflected real plan continues it.
     bool cut_a = false, cut_b = false;
+    // Mirror completion (decision 732, F-M1): the piece is the REFLECTION of the run
+    // interval through this mirror plane subset (ascending plane indices; empty for the
+    // plan as given) - the part of the reflected real plan the band did not image, inside
+    // the box: context, never a claim. Its geometry is read through the reflection.
+    std::vector<int> mirror;
     bool Excluded() const { return run == kExcludedRun; }
-    std::pair<std::size_t, std::size_t> Key() const { return {run, segment}; }
+    std::tuple<std::size_t, std::size_t, std::vector<int>> Key() const
+    {
+      return {run, segment, mirror};
+    }
+  };
+  // The reflections through a plane subset in the extension's canonical (ascending) order,
+  // and the inverse composition (descending) that maps the box back onto the real plan.
+  const std::vector<MirrorPlane> &mirror_planes = input.mirror_planes;
+  auto Reflect = [&](const Point3D &p, const std::vector<int> &subset)
+  {
+    Point3D q = p;
+    for (const int k : subset)
+    {
+      q = mirror_planes[static_cast<std::size_t>(k)].Reflect(q);
+    }
+    return q;
+  };
+  auto Unreflect = [&](const Point3D &p, const std::vector<int> &subset)
+  {
+    Point3D q = p;
+    for (auto it = subset.rbegin(); it != subset.rend(); ++it)
+    {
+      q = mirror_planes[static_cast<std::size_t>(*it)].Reflect(q);
+    }
+    return q;
+  };
+  auto ReflectDirection = [&](const Point3D &v, const std::vector<int> &subset)
+  {
+    Point3D w = v;
+    for (const int k : subset)
+    {
+      w = mirror_planes[static_cast<std::size_t>(k)].ReflectDirection(w);
+    }
+    return w;
+  };
+  // A reflected arc keeps its parameterisation (centre, u, v reflected: point(theta) is the
+  // reflected point; the handedness of (u, v) flips with the curve's sense).
+  auto ReflectArc = [&](ArcPiece arc, const std::vector<int> &subset)
+  {
+    arc.center = Reflect(arc.center, subset);
+    arc.u = ReflectDirection(arc.u, subset);
+    arc.v = ReflectDirection(arc.v, subset);
+    return arc;
+  };
+  auto ReflectCurve = [&](CurvePiece curve, const std::vector<int> &subset)
+  {
+    curve.a = Reflect(curve.a, subset);
+    curve.b = Reflect(curve.b, subset);
+    if (curve.arc)
+    {
+      curve.arc = ReflectArc(*curve.arc, subset);
+    }
+    return curve;
   };
   auto SegmentLength = [&](std::size_t i)
   { return Distance(input.segments[i].p0, input.segments[i].p1); };
@@ -10547,7 +10653,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   {
     if (!piece.Excluded())
     {
-      return RunPiece(piece.run, s0, s1);
+      return piece.mirror.empty() ? RunPiece(piece.run, s0, s1)
+                                  : ReflectCurve(RunPiece(piece.run, s0, s1), piece.mirror);
     }
     CurvePiece curve;
     curve.a = SegmentAt(piece.segment, s0);
@@ -10604,8 +10711,13 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   };
   auto PieceGapDirection = [&](const Piece &piece) -> Point3D
   {
-    return piece.Excluded() ? ExcludedGapDirection(piece.segment)
-                            : runs[piece.run].gap_direction;
+    if (piece.Excluded())
+    {
+      return ExcludedGapDirection(piece.segment);
+    }
+    return piece.mirror.empty()
+               ? runs[piece.run].gap_direction
+               : ReflectDirection(runs[piece.run].gap_direction, piece.mirror);
   };
   struct ArcLocal
   {
@@ -10689,18 +10801,17 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       }
     }
     const double margin = max_run_sagitta + 2.0 * Tol() + snap * R;
-    for (const std::size_t r : RunsNear(lo, hi, margin))
+    // The run-parameter intervals of run r inside the clip, the run read through the
+    // reflection `mirror` (empty: the run as it is).
+    auto ClipRunTo = [&](std::size_t r, const std::vector<int> &mirror)
     {
-      if (runs[r].excluded || run_plane[r] != plane || runs[r].length <= 0.0)
-      {
-        continue;
-      }
       std::vector<Interval> inside;
       const double length = runs[r].length;
       if (!run_arcs[r])
       {
         // Liang-Barsky on the chord in the frame.
-        const Point2 p = Local(runs[r].start), q = Local(runs[r].end);
+        const Point2 p = Local(Reflect(runs[r].start, mirror)),
+                     q = Local(Reflect(runs[r].end, mirror));
         double t0 = 0.0, t1 = 1.0;
         bool empty = false;
         for (int axis = 0; axis < 2 && !empty; axis++)
@@ -10732,7 +10843,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       }
       else
       {
-        const ArcPiece &arc = run_arcs[r]->piece;
+        const ArcPiece arc =
+            mirror.empty() ? run_arcs[r]->piece : ReflectArc(run_arcs[r]->piece, mirror);
         const ArcLocal a = ArcInFrame(arc);
         const double ta = std::min(arc.theta0, arc.theta1),
                      tb = std::max(arc.theta0, arc.theta1);
@@ -10791,6 +10903,15 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         }
         inside = MergeIntervals(std::move(inside), Tol());
       }
+      return inside;
+    };
+    for (const std::size_t r : RunsNear(lo, hi, margin))
+    {
+      if (runs[r].excluded || run_plane[r] != plane || runs[r].length <= 0.0)
+      {
+        continue;
+      }
+      std::vector<Interval> inside = ClipRunTo(r, {});
       if (inside.empty())
       {
         continue;
@@ -10873,6 +10994,119 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         pieces.push_back(piece);
       }
     }
+    // Mirror completion (decision 732, F-M1; DIAGNOSIS section 4): on the image side of
+    // every mirroring plane subset the plan inside the clip is the REFLECTED real plan. The
+    // band's image segments are runs of the extended input and were clipped above; the
+    // real segments the band did not image through this subset (no image segment with
+    // image_of = s and mirror_planes = subset; the planes acting at an end of the segment
+    // exactly as the extension requires) are reflected here and clipped. Rule B1 then holds
+    // on the image side too: nothing inside the box is omitted. Never on a claim (claims
+    // lie on segments of the extended input), never split by claim cuts.
+    for (const auto &subset : mirror_subsets)
+    {
+      Point3D rlo{}, rhi{};
+      bool rfirst = true;
+      for (const double bx : {clip[0], clip[2]})
+      {
+        for (const double by : {clip[1], clip[3]})
+        {
+          const Point3D corner =
+              Unreflect(Add(origin, Add(Scale(bx * R, x), Scale(by * R, y))), subset);
+          if (rfirst)
+          {
+            rlo = rhi = corner;
+            rfirst = false;
+            continue;
+          }
+          for (int d = 0; d < 3; d++)
+          {
+            rlo[d] = std::min(rlo[d], corner[d]);
+            rhi[d] = std::max(rhi[d], corner[d]);
+          }
+        }
+      }
+      for (const std::size_t r : RunsNear(rlo, rhi, margin))
+      {
+        if (runs[r].excluded || run_plane[r] != plane || runs[r].length <= 0.0)
+        {
+          continue;
+        }
+        // The run intervals of its REAL segments not imaged through this subset where
+        // every plane of the subset acts (NearFaces at an end, the extension's rule).
+        std::vector<Interval> reflectable;
+        for (const auto &rs : runs[r].segments)
+        {
+          const auto &segment = input.segments[rs.segment];
+          if (segment.image_of >= 0)
+          {
+            continue;
+          }
+          const auto &imaged = image_subsets_of_segment[rs.segment];
+          if (std::find(imaged.begin(), imaged.end(), subset) != imaged.end())
+          {
+            continue;
+          }
+          const bool acting =
+              std::all_of(subset.begin(), subset.end(),
+                          [&](int k)
+                          {
+                            const auto &mirror_plane =
+                                mirror_planes[static_cast<std::size_t>(k)];
+                            return mirror_plane.NearFaces(segment.p0, mirror_tolerance) ||
+                                   mirror_plane.NearFaces(segment.p1, mirror_tolerance);
+                          });
+          if (!acting)
+          {
+            continue;
+          }
+          reflectable.emplace_back(std::min(rs.t0, rs.t1), std::max(rs.t0, rs.t1));
+        }
+        if (reflectable.empty())
+        {
+          continue;
+        }
+        reflectable = MergeIntervals(std::move(reflectable), Tol());
+        const std::vector<Interval> inside =
+            IntersectIntervals(ClipRunTo(r, subset), reflectable, Tol());
+        for (const auto &interval : inside)
+        {
+          Piece piece{r, interval, std::nullopt};
+          piece.mirror = subset;
+          if (IsSliverLength(PieceLength(piece)))
+          {
+            slivers_dropped++;
+            continue;
+          }
+          pieces.push_back(piece);
+        }
+      }
+    }
+    // A piece end at a mirror band cut (an image chain's end where the band ends, inside
+    // the clip or in the shell) is a continuing-edge split, not a device vertex: the
+    // reflected real plan continues the edge there (cut_a / cut_b, the claim-cut
+    // exemption). Read on every piece kind so that the two-sided rule chains the halves.
+    if (!band_cuts.empty())
+    {
+      for (Piece &piece : pieces)
+      {
+        if (piece.Excluded())
+        {
+          continue;
+        }
+        const CurvePiece geometry = PieceCurve(piece, piece.s.first, piece.s.second);
+        for (const bool at_a : {true, false})
+        {
+          const Point3D &e = at_a ? geometry.a : geometry.b;
+          const bool at_cut =
+              std::any_of(band_cuts.begin(), band_cuts.end(),
+                          [&](const Point3D &cut) { return Distance(cut, e) <= join; });
+          if (at_cut)
+          {
+            (at_a ? piece.cut_a : piece.cut_b) = true;
+          }
+        }
+      }
+    }
     // The excluded perimeter segments on the plane inside the clip (rule B1): straight,
     // clipped by Liang-Barsky, never on the cluster's claims (claims are feature runs).
     const Point3D plane_normal = Normalize(Cross(x, y));
@@ -10936,6 +11170,125 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   };
   auto ClipPlan = [&]() { return ClipPlanTo(box, true); };
 
+  // Unit tangent of a piece's geometry at an end, in the frame, in the direction of travel
+  // a -> b (an arc's fitted tangent; a straight piece's chord).
+  auto PieceEndTangent = [&](const CurvePiece &geometry, bool at_a) -> Point2
+  {
+    if (geometry.arc)
+    {
+      const double theta = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
+      return LocalDirection(geometry.arc->Tangent(theta));
+    }
+    const Point2 a = Local(geometry.a), b = Local(geometry.b);
+    const Point2 d = {b[0] - a[0], b[1] - a[1]};
+    const double norm = std::hypot(d[0], d[1]);
+    return norm > 0.0 ? Point2{d[0] / norm, d[1] / norm} : Point2{0.0, 0.0};
+  };
+
+  // T4, the face-crossing tilt rule (decisions 762 / 766, S7 R2; the header's contract):
+  // the tilt of an on-face piece end against the face's normal, and the SHORTFALL its own
+  // continuation (its line, or its fitted circle) would need the face to move outward by so
+  // that it leaves through the adjacent face its outward tangent heads to instead: the
+  // largest outward excursion along that path (a line: at the adjacent face line; a circle:
+  // there, or its outward extreme when the circle turns back before reaching it). Zero
+  // where the continuation never leaves the face line (an edge along the face) or the end
+  // already sits on the adjacent face (a box corner).
+  struct FaceCrossingTiltReading
+  {
+    double theta_degrees = 0.0;
+    double shortfall_over_R = 0.0;
+  };
+  auto ReadFaceCrossingTilt = [&](const CurvePiece &geometry, bool at_a, int f,
+                                  const Point2 &e) -> FaceCrossingTiltReading
+  {
+    const int axis = FaceAxis(f), other = 1 - axis;
+    const double sigma = f < 2 ? -1.0 : 1.0;  // the face's outward sense along its axis
+    const double line = FaceLine(f);
+    const Point2 travel = PieceEndTangent(geometry, at_a);
+    FaceCrossingTiltReading reading;
+    reading.theta_degrees = std::acos(std::min(std::abs(travel[axis]), 1.0)) * 180.0 / pi;
+    // The outward direction of the continuation: against the travel at the start, along
+    // it at the end.
+    const Point2 d = at_a ? Point2{-travel[0], -travel[1]} : travel;
+    if (sigma * d[axis] <= 1.0e-12 || std::abs(d[other]) <= 1.0e-12)
+    {
+      return reading;  // along the face (no outward excursion), or straight out of it
+    }
+    const double adjacent = d[other] > 0.0 ? box[static_cast<std::size_t>(other + 2)]
+                                           : box[static_cast<std::size_t>(other)];
+    if (AtMostSnap(std::abs(e[other] - adjacent)))
+    {
+      return reading;  // on the adjacent face already
+    }
+    if (!geometry.arc)
+    {
+      const double t_hit = std::max((adjacent - e[other]) / d[other], 0.0);
+      reading.shortfall_over_R = t_hit * sigma * d[axis];
+      return reading;
+    }
+    // The circle from the end in the outward angular sense: coordinate k reads
+    // c_k + r A_k cos(theta - phi_k); its outward extreme along the face axis, its first
+    // hit of the adjacent face line and its return to the crossed face line (the other
+    // root of that line; the end itself is the nearer root).
+    const ArcLocal arc = ArcInFrame(*geometry.arc);
+    const double two_pi = 2.0 * pi;
+    const double omega =
+        (geometry.arc->theta1 >= geometry.arc->theta0 ? 1.0 : -1.0) * (at_a ? -1.0 : 1.0);
+    const double theta_e = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
+    auto Amplitude = [&](int k) { return k == 0 ? arc.amplitude_x : arc.amplitude_y; };
+    auto Phase = [&](int k) { return k == 0 ? arc.phi_x : arc.phi_y; };
+    auto Coordinate = [&](int k, double theta)
+    { return arc.center[k] + arc.radius * Amplitude(k) * std::cos(theta - Phase(k)); };
+    auto Advance = [&](double theta)  // outward angular distance from the end, [0, 2 pi)
+    {
+      double delta = std::fmod(omega * (theta - theta_e), two_pi);
+      return delta < 0.0 ? delta + two_pi : delta;
+    };
+    auto Roots = [&](int k, double value) -> std::vector<double>
+    {
+      if (arc.radius * Amplitude(k) <= 0.0)
+      {
+        return {};
+      }
+      const double cosine = (value - arc.center[k]) / (arc.radius * Amplitude(k));
+      if (std::abs(cosine) > 1.0 + 1.0e-12)
+      {
+        return {};
+      }
+      const double delta = std::acos(std::clamp(cosine, -1.0, 1.0));
+      return {Phase(k) + delta, Phase(k) - delta};
+    };
+    double advance_end = two_pi;
+    for (const double root : Roots(other, adjacent))
+    {
+      advance_end = std::min(advance_end, Advance(root));
+    }
+    {
+      // The return to the crossed face line: the root farther from the end in angle.
+      const std::vector<double> roots = Roots(axis, line);
+      if (roots.size() == 2)
+      {
+        auto Apart = [&](double theta)
+        {
+          const double delta = std::abs(std::fmod(theta - theta_e, two_pi));
+          return std::min(delta, two_pi - delta);
+        };
+        const double far = Apart(roots[0]) >= Apart(roots[1]) ? roots[0] : roots[1];
+        if (Apart(far) > 1.0e-9)
+        {
+          advance_end = std::min(advance_end, Advance(far));
+        }
+      }
+    }
+    const double extreme_theta = sigma > 0.0 ? Phase(axis) : Phase(axis) + pi;
+    const double excursion =
+        Advance(extreme_theta) < advance_end
+            ? sigma * (arc.center[axis] - line) + arc.radius * Amplitude(axis)
+            : sigma * (Coordinate(axis, theta_e + omega * advance_end) - line);
+    reading.shortfall_over_R = std::max(excursion, 0.0);
+    return reading;
+  };
+
   // T2 on the current box and pieces: the failing faces and the record of the pass.
   struct FaceCheck
   {
@@ -10991,16 +11344,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       }
       // Tangent (direction of travel a -> b) and gap direction at an end.
       auto EndTangent = [&](bool at_a) -> Point2
-      {
-        if (geometry.arc)
-        {
-          const double theta = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
-          return LocalDirection(geometry.arc->Tangent(theta));
-        }
-        const Point2 d = {b[0] - a[0], b[1] - a[1]};
-        const double norm = std::hypot(d[0], d[1]);
-        return norm > 0.0 ? Point2{d[0] / norm, d[1] / norm} : Point2{0.0, 0.0};
-      };
+      { return PieceEndTangent(geometry, at_a); };
       auto EndGap = [&](bool at_a) -> Point2
       {
         if (geometry.arc)
@@ -11126,7 +11470,9 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     // representable on it: the face fails and grows over it (T3). The exterior tail of a
     // face crossing (from the face to the shell boundary) is the crossing itself.
     {
-      std::map<std::pair<std::size_t, std::size_t>, std::vector<Interval>> inside_by_run;
+      std::map<std::tuple<std::size_t, std::size_t, std::vector<int>>,
+               std::vector<Interval>>
+          inside_by_run;
       for (const Piece &piece : pieces)
       {
         inside_by_run[piece.Key()].push_back(piece.s);
@@ -11150,6 +11496,17 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         }
         return false;
       };
+      // The exterior parts; a part end at a mirror band cut (cut_a / cut_b of the shell
+      // piece, decision 732: an image chain's end the reflected real plan continues) is no
+      // end of the device edge, so the parts meeting at a band cut are read as ONE edge
+      // (its free ends classify it); a part without such an end is read alone, as before.
+      struct ExteriorPart
+      {
+        Point2 a, b, m;
+        bool cut_a, cut_b;
+        std::vector<int> beyond;
+      };
+      std::vector<ExteriorPart> parts;
       for (const Piece &piece : shell)
       {
         std::vector<Interval> exterior = {piece.s};
@@ -11186,10 +11543,83 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
           {
             continue;
           }
-          bool interior_end = false, box_end = false;
-          double vertex_distance = std::numeric_limits<double>::infinity();
-          for (const Point2 &e : {a, b})
+          parts.push_back(
+              {a, b, m, piece.cut_a && std::abs(interval.first - piece.s.first) <= Tol(),
+               piece.cut_b && std::abs(interval.second - piece.s.second) <= Tol(), beyond});
+        }
+      }
+      // Union-find over the parts whose band-cut ends coincide (frame units of R).
+      std::vector<std::size_t> group(parts.size());
+      std::iota(group.begin(), group.end(), std::size_t{0});
+      auto Root = [&](std::size_t i)
+      {
+        while (group[i] != i)
+        {
+          i = group[i] = group[group[i]];
+        }
+        return i;
+      };
+      const double join_over_R = join / R;
+      for (std::size_t i = 0; i < parts.size(); i++)
+      {
+        for (const bool at_a : {true, false})
+        {
+          if (!(at_a ? parts[i].cut_a : parts[i].cut_b))
           {
+            continue;
+          }
+          const Point2 &e = at_a ? parts[i].a : parts[i].b;
+          for (std::size_t j = i + 1; j < parts.size(); j++)
+          {
+            for (const bool other_a : {true, false})
+            {
+              if (!(other_a ? parts[j].cut_a : parts[j].cut_b))
+              {
+                continue;
+              }
+              const Point2 &o = other_a ? parts[j].a : parts[j].b;
+              if (std::hypot(e[0] - o[0], e[1] - o[1]) <= join_over_R)
+              {
+                group[Root(j)] = Root(i);
+              }
+            }
+          }
+        }
+      }
+      std::vector<bool> read(parts.size(), false);
+      for (std::size_t i = 0; i < parts.size(); i++)
+      {
+        const std::size_t root = Root(i);
+        if (read[root])
+        {
+          continue;
+        }
+        read[root] = true;
+        std::vector<int> beyond;
+        bool interior_end = false, box_end = false;
+        double vertex_distance = std::numeric_limits<double>::infinity();
+        double edge_distance = std::numeric_limits<double>::infinity();
+        for (std::size_t j = i; j < parts.size(); j++)
+        {
+          if (Root(j) != root)
+          {
+            continue;
+          }
+          const ExteriorPart &part = parts[j];
+          for (const int f : part.beyond)
+          {
+            if (std::find(beyond.begin(), beyond.end(), f) == beyond.end())
+            {
+              beyond.push_back(f);
+            }
+          }
+          for (const bool at_a : {true, false})
+          {
+            if (at_a ? part.cut_a : part.cut_b)
+            {
+              continue;  // a band cut: the edge continues into the next part
+            }
+            const Point2 &e = at_a ? part.a : part.b;
             if (OnBoundary(e, box))
             {
               box_end = true;
@@ -11197,41 +11627,41 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
             else if (!OnBoundary(e, dilated))
             {
               interior_end = true;
-              for (const int f : beyond)
+              for (const int f : part.beyond)
               {
                 vertex_distance =
                     std::min(vertex_distance, std::abs(e[FaceAxis(f)] - FaceLine(f)));
               }
             }
           }
-          if (interior_end)
+          for (const int f : part.beyond)
           {
-            Clearance(vertex_distance);
-            check.exterior_vertices++;
-            for (const int f : beyond)
+            for (const Point2 &e : {part.a, part.b, part.m})
             {
-              Fail(f, "a device vertex lies " + std::to_string(vertex_distance) +
-                          " R outside face " + std::to_string(f));
+              edge_distance =
+                  std::min(edge_distance, std::abs(e[FaceAxis(f)] - FaceLine(f)));
             }
           }
-          else if (!box_end)
+        }
+        std::sort(beyond.begin(), beyond.end());
+        if (interior_end)
+        {
+          Clearance(vertex_distance);
+          check.exterior_vertices++;
+          for (const int f : beyond)
           {
-            double edge_distance = std::numeric_limits<double>::infinity();
-            for (const int f : beyond)
-            {
-              for (const Point2 &e : {a, b, m})
-              {
-                edge_distance =
-                    std::min(edge_distance, std::abs(e[FaceAxis(f)] - FaceLine(f)));
-              }
-            }
-            Clearance(edge_distance);
-            check.exterior_edges++;
-            for (const int f : beyond)
-            {
-              Fail(f, "a device edge runs " + std::to_string(edge_distance) +
-                          " R outside face " + std::to_string(f) + " without crossing it");
-            }
+            Fail(f, "a device vertex lies " + std::to_string(vertex_distance) +
+                        " R outside face " + std::to_string(f));
+          }
+        }
+        else if (!box_end)
+        {
+          Clearance(edge_distance);
+          check.exterior_edges++;
+          for (const int f : beyond)
+          {
+            Fail(f, "a device edge runs " + std::to_string(edge_distance) +
+                        " R outside face " + std::to_string(f) + " without crossing it");
           }
         }
       }
@@ -11278,6 +11708,9 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   std::vector<Piece> pieces;
   FaceCheck check;
   std::optional<std::string> unboxable, unboxable_reason;
+  // T4 (decisions 762 / 766): the widenings of the face-crossing tilt rule, one entry per
+  // firing end of every T2-clean box it read (empty on the records the rule leaves alone).
+  nlohmann::json tilt_widenings = nlohmann::json::array();
   for (;;)
   {
     pieces = ClipPlan();
@@ -11299,9 +11732,154 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     total_band_hits += check.band_hits;
     total_exterior_vertices += check.exterior_vertices;
     total_exterior_edges += check.exterior_edges;
-    if (std::none_of(check.failing.begin(), check.failing.end(), [](bool b) { return b; }))
+    // The fail-closed guard of the mirror completion (decision 732, F-M1 item 4): every
+    // band cut strictly inside the box (an image chain's end where the band ends; not on a
+    // face, where it is a crossing) must be continued by a reflected piece. Where none is
+    // (the plane does not act on the real segment beyond the band, or that run is
+    // excluded) the plan inside the box would be incomplete: Unboxable BY NAME, never a
+    // Chain: true piece with a free end inside the box.
+    for (const Point3D &cut : band_cuts)
+    {
+      const Point2 p = Local(cut);
+      if (!Inside(p, -snap - half_quantum))
+      {
+        continue;  // outside the box, or on a face within the snap
+      }
+      const bool continued = std::any_of(
+          pieces.begin(), pieces.end(),
+          [&](const Piece &piece)
+          {
+            if (piece.mirror.empty() || piece.Excluded())
+            {
+              return false;
+            }
+            const CurvePiece geometry = PieceCurve(piece, piece.s.first, piece.s.second);
+            return Distance(geometry.a, cut) <= join || Distance(geometry.b, cut) <= join;
+          });
+      if (!continued)
+      {
+        std::vector<int> cut_planes;
+        for (const auto &vertex : input.vertices)
+        {
+          if (vertex.image_band_cut && vertex.coordinate == cut)
+          {
+            for (const std::size_t i : vertex.segments)
+            {
+              for (const int k : input.segments[i].mirror_planes)
+              {
+                if (std::find(cut_planes.begin(), cut_planes.end(), k) == cut_planes.end())
+                {
+                  cut_planes.push_back(k);
+                }
+              }
+            }
+          }
+        }
+        std::sort(cut_planes.begin(), cut_planes.end());
+        std::ostringstream what;
+        what << "the support box exceeds the mirror band on the image side where plane";
+        for (std::size_t i = 0; i < cut_planes.size(); i++)
+        {
+          what << (i == 0 ? " " : ", ") << cut_planes[i];
+        }
+        what << (cut_planes.size() == 1 ? " does" : "s do")
+             << " not act: the image chain's band cut at (" << Q(p[0]) << ", " << Q(p[1])
+             << ") R has no reflected continuation";
+        unboxable = what.str();
+        unboxable_reason = "MirrorBandCutUncontinued";
+        break;
+      }
+    }
+    if (unboxable)
     {
       break;
+    }
+    if (std::none_of(check.failing.begin(), check.failing.end(), [](bool b) { return b; }))
+    {
+      if (!face_crossing_tilt_rule)
+      {
+        break;  // the frame-choice reading (decision 772): the clean box as without T4
+      }
+      // T4: the T2-clean box is the one the coupon mesher reads. Every on-face piece end
+      // crossing its face above the tilt bound (strictly, the mesher's relative slack) asks
+      // the face to move outward by its shortfall; the face takes the largest, plus the
+      // padding, and T2 / T3 re-read the widened box.
+      std::array<double, 4> widening{};
+      nlohmann::json firing = nlohmann::json::array();
+      for (const Piece &piece : pieces)
+      {
+        const CurvePiece geometry = PieceCurve(piece, piece.s.first, piece.s.second);
+        const Point2 a = Local(geometry.a), b = Local(geometry.b);
+        for (const bool at_a : {true, false})
+        {
+          const Point2 &e = at_a ? a : b;
+          for (int f = 0; f < 4; f++)
+          {
+            if (!AtMostSnap(std::abs(e[FaceAxis(f)] - FaceLine(f))))
+            {
+              continue;
+            }
+            const FaceCrossingTiltReading reading =
+                ReadFaceCrossingTilt(geometry, at_a, f, e);
+            if (!(reading.theta_degrees * (1.0 - 1.0e-9) >
+                  kSupportFaceCrossingTiltBoundDegrees) ||
+                reading.shortfall_over_R <= half_quantum)
+            {
+              continue;
+            }
+            widening[static_cast<std::size_t>(f)] =
+                std::max(widening[static_cast<std::size_t>(f)], reading.shortfall_over_R);
+            firing.push_back({{"Pass", passes.size() - 1},
+                              {"Face", f},
+                              {"P", {Q(e[0]), Q(e[1])}},
+                              {"TiltDegrees", RoundTo(reading.theta_degrees, 1.0e-3)},
+                              {"ShortfallOverR", Q(reading.shortfall_over_R)},
+                              {"PaddingOverR", kSupportPaddingOverRadius},
+                              {"FaceLineOverR", {Q(FaceLine(f)), nullptr}}});
+          }
+        }
+      }
+      if (std::none_of(widening.begin(), widening.end(), [](double w) { return w > 0.0; }))
+      {
+        break;
+      }
+      std::array<double, 4> widened = box;
+      for (int f = 0; f < 4; f++)
+      {
+        if (widening[static_cast<std::size_t>(f)] > 0.0)
+        {
+          widened[static_cast<std::size_t>(f)] =
+              Q(box[static_cast<std::size_t>(f)] +
+                (f < 2 ? -1.0 : 1.0) *
+                    (widening[static_cast<std::size_t>(f)] + kSupportPaddingOverRadius));
+        }
+      }
+      for (auto &entry : firing)
+      {
+        entry["FaceLineOverR"][1] = widened[entry["Face"].get<std::size_t>()];
+        tilt_widenings.push_back(entry);
+      }
+      const double widened_span =
+          std::max(widened[2] - widened[0], widened[3] - widened[1]);
+      if (widened_span > span_cap * (1.0 + 1.0e-12))
+      {
+        std::ostringstream what;
+        what << "the face-crossing tilt rule (";
+        for (std::size_t k = 0; k < firing.size(); k++)
+        {
+          what << (k == 0 ? "" : "; ") << "face " << firing[k]["Face"].get<int>()
+               << " crossed at " << firing[k]["TiltDegrees"].get<double>()
+               << " degrees above the bound " << kSupportFaceCrossingTiltBoundDegrees;
+        }
+        what << ") takes the plan span to " << widened_span << " R beyond the span cap "
+             << span_cap << " R";
+        unboxable = what.str();
+        unboxable_reason = "SpanCapRefusedFaceCrossingTiltWidening";
+        break;
+      }
+      box = widened;
+      out.grown = true;
+      continue;
     }
     std::array<double, 4> grown = box;
     for (int f = 0; f < 4; f++)
@@ -11359,11 +11937,17 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   std::vector<SignaturePortion> context_portions;
   std::vector<std::optional<std::size_t>> context_claimed_by;
   std::vector<bool> context_excluded;
+  std::vector<bool> context_mirrored;
   std::size_t excluded_pieces = 0;
   double excluded_length = 0.0;
   nlohmann::json excluded_entries = nlohmann::json::array();
+  // Mirror completion (decision 732): the reflected pieces, grouped apart per plane subset
+  // (an arc's reflected parts merge among themselves, never with the arc as given), their
+  // portions written through the reflection.
+  std::set<int> mirror_completion_planes;
   {
-    std::map<std::optional<std::size_t>, std::vector<std::pair<std::size_t, Interval>>>
+    std::map<std::pair<std::optional<std::size_t>, std::vector<int>>,
+             std::vector<std::pair<std::size_t, Interval>>>
         groups;
     for (const Piece &piece : pieces)
     {
@@ -11389,21 +11973,36 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         context_portions.push_back(std::move(portion));
         context_claimed_by.push_back(std::nullopt);
         context_excluded.push_back(true);
+        context_mirrored.push_back(false);
         continue;
       }
-      groups[piece.claimed_by].emplace_back(piece.run, piece.s);
+      groups[{piece.claimed_by, piece.mirror}].emplace_back(piece.run, piece.s);
     }
-    for (const auto &[owner, intervals] : groups)
+    for (const auto &[key, intervals] : groups)
     {
+      const auto &[owner, mirror] = key;
       for (auto &portion : ClusterSignaturePortions(intervals))
       {
+        if (!mirror.empty())
+        {
+          portion.p0 = Reflect(portion.p0, mirror);
+          portion.p1 = Reflect(portion.p1, mirror);
+          portion.gap_direction = ReflectDirection(portion.gap_direction, mirror);
+          if (portion.arc)
+          {
+            portion.arc->center = Reflect(portion.arc->center, mirror);
+            portion.arc->u = ReflectDirection(portion.arc->u, mirror);
+            portion.arc->v = ReflectDirection(portion.arc->v, mirror);
+          }
+          mirror_completion_planes.insert(mirror.begin(), mirror.end());
+        }
         context_portions.push_back(std::move(portion));
         context_claimed_by.push_back(owner);
         context_excluded.push_back(false);
+        context_mirrored.push_back(!mirror.empty());
       }
     }
   }
-  const double join = kSignatureParameterToleranceOverRadius * R;
   std::vector<Point3D> chain_ends;
   for (const auto &portion : portions)
   {
@@ -11443,11 +12042,19 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   std::size_t chain_pieces = 0, foreign_pieces = 0, other_claimed_pieces = 0;
   double other_claimed_length = 0.0;
   nlohmann::json claimed_by_other = nlohmann::json::array();
+  std::size_t mirror_completion_pieces = 0, mirror_completion_chain_pieces = 0;
+  double mirror_completion_length = 0.0;
   for (std::size_t k = 0; k < context_portions.size(); k++)
   {
     const auto &portion = context_portions[k];
     const double length =
         portion.arc ? SignatureArcLength(*portion.arc) : Distance(portion.p0, portion.p1);
+    if (context_mirrored[k])
+    {
+      mirror_completion_pieces++;
+      mirror_completion_chain_pieces += is_chain[k] ? 1 : 0;
+      mirror_completion_length += length;
+    }
     if (is_chain[k])
     {
       chain_pieces++;
@@ -11833,11 +12440,68 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       {"Unboxable", unboxable ? nlohmann::json(*unboxable) : nlohmann::json(nullptr)},
       {"UnboxableReason",
        unboxable_reason ? nlohmann::json(*unboxable_reason) : nlohmann::json(nullptr)}};
+  // Mirror completion (decision 732, F-M1): the reflected real plan the band did not image,
+  // clipped into the box. Written only where it exists, so that every other record (no
+  // mirroring plane, or no un-imaged reflected plan inside the box) is unchanged.
+  if (mirror_completion_pieces > 0)
+  {
+    out.record["MirrorCompletion"] = {
+        {"Planes", std::vector<int>(mirror_completion_planes.begin(),
+                                    mirror_completion_planes.end())},
+        {"Pieces", mirror_completion_pieces},
+        {"ChainPieces", mirror_completion_chain_pieces},
+        {"LengthOverR", Q(mirror_completion_length / R)}};
+  }
+  // T4 (decisions 762 / 766): the face-crossing tilt rule's widenings. Written only where
+  // the rule acted, so that every other record is unchanged.
+  if (!tilt_widenings.empty())
+  {
+    out.record["FaceCrossingTilt"] = {
+        {"BoundDegrees", kSupportFaceCrossingTiltBoundDegrees},
+        {"BoundSource", "mesh_spatial_coupon.jl THIN_FACE_END_TILT_BOUND"},
+        {"Widenings", tilt_widenings}};
+  }
   if (!unboxable)
   {
     out.support = std::move(support);
   }
   return out;
+}
+
+void Identifier::BuildMirrorImageIndex()
+{
+  mirror_subsets.clear();
+  image_subsets_of_segment.assign(input.segments.size(), {});
+  std::vector<int> mirroring;
+  for (std::size_t k = 0; k < input.mirror_planes.size(); k++)
+  {
+    if (input.mirror_planes[k].Mirrors())
+    {
+      mirroring.push_back(static_cast<int>(k));
+    }
+  }
+  const std::size_t n = mirroring.size();
+  for (std::size_t mask = 1; n < 63 && mask < (std::size_t(1) << n); mask++)
+  {
+    std::vector<int> subset;
+    for (std::size_t i = 0; i < n; i++)
+    {
+      if (mask & (std::size_t(1) << i))
+      {
+        subset.push_back(mirroring[i]);
+      }
+    }
+    mirror_subsets.push_back(std::move(subset));
+  }
+  for (const auto &segment : input.segments)
+  {
+    if (segment.image_of >= 0 &&
+        static_cast<std::size_t>(segment.image_of) < input.segments.size())
+    {
+      image_subsets_of_segment[static_cast<std::size_t>(segment.image_of)].push_back(
+          segment.mirror_planes);
+    }
+  }
 }
 
 // The non-hashed ownership ids of a cluster feature's context census (review MINOR-1):
@@ -11981,19 +12645,22 @@ void Identifier::EmitClusters()
                    "SpanCapOverR replaces the plan span cap for this cluster's box growth "
                    "and ExceedsSpanCap reading (never below the default cap)"}};
     }
+    // The frame of record is chosen WITHOUT T4, the face-crossing tilt rule (decision
+    // 772): the claims frame when its support is legacy-equivalent, else the frame
+    // minimised over the candidates with the support of each; then ONE ClusterSupport call
+    // WITH the rule in that frame produces the record, and the key is serialised from it
+    // (unchanged where the rule is silent; Box + Context of the widened box where it acted;
+    // Unboxable where its widening breached the span cap).
     ClusterSupportResult support =
         ClusterSupport(c, portions, vertices, canonical.origin, canonical.axes[0],
-                       canonical.axes[1], span_cap_over_R);
+                       canonical.axes[1], span_cap_over_R, false);
     nlohmann::json signature;
     int chirality = canonical.chirality;
     Point3D origin = canonical.origin;
     std::array<Point3D, 3> axes = canonical.axes;
     int contract = 2;
-    if (support.support && support.legacy_equivalent)
-    {
-      signature = canonical.signature;
-    }
-    else
+    bool boxable = support.support.has_value();
+    if (!(support.support && support.legacy_equivalent))
     {
       const auto v3 = CanonicalClusterSignatureWithSupport(
           portions, vertices, n_cluster, R,
@@ -12001,7 +12668,7 @@ void Identifier::EmitClusters()
               const Point3D &y) -> std::optional<FrameSupport>
           {
             ClusterSupportResult frame_support =
-                ClusterSupport(c, portions, vertices, o, x, y, span_cap_over_R);
+                ClusterSupport(c, portions, vertices, o, x, y, span_cap_over_R, false);
             return frame_support.support;
           },
           [&](std::size_t done, std::size_t total)
@@ -12010,23 +12677,40 @@ void Identifier::EmitClusters()
                            "support frames of cluster " + std::to_string(c) + " / " +
                                std::to_string(cluster_claimed.size()));
           });
+      boxable = v3.has_value();
       if (v3)
       {
         contract = 3;
-        signature = v3->signature;
         chirality = v3->chirality;
         origin = v3->origin;
         axes = v3->axes;
-        // The record of the frame the key was formed in.
-        support = ClusterSupport(c, portions, vertices, origin, axes[0], axes[1],
-                                 span_cap_over_R);
+      }
+    }
+    if (boxable)
+    {
+      // The record of the frame of record, with T4.
+      support = ClusterSupport(c, portions, vertices, origin, axes[0], axes[1],
+                               span_cap_over_R, true);
+      if (!support.support)
+      {
+        boxable = false;  // the tilt widening breached the span cap
+      }
+      else if (contract == 2 && support.legacy_equivalent)
+      {
+        signature = canonical.signature;
       }
       else
       {
-        contract = 0;
-        signature = canonical.signature;
-        signature["Unboxable"] = true;
+        contract = 3;
+        signature = SignatureWithSupportInFrame(portions, vertices, origin, axes[0],
+                                                axes[1], R, *support.support);
       }
+    }
+    if (!boxable)
+    {
+      contract = 0;
+      signature = canonical.signature;
+      signature["Unboxable"] = true;
     }
     signature_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - signature_started)
@@ -13540,6 +14224,7 @@ IdentificationResult Identifier::Identify()
   IdentificationResult result;
   const auto started = std::chrono::steady_clock::now();
   segment_exclusion.assign(input.segments.size(), std::nullopt);
+  BuildMirrorImageIndex();
   stage.Begin("arcs");
   DetectArcs();
   {

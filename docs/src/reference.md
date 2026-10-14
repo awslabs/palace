@@ -1437,6 +1437,23 @@ The excluded cell length is the surface left uncorrected and is reported in the 
 `Summary` next to `Missing` for the coverage bound; the matched inventory (`Exact`) is
 unchanged and still contains the excluded cells.
 
+Across the AMR cycles of an electrostatic solve the operator is rebuilt on every refined
+mesh, but two of its setup terms depend on the models and the device domain only, not on the
+mesh, and are cached per process from the first construction on. The derived model matrices
+(the unit-scaled fabricated and thin domain matrices, their defect, the fixed-flux transform
+and defect, and the per-interface surface sums: a dense eigensolve and products on each
+model's basis) are keyed on the model's source files (path, size, write time), its blend
+weights, its `ZeroTraceIndices`, its interface mappings and the unit scale factors; a hit
+returns the first computation's bits, so every output is identical to a run without the
+cache. `PALACE_RESPONSE_DERIVED_CACHE=0` recomputes every hit and aborts unless the
+recomputation equals the cached matrices bit for bit. The domain-boundary containment result
+is kept with the automatic geometry the solver retains across cycles and reused on a
+first-order mesh (h-refinement leaves the domain boundary in place) whose tested patches are
+the first construction's; a curved mesh recomputes it, and
+`PALACE_RESPONSE_CONTAINMENT_RECHECK=1` recomputes it on every cycle and aborts on any
+difference in the classification or in the tested patches. Both act from the second
+construction on; the log reports the cache hits and the reuse per construction.
+
 A spatial coupon holds its metal cross-sections on its box faces at the conductor
 potentials while the device trace is imposed around them. At solve time, before any energy
 of an excitation is formed, the conductor-consistency gate samples the device potential at
@@ -1453,7 +1470,21 @@ recorded under `Diagnostics.ConductorConsistency` of the solve's `palace.json` w
 claimed edge length left uncorrected, next to every tested patch's reading (lengths and
 coordinates in the mesh file's units). The solver does not apply the coverage bound: the
 consumer of that bound must add `ClaimLength` to the `Missing` and `DomainBoundary`
-lengths. Only the plane row is gated (the metal-top rows of a thin device read a few
+lengths. The excluded patch's claimed perimeter window (its raw claim by the
+domain-boundary rule: a translational cell's own-edge interval, a corner's arm windows, a
+spatial cluster's claims with the cell parts and uncovered portions its box removed from
+others) is never dropped: from the excluding excitation on, its RAW within-`R` surface
+energy is kept in the corrected interface energies like a `Missing` or `DomainBoundary`
+portion (fixed trace and fixed flux on the raw field, self-consistent on the corrected
+field; the response operator itself is unchanged, weight zero stands) and reported per
+feature type in `surface-response-conductor-consistency-energy.csv` beside
+`surface-response-uncovered-energy.csv` and `surface-response-domain-boundary-energy.csv`
+(`source`, `evaluation`, `type` with a `Total` row, `portions`, `length (m)`, `geometric
+cells`, then per target interface `conductorconsistency raw energy[k] (J)` and
+`conductorconsistency share[k]`; written only when a patch was excluded, an excitation
+evaluated before the exclusion reads zero), with the portions under
+`Diagnostics.ConductorConsistency.RawPortions`. A solve with no exclusion writes nothing
+new. Only the plane row is gated (the metal-top rows of a thin device read a few
 percent of the amplitude and are recorded only), so a coupon frame whose process plane did
 not coincide with the device's metal sheet would be excluded wholesale and recorded. A
 conductor without a vertex on the process plane aborts at construction naming the model; a
@@ -1836,7 +1867,14 @@ Hermitian domain- and surface-response quadratic forms.
 The corrected interface energy keeps the resolved raw energy outside the matching radius
 and replaces the complete thin core with the fabricated coupon response. The
 normalization energy receives the corresponding fabricated-minus-thin domain-response
-defect. Every 3D target interface must therefore enable `AutomaticEdges`; every 2D
+defect. A feature the library has no model for (`Missing` under `UnmatchedPolicy` `Warn`)
+keeps its RAW within-`R` surface energy in the corrected interface energies exactly as on
+the electrostatic path (fixed trace and fixed flux on the raw field, self-consistent on
+the corrected field); that share is reported per feature type in the Maxwell
+`surface-response-uncovered-energy.csv`, the electrostatic table's columns with the mode
+`m` (or `f (GHz)` for a driven solve) and `exc` in place of `source`, written only when
+something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. Every
+3D target interface must therefore enable `AutomaticEdges`; every 2D
 boundary-mode target must specify `EdgeAttributes` and `EdgeFrameNormal`. In both cases,
 `EdgeDistances` must include the library `MatchingRadius`.
 

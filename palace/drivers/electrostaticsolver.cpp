@@ -996,6 +996,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // and on the corrected field (self-consistent); empty when nothing is excluded.
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_domain_boundary;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_domain_boundary;
+    // ConductorConsistency raw claims (S7diag R1, decision 758): the raw within-R interface
+    // energy of the claims of the patches the conductor-consistency gate has excluded by
+    // this excitation (zero entries for an excitation before the first exclusion), on the
+    // raw field and on the corrected field; empty when the operator has no probes.
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_conductor_consistency;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_conductor_consistency;
     std::map<int, double> trace_closure_spread;
     double maximum_trace_closure_spread;
     double response_weighted_trace_closure_spread;
@@ -1171,6 +1177,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     EnergyData raw_energies;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_uncovered;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_domain_boundary;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_conductor_consistency;
+    // The ConductorConsistency raw claims (S7diag R1, decision 758) as the same kind of
+    // portions: the list the gate has built so far, read AFTER this excitation's gate (the
+    // exclusion is sticky, so the list only grows; empty on a window with 0 exclusions).
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+        conductor_consistency_portions;
     if (response_correction)
     {
       raw_energies = post_op.GetCachedElectrostaticEnergies();
@@ -1200,14 +1212,28 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // later evaluation (fixed trace, self-consistent) and the patch table.
       if (response_correction->HasConductorConsistencyProbes())
       {
-        BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-        const auto records =
-            response_correction->ApplyConductorConsistencyGate(V[step], idx);
-        if (std::any_of(records.begin(), records.end(),
-                        [](const auto &record) { return record.excluded; }))
         {
-          WritePatchTable();
+          BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
+          const auto records =
+              response_correction->ApplyConductorConsistencyGate(V[step], idx);
+          if (std::any_of(records.begin(), records.end(),
+                          [](const auto &record) { return record.excluded; }))
+          {
+            WritePatchTable();
+          }
         }
+        // S7diag R1 (decision 758): the excluded patches' raw claims are served RAW. Their
+        // within-R energy on this excitation's raw field is integrated by the uncovered
+        // requirements' machinery (an empty list yields zero entries without an integral:
+        // an excitation before the first exclusion kept the model).
+        for (const auto &portion : response_correction->GetConductorConsistencyPortions())
+        {
+          conductor_consistency_portions.push_back(
+              {portion.p0, portion.p1, portion.topology, portion.feature});
+        }
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        raw_conductor_consistency = post_op.GetElectrostaticUncoveredEdgeEnergies(
+            response_correction->GetTargetInterfaces(), conductor_consistency_portions);
       }
       if (self_consistent_response)
       {
@@ -1231,7 +1257,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               const std::map<int, double> &fabricated_surface,
               const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> &uncovered,
               const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
-                  &domain_boundary)
+                  &domain_boundary,
+              const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+                  &conductor_consistency)
       {
         energies.domain += domain_correction;
         for (const auto &[interface, energy] : fabricated_surface)
@@ -1260,6 +1288,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {
             it->second.energy += domain_boundary_energy->second.energy;
           }
+          // A conductor-consistency-excluded patch's raw claim (S7diag R1, decision 758)
+          // keeps its raw within-R energy of the same field: never dropped.
+          const auto conductor_consistency_energy = conductor_consistency.find(interface);
+          if (conductor_consistency_energy != conductor_consistency.end())
+          {
+            it->second.energy += conductor_consistency_energy->second.energy;
+          }
         }
         MFEM_VERIFY(energies.domain > 0.0,
                     "Response-corrected electrostatic energy is not positive!");
@@ -1278,15 +1313,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         return energies;
       };
       auto postprocessed_fixed_trace =
-          postprocess_response ? ApplyResponse(raw_energies, response.domain_correction,
-                                               response.fabricated_surface_energy,
-                                               raw_uncovered, raw_domain_boundary)
-                               : Unavailable(raw_energies);
+          postprocess_response
+              ? ApplyResponse(raw_energies, response.domain_correction,
+                              response.fabricated_surface_energy, raw_uncovered,
+                              raw_domain_boundary, raw_conductor_consistency)
+              : Unavailable(raw_energies);
       auto postprocessed_fixed_flux =
           postprocess_response
               ? ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
                               response.fabricated_surface_energy_fixed_flux, raw_uncovered,
-                              raw_domain_boundary)
+                              raw_domain_boundary, raw_conductor_consistency)
               : Unavailable(raw_energies);
       if (postprocess_response && !response.confident)
       {
@@ -1306,6 +1342,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       EnergyData corrected_energies = Unavailable(raw_energies);
       std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_uncovered;
       std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_domain_boundary;
+      std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+          corrected_conductor_consistency;
       std::vector<SurfaceResponseOperator::ModelContribution> corrected_contributions;
       std::vector<SurfaceResponseOperator::PatchContribution> corrected_patch_contributions;
       if (self_consistent_response)
@@ -1385,6 +1423,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               corrected_domain_boundary = post_op.GetElectrostaticUncoveredEdgeEnergies(
                   target_interfaces, domain_boundary_portions);
             }
+            if (!raw_conductor_consistency.empty())
+            {
+              // The operator has probes: the same list on the corrected field (zero
+              // entries while nothing is excluded, like the raw term).
+              corrected_conductor_consistency =
+                  post_op.GetElectrostaticUncoveredEdgeEnergies(
+                      target_interfaces, conductor_consistency_portions);
+            }
           }
           SurfaceResponseOperator::ElectrostaticResponse corrected_response;
           {
@@ -1395,7 +1441,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           corrected_energies = ApplyResponse(
               std::move(corrected_energies), corrected_response.domain_correction,
               corrected_response.fabricated_surface_energy, corrected_uncovered,
-              corrected_domain_boundary);
+              corrected_domain_boundary, corrected_conductor_consistency);
           corrected_contributions = std::move(corrected_response.model_contributions);
           corrected_patch_contributions = std::move(corrected_response.patch_contributions);
         }
@@ -1417,6 +1463,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                             std::move(corrected_uncovered),
                             std::move(raw_domain_boundary),
                             std::move(corrected_domain_boundary),
+                            std::move(raw_conductor_consistency),
+                            std::move(corrected_conductor_consistency),
                             response.trace_closure_spread,
                             response.maximum_trace_closure_spread,
                             response.response_weighted_trace_closure_spread,
@@ -1767,17 +1815,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       patch_output.WriteFullTableTrunc();
     }
 
-    // Decision 394 F2 and F-DB-a (decisions 442 / 454): the raw within-R energy kept in the
-    // corrected interface energies by the uncovered requirements and by the DomainBoundary
-    // raw claims, each in its own table, per source, evaluation (the codes of
-    // surface-response-model-energy.csv: 0 / 1 the raw field kept in the fixed-trace /
-    // fixed-flux energies, 2 the corrected field kept in the self-consistent energy) and
-    // feature type (one row per type and a Total row), with the portion count and length
-    // of that type, the length removed from that type's portions inside the matched
-    // clusters' support boxes at placement (decision 399 MAJOR-1; the uncovered table) or
-    // the geometric cell count (the DomainBoundary table) and, per target interface, the
-    // energy and its share of the evaluation's corrected interface energy. Each table is
-    // written only when it has portions.
+    // Decision 394 F2, F-DB-a (decisions 442 / 454) and S7diag R1 (decision 758): the raw
+    // within-R energy kept in the corrected interface energies by the uncovered
+    // requirements, by the DomainBoundary raw claims and by the conductor-consistency-
+    // excluded patches' raw claims, each in its own table, per source, evaluation (the
+    // codes of surface-response-model-energy.csv: 0 / 1 the raw field kept in the
+    // fixed-trace / fixed-flux energies, 2 the corrected field kept in the self-consistent
+    // energy) and feature type (one row per type and a Total row), with the portion count
+    // and length of that type, the length removed from that type's portions inside the
+    // matched clusters' support boxes at placement (decision 399 MAJOR-1; the uncovered
+    // table) or the geometric cell count (the DomainBoundary and ConductorConsistency
+    // tables) and, per target interface, the energy and its share of the evaluation's
+    // corrected interface energy. Each table is written only when it has portions.
     struct PortionTypeRow
     {
       int portions = 0;
@@ -1887,11 +1936,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       return std::sqrt(length2);
     };
-    // Both tables are removed UNCONDITIONALLY before the conditional write (decision 473
-    // MAJOR-3): a stale table of an earlier run or attempt in the output directory would
-    // otherwise read as a term this solve did not have.
+    // The three tables are removed UNCONDITIONALLY before the conditional write (decision
+    // 473 MAJOR-3): a stale table of an earlier run or attempt in the output directory
+    // would otherwise read as a term this solve did not have.
     std::filesystem::remove(post_dir / "surface-response-uncovered-energy.csv");
     std::filesystem::remove(post_dir / "surface-response-domain-boundary-energy.csv");
+    std::filesystem::remove(post_dir / "surface-response-conductor-consistency-energy.csv");
     if (!uncovered_portions.empty())
     {
       std::map<std::string, PortionTypeRow> portions_by_type;
@@ -1933,6 +1983,29 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {
             return corrected ? result.corrected_domain_boundary
                              : result.raw_domain_boundary;
+          });
+    }
+    if (!response_correction->GetConductorConsistencyPortions().empty())
+    {
+      // S7diag R1 (decision 758): the ConductorConsistency share per type (the
+      // DomainBoundary table's columns). The portion rows describe the FINAL list of the
+      // solve; an excitation evaluated before the exclusion kept the model and reads 0.
+      std::map<std::string, PortionTypeRow> portions_by_type;
+      const auto &record = response_correction->GetConductorConsistencyPortionRecord();
+      for (std::size_t i = 0; i < record.portions.size(); i++)
+      {
+        auto &entry = portions_by_type[record.portions[i].topology];
+        entry.portions++;
+        entry.length += PortionLength(record.portions[i]);
+        entry.extra += record.translational[i] ? 1.0 : 0.0;
+      }
+      WritePortionEnergyTable(
+          post_dir / "surface-response-conductor-consistency-energy.csv", portions_by_type,
+          "geometric cells", "conductorconsistency",
+          [](const CorrectedResult &result, bool corrected) -> const PortionEnergies &
+          {
+            return corrected ? result.corrected_conductor_consistency
+                             : result.raw_conductor_consistency;
           });
     }
   }

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -5271,6 +5272,464 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationFaceCrossingTilt",
+          "[surfaceresponseidentification][Serial]")
+{
+  // S7 R2, the face-crossing TILT rule T4 (decisions 762 / 766): on the T2-clean box every
+  // plan piece end ON a face crossing it above the THIN kind's largest built tilt (70 deg
+  // to the face normal: the mesher's THIN_FACE_END_TILT_BOUND, a cut the thin coupon
+  // refuses) moves the crossed face outward by the largest outward excursion of the piece's
+  // own continuation up to the adjacent face line, plus the R padding; a breach of the span
+  // cap is Unboxable by name. The SpatialSupportContract fixture (R = 2 um: pad A conductor
+  // 0 y <= 0, lead B conductor 1 |x| <= 1 from y = 1; the lead end's claims box x in
+  // [-12.873, 12.873], y in [-5, 12] um) plus one foreign loop (conductor 2). The record's
+  // faces are indexed in the cluster's canonical frame: they are read through DeviceFace.
+  const double R = 2.0;
+  const double pi = std::acos(-1.0);
+  const double x0 = -12.872984, y0 = -5.0, y1 = 12.0;  // the claims box, um
+  const double a18 = 18.0 * pi / 180.0;  // the strips' and the bar's crossing: 72 deg tilt
+  auto Identify = [&](const LoopSpec &foreign)
+  {
+    const std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                                         {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0},
+                                         foreign};
+    const auto input = MakeInput(loops, R);
+    auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    return std::make_pair(input, std::move(result));
+  };
+  const std::array<double, 2> probe = {0.0, 1.0};  // the lead's end edge: in the cluster
+  // The device face (0 = x0, 1 = y0, 2 = x1, 3 = y1 of the device-coordinate box) a frame
+  // face of the recorded box maps to.
+  auto DeviceFace = [&](const IdentifiedFeature &cluster, int f)
+  {
+    const auto &box = cluster.spatial_support.at("Box");
+    const auto device = DeviceBox(cluster, "Box", R);
+    const double mid_x = 0.5 * (box[0].get<double>() + box[2].get<double>()),
+                 mid_y = 0.5 * (box[1].get<double>() + box[3].get<double>());
+    const auto p = f % 2 == 0 ? DevicePoint(cluster, box[f].get<double>(), mid_y, R)
+                              : DevicePoint(cluster, mid_x, box[f].get<double>(), R);
+    int best = -1;
+    double best_distance = 1.0e300;
+    for (int k = 0; k < 4; k++)
+    {
+      const double distance = std::abs(p[k % 2] - device[static_cast<std::size_t>(k)]);
+      if (distance < best_distance)
+      {
+        best_distance = distance;
+        best = k;
+      }
+    }
+    REQUIRE(best_distance < 1.0e-6);
+    return best;
+  };
+  auto DeviceCrossings = [&](const IdentifiedFeature &cluster)
+  {
+    std::array<int, 4> crossings{};
+    for (int f = 0; f < 4; f++)
+    {
+      crossings[static_cast<std::size_t>(DeviceFace(cluster, f))] =
+          cluster.spatial_support["FaceRules"]["Crossings"][f].get<int>();
+    }
+    return crossings;
+  };
+  // A 1-um-wide strip of the given length with its corner A inside the box, running along
+  // the unit direction d (perp = the unit normal to d, the strip on that side), as a
+  // counter-clockwise loop.
+  auto Strip = [&](const Point2 &A, const Point2 &d, const Point2 &perp, double length)
+  {
+    std::vector<Point2> strip = {
+        A,
+        {A[0] + perp[0], A[1] + perp[1]},
+        {A[0] + perp[0] + length * d[0], A[1] + perp[1] + length * d[1]},
+        {A[0] + length * d[0], A[1] + length * d[1]}};
+    if (perp[0] * d[1] - perp[1] * d[0] < 0.0)
+    {
+      std::reverse(strip.begin(), strip.end());
+    }
+    return LoopSpec{strip, 2, 100.0};
+  };
+  // The on-face ends of the signature's Context, each with its tilt to the face's normal
+  // (the device face index).
+  auto ContextFaceTilts = [&](const IdentifiedFeature &cluster)
+  {
+    std::vector<std::pair<int, double>> tilts;
+    const auto &box = cluster.signature.at("Box");
+    for (const auto &entry : cluster.signature.at("Context"))
+    {
+      const auto &P = entry.at("P");
+      const Point2 a = {P[0].get<double>(), P[1].get<double>()},
+                   b = {P[2].get<double>(), P[3].get<double>()};
+      for (const auto &[e, other] : {std::make_pair(a, b), std::make_pair(b, a)})
+      {
+        Point2 t;
+        if (entry.contains("Arc"))
+        {
+          const double rx = e[0] - entry["Arc"][0].get<double>(),
+                       ry = e[1] - entry["Arc"][1].get<double>();
+          t = {-ry, rx};
+        }
+        else
+        {
+          t = {other[0] - e[0], other[1] - e[1]};
+        }
+        const double norm = std::hypot(t[0], t[1]);
+        for (int f = 0; f < 4; f++)
+        {
+          if (std::abs(e[f % 2] - box[f].get<double>()) <= 1.0e-3 + 0.5e-6)
+          {
+            tilts.emplace_back(DeviceFace(cluster, f),
+                               std::acos(std::min(std::abs(t[f % 2]) / norm, 1.0)) * 180.0 /
+                                   pi);
+          }
+        }
+      }
+    }
+    return tilts;
+  };
+  // The common reading of a record the rule left alone: the claims box, no key.
+  auto CheckSilent = [&](const IdentifiedFeature &cluster)
+  {
+    const auto &support = cluster.spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Growth"]["Grown"] == false);
+    CHECK(support["Box"] == support["ClaimsBox"]);
+    CHECK(!support.contains("FaceCrossingTilt"));
+    CHECK(support["Unboxable"].is_null());
+  };
+
+  // (d) The bound is the mesher's (the Python pin test ties the three sources).
+  CHECK(kSupportFaceCrossingTiltBoundDegrees == 70.0);
+
+  // (b) CONTROL at 65 degrees: a 20-um strip from A = (-12.3, 5.2) up and left at 25 deg
+  //     from the y axis; both long edges cross the LEFT face at 65 deg to its normal (sine
+  //     0.42: T2 passes) and the strip's far part lies outside, never re-entering. The rule
+  //     is silent: the claims box, no FaceCrossingTilt key (the identity where it does not
+  //     act).
+  std::string control_hash;
+  {
+    const double a = 25.0 * pi / 180.0;
+    const auto [input, result] = Identify(
+        Strip({-12.3, 5.2}, {-std::sin(a), std::cos(a)}, {std::cos(a), std::sin(a)}, 20.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CheckSilent(*cluster);
+    CHECK(DeviceCrossings(*cluster)[0] == 3);  // the pad edge + the strip's two edges
+    double max_tilt = 0.0;
+    for (const auto &[f, tilt] : ContextFaceTilts(*cluster))
+    {
+      max_tilt = std::max(max_tilt, tilt);
+    }
+    CHECK_THAT(max_tilt, WithinAbs(65.0, 1.0e-3));
+    control_hash = cluster->hash;
+  }
+
+  // (a) STEEP STRAIGHT at 72 degrees (the same strip at 18 deg from the y axis): T2 passes
+  //     (sine 0.309 >= 0.25) on the claims box, so the rule reads it; both strip edges
+  //     exit through the left face above the bound heading to the top face: shortfalls
+  //     (12 - 6.963) tan 18 = 1.637 um and (12 - 10.200) tan 18 = 0.585 um; the face moves
+  //     by the larger + R = 1.8185 R to x = -16.510 um, the other faces stay; both edges
+  //     then exit the top face at 18 deg; no T3 step; the key differs from the control's.
+  {
+    const auto [input, result] =
+        Identify(Strip({-12.3, 5.2}, {-std::sin(a18), std::cos(a18)},
+                       {std::cos(a18), std::sin(a18)}, 20.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Growth"]["Grown"] == true);
+    CHECK(support["LegacyEquivalent"] == false);
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      CHECK(steps.get<int>() == 0);
+    }
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(claims_box[0], WithinAbs(x0, 1.0e-5));
+    // The crossings of the two edges on x0 and the excursions of their lines to y1.
+    const double cross_1 = 5.2 + (-12.3 - x0) / std::tan(a18);
+    const double cross_2 =
+        5.2 + std::sin(a18) + (-12.3 + std::cos(a18) - x0) / std::tan(a18);
+    const double shortfall_1 = (y1 - cross_1) * std::tan(a18);
+    const double shortfall_2 = (y1 - cross_2) * std::tan(a18);
+    CHECK_THAT(cross_1, WithinAbs(6.963, 2.0e-3));
+    CHECK_THAT(cross_2, WithinAbs(10.200, 2.0e-3));
+    CHECK_THAT(shortfall_1, WithinAbs(1.637, 2.0e-3));
+    CHECK_THAT(shortfall_2, WithinAbs(0.585, 2.0e-3));
+    CHECK_THAT(box[0], WithinAbs(x0 - shortfall_1 - kSupportPaddingOverRadius * R, 1.0e-4));
+    CHECK_THAT(box[0], WithinAbs(-16.510, 2.0e-3));
+    CHECK_THAT(box[1], WithinAbs(y0, 1.0e-5));
+    CHECK_THAT(box[2], WithinAbs(-x0, 1.0e-5));
+    CHECK_THAT(box[3], WithinAbs(y1, 1.0e-5));
+    REQUIRE(support.contains("FaceCrossingTilt"));
+    const auto &tilt = support["FaceCrossingTilt"];
+    CHECK(tilt["BoundDegrees"] == 70.0);
+    CHECK_THAT(tilt["BoundSource"].get<std::string>(),
+               ContainsSubstring("THIN_FACE_END_TILT_BOUND"));
+    REQUIRE(tilt["Widenings"].size() == 2);
+    std::vector<double> shortfalls;
+    for (const auto &widening : tilt["Widenings"])
+    {
+      const int f = widening["Face"].get<int>();
+      CHECK(DeviceFace(*cluster, f) == 0);
+      CHECK(widening["Pass"] == 0);
+      CHECK_THAT(widening["TiltDegrees"].get<double>(), WithinAbs(72.0, 1.0e-3));
+      CHECK_THAT(widening["PaddingOverR"].get<double>(), WithinAbs(1.0, 0.0));
+      CHECK_THAT(widening["FaceLineOverR"][0].get<double>(),
+                 WithinAbs(support["ClaimsBox"][f].get<double>(), 1.0e-9));
+      CHECK_THAT(widening["FaceLineOverR"][1].get<double>(),
+                 WithinAbs(support["Box"][f].get<double>(), 1.0e-9));
+      shortfalls.push_back(widening["ShortfallOverR"].get<double>());
+    }
+    std::sort(shortfalls.begin(), shortfalls.end());
+    CHECK_THAT(shortfalls[0], WithinAbs(shortfall_2 / R, 1.0e-4));
+    CHECK_THAT(shortfalls[1], WithinAbs(shortfall_1 / R, 1.0e-4));
+    // The crossings of the widened box: the pad edge on x0 and x1; the lead's two edges and
+    // the strip's two on the top face; every on-face end of the Context now within the
+    // bound.
+    CHECK(DeviceCrossings(*cluster) == std::array<int, 4>{1, 0, 1, 4});
+    int top_face_strip_ends = 0;
+    for (const auto &[f, tilt_degrees] : ContextFaceTilts(*cluster))
+    {
+      CHECK(tilt_degrees <= 70.0);
+      if (f == 3 && std::abs(tilt_degrees - 18.0) < 1.0e-3)
+      {
+        top_face_strip_ends++;
+      }
+    }
+    CHECK(top_face_strip_ends == 2);
+    CHECK(support["Context"]["ForeignVertices"].size() == 2);  // the strip's near corners
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    CHECK(support["FaceRules"]["MinCrossingSine"].get<double>() >= 0.25);
+    CHECK(cluster->hash != control_hash);
+    CHECK(result.spatial_support.grown >= 1);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // (e) AN ARC, the 32dc558f4810 form (the S7 ground arc: a circle entering through a side
+  //     face above the bound whose continuation reaches its outward extreme before any
+  //     adjacent face): a 1-um bar along a circle of radius 30 um whose inner edge passes
+  //     through (x0, 7.5) at 72 deg to the left face's normal, curving right (centre at
+  //     (x0 + 30 cos 18, 7.5 - 30 sin 18)), from its lower end 0.8-1.8 um outside the face
+  //     (4.6 um above the pad: beyond the 2R interaction, its own cluster) to its upper
+  //     end above the box (5 um left of the lead; it exits the top face at 27 deg). Each
+  //     edge is a chorded polyline whose joints are vertices (every chord-run is a piece:
+  //     a joint within the clearance of a face line would fail T2 and grow the box as on
+  //     main; the chord before the first joint is a straight arm, not the arc), so the
+  //     face crossings lie between interior joints placed clear of the left and top face
+  //     lines by > 0.3 R, with chords of at most 8.4 deg (sagitta < the joint noise
+  //     resolution 0.05 R) and the end corners on the circles beyond the shell (the
+  //     least-squares bend of the arc rule needs four interior joints; T2 passes on the
+  //     claims box). The outer edge (radius 31) crosses the left face at 67.0 deg: below
+  //     the bound. The rule reads the inner edge's crossing: its
+  //     circle turns back at x = centre - 30, an excursion of 30 (1 - cos 18) = 1.468 um =
+  //     0.7342 R beyond the face, so the face moves by 1.7342 R to -16.341 um and the bar's
+  //     lower end is inside; every on-face end then reads within the bound (the exits at
+  //     the top face).
+  {
+    const double rho = 30.0;
+    const Point2 center = {x0 + rho * std::cos(a18), 7.5 - rho * std::sin(a18)};
+    auto OnCircle = [&](double radius, double degrees) -> Point2
+    {
+      return {center[0] + radius * std::cos(degrees * pi / 180.0),
+              center[1] + radius * std::sin(degrees * pi / 180.0)};
+    };
+    std::vector<Point2> bar;
+    for (const double degrees : {167.8, 166.3, 158.0, 150.6, 145.5, 141.5, 137.0})
+    {
+      bar.push_back(OnCircle(rho, degrees));
+    }
+    for (const double degrees : {136.0, 141.0, 146.0, 152.0, 160.4, 168.0})
+    {
+      bar.push_back(OnCircle(rho + 1.0, degrees));
+    }
+    const auto [input, result] = Identify({bar, 2, 100.0});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Growth"]["Grown"] == true);
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      CHECK(steps.get<int>() == 0);
+    }
+    const double excursion = rho * (1.0 - std::cos(a18));  // um
+    CHECK_THAT(excursion, WithinAbs(1.468, 1.0e-3));
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(box[0], WithinAbs(x0 - excursion - kSupportPaddingOverRadius * R, 1.0e-4));
+    CHECK_THAT(box[1], WithinAbs(y0, 1.0e-5));
+    CHECK_THAT(box[2], WithinAbs(-x0, 1.0e-5));
+    CHECK_THAT(box[3], WithinAbs(y1, 1.0e-5));
+    REQUIRE(support.contains("FaceCrossingTilt"));
+    REQUIRE(support["FaceCrossingTilt"]["Widenings"].size() == 1);
+    const auto &widening = support["FaceCrossingTilt"]["Widenings"][0];
+    CHECK(DeviceFace(*cluster, widening["Face"].get<int>()) == 0);
+    CHECK_THAT(widening["TiltDegrees"].get<double>(), WithinAbs(72.0, 1.0e-3));
+    CHECK_THAT(widening["ShortfallOverR"].get<double>(), WithinAbs(excursion / R, 1.0e-4));
+    const auto crossing = DevicePoint(*cluster, widening["P"][0], widening["P"][1], R);
+    CHECK_THAT(crossing[0], WithinAbs(x0, 1.0e-4));
+    CHECK_THAT(crossing[1], WithinAbs(7.5, 1.0e-4));
+    CHECK(DeviceCrossings(*cluster) == std::array<int, 4>{1, 0, 1, 4});
+    bool arc_context = false;
+    for (const auto &[f, tilt_degrees] : ContextFaceTilts(*cluster))
+    {
+      CHECK(tilt_degrees <= 70.0);
+    }
+    for (const auto &entry : cluster->signature["Context"])
+    {
+      arc_context = arc_context || (entry.contains("Arc") && entry["Chain"] == false);
+    }
+    CHECK(arc_context);
+    CHECK(support["Context"]["ForeignVertices"].size() == 2);  // the bar's lower end
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    CHECK(support["FaceRules"]["MinCrossingSine"].get<double>() >= 0.25);
+  }
+
+  // (c) SPAN-CAP REFUSAL: a 7-um strip from A = (-12.3, 11.4) DOWN and left at 18 deg from
+  //     the y axis (its far end 0.6 um outside the left face, 4.4 um above the pad): both
+  //     edges cross the left face at 72 deg heading to the BOTTOM face, the line of the
+  //     first from y = 9.64: an excursion of 14.64 tan 18 = 4.76 um = 2.378 R, so the
+  //     widening (+ R) would take the plan span to 16.25 R > 16 R: Unboxable by name, the
+  //     text naming the face, the tilt and the bound, the firing ends recorded.
+  {
+    const auto [input, result] =
+        Identify(Strip({-12.3, 11.4}, {-std::sin(a18), -std::cos(a18)},
+                       {std::cos(a18), -std::sin(a18)}, 7.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 0);
+    CHECK(cluster->signature["Unboxable"] == true);
+    CHECK(support["UnboxableReason"] == "SpanCapRefusedFaceCrossingTiltWidening");
+    REQUIRE(support["Unboxable"].is_string());
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("face-crossing tilt rule"));
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("above the bound 70"));
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("beyond the span cap 16"));
+    CHECK(support["Box"] == support["ClaimsBox"]);  // the refused widening is not applied
+    REQUIRE(support.contains("FaceCrossingTilt"));
+    REQUIRE(support["FaceCrossingTilt"]["Widenings"].size() == 2);
+    const double cross_1 = 11.4 - (-12.3 - x0) / std::tan(a18);
+    const double shortfall_1 = (cross_1 - y0) * std::tan(a18);
+    CHECK_THAT(shortfall_1 / R, WithinAbs(2.378, 1.0e-3));
+    double largest = 0.0;
+    for (const auto &widening : support["FaceCrossingTilt"]["Widenings"])
+    {
+      CHECK(DeviceFace(*cluster, widening["Face"].get<int>()) == 0);
+      CHECK_THAT(widening["TiltDegrees"].get<double>(), WithinAbs(72.0, 1.0e-3));
+      largest = std::max(largest, widening["ShortfallOverR"].get<double>());
+    }
+    CHECK_THAT(largest, WithinAbs(shortfall_1 / R, 1.0e-4));
+    for (const auto &widening : support["FaceCrossingTilt"]["Widenings"])
+    {
+      // The refused move of the face, recorded: the largest shortfall + the padding.
+      CHECK_THAT(std::abs(widening["FaceLineOverR"][1].get<double>() -
+                          widening["FaceLineOverR"][0].get<double>()),
+                 WithinAbs(largest + 1.0, 2.0e-6));
+    }
+    CHECK_THAT(12.872984 + largest + 1.0, WithinAbs(16.25, 1.0e-2));
+    CHECK(result.spatial_support.unboxable >= 1);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationFaceCrossingTiltFrameOfRecord",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 772: the face-crossing tilt rule reads the box of the FRAME OF RECORD only.
+  // The frame is chosen over the candidate frames of the claims (the portion tangents and
+  // perpendiculars) by the lexicographically smallest key text, which starts with the
+  // frame's "Box"; a rule acting inside every candidate's support would widen a candidate
+  // and could make its box text sort below the frame of record's ("-10.3..." < "-3.59..."),
+  // renaming a key whose own frame reads no steep crossing (the OSC-003 Matched key
+  // 56e7d233c0a7 of the s7r2 census). The pad of the SpatialSupportContract fixture with a
+  // lead tilted 20 deg from vertical (R = 2 um) has axis-aligned AND 70 / 160-deg candidate
+  // frames; its frame of record is axis-aligned (x along device y) with the claims box
+  // x in [-12.63, 12.88], y in [-5.59, 13.0] um. A 1-um foreign square at (-8, 8) inside
+  // the box makes the record contract 3 (the candidate loop runs). A 0.3-um-wide foreign
+  // strip 1.6 um ABOVE the record box, along -1.5 deg from the device x axis, is outside
+  // the record box and its clearance shell; in the 70-deg candidates it enters the box
+  // through the face normal to the 160-deg axis (tilt 18.5 deg) and leaves through the face
+  // normal to the 70-deg axis at 71.5 deg to its normal, 8.5 um from the box corner, with
+  // its line reaching the opposite face 3.76 R outward: the rule applied in that
+  // candidate would move its first box number to -10.17 R, and the per-candidate form would
+  // then choose that frame. The record must be the frame of record read without the
+  // strip: the same frame, box and KEY (the strip is not in its context), no widening.
+  const double R = 2.0;
+  const double pi = std::acos(-1.0);
+  const double a20 = 20.0 * pi / 180.0, a1p5 = -1.5 * pi / 180.0;
+  const Point2 d = {std::sin(a20), std::cos(a20)}, q = {std::cos(a20), -std::sin(a20)};
+  const std::vector<Point2> lead = {{q[0], 1.2 + q[1]},
+                                    {q[0] + 40.0 * d[0], 1.2 + q[1] + 40.0 * d[1]},
+                                    {-q[0] + 40.0 * d[0], 1.2 - q[1] + 40.0 * d[1]},
+                                    {-q[0], 1.2 - q[1]}};
+  const Point2 A = {-11.85, 14.88}, sd = {std::cos(a1p5), std::sin(a1p5)},
+               sp = {-std::sin(a1p5), std::cos(a1p5)};
+  std::vector<Point2> strip = {
+      A,
+      {A[0] + 10.0 * sd[0], A[1] + 10.0 * sd[1]},
+      {A[0] + 10.0 * sd[0] + 0.3 * sp[0], A[1] + 10.0 * sd[1] + 0.3 * sp[1]},
+      {A[0] + 0.3 * sp[0], A[1] + 0.3 * sp[1]}};
+  const std::array<double, 2> probe = {0.0, 1.2};  // the lead's end edge: in the cluster
+  auto Identify = [&](bool with_strip)
+  {
+    std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                                   {lead, 1, 100.0},
+                                   {Rectangle(-8.5, 7.5, -7.5, 8.5), 3, 100.0}};
+    if (with_strip)
+    {
+      loops.push_back({strip, 2, 100.0});
+    }
+    const auto input = MakeInput(loops, R);
+    auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    return std::make_pair(input, std::move(result));
+  };
+  const auto [control_input, control] = Identify(false);
+  const auto *reference = ClusterContaining(control, control_input, probe);
+  REQUIRE(reference != nullptr);
+  CHECK(reference->spatial_support["Contract"] == 3);
+  CHECK(reference->spatial_support["Context"]["ForeignPieces"] == 4);  // the square
+  // The frame of record: axis-aligned (x along device y, y along -device x).
+  CHECK_THAT(reference->axes[0][0], WithinAbs(0.0, 1.0e-12));
+  CHECK_THAT(reference->axes[0][1], WithinAbs(1.0, 1.0e-12));
+  CHECK_THAT(reference->axes[1][0], WithinAbs(-1.0, 1.0e-12));
+  const auto reference_box = DeviceBox(*reference, "Box", R);
+  CHECK_THAT(reference_box[0], WithinAbs(-12.63, 0.01));
+  CHECK_THAT(reference_box[3], WithinAbs(13.0, 0.01));
+  // The strip lies above the record box, beyond the clearance shell, at 71.5 deg to the
+  // normal of the 70-deg candidates' face (and would cross no face of the record box).
+  for (const auto &p : strip)
+  {
+    CHECK(p[1] > reference_box[3] + kSupportFaceClearanceOverRadius * R + 1.0);
+  }
+  CHECK_THAT(std::acos(std::abs(sd[0] * std::cos(70.0 * pi / 180.0) +
+                                sd[1] * std::sin(70.0 * pi / 180.0))) *
+                 180.0 / pi,
+             WithinAbs(71.5, 1.0e-9));
+
+  const auto [input, result] = Identify(true);
+  const auto *cluster = ClusterContaining(result, input, probe);
+  REQUIRE(cluster != nullptr);
+  CHECK(cluster->hash == reference->hash);
+  CHECK(cluster->signature == reference->signature);
+  CHECK(cluster->axes == reference->axes);
+  CHECK(cluster->origin == reference->origin);
+  CHECK(cluster->spatial_support["Box"] == reference->spatial_support["Box"]);
+  CHECK(cluster->spatial_support["Box"] == cluster->spatial_support["ClaimsBox"]);
+  CHECK(cluster->spatial_support["Growth"]["Grown"] == false);
+  CHECK(!cluster->spatial_support.contains("FaceCrossingTilt"));
+  CHECK(cluster->spatial_support["Contract"] == 3);
+  CHECK(cluster->spatial_support["Context"]["ForeignPieces"] == 4);
+  CHECK(result.spatial_support.grown == control.spatial_support.grown);
+}
+
 TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
           "[surfaceresponseidentification][surfaceresponseoperator][Serial]")
 {
@@ -5462,7 +5921,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     imaged.real_segments = static_cast<std::size_t>(chord);
     CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
   }
-  // 7. The geometry cache round trip of the record (version 18).
+  // 7. The geometry cache round trip of the record (version 19).
   {
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -5491,15 +5950,15 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     std::ifstream input(path);
     nlohmann::json cache = nlohmann::json::parse(input);
     input.close();
-    CHECK(cache["Version"] == 18);
+    CHECK(cache["Version"] == 19);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
     CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
     CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
-    // A version-18 cache written before decision 632 (no ProbeSnapsComputed) is refused by
-    // name, never read as computed.
+    // A current-version cache without ProbeSnapsComputed (the schema before decision 632)
+    // is refused by name, never read as computed.
     nlohmann::json uncomputed = cache;
     uncomputed["Patches"][0].erase("ProbeSnapsComputed");
-    const auto uncomputed_path = dir / "geometry-v18-no-computed.json";
+    const auto uncomputed_path = dir / "geometry-v19-no-computed.json";
     {
       std::ofstream output(uncomputed_path);
       output << uncomputed.dump(2) << "\n";
@@ -5521,7 +5980,192 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       ContainsSubstring("cache version 17") &&
-                          ContainsSubstring("version 18"));
+                          ContainsSubstring("version 19"));
+    // A version-18 cache (main before decision 774: the same schema, but a mirror-formed
+    // coupon's image-side probes recorded un-snapped) is refused by the version message
+    // (decision 781; the 527 rule), never read for its stale ProbeSnaps.
+    nlohmann::json eighteen = cache;
+    eighteen["Version"] = 18;
+    const auto eighteen_path = dir / "geometry-v18.json";
+    {
+      std::ofstream output(eighteen_path);
+      output << eighteen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
+                      ContainsSubstring("cache version 18") &&
+                          ContainsSubstring("version 19"));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationProbeChordSnapAcrossMirror",
+          "[surfaceresponseidentification][surfaceresponseoperator][conductorconsistency]"
+          "[Serial]")
+{
+  // Decision 774 (the GROUP B 79c3 diagnosis, decision 771): a conductor-consistency probe
+  // of a mirror-formed coupon's IMAGE half lies beyond a Natural truncation plane, and the
+  // solve evaluates it at its reflection into the domain (the even extension, within the
+  // coupon's reach). Its device chord is therefore the one at the REFLECTED position: the
+  // placement snaps it there, exactly as its real-side mirror knot is snapped, and carries
+  // the displacement back through the same reflections so that the stored displacement
+  // travels with the patch as every snap does and the solve's reflection of (probe +
+  // displacement) lands on the chord. Every probe the solve would not reflect is read as
+  // before, bitwise. The lane-P scene: the 10 x 6 island with 1-um fillets, R = 2.
+  const double R = 2.0;
+  const auto input = MakeInput({{RoundedRectangle(5.0, 3.0, 1.0, 4), 0, 1.0}}, R);
+  const auto result = IdentifyMetalPerimeter(input);
+  REQUIRE(result.arcs.size() == 4);
+  const std::array<double, 3> center = {4.0, 2.0, 0.0};
+  const double rho = 1.0;
+  const double sagitta = rho * (1.0 - std::cos(0.5 * 22.5 * std::acos(-1.0) / 180.0));
+  auto Circle = [&](double degrees, double radius)
+  {
+    const double t = degrees * std::acos(-1.0) / 180.0;
+    return std::array<double, 3>{center[0] + radius * std::cos(t),
+                                 center[1] + radius * std::sin(t), 0.0};
+  };
+  auto Moved = [](const std::array<double, 3> &p, const std::array<double, 3> &d)
+  { return std::array<double, 3>{p[0] + d[0], p[1] + d[1], p[2] + d[2]}; };
+  // The window's +x wall x = 6 (outward normal +x; the island occupies x <= 5) and its +y
+  // wall y = 4, both Natural, acting everywhere in plan view (the synthetic faces box).
+  auto Wall = [](const std::array<double, 3> &normal, double offset)
+  {
+    MirrorPlane plane;
+    plane.attribute = 7;
+    plane.normal = normal;
+    plane.offset = offset;
+    plane.faces = 1;
+    plane.status = "Natural";
+    plane.box_min = {-1.0e9, -1.0e9, -1.0e9};
+    plane.box_max = {1.0e9, 1.0e9, 1.0e9};
+    return plane;
+  };
+  const std::vector<MirrorPlane> wall = {Wall({1.0, 0.0, 0.0}, 6.0)};
+  const std::vector<MirrorPlane> corner = {Wall({1.0, 0.0, 0.0}, 6.0),
+                                           Wall({0.0, 1.0, 0.0}, 4.0)};
+  const double band = 3.0 * R, tolerance = 1.0e-3 * R;
+  auto Same =
+      [](const std::optional<ProbeChordSnap> &a, const std::optional<ProbeChordSnap> &b)
+  {
+    REQUIRE(a.has_value() == b.has_value());
+    if (a && b)
+    {
+      CHECK(a->segment == b->segment);
+      CHECK(a->arc == b->arc);
+      CHECK(a->displacement == b->displacement);
+      CHECK(a->distance == b->distance);
+    }
+  };
+
+  // The real-side knot: ON the fitted circle at the first chord's middle (the arc face-end
+  // knot of a coupon built on the circle), snapped by the sagitta (the lane-P case).
+  const auto q_real = Circle(11.25, rho);
+  const auto real = SnapProbeToDeviceChord(result, q_real);
+  REQUIRE(real.has_value());
+  CHECK_THAT(real->distance, WithinAbs(sagitta, 1.0e-12));
+  const auto &chord = result.segments[real->segment];
+  const auto foot_real = Moved(q_real, real->displacement);
+  REQUIRE(SegmentDistance(foot_real, chord.key[0], chord.key[1]) < 1.0e-12);
+
+  // Its IMAGE across the wall, 1.02 um beyond the plane (within the band): the knot of the
+  // coupon's image half. Main's reading (the real-only search at the mapped position): no
+  // real segment within the bound, no snap - the mechanism of decision 771 (c).
+  const auto q_image = wall[0].Reflect(q_real);
+  CHECK(q_image[0] > 6.0);
+  CHECK_FALSE(SnapProbeToDeviceChord(result, q_image).has_value());
+
+  // (i)-(iii) The mirror-aware snap: the image knot snaps like its real-side mirror (the
+  // same chord, arc and distance); the stored displacement is the real-side one reflected
+  // (the linear part: the x component flips); the solve's chain - the even extension of
+  // (probe + displacement) - lands on the chord, at the real-side foot.
+  {
+    const auto snap =
+        SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, band, tolerance);
+    REQUIRE(snap.has_value());
+    CHECK(snap->segment == real->segment);
+    CHECK(snap->arc == real->arc);
+    CHECK_THAT(snap->distance, WithinAbs(sagitta, 1.0e-12));
+    CHECK_THAT(snap->distance, WithinAbs(real->distance, 1.0e-15));
+    const auto expected = wall[0].ReflectDirection(real->displacement);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(snap->displacement[d], WithinAbs(expected[d], 1.0e-12));
+    }
+    CHECK_THAT(snap->displacement[0], WithinAbs(-real->displacement[0], 1.0e-12));
+    CHECK_THAT(snap->displacement[1], WithinAbs(real->displacement[1], 1.0e-12));
+    CHECK(snap->displacement[2] == 0.0);
+    CHECK_THAT(
+        std::hypot(snap->displacement[0], snap->displacement[1], snap->displacement[2]),
+        WithinAbs(snap->distance, 1.0e-15));
+    const auto evaluated =
+        ReflectIntoDomain(Moved(q_image, snap->displacement), wall, band, tolerance);
+    REQUIRE(evaluated.has_value());
+    CHECK(evaluated->planes == std::vector<int>{0});
+    CHECK(SegmentDistance(evaluated->point, chord.key[0], chord.key[1]) < 1.0e-12);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(evaluated->point[d], WithinAbs(foot_real[d], 1.0e-12));
+    }
+  }
+  // (iv) The real-side knot through the mirror-aware call: bitwise the plain reading (it
+  //      lies inside every plane; nothing is reflected).
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, wall, band, tolerance), real);
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, corner, band, tolerance), real);
+  // (v) A knot the solve would not reflect is read where it is, as on main: beyond the band
+  //     (band 0.5 um < its 1.02-um depth), or beyond a plane that does not mirror.
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, 0.5, tolerance),
+       SnapProbeToDeviceChord(result, q_image));
+  CHECK_FALSE(SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, 0.5, tolerance)
+                  .has_value());
+  {
+    auto unsupported = wall;
+    unsupported[0].status = "Unsupported";
+    Same(SnapProbeToDeviceChordAcrossMirror(result, q_image, unsupported, band, tolerance),
+         SnapProbeToDeviceChord(result, q_image));
+    CHECK_FALSE(
+        SnapProbeToDeviceChordAcrossMirror(result, q_image, unsupported, band, tolerance)
+            .has_value());
+  }
+  // (vi) No planes, or band 0 (Maxwell / Mirror Off): the plain reading.
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, {}, band, tolerance), real);
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_real, wall, 0.0, tolerance), real);
+  Same(SnapProbeToDeviceChordAcrossMirror(result, q_image, wall, 0.0, tolerance),
+       SnapProbeToDeviceChord(result, q_image));
+  // (vii) Straight edges never move a knot, through the mirror as well: the image across
+  //       the +y wall of a knot a sagitta into the gap off the island's top edge y = 3.
+  {
+    const std::array<double, 3> gap_knot = {0.0, 3.0 + sagitta, 0.0};
+    CHECK_FALSE(SnapProbeToDeviceChord(result, gap_knot).has_value());
+    const auto image = corner[1].Reflect(gap_knot);
+    CHECK(image[1] > 4.0);
+    CHECK_FALSE(SnapProbeToDeviceChordAcrossMirror(result, image, corner, band, tolerance)
+                    .has_value());
+  }
+  // (viii) The double image at the window's corner (beyond both walls): snapped through
+  // both
+  //        reflections, the same chord / arc / distance; the solve's chain lands on the
+  //        chord.
+  {
+    const auto q_double = corner[1].Reflect(corner[0].Reflect(q_real));
+    CHECK(q_double[0] > 6.0);
+    CHECK(q_double[1] > 4.0);
+    CHECK_FALSE(SnapProbeToDeviceChord(result, q_double).has_value());
+    const auto snap =
+        SnapProbeToDeviceChordAcrossMirror(result, q_double, corner, band, tolerance);
+    REQUIRE(snap.has_value());
+    CHECK(snap->segment == real->segment);
+    CHECK(snap->arc == real->arc);
+    CHECK_THAT(snap->distance, WithinAbs(real->distance, 1.0e-15));
+    CHECK_THAT(snap->displacement[0], WithinAbs(-real->displacement[0], 1.0e-12));
+    CHECK_THAT(snap->displacement[1], WithinAbs(-real->displacement[1], 1.0e-12));
+    const auto evaluated =
+        ReflectIntoDomain(Moved(q_double, snap->displacement), corner, band, tolerance);
+    REQUIRE(evaluated.has_value());
+    CHECK(evaluated->planes == std::vector<int>{0, 1});
+    CHECK(SegmentDistance(evaluated->point, chord.key[0], chord.key[1]) < 1.0e-12);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(evaluated->point[d], WithinAbs(foot_real[d], 1.0e-12));
+    }
   }
 }
 
@@ -6497,9 +7141,17 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
       CHECK(entry->contains("ImagePortions"));
       CHECK(entry->at("Hash") == feature.hash);
     }
-    // Both convexities, the real arm on the first serialised portion of one key and on the
-    // second of the other (the chirality / sort of each wedge's own frame).
-    CHECK(real_portion_sets == std::set<std::vector<int>>{{0}, {1}});
+    // Both convexities. The real arm's serialised index is the chirality / sort of each
+    // wedge's own canonical frame (the minimal serialisation of Box + Context + Portions):
+    // with the MIRROR-COMPLETE support plan (decision 732, F-M1: each wedge's box reaches
+    // past the band, so its image-side context is now the reflected real plan, not the
+    // band-cut stub) both wedges' minimal frames put the real arm first; before F-M1 one of
+    // them read {1}. The mapping itself is exact either way (the midpoint checks above).
+    CHECK(real_portion_sets == std::set<std::vector<int>>{{0}});
+    for (const auto *configuration : configurations)
+    {
+      CHECK(configuration->spatial_support.contains("MirrorCompletion"));
+    }
     CHECK(gap_signs == std::set<int>{-1, 1});
     // The MirrorBand record lists the configurations' Unmerged records with MergedFeature.
     const auto band = DescribeMirrorBand(planes, extension, summary, merged, 3.0, 1.0);
@@ -6587,5 +7239,374 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
     CHECK(MirrorFormedContractOf(*configurations[0]).is_null());
     CHECK_THAT(configurations[0]->length,
                WithinAbs(unmerged.at("RealLength").get<double>(), 1.0e-12));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationMirrorCompleteSupport",
+          "[surfaceresponseidentification][mirror][contract][Serial]")
+{
+  // Decision 732 (F-M1, the v3-g M1 DIAGNOSIS sections 1 / 4 / 5 T1): the support plan of
+  // a mirror-formed SpatialEdgeCluster is MIRROR-COMPLETE. The mirror extension images real
+  // segments only within kMirrorBandOverRadius x R of a plane, so an image chain ends at a
+  // BAND-CUT vertex; the claims box (rule B2) pads a cut image claim by 3 R, so the box
+  // reaches past the band and, before the fix, the Chain: true Context pieces of the image
+  // side ended at the band cut INSIDE the box (no device vertex there) and T2 read the band
+  // cut as an interior device vertex (46d2: MinClearanceOverR 0.46436 = the band cut's face
+  // distance). After the fix ClusterSupport clips the REFLECTED real plan beyond the band
+  // into the box as context, the band cut is a continuing-edge split (cut_a / cut_b), and a
+  // band cut no reflection continues (the plane does not act there) is Unboxable BY NAME.
+  // The fixture is the 46d2 form: a CPW (trace 1 R, gaps 1 R, grounds 4 R; 2 conductors)
+  // crossing the Natural plane x = 0 at 45 degrees, mesh segments 1 R: the four gap edges
+  // meet their images in virtual 90-degree corners 1.41 R apart, one 8-edge cluster.
+  const double R = 2.0;
+  const double s2 = std::sqrt(2.0);
+  // Along-coordinate a (direction d = (1, 1) / sqrt 2) and offset o (n = (-1, 1) / sqrt 2):
+  // p = a d + o n; the plane x = 0 is a = o.
+  auto P = [&](double a, double o) -> Point2 { return {(a - o) / s2, (a + o) / s2}; };
+  const double L = 24.0 * R;
+  auto Strip = [&](double o0, double o1, int conductor)
+  {
+    LoopSpec strip{{P(-L, o0), P(o0, o0), P(o1, o1), P(-L, o1)}, conductor, 1.0 * R};
+    strip.truncation_edges = {1};
+    return strip;
+  };
+  const std::vector<LoopSpec> cpw = {Strip(-0.5 * R, 0.5 * R, 1),
+                                     Strip(-5.5 * R, -1.5 * R, 2),
+                                     Strip(1.5 * R, 5.5 * R, 2)};
+  std::vector<MirrorPlane> planes(1);
+  planes[0].attribute = 7;
+  planes[0].normal = {1.0, 0.0, 0.0};
+  planes[0].offset = 0.0;
+  planes[0].faces = 1;
+  planes[0].status = "Natural";
+  planes[0].box_min = {-1.0e9, -1.0e9, -1.0e9};
+  planes[0].box_max = {1.0e9, 1.0e9, 1.0e9};
+  auto Configurations = [](const IdentificationResult &merged)
+  {
+    std::vector<const IdentifiedFeature *> configurations;
+    for (const auto &feature : merged.features)
+    {
+      if (IsUnmergedMirrorConfiguration(feature) && feature.type == "SpatialEdgeCluster")
+      {
+        configurations.push_back(&feature);
+      }
+    }
+    return configurations;
+  };
+  auto Run = [&](const std::vector<MirrorPlane> &with_planes)
+  {
+    const auto input = MakeInput(cpw, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, with_planes);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, with_planes, merged);
+    return std::make_tuple(input, extension, merged, summary);
+  };
+
+  // The frame coordinates (units of R) of a world point in the configuration's frame.
+  auto InFrame = [&](const IdentifiedFeature &feature, const std::array<double, 3> &p)
+  {
+    Point2 q{};
+    for (int d = 0; d < 3; d++)
+    {
+      q[0] += (p[d] - feature.origin[d]) * feature.axes[0][d] / R;
+      q[1] += (p[d] - feature.origin[d]) * feature.axes[1][d] / R;
+    }
+    return q;
+  };
+  auto OnFace = [](const Point2 &p, const std::array<double, 4> &box, double tolerance)
+  {
+    return std::abs(p[0] - box[0]) <= tolerance || std::abs(p[0] - box[2]) <= tolerance ||
+           std::abs(p[1] - box[1]) <= tolerance || std::abs(p[1] - box[3]) <= tolerance;
+  };
+  auto StrictlyInside = [](const Point2 &p, const std::array<double, 4> &box, double margin)
+  {
+    return p[0] > box[0] + margin && p[0] < box[2] - margin && p[1] > box[1] + margin &&
+           p[1] < box[3] - margin;
+  };
+
+  SECTION("the 46d2 form: the image chains are completed to the box face by the reflected "
+          "real plan; the band cuts are continuing-edge splits; the real side is unchanged")
+  {
+    const auto [input, extension, merged, summary] = Run(planes);
+    const auto configurations = Configurations(merged);
+    REQUIRE(configurations.size() == 1);
+    const IdentifiedFeature &feature = *configurations[0];
+    const nlohmann::json &support = feature.spatial_support;
+    const nlohmann::json &signature = feature.signature;
+    INFO(support.dump(1));
+    INFO(signature.dump(1));
+    CHECK(support.at("Contract").get<int>() == 3);
+    CHECK(support.at("Unboxable").is_null());
+    CHECK_FALSE(support.at("Growth").at("Grown").get<bool>());
+    REQUIRE(feature.mirror.contains("Contract"));
+    CHECK(feature.mirror.at("Contract").at("RealPortions") == std::vector<int>{0, 1, 6, 7});
+    const auto box = signature.at("Box").get<std::array<double, 4>>();
+    // The four image chains' band cuts (ExtendIdentificationInputAcrossMirrorPlanes) on the
+    // cluster's plane lie strictly INSIDE the box, 0.84-3.83 R from the +x face: before the
+    // fix the image-side Chain: true pieces ended there (46d2's reading).
+    std::vector<Point2> cuts_in_box;
+    for (const std::size_t v : extension.band_cut_vertices)
+    {
+      const Point2 q = InFrame(feature, extension.input.vertices[v].coordinate);
+      if (StrictlyInside(q, box, 1.0e-3))
+      {
+        cuts_in_box.push_back(q);
+      }
+    }
+    REQUIRE(cuts_in_box.size() == 4);
+    double missing_before = 0.0;  // sum of (face - band cut) along the image chains (+x)
+    for (const Point2 &cut : cuts_in_box)
+    {
+      CHECK(box[2] - cut[0] > 0.5);
+      missing_before += box[2] - cut[0];
+    }
+    // Every Chain: true context piece ends on a box face or at a chain end (a claim end or
+    // another context piece's end): no free end inside the box (the generator's face-vote
+    // stop of decision 699 has nothing to refuse).
+    std::vector<Point2> ends;
+    for (const auto &portion : signature.at("Portions"))
+    {
+      const auto P = portion.at("P").get<std::array<double, 4>>();
+      ends.push_back({P[0], P[1]});
+      ends.push_back({P[2], P[3]});
+    }
+    for (const auto &piece : signature.at("Context"))
+    {
+      const auto P = piece.at("P").get<std::array<double, 4>>();
+      ends.push_back({P[0], P[1]});
+      ends.push_back({P[2], P[3]});
+    }
+    std::size_t chain_pieces = 0, ends_on_faces = 0, ends_at_cuts = 0;
+    for (const auto &piece : signature.at("Context"))
+    {
+      if (!piece.at("Chain").get<bool>())
+      {
+        continue;
+      }
+      chain_pieces++;
+      const auto P = piece.at("P").get<std::array<double, 4>>();
+      for (const Point2 e : {Point2{P[0], P[1]}, Point2{P[2], P[3]}})
+      {
+        const bool on_face = OnFace(e, box, 1.0e-3);
+        const std::size_t coincident = static_cast<std::size_t>(
+            std::count_if(ends.begin(), ends.end(), [&](const Point2 &o)
+                          { return std::hypot(o[0] - e[0], o[1] - e[1]) <= 1.0e-5; }));
+        CHECK((on_face || coincident >= 2));  // itself and at least one other end
+        ends_on_faces += on_face ? 1 : 0;
+        for (const Point2 &cut : cuts_in_box)
+        {
+          ends_at_cuts += std::hypot(cut[0] - e[0], cut[1] - e[1]) <= 1.0e-5 ? 1 : 0;
+        }
+      }
+    }
+    // 4 real chain pieces + 3 image pieces to the band cuts + 4 reflected continuations.
+    CHECK(chain_pieces == 11);
+    CHECK(ends_on_faces == 8);
+    // The band cuts: three are met by an image piece AND its continuation, the fourth (an
+    // image CLAIM cut at the band) by its continuation alone.
+    CHECK(ends_at_cuts == 7);
+    // AFTER (F-M1): MirrorCompletion = the reflected real plan beyond the band inside the
+    // box: 4 pieces, every one Chain: true, of exactly the length the band cuts left out -
+    // which is exactly what the legacy census read as FICTITIOUS continuation before the
+    // fix (DIAGNOSIS 1.4: 46d2's FictitiousContinuationLengthOverR 6.03167 = its deficit);
+    // that census now reads 0: every claim-cut end is continued by device plan.
+    REQUIRE(support.contains("MirrorCompletion"));
+    const nlohmann::json &completion = support.at("MirrorCompletion");
+    CHECK(completion.at("Planes") == std::vector<int>{0});
+    CHECK(completion.at("Pieces").get<int>() == 4);
+    CHECK(completion.at("ChainPieces").get<int>() == 4);
+    CHECK_THAT(completion.at("LengthOverR").get<double>(),
+               WithinAbs(missing_before, 1.0e-5));
+    CHECK_THAT(completion.at("LengthOverR").get<double>(), WithinAbs(9.337219, 1.0e-5));
+    CHECK_THAT(support.at("LegacyContinuation")
+                   .at("FictitiousContinuationLengthOverR")
+                   .get<double>(),
+               WithinAbs(0.0, 1.0e-9));
+    // T2 no longer reads a band cut as an interior device vertex: the minimum clearance is
+    // the foreign corner's (the upper ground's outer edge meets its image), not a band
+    // cut's distance from the +x face (0.840746 before the fix); the four image chains now
+    // CROSS the +x face (1 foreign crossing before, 5 after).
+    const auto &face_rules = support.at("FaceRules");
+    REQUIRE(support.at("Context").at("ForeignVertices").size() == 1);
+    CHECK_THAT(face_rules.at("MinClearanceOverR").get<double>(),
+               WithinAbs(support.at("Context")
+                             .at("ForeignVertices")[0]
+                             .at("FaceDistanceOverR")
+                             .get<double>(),
+                         1.0e-9));
+    for (const Point2 &cut : cuts_in_box)
+    {
+      CHECK(std::abs(face_rules.at("MinClearanceOverR").get<double>() - (box[2] - cut[0])) >
+            1.0e-3);
+    }
+    CHECK(face_rules.at("Crossings") == std::vector<int>{0, 0, 5, 5});
+    CHECK(face_rules.at("Passes").get<int>() == 1);
+    // The real side of the plan is UNCHANGED: the four real chains' continuations to the +y
+    // face and the two foreign pieces of the upper ground's outer edge and its image, as
+    // the record before the fix wrote them (main d73e7f7459, this fixture).
+    const std::vector<std::array<double, 4>> unchanged = {
+        {-1.261727, 3.336973, -1.261727, 6.336973},
+        {0.738273, 3.336973, 0.738273, 6.336973},
+        {-0.261727, 3.336973, -0.261727, 6.336973},
+        {-2.261727, 3.336973, -2.261727, 6.336973},
+        {4.738273, 4.604922, 6.470324, 4.604922},
+        {4.738273, 4.604922, 4.738273, 6.336973}};
+    for (const auto &expected : unchanged)
+    {
+      const bool present =
+          std::any_of(signature.at("Context").begin(), signature.at("Context").end(),
+                      [&](const nlohmann::json &piece)
+                      {
+                        const auto P = piece.at("P").get<std::array<double, 4>>();
+                        for (int k = 0; k < 4; k++)
+                        {
+                          if (std::abs(P[k] - expected[k]) > 1.0e-6)
+                          {
+                            return false;
+                          }
+                        }
+                        return true;
+                      });
+      CHECK(present);
+    }
+    CHECK(signature.at("Context").size() == 13);
+    // The image side now carries the real side's plan: every claim-cut end's straight
+    // continuation to the claims box lies on device plan, so the chain length equals the
+    // legacy straight continuation length (24.828205 R; 15.490986 before the fix).
+    CHECK_THAT(support.at("Context").at("ChainLengthOverR").get<double>(),
+               WithinAbs(support.at("LegacyContinuation")
+                             .at("StraightContinuationLengthOverR")
+                             .get<double>(),
+                         1.0e-5));
+    // The consumer (decision 733): every context end placed by the configuration's frame
+    // lies on the MIRROR-COMPLETE perimeter within the A10 tolerance - the reflected
+    // continuation ends beyond the band through the reflection, every other end as before;
+    // a genuinely mis-placed end beyond the band (0.1 R off the reflected plan) still
+    // fails.
+    const double tolerance = kSignatureParameterToleranceOverRadius * R;
+    const double span = std::max(box[2] - box[0], box[3] - box[1]) * R;
+    std::size_t beyond_band = 0, by_reflection_only = 0;
+    for (const auto &piece : signature.at("Context"))
+    {
+      const auto P = piece.at("P").get<std::array<double, 4>>();
+      for (const auto &q :
+           {DevicePoint(feature, P[0], P[1], R), DevicePoint(feature, P[2], P[3], R)})
+      {
+        const double direct = DevicePerimeterDistance(merged, q);
+        const double complete =
+            MirrorCompletePerimeterDistance(merged, q, planes, span, tolerance);
+        CHECK(complete <= tolerance);
+        CHECK(complete <= direct);
+        if (-planes[0].Inside(q) > kMirrorBandOverRadius * R)
+        {
+          beyond_band++;
+          if (direct > tolerance)
+          {
+            by_reflection_only++;
+            // Mis-placed: shifted by 0.1 R along the plane (off the reflected plan).
+            const std::array<double, 3> off = {q[0], q[1] + 0.1 * R, q[2]};
+            CHECK(MirrorCompletePerimeterDistance(merged, off, planes, span, tolerance) >
+                  tolerance);
+          }
+        }
+      }
+    }
+    // Beyond 3 R of the plane: the four continuations' face ends, the seven band-cut ends
+    // (a band cut is the FAR end of the last imaged segment, past 3 R) and one image
+    // piece's start at a claim cut 3.35 R out; only the four face ends lie on no image
+    // segment.
+    CHECK(beyond_band == 12);
+    CHECK(by_reflection_only == 4);
+    // A point inside the domain or without planes: exactly DevicePerimeterDistance.
+    const auto real_end = DevicePoint(feature, -1.261727, 6.336973, R);
+    CHECK(MirrorCompletePerimeterDistance(merged, real_end, planes, span, tolerance) ==
+          DevicePerimeterDistance(merged, real_end));
+    CHECK(MirrorCompletePerimeterDistance(merged, real_end, {}, span, tolerance) ==
+          DevicePerimeterDistance(merged, real_end));
+  }
+
+  SECTION("identity: an input without mirror planes forms no completion; a mirror window "
+          "whose boxes hold no un-imaged reflected plan records none")
+  {
+    const auto input = MakeInput(cpw, R);
+    CHECK(input.mirror_planes.empty());
+    const auto real = IdentifyMetalPerimeter(input);
+    for (const auto &feature : real.features)
+    {
+      CHECK_FALSE((feature.spatial_support.is_object() &&
+                   feature.spatial_support.contains("MirrorCompletion")));
+    }
+    // The extended input carries the planes; the straight 90-degree lead of the MirrorBand
+    // test (a Continued feature, no cluster) records no completion anywhere.
+    LoopSpec lead{Rectangle(-20.0, -3.0, 0.0, 3.0), 0, 1.0};
+    lead.truncation_edges = {1};
+    const auto lead_input = MakeInput({lead}, R);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(lead_input, planes);
+    CHECK(extension.input.mirror_planes.size() == 1);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    for (const auto &feature : extended.features)
+    {
+      CHECK_FALSE((feature.spatial_support.is_object() &&
+                   feature.spatial_support.contains("MirrorCompletion")));
+    }
+  }
+
+  SECTION("guard: a plane acting on the band but not on the real plan beyond it leaves a "
+          "band cut inside the box without continuation: Unboxable by name")
+  {
+    // The plane's faces end (in y) half a mesh segment above the lowest band cut of the
+    // cluster's four image chains (the lower gap edge's): every imaged segment of the
+    // cluster still has an end within the faces (the same cluster forms), the lower gap
+    // edge's first un-imaged real segment has none, so its reflection is not plan there.
+    const auto [input, extension, merged, summary] = Run(planes);
+    double lowest = std::numeric_limits<double>::infinity();
+    for (const std::size_t v : extension.band_cut_vertices)
+    {
+      const double y = extension.input.vertices[v].coordinate[1];
+      if (y > -15.0)  // the lower ground's OUTER edge (not a cluster member) lies below
+      {
+        lowest = std::min(lowest, y);
+      }
+    }
+    REQUIRE(std::isfinite(lowest));
+    auto partial = planes;
+    partial[0].box_min[1] = lowest + 0.5;
+    const auto [input_p, extension_p, merged_p, summary_p] = Run(partial);
+    const auto configurations = Configurations(merged_p);
+    REQUIRE(configurations.size() == 1);
+    const IdentifiedFeature &feature = *configurations[0];
+    INFO(feature.spatial_support.dump(1));
+    CHECK(feature.signature.value("Unboxable", false));
+    CHECK(feature.spatial_support.at("Contract").get<int>() == 0);
+    CHECK(feature.spatial_support.at("UnboxableReason") == "MirrorBandCutUncontinued");
+    CHECK_THAT(feature.spatial_support.at("Unboxable").get<std::string>(),
+               ContainsSubstring("plane 0 does not act"));
+    CHECK_THAT(feature.spatial_support.at("Unboxable").get<std::string>(),
+               ContainsSubstring("has no reflected continuation"));
+    // The refused pass's record carries EXACTLY the three continued chains: the fourth (the
+    // lowest band cut's, 0.840746 R from the +x face: main's MinClearanceOverR reading) has
+    // no reflected piece, and its deficit is what the legacy census still reads as
+    // fictitious continuation; the two sum to the complete fixture's 9.337219 R.
+    const auto full = Configurations(merged);
+    REQUIRE(full.size() == 1);
+    const double complete_length =
+        full[0]->spatial_support.at("MirrorCompletion").at("LengthOverR").get<double>();
+    REQUIRE(feature.spatial_support.contains("MirrorCompletion"));
+    const nlohmann::json &partial_completion =
+        feature.spatial_support.at("MirrorCompletion");
+    CHECK(partial_completion.at("Planes") == std::vector<int>{0});
+    CHECK(partial_completion.at("Pieces").get<int>() == 3);
+    CHECK(partial_completion.at("ChainPieces").get<int>() == 3);
+    CHECK_THAT(partial_completion.at("LengthOverR").get<double>(),
+               WithinAbs(8.496473, 1.0e-5));
+    const double uncontinued = feature.spatial_support.at("LegacyContinuation")
+                                   .at("FictitiousContinuationLengthOverR")
+                                   .get<double>();
+    CHECK_THAT(uncontinued, WithinAbs(0.840746, 1.0e-5));
+    CHECK_THAT(partial_completion.at("LengthOverR").get<double>() + uncontinued,
+               WithinAbs(complete_length, 1.0e-5));
   }
 }

@@ -343,6 +343,9 @@ ExtendIdentificationInputAcrossMirrorPlanes(const IdentificationInput &input,
 {
   MirrorExtension extension;
   extension.input = input;
+  // The extended input carries the planes (decision 732, F-M1): the identification's
+  // spatial-support contract reflects the un-imaged real plan beyond the band through them.
+  extension.input.mirror_planes = planes;
   extension.real_segments = input.segments.size();
   extension.real_vertices = input.vertices.size();
   auto &out = extension.input;

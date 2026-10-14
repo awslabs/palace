@@ -65,9 +65,13 @@ struct UncoveredSpatialSupportClipping
   std::map<int, double> removed_by_feature;  // feature id -> removed length
 };
 
-// F-DB-a (decisions 442 / 454, DESIGN 2.1): the raw claims of the DomainBoundary-excluded
-// patches as perimeter portions (see CollectDomainBoundaryPortions).
-struct DomainBoundaryPortions
+// The raw claims of EXCLUDED patches as perimeter portions, whose within-R raw energy the
+// drivers keep in the corrected interface energies: the DomainBoundary-excluded patches of
+// the placement (F-DB-a, decisions 442 / 454, DESIGN 2.1; CollectDomainBoundaryPortions)
+// and the conductor-consistency-excluded patches of the solve (S7diag R1, decision 758;
+// SurfaceResponseOperator::GetConductorConsistencyPortionRecord). One record shape, one
+// per-patch claim rule (AppendExcludedPatchClaim), one share per consumer.
+struct ExcludedPatchPortions
 {
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
       portions;
@@ -444,7 +448,23 @@ private:
   // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
-  DomainBoundaryPortions domain_boundary_portions;
+  ExcludedPatchPortions domain_boundary_portions;
+  // S7diag R1 (decision 758): the raw claim of every APPLIED patch the
+  // conductor-consistency gate can probe (its model has conductor vertices on the process
+  // plane), built at construction by the DomainBoundary rule (AppendExcludedPatchClaim) and
+  // keyed by the global patch index on every rank; the gate appends an EXCLUDED patch's
+  // claim to conductor_consistency_portions (replicated: the records are gathered first),
+  // which the electrostatic driver keeps raw in E_ft / E_ff / E_sc like the uncovered
+  // requirements and the DomainBoundary claims. The list only grows (an exclusion is
+  // sticky).
+  std::map<int, ExcludedPatchPortions> conductor_consistency_claims;
+  ExcludedPatchPortions conductor_consistency_portions;
+  // kSignatureParameterToleranceOverRadius x R (mesh units): the claim portions' length
+  // floor and deduplication tolerance (the DomainBoundary rule's).
+  double conductor_consistency_claim_tolerance = 0.0;
+  // The domain-boundary containment result was reused from the first construction on the
+  // cached automatic geometry rather than recomputed on this mesh (decision 734 F2).
+  bool domain_boundary_containment_reused = false;
   // The Natural mirror planes and band (mesh units) of the mirror-point evaluation
   // (F-DB-c; DESIGN 2.2.3); empty / 0 without the mirror.
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
@@ -686,9 +706,35 @@ public:
   {
     return domain_boundary_portions.portions;
   }
-  const DomainBoundaryPortions &GetDomainBoundaryPortionRecord() const
+  const ExcludedPatchPortions &GetDomainBoundaryPortionRecord() const
   {
     return domain_boundary_portions;
+  }
+  // The raw claims of the patches the conductor-consistency gate has excluded so far
+  // (S7diag R1, decision 758; empty before the first exclusion and on every window with 0
+  // exclusions): kept in the corrected interface energies like the uncovered requirements
+  // and reported as the ConductorConsistency share. The gate runs on the electrostatic path
+  // only (ApplyConductorConsistencyGate refuses a Maxwell operator), so a Maxwell
+  // operator's list is empty by construction: the Maxwell path consumes no such term today
+  // (decision 763); when it gains the gate, it consumes this list as the electrostatic
+  // driver does.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetConductorConsistencyPortions() const
+  {
+    return conductor_consistency_portions.portions;
+  }
+  const ExcludedPatchPortions &GetConductorConsistencyPortionRecord() const
+  {
+    return conductor_consistency_portions;
+  }
+  // Whether this construction reused the first construction's domain-boundary containment
+  // result through the cached automatic geometry (decision 734 F2; false on the first
+  // construction, on a curved mesh, under PALACE_RESPONSE_CONTAINMENT_RECHECK, or when the
+  // tested patch set changed).
+  bool DomainBoundaryContainmentReused() const
+  {
+    return domain_boundary_containment_reused;
   }
 
   int GetBasisSize() const { return global_basis_size; }
@@ -786,6 +832,19 @@ double ArcChordDistance(const std::array<double, 3> &q, const std::array<double,
 double DevicePerimeterDistance(const IdentificationResult &identification,
                                const std::array<double, 3> &q);
 
+// The same distance on the MIRROR-COMPLETE plan (decisions 732 / 733, F-M1): a point beyond
+// an acting Natural mirror plane (within `band` of it; outside the domain, where the plan
+// is the reflected real plan) is reflected back into the domain through the planes it lies
+// beyond (ReflectIntoDomain) and read there as well; the smaller of the two distances. The
+// A10 check extended to the context reads it with the support box span as the band: a
+// reflected continuation piece ends on a box face beyond the mirror band, on no image
+// segment. Without planes, or for a point inside the domain, exactly
+// DevicePerimeterDistance.
+double MirrorCompletePerimeterDistance(const IdentificationResult &identification,
+                                       const std::array<double, 3> &q,
+                                       const std::vector<MirrorPlane> &planes, double band,
+                                       double tolerance);
+
 // The conductor-consistency probe snap (decision 611 (2); the R1 conductor diagnosis
 // section 6): the nearest REAL device perimeter segment to q (every segment read as the
 // straight chord of its key, the image segments of a mirror band excluded; a segment of
@@ -813,6 +872,23 @@ struct ProbeChordSnap
 std::optional<ProbeChordSnap>
 SnapProbeToDeviceChord(const IdentificationResult &identification,
                        const std::array<double, 3> &q);
+
+// The probe snap under the mirror rule (decision 774; the GROUP B 79c3 diagnosis of
+// decision 771): the solve evaluates a probe beyond a Natural truncation plane at its
+// reflection into the domain (ReflectIntoDomain: the even extension, the planes in index
+// order, within `band` = the global mirror band widened to a mirror-formed coupon's reach),
+// so the device chord such a probe must be read on is the one at its REFLECTED position -
+// the mapped position of an image-side knot lies beyond the plane, where no real segment
+// is. The snap is computed at the reflected position and its displacement carried back
+// through the same planes in reverse order (ReflectDirection, the linear part of each
+// reflection, its own inverse), so that the stored displacement is applied to the MAPPED
+// probe exactly as a real-side snap's is and the solve's reflection of (probe +
+// displacement) lands on the chord. A probe inside every plane, or one the solve would not
+// reflect (beyond the band, a plane that does not mirror, no planes, band 0), is read by
+// SnapProbeToDeviceChord at q, bitwise as before.
+std::optional<ProbeChordSnap> SnapProbeToDeviceChordAcrossMirror(
+    const IdentificationResult &identification, const std::array<double, 3> &q,
+    const std::vector<MirrorPlane> &planes, double band, double tolerance);
 
 void WriteResponseGeometryCache(
     const std::filesystem::path &path,
@@ -1341,6 +1417,28 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
         &unmerged_portions = {});
 
+// The per-process cache of the DERIVED model response matrices (decision 734 F1; the
+// response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /
+// thin matrices, the defect, the fixed-flux transform and defect: an Eigen eigensolve and
+// five n x n products per model) and BuildSurfaceResponseMatrices (the per-interface sums)
+// are recomputed at every AMR cycle on inputs that do not change across cycles - the
+// model's files, its ZeroTraceIndices and the units. Their outputs are cached per process,
+// keyed on the source files' ResponseMatrixFileKey (path / size / time / expected size /
+// within-R), the blend weights, the zero-trace indices, the interface mappings and the two
+// unit scale factors; a hit returns the first computation's bits, so every downstream
+// quantity is byte-identical by construction. PALACE_RESPONSE_DERIVED_CACHE=0 recomputes
+// on every hit and fails closed unless the recomputation equals the cached matrices bit
+// for bit (the validation switch). The counters are process-wide (every construction,
+// electrostatic and Maxwell).
+struct DerivedResponseMatrixCacheCounters
+{
+  long long int hits = 0;    // cached derived matrices returned (recomputed-and-verified
+                             // ones included under PALACE_RESPONSE_DERIVED_CACHE=0)
+  long long int misses = 0;  // derived matrices computed and stored
+  long long int entries = 0;
+};
+DerivedResponseMatrixCacheCounters GetDerivedResponseMatrixCacheCounters();
+
 // The mirror planes of a response configuration as the mirror module's planes.
 std::vector<MirrorPlane> MirrorPlanesOf(
     const std::vector<
@@ -1413,7 +1511,7 @@ std::array<double, 3>
 OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch,
                double c);
 
-DomainBoundaryPortions CollectDomainBoundaryPortions(
+ExcludedPatchPortions CollectDomainBoundaryPortions(
     const DomainBoundaryExclusions &exclusions,
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
         &patches,
@@ -1421,10 +1519,66 @@ DomainBoundaryPortions CollectDomainBoundaryPortions(
     const ContinuationOwnership &ownership,
     const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius);
 
+// The raw claim of ONE excluded patch appended to `result` by the rule above (the per-patch
+// step of CollectDomainBoundaryPortions, shared with the conductor-consistency consumer of
+// S7diag R1, decision 758): `translational` marks the own-edge interval of a cell; a
+// portion shorter than `tolerance` (kSignatureParameterToleranceOverRadius x R, mesh units)
+// is dropped; a portion of the same feature already in `result` within `tolerance` at both
+// ends folds the patch into that entry (DuplicatePatches).
+void AppendExcludedPatchClaim(
+    ExcludedPatchPortions &result, std::size_t patch_idx,
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double tolerance);
+void AppendExcludedPatchPortion(
+    ExcludedPatchPortions &result, std::size_t patch_idx,
+    const config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData
+        &portion,
+    bool translational, double tolerance);
+
 // The Diagnostics entry of the raw portions (count, geometric cells, duplicates, length,
-// per type and per feature, the portion list; mesh units scaled by coordinate_scale).
-nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &portions,
+// per type and per feature, the portion list; mesh units scaled by coordinate_scale) with
+// the consumer's rule text; DescribeDomainBoundaryPortions is the F-DB-a entry.
+nlohmann::json DescribeExcludedPatchPortions(const ExcludedPatchPortions &portions,
+                                             double coordinate_scale,
+                                             const std::string &rule);
+nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &portions,
                                               double coordinate_scale);
+
+// The integration intervals of one Maxwell response contour line (ConfigureMaxwellLines)
+// from the exact element intersection intervals gathered over the ranks (line parameter
+// in [0, 1]): the ends are snapped to 0 / 1 and the breakpoints uniqued at the parameter
+// tolerance 1e-10, every piece between breakpoints shorter than that is skipped, and a
+// remaining piece covered by no element interval is either a FLOATING-POINT CRACK or a
+// true gap (decision 745 (1), lane contourcover). Two tets sharing the face the line
+// crosses clip it independently from their own vertex arithmetic; the barycentric
+// coordinates carry a rounding error of O(eps x coordinate magnitude / altitude), so the
+// two clips of one face differ by a few tens of ULP of the coordinate magnitude in PHYSICAL
+// length (measured 20 / 68 x eps x coordinate_scale on the two cracks of record), a gap
+// or an overlap at random; in parameter space that is ~2e-10 on a 158-nm line, above the
+// 1e-10 constant, and the Maxwell driven runs aborted at AMR depth. A crack is closed
+// (dropped from the integration like the < 1e-10 pieces, counted and its length kept) iff
+// its physical length (piece x line_length) <= kMaxwellLineCrackUlps x eps x
+// max(coordinate_scale, line_length), i.e. 2^12 ULP of the coordinate magnitude: >= 60x
+// the measured cracks and a near-tangential face crossing's 1 / sin(theta) down to ~1 deg,
+// while 3 orders below a mesher's geometric tolerance (1e-8 x Lc), so a line that leaves
+// the mesh over any geometric length still fails closed (MFEM_VERIFY naming the line, the
+// parameter range, the gap and the tolerance). Where no uncovered piece occurs the
+// intervals are the pre-existing ones to the bit.
+constexpr double kMaxwellLineCrackUlps = 4096.0;
+struct MaxwellLineCoverage
+{
+  std::vector<std::pair<double, double>> intervals;
+  int closed_crack_count = 0;
+  double max_closed_crack = 0.0;  // Mesh units.
+};
+MaxwellLineCoverage
+ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
+                           double line_length, double coordinate_scale, int line_index,
+                           const std::array<double, 3> &begin,
+                           const std::array<double, 3> &end);
 
 }  // namespace palace
 

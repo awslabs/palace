@@ -100,6 +100,60 @@ struct SpanCapAllowance
   std::string approval;
 };
 
+// A truncation plane: n . x = c with n the OUTWARD unit normal of the domain, fitted from
+// the boundary faces of one truncation attribute (an exterior, nonmetal, non-interface
+// attribute under no boundary condition: metaledge's simulation-cut surfaces). Status:
+// "Natural" (planar, vertical: mirrors), "Unsupported" (not parallel to the process normal:
+// a z cut would flip the metal's process side), "NonPlanar" (the attribute's faces are
+// chords of a curved surface: two of its plane groups meet at a dihedral turn below the
+// arc rule's joint cap, kArcMaxJointTurnDegrees).
+struct MirrorPlane
+{
+  int attribute = 0;
+  std::array<double, 3> normal{};
+  double offset = 0.0;
+  int faces = 0;
+  double max_deviation = 0.0;
+  std::string status;
+  // The bounding box of the plane's faces: a plane acts only where a point's PROJECTION
+  // onto it falls within its faces (a non-convex domain — a window with a re-entrant
+  // outline, the symmetry fixture's chevron — has planes whose infinite extension passes
+  // through the domain elsewhere).
+  std::array<double, 3> box_min{}, box_max{};
+  bool Mirrors() const { return status == "Natural"; }
+  bool NearFaces(const std::array<double, 3> &p, double margin) const
+  {
+    const double d = Inside(p);
+    for (int k = 0; k < 3; k++)
+    {
+      const double projected = p[k] + d * normal[k];
+      if (projected < box_min[k] - margin || projected > box_max[k] + margin)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+  // Signed distance of a point into the domain (>= 0 inside).
+  double Inside(const std::array<double, 3> &p) const
+  {
+    return offset - (normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2]);
+  }
+  std::array<double, 3> Reflect(const std::array<double, 3> &p) const
+  {
+    const double d = Inside(p);
+    return {p[0] + 2.0 * d * normal[0], p[1] + 2.0 * d * normal[1],
+            p[2] + 2.0 * d * normal[2]};
+  }
+  // The linear part of the reflection on a direction.
+  std::array<double, 3> ReflectDirection(const std::array<double, 3> &v) const
+  {
+    const double dot = normal[0] * v[0] + normal[1] * v[1] + normal[2] * v[2];
+    return {v[0] - 2.0 * dot * normal[0], v[1] - 2.0 * dot * normal[1],
+            v[2] - 2.0 * dot * normal[2]};
+  }
+};
+
 struct IdentificationInput
 {
   double radius = 0.0;
@@ -111,6 +165,13 @@ struct IdentificationInput
   // kSupportSpanCapOverRadius and no two allowances within 2 x
   // kClusterQuantumNearMatchMaxQuanta quanta of each other (fail closed).
   std::vector<SpanCapAllowance> span_cap_allowances;
+  // Mirror band (decision 732, F-M1): the truncation planes the input was extended across
+  // (ExtendIdentificationInputAcrossMirrorPlanes; the segments' mirror_planes index this
+  // list), empty on an unextended input. The spatial-support contract reads them: the plan
+  // of a cluster's box on the image side of a mirroring plane is the REFLECTED real plan,
+  // the band's image segments inside the band and the reflection of the un-imaged real
+  // runs beyond it (Identifier::ClusterSupport).
+  std::vector<MirrorPlane> mirror_planes;
   // Progress and per-stage timing lines (counts, wall time, fraction done of a long loop
   // every ~10 s) so that a chip-scale identification can be monitored; unset = silent. Pure
   // diagnostics: nothing in the result depends on it.
@@ -466,7 +527,34 @@ CanonicalSignature CanonicalClusterSignature(
 // UnboxableFeature (the signature carries "Unboxable": true, a Missing placeholder no
 // builder makes). The context = every run piece of the cluster's plane inside the box that
 // is not a claim, in the portion encoding with "Chain": true on the pieces connected to the
-// claims inside the box (own edges, rule B3) and false on foreign edges.
+// claims inside the box (own edges, rule B3) and false on foreign edges. On the image side
+// of a mirroring plane (the mirror band's extended input, IdentificationInput::
+// mirror_planes) the plan inside the box is the REFLECTED real plan (decision 732, F-M1):
+// the band's image segments and, beyond the band, the reflection of the real runs the band
+// did not image, clipped into the box (SpatialSupport.MirrorCompletion); an image chain's
+// band cut is a continuing-edge split like a claim cut, never a device vertex; a band cut
+// inside the box that no reflection continues (the plane does not act there) makes the
+// cluster Unboxable by name (MirrorBandCutUncontinued). T4, the face-crossing TILT rule
+// (decisions 762 / 766, S7 R2): on the T2-clean box (where the coupon mesher reads its
+// face ends) every plan piece end ON a face crosses it at a tilt theta = acos|t . n| to
+// the face normal; a tilt above kSupportFaceCrossingTiltBoundDegrees (strictly, with the
+// mesher's 1e-9 relative slack) is a cut the THIN coupon kind refuses to build
+// (mesh_spatial_coupon.jl THIN_FACE_END_TILT_BOUND, the largest built thin tilt; not a
+// constant of this file: pinned to the mesher's by test), so the crossed face moves
+// outward by the SHORTFALL + kSupportPaddingOverRadius x R, quantised - the shortfall
+// being the largest outward excursion of the piece's own continuation (its line, or its
+// fitted circle) from the crossing point until it first reaches the line of the adjacent
+// face its outward tangent heads to (a circle that turns back first: its outward extreme),
+// the largest over the face's firing ends - and T2 / T3 re-run on the widened box; an
+// end whose continuation never leaves the face line (sin(theta) = 0) does not act. Every
+// widening moves a face by at least the padding, so the span cap bounds the loop; a
+// breach is Unboxable by name (SpanCapRefusedFaceCrossingTiltWidening). The rule reads
+// the FRAME OF RECORD only (decision 772): the frame is chosen over the claims' candidate
+// frames exactly as without the rule, then one support reading with the rule in that
+// frame makes the record and the key (a rule inside every candidate would widen a
+// candidate's box and could make its key text sort below the frame of record's, renaming
+// a key whose own frame reads no steep crossing). Recorded only where it acted
+// (SpatialSupport.FaceCrossingTilt), so every other record is unchanged.
 constexpr double kSupportContinuationOverRadius = 2.0;
 constexpr double kSupportPaddingOverRadius = 1.0;
 constexpr double kSupportEndCoincidenceOverRadius = 1.0e-5;
@@ -475,6 +563,7 @@ constexpr double kSupportFaceClearanceOverRadius = 0.25;
 constexpr double kSupportFaceGrowthStepOverRadius = 0.25;
 constexpr int kSupportFaceGrowthMaxSteps = 12;
 constexpr double kSupportSpanCapOverRadius = 16.0;
+constexpr double kSupportFaceCrossingTiltBoundDegrees = 70.0;
 
 // Validates a list of span-cap allowances (fail closed: a cap below
 // kSupportSpanCapOverRadius never lowers the cap; two allowances within 2 x
