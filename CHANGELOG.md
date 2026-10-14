@@ -126,6 +126,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
+    cracked face with three vertices on the crack front (at a corner of the crack) merged
+    with its twin and broke parallel mesh construction.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
   - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
     kinetic inductance makes the line modes slower than bulk waves, above the eigenvalue
     target of the port mode solve, which only sought modes below it. The port modes are
