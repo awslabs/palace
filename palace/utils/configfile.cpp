@@ -1800,9 +1800,21 @@ LinearSolverData::LinearSolverData(const json &linear)
   // Preconditioner-specific options.
   pc_mat_real = linear.value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
-  complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
+  if (auto it = linear.find("ComplexCoarseSolve"); it != linear.end())
+  {
+    complex_coarse_solve = it->get<bool>();
+    complex_coarse_solve_specified = true;
+  }
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
   pml_subdomain_solver = linear.value("PMLSubdomainSolver", pml_subdomain_solver);
+  pml_subdomain_threshold = linear.value("PMLSubdomainThreshold", pml_subdomain_threshold);
+  pml_smoother_threshold = linear.value("PMLSmootherThreshold", pml_smoother_threshold);
+  pml_subdomain_single_precision =
+      linear.value("PMLSubdomainSinglePrecision", pml_subdomain_single_precision);
+  MFEM_VERIFY(pml_smoother_threshold <= 0.0 ||
+                  pml_smoother_threshold >= pml_subdomain_threshold,
+              "config[\"Solver\"][\"Linear\"][\"PMLSmootherThreshold\"] must be at least "
+              "\"PMLSubdomainThreshold\" (or ≤ 0 to disable the smoother masks)!");
   reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
   pc_side = linear.value("PCSide", pc_side);
   sym_factorization = linear.value("ColumnOrdering", sym_factorization);

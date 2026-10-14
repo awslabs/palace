@@ -71,6 +71,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the field energy of each mode in the PML regions is written to `eig.csv`, which
     identifies the spurious modes of the layer. SchemaVer 4-2-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Improved the multigrid preconditioner for problems with PML regions: the smoothers do not
+    update the unknowns of strongly stretched PML elements (`"PMLSmootherThreshold"`), the
+    PML subdomain correction is restricted to the stretched PML elements
+    (`"PMLSubdomainThreshold"`), the coarse-level solve uses the complex-valued operator by
+    default, and STRUMPACK (the default sparse direct solver with PML regions) factors
+    complex-valued matrices in complex arithmetic (optionally in single precision for the PML
+    subdomain, `"PMLSubdomainSinglePrecision"`).
 
 #### Interface Changes
 
