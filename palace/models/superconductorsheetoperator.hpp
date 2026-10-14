@@ -30,9 +30,9 @@ class Units;
 //
 // A two-sided (two-port) sheet instead models the film as two coupled coincident faces (a
 // cracked interface), so the tangential field can jump across it. Each face carries the
-// diagonal self-term lambda*coth(d/lambda) and the faces are coupled by the cross-face term
-// -1/(mu0*lambda*sinh(d/lambda)) (see BuildTwoPortCoupling), capturing two-sided screening
-// for d >~ lambda.
+// diagonal self-term λ·tanh(d/λ) (stiffness coth(d/λ)/(μ₀λ)) and the faces are coupled by
+// the cross-face term −1/(μ₀λ·sinh(d/λ)) (see BuildTwoPortCoupling), capturing two-sided
+// screening for d ≳ λ.
 //
 class SuperconductorSheetOperator
 {
@@ -42,8 +42,8 @@ private:
 
   // Surface properties for superconductor sheet attributes: kinetic sheet inductance L_ksq
   // [H/sq] and the per-attribute area scaling for mesh cracking. For a two-sided (two-port)
-  // sheet, Ls holds the diagonal self-term inductance lambda*tanh(d/lambda) and (lambda_L,
-  // d) are retained to build the cross-face coupling -1/(lambda*sinh(d/lambda)).
+  // sheet, Ls holds the diagonal self-term inductance λ·tanh(d/λ) and (λ, d) are retained
+  // to build the cross-face coupling −1/(λ·sinh(d/λ)).
   struct SuperconductorSheetData
   {
     double Ls;
@@ -89,13 +89,14 @@ public:
   // Add the tangential surface mass contribution (1/L_ksq) A_t · v_t to the system matrix.
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb) const;
 
-  // Build the cross-face coupling matrix -1/(mu0*lambda*sinh(d/lambda)) * ∫_Σ A_t^+ · v_t^-
-  // for two-sided sheets, as a true-dof HypreParMatrix on the given ND space. The two
-  // coincident cracked faces may live on different MPI ranks, so per-face data (basis at
-  // shared quadrature points and global true-dof numbers) is gathered across ranks and each
-  // rank assembles the rows it owns. Returns nullptr if no two-sided sheet.
+  // Build the cross-face coupling matrix −1/(μ₀λ·sinh(d/λ)) ∫_Σ A_t⁺ · v_t⁻ for two-sided
+  // sheets, as a true-dof HypreParMatrix on the given ND space. The two coincident cracked
+  // faces may live on different MPI ranks, so each face record (basis at shared quadrature
+  // points and global DOF numbers) is paired on the rank its key hashes to and returned to
+  // its twin's rank. Returns nullptr if no two-sided sheet.
   std::unique_ptr<mfem::HypreParMatrix>
   BuildTwoPortCoupling(mfem::ParFiniteElementSpace &nd_fespace) const;
+
 };
 
 }  // namespace palace

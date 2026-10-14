@@ -362,6 +362,26 @@ public:
                    mpi::DataType<T>(), comm);
   }
 
+  // Exchange a fixed count of items with every rank: block r of sendbuf goes to rank r and
+  // block r of recvbuf comes from rank r.
+  template <typename T>
+  static void Alltoall(int count, const T *sendbuf, T *recvbuf, MPI_Comm comm)
+  {
+    MPI_Alltoall(sendbuf, count, mpi::DataType<T>(), recvbuf, count, mpi::DataType<T>(),
+                 comm);
+  }
+
+  // Exchange a variable number of items with every rank; counts and displs are per-rank
+  // arrays sized Size(comm).
+  template <typename T>
+  static void Alltoallv(const T *sendbuf, const int *sendcounts, const int *sdispls,
+                        T *recvbuf, const int *recvcounts, const int *rdispls,
+                        MPI_Comm comm)
+  {
+    MPI_Alltoallv(sendbuf, sendcounts, sdispls, mpi::DataType<T>(), recvbuf, recvcounts,
+                  rdispls, mpi::DataType<T>(), comm);
+  }
+
   // Print methods only print on the root process of MPI_COMM_WORLD or a given MPI_Comm.
   template <typename... T>
   static void Print(MPI_Comm comm, fmt::format_string<T...> fmt, T &&...args)
