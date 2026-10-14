@@ -451,9 +451,8 @@ public:
   std::vector<int> attributes = {};
 
   // Two-port (transfer-matrix) sheet: model the film as two coupled coincident faces so the
-  // tangential field can jump across it, capturing two-sided screening for d >~ lambda.
-  // When false the film is a single shared-A_t sheet. Requires (lambda, d); forces the film
-  // to crack.
+  // tangential field can jump across it, capturing two-sided screening for d ≳ λ. When
+  // false the film is a single shared-A_t sheet. Requires (λ, d); forces the film to crack.
   bool two_sided = false;
 
   SuperconductorData() = default;
