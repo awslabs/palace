@@ -97,6 +97,12 @@ public:
   std::unique_ptr<mfem::HypreParMatrix>
   BuildTwoPortCoupling(mfem::ParFiniteElementSpace &nd_fespace) const;
 
+  // Refine the coarser face wherever nonconformal refinement has left the two faces of a
+  // two-sided film unmatched, until every face has a coincident twin again. Returns the
+  // number of elements added.
+  static int
+  MatchTwoSidedRefinement(const std::vector<config::SuperconductorData> &superconductor,
+                          mfem::ParMesh &mesh, int nc_limit);
 };
 
 }  // namespace palace

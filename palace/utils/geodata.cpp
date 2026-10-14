@@ -254,6 +254,23 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
         // May require multiple calls due to early exit/retry approach.
       }
     }
+
+    // A nonconforming mesh identifies a face by three of its vertices, so refining a
+    // cracked film quadrilateral at a corner of the film can merge its two faces.
+    if (UseAmr(iodata.model.refinement) && iodata.model.refinement.nonconformal)
+    {
+      for (const auto &data : iodata.boundaries.superconductor)
+      {
+        for (int be = 0; data.two_sided && be < smesh->GetNBE(); be++)
+        {
+          MFEM_VERIFY(std::find(data.attributes.begin(), data.attributes.end(),
+                                smesh->GetBdrAttribute(be)) == data.attributes.end() ||
+                          smesh->GetBdrElementGeometry(be) == mfem::Geometry::TRIANGLE,
+                      "Superconductor boundary \"TwoSided\" with nonconformal adaptive "
+                      "mesh refinement requires triangular film faces!");
+        }
+      }
+    }
   }
   else
   {
