@@ -29,8 +29,9 @@ CORNER_CONVERGENCE = CORNER_ROOT / "run_probe_convergence.py"
 # The trace RESOLVABILITY gate of every corner coupon mesh (block (b) family 4 round 2,
 # supervisor decision 328 (1), 2026-10-05): every free hat of the trace basis must hold at
 # least MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED x p^2 active boundary nodes of the order-p
-# mesh, fail-closed before any solve; the mesher sizes the mesh at the knot gaps
-# (mesh_corner_coupon.jl --trace-mesh) so that it holds, whatever the basis layout.
+# mesh, fail-closed before any solve; the mesher sizes the mesh at the knots, every free
+# knot at min(its along-ring gap, its ring's across-ring spacing) (decisions 787 / 791 R-A;
+# mesh_corner_coupon.jl --trace-mesh) so that it holds, whatever the basis layout.
 CORNER_RESOLVABILITY = CORNER_ROOT / "trace_resolvability.py"
 # Knots per ring of the corner trace basis rules (generate_corner_response.RULES: 2 crossings
 # + MetalInteriorKnots + FreeKnots; legacy = the recorded MetalRingsOnly rule).

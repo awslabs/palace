@@ -43,7 +43,8 @@ import numpy as np
 # at 75-82.5), 1.2-1.6 at 90-105 (28-44 nodes) and settles at <= 1.4 (the genuine angular
 # variation) from 120 degrees on (52-56 nodes), as on every convex node whose cap hats hold
 # >= 88. The threshold sits between the two regimes: 5 p^2 (45 at p3, 80 at p4). A corner
-# coupon mesh sized at the knot gaps (mesh_corner_coupon.jl --trace-mesh, gradation 0.5)
+# coupon mesh sized at the knots (mesh_corner_coupon.jl --trace-mesh: every free knot at
+# min(along-ring gap, across-ring spacing), decisions 328 / 787 R-A; gradation 0.5)
 # gives the cap hats 270-290 nodes at p4 (3.4x the gate) and every other free hat more.
 MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED = 5
 # A hat value below this at a node is not an active degree of freedom (the solver's zero

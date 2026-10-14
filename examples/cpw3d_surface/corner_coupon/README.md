@@ -120,8 +120,12 @@ Gauss-Lobatto H1 triangle lattice on the matching-surface triangles) at which th
 nonzero, and fails closed below 5 p^2 (the count between the scattering and the settled
 regimes of the audit; report `trace-resolvability.json` per mesh root, counts per hat);
 (2) the MESHER `mesh_corner_coupon.jl ... --trace-mesh DIR` reads the generator's
-`trace-vertices.csv` and sizes the mesh at every free knot's smaller gap to its ring
-neighbours, growing at gradation 0.5 to `lc_far` (one Distance / Threshold field per gap
+`trace-vertices.csv` and sizes the mesh at every free knot's size = min(its smaller gap to
+its ring neighbours, its ring's across-ring spacing to the neighbouring rings — decisions
+787 / 791 R-A, 2026-10-13: the along-ring gap alone left the concave 75-degree node's hat
+105 at 79 active nodes of 80 on the h-2 calibration mesh; the record label
+`Response.TraceResolvability.MeshSizing` is `KnotGapAndRingSpacing`, was `KnotGap`),
+growing at gradation 0.5 to `lc_far` (one Distance / Threshold field per size
 class on OCC points that are not embedded nor saved, joined to the recipe's background by a
 Min field; +9 % nodes at the recipe's sizes; the cap hats then hold 270-290 nodes at p4).
 The planner therefore runs the generator BEFORE the mesher, passes `--trace-mesh`, and
