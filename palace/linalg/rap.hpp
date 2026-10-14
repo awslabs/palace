@@ -42,6 +42,9 @@ private:
   // deleted.
   mutable std::unique_ptr<mfem::HypreParMatrix> RAP;
 
+  // Optional assembled true-dof term added to RAP, with the essential true dofs eliminated.
+  std::unique_ptr<mfem::HypreParMatrix> B;
+
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
@@ -93,6 +96,11 @@ public:
   // Get the diagonal policy that was most recently used. If there are no essential dofs,
   // and thus no valid policy, will error.
   DiagonalPolicy GetDiagonalPolicy() const;
+
+  // Add an assembled true-dof matrix to the operator, for terms that are not element-local
+  // (such as couplings across a cracked interface). Its rows and columns at the essential
+  // true dofs are eliminated, so call after SetEssentialTrueDofs.
+  void AddParallelMatrix(const mfem::HypreParMatrix &B_);
 
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
   // condition values in x.
