@@ -831,14 +831,6 @@ void IoData::CheckConfiguration()
       solver.linear.mg_cycle_it = 1;
     }
   }
-  // With PML regions, the real-valued approximation of the coarse-level operator does not
-  // absorb (the coarse problem is that of a closed resonator), so that the coarse-level
-  // correction is poor, and a complex-valued coarse solve is used by default.
-  if ((problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
-      !domains.pml.empty() && !solver.linear.complex_coarse_solve_specified)
-  {
-    solver.linear.complex_coarse_solve = true;
-  }
   if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
       solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
       (!boundaries.waveport.empty() || !boundaries.conductivity.empty() ||
