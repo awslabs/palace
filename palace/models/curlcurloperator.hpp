@@ -108,6 +108,7 @@ private:
   // is added to every operator on the level (stiffness, preconditioners, and the sheet
   // mass), so the operator, the flux RHS, and the penalty energy stay consistent.
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> two_port_coupling_;
+  const mfem::HypreParMatrix &GetTwoPortCoupling(std::size_t l);
 
   // Add the two-sided sheet coupling on ND level l to an operator, eliminated on its
   // essential DOFs. Does nothing without a two-sided sheet.

@@ -382,19 +382,23 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-void CurlCurlOperator::AddTwoPortCoupling(std::size_t l, ParOperator &K_l)
+const mfem::HypreParMatrix &CurlCurlOperator::GetTwoPortCoupling(std::size_t l)
 {
-  if (!sc_sheet_op.HasTwoPort())
-  {
-    return;
-  }
   two_port_coupling_.resize(GetNDSpaces().GetNumLevels());
   if (!two_port_coupling_[l])
   {
     two_port_coupling_[l] =
         sc_sheet_op.BuildTwoPortCoupling(GetNDSpaces().GetFESpaceAtLevel(l).Get());
   }
-  K_l.AddParallelMatrix(*two_port_coupling_[l]);
+  return *two_port_coupling_[l];
+}
+
+void CurlCurlOperator::AddTwoPortCoupling(std::size_t l, ParOperator &K_l)
+{
+  if (sc_sheet_op.HasTwoPort())
+  {
+    K_l.AddParallelMatrix(GetTwoPortCoupling(l));
+  }
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
@@ -449,6 +453,15 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
       h1_fespace_l.Get().GetEssentialTrueDofs(marker, h1_dbc_tdof_lists[l]);
       auto A_l = std::make_unique<ParOperator>(std::move(a_aux_vec[l]), h1_fespace_l);
       A_l->SetEssentialTrueDofs(h1_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      if (sc_sheet_op.HasTwoPort())
+      {
+        // The two-sided coupling on gradients, GᵀCG.
+        const auto &G = dynamic_cast<const ParOperator &>(
+            GetNDSpaces().GetDiscreteInterpolatorAtLevel(l, h1_fespace_l));
+        std::unique_ptr<mfem::HypreParMatrix> GtCG(
+            mfem::RAP(&GetTwoPortCoupling(l), &G.ParallelAssemble()));
+        A_l->AddParallelMatrix(*GtCG);
+      }
       K->AddAuxiliaryOperator(std::move(A_l));
     }
   }
