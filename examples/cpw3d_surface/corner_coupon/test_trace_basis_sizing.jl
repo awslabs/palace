@@ -88,78 +88,87 @@ function build_fields(rows; lc_far = 0.3R)
 end
 
 @testset "trace basis sizing law (decision 787 R-A)" begin
-@testset "the knot size reads the across-ring spacing" begin
-    # The layout: the box |x|, |y|, |z| <= R. Side rings (half width R) at z = -R (the
-    # bottom edge ring, 8 knots: gap R), z = 0 and z = 0.05 R (32 knots each: gap 0.25 R,
-    # four PEC knots on z = 0), z = +R (the top edge ring, 32 knots: gap 0.25 R). Cap rings
-    # (half width R / 3) at z = +R with a cap centre and at z = -R without one (4 knots
-    # each, at the side midpoints: the along-ring gap is the chord sqrt(2) R / 3 across the
-    # corner).
-    rows = vcat(
-        square_ring_vertices(R, -R, 8),
-        square_ring_vertices(R, 0.0, 32; conductor_of = index -> index % 8 == 0 ? 1 : 0),
-        square_ring_vertices(R, 0.05R, 32),
-        square_ring_vertices(R, R, 32),
-        square_ring_vertices(R / 3, R, 4),
-        square_ring_vertices(R / 3, -R, 4),
-        ["0.0,0.0,$R,0,0"]  # the top cap centre: an interpolated vertex, basis 0
-    )
-    sizes, smallest = build_fields(rows)
-    @test length(sizes) == 8 + 28 + 32 + 32 + 4 + 4
+    @testset "the knot size reads the across-ring spacing" begin
+        # The layout: the box |x|, |y|, |z| <= R. Side rings (half width R) at z = -R (the
+        # bottom edge ring, 8 knots: gap R), z = 0 and z = 0.05 R (32 knots each:
+        # gap 0.25 R, four PEC knots on z = 0), z = +R (the top edge ring, 32 knots:
+        # gap 0.25 R). Cap rings (half width R / 3) at z = +R with a cap centre and at
+        # z = -R without one (4 knots each, at the side midpoints: the along-ring gap is
+        # the chord sqrt(2) R / 3 across the corner).
+        rows = vcat(
+            square_ring_vertices(R, -R, 8),
+            square_ring_vertices(
+                R, 0.0, 32; conductor_of = index -> index % 8 == 0 ? 1 : 0
+            ),
+            square_ring_vertices(R, 0.05R, 32),
+            square_ring_vertices(R, R, 32),
+            square_ring_vertices(R / 3, R, 4),
+            square_ring_vertices(R / 3, -R, 4),
+            ["0.0,0.0,$R,0,0"]  # the top cap centre: an interpolated vertex, basis 0
+        )
+        sizes, smallest = build_fields(rows)
+        @test length(sizes) == 8 + 28 + 32 + 32 + 4 + 4
 
-    # The hat whose support is gap x spacing with gap > spacing: the two side rings 0.05 R
-    # apart with knots 0.25 R apart along the ring get a size <= the spacing (the law of
-    # record gave the along-ring gap 0.25 R: this is the assertion that FAILS on the old
-    # law).
-    for z in (0.0, 0.05R)
-        ring = sizes_on_ring(sizes, R, z)
-        @test length(ring) == (z == 0.0 ? 28 : 32)
-        @test all(size -> size <= 0.05R + TOLERANCE, ring)
-        @test all(size -> isapprox(size, 0.05R; atol = TOLERANCE), ring)
-    end
-    @test isapprox(smallest, 0.05R; atol = TOLERANCE)
-
-    # A knot whose along-ring gap is already the smaller keeps its gap: the top edge ring
-    # (gap 0.25 R; spacings 0.95 R to the side ring, 2 R / 3 to the cap ring).
-    @test all(size -> isapprox(size, 0.25R; atol = TOLERANCE), sizes_on_ring(sizes, R, R))
-    # The bottom cap ring has no cap centre: its only neighbour is the edge ring 2 R / 3
-    # away, more than its gap sqrt(2) R / 3, so its size is unchanged.
-    @test all(
-        size -> isapprox(size, sqrt(2.0) * R / 3; atol = TOLERANCE),
-        sizes_on_ring(sizes, R / 3, -R)
-    )
-
-    # The edge ring belongs to both groups and takes the smaller spacing: the bottom edge
-    # ring (gap R) has the side ring z = 0 at R and the cap ring at 2 R / 3 -> 2 R / 3.
-    @test all(size -> isapprox(size, 2R / 3; atol = TOLERANCE), sizes_on_ring(sizes, R, -R))
-
-    # The cap centre counts as the innermost cap level: the top cap ring (gap sqrt(2) R / 3)
-    # is R / 3 from the centre -> R / 3.
-    @test all(
-        size -> isapprox(size, R / 3; atol = TOLERANCE),
-        sizes_on_ring(sizes, R / 3, R)
-    )
-
-    # free_knot_gaps still reads the along-ring gaps alone.
-    vertices = read_trace_vertices(
-        let directory = mktempdir()
-            write_trace_vertices(directory, rows)
-            directory
+        # The hat whose support is gap x spacing with gap > spacing: the two side rings
+        # 0.05 R apart with knots 0.25 R apart along the ring get a size <= the spacing (the
+        # law of record gave the along-ring gap 0.25 R: this is the assertion that FAILS on
+        # the old law).
+        for z in (0.0, 0.05R)
+            ring = sizes_on_ring(sizes, R, z)
+            @test length(ring) == (z == 0.0 ? 28 : 32)
+            @test all(size -> size <= 0.05R + TOLERANCE, ring)
+            @test all(size -> isapprox(size, 0.05R; atol = TOLERANCE), ring)
         end
-    )
-    gaps = free_knot_gaps(vertices, trace_rings(vertices, R), R)
-    @test length(gaps) == 108
-    @test isapprox(minimum(values(gaps)), 0.25R; atol = TOLERANCE)
-    @test isapprox(maximum(values(gaps)), R; atol = TOLERANCE)
-end
+        @test isapprox(smallest, 0.05R; atol = TOLERANCE)
 
-@testset "a ring on neither box surface fails closed" begin
-    rows = vcat(
-        square_ring_vertices(R, -R, 8),
-        square_ring_vertices(R, 0.0, 32),
-        square_ring_vertices(R, R, 32),
-        square_ring_vertices(0.5R, 0.0, 8)  # neither half width R nor height +-R
-    )
-    @test_throws ErrorException build_fields(rows)
-end
+        # A knot whose along-ring gap is already the smaller keeps its gap: the top edge
+        # ring (gap 0.25 R; spacings 0.95 R to the side ring, 2 R / 3 to the cap ring).
+        @test all(
+            size -> isapprox(size, 0.25R; atol = TOLERANCE),
+            sizes_on_ring(sizes, R, R)
+        )
+        # The bottom cap ring has no cap centre: its only neighbour is the edge ring 2 R / 3
+        # away, more than its gap sqrt(2) R / 3, so its size is unchanged.
+        @test all(
+            size -> isapprox(size, sqrt(2.0) * R / 3; atol = TOLERANCE),
+            sizes_on_ring(sizes, R / 3, -R)
+        )
+
+        # The edge ring belongs to both groups and takes the smaller spacing: the bottom
+        # edge ring (gap R) has the side ring z = 0 at R and the cap ring at 2 R / 3
+        # -> 2 R / 3.
+        @test all(
+            size -> isapprox(size, 2R / 3; atol = TOLERANCE),
+            sizes_on_ring(sizes, R, -R)
+        )
+
+        # The cap centre counts as the innermost cap level: the top cap ring
+        # (gap sqrt(2) R / 3) is R / 3 from the centre -> R / 3.
+        @test all(
+            size -> isapprox(size, R / 3; atol = TOLERANCE),
+            sizes_on_ring(sizes, R / 3, R)
+        )
+
+        # free_knot_gaps still reads the along-ring gaps alone.
+        vertices = read_trace_vertices(
+            let directory = mktempdir()
+                write_trace_vertices(directory, rows)
+                directory
+            end
+        )
+        gaps = free_knot_gaps(vertices, trace_rings(vertices, R), R)
+        @test length(gaps) == 108
+        @test isapprox(minimum(values(gaps)), 0.25R; atol = TOLERANCE)
+        @test isapprox(maximum(values(gaps)), R; atol = TOLERANCE)
+    end
+
+    @testset "a ring on neither box surface fails closed" begin
+        rows = vcat(
+            square_ring_vertices(R, -R, 8),
+            square_ring_vertices(R, 0.0, 32),
+            square_ring_vertices(R, R, 32),
+            square_ring_vertices(0.5R, 0.0, 8)  # neither half width R nor height +-R
+        )
+        @test_throws ErrorException build_fields(rows)
+    end
 end
