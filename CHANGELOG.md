@@ -37,6 +37,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     defaults). The stretch can be evaluated at a fixed reference frequency or at the
     solve frequency (`"FrequencyDependent"`). SchemaVer 2-3-0
     [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+  - Improved the multigrid preconditioner for problems with PML regions: the smoothers do not
+    update the unknowns of strongly stretched PML elements (`"PMLSmootherThreshold"`), the
+    PML subdomain correction is restricted to the stretched PML elements
+    (`"PMLSubdomainThreshold"`), the coarse-level solve uses the complex-valued operator by
+    default, and STRUMPACK (the default sparse direct solver with PML regions) factors
+    complex-valued matrices in complex arithmetic (optionally in single precision for the PML
+    subdomain, `"PMLSubdomainSinglePrecision"`).
 
 #### Interface Changes
 
