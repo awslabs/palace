@@ -84,7 +84,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the port and the port eigenvalue problem gave wrong or spurious modes, typically after
     two or more refinements and depending on the number of processes. The edges were
     matched through mesh node ids, which are not consistent between processes after
-    parallel refinement and rebalancing; they are now matched geometrically.
+    parallel refinement and rebalancing; they are now matched geometrically. Likewise,
+    the boundary edges added where an uncracked internal boundary crosses the port were
+    only found when both were on the same process, and missed on nonconforming meshes.
     [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute

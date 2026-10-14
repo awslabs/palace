@@ -295,6 +295,104 @@ TEST_CASE("RemapSubMeshBdrAttributes after parallel nonconforming refinement",
   CHECK(wrong == 0);
 }
 
+TEST_CASE("AddSubMeshInternalBoundaryElements after parallel nonconforming refinement",
+          "[geodata][Serial][Parallel]")
+{
+  // An uncracked internal boundary (attribute 7) at z = 0.5 crosses the x = 0 face of a
+  // cube (MFEM boundary attribute 5) along the line x = 0, z = 0.5. Refine towards the
+  // face on one side of the sheet only, so that the sheet and the face's submesh are
+  // nonconforming along that line, with rebalancing so that the sheet faces and the
+  // submesh edges on it are owned by different processes. Each piece of the line must
+  // then be a submesh boundary element with attribute 7 exactly once: on the slave edges
+  // of the refined side, not on their master edges, and on one process only. Matching
+  // the edges locally on each process instead fails on 2, 4 and 6 processes.
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  {
+    mfem::Array<int> v;
+    mfem::Vector c(3);
+    for (int f = 0; f < serial_mesh.GetNumFaces(); f++)
+    {
+      if (!serial_mesh.FaceIsInterior(f))
+      {
+        continue;
+      }
+      serial_mesh.GetFaceVertices(f, v);
+      bool on_sheet = true;
+      for (int k : v)
+      {
+        on_sheet = on_sheet && std::abs(serial_mesh.GetVertex(k)[2] - 0.5) < 1.0e-12;
+      }
+      if (on_sheet)
+      {
+        serial_mesh.AddBdrTriangle(v, 7);
+      }
+    }
+    serial_mesh.FinalizeTopology();
+    serial_mesh.Finalize();
+    serial_mesh.SetAttributes();
+  }
+  serial_mesh.EnsureNCMesh(true);
+  mfem::ParMesh par_mesh(comm, serial_mesh);
+  mfem::Vector c;
+  for (int level = 0; level < 3; level++)
+  {
+    mfem::Array<int> marked;
+    for (int e = 0; e < par_mesh.GetNE(); e++)
+    {
+      par_mesh.GetElementCenter(e, c);
+      const double r = 0.5 / (level + 1);
+      if (c(2) > 0.5 && c(2) < 0.5 + r &&
+          (c(0) < r || static_cast<int>(1000.0 * (c(0) + 3.0 * c(1))) % 3 == 0))
+      {
+        marked.Append(e);
+      }
+    }
+    par_mesh.GeneralRefinement(marked, 1);
+    par_mesh.Rebalance();
+  }
+
+  int sheet_elements = 0;
+  for (int be = 0; be < par_mesh.GetNBE(); be++)
+  {
+    sheet_elements += (par_mesh.GetBdrAttribute(be) == 7);
+  }
+  Mpi::GlobalSum(1, &sheet_elements, comm);
+  REQUIRE(sheet_elements > 0);
+
+  mfem::Array<int> surface_attrs({5});
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(par_mesh, surface_attrs);
+  REQUIRE(submesh.Nonconforming());
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+  mesh::AddSubMeshInternalBoundaryElements(submesh, surface_attrs, {7});
+
+  // Total length of the attribute 7 boundary elements, and number of them off the line.
+  double length = 0.0;
+  int off_line = 0;
+  mfem::IsoparametricTransformation T;
+  mfem::IntegrationPoint ip;
+  mfem::Vector x0(3), x1(3);
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    if (submesh.GetBdrAttribute(sbe) != 7)
+    {
+      continue;
+    }
+    submesh.GetEdgeTransformation(submesh.GetBdrElementFaceIndex(sbe), &T);
+    ip.x = 0.0;
+    T.Transform(ip, x0);
+    ip.x = 1.0;
+    T.Transform(ip, x1);
+    length += x0.DistanceTo(x1);
+    off_line += (std::abs(x0(2) - 0.5) > 1.0e-12 || std::abs(x1(2) - 0.5) > 1.0e-12);
+  }
+  Mpi::GlobalSum(1, &length, comm);
+  Mpi::GlobalSum(1, &off_line, comm);
+  CHECK(off_line == 0);
+  CHECK_THAT(length, WithinRel(1.0, 1.0e-12));
+}
+
 TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
           "[geodata][Serial][Parallel]")
 {
