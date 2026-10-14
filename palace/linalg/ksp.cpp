@@ -11,6 +11,7 @@
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
+#include "linalg/mumpscomplex.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/strumpackcomplex.hpp"
 #include "linalg/superlu.hpp"
@@ -194,9 +195,8 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
-      pc = MakeWrapperSolver<ComplexOperator, MumpsSolver>(linear_pml, comm, sym,
-                                                           linear.sym_factorization, 0.0,
-                                                           linear.reorder_reuse, print);
+      pc = std::make_unique<MumpsComplexSolver>(comm, sym, linear.sym_factorization, 0.0,
+                                                linear.reorder_reuse, print);
 #endif
       break;
     case LinearSolver::CUDSS:
@@ -292,6 +292,21 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        // A complex-valued coarse solve is factored in complex arithmetic.
+        if (linear.complex_coarse_solve && !linear.pc_mat_real &&
+            !linear.drop_small_entries)
+        {
+          pc = std::make_unique<MumpsComplexSolver>(
+              comm, pc_mat_sym, linear.sym_factorization,
+              (linear.strumpack_compression_type == SparseCompression::BLR)
+                  ? linear.strumpack_lr_tol
+                  : 0.0,
+              linear.reorder_reuse, print);
+          break;
+        }
+      }
       pc = MakeWrapperSolver<OperType, MumpsSolver>(
           linear, comm, pc_mat_sym, linear.sym_factorization,
           (linear.strumpack_compression_type == SparseCompression::BLR)

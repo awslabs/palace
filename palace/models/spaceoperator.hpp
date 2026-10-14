@@ -55,7 +55,7 @@ private:
 
   // Thresholds of the PML stretch magnitude for the PML subdomain correction and the
   // multigrid smoother masks (see GetPreconditionerMatrix).
-  const double pml_subdomain_threshold, pml_smoother_threshold;
+  const double pml_smoother_threshold;
 
   // PML subdomain true DOFs and smoother masks (true DOFs of the primary and auxiliary
   // spaces at each multigrid level), selected at the first construction of the

@@ -1200,15 +1200,10 @@ public:
   // problems with PML regions and multigrid enabled).
   PMLSubdomainSolver pml_subdomain_solver = PMLSubdomainSolver::DEFAULT;
 
-  // Threshold of the PML stretch magnitude max_a |s_a| of an element above which its true
-  // DOFs (not shared with other elements) are in the PML subdomain (all of the PML elements
-  // for a threshold of at most 1).
-  double pml_subdomain_threshold = 1.0;
-
-  // Threshold of the PML stretch magnitude above which the geometric multigrid smoothers do
-  // not update the true DOFs of an element (not shared with other elements), when the PML
-  // subdomain correction is used (≤ 0 to disable). Must be at least the PML subdomain
-  // threshold.
+  // Threshold of the PML stretch magnitude max_a |s_a| of an element above which the
+  // geometric multigrid smoothers do not update its true DOFs (not shared with other
+  // elements), when the PML subdomain correction is used (≤ 0 to disable, all of the PML
+  // elements for a threshold in (0, 1]).
   double pml_smoother_threshold = 2.0;
 
   // Factor the PML subdomain matrix in single precision, with iterative refinement in

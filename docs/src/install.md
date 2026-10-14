@@ -283,7 +283,9 @@ source code for these dependencies is downloaded during the build process:
     `PALACE_WITH_STRUMPACK=ON`), including
     [ButterflyPACK](https://github.com/liuyangzhuan/ButterflyPACK) and
     [zfp](https://github.com/LLNL/zfp) support
-  - [MUMPS](http://mumps.enseeiht.fr/) (optional, when `PALACE_WITH_MUMPS=ON`)
+  - [MUMPS](http://mumps.enseeiht.fr/) (optional, when `PALACE_WITH_MUMPS=ON`), with real
+    and complex double precision (an external MUMPS installation must also provide the
+    complex double precision library `zmumps`)
   - [SLEPc](https://slepc.upv.es/) (optional, when `PALACE_WITH_SLEPC=ON`), including
     [PETSc](https://petsc.org/release/)
   - [ARPACK-NG](https://github.com/opencollab/arpack-ng) (optional, when
