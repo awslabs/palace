@@ -154,15 +154,13 @@ stretched elements of the layer, the polynomial smoothers of the multigrid preco
 amplify the error instead of reducing it. By default
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
 the multigrid preconditioner is therefore complemented by a sparse direct solve on the
-unknowns of the PML elements (optionally only of the elements with a stretch magnitude
-above
-[`"PMLSubdomainThreshold"`](../config/reference.md#config-solver-linear-pmlsubdomainthreshold),
-which reduces the cost of the factorization but can increase the number of iterations), and
-the smoothers do not update the unknowns of the strongly stretched elements (above
+unknowns of the PML elements, and the smoothers do not update the unknowns of the strongly
+stretched elements (above
 [`"PMLSmootherThreshold"`](../config/reference.md#config-solver-linear-pmlsmootherthreshold)
-of the magnitude of the stretch factors). With STRUMPACK and SuperLU_DIST, the
-complex-valued PML subdomain matrix is factored in complex arithmetic, with half of the
-memory of the equivalent real-valued system, and with STRUMPACK,
+of the magnitude of the stretch factors). SuperLU_DIST (except with
+[`"SuperLU3DCommunicator"`](../config/reference.md#config-solver-linear-superlu3dcommunicator)),
+STRUMPACK, and MUMPS factor the complex-valued PML subdomain matrix in complex arithmetic,
+with half of the memory of the equivalent real-valued system, and with STRUMPACK,
 [`"PMLSubdomainSinglePrecision"`](../config/reference.md#config-solver-linear-pmlsubdomainsingleprecision)
 further reduces the memory of this factorization. The coarse-level solve uses the
 real-valued approximation of the operator, which does not absorb in the PML. A

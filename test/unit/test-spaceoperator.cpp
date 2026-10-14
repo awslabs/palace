@@ -688,7 +688,6 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   solver.linear.mg_max_levels = 2;
   solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
   solver.linear.pml_subdomain_solver = PMLSubdomainSolver::DIRECT;
-  solver.linear.pml_subdomain_threshold = 1.0;  // All of the PML elements
   solver.linear.pc_mat_real = false;
   solver.linear.pc_mat_shifted = 0;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
@@ -724,15 +723,15 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   CHECK(n_pml == n_pml_expected);
 }
 
-TEST_CASE("SpaceOperator PML subdomain and smoother mask thresholds",
+TEST_CASE("SpaceOperator PML smoother mask thresholds",
           "[spaceoperator][pml][Serial][Parallel]")
 {
   using namespace std::complex_literals;
 
   // Box [0, 1] x [0, 1] x [0, 2] with a PML layer z > 1 of 4 elements (attribute 2): the
-  // PML subdomain and smoother mask true DOFs for increasing thresholds of the stretch
-  // magnitude are nested, and the smoother masks are only set for the levels above the
-  // coarsest one.
+  // smoother mask true DOFs for increasing thresholds of the stretch magnitude are nested
+  // and contained in the PML subdomain (all of the PML elements), and the smoother masks
+  // are only set for the levels above the coarsest one.
   MPI_Comm comm = Mpi::World();
   constexpr int order = 2, nz = 8;
   mfem::Mesh serial_mesh =
@@ -776,9 +775,8 @@ TEST_CASE("SpaceOperator PML subdomain and smoother mask thresholds",
   Units units(1.0, 1.0);
 
   constexpr double omega = 2.0;
-  auto Select = [&](double subdomain_threshold, double smoother_threshold)
+  auto Select = [&](double smoother_threshold)
   {
-    solver.linear.pml_subdomain_threshold = subdomain_threshold;
     solver.linear.pml_smoother_threshold = smoother_threshold;
     SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
     auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
@@ -799,22 +797,25 @@ TEST_CASE("SpaceOperator PML subdomain and smoother mask thresholds",
   };
   auto Includes = [](const std::vector<int> &a, const std::vector<int> &b)
   { return std::ranges::includes(a, b); };
-  const auto all = Select(1.0, 0.0), deep = Select(1.5, 4.0);
-  CHECK(all[1].empty());
-  CHECK(all[2].empty());
-  CHECK(std::ranges::is_sorted(deep[0]));
-  CHECK(std::ranges::is_sorted(deep[1]));
-  CHECK(Includes(all[0], deep[0]));
-  CHECK(Includes(deep[0], deep[1]));
-  const auto n_all = GlobalSize(all[0]), n_deep = GlobalSize(deep[0]),
-             n_mask = GlobalSize(deep[1]), n_aux_mask = GlobalSize(deep[2]);
-  CHECK(n_deep < n_all);
-  CHECK(n_mask > 0);
-  CHECK(n_mask < n_deep);
-  CHECK(n_aux_mask > 0);
-
-  // The smoother threshold may not be smaller than the PML subdomain threshold.
-  CHECK_THROWS(Select(2.0, 1.5));
+  const auto none = Select(0.0), all = Select(1.0), mid = Select(1.5), deep = Select(4.0);
+  CHECK(none[1].empty());
+  CHECK(none[2].empty());
+  for (const auto *sel : {&all, &mid, &deep})
+  {
+    CHECK((*sel)[0] == none[0]);
+    CHECK(std::ranges::is_sorted((*sel)[1]));
+    CHECK(std::ranges::is_sorted((*sel)[2]));
+  }
+  CHECK(all[1] == all[0]);
+  CHECK(Includes(all[1], mid[1]));
+  CHECK(Includes(mid[1], deep[1]));
+  CHECK(Includes(mid[2], deep[2]));
+  const auto n_mid = GlobalSize(mid[1]), n_deep = GlobalSize(deep[1]),
+             n_aux_deep = GlobalSize(deep[2]);
+  CHECK(n_deep > 0);
+  CHECK(n_deep < n_mid);
+  CHECK(n_mid < GlobalSize(all[1]));
+  CHECK(n_aux_deep > 0);
 }
 
 TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
