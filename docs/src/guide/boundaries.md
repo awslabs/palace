@@ -154,20 +154,25 @@ stretched elements of the layer, the polynomial smoothers of the multigrid preco
 amplify the error instead of reducing it. By default
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
 the multigrid preconditioner is therefore complemented by a sparse direct solve on the
-unknowns of the strongly stretched PML elements (above
-[`"PMLSubdomainThreshold"`](../config/reference.md#config-solver-linear-pmlsubdomainthreshold)
-of the magnitude of the stretch factors), and the smoothers do not update the unknowns of
-the elements with a larger stretch (above
-[`"PMLSmootherThreshold"`](../config/reference.md#config-solver-linear-pmlsmootherthreshold)).
-The coarse-level solve of the multigrid preconditioner uses the complex-valued operator
-([`"ComplexCoarseSolve"`](../config/reference.md#config-solver-linear-complexcoarsesolve)),
-since a real-valued approximation of the PML does not absorb. With STRUMPACK (the default
-sparse direct solver with PML regions, when available), these complex-valued matrices are
-factored in complex arithmetic, and
+unknowns of the PML elements (optionally only of the elements with a stretch magnitude
+above
+[`"PMLSubdomainThreshold"`](../config/reference.md#config-solver-linear-pmlsubdomainthreshold),
+which reduces the cost of the factorization but can increase the number of iterations), and
+the smoothers do not update the unknowns of the strongly stretched elements (above
+[`"PMLSmootherThreshold"`](../config/reference.md#config-solver-linear-pmlsmootherthreshold)
+of the magnitude of the stretch factors). With STRUMPACK and SuperLU_DIST, the
+complex-valued PML subdomain matrix is factored in complex arithmetic, with half of the
+memory of the equivalent real-valued system, and with STRUMPACK,
 [`"PMLSubdomainSinglePrecision"`](../config/reference.md#config-solver-linear-pmlsubdomainsingleprecision)
-further reduces the memory of the PML subdomain factorization. Simulations with PML regions
-therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS) and AMS is not
-supported with PML regions.
+further reduces the memory of this factorization. The coarse-level solve uses the
+real-valued approximation of the operator, which does not absorb in the PML. A
+complex-valued coarse solve
+([`"ComplexCoarseSolve"`](../config/reference.md#config-solver-linear-complexcoarsesolve))
+typically reduces the number of iterations further, at the cost of a coarse-level
+factorization of a complex-valued matrix, and is needed for convergence with Floquet periodic
+boundaries at oblique incidence. Simulations with PML regions therefore require a sparse
+direct solver (SuperLU_DIST, STRUMPACK, or MUMPS) and AMS is not supported with PML
+regions.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),

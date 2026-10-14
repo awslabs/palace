@@ -39,11 +39,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR XXX](https://github.com/awslabs/palace/pull/XXX).
   - Improved the multigrid preconditioner for problems with PML regions: the smoothers do not
     update the unknowns of strongly stretched PML elements (`"PMLSmootherThreshold"`), the
-    PML subdomain correction is restricted to the stretched PML elements
-    (`"PMLSubdomainThreshold"`), the coarse-level solve uses the complex-valued operator by
-    default, and STRUMPACK (the default sparse direct solver with PML regions) factors
-    complex-valued matrices in complex arithmetic (optionally in single precision for the PML
-    subdomain, `"PMLSubdomainSinglePrecision"`).
+    PML subdomain correction can be restricted to the most stretched PML elements
+    (`"PMLSubdomainThreshold"`), and STRUMPACK and SuperLU_DIST factor the complex-valued PML
+    subdomain and coarse-level (`"ComplexCoarseSolve"`) matrices in complex arithmetic, with
+    half of the memory of the equivalent real-valued systems (optionally in single precision
+    for the PML subdomain with STRUMPACK, `"PMLSubdomainSinglePrecision"`).
 
 #### Interface Changes
 
