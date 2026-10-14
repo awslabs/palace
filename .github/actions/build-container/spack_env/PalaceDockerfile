@@ -86,6 +86,19 @@ RUN --mount=type=secret,id=github_user \
     install_status=0; \
     spack install --include-build-deps --only dependencies \
       -j$(nproc) --fail-fast || install_status=$?; \
+    echo "=== PETSC-BLAS-DIAG ==="; \
+    spack find -lv petsc openblas || true; \
+    petsc_prefix="$(spack location -i petsc 2>/dev/null)" && \
+      grep -n "64BIT_BLAS_INDICES\|PETSC_SIZEOF_BLASINT\|PETSC_HAVE_CUDA " \
+        "$petsc_prefix/include/petscconf.h"; \
+    petsc_log="$(find /opt/software "$(spack location --stage-dir)" \
+      -name configure.log -path "*petsc*" 2>/dev/null | head -n 1)"; \
+    if [ -n "$petsc_log" ]; then \
+      echo "configure.log: $petsc_log"; \
+      grep -n -i "64-bit BLAS\|64BIT_BLAS\|known-64-bit\|libcuda.so.1\|PETSc version" \
+        "$petsc_log" | head -n 40; \
+    fi; \
+    echo "=== END PETSC-BLAS-DIAG ==="; \
     spack buildcache push --allow-missing --with-build-dependencies \
       --only dependencies --unsigned local-buildcache || true; \
     spack clean --stage --downloads --misc-cache --failures || true; \
