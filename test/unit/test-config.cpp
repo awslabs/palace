@@ -1111,11 +1111,10 @@ TEST_CASE("Config Linear PML preconditioner options", "[config][Serial]")
 {
   // Thresholds of the stretch magnitude for the PML subdomain and the smoother masks.
   const config::LinearSolverData defaults(json::object());
-  CHECK(defaults.pml_subdomain_threshold == 1.1);
+  CHECK(defaults.pml_subdomain_threshold == 1.0);
   CHECK(defaults.pml_smoother_threshold == 2.0);
   CHECK_FALSE(defaults.pml_subdomain_single_precision);
   CHECK_FALSE(defaults.complex_coarse_solve);
-  CHECK_FALSE(defaults.complex_coarse_solve_specified);
   const config::LinearSolverData linear(json{{"PMLSubdomainThreshold", 1.5},
                                              {"PMLSmootherThreshold", 3.0},
                                              {"PMLSubdomainSinglePrecision", true},
@@ -1124,14 +1123,13 @@ TEST_CASE("Config Linear PML preconditioner options", "[config][Serial]")
   CHECK(linear.pml_smoother_threshold == 3.0);
   CHECK(linear.pml_subdomain_single_precision);
   CHECK_FALSE(linear.complex_coarse_solve);
-  CHECK(linear.complex_coarse_solve_specified);
   CHECK(config::LinearSolverData(json{{"PMLSmootherThreshold", 0.0}})
             .pml_smoother_threshold == 0.0);
   CHECK_THROWS(config::LinearSolverData(
       json{{"PMLSubdomainThreshold", 3.0}, {"PMLSmootherThreshold", 2.0}}));
 
-  // The complex-valued coarse solve is the default with PML regions, unless specified, and
-  // STRUMPACK is the default sparse direct solver with PML regions (when available).
+  // PML regions do not change the defaults of the coarse-level solve and of the sparse
+  // direct solver.
   auto Resolve = [](bool pml, json linear)
   {
     json domains = {{"Materials", {{{"Attributes", {1, 2}}}}}};
@@ -1156,16 +1154,12 @@ TEST_CASE("Config Linear PML preconditioner options", "[config][Serial]")
           iodata.solver.linear.pml_smoother_threshold);
     return iodata.solver.linear;
   };
-  CHECK(Resolve(true, json::object()).complex_coarse_solve);
-  CHECK_FALSE(Resolve(true, json{{"ComplexCoarseSolve", false}}).complex_coarse_solve);
+  CHECK_FALSE(Resolve(true, json::object()).complex_coarse_solve);
+  CHECK(Resolve(true, json{{"ComplexCoarseSolve", true}}).complex_coarse_solve);
   CHECK_FALSE(Resolve(false, json::object()).complex_coarse_solve);
-  CHECK(Resolve(false, json{{"ComplexCoarseSolve", true}}).complex_coarse_solve);
-#if defined(MFEM_USE_STRUMPACK)
-  CHECK(Resolve(true, json::object()).type == LinearSolver::STRUMPACK);
-#endif
+  CHECK(Resolve(true, json::object()).type == Resolve(false, json::object()).type);
 #if defined(MFEM_USE_SUPERLU)
-  CHECK(Resolve(false, json::object()).type == LinearSolver::SUPERLU);
-  CHECK(Resolve(true, json{{"Type", "SuperLU"}}).type == LinearSolver::SUPERLU);
+  CHECK(Resolve(true, json::object()).type == LinearSolver::SUPERLU);
 #endif
 }
 

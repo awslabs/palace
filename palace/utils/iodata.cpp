@@ -614,31 +614,16 @@ void IoData::CheckConfiguration()
     }
     else
     {
-      // Prefer sparse direct solver for frequency domain problems if available. With PML
-      // regions, prefer STRUMPACK, which factors the complex-valued coarse-level and PML
-      // subdomain matrices in complex arithmetic (with half of the memory of the equivalent
-      // real-valued systems factored by the other solvers).
-#if defined(MFEM_USE_STRUMPACK)
-      const bool prefer_strumpack = !domains.pml.empty();
-#else
-      const bool prefer_strumpack = false;
-#endif
-      if (prefer_strumpack)
-      {
-        solver.linear.type = LinearSolver::STRUMPACK;
-      }
-      else
-      {
+      // Prefer sparse direct solver for frequency domain problems if available.
 #if defined(MFEM_USE_SUPERLU)
-        solver.linear.type = LinearSolver::SUPERLU;
+      solver.linear.type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_STRUMPACK)
-        solver.linear.type = LinearSolver::STRUMPACK;
+      solver.linear.type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
-        solver.linear.type = LinearSolver::MUMPS;
+      solver.linear.type = LinearSolver::MUMPS;
 #else
-        solver.linear.type = LinearSolver::AMS;
+      solver.linear.type = LinearSolver::AMS;
 #endif
-      }
     }
   }
   if ((solver.linear.type == LinearSolver::STRUMPACK ||
@@ -800,14 +785,6 @@ void IoData::CheckConfiguration()
     {
       solver.linear.mg_cycle_it = 1;
     }
-  }
-  // With PML regions, the real-valued approximation of the coarse-level operator does not
-  // absorb (the coarse problem is that of a closed resonator), so that the coarse-level
-  // correction is poor, and a complex-valued coarse solve is used by default.
-  if ((problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
-      !domains.pml.empty() && !solver.linear.complex_coarse_solve_specified)
-  {
-    solver.linear.complex_coarse_solve = true;
   }
   if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
       solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
