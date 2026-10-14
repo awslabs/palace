@@ -9,10 +9,12 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/strumpackcomplex.hpp"
+#include "linalg/superlu.hpp"
+#include "linalg/superlucomplex.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
-#if defined(MFEM_USE_STRUMPACK)
+#if defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_SUPERLU)
 
 namespace palace
 {
@@ -45,6 +47,7 @@ std::unique_ptr<ComplexOperator> AssembleTestMatrix(mfem::ParFiniteElementSpace 
 
 }  // namespace
 
+#if defined(MFEM_USE_STRUMPACK)
 TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]")
 {
   // The solution of the complex arithmetic solver matches the solution of the solver of the
@@ -95,6 +98,54 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
   r -= b;
   CHECK(linalg::Norml2(comm, r) / norm_b < (single ? 1.0e-8 : 1.0e-11));
 }
+#endif
+
+#if defined(MFEM_USE_SUPERLU)
+TEST_CASE("SuperLU complex arithmetic solver", "[superlu][Serial][Parallel]")
+{
+  // The solution of the complex arithmetic solver matches the solution of the solver of the
+  // equivalent real-valued system, also for repeated factorizations with the same sparsity
+  // pattern, with and without the accuracy check of the factorizations.
+  MPI_Comm comm = Mpi::World();
+  const bool robust = GENERATE(false, true);
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  mfem::ParMesh mesh(comm, serial_mesh);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fespace(&mesh, &fec);
+  auto A = AssembleTestMatrix(fespace);
+
+  ComplexVector b(A->Height()), x(A->Height()), x_ref(A->Height()), r(A->Height());
+  b.Real().Randomize(1);
+  b.Imag().Randomize(2);
+
+  SuperLUComplexSolver solver(comm, SymbolicFactorization::DEFAULT, true, 0, robust);
+  solver.SetOperator(*A);
+  solver.Mult(b, x);
+
+  MfemWrapperSolver<ComplexOperator> ref(
+      std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, false, true, 0),
+      true, true, false, true);
+  ref.SetOperator(*A);
+  ref.Mult(b, x_ref);
+
+  A->Mult(x, r);
+  r -= b;
+  const double norm_b = linalg::Norml2(comm, b);
+  CHECK(linalg::Norml2(comm, r) / norm_b < 1.0e-10);
+  x -= x_ref;
+  CHECK(linalg::Norml2(comm, x) / linalg::Norml2(comm, x_ref) < 1.0e-9);
+
+  auto A2 = AssembleTestMatrix(fespace);
+  *const_cast<mfem::HypreParMatrix *>(
+      dynamic_cast<const mfem::HypreParMatrix *>(A2->Imag())) *= 2.0;
+  solver.SetOperator(*A2);
+  solver.Mult(b, x);
+  A2->Mult(x, r);
+  r -= b;
+  CHECK(linalg::Norml2(comm, r) / norm_b < 1.0e-10);
+}
+#endif
 
 }  // namespace palace
 
