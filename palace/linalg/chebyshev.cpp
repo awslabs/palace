@@ -4,6 +4,8 @@
 #include "chebyshev.hpp"
 
 #include <cmath>
+#include <type_traits>
+#include <vector>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -49,20 +51,22 @@ double LambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x
   return linalg::SpectralNorm(comm, S, true, &x0);
 }
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0,
+                    bool check)
 {
-  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
+  // With a mask, the diagonal is checked before the masking (see SetInverseDiagonal).
+  MFEM_VERIFY(!check || HasFiniteNonzeroDiagonal(comm, dinv),
               "Chebyshev smoother spectral estimation requires a finite, nonzero operator "
               "diagonal!");
   return LambdaMax(comm, A, dinv, x0);
 }
 
 double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
-                    ComplexVector &x0)
+                    ComplexVector &x0, bool check)
 {
   if (A.IsReal())
   {
-    MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
+    MFEM_VERIFY(!check || HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
                 "Chebyshev smoother spectral estimation requires a finite, nonzero real "
                 "operator diagonal!");
 
@@ -89,6 +93,35 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
   return linalg::SpectralNorm(comm, DinvA, false, &x0);
+}
+
+// Inverse diagonal scaling of the smoother, with zero entries for the masked true DOFs,
+// which are then not updated by the smoother. With a mask, the diagonal is checked before
+// the masking (as in GetLambdaMax otherwise).
+template <typename VecType, typename OperType>
+void SetInverseDiagonal(MPI_Comm comm, const OperType &op, const std::vector<int> &mask,
+                        VecType &dinv)
+{
+  op.AssembleDiagonal(dinv);
+  dinv.Reciprocal();
+  if (mask.empty())
+  {
+    return;
+  }
+  bool valid = true;
+  if constexpr (std::is_same_v<VecType, ComplexVector>)
+  {
+    valid = !op.IsReal() || HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag());
+  }
+  else
+  {
+    valid = HasFiniteNonzeroDiagonal(comm, dinv);
+  }
+  MFEM_VERIFY(valid, "Chebyshev smoother spectral estimation requires a finite, nonzero "
+                     "operator diagonal!");
+  const mfem::Array<int> rows(const_cast<int *>(mask.data()),
+                              static_cast<int>(mask.size()));
+  linalg::SetSubVector(dinv, rows, 0.0);
 }
 
 template <bool Transpose = false>
@@ -238,14 +271,13 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   dinv.SetSize(op.Height());
   d.UseDevice(true);
   dinv.UseDevice(true);
-  op.AssembleDiagonal(dinv);
-  dinv.Reciprocal();
+  SetInverseDiagonal(comm, op, mask_tdofs, dinv);
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al. (2003). The estimate starts from the
   // dominant vector of the previous operator, which is usually a nearby one (for example,
   // the next frequency of a driven sweep).
-  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
+  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec, mask_tdofs.empty());
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
@@ -303,8 +335,7 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   dinv.SetSize(op.Height());
   d.UseDevice(true);
   dinv.UseDevice(true);
-  op.AssembleDiagonal(dinv);
-  dinv.Reciprocal();
+  SetInverseDiagonal(comm, op, mask_tdofs, dinv);
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
   // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022). See
@@ -313,7 +344,8 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   {
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
-  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
+  const double lambda_max =
+      sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec, mask_tdofs.empty());
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
   const double lambda_min = sf_min * lambda_max;

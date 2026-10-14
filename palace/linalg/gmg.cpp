@@ -101,17 +101,33 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
       dbc_tdof_lists[l] = PtAP_l->GetEssentialTrueDofs();
     }
 
+    // The smoothers do not update the masked true DOFs (for example, of strongly stretched
+    // PML elements, see SpaceOperator::GetPreconditionerMatrix).
     auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get());
     if (dist_smoother)
     {
       MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
                   "Distributive relaxation smoother relies on both primary space and "
                   "auxiliary space operators for multigrid smoothing!");
+      dist_smoother->SetMasks(mg_op->GetSmootherMask(l),
+                              mg_op->GetAuxiliarySmootherMask(l));
       dist_smoother->SetOperators(mg_op->GetOperatorAtLevel(l),
                                   mg_op->GetAuxiliaryOperatorAtLevel(l));
     }
     else
     {
+      if (l > 0)
+      {
+        if (auto *cheby = dynamic_cast<ChebyshevSmoother<OperType> *>(B[l].get()))
+        {
+          cheby->SetMask(mg_op->GetSmootherMask(l));
+        }
+        else if (auto *cheby_1st =
+                     dynamic_cast<ChebyshevSmoother1stKind<OperType> *>(B[l].get()))
+        {
+          cheby_1st->SetMask(mg_op->GetSmootherMask(l));
+        }
+      }
       B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
     }
 

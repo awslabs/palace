@@ -439,6 +439,10 @@ private:
   std::vector<int> pml_tdofs;
   mutable std::unique_ptr<mfem::HypreParMatrix> pml_ar, pml_ai;
 
+  // Local true DOFs of the primary and auxiliary spaces at each level which are not updated
+  // by the multigrid smoothers (empty if none).
+  std::vector<std::vector<int>> smoother_masks, aux_smoother_masks;
+
 public:
   BaseMultigridOperator(std::size_t l) : OperType(0)
   {
@@ -468,6 +472,23 @@ public:
     pml_ai = std::move(ai);
   }
   const std::vector<int> &GetPMLTrueDofs() const { return pml_tdofs; }
+
+  void SetSmootherMasks(std::vector<std::vector<int>> &&masks,
+                        std::vector<std::vector<int>> &&aux_masks)
+  {
+    smoother_masks = std::move(masks);
+    aux_smoother_masks = std::move(aux_masks);
+  }
+  const std::vector<int> &GetSmootherMask(std::size_t l) const
+  {
+    static const std::vector<int> empty;
+    return (l < smoother_masks.size()) ? smoother_masks[l] : empty;
+  }
+  const std::vector<int> &GetAuxiliarySmootherMask(std::size_t l) const
+  {
+    static const std::vector<int> empty;
+    return (l < aux_smoother_masks.size()) ? aux_smoother_masks[l] : empty;
+  }
   auto TakePMLMatrices() const { return std::pair{std::move(pml_ar), std::move(pml_ai)}; }
   auto GetNumLevels() const { return ops.size(); }
   auto GetNumAuxiliaryLevels() const { return aux_ops.size(); }
