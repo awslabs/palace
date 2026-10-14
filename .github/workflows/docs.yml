@@ -29,7 +29,7 @@ concurrency:
 env:
   # Must match the sole buildcache writer configured in palace-ci/action.yml.
   SPACK_VERSION: releases/v1.2
-  SPACK_PACKAGES_COMMIT: 0ec478de0ec43571366def16bad549d6e4287abf
+  SPACK_PACKAGES_COMMIT: 80e77bd887fa3247d104eb6c81cae27447166906
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
