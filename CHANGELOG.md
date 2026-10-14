@@ -65,7 +65,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     magnetostatic preconditioner now also uses auxiliary-space multigrid smoothing by
     default, cutting PCG iterations several-fold (e.g. 189 → 25 on `narrow_ring`).
     SchemaVer 2-2-1
-    [Issue 993](https://github.com/awslabs/palace/issues/993).
+    [PR 1051](https://github.com/awslabs/palace/pull/1051).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
