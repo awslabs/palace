@@ -64,6 +64,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `mfem::MeshPartitioner` or with nonconforming refinement. This patches MFEM to order
     them consistently.
     [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+  - Fixed wave port boundary conditions after nonconforming adaptive mesh refinement in
+    parallel: the boundary edges of the port cross-section could miss the attribute of the
+    adjacent boundary (for example an impedance or PEC sheet ending on the port) when that
+    boundary was owned by another process, so its boundary condition was not applied on
+    the port and the port eigenvalue problem gave wrong or spurious modes, typically after
+    two or more refinements and depending on the number of processes. The edges were
+    matched through mesh node ids, which are not consistent between processes after
+    parallel refinement and rebalancing; they are now matched geometrically.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

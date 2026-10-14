@@ -1403,8 +1403,8 @@ namespace
 
 // Trait helpers dispatching between serial (mfem::SubMesh / mfem::Mesh) and parallel
 // (mfem::ParSubMesh / mfem::ParMesh) submesh primitives so a single templated body
-// serves both. The serial versions return MPI_COMM_SELF and identity vertex indices;
-// collectives over MPI_COMM_SELF degenerate to no-ops.
+// serves both. The serial versions return MPI_COMM_SELF; collectives over MPI_COMM_SELF
+// degenerate to no-ops.
 inline MPI_Comm GetSubMeshComm(const mfem::SubMesh &)
 {
   return MPI_COMM_SELF;
@@ -1412,55 +1412,6 @@ inline MPI_Comm GetSubMeshComm(const mfem::SubMesh &)
 inline MPI_Comm GetSubMeshComm(const mfem::ParSubMesh &s)
 {
   return s.GetComm();
-}
-
-inline void GetParentGlobalVertexIndices(const mfem::Mesh &parent,
-                                         mfem::Array<HYPRE_BigInt> &gi)
-{
-  gi.SetSize(parent.GetNV());
-  for (int i = 0; i < parent.GetNV(); i++)
-  {
-    gi[i] = i;
-  }
-}
-inline void GetParentGlobalVertexIndices(const mfem::ParMesh &parent,
-                                         mfem::Array<HYPRE_BigInt> &gi)
-{
-  // For an NC parmesh, parent.GetGlobalVertexIndices internally builds an order-1 H1
-  // ParFiniteElementSpace and calls GetGlobalTDofNumber on every vertex DoF. NC parmesh
-  // GetGlobalTDofNumber asserts that the ldof is a true DoF, which is not guaranteed for
-  // shared vertices. Use the NCMesh node-id table directly: node ids are rank-consistent.
-  // Include ghost-only vertex indices as well as [0, GetNV()), because a local slave edge
-  // can refer to a ghost-owned master whose MeshId endpoints are outside the local ParMesh
-  // vertex range.
-  if (parent.Nonconforming())
-  {
-    const auto &ncmesh = *parent.ncmesh;
-    int max_vertex = parent.GetNV() - 1;
-    for (int n = 0; n < ncmesh.GetNumNodes(); n++)
-    {
-      const auto &node = ncmesh.GetNode(n);
-      if (node.HasVertex())
-      {
-        max_vertex = std::max(max_vertex, node.vert_index);
-      }
-    }
-    gi.SetSize(max_vertex + 1);
-    gi = -1;
-    for (int n = 0; n < ncmesh.GetNumNodes(); n++)
-    {
-      const auto &node = ncmesh.GetNode(n);
-      // Nodes beyond the ghost layer still have vertex references but retain a negative
-      // vert_index (e.g. -4). Only numbered local and ghost vertices belong in this map.
-      if (node.HasVertex() && node.vert_index >= 0)
-      {
-        gi[node.vert_index] = n;
-      }
-    }
-    return;
-  }
-  gi.SetSize(parent.GetNV());
-  parent.GetGlobalVertexIndices(gi);
 }
 
 // Parent neighbor-transformation lookup. ParMesh delegates to the Palace helper that
@@ -1514,14 +1465,100 @@ void RemapSubMeshAttributes(SubMeshT &submesh)
   submesh.SetAttributes();
 }
 
+namespace
+{
+
+// Points along a mesh edge, uniformly spaced in its reference coordinate: its endpoints for
+// straight-sided meshes, or EDGE_SAMPLES + 1 points for curved meshes. Nonconforming
+// refinement splits edges at their reference midpoints, so the endpoints of descendant
+// edges (up to log2(EDGE_SAMPLES) levels) are among the points of their ancestors.
+constexpr int EDGE_SAMPLES = 16;
+
+void GetEdgePoints(const mfem::Mesh &mesh, int edge, int npts, double *pts)
+{
+  // Use the edge transformation rather than the vertex coordinates, which are not kept
+  // up to date with the nodes of a mesh with a nodal grid function.
+  const int sdim = mesh.SpaceDimension();
+  mfem::IsoparametricTransformation T;
+  mesh.GetEdgeTransformation(edge, &T);
+  mfem::IntegrationPoint ip;
+  mfem::Vector x(sdim);
+  for (int k = 0; k < npts; k++)
+  {
+    ip.x = static_cast<double>(k) / (npts - 1);
+    T.Transform(ip, x);
+    std::copy(x.GetData(), x.GetData() + sdim, pts + k * sdim);
+  }
+}
+
+// Distance from a point to the polyline through npts points.
+double PolylineDistance(const double *p, const double *pts, int npts, int sdim)
+{
+  double d2 = mfem::infinity();
+  for (int k = 0; k + 1 < npts; k++)
+  {
+    const double *a = pts + k * sdim, *b = pts + (k + 1) * sdim;
+    double ab2 = 0.0, apab = 0.0;
+    for (int d = 0; d < sdim; d++)
+    {
+      ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+      apab += (p[d] - a[d]) * (b[d] - a[d]);
+    }
+    const double t = (ab2 > 0.0) ? std::clamp(apab / ab2, 0.0, 1.0) : 0.0;
+    double e2 = 0.0;
+    for (int d = 0; d < sdim; d++)
+    {
+      const double c = a[d] + t * (b[d] - a[d]) - p[d];
+      e2 += c * c;
+    }
+    d2 = std::min(d2, e2);
+  }
+  return std::sqrt(d2);
+}
+
+double PolylineLength(const double *pts, int npts, int sdim)
+{
+  double l = 0.0;
+  for (int k = 0; k + 1 < npts; k++)
+  {
+    double e2 = 0.0;
+    for (int d = 0; d < sdim; d++)
+    {
+      const double c = pts[(k + 1) * sdim + d] - pts[k * sdim + d];
+      e2 += c * c;
+    }
+    l += std::sqrt(e2);
+  }
+  return l;
+}
+
+}  // namespace
+
 template <class SubMeshT>
 void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surface_attrs)
 {
   MFEM_VERIFY(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
               "RemapSubMeshBdrAttributes requires a boundary submesh!");
 
+  // Give each submesh boundary (perimeter) edge the attribute of the parent boundary face
+  // it lies on, other than the selected surface itself. If several physical boundaries
+  // meet at the same edge, choose the smallest attribute deterministically; an edge with
+  // no adjacent non-surface parent boundary keeps MFEM's generated attribute (it can be an
+  // artificial NC submesh boundary).
+  //
+  // The edges are matched geometrically: the parent boundary face adjacent to a submesh
+  // edge can be owned by another process, and on a nonconforming mesh it can contain the
+  // edge, or be contained in it, rather than share it. Neither the ParMesh vertex or edge
+  // numbering, nor the NCMesh node ids, nor the slave/master classification of edges
+  // (which only reflects the elements a process sees), identify an edge consistently
+  // across processes after parallel refinement and rebalancing. The coordinates do.
   const auto &parent = *submesh.GetParent();
   MPI_Comm comm = GetSubMeshComm(submesh);
+  const int sdim = parent.SpaceDimension();
+  const bool curved =
+      parent.GetNodes() && parent.GetNodes()->FESpace()->GetMaxElementOrder() > 1;
+  const int npts = curved ? EDGE_SAMPLES + 1 : 2;
+  const int rec_size = npts * sdim;
 
   std::unordered_set<int> surface_attr_set;
   for (int attr : surface_attrs)
@@ -1529,118 +1566,170 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     surface_attr_set.insert(attr);
   }
 
-  // Rank-independent edge identifiers: ParMesh global vertex indices, or [0..NV) for
-  // serial. Edges at the intersection of two parent boundary faces may live on different
-  // ranks, so a stable identifier is needed before the Allgather.
-  mfem::Array<HYPRE_BigInt> pvert_gi;
-  GetParentGlobalVertexIndices(parent, pvert_gi);
-
-  // A nonconforming child edge and the coarse edge containing it have different endpoint
-  // pairs. MFEM already records that ancestry; canonicalize slave edges to the master
-  // MeshId before comparing attributes instead of recovering the relationship from
-  // coordinates. A master can be ghost-owned and therefore have no locally addressable
-  // ParMesh edge index, but its NCMesh MeshId still exposes the endpoint vertices.
-  mfem::Array<int> vertices;
-  auto EdgeKey = [&](int edge)
-  {
-    if (parent.Nonconforming())
-    {
-      const auto &edge_list = parent.ncmesh->GetEdgeList();
-      const auto id_and_type = edge_list.GetMeshIdAndType(edge);
-      if (id_and_type.type == mfem::NCMesh::NCList::MeshIdType::SLAVE)
-      {
-        const auto *slave = static_cast<const mfem::NCMesh::Slave *>(id_and_type.id);
-        MFEM_ASSERT(slave != nullptr && slave->master >= 0,
-                    "Invalid nonconforming slave-edge ancestry!");
-        const auto master = edge_list.GetMeshIdAndType(slave->master);
-        MFEM_ASSERT(master.id != nullptr,
-                    "Could not resolve nonconforming master-edge ancestry!");
-        int master_vertices[2];
-        parent.ncmesh->GetEdgeVertices(*master.id, master_vertices);
-        vertices.SetSize(2);
-        vertices[0] = master_vertices[0];
-        vertices[1] = master_vertices[1];
-      }
-      else
-      {
-        parent.GetEdgeVertices(edge, vertices);
-      }
-    }
-    else
-    {
-      parent.GetEdgeVertices(edge, vertices);
-    }
-    MFEM_ASSERT(vertices.Size() == 2 && vertices[0] >= 0 && vertices[0] < pvert_gi.Size() &&
-                    vertices[1] >= 0 && vertices[1] < pvert_gi.Size(),
-                "Invalid canonical edge vertices!");
-    const int gv0 = static_cast<int>(pvert_gi[vertices[0]]);
-    const int gv1 = static_cast<int>(pvert_gi[vertices[1]]);
-    MFEM_ASSERT(gv0 >= 0 && gv1 >= 0, "Invalid global canonical edge vertices!");
-    return std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
-  };
-
-  // Collect the physical parent-boundary attribute associated with each canonical edge.
-  // The selected mode surface also contributes records for its perimeter; an adjacent
-  // non-surface attribute takes precedence. If several physical boundaries meet at the
-  // same edge, choose the smallest attribute deterministically.
-  constexpr int edge_attr_record_size = 4;
-  std::vector<int> local_edge_attrs;
-  mfem::Array<int> edges, orientations;
-  for (int be = 0; be < parent.GetNBE(); be++)
-  {
-    const int attr = parent.GetBdrAttribute(be);
-    const bool is_surface = surface_attr_set.contains(attr);
-    parent.GetBdrElementEdges(be, edges, orientations);
-    for (int edge : edges)
-    {
-      const auto [gv0, gv1] = EdgeKey(edge);
-      local_edge_attrs.insert(local_edge_attrs.end(), {gv0, gv1, attr, is_surface ? 1 : 0});
-    }
-  }
-
-  const int local_count = static_cast<int>(local_edge_attrs.size());
-  std::vector<int> recv_counts(Mpi::Size(comm));
-  Mpi::Allgather(1, &local_count, recv_counts.data(), comm);
-  std::vector<int> displs(Mpi::Size(comm));
-  int total = 0;
-  for (int i = 0; i < Mpi::Size(comm); i++)
-  {
-    displs[i] = total;
-    total += recv_counts[i];
-  }
-  std::vector<int> all_edge_attrs(total);
-  Mpi::Allgatherv(local_count, local_edge_attrs.data(), all_edge_attrs.data(),
-                  recv_counts.data(), displs.data(), comm);
-
-  std::map<std::pair<int, int>, int> edge_to_attr;
-  for (int i = 0; i < total / edge_attr_record_size; i++)
-  {
-    const int *record = all_edge_attrs.data() + edge_attr_record_size * i;
-    const auto key = std::make_pair(record[0], record[1]);
-    const int attr = record[2];
-    const bool is_surface = record[3] != 0;
-    auto [it, inserted] = edge_to_attr.try_emplace(key, attr);
-    if (!inserted && !is_surface)
-    {
-      const bool current_is_surface = surface_attr_set.contains(it->second);
-      it->second = current_is_surface ? attr : std::min(it->second, attr);
-    }
-  }
-
-  // Map every submesh perimeter edge through the same NC ancestry. A surface-only match is
-  // left at MFEM's generated attribute: it can be an artificial NC submesh boundary with no
-  // adjacent physical parent boundary.
+  // Gather the points of all submesh boundary edges on all processes, in the coordinates of
+  // the parent mesh (the submesh may already have been projected to 2D).
   const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
-  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  const int nbe = submesh.GetNBE();
+  std::vector<double> local_pts(static_cast<std::size_t>(nbe) * rec_size);
+  for (int sbe = 0; sbe < nbe; sbe++)
   {
     const int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
     MFEM_ASSERT(submesh_edge >= 0 && submesh_edge < parent_edge_map.Size(),
                 "Submesh boundary element edge index out of range!");
-    const auto key = EdgeKey(parent_edge_map[submesh_edge]);
-    const auto it = edge_to_attr.find(key);
-    if (it != edge_to_attr.end() && !surface_attr_set.contains(it->second))
+    GetEdgePoints(parent, parent_edge_map[submesh_edge], npts,
+                  local_pts.data() + static_cast<std::size_t>(sbe) * rec_size);
+  }
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  std::vector<int> counts(size), displs(size), edge_offsets(size + 1, 0);
+  {
+    const int local_count = static_cast<int>(local_pts.size());
+    Mpi::Allgather(1, &local_count, counts.data(), comm);
+  }
+  int total = 0;
+  for (int r = 0; r < size; r++)
+  {
+    displs[r] = total;
+    total += counts[r];
+    edge_offsets[r + 1] = edge_offsets[r] + counts[r] / rec_size;
+  }
+  std::vector<double> pts(total);
+  Mpi::Allgatherv(static_cast<int>(local_pts.size()), local_pts.data(), pts.data(),
+                  counts.data(), displs.data(), comm);
+  const int nedges = edge_offsets[size];
+  if (nedges == 0)
+  {
+    return;
+  }
+
+  // Bounding boxes and lengths of the gathered edges, sorted by their lower bound along
+  // the axis of largest extent for the candidate search.
+  std::vector<double> bb_min(static_cast<std::size_t>(nedges) * sdim),
+      bb_max(static_cast<std::size_t>(nedges) * sdim), length(nedges);
+  std::vector<double> glob_min(sdim, mfem::infinity()), glob_max(sdim, -mfem::infinity());
+  for (int i = 0; i < nedges; i++)
+  {
+    const double *p = pts.data() + static_cast<std::size_t>(i) * rec_size;
+    for (int d = 0; d < sdim; d++)
     {
-      submesh.SetBdrAttribute(sbe, it->second);
+      double lo = mfem::infinity(), hi = -mfem::infinity();
+      for (int k = 0; k < npts; k++)
+      {
+        lo = std::min(lo, p[k * sdim + d]);
+        hi = std::max(hi, p[k * sdim + d]);
+      }
+      bb_min[i * sdim + d] = lo;
+      bb_max[i * sdim + d] = hi;
+      glob_min[d] = std::min(glob_min[d], lo);
+      glob_max[d] = std::max(glob_max[d], hi);
+    }
+    length[i] = PolylineLength(p, npts, sdim);
+  }
+  int axis = 0;
+  double extent = 0.0;
+  for (int d = 0; d < sdim; d++)
+  {
+    if (glob_max[d] - glob_min[d] > extent)
+    {
+      extent = glob_max[d] - glob_min[d];
+      axis = d;
+    }
+  }
+  // Absolute tolerance for the bounding box tests (cracked boundaries are displaced by a
+  // tiny fraction of the local mesh size), and relative tolerance for the containment test.
+  const double bb_tol = 1.0e-8 * extent;
+  constexpr double rel_tol = 1.0e-6;
+  std::vector<int> order(nedges);
+  std::iota(order.begin(), order.end(), 0);
+  std::sort(order.begin(), order.end(), [&](int a, int b)
+            { return bb_min[a * sdim + axis] < bb_min[b * sdim + axis]; });
+  std::vector<double> sorted_min(nedges);
+  double max_extent = 0.0;
+  for (int i = 0; i < nedges; i++)
+  {
+    sorted_min[i] = bb_min[order[i] * sdim + axis];
+    max_extent = std::max(max_extent, bb_max[order[i] * sdim + axis] - sorted_min[i]);
+  }
+
+  // Match the edges of the local parent boundary faces (other than the surface) against
+  // the gathered submesh edges: an edge matches if one contains the other.
+  std::vector<int> attr(nedges, std::numeric_limits<int>::max());
+  std::vector<double> parent_pts(rec_size), q_min(sdim), q_max(sdim);
+  std::set<std::pair<int, int>> visited;
+  mfem::Array<int> edges, orientations;
+  for (int be = 0; be < parent.GetNBE(); be++)
+  {
+    const int be_attr = parent.GetBdrAttribute(be);
+    if (surface_attr_set.contains(be_attr))
+    {
+      continue;
+    }
+    parent.GetBdrElementEdges(be, edges, orientations);
+    for (int edge : edges)
+    {
+      if (!visited.insert({edge, be_attr}).second)
+      {
+        continue;
+      }
+      GetEdgePoints(parent, edge, npts, parent_pts.data());
+      bool overlap = true;
+      for (int d = 0; d < sdim; d++)
+      {
+        q_min[d] = mfem::infinity();
+        q_max[d] = -mfem::infinity();
+        for (int k = 0; k < npts; k++)
+        {
+          q_min[d] = std::min(q_min[d], parent_pts[k * sdim + d]);
+          q_max[d] = std::max(q_max[d], parent_pts[k * sdim + d]);
+        }
+        overlap =
+            overlap && q_max[d] >= glob_min[d] - bb_tol && q_min[d] <= glob_max[d] + bb_tol;
+      }
+      if (!overlap)
+      {
+        continue;
+      }
+      const double parent_length = PolylineLength(parent_pts.data(), npts, sdim);
+      auto it = std::lower_bound(sorted_min.begin(), sorted_min.end(),
+                                 q_min[axis] - max_extent - bb_tol);
+      for (auto j = static_cast<int>(it - sorted_min.begin());
+           j < nedges && sorted_min[j] <= q_max[axis] + bb_tol; j++)
+      {
+        const int i = order[j];
+        bool candidate = true;
+        for (int d = 0; d < sdim && candidate; d++)
+        {
+          candidate = bb_max[i * sdim + d] >= q_min[d] - bb_tol &&
+                      bb_min[i * sdim + d] <= q_max[d] + bb_tol;
+        }
+        if (!candidate || be_attr >= attr[i])
+        {
+          continue;
+        }
+        const double *sub_pts = pts.data() + static_cast<std::size_t>(i) * rec_size;
+        const double tol = rel_tol * std::max(length[i], parent_length);
+        const bool sub_in_parent =
+            PolylineDistance(sub_pts, parent_pts.data(), npts, sdim) <= tol &&
+            PolylineDistance(sub_pts + (npts - 1) * sdim, parent_pts.data(), npts, sdim) <=
+                tol;
+        const bool parent_in_sub =
+            PolylineDistance(parent_pts.data(), sub_pts, npts, sdim) <= tol &&
+            PolylineDistance(parent_pts.data() + (npts - 1) * sdim, sub_pts, npts, sdim) <=
+                tol;
+        if (sub_in_parent || parent_in_sub)
+        {
+          attr[i] = be_attr;
+        }
+      }
+    }
+  }
+  Mpi::GlobalMin(nedges, attr.data(), comm);
+
+  for (int sbe = 0; sbe < nbe; sbe++)
+  {
+    const int a = attr[edge_offsets[rank] + sbe];
+    if (a != std::numeric_limits<int>::max())
+    {
+      submesh.SetBdrAttribute(sbe, a);
     }
   }
 
@@ -2746,7 +2835,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // For each element / boundary element, find the (at most one, by independence) split edge
   // it contains, returning the matching midpoint id and the local endpoint vertices, or -1.
-  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int(*edge_vert)[2],
+  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int (*edge_vert)[2],
                                           int nedge, int &lv0, int &lv1)
   {
     for (int le = 0; le < nedge; le++)
