@@ -12,6 +12,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/strumpack.hpp"
+#include "linalg/strumpackcomplex.hpp"
 #include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -129,13 +130,16 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 
 // Sparse direct solver for the PML subdomain correction of the geometric multigrid
 // preconditioner: the solver specified by the "Type" option if it is a sparse direct
-// solver, otherwise the default sparse direct solver. The PML subdomain matrix is always
-// factored in complex form, and is symmetric (but indefinite) unless the system matrix is
-// not. The factorization is never compressed or in mixed precision, and the accuracy of
-// SuperLU_DIST factorizations is checked (its static pivoting can be unstable for this
-// indefinite matrix, in which case tiny pivot replacement and iterative refinement are
-// used): approximate solves can lead the (left-preconditioned) Krylov solver to converge to
-// an inaccurate solution.
+// solver, otherwise the default sparse direct solver (STRUMPACK if available, which factors
+// the matrix in complex arithmetic, with half of the memory of the equivalent real-valued
+// system factored by the others). The PML subdomain matrix is always factored in complex
+// form, and is symmetric (but indefinite) unless the system matrix is not. The
+// factorization is never compressed, in double precision unless
+// "PMLSubdomainSinglePrecision" (with iterative refinement, STRUMPACK only), and the
+// accuracy of SuperLU_DIST factorizations is checked (its static pivoting can be unstable
+// for this indefinite matrix, in which case tiny pivot replacement and iterative refinement
+// are used): approximate solves can lead the (left-preconditioned) Krylov solver to
+// converge to an inaccurate solution.
 std::unique_ptr<Solver<ComplexOperator>>
 ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
                             MatrixSymmetry pc_mat_sym, int verbose, MPI_Comm comm)
@@ -145,10 +149,10 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
   if (type != LinearSolver::SUPERLU && type != LinearSolver::STRUMPACK &&
       type != LinearSolver::MUMPS && type != LinearSolver::CUDSS)
   {
-#if defined(MFEM_USE_SUPERLU)
-    type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
+#if defined(MFEM_USE_STRUMPACK)
     type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+    type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_MUMPS)
     type = LinearSolver::MUMPS;
 #else
@@ -174,10 +178,9 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = MakeWrapperSolver<ComplexOperator, StrumpackSolver>(
-          linear_pml, comm, linear.sym_factorization, linear_pml.strumpack_compression_type,
-          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+      pc = std::make_unique<StrumpackComplexSolver>(
+          comm, linear.sym_factorization, linear.pml_subdomain_single_precision,
+          linear.pml_subdomain_single_precision ? 2 : 0, print);
 #endif
       break;
     case LinearSolver::MUMPS:
@@ -239,6 +242,19 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        // A complex-valued coarse solve without compression is factored in complex
+        // arithmetic.
+        if (linear.complex_coarse_solve && !linear.pc_mat_real &&
+            !linear.drop_small_entries &&
+            linear.strumpack_compression_type == SparseCompression::NONE)
+        {
+          pc = std::make_unique<StrumpackComplexSolver>(comm, linear.sym_factorization,
+                                                        false, 0, print);
+          break;
+        }
+      }
       pc = MakeWrapperSolver<OperType, StrumpackSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,

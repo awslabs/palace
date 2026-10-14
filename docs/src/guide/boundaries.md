@@ -149,12 +149,25 @@ remain linear, while the absorption in the layer grows with frequency. With
 frequency, for an absorption independent of frequency, and a complex frequency shift
 `"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency.
 
-PML can cause convergence difficulties in iterative linear solvers. By default,
+PML can cause convergence difficulties in iterative linear solvers: in the strongly
+stretched elements of the layer, the polynomial smoothers of the multigrid preconditioner
+amplify the error instead of reducing it. By default
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
-the multigrid preconditioner is therefore complemented by a sparse direct solve of the
-PML regions, which restores the convergence of the multigrid preconditioner without PML.
-Simulations with PML regions therefore require a sparse direct solver (SuperLU_DIST,
-STRUMPACK, or MUMPS) and AMS is not supported with PML regions.
+the multigrid preconditioner is therefore complemented by a sparse direct solve on the
+unknowns of the strongly stretched PML elements (above
+[`"PMLSubdomainThreshold"`](../config/reference.md#config-solver-linear-pmlsubdomainthreshold)
+of the magnitude of the stretch factors), and the smoothers do not update the unknowns of
+the elements with a larger stretch (above
+[`"PMLSmootherThreshold"`](../config/reference.md#config-solver-linear-pmlsmootherthreshold)).
+The coarse-level solve of the multigrid preconditioner uses the complex-valued operator
+([`"ComplexCoarseSolve"`](../config/reference.md#config-solver-linear-complexcoarsesolve)),
+since a real-valued approximation of the PML does not absorb. With STRUMPACK (the default
+sparse direct solver with PML regions, when available), these complex-valued matrices are
+factored in complex arithmetic, and
+[`"PMLSubdomainSinglePrecision"`](../config/reference.md#config-solver-linear-pmlsubdomainsingleprecision)
+further reduces the memory of the PML subdomain factorization. Simulations with PML regions
+therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS) and AMS is not
+supported with PML regions.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),

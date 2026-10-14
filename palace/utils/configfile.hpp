@@ -1187,8 +1187,11 @@ public:
   int pc_mat_shifted = -1;
 
   // For frequency domain applications, use the complex-valued system matrix in the sparse
-  // direct solver.
+  // direct solver. If not specified (complex_coarse_solve_specified), the default is
+  // resolved in IoData: true for frequency domain problems with PML regions, false
+  // otherwise.
   bool complex_coarse_solve = false;
+  bool complex_coarse_solve_specified = false;
 
   // Drop small entries (< numerical ε) in the system matrix used in the sparse direct
   // solver.
@@ -1199,6 +1202,21 @@ public:
   // preconditioner. The default is resolved in IoData (direct for frequency domain
   // problems with PML regions and multigrid enabled).
   PMLSubdomainSolver pml_subdomain_solver = PMLSubdomainSolver::DEFAULT;
+
+  // Threshold of the PML stretch magnitude max_a |s_a| of an element above which its true
+  // DOFs (not shared with other elements) are in the PML subdomain (all of the PML elements
+  // for a threshold of at most 1).
+  double pml_subdomain_threshold = 1.1;
+
+  // Threshold of the PML stretch magnitude above which the geometric multigrid smoothers do
+  // not update the true DOFs of an element (not shared with other elements), when the PML
+  // subdomain correction is used (≤ 0 to disable). Must be at least the PML subdomain
+  // threshold.
+  double pml_smoother_threshold = 2.0;
+
+  // Factor the PML subdomain matrix in single precision, with iterative refinement in
+  // double precision (STRUMPACK only).
+  bool pml_subdomain_single_precision = false;
 
   // Reuse the sparsity pattern (reordering) for repeated factorizations.
   bool reorder_reuse = true;
