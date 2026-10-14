@@ -11,7 +11,6 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
-#include "linalg/hypre.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
@@ -103,11 +102,14 @@ private:
   // Operator for thin-film superconductor sheet (kinetic inductance) boundaries.
   SuperconductorSheetOperator sc_sheet_op;
 
-  // Two-sided (two-port) sheet cross-face coupling as a true-dof HypreParMatrix on the
-  // finest ND space, built lazily by GetTwoPortCoupling and summed into both the stiffness
-  // and the sheet-mass operator (so the operator, the flux RHS, and the penalty energy stay
-  // consistent). Null unless a two-sided film is present.
-  mutable std::unique_ptr<mfem::HypreParMatrix> two_port_coupling_;
+  // Two-sided (two-port) sheet cross-face coupling C per ND level, built on first use. It
+  // is added to every operator on the level (stiffness, preconditioners, and the sheet
+  // mass), so the operator, the flux RHS, and the penalty energy stay consistent.
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> two_port_coupling_;
+
+  // Add the two-sided sheet coupling on ND level l to an operator, eliminated on its
+  // essential DOFs. Does nothing without a two-sided sheet.
+  void AddTwoPortCoupling(std::size_t l, ParOperator &K_l);
 
   // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
   // London flux films. Populated at construction after surf_flux_op is set.
@@ -119,7 +121,7 @@ private:
   // Cached sheet-only mass operator M_sheet (the boundary term ∫_Σ (1/L_ksq) A_t·v_t). The
   // London flux excitation RHS = M_sheet·a_h is the Euler-Lagrange source of the shifted
   // penalty ½∫_Σ (1/L_ksq)|A_t − a_h|². Lazily assembled in GetFluxExcitationVector.
-  mutable std::unique_ptr<Operator> M_sheet_;
+  mutable std::unique_ptr<ParOperator> M_sheet_;
 
   // Fluxoid circulation functional c = Curlᵀ·f_hole per London flux loop (f_hole the RT
   // hole-cap flux functional), so cᵀA = ∮_∂hole A·dl by Stokes. Used to normalize the
@@ -160,10 +162,6 @@ public:
   const auto &GetSurfaceFluxOp() const { return surf_flux_op; }
   auto &GetSuperconductorOp() { return sc_sheet_op; }
   const auto &GetSuperconductorOp() const { return sc_sheet_op; }
-
-  // Lazily builds and returns the two-sided (two-port) sheet cross-face coupling matrix, or
-  // nullptr if no two-sided sheet is configured.
-  mfem::HypreParMatrix *GetTwoPortCoupling();
 
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
