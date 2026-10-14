@@ -71,6 +71,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Fixed the `FluxLoop` inductance of `Superconductor` films under nonconformal adaptive
+    mesh refinement, which could move away from the converged value after a refinement: the
+    London drive is now built on the mesh before hanging nodes appear and carried through
+    later refinements, instead of being rebuilt with a spurious curl on the film.
+    [Issue 993](https://github.com/awslabs/palace/issues/993).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

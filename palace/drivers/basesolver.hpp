@@ -15,6 +15,7 @@
 namespace mfem
 {
 class Mesh;
+class ParMesh;
 }  // namespace mfem
 
 namespace palace
@@ -53,6 +54,10 @@ protected:
   // Previous adaptation iteration's total London kinetic energy S(A_t − a_h), for detecting
   // an anomalous spike; negative until the first London solve sets it.
   mutable double prev_london_kinetic_ = -1.0;
+
+  // Called after each modification (refinement or rebalance) of the adaptive mesh, to
+  // transfer any solver data kept across adaptive iterations.
+  virtual void UpdateAfterMeshChange(mfem::ParMesh &mesh) const {}
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,

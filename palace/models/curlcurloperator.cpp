@@ -667,7 +667,7 @@ Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
 
   Vector result;
   surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
+                                       result, generator_cache_);
   return result;
 }
 
@@ -680,7 +680,7 @@ void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T
   surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
 
   surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
+                                       result, generator_cache_);
 }
 
 // Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>
