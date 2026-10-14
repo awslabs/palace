@@ -1091,6 +1091,21 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
                                   "nc_amr", opts);
 }
 
+// As above with two refinements, each followed by a forced rebalance, which moves the kept
+// generator across ranks.
+TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
+                                  opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and
