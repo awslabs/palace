@@ -2840,6 +2840,21 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                            "be an array of multiples of OveretchDepth!");
         rule.extra_levels_above_over_overetch = extra->get<std::vector<double>>();
       }
+      if (auto metal_grading = trace_basis->find("MetalKnotGrading");
+          metal_grading != trace_basis->end())
+      {
+        // The metal-graded refinement (the concave-MS remedy, decisions 590 / 629); absent =
+        // the recorded equal-fraction metal knots, so every record written before it (the
+        // published refined-rule models) reads unchanged. A 220-knot coupon whose record
+        // lacks the key fails the load-time file check (its knots are not at the
+        // equal-fraction positions): fail closed.
+        MFEM_VERIFY(metal_grading->is_array(),
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" TraceBasis MetalKnotGrading must be an array of distances "
+                           "over R!");
+        rule.metal_knot_grading = metal_grading->get<std::vector<double>>();
+      }
       {
         const std::string reason = CheckCornerTraceBasisRule(rule);
         MFEM_VERIFY(reason.empty(), "Fabrication-process response model \""

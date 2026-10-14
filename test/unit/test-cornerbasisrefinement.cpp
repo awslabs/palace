@@ -297,6 +297,19 @@ json RefinedTraceBasisRecord()
           {"Fractions", rule.fractions}};
 }
 
+json MetalGradedTraceBasisRecord()
+{
+  const auto rule = MetalGradedCornerTraceBasisRule();
+  return {{"RingLayout", "AllRingsFollowMetal"},
+          {"RingSize", rule.ring_size},
+          {"MetalInteriorKnots", rule.metal_interior_knots},
+          {"FreeKnots", rule.free_knots},
+          {"FreeKnotGrading", rule.free_knot_grading},
+          {"MetalKnotGrading", rule.metal_knot_grading},
+          {"ExtraLevelsAboveOverOveretch", rule.extra_levels_above_over_overetch},
+          {"Fractions", rule.fractions}};
+}
+
 void WriteSyntheticMatrices(const fs::path &domain_path, const fs::path &surface_path,
                             int size, double diagonal, double coupling_scale,
                             double radius_m)
@@ -851,6 +864,243 @@ TEST_CASE("CornerRefinedRuleAcuteConcaveGrading",
       min_area = std::min(min_area, TriangleArea(basis, t));
     }
     CHECK(min_area > 1.0e-8);
+  }
+}
+
+TEST_CASE("CornerMetalGradedRule", "[cornerbasisrefinement][Serial][Parallel]")
+{
+  // The metal-graded refinement of the refined rule (the concave-MS remedy, decisions 590 /
+  // 629 O-9; MS DIAGNOSIS 6.2): MetalKnotGrading (1/9, 1/3) from each crossing INTO the metal
+  // arc on every ring, the 5 equal-fraction metal knots kept; MetalInteriorKnots 9, RingSize
+  // 20, 11 x 20 = 220 knots, 22 PEC knots; the levels are the refined rule's. The rule check
+  // refuses a grading that is not increasing / positive, that does not fit, that sits on an
+  // ungraded or MetalRingsOnly layout or whose outermost distance exceeds half the reference.
+  constexpr double R = 0.2, t = 0.01, oe = 0.005;
+  const auto rule = MetalGradedCornerTraceBasisRule();
+  CHECK(rule.ring_size == 20);
+  CHECK(rule.metal_interior_knots == 9);
+  CHECK(rule.free_knots == 9);
+  CHECK(rule.metal_knot_grading == std::vector<double>{1.0 / 9.0, 1.0 / 3.0});
+  CHECK(rule.free_knot_grading == std::vector<double>{1.0 / 3.0, 2.0 / 3.0});
+  CHECK(CheckCornerTraceBasisRule(rule).empty());
+  CHECK(rule != RefinedCornerTraceBasisRule());
+  CHECK(CornerRuleLevels(rule, R, t, oe) ==
+        CornerRuleLevels(RefinedCornerTraceBasisRule(), R, t, oe));
+  {
+    auto bad = rule;
+    bad.metal_knot_grading = {1.0 / 3.0, 1.0 / 9.0};
+    CHECK_THAT(CheckCornerTraceBasisRule(bad), ContainsSubstring("increasing positive"));
+    bad.metal_knot_grading = {0.0, 1.0 / 3.0};
+    CHECK_THAT(CheckCornerTraceBasisRule(bad), ContainsSubstring("increasing positive"));
+    bad.metal_knot_grading = {1.0 / 9.0, 1.0 / 3.0};
+    bad.metal_interior_knots = 3;
+    bad.ring_size = 14;
+    CHECK_THAT(CheckCornerTraceBasisRule(bad),
+               ContainsSubstring("more knots than MetalInteriorKnots"));
+    auto ungraded = rule;
+    ungraded.free_knot_grading.clear();
+    CHECK_THAT(CheckCornerTraceBasisRule(ungraded),
+               ContainsSubstring("graded AllRingsFollowMetal layout"));
+    auto legacy = rule;
+    legacy.ring_layout = CornerRingLayout::METAL_RINGS_ONLY;
+    legacy.extra_levels_above_over_overetch.clear();
+    legacy.free_knot_grading.clear();
+    CHECK_THAT(CheckCornerTraceBasisRule(legacy),
+               ContainsSubstring("graded AllRingsFollowMetal layout"));
+    auto wide = rule;
+    wide.metal_knot_grading = {1.0 / 9.0, 0.75};
+    CHECK_THAT(CheckCornerTraceBasisRule(wide),
+               ContainsSubstring("outermost MetalKnotGrading distance"));
+  }
+  // The scale: 1 on every metal arc at or above the reference (the convex 60-degree node's
+  // metal arc IS the reference arc; every concave node and every obtuse convex node is above
+  // it), MetalArc / Reference below it (the acute convex nodes 15 / 30 / 45).
+  CHECK(MetalKnotGradingScale(kFreeKnotGradingReferenceFreeArcOverR, rule) == 1.0);
+  CHECK(MetalKnotGradingScale(2.0, rule) == 1.0);
+  CHECK(MetalKnotGradingScale(1.0, rule) == 1.0 / kFreeKnotGradingReferenceFreeArcOverR);
+  CHECK(MetalKnotGradingScale(1.0, RefinedCornerTraceBasisRule()) == 1.0);
+  for (const bool convex : {true, false})
+  {
+    const auto seed = MakeCornerBoxSeed(R, t, oe, convex, rule);
+    CHECK(seed.points.size() == 220);
+    CHECK(seed.contour_groups == std::vector<int>(11, 20));
+    CHECK(seed.zero_trace_indices.size() == 22);
+    CHECK(CornerZeroSlots(convex, rule).size() == 11);
+    const auto basis =
+        BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
+                              90.0 * kDeg, convex, rule);
+    CHECK(basis.knots.size() == 220);
+    int zero = 0;
+    for (const bool z : basis.zero)
+    {
+      zero += z ? 1 : 0;
+    }
+    CHECK(zero == 22);
+    // On every ring: two PEC knots at R / 9 and two at R / 3 of perimeter from a crossing
+    // INTO the metal arc, the 5 equal-fraction knots between the R / 3 ones; the recorded
+    // rule's first metal knot sits at the metal arc / 6 (R on the concave 90 node).
+    for (const double angle : {90.0, 60.0, 135.0})
+    {
+      const auto layout = CornerMetalRingLayout(R, angle * kDeg, convex, rule);
+      const auto [first, second] = ArmCrossingFractions(R, angle * kDeg);
+      const std::pair<double, double> metal =
+          convex ? std::make_pair(first, second) : std::make_pair(second, first + 1.0);
+      const double arc = 8.0 * (metal.second - metal.first);
+      std::vector<double> into_metal;
+      for (const auto &vertex : layout)
+      {
+        if (vertex.kind != CornerRingVertex::Kind::ZERO)
+        {
+          continue;
+        }
+        for (const auto [c, sign] :
+             {std::make_pair(metal.first, 1.0), std::make_pair(metal.second, -1.0)})
+        {
+          const double d = std::fmod(sign * (vertex.fraction - c) + 1.5, 1.0) - 0.5;
+          if (d > 1.0e-12 && d < arc / 16.0)
+          {
+            into_metal.push_back(d * 8.0 * R);
+          }
+        }
+      }
+      std::sort(into_metal.begin(), into_metal.end());
+      REQUIRE(into_metal.size() >= 4);
+      const double scale = MetalKnotGradingScale(arc, rule);
+      CHECK(scale == 1.0);
+      CHECK(std::abs(into_metal[0] - scale * R / 9.0) < 1.0e-12);
+      CHECK(std::abs(into_metal[1] - scale * R / 9.0) < 1.0e-12);
+      CHECK(std::abs(into_metal[2] - scale * R / 3.0) < 1.0e-12);
+      CHECK(std::abs(into_metal[3] - scale * R / 3.0) < 1.0e-12);
+      // the recorded rule's layout at the same angle is unchanged by the addition (its
+      // first metal knot at arc / 6 from each crossing)
+      const auto recorded =
+          CornerMetalRingLayout(R, angle * kDeg, convex, RefinedCornerTraceBasisRule());
+      std::vector<double> recorded_into_metal;
+      for (const auto &vertex : recorded)
+      {
+        if (vertex.kind != CornerRingVertex::Kind::ZERO)
+        {
+          continue;
+        }
+        const double d = std::fmod(vertex.fraction - metal.first + 1.5, 1.0) - 0.5;
+        if (d > 1.0e-12 && d < arc / 16.0 + 1.0e-12)
+        {
+          recorded_into_metal.push_back(d * 8.0 * R);
+        }
+      }
+      REQUIRE(!recorded_into_metal.empty());
+      CHECK(std::abs(*std::min_element(recorded_into_metal.begin(),
+                                       recorded_into_metal.end()) -
+                     arc * R / 6.0) < 1.0e-12);
+    }
+    // The acute convex 45-degree node (metal arc R): the graded metal distances scale by
+    // MetalArc / Reference, the slot structure and the zero set are the 90 node's.
+    if (convex)
+    {
+      const auto layout = CornerMetalRingLayout(R, 45.0 * kDeg, true, rule);
+      const auto [first, second] = ArmCrossingFractions(R, 45.0 * kDeg);
+      const double arc = 8.0 * (second - first);
+      CHECK(std::abs(arc - 1.0) < 1.0e-12);
+      const double scale = MetalKnotGradingScale(arc, rule);
+      CHECK(scale < 1.0);
+      std::vector<double> into_metal;
+      for (const auto &vertex : layout)
+      {
+        if (vertex.kind == CornerRingVertex::Kind::ZERO)
+        {
+          const double d = vertex.fraction - first;
+          if (d > 1.0e-12 && d < (second - first) / 2.0)
+          {
+            into_metal.push_back(d * 8.0 * R);
+          }
+        }
+      }
+      std::sort(into_metal.begin(), into_metal.end());
+      REQUIRE(into_metal.size() >= 2);
+      CHECK(std::abs(into_metal[0] - scale * R / 9.0) < 1.0e-12);
+      CHECK(std::abs(into_metal[1] - scale * R / 3.0) < 1.0e-12);
+      const auto basis45 =
+          BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
+                                45.0 * kDeg, true, rule);
+      CHECK(basis45.knots.size() == 220);
+      CHECK(basis45.zero == basis.zero);
+    }
+  }
+}
+
+TEST_CASE("CornerMetalGradedRulePythonParity", "[cornerbasisrefinement][Serial][Parallel]")
+{
+  // The Python generator's 220-knot basis points of the metal-graded rule (test/data/
+  // surfaceresponse/corner-metal-graded-rule/*, written by generate_corner_response.
+  // build_surface at R = 1.9, t = 0.1, d = 0.05; manifest.json carries the zero sets) are the
+  // C++ rule's to 1e-9 R at 90 / 60 / 48.75 deg, both convexities — the position tolerance
+  // MatchCornerFamily applies to a coupon's recorded files (the (B) 2.4 (iii) form; the 48.75
+  // concave node scales its graded FREE distances, the 48.75 convex node its graded METAL
+  // distances, like-to-like slots).
+  const fs::path root =
+      fs::path(PALACE_TEST_DATA_DIR) / "surfaceresponse/corner-metal-graded-rule";
+  std::ifstream manifest_input(root / "manifest.json");
+  REQUIRE(manifest_input);
+  const json manifest = json::parse(manifest_input);
+  const double R = manifest.at("MatchingRadius"), t = manifest.at("MetalThickness"),
+               d = manifest.at("OveretchDepth");
+  const auto rule = MetalGradedCornerTraceBasisRule();
+  REQUIRE(manifest.at("Files").size() == 6);
+  for (const auto &entry : manifest.at("Files"))
+  {
+    const bool convex = entry.at("Topology") == "convex";
+    const double angle = entry.at("AngleDegrees");
+    std::vector<std::array<double, 3>> points;
+    {
+      std::ifstream input(root / entry.at("File").get<std::string>());
+      REQUIRE(input);
+      std::string line;
+      std::getline(input, line);  // x,y,z
+      while (std::getline(input, line))
+      {
+        if (line.empty())
+        {
+          continue;
+        }
+        std::array<double, 3> point;
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream fields(line);
+        fields >> point[0] >> point[1] >> point[2];
+        points.push_back(point);
+      }
+    }
+    REQUIRE(points.size() == 220);
+    const auto seed = MakeCornerBoxSeed(R, t, d, convex, rule);
+    const auto basis =
+        BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
+                              angle * kDeg, convex, rule);
+    REQUIRE(basis.knots.size() == 220);
+    double worst = 0.0;
+    for (std::size_t k = 0; k < 220; k++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        worst = std::max(worst, std::abs(basis.knots[k][c] - points[k][c]));
+      }
+    }
+    CHECK(worst <= 1.0e-9 * R);
+    std::vector<int> zero;
+    for (std::size_t k = 0; k < 220; k++)
+    {
+      if (basis.zero[k])
+      {
+        zero.push_back(static_cast<int>(k) + 1);
+      }
+    }
+    CHECK(zero == entry.at("ZeroTraceIndices").get<std::vector<int>>());
+    CHECK(seed.contour_groups == entry.at("ContourGroups").get<std::vector<int>>());
+    const auto [first, second] = ArmCrossingFractions(R, angle * kDeg);
+    const double metal_arc = 8.0 * (convex ? second - first : first + 1.0 - second);
+    const double free_arc = 8.0 * (convex ? first + 1.0 - second : second - first);
+    CHECK(entry.at("MetalGradingScaled").get<bool>() ==
+          (MetalKnotGradingScale(metal_arc, rule) < 1.0));
+    CHECK(entry.at("FreeGradingScaled").get<bool>() ==
+          (FreeKnotGradingScale(free_arc, rule) < 1.0));
   }
 }
 
@@ -1448,9 +1698,12 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
   const fs::path isolated_surface = temp.temp_dir / "isolated-surface.csv";
   const fs::path corner_domain = temp.temp_dir / "corner-domain.csv";
   const fs::path corner_surface = temp.temp_dir / "corner-surface.csv";
+  const fs::path graded_domain = temp.temp_dir / "graded-domain.csv";
+  const fs::path graded_surface = temp.temp_dir / "graded-surface.csv";
   std::map<std::string, fs::path> libraries;
-  for (const std::string name : {"family", "wrong-angle", "connectivity", "no-extra-ring",
-                                 "spurious-zero", "rounded", "rounded-wrong-angle"})
+  for (const std::string name :
+       {"family", "wrong-angle", "connectivity", "no-extra-ring", "spurious-zero", "rounded",
+        "rounded-wrong-angle", "metal-graded", "metal-graded-no-key"})
   {
     libraries[name] = temp.temp_dir / ("library-" + name + ".json");
   }
@@ -1473,6 +1726,7 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
         }
       }
       WriteSyntheticMatrices(corner_domain, corner_surface, 176, 3.0, 0.05, R);
+      WriteSyntheticMatrices(graded_domain, graded_surface, 220, 3.0, 0.05, R);
     }
     const json base = {
         {"Version", 3},
@@ -1647,6 +1901,41 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
                                            t, oe, 6 * 16 + 0))));
       Write("rounded-wrong-angle", rounded_wrong);
     }
+    {
+      // The metal-graded rule (the concave-MS remedy): a 220-knot family LOADS with its record
+      // (MetalKnotGrading [1/9, 1/3]) and its exact 90-degree corners match the 90 node; the
+      // same files under a record WITHOUT the key (the equal-fraction metal knots of the
+      // recorded rule at RingSize 20) are refused with the basis points named — fail closed.
+      // The recorded 176-knot family ("family") keeps loading beside, unchanged.
+      const auto graded = MetalGradedCornerTraceBasisRule();
+      auto GradedModel = [&](const std::string &tag, double angle, const CouponFiles &files,
+                             const json &record)
+      {
+        json model = Model(tag, angle, files);
+        model["FabricatedMatrix"] = graded_domain.string();
+        model["ThinMatrix"] = graded_domain.string();
+        model["FabricatedSurfaceMatrix"] = graded_surface.string();
+        model["ThinSurfaceMatrix"] = graded_surface.string();
+        model["TraceBasis"] = record;
+        return model;
+      };
+      std::vector<json> good, no_key;
+      for (const double angle : {90.0, 105.0, 120.0, 135.0})
+      {
+        const std::string tag = "graded-" + std::to_string(static_cast<int>(angle));
+        const auto files = WriteRefinedCoupon(temp.temp_dir, tag, angle, true, R, t, oe,
+                                              std::nullopt, graded);
+        REQUIRE(files.contour_groups == std::vector<int>(11, 20));
+        REQUIRE(files.zero_trace_indices.size() == 22);
+        good.push_back(GradedModel(tag, angle, files, MetalGradedTraceBasisRecord()));
+        auto record = RefinedTraceBasisRecord();
+        record["RingSize"] = 20;
+        record["MetalInteriorKnots"] = 9;
+        no_key.push_back(GradedModel(tag, angle, files, record));
+      }
+      Write("metal-graded", good);
+      Write("metal-graded-no-key", no_key);
+    }
   }
   Mpi::Barrier(Mpi::World());
 
@@ -1723,6 +2012,124 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
                     ContainsSubstring("convex-corner-90-r0.105") &&
                         ContainsSubstring("is not its trace basis rule's coupon") &&
                         ContainsSubstring("basis point"));
+  // The metal-graded coupon's files under a record WITHOUT the MetalKnotGrading key are not
+  // the (equal-fraction) rule's: refused with the basis points named (fail closed; the
+  // concave-MS decide step's load check).
+  CHECK_THROWS_WITH(Preflight("metal-graded-no-key", *square_mesh),
+                    ContainsSubstring("is not its trace basis rule's coupon") &&
+                        ContainsSubstring("basis point"));
+  {
+    // The 220-knot metal-graded family loads and the square island's four exact 90-degree
+    // corners match its 90 node.
+    const json manifest = Preflight("metal-graded", *square_mesh);
+    int matched = 0;
+    for (const auto &feature : manifest.at("Identification").at("Features"))
+    {
+      if (feature.at("Type") == "ConvexCorner" &&
+          feature.at("Match").at("Model") == "convex-corner-graded-90")
+      {
+        matched++;
+      }
+    }
+    CHECK(matched == 4);
+    // (vi) the identification manifest's Conventions text names the rules as a history and
+    // asserts no per-model fact (the decision 565 MAJOR-1 (b)+ form): no knot count or
+    // FreeKnots value of any one rule; each model's TraceBasis record is the rule of that
+    // model.
+    const std::string conventions =
+        manifest.at("Identification").at("Conventions").at("CornerTraceBasisRule");
+    CHECK_THAT(conventions, ContainsSubstring("TraceBasis record") &&
+                                ContainsSubstring("ORIGINAL rule") &&
+                                ContainsSubstring("REFINED rule") &&
+                                ContainsSubstring("METAL-GRADED refinement") &&
+                                ContainsSubstring("MetalKnotGrading") &&
+                                !ContainsSubstring("FreeKnots = 9") &&
+                                !ContainsSubstring("of 176 knots") &&
+                                !ContainsSubstring("of 220 knots"));
+  }
+  {
+    // (v) the runtime on the 220-knot family at an INTERPOLATED angle: the steep house's
+    // 112.5-degree corners are cubic on the metal-graded nodes 90 / 105 / 120 / 135, the
+    // constructed 220-knot basis evaluated under the SurfaceMortar lift; every corner patch's
+    // fabricated surface energy within a factor two of the exact 135-degree apex patch on
+    // the same synthetic matrices (the pattern of the refined family below).
+    const json manifest = Preflight("metal-graded", *steep_mesh);
+    std::map<std::string, int> matched;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConvexCorner")
+      {
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        matched[feature["Match"]["Model"].get<std::string>()]++;
+      }
+    }
+    CHECK(matched["convex-corner-graded-90"] == 2);
+    CHECK(matched["convex-corner-graded-135"] == 1);
+    int interpolated = 0;
+    for (const auto &[name, count] : matched)
+    {
+      if (name.find("@corner-angle112.5-cubic") != std::string::npos)
+      {
+        interpolated += count;
+      }
+    }
+    CHECK(interpolated == 2);
+    IoData iodata(ConfigFor("metal-graded"), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(*steep_mesh)));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+    mfem::FunctionCoefficient potential_coefficient(
+        [](const mfem::Vector &x)
+        { return (x[1] - 0.5) * (1.0 + 0.1 * (x[0] - 4.0) - 0.05 * (x[2] - 4.0)); });
+    potential.ProjectCoefficient(potential_coefficient);
+    Vector potential_true;
+    potential.GetTrueDofs(potential_true);
+    const auto result = response.GetElectrostaticResponse(potential_true);
+    const auto &names = response.GetModelNames();
+    std::map<std::string, double> per_patch;
+    for (const auto &contribution : result.model_contributions)
+    {
+      const auto &name = names.at(contribution.model);
+      if (name.find("corner") != std::string::npos)
+      {
+        REQUIRE(contribution.patch_count > 0.0);
+        per_patch[name] =
+            contribution.fabricated_surface_energy.at(4) / contribution.patch_count;
+        CHECK(std::isfinite(per_patch[name]));
+        CHECK(per_patch[name] > 0.0);
+      }
+    }
+    REQUIRE(per_patch.size() == 3);  // 90, 135 and the constructed 112.5 (220 knots)
+    // The constructed basis of the interpolated model IS the 220-knot layout with the 22
+    // PEC knots (the decision 573 MINOR-3 form): a 176-knot construction would pass the
+    // energy checks.
+    const auto sizes = response.GetModelBasisSizes();
+    int constructed = 0;
+    for (const auto &[idx, name] : names)
+    {
+      if (name.find("@corner-angle112.5-cubic") != std::string::npos)
+      {
+        constructed++;
+        CHECK(sizes.at(idx).first == 220);
+        CHECK(sizes.at(idx).second == 22);
+      }
+      else if (name.find("convex-corner-graded-") != std::string::npos)
+      {
+        CHECK(sizes.at(idx).first == 220);
+        CHECK(sizes.at(idx).second == 22);
+      }
+    }
+    CHECK(constructed == 1);
+    const double apex = per_patch.at("convex-corner-graded-135");
+    for (const auto &[name, energy] : per_patch)
+    {
+      CHECK(energy > 0.5 * apex);
+      CHECK(energy < 2.0 * apex);
+    }
+  }
   {
     // The rounded refined model loads under the extended check; the square island's sharp
     // corners still match the sharp 90 node (a rounded model is matched by its radius

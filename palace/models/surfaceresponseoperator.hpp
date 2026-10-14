@@ -754,6 +754,18 @@ public:
     }
     return names;
   }
+  // Runtime model index -> (basis size, number of zero-trace (PEC) knots): the constructed
+  // basis of an interpolated corner is checked against its rule by the unit tests.
+  std::map<int, std::pair<int, int>> GetModelBasisSizes() const
+  {
+    std::map<int, std::pair<int, int>> sizes;
+    for (const auto &model : models)
+    {
+      sizes[model.idx] = {model.basis_size,
+                          static_cast<int>(model.zero_trace_indices.size())};
+    }
+    return sizes;
+  }
   double GetPatchWeight() const;
   double GetMatchingRadius() const { return matching_radius; }
 

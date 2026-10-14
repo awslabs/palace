@@ -170,7 +170,7 @@ class GateTest(unittest.TestCase):
             # PASS after: the box triangulated at 50 nm (the cap faces and the side faces'
             # far parts) and 10 nm across the process band z in [-3 d, t + 6 d] of the side
             # faces — a surface mesh that samples every hat of the 48.75-degree layout as the
-            # mesher's knot-gap sizing does (the real coupon reads 270-290 on the cap hats).
+            # mesher's knot sizing does (the real coupon reads 270-290 on the cap hats).
             def graded(axis, sign):
                 if axis == 2:
                     return (uniform_breakpoints(0.05),) * 2
@@ -202,11 +202,12 @@ class GateTest(unittest.TestCase):
 
 
 class MesherTest(unittest.TestCase):
-    def test_mesher_knot_gap_sizing_passes_the_gate(self):
+    def test_mesher_knot_sizing_passes_the_gate(self):
+        # (Named test_mesher_knot_gap_sizing_passes_the_gate before decision 787 R-A.)
         # End to end at a cheap resolution (lc_fine 0.1 / lc_far 0.6, ~5 s, < 1 GB): the
         # concave 48.75-degree THIN coupon meshed WITHOUT the trace mesh fails the gate at p4
-        # (cap hats with a node or none), meshed WITH `--trace-mesh` (the knot-gap size
-        # fields) every free hat holds >= 5 p^2 nodes.
+        # (cap hats with a node or none), meshed WITH `--trace-mesh` (the knot size fields:
+        # min(along-ring gap, across-ring spacing)) every free hat holds >= 5 p^2 nodes.
         julia = julia_with_gmsh()
         if julia is None:
             self.skipTest("julia with Gmsh.jl is not available")
