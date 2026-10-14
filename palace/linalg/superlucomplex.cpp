@@ -10,7 +10,7 @@
 #include <complex>
 #include <utility>
 #include <vector>
-#include "linalg/rap.hpp"
+#include "linalg/complexcsr.hpp"
 #include "utils/communication.hpp"
 
 // SuperLU_DIST complex double precision header.
@@ -25,21 +25,6 @@ namespace
 // Relative residual above which a factorization with robust pivoting is considered
 // inaccurate (as for SuperLUSolver).
 constexpr double robust_pivoting_tol = 1.0e-10;
-
-const mfem::HypreParMatrix *GetAssembled(const Operator *op)
-{
-  if (!op)
-  {
-    return nullptr;
-  }
-  if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(op))
-  {
-    return hA;
-  }
-  const auto *PtAP = dynamic_cast<const ParOperator *>(op);
-  MFEM_VERIFY(PtAP, "SuperLUComplexSolver requires HypreParMatrix or ParOperator parts!");
-  return &PtAP->ParallelAssemble();
-}
 
 }  // namespace
 
@@ -178,79 +163,14 @@ SuperLUComplexSolver::~SuperLUComplexSolver()
 
 void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
 {
-  const auto *hAr = GetAssembled(op.Real());
-  const auto *hAi = GetAssembled(op.Imag());
-  MFEM_VERIFY(hAr || hAi, "Empty ComplexOperator for SuperLUComplexSolver!");
-  const auto &hA = hAr ? *hAr : *hAi;
-  const int_t n_glob = static_cast<int_t>(hA.GetGlobalNumRows());
-  const int_t n_loc = static_cast<int_t>(hA.Height());
-  const int_t first_row = static_cast<int_t>(hA.GetRowStarts()[0]);
-
-  // Local rows of the real and imaginary parts with global column indices, merged into a
-  // complex-valued matrix (SuperLU_DIST takes ownership of these arrays).
-  auto Merge = [](const mfem::HypreParMatrix *A) -> hypre_CSRMatrix *
-  {
-    if (!A)
-    {
-      return nullptr;
-    }
-    hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(
-        (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*A));
-    hypre_CSRMatrixMigrate(csr, HYPRE_MEMORY_HOST);
-    return csr;
-  };
-  hypre_CSRMatrix *csr[2] = {Merge(hAr), Merge(hAi)};
-  std::vector<int_t> I(n_loc + 1, 0), J;
-  std::vector<std::complex<double>> V;
-  std::vector<std::pair<HYPRE_BigInt, std::complex<double>>> row;
-  for (int_t i = 0; i < n_loc; i++)
-  {
-    row.clear();
-    for (int part = 0; part < 2; part++)
-    {
-      if (!csr[part])
-      {
-        continue;
-      }
-      const std::complex<double> s = (part == 0) ? 1.0 : std::complex<double>(0.0, 1.0);
-      const HYPRE_Int *Ip = hypre_CSRMatrixI(csr[part]);
-      const HYPRE_BigInt *Jp = hypre_CSRMatrixBigJ(csr[part]);
-      const double *Dp = hypre_CSRMatrixData(csr[part]);
-      for (HYPRE_Int k = Ip[i]; k < Ip[i + 1]; k++)
-      {
-        row.emplace_back(Jp[k], s * Dp[k]);
-      }
-    }
-    std::sort(row.begin(), row.end(),
-              [](const auto &a, const auto &b) { return a.first < b.first; });
-    for (const auto &[j, v] : row)
-    {
-      if (static_cast<int_t>(J.size()) > I[i] && J.back() == static_cast<int_t>(j))
-      {
-        V.back() += v;
-      }
-      else
-      {
-        J.push_back(static_cast<int_t>(j));
-        V.push_back(v);
-      }
-    }
-    I[i + 1] = static_cast<int_t>(J.size());
-  }
-  for (auto *c : csr)
-  {
-    if (c)
-    {
-      hypre_CSRMatrixDestroy(c);
-    }
-  }
-  for (const auto *part : {op.Real(), op.Imag()})
-  {
-    if (const auto *PtAP = dynamic_cast<const ParOperator *>(part))
-    {
-      PtAP->StealParallelAssemble();
-    }
-  }
+  // Local rows of the complex-valued matrix (SuperLU_DIST takes ownership of copies of
+  // these arrays).
+  ComplexLocalCSR csr(op);
+  const int_t n_glob = static_cast<int_t>(csr.n_glob);
+  const int_t n_loc = static_cast<int_t>(csr.n_loc);
+  const int_t first_row = static_cast<int_t>(csr.first_row);
+  std::vector<int_t> I(csr.I.begin(), csr.I.end()), J(csr.J.begin(), csr.J.end());
+  std::vector<std::complex<double>> V = std::move(csr.V);
 
   // Reuse the row and column permutations for a matrix with the same sparsity pattern.
   int same = data->initialized && reorder_reuse && n_glob == data->n_glob && I == data->I &&

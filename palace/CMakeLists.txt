@@ -669,18 +669,24 @@ endif()
 
 # Link MUMPS
 if(PALACE_WITH_MUMPS)
+  # Palace requires the real and complex double precision MUMPS libraries (dmumps and
+  # zmumps).
   find_package(MUMPS QUIET)
   if(TARGET MUMPS::MUMPS)
+    if(DEFINED MUMPS_z_FOUND AND NOT MUMPS_z_FOUND)
+      message(FATAL_ERROR "Palace requires MUMPS with complex double precision (zmumps)")
+    endif()
     message(STATUS "Found MUMPS: ${MUMPS_VERSION}")
     target_link_libraries(${LIB_TARGET_NAME} PUBLIC MUMPS::MUMPS)
   else()
+    find_library(ZMUMPS_LIBRARY NAMES zmumps HINTS ${MUMPS_ROOT}/lib REQUIRED)
     find_library(DMUMPS_LIBRARY NAMES dmumps HINTS ${MUMPS_ROOT}/lib REQUIRED)
     find_library(MUMPS_COMMON_LIBRARY NAMES mumps_common HINTS ${MUMPS_ROOT}/lib REQUIRED)
     find_library(PORD_LIBRARY NAMES pord HINTS ${MUMPS_ROOT}/lib REQUIRED)
-    find_path(MUMPS_INCLUDE_DIR NAMES dmumps_c.h HINTS ${MUMPS_ROOT}/include REQUIRED)
-    message(STATUS "Found MUMPS: ${DMUMPS_LIBRARY}")
+    find_path(MUMPS_INCLUDE_DIR NAMES zmumps_c.h HINTS ${MUMPS_ROOT}/include REQUIRED)
+    message(STATUS "Found MUMPS: ${ZMUMPS_LIBRARY};${DMUMPS_LIBRARY}")
     target_link_libraries(${LIB_TARGET_NAME} PUBLIC
-      ${DMUMPS_LIBRARY} ${MUMPS_COMMON_LIBRARY} ${PORD_LIBRARY}
+      ${ZMUMPS_LIBRARY} ${DMUMPS_LIBRARY} ${MUMPS_COMMON_LIBRARY} ${PORD_LIBRARY}
       SCALAPACK::SCALAPACK ${MPI_Fortran_LIBRARIES})
     target_include_directories(${LIB_TARGET_NAME} PUBLIC ${MUMPS_INCLUDE_DIR})
   endif()
