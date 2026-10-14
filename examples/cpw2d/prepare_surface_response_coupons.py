@@ -1804,8 +1804,10 @@ def build_corner(coupon, args, parameters, cache):
             "TraceBasis": trace_basis,
             # Decision 328: the mesh is sized at the trace knots and gated (the recipe change
             # of family-4 round 2; the fingerprint below covers the mesher and the gate).
+            # Decision 787 (R-A) / 791: the knot size is min(along-ring gap, across-ring
+            # spacing), named by the label; the fingerprint stays the byte discriminator.
             "TraceResolvability": {
-                "MeshSizing": "KnotGap",
+                "MeshSizing": "KnotGapAndRingSpacing",
                 "MinimumActiveNodesPerOrderSquared": corner_resolvability_constant(),
             },
         },
