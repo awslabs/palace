@@ -142,7 +142,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     aborts, and the deprecated top-level `"FreqStep"` must be positive (previously `0`
     crashed and negative values swept below `"MinFreq"`). An adaptive sweep with circuit
     synthesis now needs two distinct samples, and `validate-config` checks that it has a
-    positive `"AdaptiveTol"`, as *Palace* already did.
+    positive `"AdaptiveTol"`, as *Palace* already did. Samples closer than 1e-9 times the
+    lowest sample frequency, rather than 1 Hz, are now the same sample, so near-duplicate
+    samples can no longer hang an adaptive sweep.
     SchemaVer 2-2-1 [PR 952](https://github.com/awslabs/palace/pull/952).
 
 #### Performance Improvements

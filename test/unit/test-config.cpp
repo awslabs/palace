@@ -816,8 +816,40 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
                       ContainsSubstring("two distinct"));
     CHECK_THROWS_WITH(Check(ProblemType::DRIVEN, near_duplicate),
                       ContainsSubstring("two distinct"));
+    // 2 Hz apart at 100 GHz, which an absolute 1 Hz tolerance kept as two samples.
+    json near_duplicate_high = synthesis;
+    near_duplicate_high["Samples"] = {{{"Freq", {100.0, 100.0 + 2.0e-9}}}};
+    CHECK_THROWS_WITH(Check(ProblemType::DRIVEN, near_duplicate_high),
+                      ContainsSubstring("two distinct"));
     // An unused "Driven" block of another problem type is not checked.
     CHECK_NOTHROW(Check(ProblemType::EIGENMODE, single));
+  }
+
+  SECTION("Sample deduplication is relative to the lowest sample")
+  {
+    // Samples closer than 1e-9 times the lowest one are merged, so an adaptive sweep over
+    // near-duplicates has a single sample and reverts to a uniform sweep.
+    json high = {{"Samples", {{{"Freq", {100.0, 100.0 + 2.0e-9, 100.0 + 4.0e-9}}}}},
+                 {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData high_solver(high);
+    CHECK(high_solver.sample_f == std::vector{100.0});
+
+    // Distinct relative to a low lowest sample, though closer than 1 Hz.
+    json low = {{"Samples", {{{"Freq", {0.01, 0.01 + 5.0e-10}}}}}};
+    config::DrivenSolverData low_solver(low);
+    CHECK(low_solver.sample_f.size() == 2);
+
+    // Saves and PROM samples merged into another sample use that sample, whether they come
+    // from "Save", "SaveStep" or "AddToPROM" (the tolerance here is 1e-7 GHz).
+    json merged = {{"Samples",
+                    {{{"Freq", {100.0, 200.0}}},
+                     {{"Freq", {200.0 + 5.0e-8}}, {"SaveStep", 1}, {"AddToPROM", true}}}},
+                   {"Save", {100.0 + 5.0e-8}},
+                   {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData merged_solver(merged);
+    CHECK(merged_solver.sample_f == std::vector{100.0, 200.0});
+    CHECK(merged_solver.save_indices == std::vector<size_t>{0, 1});
+    CHECK(merged_solver.prom_indices == std::vector<size_t>{0, 1});
   }
 
   SECTION("Single sample ranges")

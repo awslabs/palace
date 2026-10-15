@@ -1294,9 +1294,12 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     }
   }
 
-  // Deduplicate all samples, and find indices of save and prom samples.
-  constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
-  auto equal_f = [=](auto x, auto y) { return std::abs(x - y) < delta_eps; };
+  // Deduplicate all samples, and find indices of save and prom samples. Samples closer than
+  // 1e-9 times the lowest sample frequency are the same sample: a sweep that narrow has no
+  // range to adapt over, and the adaptive sweep's error estimate cannot step through it.
+  const double f_tol =
+      sample_f.empty() ? 0.0 : 1.0e-9 * std::abs(std::ranges::min(sample_f));
+  auto equal_f = [=](auto x, auto y) { return std::abs(x - y) <= f_tol; };
   auto deduplicate = [&equal_f](auto &f)
   {
     std::ranges::sort(f);
@@ -1308,12 +1311,24 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   auto explicit_save_f = driven.value("Save", std::vector<double>());
   for (auto &f : explicit_save_f)
   {
-    auto it = FindNearestValue(sample_f, f, delta_eps);
+    auto it = FindNearestValue(sample_f, f, f_tol);
     MFEM_VERIFY(it != sample_f.end(),
                 "Entry " << f << " in \"Save\" must be an explicitly sampled frequency!");
     f = *it;
   }
   save_f.insert(save_f.end(), explicit_save_f.begin(), explicit_save_f.end());
+  // Save and PROM samples come from the sample lists, so each is within f_tol of the sample
+  // it was merged into. Use that sample's value, so the index scans below match exactly.
+  for (auto *fs : {&save_f, &prom_f})
+  {
+    for (auto &f : *fs)
+    {
+      if (auto it = FindNearestValue(sample_f, f, f_tol); it != sample_f.end())
+      {
+        f = *it;
+      }
+    }
+  }
   deduplicate(save_f);
   deduplicate(prom_f);
 
