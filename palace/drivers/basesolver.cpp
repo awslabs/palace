@@ -310,20 +310,56 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                     ? ", max. size = " + std::to_string(refinement.max_size)
                     : ""));
 
-    // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &marking_indicators)
+    // Mark. With Refinement.MinElementSize the Dörfler threshold is computed over the
+    // eligible elements (h >= 2 x floor) only; without a floor the marking is unchanged.
+    mfem::Array<int> marked_elements;
+    if (!(refinement.min_element_size > 0.0))
     {
-      const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-          comm, marking_indicators, refinement.update_fraction);
-      const auto marked_elements = MarkedElements(marking_indicators, threshold);
+      marked_elements = [&comm, &refinement](const auto &marking_indicators)
+      {
+        const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
+            comm, marking_indicators, refinement.update_fraction);
+        const auto marked_elements = MarkedElements(marking_indicators, threshold);
+        const auto [glob_marked_elements, glob_elements] =
+            linalg::GlobalSize2(comm, marked_elements, marking_indicators);
+        Mpi::Print(" Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = "
+                   "{:.2f})\n",
+                   glob_marked_elements, glob_elements, 100 * marked_error,
+                   refinement.update_fraction);
+        return marked_elements;
+      }(marking_indicators);
+    }
+    else
+    {
+      const double min_size = refinement.min_element_size;
+      mfem::ParMesh &fine_mesh = *mesh.back();
+      const auto eligible = ElementsEligibleForMarking(fine_mesh, min_size);
+      auto marking = MarkEligibleElements(comm, marking_indicators, eligible,
+                                          refinement.update_fraction);
       const auto [glob_marked_elements, glob_elements] =
-          linalg::GlobalSize2(comm, marked_elements, marking_indicators);
+          linalg::GlobalSize2(comm, marking.marked_elements, marking_indicators);
       Mpi::Print(
-          " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
-          glob_marked_elements, glob_elements, 100 * marked_error,
+          " Refinement floor MinElementSize = {:.3e} (eligible h >= {:.3e}): {:d}/{:d} "
+          "elements ineligible for marking ({:.2f}% of the error)\n",
+          min_size, 2.0 * min_size, marking.ineligible_elements, glob_elements,
+          100 * marking.ineligible_error);
+      if (!marking.markable)
+      {
+        Mpi::Print(" {}: stopping AMR, the last solved mesh is the final result\n",
+                   (marking.ineligible_elements == glob_elements)
+                       ? "No element is eligible for refinement under the floor"
+                       : "Every eligible element under the floor has a zero error "
+                         "indicator");
+        --it;
+        break;
+      }
+      Mpi::Print(
+          " Marked {:d}/{:d} elements for refinement ({:.2f}% of the eligible error, "
+          "θ = {:.2f})\n",
+          glob_marked_elements, glob_elements, 100 * marking.marked_error,
           refinement.update_fraction);
-      return marked_elements;
-    }(marking_indicators);
+      marked_elements = std::move(marking.marked_elements);
+    }
 
     // Refine.
     const auto [initial_elem_count, final_elem_count] =
@@ -337,6 +373,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
                  final_elem_count - initial_elem_count, initial_elem_count,
                  final_elem_count);
+      if (refinement.min_element_size > 0.0)
+      {
+        // Children of marked elements stay at or above the floor (h >= 2 x floor before
+        // the refinement); the conformity closure may still create smaller elements.
+        Mpi::Print(" Refinement floor: {:d} elements below MinElementSize = {:.3e} after "
+                   "refinement (created by the conformity closure)\n",
+                   CountElementsBelowSize(fine_mesh, refinement.min_element_size),
+                   refinement.min_element_size);
+      }
       return std::make_pair(initial_elem_count, final_elem_count);
     }();
 
@@ -675,6 +720,82 @@ bool ExceedsPredictedMaxSize(const config::RefinementData &refinement, long long
   }
   return PredictRefinedSize(ntdof, initial_elem_count, final_elem_count) >
          refinement.max_size;
+}
+
+std::vector<bool> ElementsEligibleForMarking(mfem::Mesh &mesh, double min_element_size)
+{
+  // GetElementSize(i, 0) is the volume-based size pow(|det J|, 1/dim) at the element center
+  // that mfem::ParMesh::PrintInfo reports as h in the mesh statistics.
+  std::vector<bool> eligible(mesh.GetNE());
+  for (int i = 0; i < mesh.GetNE(); i++)
+  {
+    eligible[i] = (mesh.GetElementSize(i, 0) >= 2.0 * min_element_size);
+  }
+  return eligible;
+}
+
+long long int CountElementsBelowSize(mfem::ParMesh &mesh, double min_element_size)
+{
+  long long int count = 0;
+  for (int i = 0; i < mesh.GetNE(); i++)
+  {
+    count += (mesh.GetElementSize(i, 0) < min_element_size);
+  }
+  Mpi::GlobalSum(1, &count, mesh.GetComm());
+  return count;
+}
+
+FloorMarking MarkEligibleElements(MPI_Comm comm, const Vector &e,
+                                  const std::vector<bool> &eligible, double fraction)
+{
+  MFEM_VERIFY(static_cast<int>(eligible.size()) == e.Size(),
+              "Marking eligibility must have one entry per local element!");
+  FloorMarking marking;
+  e.HostRead();
+  Vector eligible_e(e.Size());
+  int num_eligible = 0;
+  double ineligible_error = 0.0, eligible_error = 0.0, total_error = 0.0;
+  for (int i = 0; i < e.Size(); i++)
+  {
+    total_error += e[i] * e[i];
+    if (eligible[i])
+    {
+      eligible_e[num_eligible++] = e[i];
+      eligible_error += e[i] * e[i];
+    }
+    else
+    {
+      ineligible_error += e[i] * e[i];
+    }
+  }
+  eligible_e.SetSize(num_eligible);
+  long long int glob_eligible = num_eligible;
+  Mpi::GlobalSum(1, &glob_eligible, comm);
+  std::array<double, 3> error = {ineligible_error, eligible_error, total_error};
+  Mpi::GlobalSum(3, error.data(), comm);
+  marking.ineligible_elements = e.Size() - num_eligible;
+  Mpi::GlobalSum(1, &marking.ineligible_elements, comm);
+  marking.ineligible_error = (error[2] > 0.0) ? error[0] / error[2] : 0.0;
+  // An eligible set whose indicators are all zero has no Dörfler threshold (0 / 0): it is
+  // treated like the empty eligible set, nothing marked.
+  marking.markable = (glob_eligible > 0 && error[1] > 0.0);
+  if (!marking.markable)
+  {
+    return marking;
+  }
+  const auto [threshold, marked_error] =
+      utils::ComputeDorflerThreshold(comm, eligible_e, fraction);
+  marking.threshold = threshold;
+  marking.marked_error = marked_error;
+  marking.marked_elements.Reserve(num_eligible);
+  for (int i = 0; i < e.Size(); i++)
+  {
+    if (eligible[i] && e[i] >= marking.threshold)
+    {
+      marking.marked_elements.Append(i);
+    }
+  }
+  return marking;
 }
 
 template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;

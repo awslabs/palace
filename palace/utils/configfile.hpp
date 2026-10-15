@@ -140,6 +140,13 @@ public:
   // update_fraction of the total error.
   double update_fraction = 0.7;
 
+  // Element-size floor for AMR marking [m]. An element is eligible for marking only when
+  // its size h (the volume-based element size reported as h in the mesh statistics) is at
+  // least twice this value, so one refinement of a marked element stays at or above the
+  // floor; the Dörfler threshold is computed over the eligible elements only, while the
+  // error estimate and the convergence test keep every element. Zero disables the floor.
+  double min_element_size = 0.0;
+
   // Maximum allowable ratio of number of elements across processors before rebalancing is
   // performed.
   double maximum_imbalance = 1.1;

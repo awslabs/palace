@@ -390,6 +390,7 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                 {"Nonconformal", ref.nonconformal},
                 {"MaxNCLevels", ref.max_nc_levels},
                 {"UpdateFraction", ref.update_fraction},
+                {"MinElementSize", ref.min_element_size},
                 {"MaximumImbalance", ref.maximum_imbalance},
                 {"SaveAdaptIterations", ref.save_adapt_iterations},
                 {"SaveAdaptMesh", ref.save_adapt_mesh},
