@@ -1626,11 +1626,16 @@ nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &porti
 // coplanar with (both ends within the point locator's 1e-9 barycentric acceptance) taken as
 // not clipping: such a piece is split at their breakpoints (element-aligned quadrature)
 // and integrated once, each quadrature point then located by the rank / element rule of
-// DistributedPointLocator (the lowest candidate rank, its lowest element). In H(curl) the
-// tangential field is continuous across a face, so the line integral is the same from
-// either side; on a PEC sheet it is zero on both sides. Pieces covered by exact intervals
-// and closed cracks are untouched by this pass: a line without a true gap is bitwise the
-// pre-existing resolution. A piece neither pass covers still fails closed.
+// DistributedPointLocator (the lowest candidate rank, its lowest element). The one-sided
+// assignment is exact where the two sides agree: across an uncracked (conforming) face
+// the tangential field is continuous in H(curl), and on a cracked PEC sheet both sides'
+// tangential traces are essential (zero), so the integral is the same from either side
+// (zero on the sheet). On a cracked face that is not PEC the two sides carry independent
+// tangential dofs and this rule integrates the owner's side only; within the scope of
+// record (clusters on PEC metal; finite-impedance Maxwell patches with ZeroTraceIndices
+// refused) no such line occurs. Pieces covered by exact intervals and closed cracks are
+// untouched by this pass: a line without a true gap is bitwise the pre-existing
+// resolution. A piece neither pass covers still fails closed.
 constexpr double kMaxwellLineCrackUlps = 4096.0;
 struct MaxwellLineCoverage
 {
