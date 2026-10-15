@@ -8,7 +8,6 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
-#include <set>
 #include <utility>
 #include <Eigen/Dense>
 #include "fem/substructure.hpp"
@@ -16,8 +15,6 @@
 #include "linalg/rap.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/geodata.hpp"
-#include "utils/outputdir.hpp"
 
 extern "C"
 {
@@ -130,6 +127,7 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
     }
     int off = 0;
     MPI_Exscan(&nc, &off, 1, MPI_INT, MPI_SUM, comm);
+    off = Mpi::Root(comm) ? 0 : off;
     Mpi::GlobalSum(1, &nc, comm);
     for (auto &g : index)
     {
@@ -1083,181 +1081,34 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
 std::vector<char>
 DrivenSubstructure::BoundaryTrueDofs(const std::vector<int> &bdr_attributes) const
 {
-  // Mark the local DOFs of the boundary elements, then the true DOFs they reach (|P|^T: a
-  // true DOF shared between ranks is marked on its owner).
-  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get());
-  const auto &mesh = *fes.GetParMesh();
-  mfem::Vector lmark(fes.GetVSize()), tmark(fes.GetTrueVSize());
-  lmark = 0.0;
-  mfem::Array<int> dofs;
-  for (int be = 0; be < mesh.GetNBE(); be++)
-  {
-    if (std::ranges::find(bdr_attributes, mesh.GetBdrAttribute(be)) != bdr_attributes.end())
-    {
-      fes.GetBdrElementDofs(be, dofs);
-      for (int d : dofs)
-      {
-        lmark(d >= 0 ? d : -1 - d) = 1.0;
-      }
-    }
-  }
-  fes.Dof_TrueDof_Matrix()->AbsMultTranspose(1.0, lmark, 0.0, tmark);
-  std::vector<char> mark(fes.GetTrueVSize(), 0);
-  for (int i = 0; i < fes.GetTrueVSize(); i++)
-  {
-    mark[i] = tmark(i) > 0.0;
-  }
-  return mark;
+  return palace::BoundaryTrueDofs(
+      const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get()),
+      bdr_attributes);
 }
-
-namespace
-{
-
-// A serial mesh of the region, written without the boundary elements duplicated by the
-// cracking of interior boundaries (the online run cracks them again).
-class SerialRegionMesh : public mfem::Mesh
-{
-public:
-  explicit SerialRegionMesh(mfem::Mesh &&mesh) : mfem::Mesh(std::move(mesh)) {}
-
-  // Shift the attributes above shift back and drop the duplicated boundary elements (for
-  // writing only: the boundary tables are not updated).
-  void Finalize(int shift)
-  {
-    for (int e = 0; e < GetNE(); e++)
-    {
-      if (GetAttribute(e) > shift)
-      {
-        SetAttribute(e, GetAttribute(e) - shift);
-      }
-    }
-    std::set<std::vector<int>> seen;  // attribute, then the sorted vertices
-    int nbe = 0;
-    for (int be = 0; be < NumOfBdrElements; be++)
-    {
-      mfem::Array<int> v;
-      boundary[be]->GetVertices(v);
-      std::vector<int> key(v.begin(), v.end());
-      std::sort(key.begin(), key.end());
-      key.insert(key.begin(), boundary[be]->GetAttribute());
-      if (!seen.insert(key).second)
-      {
-        FreeElement(boundary[be]);
-        continue;
-      }
-      boundary[nbe++] = boundary[be];
-    }
-    NumOfBdrElements = nbe;
-    boundary.SetSize(nbe);
-    SetAttributes();
-  }
-};
-
-}  // namespace
 
 void DrivenSubstructure::WriteRegionMesh(const std::string &path,
                                          const std::vector<int> &port_attributes,
                                          double length_scale) const
 {
   // The region, and the environment elements touching the DOFs of the environment's ports
-  // or the region's Dirichlet DOFs (on Γ, set by boundary conditions of the environment),
-  // with their boundary elements. On a copy of the mesh, these environment elements take
-  // shifted attributes for the domain submesh, and get theirs back in the written mesh.
+  // or the region's Dirichlet DOFs (on Γ, set by boundary conditions of the environment).
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get());
-  const auto &parent = *fes.GetParMesh();
-  mfem::Vector tmark(fes.GetTrueVSize()), lmark(fes.GetVSize());
-  {
-    const auto port = BoundaryTrueDofs(port_attributes);
-    mfem::Array<int> rm, em, im, ra, ea;
-    for (int a : region.attrs)
-    {
-      ra.Append(a);
-    }
-    for (int a : env.attrs)
-    {
-      ea.Append(a);
-    }
-    MarkInterfaceTrueDofs(fes, ra, ea, rm, em, im);
-    tmark = 0.0;
-    for (int d : space_op.GetNDDbcTDofLists().back())
-    {
-      tmark(d) = rm[d];
-    }
-    for (int i = 0; i < fes.GetTrueVSize(); i++)
-    {
-      tmark(i) = std::max(tmark(i), static_cast<double>(port[i]));
-    }
-  }
-  fes.Dof_TrueDof_Matrix()->Mult(tmark, lmark);
-  mfem::ParMesh mesh(parent);
-  const int shift = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
-  mfem::Array<int> dofs;
-  for (int e = 0; e < mesh.GetNE(); e++)
-  {
-    if (std::ranges::find(env.attrs, parent.GetAttribute(e)) == env.attrs.end())
-    {
-      continue;
-    }
-    fes.GetElementDofs(e, dofs);
-    if (std::ranges::any_of(dofs, [&](int d) { return lmark(d >= 0 ? d : -1 - d) != 0.0; }))
-    {
-      mesh.SetAttribute(e, parent.GetAttribute(e) + shift);
-    }
-  }
-  mesh.SetAttributes();
-  mfem::Array<int> attrs;
+  std::vector<char> keep = BoundaryTrueDofs(port_attributes);
+  mfem::Array<int> rm, em, im, ra, ea;
   for (int a : region.attrs)
   {
-    attrs.Append(a);
+    ra.Append(a);
   }
   for (int a : env.attrs)
   {
-    attrs.Append(a + shift);
+    ea.Append(a);
   }
-
-  // The submesh is extracted from the whole mesh on rank 0 (gathering a parallel submesh
-  // can duplicate entities shared between ranks that hold few of its elements), and
-  // written in mesh length units.
-  MPI_Comm comm = parent.GetComm();
-  auto write = [&](mfem::Mesh &smesh)
+  MarkInterfaceTrueDofs(fes, ra, ea, rm, em, im);
+  for (int d : space_op.GetNDDbcTDofLists().back())
   {
-    WriteRootOutputFile(path, comm,
-                        [&](std::ostream &out)
-                        {
-                          out << std::scientific;
-                          out.precision(std::numeric_limits<double>::max_digits10);
-                          mesh::DimensionalizeMesh(smesh, length_scale);
-                          smesh.Mesh::Print(out);
-                        });
-  };
-  if (mesh.Nonconforming())
-  {
-    mfem::Array<int> rank0(mesh.GetNE());
-    rank0 = 0;
-    mesh.Rebalance(rank0);
-    auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);
-    for (int e = 0; e < sub.GetNE(); e++)
-    {
-      if (sub.GetAttribute(e) > shift)
-      {
-        sub.SetAttribute(e, sub.GetAttribute(e) - shift);
-      }
-    }
-    sub.SetAttributes();
-    write(sub);
+    keep[d] = keep[d] || rm[d];
   }
-  else
-  {
-    mfem::Mesh smesh = mesh.GetSerialMesh(0);
-    SerialRegionMesh sub(Mpi::Root(comm)
-                             ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
-                             : mfem::Mesh());
-    if (Mpi::Root(comm))
-    {
-      sub.Finalize(shift);
-    }
-    write(sub);
-  }
+  palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
 }
 
 namespace
