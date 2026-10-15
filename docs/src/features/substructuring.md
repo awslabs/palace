@@ -189,14 +189,10 @@ interface are unchanged. The online field is known in the region and on the inte
     environment's ports, and the voltage of its wave ports, are not available);
   - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
 
-The offline sweep also writes a mesh of the region next to the model (`<model>_region.mesh` for
-`"SaveModel": "<model>.bin"`), with the few environment elements at the environment's ports and
-along the boundary conditions of the environment that reach the interface. An online sweep on it
-(`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and partitions the region
-only: on large designs, reading and partitioning the full mesh take most of an online sweep's
-time. The environment is then that of the model, and its fingerprint is not checked; the
-interface is found from the saved interface DOFs, and the nondimensionalization is that of the
-model.
+The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also
+holds the environment elements at the environment's ports, whose excitations and outputs need
+them. On large designs, reading and partitioning the full mesh take most of an online sweep's
+time.
 
 An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain) (nonzero
 `"AdaptiveTol"`) instead condenses the environment at frequencies chosen greedily, as the

@@ -55,6 +55,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     in the adaptive fast frequency sweep. The offline sweep also writes a mesh of the region,
     on which online sweeps read and partition the region only. Adds a driven example in
     `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 2-3-1.
+    [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes
 
@@ -209,6 +210,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
   - Builds with MUMPS now also need its complex double precision library (ZMUMPS), used by
     driven substructuring; the superbuild and the Spack recipe build it.
+    [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 ## [0.18.1] - 2026-09-21
 
