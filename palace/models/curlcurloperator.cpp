@@ -76,7 +76,8 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
     surf_j_op(boundaries.current, *mesh.back()),
     sc_sheet_op(boundaries.superconductor, boundaries.cracked_attributes, units, mat_op,
                 *mesh.back()),
-    london_pc_shift_(solver.linear.london_pc_shift)
+    london_pc_shift_(solver.linear.london_pc_shift),
+    mg_smooth_aux_(solver.linear.mg_smooth_aux > 0)
 {
   // In 2D, curl maps H(curl) → L2 (scalar), so add an L2 space for B = curl A.
   if (mesh.back()->Dimension() == 2)
@@ -381,23 +382,28 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-void CurlCurlOperator::AddTwoPortCoupling(std::size_t l, ParOperator &K_l)
+const mfem::HypreParMatrix &CurlCurlOperator::GetTwoPortCoupling(std::size_t l)
 {
-  if (!sc_sheet_op.HasTwoPort())
-  {
-    return;
-  }
   two_port_coupling_.resize(GetNDSpaces().GetNumLevels());
   if (!two_port_coupling_[l])
   {
     two_port_coupling_[l] =
         sc_sheet_op.BuildTwoPortCoupling(GetNDSpaces().GetFESpaceAtLevel(l).Get());
   }
-  K_l.AddParallelMatrix(*two_port_coupling_[l]);
+  return *two_port_coupling_[l];
+}
+
+void CurlCurlOperator::AddTwoPortCoupling(std::size_t l, ParOperator &K_l)
+{
+  if (sc_sheet_op.HasTwoPort())
+  {
+    K_l.AddParallelMatrix(GetTwoPortCoupling(l));
+  }
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
-    const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists)
+    const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists,
+    const mfem::Array<int> &pc_dbc_attr, std::vector<mfem::Array<int>> &h1_dbc_tdof_lists)
 {
   // Assemble K̃_pc = A_curlcurl + (1/L_ksq) M_sheet + london_pc_shift_ · (1/µ) ∫|A|². The
   // first two terms track the true stiffness; the volume mass is a reluctance-weighted
@@ -426,6 +432,39 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     AddTwoPortCoupling(l, *K_l);
     K->AddOperator(std::move(K_l));
   }
+
+  // Gradient-space operator GᵀK̃G for the distributive-relaxation smoother: the shift and
+  // sheet terms lift the gradients off the curl-curl kernel, so they must be smoothed.
+  if (mg_smooth_aux_)
+  {
+    BilinearForm a_aux(GetH1Space());
+    a_aux.AddDomainIntegrator<DiffusionIntegrator>(mass_func);
+    if (!fbr.empty())
+    {
+      a_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fbr);
+    }
+    auto a_aux_vec = a_aux.Assemble(GetH1Spaces(), skip_zeros);
+    const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
+    auto marker = mesh::BdrAttrToMarker(pmesh, pc_dbc_attr, true);
+    h1_dbc_tdof_lists.resize(GetH1Spaces().GetNumLevels());
+    for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
+    {
+      const auto &h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);
+      h1_fespace_l.Get().GetEssentialTrueDofs(marker, h1_dbc_tdof_lists[l]);
+      auto A_l = std::make_unique<ParOperator>(std::move(a_aux_vec[l]), h1_fespace_l);
+      A_l->SetEssentialTrueDofs(h1_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      if (sc_sheet_op.HasTwoPort())
+      {
+        // The two-sided coupling on gradients, GᵀCG.
+        const auto &G = dynamic_cast<const ParOperator &>(
+            GetNDSpaces().GetDiscreteInterpolatorAtLevel(l, h1_fespace_l));
+        std::unique_ptr<mfem::HypreParMatrix> GtCG(
+            mfem::RAP(&GetTwoPortCoupling(l), &G.ParallelAssemble()));
+        A_l->AddParallelMatrix(*GtCG);
+      }
+      K->AddAuxiliaryOperator(std::move(A_l));
+    }
+  }
   return K;
 }
 
@@ -438,7 +477,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetPreconditionerMatrix()
   {
     return nullptr;
   }
-  return AssembleShiftedPreconditioner(dbc_tdof_lists);
+  return AssembleShiftedPreconditioner(dbc_tdof_lists, dbc_attr, h1_dbc_tdof_lists_);
 }
 
 const Operator *
@@ -459,7 +498,13 @@ CurlCurlOperator::GetScreenedPreconditionerMatrix(const mfem::Array<int> &extra_
   auto &entry = screened_stiffness_cache.back();
   if (!entry.P)
   {
-    entry.P = AssembleShiftedPreconditioner(entry.dbc_tdof_lists);
+    mfem::Array<int> merged_attr(dbc_attr);
+    for (int attr : entry.key)
+    {
+      merged_attr.Append(attr);
+    }
+    entry.P = AssembleShiftedPreconditioner(entry.dbc_tdof_lists, merged_attr,
+                                            entry.h1_dbc_tdof_lists);
   }
   return entry.P.get();
 }
@@ -667,7 +712,7 @@ Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
 
   Vector result;
   surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
+                                       result, generator_cache_);
   return result;
 }
 
@@ -680,7 +725,7 @@ void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T
   surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
 
   surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
+                                       result, generator_cache_);
 }
 
 // Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>

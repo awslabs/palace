@@ -57,18 +57,20 @@ const SurfaceFluxData &SurfaceFluxOperator::GetSource(int idx) const
 
 palace::Vector SurfaceFluxOperator::SolveSurfaceCurlProblem(
     int idx, const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-    PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const
+    PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+    CohomologyGeneratorCache *cache) const
 {
   const auto &data = GetSource(idx);
-  return palace::SolveSurfaceCurlProblem(data, mesh, nd_fespace, post_op);
+  return palace::SolveSurfaceCurlProblem(data, mesh, nd_fespace, post_op, cache, idx);
 }
 
 void SurfaceFluxOperator::SolveSurfaceCurlProblem(
     int idx, const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-    PostOperator<ProblemType::MAGNETOSTATIC> &post_op, Vector &result) const
+    PostOperator<ProblemType::MAGNETOSTATIC> &post_op, Vector &result,
+    CohomologyGeneratorCache *cache) const
 {
   const auto &data = GetSource(idx);
-  palace::SolveSurfaceCurlProblem(data, mesh, nd_fespace, post_op, result);
+  palace::SolveSurfaceCurlProblem(data, mesh, nd_fespace, post_op, result, cache, idx);
 }
 
 }  // namespace palace

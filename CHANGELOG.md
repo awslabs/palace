@@ -58,6 +58,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Fixed the `FluxLoop` inductance of `Superconductor` films under nonconformal adaptive
+    mesh refinement, which could move away from the converged value after a refinement: the
+    London drive is now built on the mesh before hanging nodes appear and carried through
+    later refinements, instead of being rebuilt with a spurious curl on the film. The London
+    magnetostatic preconditioner now also uses auxiliary-space multigrid smoothing by
+    default, cutting PCG iterations several-fold (e.g. 189 → 25 on `narrow_ring`).
+    SchemaVer 2-2-2
+    [PR 1051](https://github.com/awslabs/palace/pull/1051).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
