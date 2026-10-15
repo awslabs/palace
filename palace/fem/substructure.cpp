@@ -403,7 +403,7 @@ public:
 
   // Shift the attributes above shift back and drop the duplicated boundary elements (for
   // writing only: the boundary tables are not updated).
-  void Finalize(int shift)
+  void PrepareForPrint(int shift)
   {
     for (int e = 0; e < GetNE(); e++)
     {
@@ -495,6 +495,7 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
   };
   if (mesh.Nonconforming())
   {
+    // Written as cracked: the online run does not preprocess a nonconforming mesh.
     mfem::Array<int> rank0(mesh.GetNE());
     rank0 = 0;
     mesh.Rebalance(rank0);
@@ -517,7 +518,7 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
                              : mfem::Mesh());
     if (Mpi::Root(comm))
     {
-      sub.Finalize(shift);
+      sub.PrepareForPrint(shift);
     }
     write(sub);
   }

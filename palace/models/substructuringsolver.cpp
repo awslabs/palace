@@ -573,6 +573,9 @@ struct SubstructuringSolver::Impl
       region_only = !head.env_fp.empty() && head.width > 0 && n_env < head.env_fp[0];
       if (region_only)
       {
+        MFEM_VERIFY(iodata.model.refinement.max_it == 0,
+                    "Adaptive refinement with substructuring needs the full mesh, not the "
+                    "mesh of the region!");
         std::vector<char> bdr =
             BoundaryTrueDofs(parent_fes, std::vector<int>(parent.bdr_attributes.begin(),
                                                           parent.bdr_attributes.end()));
@@ -599,9 +602,6 @@ struct SubstructuringSolver::Impl
         {
           cut[i] = (index[i] >= 0) && match[index[i]];
         }
-        MFEM_VERIFY(iodata.model.refinement.max_it == 0,
-                    "Adaptive refinement with substructuring needs the full mesh, not the "
-                    "mesh of the region!");
       }
     }
 
@@ -1700,12 +1700,6 @@ struct SubstructuringSolver::Impl
     return h;
   }
 
-  // Fingerprint of the environment: global counts of the environment-closure DOFs and of
-  // the Dirichlet DOFs of environment elements, and the energies r^T A_env r of three fixed
-  // fields (projected polynomials). Independent of the region (A_env has no region
-  // contribution), of the partition, the DOF numbering and the H(curl) orientations, but it
-  // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
-  // Computed element by element (no assembled A_env). Collective.
   // Fixed projected polynomial field k of the fingerprints.
   mfem::Vector FingerprintField(int k) const
   {
@@ -1742,6 +1736,12 @@ struct SubstructuringSolver::Impl
     return r;
   }
 
+  // Fingerprint of the environment: global counts of the environment-closure DOFs and of
+  // the Dirichlet DOFs of environment elements, and the energies r^T A_env r of three fixed
+  // fields (projected polynomials). Independent of the region (A_env has no region
+  // contribution), of the partition, the DOF numbering and the H(curl) orientations, but it
+  // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
+  // Computed element by element (no assembled A_env). Collective.
   std::array<double, 5> EnvironmentFingerprint() const
   {
     // The environment does not change within a run: computed once.
@@ -1925,10 +1925,9 @@ struct SubstructuringSolver::Impl
       MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
       if (magic == kLengthMagic)
       {
-        double length;
         if (root)
         {
-          f.read(reinterpret_cast<char *>(&length), sizeof(double));
+          f.seekg(sizeof(double), std::ios::cur);  // read by ReadSavedHead
         }
       }
       else if (magic == kEnvFpMagic)
@@ -2299,24 +2298,23 @@ struct SubstructuringSolver::Impl
                              "environment factorization (the environment is too large "
                              "for one)!");
     PWMatrixCoefficient coef(parent.Dimension(), env_eps);
+    mfem::Vector mass(env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1);
+    mass = 0.0;
+    for (const auto &[attr, t] : env_eps)
+    {
+      mass(attr - 1) = mag_eps;
+    }
+    mfem::PWConstCoefficient mcoef(mass);
     mfem::ParBilinearForm a(env_sfes.get());
     if (magnetostatic)
     {
       a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef));
-      const int am = env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1;
-      mfem::Vector mass(am);
-      mass = 0.0;
-      for (const auto &[attr, t] : env_eps)
-      {
-        mass(attr - 1) = mag_eps;
-      }
-      mfem::PWConstCoefficient mcoef(mass);
       a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef));
-      a.Assemble();
-      a.Finalize();
-      return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
     }
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
+    else
+    {
+      a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
+    }
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
@@ -2337,6 +2335,7 @@ struct SubstructuringSolver::Impl
     }
     int off = 0, nglob = 0;
     MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
+    off = Mpi::Root(comm) ? 0 : off;
     MPI_Allreduce(&nloc, &nglob, 1, MPI_INT, MPI_SUM, comm);
     std::vector<int> I(nt + 1, 0);
     std::vector<HYPRE_BigInt> J;
@@ -2752,6 +2751,7 @@ void SubstructuringSolver::CondenseEnvironment()
   }
   int off = 0;
   MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
+  off = Mpi::Root(comm) ? 0 : off;
   impl->nG_global = 0;
   MPI_Allreduce(&nloc, &impl->nG_global, 1, MPI_INT, MPI_SUM, comm);
   impl->gamma_global.assign(impl->nt, -1);
@@ -3866,8 +3866,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
 mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids,
                                                      const std::vector<Vector> &lifts,
                                                      std::vector<Vector> *fields,
-                                                     int n_fields,
-                                                     std::vector<Vector> *region_fields)
+                                                     int n_fields)
 {
   MFEM_VERIFY(ids.size() == lifts.size(), "EnergyMatrix: one id per lift!");
   // Dirichlet data restricted to the Dirichlet DOF set (as SolveDirichlets does).
@@ -3876,7 +3875,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
   {
     lifts[k].GetSubVector(impl->dbc_tdofs, xd[k]);
   }
-  return EnergyMatrixDbc(ids, xd, fields, n_fields, region_fields);
+  return EnergyMatrixDbc(ids, xd, fields, n_fields, nullptr);
 }
 
 mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &ids,
@@ -3916,10 +3915,6 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     if (fields)
     {
       fields->assign(u.begin(), u.begin() + nf);
-    }
-    if (region_fields)
-    {
-      *region_fields = u;
     }
     return E;
   }

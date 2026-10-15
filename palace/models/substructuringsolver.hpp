@@ -49,12 +49,10 @@ public:
   // the lift modes are known (from a saved model, matched by id and an environment-side
   // fingerprint), no environment solve is needed; otherwise they are computed and appended
   // to the model being saved. If fields is non-null, it receives the full fields of the
-  // first n_fields lifts; if region_fields is non-null, the solutions of all lifts on the
-  // region and interface (zero on the environment interior).
+  // first n_fields lifts.
   mfem::DenseMatrix EnergyMatrix(const std::vector<int> &ids,
                                  const std::vector<Vector> &lifts,
-                                 std::vector<Vector> *fields = nullptr, int n_fields = 0,
-                                 std::vector<Vector> *region_fields = nullptr);
+                                 std::vector<Vector> *fields = nullptr, int n_fields = 0);
 
   // Magnetostatic energy matrix of London flux states: flux loop k with the fluxoid
   // generator a_k drives the source M_sheet a_k with the superconducting films as free
@@ -89,7 +87,8 @@ public:
   bool HasSheets() const;
 
   // Maxwell capacitance matrix over the given terminals (EnergyMatrix of the terminal unit
-  // potentials).
+  // potentials). If region_fields is non-null, it receives the solutions of all terminals
+  // on the region and interface (zero on the environment interior).
   mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
                                       std::vector<Vector> *fields = nullptr,
                                       int n_fields = 0,

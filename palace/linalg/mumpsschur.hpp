@@ -53,7 +53,7 @@ private:
   std::vector<int> row_cnt, row_disp;
   std::vector<MUMPS_INT> irn, jcn, listvar;
   std::vector<double> val, schur, rhs;
-  double blr_tol = 0.0, scale = 1.0;
+  double scale = 1.0;
   DMUMPS_STRUC_C id{};
 };
 

@@ -16,7 +16,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
                                    const std::vector<HYPRE_BigInt> &schur_vars,
                                    double blr_tol, bool serial)
   : comm(A.GetComm()), serial(serial), n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
-    n_schur(static_cast<int>(schur_vars.size())), blr_tol(blr_tol)
+    n_schur(static_cast<int>(schur_vars.size()))
 {
   MPI_Comm_rank(comm, &rank);
   active = !serial || rank == 0;
