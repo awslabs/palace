@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-10-15 18:56:03</td>
+            <td class="headerValue">2026-10-15 19:37:53</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -473,7 +473,7 @@
 <span id="L403"><span class="lineNum">     403</span>              : </span>
 <span id="L404"><span class="lineNum">     404</span>              :   // Shift the attributes above shift back and drop the duplicated boundary elements (for</span>
 <span id="L405"><span class="lineNum">     405</span>              :   // writing only: the boundary tables are not updated).</span>
-<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">          86 :   void Finalize(int shift)</span></span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">          86 :   void PrepareForPrint(int shift)</span></span>
 <span id="L407"><span class="lineNum">     407</span>              :   {</span>
 <span id="L408"><span class="lineNum">     408</span> <span class="tlaGNC">       15102 :     for (int e = 0; e &lt; GetNE(); e++)</span></span>
 <span id="L409"><span class="lineNum">     409</span>              :     {</span>
@@ -565,35 +565,36 @@
 <span id="L495"><span class="lineNum">     495</span> <span class="tlaGNC">         294 :   };</span></span>
 <span id="L496"><span class="lineNum">     496</span> <span class="tlaGNC">         147 :   if (mesh.Nonconforming())</span></span>
 <span id="L497"><span class="lineNum">     497</span>              :   {</span>
-<span id="L498"><span class="lineNum">     498</span>              :     mfem::Array&lt;int&gt; rank0(mesh.GetNE());</span>
-<span id="L499"><span class="lineNum">     499</span>              :     rank0 = 0;</span>
-<span id="L500"><span class="lineNum">     500</span> <span class="tlaGNC">          18 :     mesh.Rebalance(rank0);</span></span>
-<span id="L501"><span class="lineNum">     501</span> <span class="tlaGNC">          18 :     auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);</span></span>
-<span id="L502"><span class="lineNum">     502</span> <span class="tlaGNC">        4098 :     for (int e = 0; e &lt; sub.GetNE(); e++)</span></span>
-<span id="L503"><span class="lineNum">     503</span>              :     {</span>
-<span id="L504"><span class="lineNum">     504</span> <span class="tlaGNC">        4080 :       if (sub.GetAttribute(e) &gt; shift)</span></span>
-<span id="L505"><span class="lineNum">     505</span>              :       {</span>
-<span id="L506"><span class="lineNum">     506</span> <span class="tlaUNC tlaBgUNC">           0 :         sub.SetAttribute(e, sub.GetAttribute(e) - shift);</span></span>
-<span id="L507"><span class="lineNum">     507</span>              :       }</span>
-<span id="L508"><span class="lineNum">     508</span>              :     }</span>
-<span id="L509"><span class="lineNum">     509</span> <span class="tlaGNC tlaBgGNC">          18 :     sub.SetAttributes();</span></span>
-<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC">          18 :     write(sub);</span></span>
-<span id="L511"><span class="lineNum">     511</span> <span class="tlaGNC">          18 :   }</span></span>
-<span id="L512"><span class="lineNum">     512</span>              :   else</span>
-<span id="L513"><span class="lineNum">     513</span>              :   {</span>
-<span id="L514"><span class="lineNum">     514</span> <span class="tlaGNC">         129 :     mfem::Mesh smesh = mesh.GetSerialMesh(0);</span></span>
-<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">         129 :     SerialRegionMesh sub(Mpi::Root(comm)</span></span>
-<span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">         258 :                              ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))</span></span>
-<span id="L517"><span class="lineNum">     517</span>              :                              : mfem::Mesh());</span>
-<span id="L518"><span class="lineNum">     518</span> <span class="tlaGNC">         129 :     if (Mpi::Root(comm))</span></span>
-<span id="L519"><span class="lineNum">     519</span>              :     {</span>
-<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC">          86 :       sub.Finalize(shift);</span></span>
-<span id="L521"><span class="lineNum">     521</span>              :     }</span>
-<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">         129 :     write(sub);</span></span>
-<span id="L523"><span class="lineNum">     523</span> <span class="tlaGNC">         129 :   }</span></span>
-<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">         294 : }</span></span>
-<span id="L525"><span class="lineNum">     525</span>              : </span>
-<span id="L526"><span class="lineNum">     526</span>              : }  // namespace palace</span>
+<span id="L498"><span class="lineNum">     498</span>              :     // Written as cracked: the online run does not preprocess a nonconforming mesh.</span>
+<span id="L499"><span class="lineNum">     499</span>              :     mfem::Array&lt;int&gt; rank0(mesh.GetNE());</span>
+<span id="L500"><span class="lineNum">     500</span>              :     rank0 = 0;</span>
+<span id="L501"><span class="lineNum">     501</span> <span class="tlaGNC">          18 :     mesh.Rebalance(rank0);</span></span>
+<span id="L502"><span class="lineNum">     502</span> <span class="tlaGNC">          18 :     auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);</span></span>
+<span id="L503"><span class="lineNum">     503</span> <span class="tlaGNC">        4098 :     for (int e = 0; e &lt; sub.GetNE(); e++)</span></span>
+<span id="L504"><span class="lineNum">     504</span>              :     {</span>
+<span id="L505"><span class="lineNum">     505</span> <span class="tlaGNC">        4080 :       if (sub.GetAttribute(e) &gt; shift)</span></span>
+<span id="L506"><span class="lineNum">     506</span>              :       {</span>
+<span id="L507"><span class="lineNum">     507</span> <span class="tlaUNC tlaBgUNC">           0 :         sub.SetAttribute(e, sub.GetAttribute(e) - shift);</span></span>
+<span id="L508"><span class="lineNum">     508</span>              :       }</span>
+<span id="L509"><span class="lineNum">     509</span>              :     }</span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC tlaBgGNC">          18 :     sub.SetAttributes();</span></span>
+<span id="L511"><span class="lineNum">     511</span> <span class="tlaGNC">          18 :     write(sub);</span></span>
+<span id="L512"><span class="lineNum">     512</span> <span class="tlaGNC">          18 :   }</span></span>
+<span id="L513"><span class="lineNum">     513</span>              :   else</span>
+<span id="L514"><span class="lineNum">     514</span>              :   {</span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">         129 :     mfem::Mesh smesh = mesh.GetSerialMesh(0);</span></span>
+<span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">         129 :     SerialRegionMesh sub(Mpi::Root(comm)</span></span>
+<span id="L517"><span class="lineNum">     517</span> <span class="tlaGNC">         258 :                              ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))</span></span>
+<span id="L518"><span class="lineNum">     518</span>              :                              : mfem::Mesh());</span>
+<span id="L519"><span class="lineNum">     519</span> <span class="tlaGNC">         129 :     if (Mpi::Root(comm))</span></span>
+<span id="L520"><span class="lineNum">     520</span>              :     {</span>
+<span id="L521"><span class="lineNum">     521</span> <span class="tlaGNC">          86 :       sub.PrepareForPrint(shift);</span></span>
+<span id="L522"><span class="lineNum">     522</span>              :     }</span>
+<span id="L523"><span class="lineNum">     523</span> <span class="tlaGNC">         129 :     write(sub);</span></span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">         129 :   }</span></span>
+<span id="L525"><span class="lineNum">     525</span> <span class="tlaGNC">         294 : }</span></span>
+<span id="L526"><span class="lineNum">     526</span>              : </span>
+<span id="L527"><span class="lineNum">     527</span>              : }  // namespace palace</span>
         </pre>
               </td>
             </tr>

@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-10-15 18:56:03</td>
+            <td class="headerValue">2026-10-15 19:37:53</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -86,12 +86,12 @@
 <span id="L16"><span class="lineNum">      16</span>              : {</span>
 <span id="L17"><span class="lineNum">      17</span>              : </span>
 <span id="L18"><span class="lineNum">      18</span>              : // New uniquely named temporary directory (empty path on failure).</span>
-<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC tlaBgGNC">         200 : fs::path MakeUniqueTempDir(const std::string &amp;prefix)</span></span>
+<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC tlaBgGNC">         215 : fs::path MakeUniqueTempDir(const std::string &amp;prefix)</span></span>
 <span id="L20"><span class="lineNum">      20</span>              : {</span>
-<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">         600 :   std::string tmpl = (fs::temp_directory_path() / (prefix + &quot;XXXXXX&quot;)).string();</span></span>
-<span id="L22"><span class="lineNum">      22</span> <span class="tlaGNC">         200 :   std::vector&lt;char&gt; buf(tmpl.begin(), tmpl.end());</span></span>
-<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC">         200 :   buf.push_back('\0');</span></span>
-<span id="L24"><span class="lineNum">      24</span> <span class="tlaGNC">         400 :   return mkdtemp(buf.data()) ? fs::path(buf.data()) : fs::path();</span></span>
+<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">         645 :   std::string tmpl = (fs::temp_directory_path() / (prefix + &quot;XXXXXX&quot;)).string();</span></span>
+<span id="L22"><span class="lineNum">      22</span> <span class="tlaGNC">         215 :   std::vector&lt;char&gt; buf(tmpl.begin(), tmpl.end());</span></span>
+<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC">         215 :   buf.push_back('\0');</span></span>
+<span id="L24"><span class="lineNum">      24</span> <span class="tlaGNC">         430 :   return mkdtemp(buf.data()) ? fs::path(buf.data()) : fs::path();</span></span>
 <span id="L25"><span class="lineNum">      25</span>              : }</span>
 <span id="L26"><span class="lineNum">      26</span>              : </span>
 <span id="L27"><span class="lineNum">      27</span>              : }  // namespace</span>
@@ -111,37 +111,37 @@
 <span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">          21 :   fs::remove_all(temp_dir);</span></span>
 <span id="L42"><span class="lineNum">      42</span> <span class="tlaGNC">          21 : }</span></span>
 <span id="L43"><span class="lineNum">      43</span>              : </span>
-<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">         253 : SharedTempDir::SharedTempDir()</span></span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">         268 : SharedTempDir::SharedTempDir()</span></span>
 <span id="L45"><span class="lineNum">      45</span>              : {</span>
 <span id="L46"><span class="lineNum">      46</span>              :   // Rank 0 creates the directory and broadcasts its path.</span>
 <span id="L47"><span class="lineNum">      47</span>              :   std::string path;</span>
-<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">         253 :   if (Mpi::Root(Mpi::World()))</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">         268 :   if (Mpi::Root(Mpi::World()))</span></span>
 <span id="L49"><span class="lineNum">      49</span>              :   {</span>
-<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">         716 :     path = MakeUniqueTempDir(&quot;palace_test_&quot;).string();</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">         776 :     path = MakeUniqueTempDir(&quot;palace_test_&quot;).string();</span></span>
 <span id="L51"><span class="lineNum">      51</span>              :   }</span>
-<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">         253 :   int len = static_cast&lt;int&gt;(path.size());</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">         268 :   int len = static_cast&lt;int&gt;(path.size());</span></span>
 <span id="L53"><span class="lineNum">      53</span>              :   Mpi::Broadcast(1, &amp;len, 0, Mpi::World());</span>
-<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">         253 :   path.resize(len);</span></span>
-<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">         253 :   if (len &gt; 0)</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">         268 :   path.resize(len);</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">         268 :   if (len &gt; 0)</span></span>
 <span id="L56"><span class="lineNum">      56</span>              :   {</span>
-<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">         253 :     MPI_Bcast(path.data(), len, MPI_CHAR, 0, Mpi::World());</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">         268 :     MPI_Bcast(path.data(), len, MPI_CHAR, 0, Mpi::World());</span></span>
 <span id="L58"><span class="lineNum">      58</span>              :   }</span>
-<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">         253 :   if (len == 0)</span></span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">         268 :   if (len == 0)</span></span>
 <span id="L60"><span class="lineNum">      60</span>              :   {</span>
 <span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC tlaBgUNC">           0 :     throw std::runtime_error(&quot;Failed to create a temporary directory!&quot;);</span></span>
 <span id="L62"><span class="lineNum">      62</span>              :   }</span>
-<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC tlaBgGNC">         253 :   temp_dir = path;</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC tlaBgGNC">         268 :   temp_dir = path;</span></span>
 <span id="L64"><span class="lineNum">      64</span>              :   Mpi::Barrier(Mpi::World());</span>
-<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">         253 : }</span></span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">         268 : }</span></span>
 <span id="L66"><span class="lineNum">      66</span>              : </span>
-<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">         253 : SharedTempDir::~SharedTempDir()</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">         268 : SharedTempDir::~SharedTempDir()</span></span>
 <span id="L68"><span class="lineNum">      68</span>              : {</span>
 <span id="L69"><span class="lineNum">      69</span>              :   Mpi::Barrier(Mpi::World());</span>
-<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">         253 :   if (Mpi::Rank(Mpi::World()) == 0)</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">         268 :   if (Mpi::Rank(Mpi::World()) == 0)</span></span>
 <span id="L71"><span class="lineNum">      71</span>              :   {</span>
-<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">         179 :     fs::remove_all(temp_dir);</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">         194 :     fs::remove_all(temp_dir);</span></span>
 <span id="L73"><span class="lineNum">      73</span>              :   }</span>
-<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">         253 : }</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">         268 : }</span></span>
 <span id="L75"><span class="lineNum">      75</span>              : </span>
 <span id="L76"><span class="lineNum">      76</span>              : }  // namespace palace::test</span>
         </pre>

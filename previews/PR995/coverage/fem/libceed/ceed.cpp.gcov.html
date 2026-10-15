@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-10-15 18:56:03</td>
+            <td class="headerValue">2026-10-15 19:37:53</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -85,9 +85,9 @@
 <span id="L15"><span class="lineNum">      15</span>              : </span>
 <span id="L16"><span class="lineNum">      16</span>              : static std::vector&lt;Ceed&gt; ceeds;</span>
 <span id="L17"><span class="lineNum">      17</span>              : </span>
-<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC tlaBgGNC">      615307 : const std::vector&lt;Ceed&gt; &amp;GetCeedObjects()</span></span>
+<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC tlaBgGNC">      615315 : const std::vector&lt;Ceed&gt; &amp;GetCeedObjects()</span></span>
 <span id="L19"><span class="lineNum">      19</span>              : {</span>
-<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">      615307 :   return ceeds;</span></span>
+<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">      615315 :   return ceeds;</span></span>
 <span id="L21"><span class="lineNum">      21</span>              : }</span>
 <span id="L22"><span class="lineNum">      22</span>              : </span>
 <span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC">       39279 : std::size_t NumCeeds()</span></span>
@@ -97,9 +97,9 @@
 <span id="L27"><span class="lineNum">      27</span>              : </span>
 <span id="L28"><span class="lineNum">      28</span>              : }  // namespace internal</span>
 <span id="L29"><span class="lineNum">      29</span>              : </span>
-<span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">         543 : void Initialize(const char *resource, const char *jit_source_dir)</span></span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">         547 : void Initialize(const char *resource, const char *jit_source_dir)</span></span>
 <span id="L31"><span class="lineNum">      31</span>              : {</span>
-<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">         543 :   PalacePragmaOmp(parallel)</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">         547 :   PalacePragmaOmp(parallel)</span></span>
 <span id="L33"><span class="lineNum">      33</span>              :   {</span>
 <span id="L34"><span class="lineNum">      34</span>              :     PalacePragmaOmp(master)</span>
 <span id="L35"><span class="lineNum">      35</span>              :     {</span>
@@ -112,47 +112,47 @@
 <span id="L42"><span class="lineNum">      42</span>              : </span>
 <span id="L43"><span class="lineNum">      43</span>              :   // Master thread initializes all Ceed objects (ineherently sequential anyway due to shared</span>
 <span id="L44"><span class="lineNum">      44</span>              :   // resources).</span>
-<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">        1629 :   for (std::size_t i = 0; i &lt; internal::ceeds.size(); i++)</span></span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">        1641 :   for (std::size_t i = 0; i &lt; internal::ceeds.size(); i++)</span></span>
 <span id="L46"><span class="lineNum">      46</span>              :   {</span>
-<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">        1086 :     int ierr = CeedInit(resource, &amp;internal::ceeds[i]);</span></span>
-<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">        1086 :     MFEM_VERIFY(!ierr, &quot;Failed to initialize libCEED with resource &quot; &lt;&lt; resource &lt;&lt; &quot;!&quot;);</span></span>
-<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">        1086 :     Ceed ceed = internal::ceeds[i];</span></span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">        1094 :     int ierr = CeedInit(resource, &amp;internal::ceeds[i]);</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">        1094 :     MFEM_VERIFY(!ierr, &quot;Failed to initialize libCEED with resource &quot; &lt;&lt; resource &lt;&lt; &quot;!&quot;);</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">        1094 :     Ceed ceed = internal::ceeds[i];</span></span>
 <span id="L50"><span class="lineNum">      50</span>              : </span>
 <span id="L51"><span class="lineNum">      51</span>              :     // Configure error handling (allow errors to be handled by PalaceCeedCallBackend or</span>
 <span id="L52"><span class="lineNum">      52</span>              :     // PalaceCeedCall).</span>
-<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">        1086 :     PalaceCeedCall(ceed, CeedSetErrorHandler(ceed, CeedErrorStore));</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">        1094 :     PalaceCeedCall(ceed, CeedSetErrorHandler(ceed, CeedErrorStore));</span></span>
 <span id="L54"><span class="lineNum">      54</span>              : </span>
 <span id="L55"><span class="lineNum">      55</span>              :     // Configure QFunction search path.</span>
-<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">        1086 :     if (jit_source_dir)</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">        1094 :     if (jit_source_dir)</span></span>
 <span id="L57"><span class="lineNum">      57</span>              :     {</span>
-<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">        1086 :       PalaceCeedCall(ceed, CeedAddJitSourceRoot(ceed, jit_source_dir));</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">        1094 :       PalaceCeedCall(ceed, CeedAddJitSourceRoot(ceed, jit_source_dir));</span></span>
 <span id="L59"><span class="lineNum">      59</span>              :     }</span>
 <span id="L60"><span class="lineNum">      60</span>              :   }</span>
-<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">         543 : }</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">         547 : }</span></span>
 <span id="L62"><span class="lineNum">      62</span>              : </span>
-<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">         543 : void Finalize()</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">         547 : void Finalize()</span></span>
 <span id="L64"><span class="lineNum">      64</span>              : {</span>
 <span id="L65"><span class="lineNum">      65</span>              :   // Cached bases own references to their creating Ceed contexts and must be released before</span>
 <span id="L66"><span class="lineNum">      66</span>              :   // dropping Palace's top-level context references.</span>
-<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">         543 :   internal::FinalizeBasisCache();</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">         547 :   internal::FinalizeBasisCache();</span></span>
 <span id="L68"><span class="lineNum">      68</span>              : </span>
 <span id="L69"><span class="lineNum">      69</span>              :   // Destroy Ceed context(s).</span>
-<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">        1629 :   for (std::size_t i = 0; i &lt; internal::ceeds.size(); i++)</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">        1641 :   for (std::size_t i = 0; i &lt; internal::ceeds.size(); i++)</span></span>
 <span id="L71"><span class="lineNum">      71</span>              :   {</span>
-<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">        1086 :     int ierr = CeedDestroy(&amp;internal::ceeds[i]);</span></span>
-<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">        1086 :     MFEM_VERIFY(!ierr, &quot;Failed to finalize libCEED!&quot;);</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">        1094 :     int ierr = CeedDestroy(&amp;internal::ceeds[i]);</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">        1094 :     MFEM_VERIFY(!ierr, &quot;Failed to finalize libCEED!&quot;);</span></span>
 <span id="L74"><span class="lineNum">      74</span>              :   }</span>
 <span id="L75"><span class="lineNum">      75</span>              :   internal::ceeds.clear();</span>
-<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">         543 : }</span></span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">         547 : }</span></span>
 <span id="L77"><span class="lineNum">      77</span>              : </span>
-<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">         543 : std::string Print()</span></span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">         547 : std::string Print()</span></span>
 <span id="L79"><span class="lineNum">      79</span>              : {</span>
-<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">         543 :   MFEM_VERIFY(!internal::GetCeedObjects().empty(),</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">         547 :   MFEM_VERIFY(!internal::GetCeedObjects().empty(),</span></span>
 <span id="L81"><span class="lineNum">      81</span>              :               &quot;libCEED must be initialized before querying the active backend!&quot;);</span>
-<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">         543 :   Ceed ceed = internal::GetCeedObjects()[0];</span></span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">         547 :   Ceed ceed = internal::GetCeedObjects()[0];</span></span>
 <span id="L83"><span class="lineNum">      83</span>              :   const char *ceed_resource;</span>
-<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">         543 :   PalaceCeedCall(ceed, CeedGetResource(ceed, &amp;ceed_resource));</span></span>
-<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">         543 :   return std::string(ceed_resource);</span></span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">         547 :   PalaceCeedCall(ceed, CeedGetResource(ceed, &amp;ceed_resource));</span></span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">         547 :   return std::string(ceed_resource);</span></span>
 <span id="L86"><span class="lineNum">      86</span>              : }</span>
 <span id="L87"><span class="lineNum">      87</span>              : </span>
 <span id="L88"><span class="lineNum">      88</span> <span class="tlaGNC">      210989 : void InitCeedVector(const mfem::Vector &amp;v, Ceed ceed, CeedVector *cv, bool init,</span></span>

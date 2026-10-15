@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-10-15 18:56:03</td>
+            <td class="headerValue">2026-10-15 19:37:53</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -90,16 +90,16 @@
 <span id="L20"><span class="lineNum">      20</span>              : using BasisKey = std::vector&lt;std::uint64_t&gt;;</span>
 <span id="L21"><span class="lineNum">      21</span>              : using BasisCache = std::map&lt;BasisKey, CeedBasis&gt;;</span>
 <span id="L22"><span class="lineNum">      22</span>              : </span>
-<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC tlaBgGNC">       18075 : BasisCache &amp;GetBasisCache()</span></span>
+<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC tlaBgGNC">       18079 : BasisCache &amp;GetBasisCache()</span></span>
 <span id="L24"><span class="lineNum">      24</span>              : {</span>
-<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC">       18075 :   static auto *cache = new BasisCache();</span></span>
-<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">       18075 :   return *cache;</span></span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC">       18079 :   static auto *cache = new BasisCache();</span></span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">       18079 :   return *cache;</span></span>
 <span id="L27"><span class="lineNum">      27</span>              : }</span>
 <span id="L28"><span class="lineNum">      28</span>              : </span>
-<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">       18075 : std::mutex &amp;GetBasisCacheMutex()</span></span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">       18079 : std::mutex &amp;GetBasisCacheMutex()</span></span>
 <span id="L30"><span class="lineNum">      30</span>              : {</span>
-<span id="L31"><span class="lineNum">      31</span> <span class="tlaGNC">       18075 :   static auto *cache_mutex = new std::mutex();</span></span>
-<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">       18075 :   return *cache_mutex;</span></span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaGNC">       18079 :   static auto *cache_mutex = new std::mutex();</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">       18079 :   return *cache_mutex;</span></span>
 <span id="L33"><span class="lineNum">      33</span>              : }</span>
 <span id="L34"><span class="lineNum">      34</span>              : </span>
 <span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">       39861 : void InitTensorBasis(const mfem::FiniteElement &amp;fe, const mfem::IntegrationRule &amp;ir,</span></span>
@@ -330,18 +330,18 @@
 <span id="L260"><span class="lineNum">     260</span>              : namespace internal</span>
 <span id="L261"><span class="lineNum">     261</span>              : {</span>
 <span id="L262"><span class="lineNum">     262</span>              : </span>
-<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">         543 : void FinalizeBasisCache()</span></span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">         547 : void FinalizeBasisCache()</span></span>
 <span id="L264"><span class="lineNum">     264</span>              : {</span>
-<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">         543 :   auto &amp;cache = GetBasisCache();</span></span>
-<span id="L266"><span class="lineNum">     266</span> <span class="tlaGNC">         543 :   std::lock_guard&lt;std::mutex&gt; lock(GetBasisCacheMutex());</span></span>
-<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">        3117 :   for (auto &amp;[key, basis] : cache)</span></span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">         547 :   auto &amp;cache = GetBasisCache();</span></span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaGNC">         547 :   std::lock_guard&lt;std::mutex&gt; lock(GetBasisCacheMutex());</span></span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">        3121 :   for (auto &amp;[key, basis] : cache)</span></span>
 <span id="L268"><span class="lineNum">     268</span>              :   {</span>
 <span id="L269"><span class="lineNum">     269</span>              :     (void)key;</span>
 <span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">        2574 :     Ceed ceed = CeedBasisReturnCeed(basis);</span></span>
 <span id="L271"><span class="lineNum">     271</span> <span class="tlaGNC">        2574 :     PalaceCeedCall(ceed, CeedBasisDestroy(&amp;basis));</span></span>
 <span id="L272"><span class="lineNum">     272</span>              :   }</span>
 <span id="L273"><span class="lineNum">     273</span>              :   cache.clear();</span>
-<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">         543 : }</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">         547 : }</span></span>
 <span id="L275"><span class="lineNum">     275</span>              : </span>
 <span id="L276"><span class="lineNum">     276</span>              : }  // namespace internal</span>
 <span id="L277"><span class="lineNum">     277</span>              : </span>
