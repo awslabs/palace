@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -86,7 +87,7 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageCrack",
                                                {crack.gap_end, 1.0}};
     MaxwellLineCoverage coverage;
     REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(
-                        element_intervals, crack.line.length, crack.coordinate_scale,
+                        element_intervals, {}, crack.line.length, crack.coordinate_scale,
                         crack.line_index, crack.line.begin, crack.line.end));
     REQUIRE(coverage.intervals.size() == 2);
     CHECK(coverage.intervals[0] == Interval{0.0, crack.gap_begin});
@@ -107,8 +108,8 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageTrueGap",
   const auto line = VerticalLine(-6.6490033793415808e+00, 3.6334089021739100e+00,
                                  -1.3509670079635962e-03, -1.5010744532928826e-03);
   std::vector<Interval> element_intervals = {{0.0, 0.4}, {0.6, 1.0}};
-  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(element_intervals, line.length, 6.75, 297,
-                                               line.begin, line.end),
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(element_intervals, {}, line.length, 6.75,
+                                               297, line.begin, line.end),
                     ContainsSubstring("Maxwell response contour line 297 leaves the "
                                       "finite-element mesh over parameter"));
 
@@ -127,26 +128,26 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageTrueGap",
                                        {split + gap_length / line_length, 1.0}};
     return intervals;
   };
-  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(1.5 * tolerance, line.length),
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(1.5 * tolerance, line.length), {},
                                                line.length, coordinate_scale, 297,
                                                line.begin, line.end),
                     ContainsSubstring("above the floating-point crack tolerance"));
   MaxwellLineCoverage coverage;
   REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(
-                      Gapped(0.5 * tolerance, line.length), line.length, coordinate_scale,
-                      297, line.begin, line.end));
+                      Gapped(0.5 * tolerance, line.length), {}, line.length,
+                      coordinate_scale, 297, line.begin, line.end));
   CHECK(coverage.closed_crack_count == 1);
   // (1e-6: the fixture's split + gap / L - split rounds at eps x split / (gap / L) ~ 3e-9.)
   CHECK_THAT(coverage.max_closed_crack, WithinRel(0.5 * tolerance, 1.0e-6));
   REQUIRE(coverage.intervals.size() == 2);
   const auto longer = VerticalLine(line.begin[0], line.begin[1], 0.0, 100.0 * line.length);
-  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(1.5 * tolerance, line.length),
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(1.5 * tolerance, line.length), {},
                                                longer.length, coordinate_scale, 297,
                                                longer.begin, longer.end),
                     ContainsSubstring("above the floating-point crack tolerance"));
   const auto shorter = VerticalLine(line.begin[0], line.begin[1], 0.0, 0.01 * line.length);
   REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(
-                      Gapped(0.5 * tolerance, line.length), shorter.length,
+                      Gapped(0.5 * tolerance, line.length), {}, shorter.length,
                       coordinate_scale, 297, shorter.begin, shorter.end));
   CHECK(coverage.closed_crack_count == 1);
 }
@@ -163,8 +164,8 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageBitwise",
                                              {0.5 - 4.0e-11, 0.75},
                                              {0.75, 0.75 + 5.0e-11}};
   MaxwellLineCoverage coverage;
-  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(element_intervals, line.length, 2.0,
-                                                        7, line.begin, line.end));
+  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(element_intervals, {}, line.length,
+                                                        2.0, 7, line.begin, line.end));
   // Breakpoints after snapping / uniquing: 0, 0.5 - 4e-11 (the first of the 0.5 cluster),
   // 0.75, 0.75 + 5e-11 is within 1e-10 of 0.75 (dropped), 1.
   REQUIRE(coverage.intervals.size() == 3);
@@ -173,6 +174,133 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageBitwise",
   CHECK(coverage.intervals[2] == Interval{0.75, 1.0});
   CHECK(coverage.closed_crack_count == 0);
   CHECK(coverage.max_closed_crack == 0.0);
+}
+
+TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageInFace",
+          "[surfaceresponseoperator][maxwell][Serial]")
+{
+  // T4 (decisions 829 / 831, lane inplane): the S1 stage-1 line of record (the e713e17dd494
+  // anchor line in the trace_331_L2 sheet plane z = 4.80 um; PBS 63913 line 234, locally
+  // line 10665): its exact intersections cover [0, 0.2943] and [0.8609, 1] plus five
+  // zero-length slivers (the tets with two sheet vertices), the cracked sheet's tets
+  // reject the in-crack stretch 0.2943-0.8609 from both sides. The in-face intersections
+  // (the same tets with the sheet face taken as coplanar) cover that stretch in element
+  // pieces, overlapping from the two sides: the resolution integrates it in the pieces
+  // between their breakpoints, counts the stretch and its length, and the exact pieces are
+  // untouched.
+  const Line line = {{0.54346795625350652, -0.063844533280995167, 0.004550625711035268},
+                     {0.54722248990917588, -0.052038301104279205, 0.0045506257110352671},
+                     1.2389e-02};
+  const double coordinate_scale = 1.0;
+  const std::vector<Interval> exact = {{0.0, 0.29428948215455036},
+                                       {0.42631914836662643, 0.42631914836662993},
+                                       {0.5158780723205124, 0.5158780723205147},
+                                       {0.767823476863604, 0.767823476863607},
+                                       {0.8609476618148033, 1.0}};
+  // The upper (substrate) tets' passages and the lower (vacuum) tets' passages.
+  const std::vector<Interval> in_face = {
+      {0.2943, 0.4263}, {0.4263, 0.5159}, {0.5159, 0.7678}, {0.7678, 0.8609},
+      {0.2741, 0.4263}, {0.4263, 0.5159}, {0.5159, 0.7679}, {0.7678, 0.8610},
+      {0.0901, 0.2741}, {0.8609, 1.0}};
+  MaxwellLineCoverage coverage;
+  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(exact, in_face, line.length,
+                                                        coordinate_scale, 234, line.begin,
+                                                        line.end));
+  CHECK(coverage.closed_crack_count == 0);
+  CHECK(coverage.in_face_count == 1);
+  // The stretch between the last exact breakpoint before the gap and the first after it.
+  CHECK_THAT(coverage.in_face_length,
+             WithinRel((0.8609476618148033 - 0.29428948215455036) * line.length, 1.0e-12));
+  // The exact pieces: [0, 0.2943] and [0.8609, 1] (the slivers are below the parameter
+  // tolerance and skipped, their breakpoints kept); the in-face pieces split at the in-face
+  // breakpoints inside the gap: 0.2943 | 0.4263 | 0.5159 | 0.7678 | 0.7679 | 0.8609.
+  REQUIRE(coverage.intervals.size() >= 6);
+  CHECK(coverage.intervals.front() == Interval{0.0, 0.29428948215455036});
+  CHECK(coverage.intervals.back() == Interval{0.8609476618148033, 1.0});
+  double covered_length = 0.0;
+  for (std::size_t i = 0; i < coverage.intervals.size(); i++)
+  {
+    const auto &[begin, end] = coverage.intervals[i];
+    CHECK(end > begin);
+    covered_length += end - begin;
+    if (i > 0)
+    {
+      CHECK(begin >= coverage.intervals[i - 1].second);
+    }
+  }
+  // Every piece of the line is integrated exactly once (the slivers excepted).
+  CHECK_THAT(covered_length, WithinAbs(1.0, 1.0e-9));
+  for (const auto &[begin, end] : coverage.intervals)
+  {
+    if (begin < 0.2942 || end > 0.8610)
+    {
+      continue;  // An exact piece.
+    }
+    // No in-face piece straddles an in-face breakpoint strictly inside it.
+    for (const auto &[face_begin, face_end] : in_face)
+    {
+      for (const double bound : {face_begin, face_end})
+      {
+        CHECK_FALSE((bound > begin + 1.0e-10 && bound < end - 1.0e-10));
+      }
+    }
+  }
+
+  // T5: a gap the in-face intersections do not cover still fails closed with the message
+  // of record (a true gap, here the stretch 0.5159-0.7678 left out).
+  std::vector<Interval> partial = in_face;
+  partial.erase(std::remove_if(partial.begin(), partial.end(), [](const Interval &interval)
+                               { return interval.first > 0.51 && interval.first < 0.52; }),
+                partial.end());
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(exact, partial, line.length,
+                                               coordinate_scale, 234, line.begin, line.end),
+                    ContainsSubstring("Maxwell response contour line 234 leaves the "
+                                      "finite-element mesh over parameter 5.159"));
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(exact, partial, line.length,
+                                               coordinate_scale, 234, line.begin, line.end),
+                    ContainsSubstring("no element intersection, exact or in a coplanar "
+                                      "face, covers it"));
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(exact, {}, line.length, coordinate_scale,
+                                               234, line.begin, line.end),
+                    ContainsSubstring("above the floating-point crack tolerance"));
+
+  // T6: where the exact intervals leave no true gap, in-face intervals change nothing: the
+  // T3 line with in-face intersections of its own (an uncracked interior face both tets
+  // keep) resolves to the bit as without them.
+  const auto bitwise_line = VerticalLine(0.5, 0.25, 0.0, 2.0);
+  const std::vector<Interval> bitwise_exact = {{3.0e-11, 0.5 + 2.0e-11},
+                                               {0.5 - 4.0e-11, 1.0 - 2.0e-11},
+                                               {0.5 - 4.0e-11, 0.75},
+                                               {0.75, 0.75 + 5.0e-11}};
+  const std::vector<Interval> bitwise_in_face = {{0.1, 0.3}, {0.3, 0.9}, {0.45, 0.6}};
+  MaxwellLineCoverage without, with;
+  REQUIRE_NOTHROW(
+      without = ResolveMaxwellLineCoverage(bitwise_exact, {}, bitwise_line.length, 2.0, 7,
+                                           bitwise_line.begin, bitwise_line.end));
+  REQUIRE_NOTHROW(with = ResolveMaxwellLineCoverage(bitwise_exact, bitwise_in_face,
+                                                    bitwise_line.length, 2.0, 7,
+                                                    bitwise_line.begin, bitwise_line.end));
+  CHECK(with.intervals == without.intervals);
+  CHECK(with.closed_crack_count == without.closed_crack_count);
+  CHECK(with.max_closed_crack == without.max_closed_crack);
+  CHECK(with.in_face_count == 0);
+  CHECK(with.in_face_length == 0.0);
+  // A floating-point crack stays a closed crack (not an in-face stretch) with in-face
+  // intervals present.
+  for (const auto &crack : kCracksOfRecord)
+  {
+    const std::vector<Interval> element_intervals = {{0.0, crack.gap_begin},
+                                                     {crack.gap_end, 1.0}};
+    const std::vector<Interval> crack_in_face = {{0.0, 1.0}};
+    MaxwellLineCoverage crack_coverage;
+    REQUIRE_NOTHROW(crack_coverage = ResolveMaxwellLineCoverage(
+                        element_intervals, crack_in_face, crack.line.length,
+                        crack.coordinate_scale, crack.line_index, crack.line.begin,
+                        crack.line.end));
+    CHECK(crack_coverage.closed_crack_count == 1);
+    CHECK(crack_coverage.in_face_count == 0);
+    REQUIRE(crack_coverage.intervals.size() == 2);
+  }
 }
 
 }  // namespace palace

@@ -1614,15 +1614,36 @@ nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &porti
 // the mesh over any geometric length still fails closed (MFEM_VERIFY naming the line, the
 // parameter range, the gap and the tolerance). Where no uncovered piece occurs the
 // intervals are the pre-existing ones to the bit.
+//
+// A piece that is a true gap for the exact intervals is still integrated when the line
+// lies IN a mesh face no element's exact intersection covers (decisions 829 / 831, lane
+// inplane): Palace cracks the internal PEC boundaries and moves the two sides' duplicated
+// face vertices apart by CrackDisplacementFactor x h_min (geodata.cpp), so a line lying in
+// such a sheet plane (a cluster's anchor / hat line on the metal) sits inside the open
+// crack, outside both adjacent tets by delta / h ~ 1e-14 .. 1e-12 in barycentric terms,
+// beyond the 64-eps clip, while a line in an uncracked interior face is kept by both tets.
+// `in_face_intervals` are the same candidates' intersections with the face the line is
+// coplanar with (both ends within the point locator's 1e-9 barycentric acceptance) taken as
+// not clipping: such a piece is split at their breakpoints (element-aligned quadrature)
+// and integrated once, each quadrature point then located by the rank / element rule of
+// DistributedPointLocator (the lowest candidate rank, its lowest element). In H(curl) the
+// tangential field is continuous across a face, so the line integral is the same from
+// either side; on a PEC sheet it is zero on both sides. Pieces covered by exact intervals
+// and closed cracks are untouched by this pass: a line without a true gap is bitwise the
+// pre-existing resolution. A piece neither pass covers still fails closed.
 constexpr double kMaxwellLineCrackUlps = 4096.0;
 struct MaxwellLineCoverage
 {
   std::vector<std::pair<double, double>> intervals;
   int closed_crack_count = 0;
   double max_closed_crack = 0.0;  // Mesh units.
+  // Pieces integrated from the in-face intervals (no exact interval covers them).
+  int in_face_count = 0;
+  double in_face_length = 0.0;  // Mesh units.
 };
 MaxwellLineCoverage
 ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
+                           std::vector<std::pair<double, double>> in_face_intervals,
                            double line_length, double coordinate_scale, int line_index,
                            const std::array<double, 3> &begin,
                            const std::array<double, 3> &end);
