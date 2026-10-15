@@ -236,10 +236,11 @@ TEST_CASE("CPU preconditioner quadrature data preserves the multigrid operators"
   }
 }
 
-// The driven sweep passes the preconditioner to the Krylov solver as the system operator
-// when its finest level applies exactly A = K + iω C - ω² (Mr + i Mi) (see
-// SpaceOperator::CanUsePreconditionerAsSystemOperator and DrivenSolver::SweepUniform).
-TEST_CASE("Driven preconditioner finest level is the system matrix",
+// The driven solvers apply the system operator through the finest level of the
+// preconditioner when that level is the sparse part of A = K + iω C - ω² (Mr + i Mi) +
+// A2(ω) (see SpaceOperator::GetSystemOperator). The wave-port modal correction, which is
+// the matrix-free part of A2, is covered in test-waveportoperator.cpp.
+TEST_CASE("Driven system operator from the preconditioner",
           "[spaceoperator][Serial][Parallel]")
 {
   using namespace std::complex_literals;
@@ -298,30 +299,43 @@ TEST_CASE("Driven preconditioner finest level is the system matrix",
   Units units(1.0, 1.0);
 
   double omega = 2.0;
-  // Assemble the system matrix from the fixed K, C and M and the preconditioner with the
-  // same driven coefficients, and return the relative difference of their application to a
-  // random complex vector. The Krylov solver applies the preconditioner through the
-  // multigrid wrapper, which forwards to its finest level.
-  auto ApplyDifference = [&](SpaceOperator &space_op)
+  auto GetPreconditioner = [&](SpaceOperator &space_op)
   {
-    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    REQUIRE(K);
-    REQUIRE(C);
-    REQUIRE(M);
-    auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-    CHECK(!A2);
-    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                      K.get(), C.get(), M.get(), A2.get());
-    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
-    REQUIRE(mg);
-    REQUIRE(mg->GetNumLevels() == 2);
-    REQUIRE(&mg->GetFinestOperator() == &mg->GetOperatorAtLevel(1));
+    return space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                             -omega * omega + 0.0i, omega);
+  };
 
-    ComplexVector x(A->Width()), expected(A->Height()), result(A->Height());
+  // The system operator assembled from the fixed K, C and M, as the driven solvers do when
+  // they cannot apply it through the preconditioner. A refers to the other operators.
+  struct AssembledSystem
+  {
+    std::unique_ptr<ComplexOperator> K, C, M, A2, A;
+  };
+  auto AssembleSystem = [&](SpaceOperator &space_op, bool include_extra)
+  {
+    AssembledSystem sys;
+    sys.K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    sys.C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    sys.M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(sys.K);
+    REQUIRE(sys.C);
+    REQUIRE(sys.M);
+    if (include_extra)
+    {
+      sys.A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    }
+    sys.A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                     sys.K.get(), sys.C.get(), sys.M.get(), sys.A2.get());
+    return sys;
+  };
+
+  // Relative difference of the application of two operators, or of their transposes, to
+  // random complex vectors.
+  auto RelativeDifference = [&](const ComplexOperator &expected_op,
+                                const ComplexOperator &actual_op, bool transpose = false)
+  {
+    ComplexVector x(expected_op.Width()), expected(expected_op.Height()),
+        result(expected_op.Height());
     x.UseDevice(true);
     expected.UseDevice(true);
     result.UseDevice(true);
@@ -330,34 +344,94 @@ TEST_CASE("Driven preconditioner finest level is the system matrix",
     {
       x.Real().Randomize(seed + Mpi::Rank(comm));
       x.Imag().Randomize(seed + 1 + Mpi::Rank(comm));
-      A->Mult(x, expected);
-      P->Mult(x, result);
-      CHECK(linalg::Norml2(comm, expected) > 0.0);
+      if (transpose)
+      {
+        expected_op.MultTranspose(x, expected);
+        actual_op.MultTranspose(x, result);
+      }
+      else
+      {
+        expected_op.Mult(x, expected);
+        actual_op.Mult(x, result);
+      }
+      const double norm = linalg::Norml2(comm, expected);
+      CHECK(norm > 0.0);
       result.AXPY(-1.0, expected);
-      max_rel_diff = std::max(max_rel_diff, linalg::Norml2(comm, result) /
-                                                linalg::Norml2(comm, expected));
+      max_rel_diff = std::max(max_rel_diff, linalg::Norml2(comm, result) / norm);
     }
     return max_rel_diff;
   };
 
-  SECTION("Preconditioner is the system matrix")
+  // The system operator from the preconditioner must match the assembled one. When there
+  // are frequency-dependent boundary terms, also check that they change the system
+  // operator, so that the match covers them.
+  auto CheckSystemOperator = [&](SpaceOperator &space_op, bool has_extra)
+  {
+    auto sys = AssembleSystem(space_op, true);
+    CHECK(static_cast<bool>(sys.A2) == has_extra);
+    auto P = GetPreconditioner(space_op);
+    auto A = space_op.GetSystemOperator(omega, *P);
+    REQUIRE(A);
+    CHECK_THAT(RelativeDifference(*sys.A, *A), Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(RelativeDifference(*sys.A, *A, true),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+    if (has_extra)
+    {
+      auto sys_no_extra = AssembleSystem(space_op, false);
+      CHECK(RelativeDifference(*sys.A, *sys_no_extra.A) > 1.0e-6);
+    }
+  };
+
+  SECTION("Surface impedance boundary")
   {
     SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
-    REQUIRE(space_op.CanUsePreconditionerAsSystemOperator());
-    CHECK_THAT(ApplyDifference(space_op), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+    CheckSystemOperator(space_op, false);
   }
 
   SECTION("Multiple attributes in one impedance boundary group")
   {
     // Repeated terms on one boundary group must update only the listed attributes even when
-    // equal material properties initially share coefficient storage. This is the case that
-    // makes the configuration predicate a sufficient condition rather than a heuristic.
+    // equal material properties initially share coefficient storage.
     auto multi_attr_boundaries = boundaries;
     multi_attr_boundaries.impedance.front().attributes = {4, 5, 6};
     SpaceOperator space_op(solver, domains, multi_attr_boundaries, ProblemType::DRIVEN,
                            units, mesh);
-    REQUIRE(space_op.CanUsePreconditionerAsSystemOperator());
-    CHECK_THAT(ApplyDifference(space_op), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+    CheckSystemOperator(space_op, false);
+  }
+
+  SECTION("Second-order farfield boundary")
+  {
+    auto farfield_boundaries = boundaries;
+    farfield_boundaries.impedance = {};
+    farfield_boundaries.farfield.order = 2;
+    farfield_boundaries.farfield.attributes = {4, 5, 6};
+    SpaceOperator space_op(solver, domains, farfield_boundaries, ProblemType::DRIVEN, units,
+                           mesh);
+    CheckSystemOperator(space_op, true);
+  }
+
+  SECTION("Surface conductivity boundary")
+  {
+    auto conductivity_boundaries = boundaries;
+    auto &conductivity = conductivity_boundaries.conductivity.emplace_back();
+    conductivity.sigma = 0.5;
+    conductivity.attributes = {5};
+    SpaceOperator space_op(solver, domains, conductivity_boundaries, ProblemType::DRIVEN,
+                           units, mesh);
+    CheckSystemOperator(space_op, true);
+  }
+
+  SECTION("Rational impedance boundary")
+  {
+    // Series RL impedance Z(s) = 0.5 s + 2.
+    auto rational_boundaries = boundaries;
+    auto &rational = rational_boundaries.rational_impedance.emplace_back();
+    rational.num = {0.5, 2.0};
+    rational.den = {1.0};
+    rational.attributes = {6};
+    SpaceOperator space_op(solver, domains, rational_boundaries, ProblemType::DRIVEN, units,
+                           mesh);
+    CheckSystemOperator(space_op, true);
   }
 
   SECTION("Shifted preconditioner is a different matrix")
@@ -366,8 +440,10 @@ TEST_CASE("Driven preconditioner finest level is the system matrix",
     shifted_solver.linear.pc_mat_shifted = 1;
     SpaceOperator space_op(shifted_solver, domains, boundaries, ProblemType::DRIVEN, units,
                            mesh);
-    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
-    CHECK(ApplyDifference(space_op) > 1.0e-6);
+    auto P = GetPreconditioner(space_op);
+    CHECK(!space_op.GetSystemOperator(omega, *P));
+    auto sys = AssembleSystem(space_op, true);
+    CHECK(RelativeDifference(*sys.A, *P) > 1.0e-6);
   }
 
   SECTION("Real-valued preconditioner")
@@ -376,7 +452,8 @@ TEST_CASE("Driven preconditioner finest level is the system matrix",
     real_solver.linear.pc_mat_real = true;
     SpaceOperator space_op(real_solver, domains, boundaries, ProblemType::DRIVEN, units,
                            mesh);
-    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
+    auto P = GetPreconditioner(space_op);
+    CHECK(!space_op.GetSystemOperator(omega, *P));
   }
 
   SECTION("Single multigrid level")
@@ -388,7 +465,8 @@ TEST_CASE("Driven preconditioner finest level is the system matrix",
     SpaceOperator space_op(single_solver, domains, boundaries, ProblemType::DRIVEN, units,
                            mesh);
     REQUIRE(space_op.GetNDSpaces().GetNumLevels() == 1);
-    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
+    auto P = GetPreconditioner(space_op);
+    CHECK(!space_op.GetSystemOperator(omega, *P));
   }
 
   SECTION("Floquet wave vector")
@@ -400,19 +478,8 @@ TEST_CASE("Driven preconditioner finest level is the system matrix",
     SpaceOperator space_op(solver, domains, floquet_boundaries, ProblemType::DRIVEN, units,
                            mesh);
     REQUIRE(space_op.GetMaterialOp().HasWaveVector());
-    CHECK(!space_op.CanUsePreconditionerAsSystemOperator());
-  }
-
-  SECTION("Second-order farfield boundary is frequency dependent")
-  {
-    auto farfield_boundaries = boundaries;
-    farfield_boundaries.impedance = {};
-    farfield_boundaries.farfield.order = 2;
-    farfield_boundaries.farfield.attributes = {4, 5, 6};
-    SpaceOperator space_op(solver, domains, farfield_boundaries, ProblemType::DRIVEN, units,
-                           mesh);
-    CHECK(space_op.CanUsePreconditionerAsSystemOperator());
-    CHECK(space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO));
+    auto P = GetPreconditioner(space_op);
+    CHECK(!space_op.GetSystemOperator(omega, *P));
   }
 }
 

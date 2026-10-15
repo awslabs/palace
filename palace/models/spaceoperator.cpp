@@ -885,27 +885,37 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   // W_scalar), which supplies the ∇ₜEₙ term the sparse mass drops so the port reproduces
   // the full modal n×H on its own mode. The sparse mass is retained here
   // (include_wave_ports=true) and also serves as the preconditioner's port block; the
-  // correction and the Floquet DtN are summed onto the sparse A2 via non-owning/owning
+  // correction and the Floquet DtN are summed onto the sparse A2 via an owning
   // SumComplexOperator.
   auto A2 = GetExtraSystemMatrix<ComplexOperator>(omega, diag_policy,
                                                   /*include_wave_ports=*/true);
+  auto WF = GetMatrixFreeExtraSystemOperator(omega);
+  if (!WF)
+  {
+    return A2;
+  }
+  if (!A2)
+  {
+    return WF;
+  }
+  return std::make_unique<SumComplexOperator>(std::move(A2), std::move(WF));
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetMatrixFreeExtraSystemOperator(double omega)
+{
   auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
                                                    nd_dbc_tdof_lists.back());
   auto F = floquet_port_op.GetExtraSystemOperator(omega);
-  std::unique_ptr<ComplexOperator> op;
-  auto add = [&op](std::unique_ptr<ComplexOperator> term)
+  if (!W)
   {
-    if (!term)
-    {
-      return;
-    }
-    op = op ? std::make_unique<SumComplexOperator>(std::move(op), std::move(term))
-            : std::move(term);
-  };
-  add(std::move(A2));
-  add(std::move(W));
-  add(std::move(F));
-  return op;
+    return F;
+  }
+  if (!F)
+  {
+    return W;
+  }
+  return std::make_unique<SumComplexOperator>(std::move(W), std::move(F));
 }
 
 std::unique_ptr<ComplexOperator>
@@ -1227,10 +1237,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   // data if the spaces correspond to the same mesh. When appropriate, we build the
   // preconditioner on all levels based on the actual complex-valued system matrix. The
   // coarse operator is always fully assembled.
-  if (print_prec_hdr)
-  {
-    Mpi::Print("\nAssembling multigrid hierarchy:\n");
-  }
+  //
+  // The driven solvers may apply the system operator through the finest level alone (see
+  // GetSystemOperator), without assembling K, C or M, so print the header here too.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
 
@@ -1246,6 +1256,12 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec);
   }
 
+  // Print after the assembly, which may first solve and print the wave port modes at a new
+  // frequency.
+  if (print_prec_hdr)
+  {
+    Mpi::Print("\nAssembling multigrid hierarchy:\n");
+  }
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
   for (bool aux : {false, true})
   {
@@ -1294,10 +1310,27 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   return B;
 }
 
-bool SpaceOperator::CanUsePreconditionerAsSystemOperator() const
+std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
+                                                                  const ComplexOperator &P)
 {
-  return !pc_mat_real && !pc_mat_shifted && !mat_op.HasWaveVector() &&
-         GetNDSpaces().GetNumLevels() > 1;
+  if (pc_mat_real || pc_mat_shifted || mat_op.HasWaveVector() ||
+      GetNDSpaces().GetNumLevels() < 2)
+  {
+    return {};
+  }
+  const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(&P);
+  MFEM_VERIFY(mg && mg->GetNumLevels() == GetNDSpaces().GetNumLevels(),
+              "GetSystemOperator requires the multigrid preconditioner from "
+              "GetPreconditionerMatrix!");
+
+  // AssemblePreconditioner adds the same AddExtraSystemBdrCoefficients(ω) terms, wave-port
+  // boundary mass included, as GetExtraSystemMatrix. Only the matrix-free terms are left.
+  auto A = std::make_unique<SumComplexOperator>(mg->GetFinestOperator());
+  if (auto WF = GetMatrixFreeExtraSystemOperator(omega))
+  {
+    A->AddOperator(std::move(WF));
+  }
+  return A;
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,

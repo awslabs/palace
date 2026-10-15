@@ -85,20 +85,17 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
 
-  // The preconditioner's finest level is assembled with the system coefficients. When the
-  // frequency has no extra system operator, use that level as the system operator too: one
-  // fused application per iteration instead of the sum of the fixed K, C and M
-  // applications. Nothing else in the uniform sweep uses K, C or M, so assemble them lazily
-  // only if GetExtraSystemOperator returns a term which prevents the reuse.
-  const bool can_use_pc_as_system = space_op.CanUsePreconditionerAsSystemOperator();
+  // When the preconditioner's finest level is the sparse part of the system operator, the
+  // sweep applies the system through it (see SpaceOperator::GetSystemOperator) and never
+  // needs K, C or M. Otherwise, assemble them on first use. PEC boundaries are handled by
+  // setting the system-matrix diagonal. The Dirichlet condition is homogeneous, so no
+  // special RHS elimination is required.
   std::unique_ptr<ComplexOperator> K, C, M;
   bool fixed_system_operators_assembled = false;
   auto AssembleFixedSystemOperators = [&]()
   {
     if (!fixed_system_operators_assembled)
     {
-      // PEC boundaries are handled by setting the system-matrix diagonal. The Dirichlet
-      // condition is homogeneous, so no special RHS elimination is required.
       K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
       C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
       M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -183,21 +180,19 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     {
       auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
-      // solver.
-      auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-      const bool pc_as_system = can_use_pc_as_system && !A2;
-      std::unique_ptr<ComplexOperator> A;
-      if (!pc_as_system)
+      // solver. A refers to P, and to A2 when assembled, so both must outlive it.
+      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+          1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+      std::unique_ptr<ComplexOperator> A2;
+      auto A = space_op.GetSystemOperator(omega, *P);
+      if (!A)
       {
         AssembleFixedSystemOperators();
+        A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
         A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
                                      C.get(), M.get(), A2.get());
       }
-      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-          1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      // When shared, both roles are non-owning views of P, which owns its finest level for
-      // the whole solve.
-      ksp.SetOperators(pc_as_system ? *P : *A, *P);
+      ksp.SetOperators(*A, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",

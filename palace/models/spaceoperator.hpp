@@ -142,6 +142,11 @@ private:
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
 
+  // The terms of GetExtraSystemOperator(ω) which are applied matrix-free and so are not
+  // part of any assembled matrix: the wave-port modal correction W and the Floquet DtN F.
+  // Returns nullptr if there are none.
+  std::unique_ptr<ComplexOperator> GetMatrixFreeExtraSystemOperator(double omega);
+
 public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
                 const config::BoundaryData &boundaries, ProblemType problem_type,
@@ -360,21 +365,22 @@ public:
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);
 
-  // Whether the finest level of GetPreconditionerMatrix<ComplexOperator>(1, iω, -ω², ω)
-  // is the system matrix K + iω C - ω² (Mr + i Mi). Both are assembled from the same
-  // material and boundary coefficients with the same essential-dof policy. Real and shifted
-  // preconditioners intentionally change the matrix. Floquet-wave-vector assembly is
-  // outside this equivalence contract, as is a single-level hierarchy: its only
-  // preconditioner level is the fully assembled coarse matrix, which must not replace the
-  // matrix-free system operator. A caller must separately check for any operator returned
-  // by GetExtraSystemOperator at the current frequency.
+  // Construct the driven system operator A = K + iω C - ω² (Mr + i Mi) + A2(ω), with
+  // A2(ω) = GetExtraSystemOperator(ω), from the preconditioner
+  // P = GetPreconditionerMatrix<ComplexOperator>(1, iω, -ω², ω) at the same ω. The finest
+  // level of P is assembled from the same material and boundary coefficients as the sparse
+  // part of A, including the sparse frequency-dependent boundary terms, with the same
+  // essential-dof policy. The returned operator applies that level once (fused where
+  // supported) instead of K, C, M and the sparse A2 separately, and adds only the
+  // matrix-free terms of A2. It refers to P without owning it, so P must outlive it.
   //
-  // When true and no extra operator is present, the preconditioner may also be passed to
-  // the Krylov solver as its system operator. BaseMultigridOperator::Mult applies the
-  // finest level, replacing the three fixed-operator applications by one (fused where
-  // supported). The preconditioner remains the sole owner; both Krylov roles are non-owning
-  // references and must not outlive it.
-  bool CanUsePreconditionerAsSystemOperator() const;
+  // Returns nullptr, at every ω, if the finest level of P is not the sparse part of A. The
+  // caller then assembles A with GetSystemMatrix. Real and shifted preconditioners
+  // intentionally change the matrix, and Floquet-wave-vector assembly is outside this
+  // equivalence. A single-level hierarchy is excluded too: its only level is the fully
+  // assembled coarse matrix, which must not replace the matrix-free system operator.
+  std::unique_ptr<ComplexOperator> GetSystemOperator(double omega,
+                                                     const ComplexOperator &P);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
