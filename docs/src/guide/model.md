@@ -80,8 +80,9 @@ error estimate and the `"Tol"` test keep every element. Each AMR iteration logs 
 the number of ineligible elements with their share of the error, and, after the refinement
 step, the number of elements below the floor (the conformity closure of a nonconforming or
 conforming refinement can create elements smaller than a marked element's children; they
-are counted, not prevented). When no element is eligible, AMR stops before the refinement
-step and the last solved mesh is the final result.
+are counted, not prevented). When no element is eligible, or every eligible element has a
+zero error indicator, AMR stops before the refinement step and the last solved mesh is the
+final result.
 
 ## Material models
 

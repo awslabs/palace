@@ -126,13 +126,15 @@ long long int CountElementsBelowSize(mfem::ParMesh &mesh, double min_element_siz
 // Dörfler marking over the eligible elements only: the threshold is computed on the
 // eligible indicators and an element is marked when it is eligible and its indicator
 // reaches the threshold. The ineligible elements are counted with their share of the total
-// squared indicator (global sums). When no element is eligible (globally) nothing is marked
-// and the threshold and marked_error are 0.
+// squared indicator (global sums). When no element is eligible (globally), or every
+// eligible indicator is zero, markable is false, nothing is marked and the threshold and
+// marked_error are 0.
 struct FloorMarking
 {
   mfem::Array<int> marked_elements;       // Local indices.
   long long int ineligible_elements = 0;  // Global count.
   double ineligible_error = 0.0;          // Share of the global sum of e^2.
+  bool markable = false;                  // Some eligible element has a nonzero indicator.
   double threshold = 0.0;                 // Dörfler threshold over the eligible set.
   double marked_error = 0.0;              // Marked share of the eligible sum of e^2.
 };

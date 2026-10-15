@@ -341,6 +341,7 @@ TEST_CASE("MarkEligibleElements without a floor marks the Dörfler set",
   const double fraction = 0.7;
   const auto marking = MarkEligibleElements(comm, e, eligible, fraction);
   const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(comm, e, fraction);
+  CHECK(marking.markable);
   CHECK(marking.threshold == threshold);
   CHECK(marking.marked_error == marked_error);
   CHECK(marking.ineligible_elements == 0);
@@ -374,6 +375,7 @@ TEST_CASE("MarkEligibleElements excludes the ineligible elements from the thresh
   const std::vector<bool> eligible = {false, false, true, true, true, true};
   const double fraction = 0.7;
   const auto marking = MarkEligibleElements(comm, e, eligible, fraction);
+  CHECK(marking.markable);
 
   Vector eligible_e(4);
   eligible_e[0] = 1.0;
@@ -411,8 +413,24 @@ TEST_CASE("MarkEligibleElements with an empty eligible set marks nothing",
   {
     const std::vector<bool> eligible(e.Size(), false);
     const auto marking = MarkEligibleElements(comm, e, eligible, 0.7);
+    CHECK(!marking.markable);
     CHECK(marking.marked_elements.Size() == 0);
     CHECK(marking.ineligible_elements == 3 * size);
+    CHECK(marking.ineligible_error == 1.0);
+    CHECK(marking.threshold == 0.0);
+    CHECK(marking.marked_error == 0.0);
+  }
+
+  SECTION("Eligible elements with a zero indicator only")
+  {
+    // All the error sits on the ineligible elements: there is no Dörfler threshold over
+    // the eligible set (0 / 0), so the marking reads like the empty eligible set.
+    e[0] = 0.0;
+    const std::vector<bool> eligible = {true, false, false};
+    const auto marking = MarkEligibleElements(comm, e, eligible, 0.7);
+    CHECK(!marking.markable);
+    CHECK(marking.marked_elements.Size() == 0);
+    CHECK(marking.ineligible_elements == 2 * size);
     CHECK(marking.ineligible_error == 1.0);
     CHECK(marking.threshold == 0.0);
     CHECK(marking.marked_error == 0.0);
@@ -426,6 +444,7 @@ TEST_CASE("MarkEligibleElements with an empty eligible set marks nothing",
     const bool root = Mpi::Root(comm);
     const std::vector<bool> eligible = {false, root, root};
     const auto marking = MarkEligibleElements(comm, e, eligible, 0.7);
+    CHECK(marking.markable);
     CHECK(marking.ineligible_elements == 3 * size - 2);
     CHECK(marking.marked_error >= 0.7);
     CHECK(marking.marked_elements.Size() == (root ? marking.marked_elements.Size() : 0));

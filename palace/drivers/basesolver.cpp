@@ -331,9 +331,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
     else
     {
-      const double floor = refinement.min_element_size;
+      const double min_size = refinement.min_element_size;
       mfem::ParMesh &fine_mesh = *mesh.back();
-      const auto eligible = ElementsEligibleForMarking(fine_mesh, floor);
+      const auto eligible = ElementsEligibleForMarking(fine_mesh, min_size);
       auto marking = MarkEligibleElements(comm, marking_indicators, eligible,
                                           refinement.update_fraction);
       const auto [glob_marked_elements, glob_elements] =
@@ -341,12 +341,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Print(
           " Refinement floor MinElementSize = {:.3e} (eligible h >= {:.3e}): {:d}/{:d} "
           "elements ineligible for marking ({:.2f}% of the error)\n",
-          floor, 2.0 * floor, marking.ineligible_elements, glob_elements,
+          min_size, 2.0 * min_size, marking.ineligible_elements, glob_elements,
           100 * marking.ineligible_error);
-      if (marking.ineligible_elements == glob_elements)
+      if (!marking.markable)
       {
-        Mpi::Print(" No element is eligible for refinement under the floor: stopping AMR, "
-                   "the last solved mesh is the final result\n");
+        Mpi::Print(" {}: stopping AMR, the last solved mesh is the final result\n",
+                   (marking.ineligible_elements == glob_elements)
+                       ? "No element is eligible for refinement under the floor"
+                       : "Every eligible element under the floor has a zero error "
+                         "indicator");
         --it;
         break;
       }
@@ -751,13 +754,14 @@ FloorMarking MarkEligibleElements(MPI_Comm comm, const Vector &e,
   e.HostRead();
   Vector eligible_e(e.Size());
   int num_eligible = 0;
-  double ineligible_error = 0.0, total_error = 0.0;
+  double ineligible_error = 0.0, eligible_error = 0.0, total_error = 0.0;
   for (int i = 0; i < e.Size(); i++)
   {
     total_error += e[i] * e[i];
     if (eligible[i])
     {
       eligible_e[num_eligible++] = e[i];
+      eligible_error += e[i] * e[i];
     }
     else
     {
@@ -767,12 +771,15 @@ FloorMarking MarkEligibleElements(MPI_Comm comm, const Vector &e,
   eligible_e.SetSize(num_eligible);
   long long int glob_eligible = num_eligible;
   Mpi::GlobalSum(1, &glob_eligible, comm);
-  std::array<double, 2> error = {ineligible_error, total_error};
-  Mpi::GlobalSum(2, error.data(), comm);
+  std::array<double, 3> error = {ineligible_error, eligible_error, total_error};
+  Mpi::GlobalSum(3, error.data(), comm);
   marking.ineligible_elements = e.Size() - num_eligible;
   Mpi::GlobalSum(1, &marking.ineligible_elements, comm);
-  marking.ineligible_error = (error[1] > 0.0) ? error[0] / error[1] : 0.0;
-  if (glob_eligible == 0)
+  marking.ineligible_error = (error[2] > 0.0) ? error[0] / error[2] : 0.0;
+  // An eligible set whose indicators are all zero has no Dörfler threshold (0 / 0): it is
+  // treated like the empty eligible set, nothing marked.
+  marking.markable = (glob_eligible > 0 && error[1] > 0.0);
+  if (!marking.markable)
   {
     return marking;
   }
