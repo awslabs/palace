@@ -766,6 +766,124 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
         {"Save", {0.05}},
         {"AdaptiveTol", 1e-3}};
     CHECK_THROWS(config::DrivenSolverData(invalid_save));
+
+    // Nonpositive deprecated FreqStep
+    json zero_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.0}};
+    CHECK_THROWS_WITH(config::DrivenSolverData(zero_step),
+                      Catch::Matchers::ContainsSubstring("\"FreqStep\" must be positive"));
+    json negative_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", -0.5}};
+    CHECK_THROWS(config::DrivenSolverData(negative_step));
+
+    // "MaxFreq" below "MinFreq" with a step would sample only "MinFreq".
+    json reversed_step = {{"MinFreq", 2.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}};
+    CHECK_THROWS_WITH(config::DrivenSolverData(reversed_step),
+                      ContainsSubstring("must not be less than \"MinFreq\""));
+    json reversed_linear = {
+        {"Samples", {{{"MinFreq", 2.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}}}}};
+    CHECK_THROWS_WITH(config::DrivenSolverData(reversed_linear),
+                      ContainsSubstring("must not be less than \"MinFreq\""));
+
+    // A step too small for the number of steps to fit in an int.
+    json tiny_step = {{"MinFreq", 1.0}, {"MaxFreq", 10.0}, {"FreqStep", 1.0e-9}};
+    CHECK_THROWS_WITH(config::DrivenSolverData(tiny_step), ContainsSubstring("too small"));
+
+    // Circuit synthesis needs a positive "AdaptiveTol" and two distinct samples, but only
+    // for a Driven problem, so the parser accepts both.
+    json synthesis_no_tol = {{"Samples", {{{"Freq", {1.0, 2.0}}}}},
+                             {"AdaptiveCircuitSynthesis", true}};
+    CHECK_NOTHROW(config::DrivenSolverData(synthesis_no_tol));
+    json synthesis_single = {{"Samples", {{{"Freq", {3.0}}}}},
+                             {"AdaptiveTol", 1e-3},
+                             {"AdaptiveCircuitSynthesis", true}};
+    CHECK_NOTHROW(config::DrivenSolverData(synthesis_single));
+  }
+
+  SECTION("Circuit synthesis requires two distinct samples")
+  {
+    auto Check = [](ProblemType type, const json &driven)
+    {
+      IoData iodata{Units(1.0, 1.0)};
+      iodata.problem.type = type;
+      iodata.solver.driven = config::DrivenSolverData(driven);
+      iodata.CheckConfiguration();
+    };
+    json synthesis = {{"AdaptiveTol", 1e-3}, {"AdaptiveCircuitSynthesis", true}};
+    json single = synthesis, near_duplicate = synthesis;
+    single["Samples"] = {{{"Freq", {3.0}}}};
+    // Within the sample deduplication tolerance, so a single distinct sample.
+    near_duplicate["Samples"] = {{{"Freq", {3.0, 3.0 + 1.0e-10}}}};
+    CHECK_THROWS_WITH(Check(ProblemType::DRIVEN, single),
+                      ContainsSubstring("two distinct"));
+    CHECK_THROWS_WITH(Check(ProblemType::DRIVEN, near_duplicate),
+                      ContainsSubstring("two distinct"));
+    // 2 Hz apart at 100 GHz, which an absolute 1 Hz tolerance kept as two samples.
+    json near_duplicate_high = synthesis;
+    near_duplicate_high["Samples"] = {{{"Freq", {100.0, 100.0 + 2.0e-9}}}};
+    CHECK_THROWS_WITH(Check(ProblemType::DRIVEN, near_duplicate_high),
+                      ContainsSubstring("two distinct"));
+    // An unused "Driven" block of another problem type is not checked.
+    CHECK_NOTHROW(Check(ProblemType::EIGENMODE, single));
+  }
+
+  SECTION("Sample deduplication is relative to the lowest sample")
+  {
+    // Samples closer than 1e-9 times the lowest one are merged, so an adaptive sweep over
+    // near-duplicates has a single sample and reverts to a uniform sweep.
+    json high = {{"Samples", {{{"Freq", {100.0, 100.0 + 2.0e-9, 100.0 + 4.0e-9}}}}},
+                 {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData high_solver(high);
+    CHECK(high_solver.sample_f == std::vector{100.0});
+
+    // Distinct relative to a low lowest sample, though closer than 1 Hz.
+    json low = {{"Samples", {{{"Freq", {0.01, 0.01 + 5.0e-10}}}}}};
+    config::DrivenSolverData low_solver(low);
+    CHECK(low_solver.sample_f.size() == 2);
+
+    // Saves and PROM samples merged into another sample use that sample, whether they come
+    // from "Save", "SaveStep" or "AddToPROM" (the tolerance here is 1e-7 GHz).
+    json merged = {{"Samples",
+                    {{{"Freq", {100.0, 200.0}}},
+                     {{"Freq", {200.0 + 5.0e-8}}, {"SaveStep", 1}, {"AddToPROM", true}}}},
+                   {"Save", {100.0 + 5.0e-8}},
+                   {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData merged_solver(merged);
+    CHECK(merged_solver.sample_f == std::vector{100.0, 200.0});
+    CHECK(merged_solver.save_indices == std::vector<size_t>{0, 1});
+    CHECK(merged_solver.prom_indices == std::vector<size_t>{0, 1});
+  }
+
+  SECTION("Single sample ranges")
+  {
+    // A single linear or log sample is the interval start (numpy.linspace convention).
+    json linear_single = {
+        {"Samples", {{{"MinFreq", 2.0}, {"MaxFreq", 5.0}, {"NSample", 1}}}}};
+    config::DrivenSolverData linear_solver(linear_single);
+    REQUIRE(linear_solver.sample_f.size() == 1);
+    CHECK_THAT(linear_solver.sample_f[0], WithinAbs(2.0, delta_eps));
+
+    json log_single = {
+        {"Samples",
+         {{{"Type", "Log"}, {"MinFreq", 0.1}, {"MaxFreq", 10.0}, {"NSample", 1}}}}};
+    config::DrivenSolverData log_solver(log_single);
+    REQUIRE(log_solver.sample_f.size() == 1);
+    CHECK_THAT(log_solver.sample_f[0], WithinAbs(0.1, delta_eps));
+
+    // A single-sample adaptive sweep without circuit synthesis parses; DrivenSolver
+    // reverts it to a uniform sweep at runtime.
+    json adaptive_single = {
+        {"Samples", {{{"MinFreq", 2.0}, {"MaxFreq", 5.0}, {"NSample", 1}}}},
+        {"AdaptiveTol", 1e-3}};
+    CHECK_NOTHROW(config::DrivenSolverData(adaptive_single));
+
+    // Deprecated top-level interface with a valid positive step.
+    json legacy = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}};
+    config::DrivenSolverData legacy_solver(legacy);
+    auto sample_f = std::vector{1.0, 1.5, 2.0};
+    REQUIRE(legacy_solver.sample_f.size() == sample_f.size());
+    for (size_t i = 0; i < sample_f.size(); ++i)
+    {
+      CHECK_THAT(legacy_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));
+    }
   }
 }
 

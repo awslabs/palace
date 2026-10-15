@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-2-0",
+  "$id": "urn:palace:schema:2-2-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2613,7 +2613,25 @@
           "default": "Energy",
           "x-palace-advanced": true
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "MinFreq",
+              "MaxFreq",
+              "FreqStep"
+            ]
+          },
+          "then": {
+            "properties": {
+              "FreqStep": {
+                "exclusiveMinimum": 0.0
+              }
+            }
+          }
+        }
+      ]
     },
     "SamplesPoint": {
       "type": "object",
@@ -2678,7 +2696,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples. Mutually exclusive with `\"FreqStep\"`.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`). Mutually exclusive with `\"FreqStep\"`.",
           "minimum": 0
         },
         "SaveStep": {
@@ -2721,7 +2739,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`).",
           "minimum": 1
         },
         "SaveStep": {
@@ -3144,7 +3162,31 @@
           "Solver": {
             "required": [
               "Driven"
-            ]
+            ],
+            "properties": {
+              "Driven": {
+                "if": {
+                  "properties": {
+                    "AdaptiveCircuitSynthesis": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "AdaptiveCircuitSynthesis"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "AdaptiveTol": {
+                      "exclusiveMinimum": 0.0
+                    }
+                  },
+                  "required": [
+                    "AdaptiveTol"
+                  ]
+                }
+              }
+            }
           }
         }
       }

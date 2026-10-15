@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <sstream>
 #include <string_view>
@@ -1136,6 +1137,11 @@ BoundaryData::BoundaryData(const json &boundaries)
 
 std::vector<double> ConstructLinearRange(double start, double end, double delta)
 {
+  // GetNumSteps returns a single step for an empty range, which would silently sample only
+  // the start.
+  MFEM_VERIFY(end >= start, "\"MaxFreq\" ("
+                                << end << ") must not be less than \"MinFreq\" (" << start
+                                << ") with \"FreqStep\"!");
   auto n_step = GetNumSteps(start, end, delta);
   std::vector<double> f(n_step);
   std::iota(f.begin(), f.end(), 0);
@@ -1144,15 +1150,21 @@ std::vector<double> ConstructLinearRange(double start, double end, double delta)
 }
 std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 {
+  // A single sample is the interval start (as in numpy.linspace).
   std::vector<double> f(n_sample);
   for (int i = 0; i < n_sample; i++)
   {
-    f[i] = start + (double(i) / (n_sample - 1)) * (end - start);
+    f[i] = start + (n_sample > 1 ? double(i) / (n_sample - 1) : 0.0) * (end - start);
   }
   return f;
 }
 std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 {
+  MFEM_VERIFY(n_sample > 0, "Invalid number of samples for log frequency range!");
+  if (n_sample == 1)
+  {
+    return {start};
+  }
   std::vector<double> f(n_sample);
   double log_start = std::log10(start);
   double log_end = std::log10(end);
@@ -1212,6 +1224,7 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     double min_f = driven.at("MinFreq");     // Required
     double max_f = driven.at("MaxFreq");     // Required
     double delta_f = driven.at("FreqStep");  // Required
+    MFEM_VERIFY(delta_f > 0.0, "\"FreqStep\" must be positive!");
     sample_f = ConstructLinearRange(min_f, max_f, delta_f);
     if (int save_step = driven.value("SaveStep", 0); save_step > 0)
     {
@@ -1281,9 +1294,12 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     }
   }
 
-  // Deduplicate all samples, and find indices of save and prom samples.
-  constexpr double delta_eps = 1.0e-9;  // Precision in frequency comparisons (Hz)
-  auto equal_f = [=](auto x, auto y) { return std::abs(x - y) < delta_eps; };
+  // Deduplicate all samples, and find indices of save and prom samples. Samples closer than
+  // 1e-9 times the lowest sample frequency are the same sample: a sweep that narrow has no
+  // range to adapt over, and the adaptive sweep's error estimate cannot step through it.
+  const double f_tol =
+      sample_f.empty() ? 0.0 : 1.0e-9 * std::abs(std::ranges::min(sample_f));
+  auto equal_f = [=](auto x, auto y) { return std::abs(x - y) <= f_tol; };
   auto deduplicate = [&equal_f](auto &f)
   {
     std::ranges::sort(f);
@@ -1295,12 +1311,24 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   auto explicit_save_f = driven.value("Save", std::vector<double>());
   for (auto &f : explicit_save_f)
   {
-    auto it = FindNearestValue(sample_f, f, delta_eps);
+    auto it = FindNearestValue(sample_f, f, f_tol);
     MFEM_VERIFY(it != sample_f.end(),
                 "Entry " << f << " in \"Save\" must be an explicitly sampled frequency!");
     f = *it;
   }
   save_f.insert(save_f.end(), explicit_save_f.begin(), explicit_save_f.end());
+  // Save and PROM samples come from the sample lists, so each is within f_tol of the sample
+  // it was merged into. Use that sample's value, so the index scans below match exactly.
+  for (auto *fs : {&save_f, &prom_f})
+  {
+    for (auto &f : *fs)
+    {
+      if (auto it = FindNearestValue(sample_f, f, f_tol); it != sample_f.end())
+      {
+        f = *it;
+      }
+    }
+  }
   deduplicate(save_f);
   deduplicate(prom_f);
 
@@ -1529,6 +1557,9 @@ int GetNumSteps(double start, double end, double delta)
   }
   constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
   double dn = std::abs(end - start) / std::abs(delta);
+  MFEM_VERIFY(dn < std::numeric_limits<int>::max() - 2,
+              "Step " << delta << " is too small for the range [" << start << ", " << end
+                      << "]: " << dn << " steps!");
   int n_step = 1 + static_cast<int>(dn);
   double dfinal = start + n_step * delta;
   return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
