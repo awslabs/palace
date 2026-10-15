@@ -14,6 +14,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -521,6 +522,25 @@ private:
       const IoData &iodata, const MaterialOperator &mat_op,
       const mfem::Array<int> &dbc_tdof_list,
       std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry);
+  // The placement-ownership stage shared by the electrostatic and Maxwell constructors
+  // (decision 818 R5): the configured patches with the continuation ownership applied
+  // (placed_patches) and the set of patch indices that are not applied (owned by a
+  // spatial cluster, wholly trimmed, vertex-owned or DomainBoundary-excluded). Records the
+  // uncovered / DomainBoundary / conductor-consistency portions and the ownership
+  // Diagnostics as members. Collective (the domain-boundary containment test).
+  struct PlacementOwnership
+  {
+    std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        placed_patches;
+    std::set<std::size_t> owned_patches;
+  };
+  PlacementOwnership ApplyPlacementOwnership(
+      const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+      const std::unordered_map<int, int> &model_indices,
+      const std::vector<std::vector<std::array<double, 3>>> &basis_points,
+      double coordinate_scale, int dimension,
+      const std::shared_ptr<const SurfaceResponseGeometry> &cached_geometry,
+      bool setup_timing);
 
 public:
   struct EnergyCorrection
