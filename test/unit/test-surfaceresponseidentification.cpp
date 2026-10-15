@@ -7611,16 +7611,19 @@ TEST_CASE("SurfaceResponseIdentificationMirrorCompleteSupport",
   }
 }
 
-TEST_CASE("SurfaceResponseIdentification frame minimisation compares numbers by value",
+TEST_CASE("SurfaceResponseIdentification frame minimisation orders the key text",
           "[surfaceresponseidentification][Serial]")
 {
-  // Decision 825 (b) H-8 (the 772 finding): CanonicalClusterSignatureWithSupport keeps the
-  // candidate frame with the smallest serialisation. The serialisation starts with "Box",
-  // so two frames whose boxes differ decide on the first box number. The dump STRINGS put
-  // "-1.5" before "-10.3" ('.' sorts before '0') although -10.3 < -1.5: the string order
-  // picked the numerically larger frame. One straight claim along x; the two frames whose
-  // y axis is +y (x = +x with handedness +1, x = -x with handedness -1) are boxable, every
-  // other frame is not; the +x frame's box starts at -1.5 and the -x frame's at -10.3.
+  // The canonical-frame convention of record (decision 828; decisions 772 / 825 (b) H-8):
+  // CanonicalClusterSignatureWithSupport keeps the candidate frame whose serialised key
+  // TEXT is lexicographically smallest. The serialisation starts with "Box", so two frames
+  // whose boxes differ decide on the TEXT of the first box number: "-3.594979" sorts before
+  // "-6.534326" (the 5642 fixture's frame of record, SpatialSupportContractFaceCrossing
+  // TiltFrameOfRecord: x along device y) and "-1.5" before "-10.3", although -6.534326 and
+  // -10.3 are the smaller values. A numeric order would keep the other frame in both cases
+  // and re-key the library. One straight claim along x; the two frames whose y axis is +y
+  // (x = +x with handedness +1, x = -x with handedness -1) are boxable, every other frame
+  // is not; the +x frame's box starts at the text-smaller number.
   const double R = 1.0;
   const std::vector<SignaturePortion> portions = {{{-1.0, 0.0, 0.0},
                                                    {1.0, 0.0, 0.0},
@@ -7629,35 +7632,42 @@ TEST_CASE("SurfaceResponseIdentification frame minimisation compares numbers by 
                                                    {"MS"},
                                                    "{\"Type\":\"PEC\"}"}};
   const std::vector<SignatureVertex> vertices;
-  const std::array<double, 4> box_plus_x = {-1.5, -1.0, 1.0, 1.0};
-  const std::array<double, 4> box_minus_x = {-10.3, -1.0, 1.0, 1.0};
-  int frames_boxed = 0;
-  auto support = [&](const std::array<double, 3> &, const std::array<double, 3> &x,
-                     const std::array<double, 3> &y) -> std::optional<FrameSupport>
+  struct Case
   {
-    if (std::abs(y[1] - 1.0) > 1.0e-12)
-    {
-      return std::nullopt;
-    }
-    frames_boxed++;
-    FrameSupport frame_support;
-    frame_support.box = x[0] > 0.0 ? box_plus_x : box_minus_x;
-    return frame_support;
+    std::array<double, 4> box_plus_x;
+    std::array<double, 4> box_minus_x;
   };
-  const auto canonical =
-      CanonicalClusterSignatureWithSupport(portions, vertices, {0.0, 0.0, 1.0}, R, support);
-  REQUIRE(canonical);
-  CHECK(frames_boxed == 2);
-  // The two frames' serialisations order the other way as strings: the string order would
-  // keep the +x frame.
-  const nlohmann::json box_plus_x_json = box_plus_x, box_minus_x_json = box_minus_x;
-  CHECK(box_plus_x_json.dump() < box_minus_x_json.dump());
-  // The frame of record is the one whose box is numerically smallest: the -x frame.
-  const auto &box = canonical->signature.at("Box");
-  REQUIRE(box.size() == 4);
-  CHECK_THAT(box[0].get<double>(), WithinAbs(-10.3, 1.0e-12));
-  CHECK(canonical->chirality == -1);
-  CHECK_THAT(canonical->axes[0][0], WithinAbs(-1.0, 1.0e-12));
-  CHECK(canonical->key.rfind("{\"Box\":[-10.3,", 0) == 0);
-  CHECK(canonical->hash == Sha256Hex(canonical->key));
+  for (const Case &c : {Case{{-3.594979, -1.0, 1.0, 1.0}, {-6.534326, -1.0, 1.0, 1.0}},
+                        Case{{-1.5, -1.0, 1.0, 1.0}, {-10.3, -1.0, 1.0, 1.0}}})
+  {
+    // The value order would keep the -x frame; the text order keeps the +x frame.
+    REQUIRE(c.box_minus_x[0] < c.box_plus_x[0]);
+    const nlohmann::json box_plus_x_json = c.box_plus_x, box_minus_x_json = c.box_minus_x;
+    REQUIRE(box_plus_x_json.dump() < box_minus_x_json.dump());
+    int frames_boxed = 0;
+    auto support = [&](const std::array<double, 3> &, const std::array<double, 3> &x,
+                       const std::array<double, 3> &y) -> std::optional<FrameSupport>
+    {
+      if (std::abs(y[1] - 1.0) > 1.0e-12)
+      {
+        return std::nullopt;
+      }
+      frames_boxed++;
+      FrameSupport frame_support;
+      frame_support.box = x[0] > 0.0 ? c.box_plus_x : c.box_minus_x;
+      return frame_support;
+    };
+    const auto canonical = CanonicalClusterSignatureWithSupport(
+        portions, vertices, {0.0, 0.0, 1.0}, R, support);
+    REQUIRE(canonical);
+    CHECK(frames_boxed == 2);
+    const auto &box = canonical->signature.at("Box");
+    REQUIRE(box.size() == 4);
+    CHECK_THAT(box[0].get<double>(), WithinAbs(c.box_plus_x[0], 1.0e-12));
+    CHECK(canonical->chirality == 1);
+    CHECK_THAT(canonical->axes[0][0], WithinAbs(1.0, 1.0e-12));
+    // The key text of record is the chosen frame's serialisation, the smallest text.
+    CHECK(canonical->key == canonical->signature.dump());
+    CHECK(canonical->hash == Sha256Hex(canonical->key));
+  }
 }
