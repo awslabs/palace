@@ -54,15 +54,16 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(
     {
       for (auto attr : data.attributes)
       {
+        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+        {
+          bdr_warn_list.insert(attr);
+          continue;
+        }
         MFEM_VERIFY(
             !impedance_marker[attr - 1],
             "Multiple definitions of impedance boundary properties for boundary attribute "
                 << attr << "!");
         impedance_marker[attr - 1] = 1;
-        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-        {
-          bdr_warn_list.insert(attr);
-        }
       }
     }
     if (!bdr_warn_list.empty())

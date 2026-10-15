@@ -224,6 +224,14 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
 
+    // Coordinate-path line integrals are split at element boundaries and each piece is
+    // integrated with a Gauss rule exact for the field polynomial degree on straight-sided
+    // elements, see fem::LineIntegrator.
+    const int field_order = fem_op->GetNDSpace().Get().GetMaxElementOrder();
+    const int mesh_order =
+        pmesh.GetNodes() ? pmesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
+    const int line_order = 2 * (field_order + mesh_order);
+
     // Impedance postprocessing setup (all configured entries).
     for (const auto &[idx, imp] : boundaries.postpro.impedance)
     {
@@ -237,17 +245,20 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
         cfg.current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
         cfg.has_current = true;
       }
-      cfg.n_samples = imp.n_samples;
       if (imp.voltage_path.size() >= 2)
       {
         cfg.has_voltage_coordinates = true;
         cfg.voltage_path = ParsePath(imp.voltage_path);
+        cfg.voltage_integrator = std::make_shared<fem::LineIntegrator>(
+            pmesh, cfg.voltage_path, false, line_order);
       }
       if (!imp.current_path.empty())
       {
         cfg.has_current_path = true;
         cfg.has_current = true;
         cfg.current_path = ParsePath(imp.current_path);
+        cfg.current_integrator = std::make_shared<fem::LineIntegrator>(
+            pmesh, cfg.current_path, true, line_order);
       }
     }
 
@@ -259,11 +270,12 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       {
         cfg.voltage_marker = mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
       }
-      cfg.n_samples = vol.n_samples;
       if (vol.voltage_path.size() >= 2)
       {
         cfg.has_coordinates = true;
         cfg.voltage_path = ParsePath(vol.voltage_path);
+        cfg.voltage_integrator = std::make_shared<fem::LineIntegrator>(
+            pmesh, cfg.voltage_path, false, line_order);
       }
     }
   }
@@ -2592,18 +2604,16 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   struct LineIntegralKey
   {
     bool has_coords = false;
-    int quad_order = 0;
     std::vector<double> path_data;
     std::vector<int> marker_data;
 
     auto operator<=>(const LineIntegralKey &) const = default;
   };
   auto MakeLineIntegralKey = [](const std::vector<mfem::Vector> &path, bool has_coords,
-                                const mfem::Array<int> &marker, int quad_order)
+                                const mfem::Array<int> &marker)
   {
     LineIntegralKey key;
     key.has_coords = has_coords;
-    key.quad_order = quad_order;
     if (has_coords)
     {
       for (const auto &pt : path)
@@ -2629,10 +2639,10 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
   auto ComputeVoltage = [this, &MakeLineIntegralKey, &voltage_cache](
                             const std::vector<mfem::Vector> &path, bool has_coords,
-                            mfem::Array<int> marker, int quad_order,
+                            mfem::Array<int> marker, const fem::LineIntegrator *integrator,
                             const GridFunction &field) -> std::complex<double>
   {
-    auto key = MakeLineIntegralKey(path, has_coords, marker, quad_order);
+    auto key = MakeLineIntegralKey(path, has_coords, marker);
     if (auto it = voltage_cache.find(key); it != voltage_cache.end())
     {
       return it->second;
@@ -2641,13 +2651,8 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     std::complex<double> V(0.0, 0.0);
     if (has_coords)
     {
-      for (std::size_t k = 0; k + 1 < path.size(); k++)
-      {
-        V.real(V.real() +
-               fem::ComputeLineIntegral(path[k], path[k + 1], field.Real(), quad_order));
-        V.imag(V.imag() +
-               fem::ComputeLineIntegral(path[k], path[k + 1], field.Imag(), quad_order));
-      }
+      MFEM_VERIFY(integrator, "Missing line integrator for coordinate voltage path!");
+      V = integrator->Integrate(field);
     }
     else if (marker.Size() > 0)
     {
@@ -2673,10 +2678,10 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   // Helper: compute current I = ∮ H · t dl via coordinate path or boundary attributes.
   auto ComputeCurrent = [this, &MakeLineIntegralKey, &current_cache](
                             const std::vector<mfem::Vector> &path, bool has_path,
-                            mfem::Array<int> marker, int quad_order,
+                            mfem::Array<int> marker, const fem::LineIntegrator *integrator,
                             const GridFunction &field) -> std::complex<double>
   {
-    auto key = MakeLineIntegralKey(path, has_path, marker, quad_order);
+    auto key = MakeLineIntegralKey(path, has_path, marker);
     if (auto it = current_cache.find(key); it != current_cache.end())
     {
       return it->second;
@@ -2685,13 +2690,8 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     std::complex<double> I(0.0, 0.0);
     if (has_path)
     {
-      for (std::size_t k = 0; k < path.size(); k++)
-      {
-        const auto &pk = path[k];
-        const auto &pk1 = path[(k + 1) % path.size()];
-        I.real(I.real() + fem::ComputeLineIntegral(pk, pk1, field.Real(), quad_order));
-        I.imag(I.imag() + fem::ComputeLineIntegral(pk, pk1, field.Imag(), quad_order));
-      }
+      MFEM_VERIFY(integrator, "Missing line integrator for coordinate current path!");
+      I = integrator->Integrate(field);
     }
     else if (marker.Size() > 0)
     {
@@ -2754,8 +2754,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   auto SameVoltageConfig =
       [&](const ImpedancePostproConfig &imp, const VoltagePostproConfig &vol)
   {
-    return imp.n_samples == vol.n_samples &&
-           imp.has_voltage_coordinates == vol.has_coordinates &&
+    return imp.has_voltage_coordinates == vol.has_coordinates &&
            (imp.has_voltage_coordinates
                 ? SamePath(imp.voltage_path, vol.voltage_path)
                 : SameMarker(imp.voltage_marker, vol.voltage_marker));
@@ -2767,7 +2766,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   for (const auto &[idx, cfg] : impedance_postpro)
   {
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_voltage_coordinates,
-                            cfg.voltage_marker, cfg.n_samples, *E);
+                            cfg.voltage_marker, cfg.voltage_integrator.get(), *E);
     auto &result = measurement_cache.mode_data.impedance[idx];
     if (auto vol_it = voltage_postpro.find(idx);
         vol_it != voltage_postpro.end() && SameVoltageConfig(cfg, vol_it->second))
@@ -2788,7 +2787,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     if (cfg.has_current)
     {
       auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
-                              cfg.n_samples, *Bt_inplane);
+                              cfg.current_integrator.get(), *Bt_inplane);
       if (std::abs(I) > 1e-30)
       {
         result.Z_VI = std::abs(V) / std::abs(I);
@@ -2805,7 +2804,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
       continue;
     }
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_coordinates, cfg.voltage_marker,
-                            cfg.n_samples, *E);
+                            cfg.voltage_integrator.get(), *E);
     measurement_cache.mode_data.voltage[idx] = {V};
   }
 
