@@ -34,16 +34,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added substructuring for electrostatic and magnetostatic simulations
     (`config["Solver"]["Substructuring"]`): the environment of a region of interest is
     condensed exactly onto their shared interface, and the region is solved against it. A
-    saved environment model is reused across runs, including after the region is
-    re-meshed, and the capacitance or inductance matrix of a reused model needs no
-    environment solve. The offline run also writes a mesh of the region, on which online runs
-    read and partition the region only, and in which `remesh_region.py` re-meshes a redesign. Includes optional block low-rank environment factorization with
-    MUMPS (`"FactorizationTol"`) and hierarchical compression of the interface operator
+    saved environment model is reused across runs, including after the region is re-meshed,
+    and the capacitance or inductance matrix of a reused model needs no environment solve.
+    The offline run also writes a mesh of the region, on which online runs read and
+    partition the region only, and in which `remesh_region.py` re-meshes a redesign.
+    Includes optional block low-rank environment factorization with MUMPS
+    (`"FactorizationTol"`) and hierarchical compression of the interface operator
     (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"` and
     `"SurfaceCurrent"` excitations, alone or together, with the films and `"Superconductor"`
-    boundaries as London sheets (kinetic inductance included). Adds substructuring examples in `examples/transmon` and
-    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops, on separate rings
-    and on one plate). SchemaVer 2-3-0.
+    boundaries as London sheets (kinetic inductance included). Adds substructuring examples
+    in `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of
+    flux loops, on separate rings and on one plate). SchemaVer 2-3-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes
