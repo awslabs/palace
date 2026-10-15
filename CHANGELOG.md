@@ -125,6 +125,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux
     error estimators on processes without elements of a submesh.
     [PR 1022](https://github.com/awslabs/palace/pull/1022).
+  - Fixed silent misparsing of Nastran coordinates with implicit or Fortran `D` exponents
+    (e.g. `-7.-1` was read as `-7.0` instead of `-0.7`), and read blank or
+    trailing-trimmed fixed-width fields as zero instead of aborting.
+    [PR 951](https://github.com/awslabs/palace/pull/951).
+  - Fixed reading Nastran meshes exported by Gmsh, which have no `BEGIN BULK` line. Free
+    field (comma-separated) cards that omit trailing fields no longer reuse the previous
+    field (`CTRIA3,1,1,1,2,3` became a degenerate 6-node triangle), free field and
+    blank-field continuation lines are read, and the final line no longer needs a newline.
+    `GRID` points with a nonzero coordinate system (`CP`, or a `GRDSET` default) now abort,
+    since coordinate systems are not applied.
+    [PR 951](https://github.com/awslabs/palace/pull/951).
 
 #### Performance Improvements
 
