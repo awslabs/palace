@@ -1428,6 +1428,12 @@ TransientSolverData::TransientSolverData(const json &transient)
   }
 }
 
+MaterialFieldData::MaterialFieldData(const json &mf)
+{
+  file = mf.at("File").get<std::string>();  // Required
+  name = mf.value("Name", name);
+}
+
 BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
 {
   freq = ma.at("Freq");  // Required
@@ -1441,6 +1447,17 @@ BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
   {
     attributes = it->get<std::vector<int>>();
     std::ranges::sort(attributes);
+  }
+  if (auto it = ma.find("MaterialFields"); it != ma.end())
+  {
+    if (auto jt = it->find("Permittivity"); jt != it->end())
+    {
+      permittivity_field = MaterialFieldData(*jt);
+    }
+    if (auto jt = it->find("Permeability"); jt != it->end())
+    {
+      permeability_field = MaterialFieldData(*jt);
+    }
   }
 
   // Resolve subspace sentinel: ModeEigenSolver forwards this to SLEPc/ARPACK, which

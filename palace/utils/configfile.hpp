@@ -1011,6 +1011,21 @@ public:
   TransientSolverData(const json &transient);
 };
 
+struct MaterialFieldData
+{
+public:
+  // Path to the field file (Gmsh .msh or VTK/VTU).
+  std::string file = "";
+
+  // Name of the scalar array to read from the file. When empty, the first array is used.
+  std::string name = "";
+
+  [[nodiscard]] bool empty() const { return file.empty(); }
+
+  MaterialFieldData() = default;
+  MaterialFieldData(const json &mf);
+};
+
 struct BoundaryModeSolverData
 {
 public:
@@ -1042,6 +1057,11 @@ public:
   // the mesh must be 3D and a 2D submesh is extracted from these boundary faces. When
   // empty, the mesh must be 2D (current behavior).
   std::vector<int> attributes = {};
+
+  // Optional spatially-varying relative permittivity and permeability fields, defined on
+  // the solve mesh vertices and sampled at the solver quadrature points.
+  MaterialFieldData permittivity_field = {};
+  MaterialFieldData permeability_field = {};
 
   BoundaryModeSolverData() = default;
   BoundaryModeSolverData(const json &bm);

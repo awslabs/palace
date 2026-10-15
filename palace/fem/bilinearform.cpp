@@ -6,6 +6,7 @@
 #include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
+#include "fem/materialfield.hpp"
 #include "fem/mesh.hpp"
 #include "utils/omp.hpp"
 
@@ -45,6 +46,19 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         std::make_unique<ceed::Operator>(test_fespace.GetVSize(), trial_fespace.GetVSize());
   }
 
+  // Warm material field quadrature data (which is independent of the FE space order)
+  // before the parallel region so that the per-thread lookups below are read-only.
+  for (const auto &integ : domain_integs)
+  {
+    if (const MaterialField *field = integ->GetMaterialField())
+    {
+      for (Ceed ceed : ceed::internal::GetCeedObjects())
+      {
+        field->WarmCache(ceed, mesh);
+      }
+    }
+  }
+
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
@@ -71,9 +85,12 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         for (const auto &integ : domain_integs)
         {
           CeedOperator sub_op;
+          const MaterialField *field = integ->GetMaterialField();
+          const CeedMaterialFieldData *field_data =
+              field ? &field->GetData(ceed, geom, data.indices) : nullptr;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.geom_data_restr, &sub_op);
+                          data.geom_data, data.geom_data_restr, field_data, &sub_op);
           op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }
@@ -93,7 +110,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.geom_data_restr, &sub_op);
+                          data.geom_data, data.geom_data_restr, nullptr, &sub_op);
           op->AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }

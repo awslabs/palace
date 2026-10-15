@@ -25,7 +25,7 @@ void MixedVectorCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
                                          CeedBasis trial_basis, CeedBasis test_basis,
                                          CeedVector geom_data,
                                          CeedElemRestriction geom_data_restr,
-                                         CeedOperator *op) const
+                                         const CeedMaterialFieldData *field_data, CeedOperator *op) const
 {
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
@@ -64,7 +64,7 @@ void MixedVectorCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
   auto ctx = PopulateCoefficientContext(space_dim, Q, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
-                       geom_data_restr, op);
+                       geom_data_restr, field_data, op);
 }
 
 void MixedVectorWeakCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -72,7 +72,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
                                              CeedBasis trial_basis, CeedBasis test_basis,
                                              CeedVector geom_data,
                                              CeedElemRestriction geom_data_restr,
-                                             CeedOperator *op) const
+                                             const CeedMaterialFieldData *field_data, CeedOperator *op) const
 {
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
@@ -111,7 +111,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   auto ctx = PopulateCoefficientContext(space_dim, Q, transpose, -1.0);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
-                       geom_data_restr, op);
+                       geom_data_restr, field_data, op);
 }
 
 }  // namespace palace

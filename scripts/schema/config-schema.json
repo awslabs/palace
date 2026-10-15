@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-2-0",
+  "$id": "urn:palace:schema:2-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2856,6 +2856,40 @@
           "items": {
             "type": "integer"
           }
+        },
+        "MaterialFields": {
+          "type": "object",
+          "description": "Optional spatially-varying relative material properties, defined on the solve mesh vertices and sampled at the solver quadrature points. The field replaces the corresponding material property over the whole solve domain (scalar/isotropic only).",
+          "additionalProperties": false,
+          "properties": {
+            "Permittivity": {
+              "$ref": "#/$defs/MaterialField",
+              "description": "Spatially-varying relative permittivity `epsilon_r(x)`."
+            },
+            "Permeability": {
+              "$ref": "#/$defs/MaterialField",
+              "description": "Spatially-varying relative permeability `mu_r(x)`."
+            }
+          }
+        }
+      }
+    },
+    "MaterialField": {
+      "type": "object",
+      "title": "Material Field",
+      "description": "A named scalar field read from a standard mesh file (Gmsh `.msh` `$NodeData` or VTK/VTU point data) and mapped to the solve mesh by coordinate matching.",
+      "additionalProperties": false,
+      "required": [
+        "File"
+      ],
+      "properties": {
+        "File": {
+          "type": "string",
+          "description": "Path to the field file (Gmsh `.msh` or VTK/VTU), relative to the working directory."
+        },
+        "Name": {
+          "type": "string",
+          "description": "Name of the scalar array to read from the file. When omitted, the first array in the file is used."
         }
       }
     },

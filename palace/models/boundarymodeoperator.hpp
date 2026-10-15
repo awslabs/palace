@@ -18,6 +18,7 @@ namespace palace
 {
 
 class FarfieldBoundaryOperator;
+class MaterialField;
 class SurfaceConductivityOperator;
 class SurfaceRationalImpedanceOperator;
 class SurfaceImpedanceOperator;
@@ -30,9 +31,13 @@ class SurfaceImpedanceOperator;
 class BoundaryModeOperator
 {
 public:
-  // Caller owns mat_op; it must outlive this operator.
+  // Caller owns mat_op; it must outlive this operator. The optional material fields
+  // supply spatially-varying relative permittivity and inverse permeability over the
+  // solve domain; fields are caller-owned and must outlive this operator.
   BoundaryModeOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
-                       const MaterialOperator &mat_op);
+                       const MaterialOperator &mat_op,
+                       const MaterialField *eps_field = nullptr,
+                       const MaterialField *muinv_field = nullptr);
 
   // Access FE spaces.
   FiniteElementSpace &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
@@ -64,6 +69,8 @@ public:
 
   // Access material and boundary operators.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
+  const MaterialField *GetPermittivityField() const { return eps_field; }
+  const MaterialField *GetInvPermeabilityField() const { return muinv_field; }
   SurfaceImpedanceOperator &GetSurfZOp() { return *surf_z_op; }
   FarfieldBoundaryOperator &GetFarfieldOp() { return *farfield_op; }
   SurfaceConductivityOperator &GetSurfSigmaOp() { return *surf_sigma_op; }
@@ -125,6 +132,7 @@ private:
   // Material and boundary operators. mat_op is caller-owned; the rest are constructed
   // from mat_op + the solve mesh at construction time.
   const MaterialOperator &mat_op;
+  const MaterialField *eps_field, *muinv_field;
   std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
   std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
   std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;

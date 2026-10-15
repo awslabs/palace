@@ -17,9 +17,11 @@ namespace palace
 
 BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh,
-                                           const MaterialOperator &mat_op_in)
+                                           const MaterialOperator &mat_op_in,
+                                           const MaterialField *eps_field_in,
+                                           const MaterialField *muinv_field_in)
   : iodata(iodata_), solver_order(iodata_.solver.order), solve_mesh(mesh.back().get()),
-    mat_op(mat_op_in)
+    mat_op(mat_op_in), eps_field(eps_field_in), muinv_field(muinv_field_in)
 {
   MFEM_VERIFY(solve_mesh->Dimension() == 2,
               "BoundaryMode solver requires a 2D mesh (waveguide cross-section). When "
@@ -38,7 +40,8 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
   // Btn = -Atn^T, Btt is the ND mass.
-  std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op);
+  std::tie(Atnr, Atni) =
+      mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op, muinv_field);
   Btnr.reset(Atnr->Transpose());
   *Btnr *= -1.0;
   if (Atni)
@@ -46,7 +49,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
     Btni.reset(Atni->Transpose());
     *Btni *= -1.0;
   }
-  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(GetNDSpace(), mat_op);
+  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(GetNDSpace(), mat_op, muinv_field);
   Bttr = std::move(bttr_tmp);
 
   Mpi::Print(" ND space: {:d} DOFs, H1 space: {:d} DOFs, total: {:d}\n",

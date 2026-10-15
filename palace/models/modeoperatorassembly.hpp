@@ -17,7 +17,9 @@ namespace palace
 
 class FarfieldBoundaryOperator;
 class FiniteElementSpace;
+class MaterialField;
 class MaterialOperator;
+class MaterialPropertyCoefficient;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
 class SurfaceRationalImpedanceOperator;
@@ -74,7 +76,9 @@ public:
                     SurfaceRationalImpedanceOperator &surf_rz_op,
                     const mfem::HypreParMatrix &Bttr, const mfem::HypreParMatrix *Atnr,
                     const mfem::HypreParMatrix *Atni, const mfem::HypreParMatrix *Btnr,
-                    const mfem::Array<int> &dbc_tdof_list);
+                    const mfem::Array<int> &dbc_tdof_list,
+                    const MaterialField *eps_field = nullptr,
+                    const MaterialField *muinv_field = nullptr);
 
   const std::vector<OperatorComponent> &GetComponents() const { return components; }
   std::complex<double> EvaluateCoefficient(const OperatorComponent &component,
@@ -84,9 +88,18 @@ public:
 
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const MaterialField *muinv_field = nullptr);
 ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const MaterialField *muinv_field = nullptr);
+
+// Build the attribute-based coefficient for a material property. When a spatially-varying
+// field supplies the property, the material constant is replaced by a unit coefficient so
+// that the field multiplies only the sign/scaling `a` (the field then carries the value).
+MaterialPropertyCoefficient MakeMaterialCoefficient(const mfem::Array<int> &attr_to_mat,
+                                                    const mfem::DenseTensor &property,
+                                                    double a, const MaterialField *field);
 
 ComplexHypreParMatrix BuildSystemMatrixA(
     const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,

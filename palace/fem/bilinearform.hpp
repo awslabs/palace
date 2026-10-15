@@ -51,15 +51,21 @@ public:
   const auto &GetTestSpace() const { return test_fespace; }
 
   template <typename T, typename... U>
-  void AddDomainIntegrator(U &&...args)
+  T &AddDomainIntegrator(U &&...args)
   {
-    domain_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
+    auto integ = std::make_unique<T>(std::forward<U>(args)...);
+    T &ref = *integ;
+    domain_integs.push_back(std::move(integ));
+    return ref;
   }
 
   template <typename T, typename... U>
-  void AddBoundaryIntegrator(U &&...args)
+  T &AddBoundaryIntegrator(U &&...args)
   {
-    boundary_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
+    auto integ = std::make_unique<T>(std::forward<U>(args)...);
+    T &ref = *integ;
+    boundary_integs.push_back(std::move(integ));
+    return ref;
   }
 
   void AssembleQuadratureData();

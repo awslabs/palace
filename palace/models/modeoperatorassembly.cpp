@@ -9,6 +9,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
+#include "fem/materialfield.hpp"
 #include "linalg/rap.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -68,26 +69,52 @@ void AddScaledComplex(std::unique_ptr<mfem::HypreParMatrix> &real,
 }
 }  // namespace
 
+// Build the attribute-based coefficient for a material property. When a spatially-varying
+// field supplies the property, the material constant is replaced by a unit coefficient so
+// that the field multiplies only the sign/scaling `a` (the field then carries the value).
+MaterialPropertyCoefficient MakeMaterialCoefficient(const mfem::Array<int> &attr_to_mat,
+                                                    const mfem::DenseTensor &property,
+                                                    double a, const MaterialField *field)
+{
+  if (!field)
+  {
+    return MaterialPropertyCoefficient(attr_to_mat, property, a);
+  }
+  const int n = (attr_to_mat.Size() > 0) ? attr_to_mat.Max() + 1 : 1;
+  mfem::DenseTensor unit(1, 1, n);
+  for (int k = 0; k < n; k++)
+  {
+    unit(0, 0, k) = 1.0;
+  }
+  return MaterialPropertyCoefficient(attr_to_mat, unit, a);
+}
+
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op)
+                                  const MaterialOperator &mat_op,
+                                  const MaterialField *muinv_field)
 {
-  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability(), -1.0);
+  MaterialPropertyCoefficient muinv_func =
+      MakeMaterialCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
+                              -1.0, muinv_field);
   BilinearForm atn(h1_fespace, nd_fespace);
-  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
+  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func)
+      .SetMaterialField(muinv_field);
   return {ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
               .StealParallelAssemble(),
           nullptr};
 }
 
 ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op)
+                                  const MaterialOperator &mat_op,
+                                  const MaterialField *muinv_field)
 {
-  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
+  MaterialPropertyCoefficient muinv_func =
+      MakeMaterialCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
+                              1.0, muinv_field);
   BilinearForm btt(nd_fespace);
-  btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
+  btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func)
+      .SetMaterialField(muinv_field);
   return {ParOperator(btt.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
           nullptr};
 }
@@ -107,9 +134,13 @@ ModeOperatorModel::ModeOperatorModel(
     SurfaceConductivityOperator &surf_sigma_op,
     SurfaceRationalImpedanceOperator &surf_rz_op, const mfem::HypreParMatrix &Bttr,
     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
-    const mfem::HypreParMatrix *Btnr, const mfem::Array<int> &dbc_tdof_list)
+    const mfem::HypreParMatrix *Btnr, const mfem::Array<int> &dbc_tdof_list,
+    const MaterialField *eps_field, const MaterialField *muinv_field)
   : surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op)
 {
+  MFEM_VERIFY(!(normal && (eps_field || muinv_field)),
+              "Spatially-varying material coefficients are not supported with a surface "
+              "normal!");
   auto assemble_nd = [&](BilinearForm &form)
   {
     return ParOperator(form.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble();
@@ -148,15 +179,17 @@ ModeOperatorModel::ModeOperatorModel(
 
   // Constant: curl-curl/negative diffusion, London mass, and surface inductance.
   {
-    MaterialPropertyCoefficient muinv_cc(attr_to_mat,
-                                         normal ? mat_op.GetInvPermeability()
-                                                : mat_op.GetCurlCurlInvPermeability());
+    MaterialPropertyCoefficient muinv_cc =
+        MakeMaterialCoefficient(attr_to_mat,
+                                normal ? mat_op.GetInvPermeability()
+                                       : mat_op.GetCurlCurlInvPermeability(),
+                                1.0, muinv_field);
     if (normal)
     {
       muinv_cc.NormalProjectedCoefficient(*normal);
     }
     BilinearForm att(nd_fespace);
-    att.AddDomainIntegrator<CurlCurlIntegrator>(muinv_cc);
+    att.AddDomainIntegrator<CurlCurlIntegrator>(muinv_cc).SetMaterialField(muinv_field);
     MaterialPropertyCoefficient london_t(n_attr);
     if (mat_op.HasLondonDepth())
     {
@@ -171,13 +204,15 @@ ModeOperatorModel::ModeOperatorModel(
     }
     auto Attr = assemble_nd(att);
 
-    MaterialPropertyCoefficient neg_muinv(attr_to_mat, mat_op.GetInvPermeability(), -1.0);
+    MaterialPropertyCoefficient neg_muinv =
+        MakeMaterialCoefficient(attr_to_mat, mat_op.GetInvPermeability(), -1.0,
+                                muinv_field);
     if (normal)
     {
       neg_muinv.NormalProjectedCoefficient(*normal);
     }
     BilinearForm ann(h1_fespace);
-    ann.AddDomainIntegrator<DiffusionIntegrator>(neg_muinv);
+    ann.AddDomainIntegrator<DiffusionIntegrator>(neg_muinv).SetMaterialField(muinv_field);
     // The H1 block is assembled with the opposite sign (negative diffusion), so the London
     // mass, like the surface inductance, enters with a negative coefficient.
     MaterialPropertyCoefficient london_n(n_attr);
@@ -264,8 +299,9 @@ ModeOperatorModel::ModeOperatorModel(
   // Quadratic omega: signed permittivity/loss and surface capacitance.
   {
     BilinearForm attr(nd_fespace), atti(nd_fespace);
-    MaterialPropertyCoefficient neg_eps(attr_to_mat, mat_op.GetPermittivityReal(), -1.0);
-    attr.AddDomainIntegrator<VectorFEMassIntegrator>(neg_eps);
+    MaterialPropertyCoefficient neg_eps =
+        MakeMaterialCoefficient(attr_to_mat, mat_op.GetPermittivityReal(), -1.0, eps_field);
+    attr.AddDomainIntegrator<VectorFEMassIntegrator>(neg_eps).SetMaterialField(eps_field);
     MaterialPropertyCoefficient surf_m_t(max_bdr_attr);
     surf_z_op.AddMassBdrCoefficients(-1.0, surf_m_t);
     if (!surf_m_t.empty())
@@ -282,13 +318,16 @@ ModeOperatorModel::ModeOperatorModel(
     }
 
     BilinearForm annr(h1_fespace), anni(h1_fespace);
-    MaterialPropertyCoefficient eps_n(attr_to_mat, normal ? mat_op.GetPermittivityReal()
-                                                          : mat_op.GetPermittivityScalar());
+    MaterialPropertyCoefficient eps_n =
+        MakeMaterialCoefficient(attr_to_mat,
+                                normal ? mat_op.GetPermittivityReal()
+                                       : mat_op.GetPermittivityScalar(),
+                                1.0, eps_field);
     if (normal)
     {
       eps_n.NormalProjectedCoefficient(*normal);
     }
-    annr.AddDomainIntegrator<MassIntegrator>(eps_n);
+    annr.AddDomainIntegrator<MassIntegrator>(eps_n).SetMaterialField(eps_field);
     MaterialPropertyCoefficient surf_m_n(max_bdr_attr);
     surf_z_op.AddMassBdrCoefficients(1.0, surf_m_n);
     if (!surf_m_n.empty())
