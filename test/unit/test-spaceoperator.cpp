@@ -723,6 +723,101 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   CHECK(n_pml == n_pml_expected);
 }
 
+TEST_CASE("SpaceOperator PML smoother mask thresholds",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  // Box [0, 1] x [0, 1] x [0, 2] with a PML layer z > 1 of 4 elements (attribute 2): the
+  // smoother mask true DOFs for increasing thresholds of the stretch magnitude are nested
+  // and contained in the PML subdomain (all of the PML elements), and the smoother masks
+  // are only set for the levels above the coarsest one.
+  MPI_Comm comm = Mpi::World();
+  constexpr int order = 2, nz = 8;
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(2, 2, nz, mfem::Element::HEXAHEDRON, 1.0, 1.0, 2.0);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) > 1.0) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = order;
+  solver.linear.mg_max_levels = 2;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  solver.linear.pml_subdomain_solver = PMLSubdomainSolver::DIRECT;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  config::MaterialData vacuum, pml;
+  vacuum.attributes = {1};
+  pml.attributes = {2};
+  config::PMLData pml_pml;
+  pml_pml.autodetect_geometry = false;
+  pml_pml.directions = {false, false, false, false, false, true};
+  pml_pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+  pml_pml.sigma_auto = false;
+  pml_pml.sigma_max = {1.0, 1.0, 20.0};
+  pml_pml.reference_frequency = 2.0;
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {vacuum, pml};
+  domains.pml = {pml_pml};
+  domains.pml[0].attributes = pml.attributes;
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+
+  constexpr double omega = 2.0;
+  auto Select = [&](double smoother_threshold)
+  {
+    solver.linear.pml_smoother_threshold = smoother_threshold;
+    SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    REQUIRE(mg->GetNumLevels() == 2);
+    CHECK(mg->GetSmootherMask(0).empty());
+    CHECK(mg->GetAuxiliarySmootherMask(0).empty());
+    return std::array{mg->GetPMLTrueDofs(), mg->GetSmootherMask(1),
+                      mg->GetAuxiliarySmootherMask(1)};
+  };
+  auto GlobalSize = [&](const std::vector<int> &v)
+  {
+    long long n = static_cast<long long>(v.size());
+    Mpi::GlobalSum(1, &n, comm);
+    return n;
+  };
+  auto Includes = [](const std::vector<int> &a, const std::vector<int> &b)
+  { return std::ranges::includes(a, b); };
+  const auto none = Select(0.0), all = Select(1.0), mid = Select(1.5), deep = Select(4.0);
+  CHECK(none[1].empty());
+  CHECK(none[2].empty());
+  for (const auto *sel : {&all, &mid, &deep})
+  {
+    CHECK((*sel)[0] == none[0]);
+    CHECK(std::ranges::is_sorted((*sel)[1]));
+    CHECK(std::ranges::is_sorted((*sel)[2]));
+  }
+  CHECK(all[1] == all[0]);
+  CHECK(Includes(all[1], mid[1]));
+  CHECK(Includes(mid[1], deep[1]));
+  CHECK(Includes(mid[2], deep[2]));
+  const auto n_mid = GlobalSize(mid[1]), n_deep = GlobalSize(deep[1]),
+             n_aux_deep = GlobalSize(deep[2]);
+  CHECK(n_deep > 0);
+  CHECK(n_deep < n_mid);
+  CHECK(n_mid < GlobalSize(all[1]));
+  CHECK(n_aux_deep > 0);
+}
+
 TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
           "[spaceoperator][pml][Serial][Parallel]")
 {

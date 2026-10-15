@@ -817,6 +817,56 @@ TEST_CASE("Config Linear PML subdomain solver", "[config][Serial]")
   CHECK(Resolve(false, json{{"Type", "AMS"}}) == PMLSubdomainSolver::NONE);
 }
 
+TEST_CASE("Config Linear PML preconditioner options", "[config][Serial]")
+{
+  // Threshold of the stretch magnitude for the smoother masks and the precision of the PML
+  // subdomain factorization.
+  const config::LinearSolverData defaults(json::object());
+  CHECK(defaults.pml_smoother_threshold == 2.0);
+  CHECK_FALSE(defaults.pml_subdomain_single_precision);
+  CHECK_FALSE(defaults.complex_coarse_solve);
+  const config::LinearSolverData linear(json{{"PMLSmootherThreshold", 3.0},
+                                             {"PMLSubdomainSinglePrecision", true},
+                                             {"ComplexCoarseSolve", false}});
+  CHECK(linear.pml_smoother_threshold == 3.0);
+  CHECK(linear.pml_subdomain_single_precision);
+  CHECK_FALSE(linear.complex_coarse_solve);
+  CHECK(config::LinearSolverData(json{{"PMLSmootherThreshold", 0.0}})
+            .pml_smoother_threshold == 0.0);
+
+  // PML regions do not change the defaults of the coarse-level solve and of the sparse
+  // direct solver.
+  auto Resolve = [](bool pml, json linear)
+  {
+    json domains = {{"Materials", {{{"Attributes", {1, 2}}}}}};
+    if (pml)
+    {
+      domains["PML"] = json::array({json{{"Attributes", {2}}}});
+    }
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", domains},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}},
+                     {"Linear", linear}}}};
+    IoData iodata(config, false);
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() ==
+          iodata.solver.linear.complex_coarse_solve);
+    CHECK(resolved["Solver"]["Linear"]["PMLSmootherThreshold"].get<double>() ==
+          iodata.solver.linear.pml_smoother_threshold);
+    return iodata.solver.linear;
+  };
+  CHECK_FALSE(Resolve(true, json::object()).complex_coarse_solve);
+  CHECK(Resolve(true, json{{"ComplexCoarseSolve", true}}).complex_coarse_solve);
+  CHECK_FALSE(Resolve(false, json::object()).complex_coarse_solve);
+  CHECK(Resolve(true, json::object()).type == Resolve(false, json::object()).type);
+#if defined(MFEM_USE_SUPERLU)
+  CHECK(Resolve(true, json::object()).type == LinearSolver::SUPERLU);
+#endif
+}
+
 TEST_CASE("Config preconditioner matrix symmetry", "[config][Serial]")
 {
   auto Symmetry = [](json linear, bool floquet)
