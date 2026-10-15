@@ -11,6 +11,7 @@
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
@@ -71,6 +72,11 @@ private:
   // Operator for domain material properties.
   MaterialOperator mat_op;
 
+  // One unit vector mass B_m per globally indexed material support with a nonlinear
+  // permittivity term. These have no essential-DOF policy; returned A2 wrappers apply it
+  // after factorization.
+  std::vector<std::unique_ptr<ParOperator>> frequency_dependent_permittivity_mass;
+
   // Operators for boundary conditions and source excitations.
   CurrentDipoleOperator current_dipole_op;
   FarfieldBoundaryOperator farfield_op;
@@ -115,6 +121,31 @@ private:
                                      MaterialPropertyCoefficient &fbi);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
+
+  void SetUpFrequencyDependentPermittivityMassOperators();
+  std::unique_ptr<Operator>
+  BuildFrequencyDependentPermittivityA2Operator(std::unique_ptr<Operator> &&base,
+                                                const std::vector<double> &coeff) const;
+  void AddFrequencyDependentPermittivityA2Coefficient(std::size_t material_idx,
+                                                      double coeff,
+                                                      MaterialPropertyCoefficient &f) const;
+  void GetFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                       std::vector<double> &real,
+                                                       std::vector<double> &imag) const;
+  void AssembleFrequencyDependentPermittivityA2Operators(
+      std::complex<double> omega, const MaterialPropertyCoefficient &dfbr,
+      const MaterialPropertyCoefficient &dfbi, const MaterialPropertyCoefficient &fbr,
+      const MaterialPropertyCoefficient &fbi, std::unique_ptr<Operator> &ar,
+      std::unique_ptr<Operator> &ai);
+  // Preconditioner coefficients for the volume A2 terms. With pc_mat_shifted, the
+  // mass-like real part is shifted like the ε∞ mass.
+  void
+  AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                  MaterialPropertyCoefficient &fr,
+                                                  MaterialPropertyCoefficient &fi) const;
+  void
+  AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                  MaterialPropertyCoefficient &f) const;
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
@@ -183,8 +214,8 @@ public:
   const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
-  // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
-  // operator can be passed directly to GetSystemMatrix as the A2 argument. If no
+  // sparse domain/boundary operator and F is the low-rank Floquet DtN correction. The
+  // returned operator can be passed directly to GetSystemMatrix as the A2 argument. If no
   // frequency-dependent terms exist, returns nullptr.
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy);
@@ -242,6 +273,10 @@ public:
   std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
+  // The frequency-dependent part A2(ω) of the system matrix, or null when there is none.
+  // With frequency-dependent material permittivity the result is never null, even at a
+  // frequency where that contribution cancels, so callers can select the nonlinear or
+  // per-frequency path from the returned operator alone.
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
@@ -256,8 +291,9 @@ public:
                                                  bool include_wave_ports);
 
   // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
-  // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
-  // impedance, numeric wave ports) evaluated at the genuinely complex frequency
+  // frequency-dependent domain and boundary terms (including material permittivity models,
+  // 2nd-order ABC, surface conductivity, rational impedance, and numeric wave ports)
+  // evaluated at the genuinely complex frequency
   // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution
   // at complex ω). For real ω this matches GetExtraSystemMatrix<ComplexOperator>(double)
   // up to the wave-port term, which additionally carries the attenuation -Im(k_n)·M on
@@ -323,6 +359,18 @@ public:
   template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
+
+  // Return the ω-independent unit-coefficient volume mass B_m of frequency-dependent
+  // permittivity material `material_idx`, placed on the IMAGINARY slot (matching the
+  // wave-port convention). The full A2 contribution at frequency ω is g_m(iω)·B_m =
+  // f_m(ω)·(i·B_m) with g_m(s) from
+  // GetMaterialOp().EvaluateFrequencyDependentPermittivityA2(material_idx, s) and
+  // f_m(ω) = g_m(iω)/i. The returned operator borrows the B_m cached by this SpaceOperator
+  // (no assembly), so it must not outlive it. Returns null if the material has no nonlinear
+  // term or no support on any rank (rank-uniform). Used by the PROM factored online phase.
+  std::unique_ptr<ComplexOperator>
+  GetFrequencyDependentPermittivityMassMatrix(std::size_t material_idx,
+                                              Operator::DiagonalPolicy diag_policy) const;
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:

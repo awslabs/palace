@@ -7,6 +7,7 @@
 #include <complex>
 #include <memory>
 #include <optional>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -68,6 +69,9 @@ protected:
   // which case identity is used.
   const Operator *opB;
 
+  // Known poles of A2(λ).
+  nleps::PoleTerms poles;
+
   // Workspace vector for operator applications.
   mutable ComplexVector x1, y1;
 
@@ -96,6 +100,12 @@ public:
 
   // Set the projection operator for enforcing the divergence-free constraint.
   void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;
+
+  // Set the known poles of A2(λ).
+  void SetExtraSystemPoles(const std::vector<std::complex<double>> &p) override
+  {
+    poles.poles = p;
+  }
 
   // Set optional B matrix used for weighted inner products. This must be set explicitly
   // even for generalized problems, otherwise the identity will be used.

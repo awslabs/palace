@@ -68,6 +68,13 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
+  // The 2D driven and eigenmode paths use a different curl space and error estimator and
+  // have no coverage with dispersive materials, so they are rejected rather than assumed.
+  MFEM_VERIFY(!mat_op.HasFrequencyDependentPermittivity() || mesh.back()->Dimension() == 3,
+              "Frequency-dependent material Permittivity is only supported for 3D "
+              "simulations!");
+  SetUpFrequencyDependentPermittivityMassOperators();
+
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
   // target space.
@@ -100,6 +107,145 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
 {
   // Validate excitations after wave port setup is complete.
   CheckExcitations(iodata.problem.type);
+}
+
+void SpaceOperator::SetUpFrequencyDependentPermittivityMassOperators()
+{
+  frequency_dependent_permittivity_mass.resize(
+      mat_op.NumFrequencyDependentPermittivityMaterials());
+  for (std::size_t i = 0; i < frequency_dependent_permittivity_mass.size(); i++)
+  {
+    if (!mat_op.HasFrequencyDependentPermittivityA2(i) ||
+        !mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      continue;
+    }
+    MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+    f.AddMaterialProperty(
+        mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i)),
+        1.0);
+
+    // Every rank builds the same cache entry. Ranks without this support assemble an empty,
+    // dimensionally valid local operator, while the outer ParOperator supplies the common
+    // parallel restriction/prolongation.
+    constexpr bool skip_zeros = false;
+    BilinearForm a(GetNDSpace());
+    if (!f.empty())
+    {
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(f);
+    }
+    auto b = a.Assemble(skip_zeros);
+    frequency_dependent_permittivity_mass[i] =
+        std::make_unique<ParOperator>(std::move(b), GetNDSpace());
+  }
+}
+
+std::unique_ptr<Operator> SpaceOperator::BuildFrequencyDependentPermittivityA2Operator(
+    std::unique_ptr<Operator> &&base, const std::vector<double> &coeff) const
+{
+  MFEM_VERIFY(coeff.size() == frequency_dependent_permittivity_mass.size(),
+              "Invalid dispersive material coefficient array!");
+  auto sum = std::make_unique<SumOperator>(GetNDSpace().GetVSize());
+  if (base)
+  {
+    sum->AddOperator(std::move(base));
+  }
+  for (std::size_t i = 0; i < coeff.size(); i++)
+  {
+    if (coeff[i] != 0.0 && frequency_dependent_permittivity_mass[i])
+    {
+      // B_m is owned by SpaceOperator and intentionally borrowed by each A2 sum.
+      sum->AddOperator(frequency_dependent_permittivity_mass[i]->LocalOperator(), coeff[i]);
+    }
+  }
+  return sum;
+}
+
+std::unique_ptr<ComplexOperator> SpaceOperator::GetFrequencyDependentPermittivityMassMatrix(
+    std::size_t material_idx, Operator::DiagonalPolicy diag_policy) const
+{
+  // The cache entry exists on every rank exactly when the material has a nonlinear term
+  // with global support (SetUpFrequencyDependentPermittivityMassOperators), so the null
+  // contract is rank-uniform.
+  const auto &B = frequency_dependent_permittivity_mass.at(material_idx);
+  if (!B)
+  {
+    return {};
+  }
+  auto B_op =
+      std::make_unique<ComplexParOperator>(nullptr, &B->LocalOperator(), GetNDSpace());
+  B_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return B_op;
+}
+
+void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficient(
+    std::size_t material_idx, double coeff, MaterialPropertyCoefficient &f) const
+{
+  if (coeff != 0.0 && mat_op.HasFrequencyDependentPermittivitySupport(material_idx))
+  {
+    f.AddMaterialProperty(
+        mat_op.GetCeedAttributes(
+            mat_op.GetFrequencyDependentPermittivityAttributes(material_idx)),
+        coeff);
+  }
+}
+
+void SpaceOperator::GetFrequencyDependentPermittivityA2Coefficients(
+    std::complex<double> omega, std::vector<double> &real, std::vector<double> &imag) const
+{
+  real.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
+  imag.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
+  const std::complex<double> s = 1i * omega;
+  for (std::size_t i = 0; i < real.size(); i++)
+  {
+    // A material without mesh support contributes nothing and is not evaluated, since it
+    // may be singular at this frequency.
+    const std::complex<double> value =
+        mat_op.HasFrequencyDependentPermittivitySupport(i)
+            ? mat_op.EvaluateFrequencyDependentPermittivityA2(i, s)
+            : 0.0;
+    real[i] = value.real();
+    imag[i] = value.imag();
+  }
+}
+
+void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &fr,
+    MaterialPropertyCoefficient &fi) const
+{
+  const std::complex<double> s = 1i * omega;
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    // The real part is mass-like (s²χ), so it follows the same shift as the ε∞ mass; a
+    // strongly dispersive material (Re χ > ε∞) would otherwise make the shifted
+    // preconditioner indefinite. The imaginary part is loss-like and is left as is.
+    if (!mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      continue;
+    }
+    const std::complex<double> g = mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
+    AddFrequencyDependentPermittivityA2Coefficient(
+        i, pc_mat_shifted ? std::abs(g.real()) : g.real(), fr);
+    AddFrequencyDependentPermittivityA2Coefficient(i, g.imag(), fi);
+  }
+}
+
+void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &f) const
+{
+  const std::complex<double> s = 1i * omega;
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    // Real preconditioners accumulate the real and imaginary slots into the same form, as
+    // for other A2 terms, with the mass-like real part shifted like the ε∞ mass.
+    if (!mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      continue;
+    }
+    const std::complex<double> g = mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
+    AddFrequencyDependentPermittivityA2Coefficient(
+        i, (pc_mat_shifted ? std::abs(g.real()) : g.real()) + g.imag(), f);
+  }
 }
 
 void SpaceOperator::CheckExcitations(ProblemType problem_type) const
@@ -442,6 +588,53 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
 
 }  // namespace
 
+void SpaceOperator::AssembleFrequencyDependentPermittivityA2Operators(
+    std::complex<double> omega, const MaterialPropertyCoefficient &dfbr,
+    const MaterialPropertyCoefficient &dfbi, const MaterialPropertyCoefficient &fbr,
+    const MaterialPropertyCoefficient &fbi, std::unique_ptr<Operator> &ar,
+    std::unique_ptr<Operator> &ai)
+{
+  // Preserve the established boundary-only assembly path when no volume A2 model exists.
+  // In particular, exact-zero poles have already been folded into ordinary conductivity.
+  if (!mat_op.HasFrequencyDependentPermittivityA2())
+  {
+    int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
+    Mpi::GlobalMin(2, empty, GetComm());
+    constexpr bool skip_zeros = false;
+    if (!empty[0])
+    {
+      ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr,
+                            skip_zeros);
+    }
+    if (!empty[1])
+    {
+      ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr,
+                            skip_zeros);
+    }
+    return;
+  }
+
+  // Always build both slots, including a zero wrapper when the contribution cancels at
+  // this frequency: nonlinear interpolation and PROM fallback selection require the same
+  // operator structure at every frequency.
+  std::vector<double> model_A2_real, model_A2_imag;
+  GetFrequencyDependentPermittivityA2Coefficients(omega, model_A2_real, model_A2_imag);
+  constexpr bool skip_zeros = false;
+  std::unique_ptr<Operator> base_r, base_i;
+  if (!AreExactlyZero(dfbr, fbr))
+  {
+    base_r =
+        AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+  }
+  if (!AreExactlyZero(dfbi, fbi))
+  {
+    base_i =
+        AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+  }
+  ar = BuildFrequencyDependentPermittivityA2Operator(std::move(base_r), model_A2_real);
+  ai = BuildFrequencyDependentPermittivityA2Operator(std::move(base_i), model_A2_imag);
+}
+
 template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
@@ -589,21 +782,11 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, include_wave_ports);
-  int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
-  Mpi::GlobalMin(2, empty, GetComm());
-  if (empty[0] && empty[1])
+  std::unique_ptr<Operator> ar, ai;
+  AssembleFrequencyDependentPermittivityA2Operators(omega, dfbr, dfbi, fbr, fbi, ar, ai);
+  if (!ar && !ai)
   {
     return {};
-  }
-  constexpr bool skip_zeros = false;
-  std::unique_ptr<Operator> ar, ai;
-  if (!empty[0])
-  {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
-  }
-  if (!empty[1])
-  {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -625,31 +808,21 @@ std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
                                     Operator::DiagonalPolicy diag_policy)
 {
-  // Complex-ω A2(λ) for the eigenmode nonlinear solve: identical assembly to the real-ω
-  // overload but the frequency-dependent boundary terms (2nd-order ABC, surface
-  // conductivity, rational impedance, numeric wave ports) are evaluated at the genuinely
-  // complex frequency (ω = -i·λ). Always returns a ComplexOperator since these terms
-  // carry a real-slot contribution at complex ω.
+  // Complex-ω A2(λ) for the eigenmode nonlinear solve: nonzero-pole volume and
+  // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
+  // impedance, numeric wave ports) are evaluated at the genuinely complex
+  // frequency (ω = -i·λ). Always returns a ComplexOperator since these terms carry a
+  // real-slot contribution at complex ω.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
-  Mpi::GlobalMin(2, empty, GetComm());
-  if (empty[0] && empty[1])
+  std::unique_ptr<Operator> ar, ai;
+  AssembleFrequencyDependentPermittivityA2Operators(omega, dfbr, dfbi, fbr, fbi, ar, ai);
+  if (!ar && !ai)
   {
     return {};
-  }
-  constexpr bool skip_zeros = false;
-  std::unique_ptr<Operator> ar, ai;
-  if (!empty[0])
-  {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
-  }
-  if (!empty[1])
-  {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -1111,6 +1284,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(a2.imag(), fbi);
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
+  AddFrequencyDependentPermittivityA2Coefficients(a3, fr, fi);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
   if (mat_op.HasFloquetFrequencyScaling())
   {
@@ -1161,8 +1335,10 @@ void SpaceOperator::AssemblePreconditioner(
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddDampingCoefficients(a1.imag(), fr);
   AddDampingBdrCoefficients(a1.imag(), fbr);
-  AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
-  AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
+  const double a2_pc = pc_mat_shifted ? std::abs(a2.real()) : a2.real();
+  AddAbsMassCoefficients(a2_pc, fr);
+  AddRealMassBdrCoefficients(a2_pc, fbr);
+  AddFrequencyDependentPermittivityA2Coefficients(a3, fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
@@ -1196,8 +1372,10 @@ void SpaceOperator::AssemblePreconditioner(
   AddStiffnessBdrCoefficients(a0, fbr);
   AddDampingCoefficients(a1, fr);
   AddDampingBdrCoefficients(a1, fbr);
-  AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
-  AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+  const double a2_pc = pc_mat_shifted ? std::abs(a2) : a2;
+  AddAbsMassCoefficients(a2_pc, fr);
+  AddRealMassBdrCoefficients(a2_pc, fbr);
+  AddFrequencyDependentPermittivityA2Coefficients(a3, fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
