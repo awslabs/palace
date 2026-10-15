@@ -7658,6 +7658,8 @@ TEST_CASE("SurfaceResponseIdentification frame minimisation compares numbers by 
   CHECK_THAT(box[0].get<double>(), WithinAbs(-10.3, 1.0e-12));
   CHECK(canonical->chirality == -1);
   CHECK_THAT(canonical->axes[0][0], WithinAbs(-1.0, 1.0e-12));
-  CHECK(canonical->key.rfind("{\"Box\":[-10.3,", 0) == 0);
+  // The key text of record is the chosen frame's serialisation (the box quantised:
+  // -10.299999999999999 in the text).
+  CHECK(canonical->key == canonical->signature.dump());
   CHECK(canonical->hash == Sha256Hex(canonical->key));
 }

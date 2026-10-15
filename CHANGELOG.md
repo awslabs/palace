@@ -186,6 +186,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - The surface-response identification's candidate-frame minimisation
+    (`CanonicalClusterSignatureWithSupport`, the spatial-support contract-3 key) compares the
+    frames' serialisations field by field with numbers compared by value; it compared the
+    serialised key texts, which sorted `-1.5` before `-10.3`. The MPI-2 unit test
+    "SurfaceResponseOperator C4 curvature family rings" no longer removes its shared patches
+    CSV on every rank (the root removes it after a barrier).
   - Reject all-zero numerator or denominator polynomial coefficients in
     `config["Boundaries"]["RationalImpedance"]` during schema validation, matching the
     existing checks in the configuration parser and providing users with earlier feedback.

@@ -636,10 +636,12 @@ struct FrameSupport
   std::vector<SupportContextPiece> context;
 };
 
-// The v3 canonical signature: the lexicographically smallest serialisation of
-// {Box, Context, Portions, Vertices} over the candidate frames of the claims (the frame
-// candidates are the PORTION tangents and perpendiculars, both signs and handedness, as in
-// CanonicalClusterSignature; the context cannot rotate the frame away from the claims),
+// The v3 canonical signature: the smallest serialisation of {Box, Context, Portions,
+// Vertices} over the candidate frames of the claims, the fields read in the order of the
+// serialisation with numbers compared by value (not as text: "-1.5" sorted before "-10.3";
+// decision 825 (b) H-8); the frame candidates are the PORTION tangents and perpendiculars,
+// both signs and handedness, as in CanonicalClusterSignature; the context cannot rotate the
+// frame away from the claims,
 // `support(origin, x, y)` giving the frame's box and context (nullopt = unboxable in that
 // frame; frames reaching a box are preferred). Conductor labels: by first appearance over
 // the sorted Portions THEN the sorted Context. nullopt when every frame is unboxable.

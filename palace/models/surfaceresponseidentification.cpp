@@ -2415,6 +2415,58 @@ nlohmann::json SignatureWithSupportInFrame(const std::vector<SignaturePortion> &
   return serialized;
 }
 
+namespace
+{
+
+// The order of the frame minimisation on two serialisations (decision 825 (b) H-8, the 772
+// finding): the fields in the order of the dump (object keys sorted, array entries in
+// order), numbers compared by VALUE where the dump text put "-1.5" before "-10.3". A side
+// that runs out of entries sorts after the other and a key present on one side only sorts
+// by its name, as the dump text does; a string, boolean or null by its dump text; two
+// numbers equal by value by their dump text, so 0 is returned exactly when the dumps are
+// equal (the mirror-symmetric tie, chirality 0, is unchanged). Negative: a before b.
+int CompareSerializedInDumpOrder(const nlohmann::json &a, const nlohmann::json &b)
+{
+  auto by_dump = [](const nlohmann::json &p, const nlohmann::json &q)
+  { return p.dump().compare(q.dump()); };
+  if (a.is_number() && b.is_number())
+  {
+    const double va = a.get<double>(), vb = b.get<double>();
+    return va < vb ? -1 : (vb < va ? 1 : by_dump(a, b));
+  }
+  if (a.is_object() && b.is_object())
+  {
+    auto ia = a.begin(), ib = b.begin();
+    for (; ia != a.end() && ib != b.end(); ++ia, ++ib)
+    {
+      if (ia.key() != ib.key())
+      {
+        return ia.key() < ib.key() ? -1 : 1;
+      }
+      if (const int order = CompareSerializedInDumpOrder(ia.value(), ib.value()))
+      {
+        return order;
+      }
+    }
+    return ia != a.end() ? -1 : (ib != b.end() ? 1 : 0);
+  }
+  if (a.is_array() && b.is_array())
+  {
+    const std::size_t common = std::min(a.size(), b.size());
+    for (std::size_t i = 0; i < common; i++)
+    {
+      if (const int order = CompareSerializedInDumpOrder(a[i], b[i]))
+      {
+        return order;
+      }
+    }
+    return a.size() > common ? -1 : (b.size() > common ? 1 : 0);
+  }
+  return by_dump(a, b);
+}
+
+}  // namespace
+
 std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
     const std::vector<SignaturePortion> &portions,
     const std::vector<SignatureVertex> &vertices, const Point3D &process_normal,
@@ -2446,22 +2498,24 @@ std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
       {
         continue;  // unboxable in this frame
       }
-      // The dump of a complete JSON object starts with its "Box" entry (keys sorted), so a
-      // frame whose box dump exceeds the best frame's cannot serialise below it.
+      // The serialisation of a complete frame starts with its "Box" entry (keys sorted), so
+      // a frame whose box exceeds the best frame's cannot serialise below it; numbers are
+      // compared by value (CompareSerializedInDumpOrder).
       nlohmann::json serialized = SignatureWithSupportInFrame(portions, vertices, origin, x,
                                                               y, radius, *frame_support);
-      const std::string key = serialized.dump();
-      if (!have || key < best_key)
+      const int order =
+          have ? CompareSerializedInDumpOrder(serialized, best.signature) : -1;
+      if (order < 0)
       {
         have = true;
-        best_key = key;
+        best_key = serialized.dump();
         best.signature = std::move(serialized);
         best.chirality = handedness;
         best.origin = origin;
         best.axes = {x, y, n};
         minimal_handedness = {handedness};
       }
-      else if (key == best_key)
+      else if (order == 0)
       {
         minimal_handedness.insert(handedness);
       }

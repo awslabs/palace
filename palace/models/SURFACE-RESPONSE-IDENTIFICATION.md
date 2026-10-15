@@ -1488,7 +1488,9 @@ reads again (every widening moves a face by at least R, so the span cap bounds i
 (an edge along the face, sin theta = 0) does not act: T2 reads it as before. The rule reads the
 FRAME OF RECORD only (decision 772): the frame is chosen over the candidate frames of the claims
 exactly as without the rule (the claims frame when its support is legacy-equivalent, else the
-lexicographically smallest key text with the support of each candidate), then one support
+smallest serialisation with the support of each candidate, the fields in the order of the key
+text with NUMBERS compared by value — decision 825 (b) H-8: the earlier text compare sorted
+"-1.5" before "-10.3"), then one support
 reading WITH the rule in that frame makes the record and the key — a rule acting inside every
 candidate would widen a candidate's box and could make its key text sort below the frame of
 record's ("-10.3..." before "-2.9..."), renaming a key whose own frame reads no steep crossing
@@ -1512,8 +1514,9 @@ is a straight chain piece abutting a claim-cut end, collinear with that claim an
 face of the box (`LegacyEquivalent`) with no growth — then the device plan clipped to the box
 IS the legacy coupon geometry and the claims-only key stands byte for byte (contract 2:
 unchanged coupons keep their keys, no library migration; the transmon's 10-edge JJ and 4-edge
-models and every corner). Otherwise (contract 3) the signature is the lexicographically
-smallest `{Box, Context, Portions, Vertices}` over the candidate frames of the CLAIMS (the
+models and every corner). Otherwise (contract 3) the signature is the smallest
+`{Box, Context, Portions, Vertices}` over the candidate frames of the CLAIMS (the fields in the
+order of the key text, numbers by value, decision 825 (b) H-8; the
 portion tangents and perpendiculars, both signs and handedness values, as before) with the box
 and the context recomputed in every frame (`CanonicalClusterSignatureWithSupport`; the box
 frame IS the canonical frame, ruling MAJOR-2 — for axis-aligned clusters every candidate frame
