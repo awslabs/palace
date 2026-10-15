@@ -12,9 +12,11 @@
 #include <cmath>
 #include <complex>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <numbers>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -254,6 +256,28 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
                               Catch::Matchers::WithinAbs(v_ref, atol));
       }
     }
+  };
+}
+
+// FluxLoopExcitation fields are saved by SaveField alone, and the final save lands after
+// the largest written cycle instead of over a source written out of order.
+palace::test::CustomCheck TestFluxLoopExcitationFields()
+{
+  return [](palace::Table &, palace::Table &, const std::filesystem::path &actual)
+  {
+    const auto dir = actual.parent_path() / "paraview" / "magnetostatic";
+    auto fields = [&dir](int cycle)
+    {
+      std::ifstream file(dir / ("Cycle00000" + std::to_string(cycle)) / "data.pvtu");
+      std::stringstream ss;
+      ss << file.rdbuf();
+      return ss.str();
+    };
+    CHECK(fields(1).find("Name=\"B\"") != std::string::npos);     // swept loop 1
+    CHECK(fields(2).find("Name=\"B\"") != std::string::npos);     // excitation 2
+    CHECK(fields(3).find("Name=\"B\"") != std::string::npos);     // swept loop 3
+    CHECK(fields(4).find("Name=\"Rank\"") != std::string::npos);  // final save
+    CHECK(!std::filesystem::exists(dir / "Cycle000005"));
   };
 }
 
@@ -1004,6 +1028,21 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "", opts);
+}
+
+// Two simultaneous London flux-loop excitations alongside the swept loops 1 and 3: one
+// drives both holes, written between the swept fields, and one is the zero state with no
+// field. Locks terminal-fluxexc.csv and the field and final-save layout.
+TEST_CASE("double_hole_london_flux_excitation", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = force_default_solver;
+  opts.custom_checks["terminal-fluxexc.csv"] = TestFluxLoopExcitationFields();
+  palace::test::RunRegressionCase("double_hole_london_excitation",
+                                  "double_hole_excitation.json", "", opts);
 }
 
 // Narrow London ring vs the analytic thin-ring L = L_geom + L_ksq*2*pi*r/w: the extracted

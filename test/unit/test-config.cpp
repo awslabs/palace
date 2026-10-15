@@ -623,6 +623,55 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config FluxLoopExcitation", "[config][Serial]")
+{
+  auto make = [](const json &excitation)
+  {
+    return json{{"FluxLoop",
+                 {{{"Index", 1},
+                   {"FilmAttributes", {8}},
+                   {"HoleAttributes", {9}},
+                   {"FluxAmounts", {1.0}},
+                   {"Direction", "+Z"}}}},
+                {"FluxLoopExcitation", {excitation}}};
+  };
+
+  SECTION("Index must not collide with another boundary's")
+  {
+    auto boundaries = make({{"Index", 1}, {"FluxLoops", {1}}, {"FluxAmounts", {1.0}}});
+    auto error = config::Validate(config::BoundaryData(boundaries));
+    REQUIRE(error.has_value());
+    CHECK_THAT(*error, Catch::Matchers::ContainsSubstring("Duplicate \"Index\": 1"));
+  }
+
+  SECTION("FluxLoops must be non-empty")
+  {
+    CHECK_THROWS(config::BoundaryData(make(
+        {{"Index", 2}, {"FluxLoops", json::array()}, {"FluxAmounts", json::array()}})));
+  }
+
+  SECTION("FluxLoops and FluxAmounts must have the same length")
+  {
+    CHECK_THROWS(config::BoundaryData(
+        make({{"Index", 2}, {"FluxLoops", {1}}, {"FluxAmounts", {1.0, 2.0}}})));
+  }
+
+  SECTION("SaveField defaults to true")
+  {
+    config::BoundaryData boundaries(
+        make({{"Index", 2}, {"FluxLoops", {1}}, {"FluxAmounts", {0.0}}}));
+    CHECK(boundaries.fluxloopexcitation.at(2).save_field);
+    CHECK(!config::Validate(boundaries).has_value());
+  }
+
+  SECTION("FluxLoopMatrixSweep parses and defaults to true")
+  {
+    CHECK(config::MagnetostaticSolverData(json::object()).flux_loop_matrix_sweep);
+    CHECK(!config::MagnetostaticSolverData(json{{"FluxLoopMatrixSweep", false}})
+               .flux_loop_matrix_sweep);
+  }
+}
+
 TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
   using namespace Catch::Matchers;
@@ -1778,6 +1827,46 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                          /*skip=*/{"Order", "RelTol", "AbsTol"});
     INFO("Solver.Transient missing keys: " << json(trans_gaps).dump());
     CHECK(trans_gaps.empty());
+  }
+
+  SECTION("Round-trip: Magnetostatic and FluxLoopExcitation defaults are reproducible")
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries",
+                    {{"FluxLoop",
+                      {{{"Index", 1},
+                        {"FilmAttributes", {8}},
+                        {"HoleAttributes", {9}},
+                        {"FluxAmounts", {1.0}},
+                        {"Direction", "+Z"}}}},
+                     {"FluxLoopExcitation",
+                      {{{"Index", 2}, {"FluxLoops", {1}}, {"FluxAmounts", {0.5}}}}}}},
+                   {"Solver", json::object()}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.magnetostatic.flux_loop_matrix_sweep ==
+          iodata1.solver.magnetostatic.flux_loop_matrix_sweep);
+    CHECK(iodata2.boundaries.fluxloopexcitation.at(2).save_field ==
+          iodata1.boundaries.fluxloopexcitation.at(2).save_field);
+
+    auto ms_gaps = SchemaCoverageGaps("/properties/Solver/properties/Magnetostatic",
+                                      config["Solver"]["Magnetostatic"], /*skip=*/{});
+    INFO("Solver.Magnetostatic missing keys: " << json(ms_gaps).dump());
+    CHECK(ms_gaps.empty());
+    auto exc_gaps =
+        SchemaCoverageGaps("/properties/Boundaries/properties/FluxLoopExcitation/items",
+                           config["Boundaries"]["FluxLoopExcitation"][0], /*skip=*/{});
+    INFO("Boundaries.FluxLoopExcitation[] missing keys: " << json(exc_gaps).dump());
+    CHECK(exc_gaps.empty());
   }
 
   SECTION("Round-trip: BoundaryMode defaulted fields are reproducible")
