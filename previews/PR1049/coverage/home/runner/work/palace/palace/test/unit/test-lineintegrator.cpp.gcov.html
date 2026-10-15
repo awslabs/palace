@@ -1,0 +1,455 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - home/runner/work/palace/palace/test/unit/test-lineintegrator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">/home/runner/work/palace/palace/test/unit</a> - test-lineintegrator.cpp<span style="font-size: 80%;"> (source / <a href="test-lineintegrator.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">193</td>
+            <td class="headerCovTableEntry">193</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-10-14 22:25:13</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntry">12</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &lt;cmath&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>              : #include &lt;functional&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;vector&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;catch2/generators/catch_generators.hpp&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : </span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;fem/lineintegrator.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : </span>
+<span id="L15"><span class="lineNum">      15</span>              : namespace palace</span>
+<span id="L16"><span class="lineNum">      16</span>              : {</span>
+<span id="L17"><span class="lineNum">      17</span>              : using namespace Catch::Matchers;</span>
+<span id="L18"><span class="lineNum">      18</span>              : </span>
+<span id="L19"><span class="lineNum">      19</span>              : namespace</span>
+<span id="L20"><span class="lineNum">      20</span>              : {</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : using VecFunc = std::function&lt;void(const mfem::Vector &amp;, mfem::Vector &amp;)&gt;;</span>
+<span id="L23"><span class="lineNum">      23</span>              : </span>
+<span id="L24"><span class="lineNum">      24</span>              : // Reference value of ∫ F · dl along a polyline, using a high-order Gauss rule on each</span>
+<span id="L25"><span class="lineNum">      25</span>              : // segment (exact for the polynomial fields used here).</span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC tlaBgGNC">          48 : double ReferenceLineIntegral(const VecFunc &amp;F, const std::vector&lt;mfem::Vector&gt; &amp;path,</span></span>
+<span id="L27"><span class="lineNum">      27</span>              :                              bool closed, int vdim)</span>
+<span id="L28"><span class="lineNum">      28</span>              : {</span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">          48 :   const auto &amp;ir = mfem::IntRules.Get(mfem::Geometry::SEGMENT, 20);</span></span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">          48 :   const int sdim = path[0].Size();</span></span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaGNC">          87 :   const int n = static_cast&lt;int&gt;(path.size()) - (closed ? 0 : 1);</span></span>
+<span id="L32"><span class="lineNum">      32</span>              :   double result = 0.0;</span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaGNC">          48 :   mfem::Vector x(sdim), f(vdim);</span></span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">         138 :   for (int s = 0; s &lt; n; s++)</span></span>
+<span id="L35"><span class="lineNum">      35</span>              :   {</span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">          90 :     const auto &amp;p0 = path[s];</span></span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">          90 :     const auto &amp;p1 = path[(s + 1) % path.size()];</span></span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">        1080 :     for (int i = 0; i &lt; ir.GetNPoints(); i++)</span></span>
+<span id="L39"><span class="lineNum">      39</span>              :     {</span>
+<span id="L40"><span class="lineNum">      40</span>              :       const auto &amp;ip = ir.IntPoint(i);</span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">        3168 :       for (int d = 0; d &lt; sdim; d++)</span></span>
+<span id="L42"><span class="lineNum">      42</span>              :       {</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC">        2178 :         x(d) = p0(d) + ip.x * (p1(d) - p0(d));</span></span>
+<span id="L44"><span class="lineNum">      44</span>              :       }</span>
+<span id="L45"><span class="lineNum">      45</span>              :       F(x, f);</span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">        3168 :       for (int d = 0; d &lt; std::min(sdim, vdim); d++)</span></span>
+<span id="L47"><span class="lineNum">      47</span>              :       {</span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">        2178 :         result += ip.weight * f(d) * (p1(d) - p0(d));</span></span>
+<span id="L49"><span class="lineNum">      49</span>              :       }</span>
+<span id="L50"><span class="lineNum">      50</span>              :     }</span>
+<span id="L51"><span class="lineNum">      51</span>              :   }</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">          48 :   return result;</span></span>
+<span id="L53"><span class="lineNum">      53</span>              : }</span>
+<span id="L54"><span class="lineNum">      54</span>              : </span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">         243 : mfem::Vector Point(std::initializer_list&lt;double&gt; x)</span></span>
+<span id="L56"><span class="lineNum">      56</span>              : {</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">         243 :   mfem::Vector v(static_cast&lt;int&gt;(x.size()));</span></span>
+<span id="L58"><span class="lineNum">      58</span>              :   int i = 0;</span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">         765 :   for (auto xi : x)</span></span>
+<span id="L60"><span class="lineNum">      60</span>              :   {</span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">         522 :     v(i++) = xi;</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :   }</span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">         243 :   return v;</span></span>
+<span id="L64"><span class="lineNum">      64</span>              : }</span>
+<span id="L65"><span class="lineNum">      65</span>              : </span>
+<span id="L66"><span class="lineNum">      66</span>              : // Locally refine the elements whose centers satisfy the predicate, to mimic adaptive</span>
+<span id="L67"><span class="lineNum">      67</span>              : // refinement towards a point (conforming bisection or nonconforming refinement).</span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">          48 : void RefineNear(mfem::ParMesh &amp;mesh, const mfem::Vector &amp;c, double r, int levels,</span></span>
+<span id="L69"><span class="lineNum">      69</span>              :                 bool nonconforming)</span>
+<span id="L70"><span class="lineNum">      70</span>              : {</span>
+<span id="L71"><span class="lineNum">      71</span>              :   mfem::Vector x(mesh.SpaceDimension());</span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">         330 :   for (int l = 0; l &lt; levels; l++)</span></span>
+<span id="L73"><span class="lineNum">      73</span>              :   {</span>
+<span id="L74"><span class="lineNum">      74</span>              :     mfem::Array&lt;int&gt; marked;</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">       38486 :     for (int e = 0; e &lt; mesh.GetNE(); e++)</span></span>
+<span id="L76"><span class="lineNum">      76</span>              :     {</span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">       38204 :       auto &amp;T = *mesh.GetElementTransformation(e);</span></span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">       38204 :       T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), x);</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">       38204 :       if (x.DistanceTo(c) &lt; r)</span></span>
+<span id="L80"><span class="lineNum">      80</span>              :       {</span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">        5140 :         marked.Append(e);</span></span>
+<span id="L82"><span class="lineNum">      82</span>              :       }</span>
+<span id="L83"><span class="lineNum">      83</span>              :     }</span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">         378 :     mesh.GeneralRefinement(marked, nonconforming ? 1 : 0);</span></span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">         282 :     r *= 0.6;</span></span>
+<span id="L86"><span class="lineNum">      86</span>              :   }</span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">          48 : }</span></span>
+<span id="L88"><span class="lineNum">      88</span>              : </span>
+<span id="L89"><span class="lineNum">      89</span>              : }  // namespace</span>
+<span id="L90"><span class="lineNum">      90</span>              : </span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaGNC">          39 : TEST_CASE(&quot;LineIntegrator 2D exact for discrete fields&quot;,</span></span>
+<span id="L92"><span class="lineNum">      92</span>              :           &quot;[lineintegrator][Serial][Parallel]&quot;)</span>
+<span id="L93"><span class="lineNum">      93</span>              : {</span>
+<span id="L94"><span class="lineNum">      94</span>              :   MPI_Comm comm = Mpi::World();</span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">          42 :   const bool nonconforming = GENERATE(false, true);</span></span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaGNC">          45 :   const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);</span></span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaGNC">          39 :   if (type == mfem::Element::QUADRILATERAL &amp;&amp; !nonconforming)</span></span>
+<span id="L98"><span class="lineNum">      98</span>              :   {</span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">           3 :     return;  // Local conforming refinement is only available for simplices</span></span>
+<span id="L100"><span class="lineNum">     100</span>              :   }</span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaGNC">          36 :   CAPTURE(nonconforming, type);</span></span>
+<span id="L102"><span class="lineNum">     102</span>              : </span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">          36 :   auto smesh = mfem::Mesh::MakeCartesian2D(6, 4, type, false, 3.0, 2.0);</span></span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC">          36 :   if (nonconforming)</span></span>
+<span id="L105"><span class="lineNum">     105</span>              :   {</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">          24 :     smesh.EnsureNCMesh(true);</span></span>
+<span id="L107"><span class="lineNum">     107</span>              :   }</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">          36 :   mfem::ParMesh mesh(comm, smesh);</span></span>
+<span id="L109"><span class="lineNum">     109</span>              : </span>
+<span id="L110"><span class="lineNum">     110</span>              :   // Graded refinement towards a point on the path, as AMR does near a metal edge.</span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">          36 :   RefineNear(mesh, Point({1.0, 1.0}), 0.6, 6, nonconforming);</span></span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              :   // Field components are quadratic polynomials, contained in the order 3 Nédélec space.</span>
+<span id="L114"><span class="lineNum">     114</span>              :   const int order = 3;</span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaGNC">          36 :   mfem::ND_FECollection fec(order, 2);</span></span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">          36 :   mfem::ParFiniteElementSpace fespace(&amp;mesh, &amp;fec);</span></span>
+<span id="L117"><span class="lineNum">     117</span>              :   VecFunc F = [](const mfem::Vector &amp;x, mfem::Vector &amp;f)</span>
+<span id="L118"><span class="lineNum">     118</span>              :   {</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">      205320 :     f(0) = 1.0 + x(0) * x(0) + 0.5 * x(1);</span></span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaGNC">      205320 :     f(1) = x(0) * x(1) - x(1) * x(1) + 2.0;</span></span>
+<span id="L121"><span class="lineNum">     121</span>              :   };</span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">          36 :   mfem::VectorFunctionCoefficient coeff(2, F);</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">          36 :   mfem::ParGridFunction U(&amp;fespace);</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">          36 :   U.ProjectCoefficient(coeff);</span></span>
+<span id="L125"><span class="lineNum">     125</span>              : </span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaGNC">          27 :   auto Check = [&amp;](const std::vector&lt;mfem::Vector&gt; &amp;path, bool closed)</span></span>
+<span id="L127"><span class="lineNum">     127</span>              :   {</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC">          27 :     fem::LineIntegrator integrator(mesh, path, closed, 2 * order);</span></span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">          27 :     const double ref = ReferenceLineIntegral(F, path, closed, 2);</span></span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaGNC">          27 :     CAPTURE(ref);</span></span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">          27 :     CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">          27 :     CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(0.0, 1.0e-12));</span></span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">          54 :   };</span></span>
+<span id="L134"><span class="lineNum">     134</span>              : </span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">          36 :   SECTION(&quot;Oblique path through the refined region&quot;)</span></span>
+<span id="L136"><span class="lineNum">     136</span>              :   {</span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">          36 :     Check({Point({0.13, 0.27}), Point({1.0, 1.0}), Point({2.71, 1.83})}, false);</span></span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">          36 :   }</span></span>
+<span id="L139"><span class="lineNum">     139</span>              : </span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">          36 :   SECTION(&quot;Path along element edges&quot;)</span></span>
+<span id="L141"><span class="lineNum">     141</span>              :   {</span>
+<span id="L142"><span class="lineNum">     142</span>              :     // y = 1 and x = 1.5 are grid lines of the coarse mesh, so every piece of these</span>
+<span id="L143"><span class="lineNum">     143</span>              :     // segments lies on an edge shared by two elements: it must be counted exactly once.</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">          36 :     Check({Point({0.0, 1.0}), Point({1.5, 1.0}), Point({1.5, 2.0})}, false);</span></span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">          36 :   }</span></span>
+<span id="L146"><span class="lineNum">     146</span>              : </span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">          36 :   SECTION(&quot;Closed path&quot;)</span></span>
+<span id="L148"><span class="lineNum">     148</span>              :   {</span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">          36 :     Check({Point({0.3, 0.3}), Point({2.4, 0.6}), Point({1.1, 1.7})}, true);</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">          36 :   }</span></span>
+<span id="L151"><span class="lineNum">     151</span>              : </span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">          36 :   SECTION(&quot;Path leaving the mesh&quot;)</span></span>
+<span id="L153"><span class="lineNum">     153</span>              :   {</span>
+<span id="L154"><span class="lineNum">     154</span>              :     // Only the portion inside the mesh contributes.</span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">          27 :     std::vector&lt;mfem::Vector&gt; path = {Point({-1.0, 0.5}), Point({1.0, 0.5})};</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">           9 :     fem::LineIntegrator integrator(mesh, path, false, 2 * order);</span></span>
+<span id="L157"><span class="lineNum">     157</span>              :     const double ref =</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">          27 :         ReferenceLineIntegral(F, {Point({0.0, 0.5}), Point({1.0, 0.5})}, false, 2);</span></span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC">           9 :     CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));</span></span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">           9 :     CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(1.0, 1.0e-10));</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaGNC">           9 :     CHECK_THAT(integrator.GetPathLength(), WithinAbs(2.0, 1.0e-14));</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">          45 :   }</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">         135 : }</span></span>
+<span id="L164"><span class="lineNum">     164</span>              : </span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">           6 : TEST_CASE(&quot;LineIntegrator on a 3D boundary submesh&quot;, &quot;[lineintegrator][Serial][Parallel]&quot;)</span></span>
+<span id="L166"><span class="lineNum">     166</span>              : {</span>
+<span id="L167"><span class="lineNum">     167</span>              :   MPI_Comm comm = Mpi::World();</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">           9 :   const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">           6 :   CAPTURE(type);</span></span>
+<span id="L170"><span class="lineNum">     170</span>              : </span>
+<span id="L171"><span class="lineNum">     171</span>              :   // MakeCartesian3D boundary attribute 5 is the x = 0 face.</span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">           6 :   auto smesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, type, 1.0, 1.0, 1.0);</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">           6 :   smesh.EnsureNCMesh(true);</span></span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">           6 :   mfem::ParMesh mesh(comm, smesh);</span></span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">          12 :   RefineNear(mesh, Point({0.0, 0.5, 0.5}), 0.4, 3, true);</span></span>
+<span id="L176"><span class="lineNum">     176</span>              :   mfem::Array&lt;int&gt; attr(1);</span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">           6 :   attr[0] = 5;</span></span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">           6 :   auto submesh = mfem::ParSubMesh::CreateFromBoundary(mesh, attr);</span></span>
+<span id="L179"><span class="lineNum">     179</span>              : </span>
+<span id="L180"><span class="lineNum">     180</span>              :   // Linear tangential field, contained in the order 2 Nédélec space on the surface.</span>
+<span id="L181"><span class="lineNum">     181</span>              :   const int order = 2;</span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">           6 :   mfem::ND_FECollection fec(order, 2);</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">           6 :   mfem::ParFiniteElementSpace fespace(&amp;submesh, &amp;fec);</span></span>
+<span id="L184"><span class="lineNum">     184</span>              :   VecFunc F = [](const mfem::Vector &amp;x, mfem::Vector &amp;f)</span>
+<span id="L185"><span class="lineNum">     185</span>              :   {</span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">        6758 :     f(0) = 7.0;  // Normal component, ignored</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">        6758 :     f(1) = 1.0 + x(1) + 2.0 * x(2);</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">        6758 :     f(2) = x(1) - 2.0 * x(2) + 0.5;</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :   };</span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">           6 :   mfem::VectorFunctionCoefficient coeff(3, F);</span></span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">           6 :   mfem::ParGridFunction U(&amp;fespace);</span></span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">           6 :   U.ProjectCoefficient(coeff);</span></span>
+<span id="L193"><span class="lineNum">     193</span>              : </span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">          12 :   for (const auto &amp;path :</span></span>
+<span id="L195"><span class="lineNum">     195</span>              :        {std::vector&lt;mfem::Vector&gt;{Point({0.0, 0.1, 0.2}), Point({0.0, 0.5, 0.5}),</span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">          18 :                                   Point({0.0, 0.9, 0.7})},</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">          72 :         std::vector&lt;mfem::Vector&gt;{Point({0.0, 0.5, 0.0}), Point({0.0, 0.5, 1.0})}})</span></span>
+<span id="L198"><span class="lineNum">     198</span>              :   {</span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">          12 :     fem::LineIntegrator integrator(submesh, path, false, 2 * order);</span></span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaGNC">          12 :     const double ref = ReferenceLineIntegral(F, path, false, 3);</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">          12 :     CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">          12 :     CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(0.0, 1.0e-12));</span></span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaGNC">          18 :   }</span></span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">          36 : }</span></span>
+<span id="L205"><span class="lineNum">     205</span>              : </span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">           6 : TEST_CASE(&quot;LineIntegrator exact for discrete gradient fields&quot;,</span></span>
+<span id="L207"><span class="lineNum">     207</span>              :           &quot;[lineintegrator][Serial][Parallel]&quot;)</span>
+<span id="L208"><span class="lineNum">     208</span>              : {</span>
+<span id="L209"><span class="lineNum">     209</span>              :   // For E = ∇φ with φ a random H1 finite element function, E lies in the Nédélec space and</span>
+<span id="L210"><span class="lineNum">     210</span>              :   // is discontinuous across element boundaries, while its line integral along any path is</span>
+<span id="L211"><span class="lineNum">     211</span>              :   // exactly φ(p1) - φ(p0). A single global Gauss rule over the segment would not resolve</span>
+<span id="L212"><span class="lineNum">     212</span>              :   // the kinks of the integrand, but the element-aware quadrature must be exact.</span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">           6 :   MPI_Comm comm = Mpi::World();</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">           9 :   const bool nonconforming = GENERATE(false, true);</span></span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaGNC">           6 :   CAPTURE(nonconforming);</span></span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">           6 :   auto smesh = mfem::Mesh::MakeCartesian2D(5, 4, mfem::Element::TRIANGLE, false, 3.0, 2.0);</span></span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">           6 :   if (nonconforming)</span></span>
+<span id="L218"><span class="lineNum">     218</span>              :   {</span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">           3 :     smesh.EnsureNCMesh(true);</span></span>
+<span id="L220"><span class="lineNum">     220</span>              :   }</span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaGNC">           6 :   mfem::ParMesh mesh(comm, smesh);</span></span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaGNC">           6 :   RefineNear(mesh, Point({1.2, 1.0}), 0.6, 8, nonconforming);</span></span>
+<span id="L223"><span class="lineNum">     223</span>              : </span>
+<span id="L224"><span class="lineNum">     224</span>              :   const int order = 2;</span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaGNC">           6 :   mfem::H1_FECollection h1_fec(order, 2);</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">           6 :   mfem::ND_FECollection nd_fec(order, 2);</span></span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaGNC">           6 :   mfem::ParFiniteElementSpace h1_fespace(&amp;mesh, &amp;h1_fec), nd_fespace(&amp;mesh, &amp;nd_fec);</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :   mfem::Vector phi_t(h1_fespace.GetTrueVSize()), E_t(nd_fespace.GetTrueVSize());</span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC">           6 :   phi_t.Randomize(1 + Mpi::Rank(comm));</span></span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaGNC">           6 :   mfem::ParGridFunction phi(&amp;h1_fespace), E(&amp;nd_fespace);</span></span>
+<span id="L231"><span class="lineNum">     231</span>              :   phi.SetFromTrueDofs(phi_t);</span>
+<span id="L232"><span class="lineNum">     232</span>              :   {</span>
+<span id="L233"><span class="lineNum">     233</span>              :     mfem::ParDiscreteLinearOperator grad(&amp;h1_fespace, &amp;nd_fespace);</span>
+<span id="L234"><span class="lineNum">     234</span> <span class="tlaGNC">           6 :     grad.AddDomainInterpolator(new mfem::GradientInterpolator);</span></span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">           6 :     grad.Assemble();</span></span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaGNC">           6 :     grad.Finalize();</span></span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaGNC">           6 :     std::unique_ptr&lt;mfem::HypreParMatrix&gt; G(grad.ParallelAssemble());</span></span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaGNC">           6 :     G-&gt;Mult(phi_t, E_t);</span></span>
+<span id="L239"><span class="lineNum">     239</span>              :   }</span>
+<span id="L240"><span class="lineNum">     240</span>              :   E.SetFromTrueDofs(E_t);</span>
+<span id="L241"><span class="lineNum">     241</span>              : </span>
+<span id="L242"><span class="lineNum">     242</span>              :   // Evaluate φ at the given points (collective).</span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaGNC">           6 :   auto Phi = [&amp;](const std::vector&lt;mfem::Vector&gt; &amp;points)</span></span>
+<span id="L244"><span class="lineNum">     244</span>              :   {</span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">           6 :     mfem::DenseMatrix pts(2, static_cast&lt;int&gt;(points.size()));</span></span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaGNC">          18 :     for (int i = 0; i &lt; pts.Width(); i++)</span></span>
+<span id="L247"><span class="lineNum">     247</span>              :     {</span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaGNC">          12 :       pts(0, i) = points[i](0);</span></span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">          12 :       pts(1, i) = points[i](1);</span></span>
+<span id="L250"><span class="lineNum">     250</span>              :     }</span>
+<span id="L251"><span class="lineNum">     251</span>              :     mfem::Array&lt;int&gt; elems;</span>
+<span id="L252"><span class="lineNum">     252</span>              :     mfem::Array&lt;mfem::IntegrationPoint&gt; ips;</span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">           6 :     mesh.FindPoints(pts, elems, ips, false);</span></span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">           6 :     std::vector&lt;double&gt; vals(points.size(), 0.0);</span></span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">          18 :     for (int i = 0; i &lt; pts.Width(); i++)</span></span>
+<span id="L256"><span class="lineNum">     256</span>              :     {</span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">          12 :       if (elems[i] &gt;= 0)</span></span>
+<span id="L258"><span class="lineNum">     258</span>              :       {</span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">           8 :         vals[i] = phi.GetValue(elems[i], ips[i]);</span></span>
+<span id="L260"><span class="lineNum">     260</span>              :       }</span>
+<span id="L261"><span class="lineNum">     261</span>              :     }</span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">           6 :     Mpi::GlobalSum(static_cast&lt;int&gt;(vals.size()), vals.data(), comm);</span></span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">           6 :     return vals;</span></span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaGNC">           6 :   };</span></span>
+<span id="L265"><span class="lineNum">     265</span>              : </span>
+<span id="L266"><span class="lineNum">     266</span>              :   const std::vector&lt;mfem::Vector&gt; path = {Point({0.17, 0.31}), Point({1.2, 1.0}),</span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">          30 :                                           Point({1.2, 1.5}), Point({2.83, 1.77})};</span></span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaGNC">          18 :   const auto vals = Phi({path.front(), path.back()});</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">           6 :   const double ref = vals[1] - vals[0];</span></span>
+<span id="L270"><span class="lineNum">     270</span>              :   {</span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaGNC">           6 :     fem::LineIntegrator integrator(mesh, path, false, 2 * order);</span></span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">           6 :     CAPTURE(ref, integrator.GetNumSubIntervals());</span></span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">           6 :     CHECK_THAT(integrator.Integrate(E), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">           6 :   }</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :   {</span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">           6 :     fem::LineIntegrator integrator(mesh, path, true, 2 * order);</span></span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">           6 :     CHECK_THAT(integrator.Integrate(E), WithinAbs(0.0, 1.0e-10 * (1.0 + std::abs(ref))));</span></span>
+<span id="L278"><span class="lineNum">     278</span>              :   }</span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">          24 : }</span></span>
+<span id="L280"><span class="lineNum">     280</span>              : </span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">           6 : TEST_CASE(&quot;LineIntegrator on curved elements&quot;, &quot;[lineintegrator][Serial][Parallel]&quot;)</span></span>
+<span id="L282"><span class="lineNum">     282</span>              : {</span>
+<span id="L283"><span class="lineNum">     283</span>              :   // Quarter annulus a &lt; r &lt; b with a curved (cubic) mesh. Straight paths ending next to</span>
+<span id="L284"><span class="lineNum">     284</span>              :   // the curved boundaries cross curved elements and end between mesh vertices, where the</span>
+<span id="L285"><span class="lineNum">     285</span>              :   // straight chords of the boundary elements would cut off part of the path. The line</span>
+<span id="L286"><span class="lineNum">     286</span>              :   // integral of E = ∇φ must still be φ(p1) - φ(p0).</span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">           6 :   MPI_Comm comm = Mpi::World();</span></span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaGNC">           9 :   const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);</span></span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">           6 :   CAPTURE(type);</span></span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">           6 :   const double a = 0.5, b = 2.0;</span></span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">           6 :   auto smesh = mfem::Mesh::MakeCartesian2D(3, 8, type, false, 1.0, 1.0);</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">           6 :   smesh.SetCurvature(3);</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">           6 :   smesh.Transform(</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">        2592 :       [&amp;](const mfem::Vector &amp;u, mfem::Vector &amp;x)</span></span>
+<span id="L295"><span class="lineNum">     295</span>              :       {</span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">        2592 :         const double r = a + (b - a) * u(0), theta = 0.5 * M_PI * u(1);</span></span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">        2592 :         x(0) = r * std::cos(theta);</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">        2592 :         x(1) = r * std::sin(theta);</span></span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaGNC">        2592 :       });</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">           6 :   mfem::ParMesh mesh(comm, smesh);</span></span>
+<span id="L301"><span class="lineNum">     301</span>              : </span>
+<span id="L302"><span class="lineNum">     302</span>              :   const int order = 2;</span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">           6 :   mfem::H1_FECollection h1_fec(order, 2);</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">           6 :   mfem::ND_FECollection nd_fec(order, 2);</span></span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaGNC">           6 :   mfem::ParFiniteElementSpace h1_fespace(&amp;mesh, &amp;h1_fec), nd_fespace(&amp;mesh, &amp;nd_fec);</span></span>
+<span id="L306"><span class="lineNum">     306</span>              :   mfem::FunctionCoefficient phi_coeff(</span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaGNC">        1014 :       [](const mfem::Vector &amp;x) { return std::sin(1.3 * x(0)) * std::cosh(0.7 * x(1)); });</span></span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">           6 :   mfem::ParGridFunction phi(&amp;h1_fespace), E(&amp;nd_fespace);</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">           6 :   phi.ProjectCoefficient(phi_coeff);</span></span>
+<span id="L310"><span class="lineNum">     310</span>              :   {</span>
+<span id="L311"><span class="lineNum">     311</span>              :     mfem::ParDiscreteLinearOperator grad(&amp;h1_fespace, &amp;nd_fespace);</span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaGNC">           6 :     grad.AddDomainInterpolator(new mfem::GradientInterpolator);</span></span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">           6 :     grad.Assemble();</span></span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">           6 :     grad.Finalize();</span></span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaGNC">           6 :     grad.Mult(phi, E);</span></span>
+<span id="L316"><span class="lineNum">     316</span>              :   }</span>
+<span id="L317"><span class="lineNum">     317</span>              : </span>
+<span id="L318"><span class="lineNum">     318</span>              :   // Evaluate φ at a point (collective), searching all elements with the exact curved</span>
+<span id="L319"><span class="lineNum">     319</span>              :   // geometry (points on the curved boundary between vertices lie outside the straight</span>
+<span id="L320"><span class="lineNum">     320</span>              :   // chords used by a bounding-box search).</span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">          24 :   auto Phi = [&amp;](const mfem::Vector &amp;x)</span></span>
+<span id="L322"><span class="lineNum">     322</span>              :   {</span>
+<span id="L323"><span class="lineNum">     323</span>              :     mfem::InverseElementTransformation inv;</span>
+<span id="L324"><span class="lineNum">     324</span>              :     inv.SetSolverType(mfem::InverseElementTransformation::NewtonElementProject);</span>
+<span id="L325"><span class="lineNum">     325</span>              :     mfem::IntegrationPoint ip;</span>
+<span id="L326"><span class="lineNum">     326</span>              :     mfem::Vector y(2);</span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">          24 :     double val = 0.0;</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">          24 :     int found = Mpi::Size(comm);</span></span>
+<span id="L329"><span class="lineNum">     329</span> <span class="tlaGNC">         386 :     for (int e = 0; e &lt; mesh.GetNE(); e++)</span></span>
+<span id="L330"><span class="lineNum">     330</span>              :     {</span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">         378 :       auto &amp;T = *mesh.GetElementTransformation(e);</span></span>
+<span id="L332"><span class="lineNum">     332</span>              :       inv.SetTransformation(T);</span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">         378 :       if (inv.Transform(x, ip) == mfem::InverseElementTransformation::Unknown)</span></span>
+<span id="L334"><span class="lineNum">     334</span>              :       {</span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaGNC">          63 :         continue;</span></span>
+<span id="L336"><span class="lineNum">     336</span>              :       }</span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaGNC">         315 :       T.Transform(ip, y);</span></span>
+<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC">         315 :       if (y.DistanceTo(x) &lt; 1.0e-12)</span></span>
+<span id="L339"><span class="lineNum">     339</span>              :       {</span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">          16 :         val = phi.GetValue(e, ip);</span></span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaGNC">          16 :         found = Mpi::Rank(comm);</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">          16 :         break;</span></span>
+<span id="L343"><span class="lineNum">     343</span>              :       }</span>
+<span id="L344"><span class="lineNum">     344</span>              :     }</span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">          24 :     int owner = found;</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">          24 :     Mpi::GlobalMin(1, &amp;owner, comm);</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaGNC">          24 :     REQUIRE(owner &lt; Mpi::Size(comm));</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">          24 :     val = (owner == Mpi::Rank(comm)) ? val : 0.0;</span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">          24 :     Mpi::GlobalSum(1, &amp;val, comm);</span></span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">          48 :     return val;</span></span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">           6 :   };</span></span>
+<span id="L352"><span class="lineNum">     352</span>              : </span>
+<span id="L353"><span class="lineNum">     353</span>              :   // Endpoints just inside the mesh, which only approximates the circles between nodes, but</span>
+<span id="L354"><span class="lineNum">     354</span>              :   // well within the gap between the curved boundary and its straight chords.</span>
+<span id="L355"><span class="lineNum">     355</span>              :   const double th0 = 0.37 * 0.5 * M_PI, th1 = 0.81 * 0.5 * M_PI;</span>
+<span id="L356"><span class="lineNum">     356</span>              :   const double ra = a + 1.0e-3, rb = b - 1.0e-3;</span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaGNC">          12 :   for (const auto &amp;path :</span></span>
+<span id="L358"><span class="lineNum">     358</span>              :        {std::vector&lt;mfem::Vector&gt;{Point({ra * std::cos(th0), ra * std::sin(th0)}),</span>
+<span id="L359"><span class="lineNum">     359</span> <span class="tlaGNC">          12 :                                   Point({rb * std::cos(th0), rb * std::sin(th0)})},</span></span>
+<span id="L360"><span class="lineNum">     360</span>              :         std::vector&lt;mfem::Vector&gt;{Point({rb * std::cos(th0), rb * std::sin(th0)}),</span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">          72 :                                   Point({rb * std::cos(th1), rb * std::sin(th1)})}})</span></span>
+<span id="L362"><span class="lineNum">     362</span>              :   {</span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">          12 :     fem::LineIntegrator integrator(mesh, path, false, 2 * (order + 3));</span></span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">          12 :     const double ref = Phi(path.back()) - Phi(path.front());</span></span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">          12 :     CAPTURE(ref);</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">          12 :     CHECK_THAT(integrator.Integrate(E), WithinAbs(ref, 1.0e-8 * (1.0 + std::abs(ref))));</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">          12 :     CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(0.0, 1.0e-12));</span></span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">          30 :   }</span></span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">          30 : }</span></span>
+<span id="L370"><span class="lineNum">     370</span>              : </span>
+<span id="L371"><span class="lineNum">     371</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

@@ -1,0 +1,407 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - fem/qfunctions/coeff/pml_qf.h</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">fem/qfunctions/coeff</a> - pml_qf.h<span style="font-size: 80%;"> (source / <a href="pml_qf.h.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">63</td>
+            <td class="headerCovTableEntry">63</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-10-13 17:33:35</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_LIBCEED_PML_QF_H</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_LIBCEED_PML_QF_H</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #ifndef CEED_RUNNING_JIT_PASS</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;math.h&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #endif</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;coeff_qf.h&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : </span>
+<span id="L12"><span class="lineNum">      12</span>              : // Device-callable evaluation of the Cartesian PML material tensors at a quadrature point,</span>
+<span id="L13"><span class="lineNum">      13</span>              : // from the physical coordinate x and a packed QFunction context.</span>
+<span id="L14"><span class="lineNum">      14</span>              : //</span>
+<span id="L15"><span class="lineNum">      15</span>              : // With the diagonal coordinate stretch S = diag(s_x, s_y, s_z), where (Palace e^{+iωt}</span>
+<span id="L16"><span class="lineNum">      16</span>              : // time convention)</span>
+<span id="L17"><span class="lineNum">      17</span>              : //                       s_a(x, ω) = κ_a(x) + σ_a(x) / (α_a(x) + iω) ,</span>
+<span id="L18"><span class="lineNum">      18</span>              : // Maxwell's equations in the stretched coordinates are equivalent to Maxwell's equations</span>
+<span id="L19"><span class="lineNum">      19</span>              : // in the real coordinates with the transformed (complex, symmetric) material tensors</span>
+<span id="L20"><span class="lineNum">      20</span>              : //                 μ̃⁻¹ = S μ⁻¹ S / det(S) ,     ε̃ = det(S) S⁻¹ ε S⁻¹ ,</span>
+<span id="L21"><span class="lineNum">      21</span>              : // that is, μ̃⁻¹_ij = μ⁻¹_ij s_i s_j / (s_x s_y s_z) and ε̃_ij = ε_ij (s_x s_y s_z) / (s_i</span>
+<span id="L22"><span class="lineNum">      22</span>              : // s_j). These hold for general (anisotropic, lossy) background tensors μ⁻¹ and ε = ε' + i</span>
+<span id="L23"><span class="lineNum">      23</span>              : // ε''. For an isotropic background they reduce to the classic uniaxial PML tensors μ̃⁻¹_ii =</span>
+<span id="L24"><span class="lineNum">      24</span>              : // μ⁻¹ s_i / (s_j s_k), ε̃_ii = ε s_j s_k / s_i. The frequency ω is the complex solve</span>
+<span id="L25"><span class="lineNum">      25</span>              : // frequency for a frequency-dependent stretch (so that the stretch is the analytic</span>
+<span id="L26"><span class="lineNum">      26</span>              : // continuation for complex eigenfrequencies), or a fixed real reference frequency ω₀ for a</span>
+<span id="L27"><span class="lineNum">      27</span>              : // static stretch.</span>
+<span id="L28"><span class="lineNum">      28</span>              : //</span>
+<span id="L29"><span class="lineNum">      29</span>              : // Context layout (array of CeedIntScalar):</span>
+<span id="L30"><span class="lineNum">      30</span>              : //</span>
+<span id="L31"><span class="lineNum">      31</span>              : //   Header (PALACE_PML_HEADER_SIZE entries):</span>
+<span id="L32"><span class="lineNum">      32</span>              : //     [0]       number of (1-based) libCEED attributes, num_attr</span>
+<span id="L33"><span class="lineNum">      33</span>              : //     [1]       output part of the scaled tensor c T: 0 → Re{c T}, 1 → Im{c T},</span>
+<span id="L34"><span class="lineNum">      34</span>              : //               3 → Re{c T̂}, 4 → Im{c T̂} for the tensor T̂ with the stretch factors</span>
+<span id="L35"><span class="lineNum">      35</span>              : //               replaced by their magnitudes (exact for a unit stretch),</span>
+<span id="L36"><span class="lineNum">      36</span>              : //               2 → Re{c} |T| (entrywise magnitude, for real-valued approximations)</span>
+<span id="L37"><span class="lineNum">      37</span>              : //     [2, 3]    (Re, Im) of the prefactor c for μ̃⁻¹ terms (curl-curl, Floquet)</span>
+<span id="L38"><span class="lineNum">      38</span>              : //     [4, 5]    (Re, Im) of the prefactor c for ε̃ terms (mass, diffusion)</span>
+<span id="L39"><span class="lineNum">      39</span>              : //     [6, 7]    (Re, Im) of the frequency ω of the stretch: the solve frequency for a</span>
+<span id="L40"><span class="lineNum">      40</span>              : //               frequency-dependent stretch, or the reference frequency ω₀ otherwise</span>
+<span id="L41"><span class="lineNum">      41</span>              : //     [8..16]   Floquet wave vector cross product matrix [k ×] (3 x 3, column-major)</span>
+<span id="L42"><span class="lineNum">      42</span>              : //   Stretch (PALACE_PML_STRETCH_SIZE entries) of the PML block of the integrator:</span>
+<span id="L43"><span class="lineNum">      43</span>              : //     [0]       polynomial grading order n</span>
+<span id="L44"><span class="lineNum">      44</span>              : //     [1..6]    inner interface coordinate of each face {-x, +x, -y, +y, -z, +z}</span>
+<span id="L45"><span class="lineNum">      45</span>              : //     [7..12]   layer thickness of each face (≤ 0 for inactive faces)</span>
+<span id="L46"><span class="lineNum">      46</span>              : //     [13..18]  σ_max of each face</span>
+<span id="L47"><span class="lineNum">      47</span>              : //     [19..21]  κ_max per axis</span>
+<span id="L48"><span class="lineNum">      48</span>              : //     [22..24]  α_max per axis</span>
+<span id="L49"><span class="lineNum">      49</span>              : //   Attribute map (num_attr entries): background material index for each attribute, or -1</span>
+<span id="L50"><span class="lineNum">      50</span>              : //   for attributes outside of the PML regions.</span>
+<span id="L51"><span class="lineNum">      51</span>              : //   Background materials (PALACE_PML_BACKGROUND_SIZE entries each):</span>
+<span id="L52"><span class="lineNum">      52</span>              : //     [0..8]    μ⁻¹ (3 x 3, column-major)</span>
+<span id="L53"><span class="lineNum">      53</span>              : //     [9..17]   Re{ε}</span>
+<span id="L54"><span class="lineNum">      54</span>              : //     [18..26]  Im{ε}</span>
+<span id="L55"><span class="lineNum">      55</span>              : //</span>
+<span id="L56"><span class="lineNum">      56</span>              : // The profile parameters are graded with depth d into the layer of thickness t on each face</span>
+<span id="L57"><span class="lineNum">      57</span>              : // as σ = σ_max (d/t)ⁿ, κ = 1 + (κ_max - 1)(d/t)ⁿ, α = α_max (d/t)ⁿ.</span>
+<span id="L58"><span class="lineNum">      58</span>              : </span>
+<span id="L59"><span class="lineNum">      59</span>              : #define PALACE_PML_HEADER_SIZE 17</span>
+<span id="L60"><span class="lineNum">      60</span>              : #define PALACE_PML_STRETCH_SIZE 25</span>
+<span id="L61"><span class="lineNum">      61</span>              : #define PALACE_PML_BACKGROUND_SIZE 27</span>
+<span id="L62"><span class="lineNum">      62</span>              : </span>
+<span id="L63"><span class="lineNum">      63</span>              : enum</span>
+<span id="L64"><span class="lineNum">      64</span>              : {</span>
+<span id="L65"><span class="lineNum">      65</span>              :   PALACE_PML_PART_RE = 0,</span>
+<span id="L66"><span class="lineNum">      66</span>              :   PALACE_PML_PART_IM = 1,</span>
+<span id="L67"><span class="lineNum">      67</span>              :   PALACE_PML_PART_ABS = 2,</span>
+<span id="L68"><span class="lineNum">      68</span>              :   PALACE_PML_PART_MAG_RE = 3,</span>
+<span id="L69"><span class="lineNum">      69</span>              :   PALACE_PML_PART_MAG_IM = 4</span>
+<span id="L70"><span class="lineNum">      70</span>              : };</span>
+<span id="L71"><span class="lineNum">      71</span>              : </span>
+<span id="L72"><span class="lineNum">      72</span>              : CEED_QFUNCTION_HELPER CeedInt PMLNumAttr(const CeedIntScalar *ctx)</span>
+<span id="L73"><span class="lineNum">      73</span>              : {</span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC tlaBgGNC">     2116113 :   return ctx[0].first;</span></span>
+<span id="L75"><span class="lineNum">      75</span>              : }</span>
+<span id="L76"><span class="lineNum">      76</span>              : </span>
+<span id="L77"><span class="lineNum">      77</span>              : CEED_QFUNCTION_HELPER CeedInt PMLPart(const CeedIntScalar *ctx)</span>
+<span id="L78"><span class="lineNum">      78</span>              : {</span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">     2116113 :   return ctx[1].first;</span></span>
+<span id="L80"><span class="lineNum">      80</span>              : }</span>
+<span id="L81"><span class="lineNum">      81</span>              : </span>
+<span id="L82"><span class="lineNum">      82</span>              : CEED_QFUNCTION_HELPER const CeedIntScalar *PMLWaveVectorCross(const CeedIntScalar *ctx)</span>
+<span id="L83"><span class="lineNum">      83</span>              : {</span>
+<span id="L84"><span class="lineNum">      84</span>              :   return ctx + 8;</span>
+<span id="L85"><span class="lineNum">      85</span>              : }</span>
+<span id="L86"><span class="lineNum">      86</span>              : </span>
+<span id="L87"><span class="lineNum">      87</span>              : // Return the background material data for the given (1-based) libCEED attribute, or a null</span>
+<span id="L88"><span class="lineNum">      88</span>              : // pointer if the attribute is not in a PML region.</span>
+<span id="L89"><span class="lineNum">      89</span>              : CEED_QFUNCTION_HELPER const CeedIntScalar *PMLBackgroundData(const CeedIntScalar *ctx,</span>
+<span id="L90"><span class="lineNum">      90</span>              :                                                              CeedInt attr)</span>
+<span id="L91"><span class="lineNum">      91</span>              : {</span>
+<span id="L92"><span class="lineNum">      92</span>              :   const CeedInt num_attr = PMLNumAttr(ctx);</span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">     2116534 :   if (attr &lt; 1 || attr &gt; num_attr)</span></span>
+<span id="L94"><span class="lineNum">      94</span>              :   {</span>
+<span id="L95"><span class="lineNum">      95</span>              :     return 0;</span>
+<span id="L96"><span class="lineNum">      96</span>              :   }</span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaGNC">     2116115 :   const CeedIntScalar *attr_map = ctx + PALACE_PML_HEADER_SIZE + PALACE_PML_STRETCH_SIZE;</span></span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">     2116533 :   const CeedInt k = attr_map[attr - 1].first;</span></span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">     2116533 :   return (k &lt; 0) ? 0 : attr_map + num_attr + PALACE_PML_BACKGROUND_SIZE * k;</span></span>
+<span id="L100"><span class="lineNum">     100</span>              : }</span>
+<span id="L101"><span class="lineNum">     101</span>              : </span>
+<span id="L102"><span class="lineNum">     102</span>              : CEED_QFUNCTION_HELPER CeedScalar PMLIntPow(CeedScalar x, CeedInt n)</span>
+<span id="L103"><span class="lineNum">     103</span>              : {</span>
+<span id="L104"><span class="lineNum">     104</span>              :   CeedScalar r = 1.0;</span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">     8666041 :   for (CeedInt i = 0; i &lt; n; i++)</span></span>
+<span id="L106"><span class="lineNum">     106</span>              :   {</span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">     6474707 :     r *= x;</span></span>
+<span id="L108"><span class="lineNum">     108</span>              :   }</span>
+<span id="L109"><span class="lineNum">     109</span>              :   return r;</span>
+<span id="L110"><span class="lineNum">     110</span>              : }</span>
+<span id="L111"><span class="lineNum">     111</span>              : </span>
+<span id="L112"><span class="lineNum">     112</span>              : CEED_QFUNCTION_HELPER void PMLComplexMult(CeedScalar ar, CeedScalar ai, CeedScalar br,</span>
+<span id="L113"><span class="lineNum">     113</span>              :                                           CeedScalar bi, CeedScalar *cr, CeedScalar *ci)</span>
+<span id="L114"><span class="lineNum">     114</span>              : {</span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaGNC">    19169710 :   *cr = ar * br - ai * bi;</span></span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">    19169710 :   *ci = ar * bi + ai * br;</span></span>
+<span id="L117"><span class="lineNum">     117</span>              : }</span>
+<span id="L118"><span class="lineNum">     118</span>              : </span>
+<span id="L119"><span class="lineNum">     119</span>              : CEED_QFUNCTION_HELPER void PMLComplexDiv(CeedScalar ar, CeedScalar ai, CeedScalar br,</span>
+<span id="L120"><span class="lineNum">     120</span>              :                                          CeedScalar bi, CeedScalar *cr, CeedScalar *ci)</span>
+<span id="L121"><span class="lineNum">     121</span>              : {</span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">    14079328 :   const CeedScalar den = br * br + bi * bi;</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">    14079328 :   *cr = (ar * br + ai * bi) / den;</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">    14079328 :   *ci = (ai * br - ar * bi) / den;</span></span>
+<span id="L125"><span class="lineNum">     125</span>              : }</span>
+<span id="L126"><span class="lineNum">     126</span>              : </span>
+<span id="L127"><span class="lineNum">     127</span>              : // Compute the complex stretch factors s_a for each axis at the physical point x.</span>
+<span id="L128"><span class="lineNum">     128</span>              : CEED_QFUNCTION_HELPER void PMLStretch(const CeedIntScalar *ctx, const CeedScalar x[3],</span>
+<span id="L129"><span class="lineNum">     129</span>              :                                       CeedScalar s_re[3], CeedScalar s_im[3])</span>
+<span id="L130"><span class="lineNum">     130</span>              : {</span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">     2116526 :   const CeedIntScalar *p = ctx + PALACE_PML_HEADER_SIZE;</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">     2156575 :   const CeedInt order = p[0].first;</span></span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">     2156575 :   const CeedScalar omega_re = ctx[6].second, omega_im = ctx[7].second;</span></span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">     8626300 :   for (CeedInt a = 0; a &lt; 3; a++)</span></span>
+<span id="L135"><span class="lineNum">     135</span>              :   {</span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">     6469725 :     s_re[a] = 1.0;</span></span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">     6469725 :     s_im[a] = 0.0;</span></span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">     6469725 :     const CeedScalar t_neg = p[7 + 2 * a].second, t_pos = p[8 + 2 * a].second;</span></span>
+<span id="L139"><span class="lineNum">     139</span> <span class="tlaGNC">     6469725 :     const CeedScalar d_neg = p[1 + 2 * a].second - x[a], d_pos = x[a] - p[2 + 2 * a].second;</span></span>
+<span id="L140"><span class="lineNum">     140</span>              :     CeedScalar r, sigma_max;</span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">     6469725 :     if (t_neg &gt; 0.0 &amp;&amp; d_neg &gt; 0.0)</span></span>
+<span id="L142"><span class="lineNum">     142</span>              :     {</span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">      140040 :       r = d_neg / t_neg;</span></span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">      140040 :       sigma_max = p[13 + 2 * a].second;</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :     }</span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">     6329685 :     else if (t_pos &gt; 0.0 &amp;&amp; d_pos &gt; 0.0)</span></span>
+<span id="L147"><span class="lineNum">     147</span>              :     {</span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">     2051294 :       r = d_pos / t_pos;</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">     2051294 :       sigma_max = p[14 + 2 * a].second;</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :     }</span>
+<span id="L151"><span class="lineNum">     151</span>              :     else</span>
+<span id="L152"><span class="lineNum">     152</span>              :     {</span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">     4278391 :       continue;</span></span>
+<span id="L154"><span class="lineNum">     154</span>              :     }</span>
+<span id="L155"><span class="lineNum">     155</span>              :     const CeedScalar shape = PMLIntPow((r &lt; 1.0) ? r : 1.0, order);</span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">     2191334 :     const CeedScalar sigma = sigma_max * shape;</span></span>
+<span id="L157"><span class="lineNum">     157</span> <span class="tlaGNC">     2191334 :     const CeedScalar kappa = 1.0 + (p[19 + a].second - 1.0) * shape;</span></span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">     2191334 :     const CeedScalar alpha = p[22 + a].second * shape;</span></span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span>              :     // σ / (α + iω) with α + iω = (α - Im{ω}) + i Re{ω}. The degenerate α = ω = 0 case falls</span>
+<span id="L161"><span class="lineNum">     161</span>              :     // back to the real coordinate scaling κ.</span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">     2191334 :     const CeedScalar den_re = alpha - omega_im, den_im = omega_re;</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">     2191334 :     s_re[a] = kappa;</span></span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">     2191334 :     if (den_re != 0.0 || den_im != 0.0)</span></span>
+<span id="L165"><span class="lineNum">     165</span>              :     {</span>
+<span id="L166"><span class="lineNum">     166</span>              :       CeedScalar q_re, q_im;</span>
+<span id="L167"><span class="lineNum">     167</span>              :       PMLComplexDiv(sigma, 0.0, den_re, den_im, &amp;q_re, &amp;q_im);</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">     2191334 :       s_re[a] += q_re;</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">     2191334 :       s_im[a] = q_im;</span></span>
+<span id="L170"><span class="lineNum">     170</span>              :     }</span>
+<span id="L171"><span class="lineNum">     171</span>              :   }</span>
+<span id="L172"><span class="lineNum">     172</span>              : }</span>
+<span id="L173"><span class="lineNum">     173</span>              : </span>
+<span id="L174"><span class="lineNum">     174</span>              : // Requested part of the complex prefactor c times a complex tensor entry t: Re{c t},</span>
+<span id="L175"><span class="lineNum">     175</span>              : // Im{c t}, or the real-valued approximation Re{c} |t|.</span>
+<span id="L176"><span class="lineNum">     176</span>              : CEED_QFUNCTION_HELPER CeedScalar PMLScaledPart(CeedInt part, CeedScalar c_re,</span>
+<span id="L177"><span class="lineNum">     177</span>              :                                                CeedScalar c_im, CeedScalar t_re,</span>
+<span id="L178"><span class="lineNum">     178</span>              :                                                CeedScalar t_im)</span>
+<span id="L179"><span class="lineNum">     179</span>              : {</span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">    11887994 :   switch (part)</span></span>
+<span id="L181"><span class="lineNum">     181</span>              :   {</span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">     5802698 :     case PALACE_PML_PART_IM:</span></span>
+<span id="L183"><span class="lineNum">     183</span>              :     case PALACE_PML_PART_MAG_IM:</span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">     5802698 :       return c_re * t_im + c_im * t_re;</span></span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">      282592 :     case PALACE_PML_PART_ABS:</span></span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">      282592 :       return c_re * sqrt(t_re * t_re + t_im * t_im);</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">     5802704 :     default:</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">     5802704 :       return c_re * t_re - c_im * t_im;</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :   }</span>
+<span id="L190"><span class="lineNum">     190</span>              : }</span>
+<span id="L191"><span class="lineNum">     191</span>              : </span>
+<span id="L192"><span class="lineNum">     192</span>              : // Stretch factor f = f_re + i f_im of a tensor entry, replaced by its magnitude for the</span>
+<span id="L193"><span class="lineNum">     193</span>              : // parts with the magnitudes of the stretch factors.</span>
+<span id="L194"><span class="lineNum">     194</span>              : CEED_QFUNCTION_HELPER void PMLStretchFactorPart(CeedInt part, CeedScalar *f_re,</span>
+<span id="L195"><span class="lineNum">     195</span>              :                                                 CeedScalar *f_im)</span>
+<span id="L196"><span class="lineNum">     196</span>              : {</span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">    11887994 :   if (part == PALACE_PML_PART_MAG_RE || part == PALACE_PML_PART_MAG_IM)</span></span>
+<span id="L198"><span class="lineNum">     198</span>              :   {</span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">     1686656 :     *f_re = sqrt(*f_re * *f_re + *f_im * *f_im);</span></span>
+<span id="L200"><span class="lineNum">     200</span>              :     *f_im = 0.0;</span>
+<span id="L201"><span class="lineNum">     201</span>              :   }</span>
+<span id="L202"><span class="lineNum">     202</span>              : }</span>
+<span id="L203"><span class="lineNum">     203</span>              : </span>
+<span id="L204"><span class="lineNum">     204</span>              : // Stretch factors s_a and their product det(S) = s_x s_y s_z at x.</span>
+<span id="L205"><span class="lineNum">     205</span>              : CEED_QFUNCTION_HELPER void PMLStretchDet(const CeedIntScalar *ctx, const CeedScalar x[3],</span>
+<span id="L206"><span class="lineNum">     206</span>              :                                          CeedScalar s_re[3], CeedScalar s_im[3],</span>
+<span id="L207"><span class="lineNum">     207</span>              :                                          CeedScalar *det_re, CeedScalar *det_im)</span>
+<span id="L208"><span class="lineNum">     208</span>              : {</span>
+<span id="L209"><span class="lineNum">     209</span>              :   PMLStretch(ctx, x, s_re, s_im);</span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">     2116526 :   PMLComplexMult(s_re[0], s_im[0], s_re[1], s_im[1], det_re, det_im);</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">     2116526 :   PMLComplexMult(*det_re, *det_im, s_re[2], s_im[2], det_re, det_im);</span></span>
+<span id="L212"><span class="lineNum">     212</span>              : }</span>
+<span id="L213"><span class="lineNum">     213</span>              : </span>
+<span id="L214"><span class="lineNum">     214</span>              : // Requested part of c μ̃⁻¹ (3 x 3, column-major), with μ̃⁻¹_ij = μ⁻¹_ij s_i s_j / det(S) for</span>
+<span id="L215"><span class="lineNum">     215</span>              : // the background material b and c the μ̃⁻¹ prefactor in the context header.</span>
+<span id="L216"><span class="lineNum">     216</span>              : CEED_QFUNCTION_HELPER void PMLMuInvCoeffStretch(const CeedIntScalar *ctx,</span>
+<span id="L217"><span class="lineNum">     217</span>              :                                                 const CeedIntScalar *b,</span>
+<span id="L218"><span class="lineNum">     218</span>              :                                                 const CeedScalar s_re[3],</span>
+<span id="L219"><span class="lineNum">     219</span>              :                                                 const CeedScalar s_im[3], CeedScalar det_re,</span>
+<span id="L220"><span class="lineNum">     220</span>              :                                                 CeedScalar det_im, CeedScalar coeff[9])</span>
+<span id="L221"><span class="lineNum">     221</span>              : {</span>
+<span id="L222"><span class="lineNum">     222</span>              :   const CeedInt part = PMLPart(ctx);</span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">     1793116 :   const CeedScalar c_re = ctx[2].second, c_im = ctx[3].second;</span></span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">     7172464 :   for (CeedInt j = 0; j &lt; 3; j++)</span></span>
+<span id="L225"><span class="lineNum">     225</span>              :   {</span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">    21517392 :     for (CeedInt i = 0; i &lt; 3; i++)</span></span>
+<span id="L227"><span class="lineNum">     227</span>              :     {</span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">    16138044 :       const CeedScalar mu_inv = b[i + 3 * j].second;</span></span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC">    16138044 :       if (mu_inv == 0.0)</span></span>
+<span id="L230"><span class="lineNum">     230</span>              :       {</span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaGNC">     9415240 :         coeff[i + 3 * j] = 0.0;</span></span>
+<span id="L232"><span class="lineNum">     232</span>              :         continue;</span>
+<span id="L233"><span class="lineNum">     233</span>              :       }</span>
+<span id="L234"><span class="lineNum">     234</span>              :       CeedScalar f_re, f_im;</span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">     6722804 :       PMLComplexMult(s_re[i], s_im[i], s_re[j], s_im[j], &amp;f_re, &amp;f_im);</span></span>
+<span id="L236"><span class="lineNum">     236</span>              :       PMLComplexDiv(f_re, f_im, det_re, det_im, &amp;f_re, &amp;f_im);</span>
+<span id="L237"><span class="lineNum">     237</span>              :       PMLStretchFactorPart(part, &amp;f_re, &amp;f_im);</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaGNC">    13445608 :       coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, mu_inv * f_re, mu_inv * f_im);</span></span>
+<span id="L239"><span class="lineNum">     239</span>              :     }</span>
+<span id="L240"><span class="lineNum">     240</span>              :   }</span>
+<span id="L241"><span class="lineNum">     241</span>              : }</span>
+<span id="L242"><span class="lineNum">     242</span>              : </span>
+<span id="L243"><span class="lineNum">     243</span>              : // Requested part of c ε̃ (3 x 3, column-major), with ε̃_ij = ε_ij det(S) / (s_i s_j) for the</span>
+<span id="L244"><span class="lineNum">     244</span>              : // complex permittivity ε_ij = ε'_ij + i ε''_ij of the background material b and c the ε̃</span>
+<span id="L245"><span class="lineNum">     245</span>              : // prefactor in the context header.</span>
+<span id="L246"><span class="lineNum">     246</span>              : CEED_QFUNCTION_HELPER void PMLEpsCoeffStretch(const CeedIntScalar *ctx,</span>
+<span id="L247"><span class="lineNum">     247</span>              :                                               const CeedIntScalar *b,</span>
+<span id="L248"><span class="lineNum">     248</span>              :                                               const CeedScalar s_re[3],</span>
+<span id="L249"><span class="lineNum">     249</span>              :                                               const CeedScalar s_im[3], CeedScalar det_re,</span>
+<span id="L250"><span class="lineNum">     250</span>              :                                               CeedScalar det_im, CeedScalar coeff[9])</span>
+<span id="L251"><span class="lineNum">     251</span>              : {</span>
+<span id="L252"><span class="lineNum">     252</span>              :   const CeedInt part = PMLPart(ctx);</span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">     1539874 :   const CeedScalar c_re = ctx[4].second, c_im = ctx[5].second;</span></span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">     6159496 :   for (CeedInt j = 0; j &lt; 3; j++)</span></span>
+<span id="L255"><span class="lineNum">     255</span>              :   {</span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">    18478488 :     for (CeedInt i = 0; i &lt; 3; i++)</span></span>
+<span id="L257"><span class="lineNum">     257</span>              :     {</span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">    13858866 :       const CeedScalar eps_re = b[9 + i + 3 * j].second, eps_im = b[18 + i + 3 * j].second;</span></span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">    13858866 :       if (eps_re == 0.0 &amp;&amp; eps_im == 0.0)</span></span>
+<span id="L260"><span class="lineNum">     260</span>              :       {</span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">     8693676 :         coeff[i + 3 * j] = 0.0;</span></span>
+<span id="L262"><span class="lineNum">     262</span>              :         continue;</span>
+<span id="L263"><span class="lineNum">     263</span>              :       }</span>
+<span id="L264"><span class="lineNum">     264</span>              :       CeedScalar f_re, f_im, t_re, t_im;</span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">     5165190 :       PMLComplexMult(s_re[i], s_im[i], s_re[j], s_im[j], &amp;f_re, &amp;f_im);</span></span>
+<span id="L266"><span class="lineNum">     266</span>              :       PMLComplexDiv(det_re, det_im, f_re, f_im, &amp;f_re, &amp;f_im);</span>
+<span id="L267"><span class="lineNum">     267</span>              :       PMLStretchFactorPart(part, &amp;f_re, &amp;f_im);</span>
+<span id="L268"><span class="lineNum">     268</span>              :       PMLComplexMult(eps_re, eps_im, f_re, f_im, &amp;t_re, &amp;t_im);</span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">    10330380 :       coeff[i + 3 * j] = PMLScaledPart(part, c_re, c_im, t_re, t_im);</span></span>
+<span id="L270"><span class="lineNum">     270</span>              :     }</span>
+<span id="L271"><span class="lineNum">     271</span>              :   }</span>
+<span id="L272"><span class="lineNum">     272</span>              : }</span>
+<span id="L273"><span class="lineNum">     273</span>              : </span>
+<span id="L274"><span class="lineNum">     274</span>              : // Requested part of c μ̃⁻¹ at x. Returns false (and leaves coeff unset) for attributes</span>
+<span id="L275"><span class="lineNum">     275</span>              : // outside of the PML regions.</span>
+<span id="L276"><span class="lineNum">     276</span>              : CEED_QFUNCTION_HELPER bool PMLMuInvCoeff(const CeedIntScalar *ctx, CeedInt attr,</span>
+<span id="L277"><span class="lineNum">     277</span>              :                                          const CeedScalar x[3], CeedScalar coeff[9])</span>
+<span id="L278"><span class="lineNum">     278</span>              : {</span>
+<span id="L279"><span class="lineNum">     279</span>              :   const CeedIntScalar *b = PMLBackgroundData(ctx, attr);</span>
+<span id="L280"><span class="lineNum">     280</span>              :   if (!b)</span>
+<span id="L281"><span class="lineNum">     281</span>              :   {</span>
+<span id="L282"><span class="lineNum">     282</span>              :     return false;</span>
+<span id="L283"><span class="lineNum">     283</span>              :   }</span>
+<span id="L284"><span class="lineNum">     284</span>              :   CeedScalar s_re[3], s_im[3], det_re, det_im;</span>
+<span id="L285"><span class="lineNum">     285</span>              :   PMLStretchDet(ctx, x, s_re, s_im, &amp;det_re, &amp;det_im);</span>
+<span id="L286"><span class="lineNum">     286</span>              :   PMLMuInvCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, coeff);</span>
+<span id="L287"><span class="lineNum">     287</span>              :   return true;</span>
+<span id="L288"><span class="lineNum">     288</span>              : }</span>
+<span id="L289"><span class="lineNum">     289</span>              : </span>
+<span id="L290"><span class="lineNum">     290</span>              : // Requested part of c ε̃ at x. Returns false (and leaves coeff unset) for attributes outside</span>
+<span id="L291"><span class="lineNum">     291</span>              : // of the PML regions.</span>
+<span id="L292"><span class="lineNum">     292</span>              : CEED_QFUNCTION_HELPER bool PMLEpsCoeff(const CeedIntScalar *ctx, CeedInt attr,</span>
+<span id="L293"><span class="lineNum">     293</span>              :                                        const CeedScalar x[3], CeedScalar coeff[9])</span>
+<span id="L294"><span class="lineNum">     294</span>              : {</span>
+<span id="L295"><span class="lineNum">     295</span>              :   const CeedIntScalar *b = PMLBackgroundData(ctx, attr);</span>
+<span id="L296"><span class="lineNum">     296</span>              :   if (!b)</span>
+<span id="L297"><span class="lineNum">     297</span>              :   {</span>
+<span id="L298"><span class="lineNum">     298</span>              :     return false;</span>
+<span id="L299"><span class="lineNum">     299</span>              :   }</span>
+<span id="L300"><span class="lineNum">     300</span>              :   CeedScalar s_re[3], s_im[3], det_re, det_im;</span>
+<span id="L301"><span class="lineNum">     301</span>              :   PMLStretchDet(ctx, x, s_re, s_im, &amp;det_re, &amp;det_im);</span>
+<span id="L302"><span class="lineNum">     302</span>              :   PMLEpsCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, coeff);</span>
+<span id="L303"><span class="lineNum">     303</span>              :   return true;</span>
+<span id="L304"><span class="lineNum">     304</span>              : }</span>
+<span id="L305"><span class="lineNum">     305</span>              : </span>
+<span id="L306"><span class="lineNum">     306</span>              : // Both of the above, sharing the stretch evaluation.</span>
+<span id="L307"><span class="lineNum">     307</span>              : CEED_QFUNCTION_HELPER bool PMLMuInvEpsCoeff(const CeedIntScalar *ctx, CeedInt attr,</span>
+<span id="L308"><span class="lineNum">     308</span>              :                                             const CeedScalar x[3], CeedScalar mu_coeff[9],</span>
+<span id="L309"><span class="lineNum">     309</span>              :                                             CeedScalar eps_coeff[9])</span>
+<span id="L310"><span class="lineNum">     310</span>              : {</span>
+<span id="L311"><span class="lineNum">     311</span>              :   const CeedIntScalar *b = PMLBackgroundData(ctx, attr);</span>
+<span id="L312"><span class="lineNum">     312</span>              :   if (!b)</span>
+<span id="L313"><span class="lineNum">     313</span>              :   {</span>
+<span id="L314"><span class="lineNum">     314</span>              :     return false;</span>
+<span id="L315"><span class="lineNum">     315</span>              :   }</span>
+<span id="L316"><span class="lineNum">     316</span>              :   CeedScalar s_re[3], s_im[3], det_re, det_im;</span>
+<span id="L317"><span class="lineNum">     317</span>              :   PMLStretchDet(ctx, x, s_re, s_im, &amp;det_re, &amp;det_im);</span>
+<span id="L318"><span class="lineNum">     318</span>              :   PMLMuInvCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, mu_coeff);</span>
+<span id="L319"><span class="lineNum">     319</span>              :   PMLEpsCoeffStretch(ctx, b, s_re, s_im, det_re, det_im, eps_coeff);</span>
+<span id="L320"><span class="lineNum">     320</span>              :   return true;</span>
+<span id="L321"><span class="lineNum">     321</span>              : }</span>
+<span id="L322"><span class="lineNum">     322</span>              : </span>
+<span id="L323"><span class="lineNum">     323</span>              : #endif  // PALACE_LIBCEED_PML_QF_H</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

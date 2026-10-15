@@ -1,0 +1,299 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/pml.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - pml.hpp<span style="font-size: 80%;"> (source / <a href="pml.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">6</td>
+            <td class="headerCovTableEntry">6</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-10-13 17:33:35</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_MODELS_PML_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_MODELS_PML_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;array&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;complex&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;vector&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;utils/configfile.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : </span>
+<span id="L13"><span class="lineNum">      13</span>              : // Forward-declare the union used by libCEED QFunction contexts (defined in</span>
+<span id="L14"><span class="lineNum">      14</span>              : // fem/qfunctions/coeff/coeff_qf.h).</span>
+<span id="L15"><span class="lineNum">      15</span>              : union CeedIntScalar;</span>
+<span id="L16"><span class="lineNum">      16</span>              : </span>
+<span id="L17"><span class="lineNum">      17</span>              : namespace palace</span>
+<span id="L18"><span class="lineNum">      18</span>              : {</span>
+<span id="L19"><span class="lineNum">      19</span>              : </span>
+<span id="L20"><span class="lineNum">      20</span>              : class Mesh;</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : namespace pml</span>
+<span id="L23"><span class="lineNum">      23</span>              : {</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span>              : //</span>
+<span id="L26"><span class="lineNum">      26</span>              : // Cartesian perfectly matched layer (PML) model. Within the layer, the coordinates normal</span>
+<span id="L27"><span class="lineNum">      27</span>              : // to each active face of the PML box are stretched by the complex factor (Palace's e^{+iωt}</span>
+<span id="L28"><span class="lineNum">      28</span>              : // time convention)</span>
+<span id="L29"><span class="lineNum">      29</span>              : //                       s(x, ω) = κ(x) + σ(x) / (α(x) + iω) ,</span>
+<span id="L30"><span class="lineNum">      30</span>              : // with σ, κ - 1, α graded polynomially from zero at the inner interface to their maximum</span>
+<span id="L31"><span class="lineNum">      31</span>              : // values at the outer boundary. The stretch is applied through the equivalent anisotropic</span>
+<span id="L32"><span class="lineNum">      32</span>              : // material tensors μ̃⁻¹ = S μ⁻¹ S / det(S) and ε̃ = det(S) S⁻¹ ε S⁻¹, S = diag(s_x, s_y,</span>
+<span id="L33"><span class="lineNum">      33</span>              : // s_z), of the background material properties μ⁻¹ and ε of each PML region, evaluated at</span>
+<span id="L34"><span class="lineNum">      34</span>              : // each quadrature point (see fem/qfunctions/coeff/pml_qf.h). A static stretch uses a fixed</span>
+<span id="L35"><span class="lineNum">      35</span>              : // real reference frequency ω₀, while a frequency-dependent stretch uses the (possibly</span>
+<span id="L36"><span class="lineNum">      36</span>              : // complex) solve frequency.</span>
+<span id="L37"><span class="lineNum">      37</span>              : //</span>
+<span id="L38"><span class="lineNum">      38</span>              : // The PML regions are configured in blocks, each with its own stretch: the stretch of a</span>
+<span id="L39"><span class="lineNum">      39</span>              : // block is the same function of position in all of its PML regions, so that the PML is a</span>
+<span id="L40"><span class="lineNum">      40</span>              : // coordinate transformation, also across the material interfaces inside of the layer (for</span>
+<span id="L41"><span class="lineNum">      41</span>              : // example, a substrate crossing the PML). The stretch must be continuous across the</span>
+<span id="L42"><span class="lineNum">      42</span>              : // interfaces between the PML regions of different blocks, and equal to one at the</span>
+<span id="L43"><span class="lineNum">      43</span>              : // interfaces with the physical (non-PML) region (see CheckStretchContinuity).</span>
+<span id="L44"><span class="lineNum">      44</span>              : //</span>
+<span id="L45"><span class="lineNum">      45</span>              : // Faces are indexed {-x, +x, -y, +y, -z, +z}: face f is on axis f / 2 and on the positive</span>
+<span id="L46"><span class="lineNum">      46</span>              : // side if f % 2 == 1. All quantities are nondimensional.</span>
+<span id="L47"><span class="lineNum">      47</span>              : //</span>
+<span id="L48"><span class="lineNum">      48</span>              : </span>
+<span id="L49"><span class="lineNum">      49</span>              : // Coordinate of the inner interface (the boundary with the physical region) and layer</span>
+<span id="L50"><span class="lineNum">      50</span>              : // thickness of each face. Faces with zero thickness are inactive.</span>
+<span id="L51"><span class="lineNum">      51</span>              : struct LayerGeometry</span>
+<span id="L52"><span class="lineNum">      52</span>              : {</span>
+<span id="L53"><span class="lineNum">      53</span>              :   std::array&lt;double, 6&gt; inner{};</span>
+<span id="L54"><span class="lineNum">      54</span>              :   std::array&lt;double, 6&gt; thickness{};</span>
+<span id="L55"><span class="lineNum">      55</span>              : };</span>
+<span id="L56"><span class="lineNum">      56</span>              : </span>
+<span id="L57"><span class="lineNum">      57</span>              : // The coordinate stretch of the PML. element_size is the size of the PML elements normal to</span>
+<span id="L58"><span class="lineNum">      58</span>              : // each face, measured on the mesh.</span>
+<span id="L59"><span class="lineNum">      59</span>              : struct Stretch</span>
+<span id="L60"><span class="lineNum">      60</span>              : {</span>
+<span id="L61"><span class="lineNum">      61</span>              :   LayerGeometry geometry;</span>
+<span id="L62"><span class="lineNum">      62</span>              :   std::array&lt;double, 6&gt; sigma_max{};</span>
+<span id="L63"><span class="lineNum">      63</span>              :   std::array&lt;double, 3&gt; kappa_max{{1.0, 1.0, 1.0}};</span>
+<span id="L64"><span class="lineNum">      64</span>              :   std::array&lt;double, 3&gt; alpha_max{};</span>
+<span id="L65"><span class="lineNum">      65</span>              :   int order = 3;</span>
+<span id="L66"><span class="lineNum">      66</span>              :   bool frequency_dependent = false;</span>
+<span id="L67"><span class="lineNum">      67</span>              :   double reference_frequency = 0.0;</span>
+<span id="L68"><span class="lineNum">      68</span>              :   bool sigma_auto = false;</span>
+<span id="L69"><span class="lineNum">      69</span>              :   double refractive_index = 1.0;</span>
+<span id="L70"><span class="lineNum">      70</span>              :   std::array&lt;double, 6&gt; element_size{};</span>
+<span id="L71"><span class="lineNum">      71</span>              : };</span>
+<span id="L72"><span class="lineNum">      72</span>              : </span>
+<span id="L73"><span class="lineNum">      73</span>              : // Factor C of the automatic peak conductivity σ_max = C (n + 1) p / (n_r h), for grading</span>
+<span id="L74"><span class="lineNum">      74</span>              : // order n, finite element order p, refractive index n_r, and PML element size h normal to</span>
+<span id="L75"><span class="lineNum">      75</span>              : // the face: the optimal conductivity of a discrete layer of cells of size h / p (see for</span>
+<span id="L76"><span class="lineNum">      76</span>              : // example Taflove and Hagness, Computational Electrodynamics, 2005), for which the</span>
+<span id="L77"><span class="lineNum">      77</span>              : // theoretical reflection at normal incidence of a layer of N elements is exp(-2 C p N).</span>
+<span id="L78"><span class="lineNum">      78</span>              : constexpr double AUTO_SIGMA_FACTOR = 0.8;</span>
+<span id="L79"><span class="lineNum">      79</span>              : </span>
+<span id="L80"><span class="lineNum">      80</span>              : // Theoretical reflection coefficient at normal incidence of the stretch on face f,</span>
+<span id="L81"><span class="lineNum">      81</span>              : // exp(-2 n_r σ_max t / (n + 1)).</span>
+<span id="L82"><span class="lineNum">      82</span>              : double TheoreticalReflection(const Stretch &amp;stretch, int f);</span>
+<span id="L83"><span class="lineNum">      83</span>              : </span>
+<span id="L84"><span class="lineNum">      84</span>              : // Background material tensors of a PML region (3 x 3, column-major).</span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC tlaBgGNC">         256 : struct Background</span></span>
+<span id="L86"><span class="lineNum">      86</span>              : {</span>
+<span id="L87"><span class="lineNum">      87</span>              :   std::array&lt;double, 9&gt; mu_inv{{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};</span>
+<span id="L88"><span class="lineNum">      88</span>              :   std::array&lt;double, 9&gt; epsilon_real{{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};</span>
+<span id="L89"><span class="lineNum">      89</span>              :   std::array&lt;double, 9&gt; epsilon_imag{};</span>
+<span id="L90"><span class="lineNum">      90</span>              : };</span>
+<span id="L91"><span class="lineNum">      91</span>              : </span>
+<span id="L92"><span class="lineNum">      92</span>              : // Detect the PML layer geometry from the bounding box of the physical (non-PML) region,</span>
+<span id="L93"><span class="lineNum">      93</span>              : // whose faces are the inner PML interfaces, and the bounding box of the PML regions of a</span>
+<span id="L94"><span class="lineNum">      94</span>              : // block, whose faces are the outer PML boundaries. A face is active if the two boxes differ</span>
+<span id="L95"><span class="lineNum">      95</span>              : // on that face by more than rel_tol times the extent of the outer box.</span>
+<span id="L96"><span class="lineNum">      96</span>              : LayerGeometry DetectLayerGeometry(const std::array&lt;double, 3&gt; &amp;inner_min,</span>
+<span id="L97"><span class="lineNum">      97</span>              :                                   const std::array&lt;double, 3&gt; &amp;inner_max,</span>
+<span id="L98"><span class="lineNum">      98</span>              :                                   const std::array&lt;double, 3&gt; &amp;outer_min,</span>
+<span id="L99"><span class="lineNum">      99</span>              :                                   const std::array&lt;double, 3&gt; &amp;outer_max,</span>
+<span id="L100"><span class="lineNum">     100</span>              :                                   double rel_tol = 1.0e-6);</span>
+<span id="L101"><span class="lineNum">     101</span>              : </span>
+<span id="L102"><span class="lineNum">     102</span>              : // Layer geometry from explicitly configured directions and thicknesses, measured inward</span>
+<span id="L103"><span class="lineNum">     103</span>              : // from the faces of the bounding box of the PML regions of a block.</span>
+<span id="L104"><span class="lineNum">     104</span>              : LayerGeometry ConfiguredLayerGeometry(const config::PMLData &amp;data,</span>
+<span id="L105"><span class="lineNum">     105</span>              :                                       const std::array&lt;double, 3&gt; &amp;outer_min,</span>
+<span id="L106"><span class="lineNum">     106</span>              :                                       const std::array&lt;double, 3&gt; &amp;outer_max);</span>
+<span id="L107"><span class="lineNum">     107</span>              : </span>
+<span id="L108"><span class="lineNum">     108</span>              : // Smallest refractive index of a background material over its principal directions, for</span>
+<span id="L109"><span class="lineNum">     109</span>              : // the 3 x 3 (column-major) tensors μ⁻¹ and Re{ε}.</span>
+<span id="L110"><span class="lineNum">     110</span>              : double RefractiveIndex(const std::array&lt;double, 9&gt; &amp;mu_inv,</span>
+<span id="L111"><span class="lineNum">     111</span>              :                        const std::array&lt;double, 9&gt; &amp;epsilon_real);</span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              : // Stretch from a (nondimensionalized) configuration and layer geometry. The peak</span>
+<span id="L114"><span class="lineNum">     114</span>              : // conductivity σ_max of each active face is either the configured value for the face's</span>
+<span id="L115"><span class="lineNum">     115</span>              : // axis, computed from the size h of the PML elements normal to the face (element_size) and</span>
+<span id="L116"><span class="lineNum">     116</span>              : // the finite element order p (data.sigma_auto, see AUTO_SIGMA_FACTOR), or σ_max = -(n + 1)</span>
+<span id="L117"><span class="lineNum">     117</span>              : // ln(R) / (2 d n_r) for a target normal-incidence reflection coefficient R, layer thickness</span>
+<span id="L118"><span class="lineNum">     118</span>              : // d, grading order n, and refractive index n_r: the smallest refractive index of the</span>
+<span id="L119"><span class="lineNum">     119</span>              : // background materials of the PML regions of the block, so that each of them meets the</span>
+<span id="L120"><span class="lineNum">     120</span>              : // reflection target.</span>
+<span id="L121"><span class="lineNum">     121</span>              : Stretch BuildStretch(const config::PMLData &amp;data, const LayerGeometry &amp;geometry, double n_r,</span>
+<span id="L122"><span class="lineNum">     122</span>              :                      const std::array&lt;double, 6&gt; &amp;element_size = {}, int fe_order = 1);</span>
+<span id="L123"><span class="lineNum">     123</span>              : </span>
+<span id="L124"><span class="lineNum">     124</span>              : // Output part of the complex PML tensor terms assembled by a PML integrator.</span>
+<span id="L125"><span class="lineNum">     125</span>              : enum class TensorPart : int</span>
+<span id="L126"><span class="lineNum">     126</span>              : {</span>
+<span id="L127"><span class="lineNum">     127</span>              :   REAL = 0,</span>
+<span id="L128"><span class="lineNum">     128</span>              :   IMAG = 1,</span>
+<span id="L129"><span class="lineNum">     129</span>              :   ABS = 2,  // Re{c} |T| with entrywise magnitude, for real-valued approximations</span>
+<span id="L130"><span class="lineNum">     130</span>              :   STRETCH_MAGNITUDE_REAL = 3,  // Re{c T̂}, T̂ with the magnitudes of the stretch factors</span>
+<span id="L131"><span class="lineNum">     131</span>              :   STRETCH_MAGNITUDE_IMAG = 4   // Im{c T̂}</span>
+<span id="L132"><span class="lineNum">     132</span>              : };</span>
+<span id="L133"><span class="lineNum">     133</span>              : </span>
+<span id="L134"><span class="lineNum">     134</span>              : // Per-integrator data of the PML QFunction context: the integrator assembles</span>
+<span id="L135"><span class="lineNum">     135</span>              : // part(c_muinv μ̃⁻¹) and/or part(c_eps ε̃) terms, with the frequency-dependent stretch</span>
+<span id="L136"><span class="lineNum">     136</span>              : // evaluated at omega (ignored for a static stretch).</span>
+<span id="L137"><span class="lineNum">     137</span>              : struct ContextHeader</span>
+<span id="L138"><span class="lineNum">     138</span>              : {</span>
+<span id="L139"><span class="lineNum">     139</span>              :   TensorPart part = TensorPart::REAL;</span>
+<span id="L140"><span class="lineNum">     140</span>              :   std::complex&lt;double&gt; c_muinv = 0.0, c_eps = 0.0, omega = 0.0;</span>
+<span id="L141"><span class="lineNum">     141</span>              :   std::array&lt;double, 9&gt; wave_vector_cross{};  // [k ×], column-major</span>
+<span id="L142"><span class="lineNum">     142</span>              : };</span>
+<span id="L143"><span class="lineNum">     143</span>              : </span>
+<span id="L144"><span class="lineNum">     144</span>              : // Stretch factors s_a(x, ω) at the point x, with the frequency-dependent stretch evaluated</span>
+<span id="L145"><span class="lineNum">     145</span>              : // at omega (ignored for a static stretch).</span>
+<span id="L146"><span class="lineNum">     146</span>              : std::array&lt;std::complex&lt;double&gt;, 3&gt; EvaluateStretch(const Stretch &amp;stretch,</span>
+<span id="L147"><span class="lineNum">     147</span>              :                                                     const std::array&lt;double, 3&gt; &amp;x,</span>
+<span id="L148"><span class="lineNum">     148</span>              :                                                     std::complex&lt;double&gt; omega);</span>
+<span id="L149"><span class="lineNum">     149</span>              : </span>
+<span id="L150"><span class="lineNum">     150</span>              : // Pack the QFunction context of a PML integrator (layout in fem/qfunctions/coeff/pml_qf.h),</span>
+<span id="L151"><span class="lineNum">     151</span>              : // with attr_background the background index of each (1-based) libCEED attribute (-1 for</span>
+<span id="L152"><span class="lineNum">     152</span>              : // attributes outside of the PML regions). Returns an empty context if no attribute is in a</span>
+<span id="L153"><span class="lineNum">     153</span>              : // PML region.</span>
+<span id="L154"><span class="lineNum">     154</span>              : std::vector&lt;CeedIntScalar&gt; PackContext(const ContextHeader &amp;header, const Stretch &amp;stretch,</span>
+<span id="L155"><span class="lineNum">     155</span>              :                                        const std::vector&lt;int&gt; &amp;attr_background,</span>
+<span id="L156"><span class="lineNum">     156</span>              :                                        const std::vector&lt;Background&gt; &amp;backgrounds);</span>
+<span id="L157"><span class="lineNum">     157</span>              : </span>
+<span id="L158"><span class="lineNum">     158</span>              : //</span>
+<span id="L159"><span class="lineNum">     159</span>              : // A block of PML regions of a 3D mesh, for frequency domain problems: the stretch and the</span>
+<span id="L160"><span class="lineNum">     160</span>              : // background material of each PML attribute (the material properties of its material).</span>
+<span id="L161"><span class="lineNum">     161</span>              : //</span>
+<span id="L162"><span class="lineNum">     162</span>              : class Layer</span>
+<span id="L163"><span class="lineNum">     163</span>              : {</span>
+<span id="L164"><span class="lineNum">     164</span>              : private:</span>
+<span id="L165"><span class="lineNum">     165</span>              :   Stretch stretch;</span>
+<span id="L166"><span class="lineNum">     166</span>              : </span>
+<span id="L167"><span class="lineNum">     167</span>              :   // Domain attributes of the PML regions (global mesh attributes, sorted).</span>
+<span id="L168"><span class="lineNum">     168</span>              :   std::vector&lt;int&gt; attributes;</span>
+<span id="L169"><span class="lineNum">     169</span>              : </span>
+<span id="L170"><span class="lineNum">     170</span>              :   // Background material index of each local libCEED attribute (-1 for attributes outside</span>
+<span id="L171"><span class="lineNum">     171</span>              :   // of the PML regions), and background materials.</span>
+<span id="L172"><span class="lineNum">     172</span>              :   std::vector&lt;int&gt; attr_background;</span>
+<span id="L173"><span class="lineNum">     173</span>              :   std::vector&lt;Background&gt; backgrounds;</span>
+<span id="L174"><span class="lineNum">     174</span>              : </span>
+<span id="L175"><span class="lineNum">     175</span>              : public:</span>
+<span id="L176"><span class="lineNum">     176</span>              :   // Set up the PML regions of the block configured by data, with pml_attributes the</span>
+<span id="L177"><span class="lineNum">     177</span>              :   // attributes of the PML regions of all blocks (the remaining attributes form the physical</span>
+<span id="L178"><span class="lineNum">     178</span>              :   // region). The background materials are the materials with the given properties</span>
+<span id="L179"><span class="lineNum">     179</span>              :   // (indexed by material, with attr_mat the map from libCEED attribute to material index).</span>
+<span id="L180"><span class="lineNum">     180</span>              :   // Checks that each element of the PML regions of the block is in the layer. The finite</span>
+<span id="L181"><span class="lineNum">     181</span>              :   // element order is used for the automatic conductivity.</span>
+<span id="L182"><span class="lineNum">     182</span>              :   Layer(const config::PMLData &amp;data, const std::vector&lt;int&gt; &amp;pml_attributes,</span>
+<span id="L183"><span class="lineNum">     183</span>              :         const std::vector&lt;config::MaterialData&gt; &amp;materials, const Mesh &amp;mesh,</span>
+<span id="L184"><span class="lineNum">     184</span>              :         const mfem::Array&lt;int&gt; &amp;attr_mat, const mfem::DenseTensor &amp;mu_inv,</span>
+<span id="L185"><span class="lineNum">     185</span>              :         const mfem::DenseTensor &amp;epsilon_real, const mfem::DenseTensor &amp;epsilon_imag,</span>
+<span id="L186"><span class="lineNum">     186</span>              :         int fe_order = 1);</span>
+<span id="L187"><span class="lineNum">     187</span>              : </span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">       40155 :   const Stretch &amp;GetStretch() const { return stretch; }</span></span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaGNC">         928 :   bool IsFrequencyDependent() const { return stretch.frequency_dependent; }</span></span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">        1097 :   const std::vector&lt;int&gt; &amp;GetAttributes() const { return attributes; }</span></span>
+<span id="L191"><span class="lineNum">     191</span>              : </span>
+<span id="L192"><span class="lineNum">     192</span>              :   // Whether the local libCEED attribute is in a PML region of the block.</span>
+<span id="L193"><span class="lineNum">     193</span>              :   bool IsPMLCeedAttribute(int ceed_attr) const</span>
+<span id="L194"><span class="lineNum">     194</span>              :   {</span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">        1200 :     return ceed_attr &gt; 0 &amp;&amp; ceed_attr &lt;= static_cast&lt;int&gt;(attr_background.size()) &amp;&amp;</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">        1200 :            attr_background[ceed_attr - 1] &gt;= 0;</span></span>
+<span id="L197"><span class="lineNum">     197</span>              :   }</span>
+<span id="L198"><span class="lineNum">     198</span>              : </span>
+<span id="L199"><span class="lineNum">     199</span>              :   // Pack the QFunction context of a PML integrator (see pml::PackContext). Returns an empty</span>
+<span id="L200"><span class="lineNum">     200</span>              :   // context if no local attribute is in a PML region.</span>
+<span id="L201"><span class="lineNum">     201</span>              :   std::vector&lt;CeedIntScalar&gt; PackContext(const ContextHeader &amp;header) const;</span>
+<span id="L202"><span class="lineNum">     202</span>              : };</span>
+<span id="L203"><span class="lineNum">     203</span>              : </span>
+<span id="L204"><span class="lineNum">     204</span>              : // Check that the stretch is continuous across the interfaces between the PML regions of</span>
+<span id="L205"><span class="lineNum">     205</span>              : // different blocks, and equal to one at the interfaces between the PML regions and the</span>
+<span id="L206"><span class="lineNum">     206</span>              : // physical region: at points of each mesh face on these interfaces, the stretch factors of</span>
+<span id="L207"><span class="lineNum">     207</span>              : // the two sides must be the same functions of the frequency. Otherwise, the</span>
+<span id="L208"><span class="lineNum">     208</span>              : // PML is not a coordinate transformation and the interfaces reflect.</span>
+<span id="L209"><span class="lineNum">     209</span>              : void CheckStretchContinuity(const std::vector&lt;Layer&gt; &amp;layers, const Mesh &amp;mesh);</span>
+<span id="L210"><span class="lineNum">     210</span>              : </span>
+<span id="L211"><span class="lineNum">     211</span>              : }  // namespace pml</span>
+<span id="L212"><span class="lineNum">     212</span>              : </span>
+<span id="L213"><span class="lineNum">     213</span>              : }  // namespace palace</span>
+<span id="L214"><span class="lineNum">     214</span>              : </span>
+<span id="L215"><span class="lineNum">     215</span>              : #endif  // PALACE_MODELS_PML_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
