@@ -37,6 +37,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. Supports nonconformal adaptive
     mesh refinement, which keeps the two faces matched. SchemaVer 2-2-1.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Added `Boundaries.FluxLoopExcitation`, a single-solve excitation that drives several
+    `FluxLoop` holes together with prescribed fluxoids and writes the superposed field and
+    stored energy to `terminal-fluxexc.csv`, separate from the inductance-matrix sweep
+    (toggle `Solver.Magnetostatic.FluxLoopMatrixSweep`). SchemaVer 2-2-3.
+    [PR 979](https://github.com/awslabs/palace/pull/979).
 
 #### Interface Changes
 

@@ -192,6 +192,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
     output_n_post = solver.magnetostatic.n_post;
+    output_excitation_saves = std::ranges::any_of(
+        boundaries.fluxloopexcitation, [](const auto &kv) { return kv.second.save_field; });
   }
   else if (solver_t == ProblemType::TRANSIENT)
   {
@@ -754,6 +756,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
+  paraview_max_cycle = -1;
   paraview->SetDataFormat(format);
   MFEM_VERIFY(use_ceed_domain_paraview,
               "ParaView domain output requires the libCEED point-field path!");
@@ -1223,6 +1226,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
         units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
+  paraview_max_cycle = std::max(paraview_max_cycle, step);
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
@@ -1260,7 +1264,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // non-used value to make the step identifiable within the data collection.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  paraview->SetCycle(paraview->GetCycle() + 1);
+  paraview->SetCycle(paraview_max_cycle + 1);
   if (paraview->GetTime() < 1.0)
   {
     paraview->SetTime(99.0);
@@ -2414,7 +2418,8 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v,
 }
 template <ProblemType solver_t>
 double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
-                                                  const Vector &b, int idx)
+                                                  const Vector &b, int idx,
+                                                  std::optional<bool> save_fields)
   requires(solver_t == ProblemType::MAGNETOSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -2426,13 +2431,15 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (ShouldWriteParaviewFields(step))
+  if (save_fields ? (enable_paraview_output && *save_fields)
+                  : ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteParaviewFields(step, idx);
     Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
   }
-  if (ShouldWriteGridFunctionFields(step))
+  if (save_fields ? (enable_gridfunction_output && *save_fields)
+                  : ShouldWriteGridFunctionFields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(step, idx);
