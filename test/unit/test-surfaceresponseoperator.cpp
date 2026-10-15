@@ -6440,7 +6440,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   cluster_maxwell_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
   SpaceOperator cluster_maxwell_space(cluster_maxwell_iodata, cluster_maxwell_meshes);
   // U5: what stays refused on the Maxwell path. A hat whose cap plane holds no contour knot
-  // (decision 821 (2)); the corner family's trace basis (M-3: stage 2); SurfaceMortar.
+  // (decision 821 (2)); a closed-contour key (ZeroTraceIndices, ContourGroups) on the
+  // open-path cluster, refused at the library load before the constructor's own
+  // combination check; the corner family's trace basis (M-3: stage 2); SurfaceMortar.
   {
     auto off_plane_config = cluster_maxwell_config;
     off_plane_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
@@ -6451,6 +6453,27 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THROWS_WITH(
         SurfaceResponseOperator(off_plane_iodata, cluster_maxwell_space),
         Catch::Matchers::ContainsSubstring("has no contour knot in its own cap plane"));
+    auto zero_trace_open_paths_config = cluster_maxwell_config;
+    zero_trace_open_paths_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+        cap_hat_zero_trace_open_paths_library_3d_path.string();
+    IoData zero_trace_open_paths_iodata(zero_trace_open_paths_config, false);
+    zero_trace_open_paths_iodata.boundaries.cracked_attributes.insert(9);
+    zero_trace_open_paths_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(zero_trace_open_paths_iodata, cluster_maxwell_space),
+        Catch::Matchers::ContainsSubstring(
+            "ZeroTraceIndices requires closed response-model contours"));
+    auto contour_groups_open_paths_config = cluster_maxwell_config;
+    contour_groups_open_paths_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+        cap_hat_contour_groups_open_paths_library_3d_path.string();
+    IoData contour_groups_open_paths_iodata(contour_groups_open_paths_config, false);
+    contour_groups_open_paths_iodata.boundaries.cracked_attributes.insert(9);
+    contour_groups_open_paths_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(contour_groups_open_paths_iodata, cluster_maxwell_space),
+        Catch::Matchers::ContainsSubstring(
+            "OpenContourPaths requires a version-2 DifferentConductorGap or edge-cluster "
+            "model with ConductorReferences and no ContourGroups"));
     auto mortar_config = cluster_maxwell_config;
     mortar_config["Solver"]["SurfaceResponseCorrection"]["TraceCoupling"] = "SurfaceMortar";
     IoData mortar_iodata(mortar_config, false);

@@ -736,6 +736,21 @@ SurfaceResponseFiles::SurfaceResponseFiles()
       output << cap_hat_off_plane_library_3d.dump(2) << "\n";
     }
 
+    {
+      auto zero_trace_open_paths_library_3d = cap_hat_library_3d;
+      zero_trace_open_paths_library_3d["Name"] =
+          "unit-test-process-spatial-cluster-cap-hats-zero-trace-open-paths-3d";
+      zero_trace_open_paths_library_3d["Models"].back()["ZeroTraceIndices"] = {1};
+      std::ofstream output(cap_hat_zero_trace_open_paths_library_3d_path);
+      output << zero_trace_open_paths_library_3d.dump(2) << "\n";
+      auto contour_groups_open_paths_library_3d = cap_hat_library_3d;
+      contour_groups_open_paths_library_3d["Name"] =
+          "unit-test-process-spatial-cluster-cap-hats-contour-groups-open-paths-3d";
+      contour_groups_open_paths_library_3d["Models"].back()["ContourGroups"] = {4};
+      std::ofstream groups_output(cap_hat_contour_groups_open_paths_library_3d_path);
+      groups_output << contour_groups_open_paths_library_3d.dump(2) << "\n";
+    }
+
     auto cap_hat_loaded_library_3d = cap_hat_library_3d;
     cap_hat_loaded_library_3d["Name"] =
         "unit-test-process-spatial-cluster-cap-hats-loaded-3d";

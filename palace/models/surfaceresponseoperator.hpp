@@ -336,7 +336,9 @@ private:
     // The rim knot each cap-interior hat hangs from on the Maxwell path (decision 818 R2):
     // the nearest contour knot of a path (never a PEC knot) in the hat's own cap plane,
     // chosen from the model data on every rank (a hat without one is refused at
-    // configuration).
+    // configuration). "Own cap plane" = the same local w within
+    // kSignatureParameterToleranceOverRadius x the library matching radius, which is 0 for
+    // an explicit (non-library) model: there the knot's w must equal the hat's exactly.
     std::vector<int> hat_rim_knots;
     bool surface_mortar = false;
     bool spatial_mortar = false;

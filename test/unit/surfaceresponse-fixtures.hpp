@@ -225,6 +225,15 @@ struct SurfaceResponseFiles
   // the Maxwell path refuses it (decision 821 (2)); the electrostatic path loads it.
   const fs::path cap_hat_off_plane_spatial_cluster_library_3d_path =
       temp.temp_dir / "fabrication-process-spatial-cluster-cap-hats-off-plane-3d.json";
+  // The cap-hat cluster (open paths between its two conductors) declaring ZeroTraceIndices,
+  // resp. ContourGroups, as well: a closed-contour key on an open-path model, refused at
+  // the library load on both paths.
+  const fs::path cap_hat_zero_trace_open_paths_library_3d_path =
+      temp.temp_dir /
+      "fabrication-process-spatial-cluster-cap-hats-zero-trace-open-paths-3d.json";
+  const fs::path cap_hat_contour_groups_open_paths_library_3d_path =
+      temp.temp_dir /
+      "fabrication-process-spatial-cluster-cap-hats-contour-groups-open-paths-3d.json";
   const fs::path cap_hat_off_plane_points_path =
       temp.temp_dir / "cap-hat-off-plane-basis-points.csv";
   const fs::path cap_hat_off_plane_trace_vertices_path =
