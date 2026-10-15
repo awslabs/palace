@@ -102,6 +102,15 @@ private:
   // Operator for thin-film superconductor sheet (kinetic inductance) boundaries.
   SuperconductorSheetOperator sc_sheet_op;
 
+  // Two-sided (two-port) sheet cross-face coupling C per ND level, built on first use. It
+  // is added to every operator on the level (stiffness, preconditioners, and the sheet
+  // mass), so the operator, the flux RHS, and the penalty energy stay consistent.
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> two_port_coupling_;
+
+  // Add the two-sided sheet coupling on ND level l to an operator, eliminated on its
+  // essential DOFs. Does nothing without a two-sided sheet.
+  void AddTwoPortCoupling(std::size_t l, ParOperator &K_l);
+
   // Flux-loop indices whose film is (partly) a Superconductor sheet — i.e.
   // London flux films. Populated at construction after surf_flux_op is set.
   std::set<int> london_flux_loops_;
