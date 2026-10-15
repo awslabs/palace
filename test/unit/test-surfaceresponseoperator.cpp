@@ -4536,7 +4536,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       ring_correction["Library"] = library.string();
       IoData ring_iodata(ring_config, false);
       ring_iodata.boundaries.cracked_attributes.insert(9);
-      fs::remove(ring_patches_path);
+      // The shared patches CSV of the previous run is read by every rank (PatchSummary)
+      // with no collective after the reads, so only the root (the writer) removes it, and
+      // only once every rank has finished reading it.
+      Mpi::Barrier(Mpi::World());
+      if (Mpi::Root(Mpi::World()))
+      {
+        fs::remove(ring_patches_path);
+      }
       WriteSurfaceResponseRequirements(ring_iodata, *ring_mesh,
                                        ring_manifest_path.string());
       Mpi::Barrier(Mpi::World());
