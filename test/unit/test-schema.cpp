@@ -279,6 +279,18 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     }
   }
 
+  SECTION("Refinement MinElementSize is a non-negative length")
+  {
+    json refinement = {{"MaxIts", 4}, {"MinElementSize", 0.02}};
+    CHECK(ValidateConfig(refinement, "Refinement").empty());
+    refinement["MinElementSize"] = 0.0;
+    CHECK(ValidateConfig(refinement, "Refinement").empty());
+    refinement["MinElementSize"] = -0.02;
+    CHECK(!ValidateConfig(refinement, "Refinement").empty());
+    refinement["MinElementSize"] = "20nm";
+    CHECK(!ValidateConfig(refinement, "Refinement").empty());
+  }
+
   SECTION("Invalid Direction strings")
   {
     std::vector<std::string> invalid_dirs = {"a",  "+a", "-a",  "xx", "~x",

@@ -519,6 +519,12 @@
           "description": "D\u00f6rfler marking fraction used to specify which elements to refine. This marking strategy will mark the smallest number of elements that make up \"UpdateFraction\" of the total error in the mesh. A larger value will refine more elements per iteration, at the cost of the final mesh being less efficient.",
           "default": 0.7
         },
+        "MinElementSize": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Element-size floor for AMR marking, in mesh length units (scaled by `L0`). An element is eligible for marking only when its size `h` (the volume-based element size reported as `h` in the mesh statistics of the log) is at least twice this value, so that one refinement of a marked element stays at or above the floor; the D\u00f6rfler threshold is computed over the eligible elements only, while the error estimate and the convergence test keep every element. Each AMR iteration logs the floor, the number of ineligible elements and their share of the error, and the number of elements below the floor that the refinement closure created. AMR stops when no element is eligible. `0` disables the floor.",
+          "default": 0.0
+        },
         "Nonconformal": {
           "type": "boolean",
           "description": "Use nonconformal refinement in adaptation. Required for non-simplex meshes.",

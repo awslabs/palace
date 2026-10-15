@@ -220,6 +220,10 @@ RefinementData::RefinementData(const json &refinement)
   nonconformal = refinement.value("Nonconformal", nonconformal);
   max_nc_levels = refinement.value("MaxNCLevels", max_nc_levels);
   update_fraction = refinement.value("UpdateFraction", update_fraction);
+  min_element_size = refinement.value("MinElementSize", min_element_size);
+  MFEM_VERIFY(
+      min_element_size >= 0.0,
+      "config[\"Model\"][\"Refinement\"][\"MinElementSize\"] must be non-negative!");
   maximum_imbalance = refinement.value("MaximumImbalance", maximum_imbalance);
   save_adapt_iterations = refinement.value("SaveAdaptIterations", save_adapt_iterations);
   save_adapt_mesh = refinement.value("SaveAdaptMesh", save_adapt_mesh);
@@ -2122,6 +2126,7 @@ void Nondimensionalize(const Units &units, RefinementData &data)
     std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
                    scale);
   }
+  data.min_element_size /= units.GetMeshLengthRelativeScale();
 }
 
 void Nondimensionalize(const Units &units, MaterialData &data)

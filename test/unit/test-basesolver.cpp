@@ -1,12 +1,19 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <vector>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
+#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/dorfler.hpp"
 #include "utils/filesystem.hpp"
 
 using namespace palace;
@@ -316,4 +323,172 @@ TEST_CASE("ExceedsPredictedMaxSize stops before an oversized solve", "[basesolve
     refinement.max_size = -1;
     CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
   }
+}
+
+TEST_CASE("MarkEligibleElements without a floor marks the Dörfler set",
+          "[basesolver][Serial][Parallel]")
+{
+  // Every element eligible: the marked set, the threshold and the marked error are those
+  // of the unrestricted Dörfler marking on the same indicators (the default code path).
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm);
+  Vector e(6);
+  for (int i = 0; i < e.Size(); i++)
+  {
+    e[i] = 0.5 + i + 0.1 * rank;
+  }
+  const std::vector<bool> eligible(e.Size(), true);
+  const double fraction = 0.7;
+  const auto marking = MarkEligibleElements(comm, e, eligible, fraction);
+  const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(comm, e, fraction);
+  CHECK(marking.threshold == threshold);
+  CHECK(marking.marked_error == marked_error);
+  CHECK(marking.ineligible_elements == 0);
+  CHECK(marking.ineligible_error == 0.0);
+  mfem::Array<int> expected;
+  for (int i = 0; i < e.Size(); i++)
+  {
+    if (e[i] >= threshold)
+    {
+      expected.Append(i);
+    }
+  }
+  CHECK(marking.marked_elements == expected);
+  CHECK(marking.marked_elements.Size() > 0);
+}
+
+TEST_CASE("MarkEligibleElements excludes the ineligible elements from the threshold",
+          "[basesolver][Serial][Parallel]")
+{
+  // The two largest indicators sit on ineligible elements: they are never marked, do not
+  // enter the threshold, and are reported with their share of the squared indicator.
+  MPI_Comm comm = Mpi::World();
+  const int size = Mpi::Size(comm);
+  Vector e(6);
+  e[0] = 10.0;
+  e[1] = 9.0;
+  e[2] = 1.0;
+  e[3] = 2.0;
+  e[4] = 3.0;
+  e[5] = 4.0;
+  const std::vector<bool> eligible = {false, false, true, true, true, true};
+  const double fraction = 0.7;
+  const auto marking = MarkEligibleElements(comm, e, eligible, fraction);
+
+  Vector eligible_e(4);
+  eligible_e[0] = 1.0;
+  eligible_e[1] = 2.0;
+  eligible_e[2] = 3.0;
+  eligible_e[3] = 4.0;
+  const auto [threshold, marked_error] =
+      utils::ComputeDorflerThreshold(comm, eligible_e, fraction);
+  CHECK(marking.threshold == threshold);
+  CHECK(marking.marked_error == marked_error);
+  CHECK(marking.ineligible_elements == 2 * size);
+  CHECK_THAT(marking.ineligible_error,
+             Catch::Matchers::WithinRel(
+                 (100.0 + 81.0) / (100.0 + 81.0 + 1.0 + 4.0 + 9.0 + 16.0), 1.0e-14));
+  // 70% of the eligible squared error 30 needs {4, 3} (25) : {4} alone is 16 < 21.
+  mfem::Array<int> expected({4, 5});
+  CHECK(marking.marked_elements == expected);
+  for (int i : marking.marked_elements)
+  {
+    CHECK(eligible[i]);
+  }
+}
+
+TEST_CASE("MarkEligibleElements with an empty eligible set marks nothing",
+          "[basesolver][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int size = Mpi::Size(comm);
+  Vector e(3);
+  e[0] = 1.0;
+  e[1] = 2.0;
+  e[2] = 3.0;
+
+  SECTION("No eligible element on any process")
+  {
+    const std::vector<bool> eligible(e.Size(), false);
+    const auto marking = MarkEligibleElements(comm, e, eligible, 0.7);
+    CHECK(marking.marked_elements.Size() == 0);
+    CHECK(marking.ineligible_elements == 3 * size);
+    CHECK(marking.ineligible_error == 1.0);
+    CHECK(marking.threshold == 0.0);
+    CHECK(marking.marked_error == 0.0);
+  }
+
+  SECTION("Eligible elements on the root process only")
+  {
+    // The marking is collective: the other processes take part in the threshold and mark
+    // nothing; the root marks eligible elements only, among them the largest indicator,
+    // and the marked share of the eligible error (4 + 9) reaches the fraction.
+    const bool root = Mpi::Root(comm);
+    const std::vector<bool> eligible = {false, root, root};
+    const auto marking = MarkEligibleElements(comm, e, eligible, 0.7);
+    CHECK(marking.ineligible_elements == 3 * size - 2);
+    CHECK(marking.marked_error >= 0.7);
+    CHECK(marking.marked_elements.Size() == (root ? marking.marked_elements.Size() : 0));
+    if (root)
+    {
+      REQUIRE(marking.marked_elements.Size() >= 1);
+      CHECK(marking.marked_elements[marking.marked_elements.Size() - 1] == 2);
+      for (int i : marking.marked_elements)
+      {
+        CHECK(eligible[i]);
+      }
+    }
+  }
+}
+
+TEST_CASE("ElementsEligibleForMarking reads the element size of the mesh statistics",
+          "[basesolver][Serial][Parallel]")
+{
+  // Two 1.5 x 1 x 1 hexahedra; one is refined once, so its 8 children have half its
+  // volume-based size h = (1.5)^(1/3).
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 3.0, 1.0, 1.0);
+  serial_mesh.EnsureNCMesh(true);
+  mfem::Array<int> refine_first(1);
+  refine_first[0] = 0;
+  serial_mesh.GeneralRefinement(refine_first, 1);
+  REQUIRE(serial_mesh.GetNE() == 9);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+  const double h_parent = std::cbrt(1.5), h_child = 0.5 * h_parent;
+
+  // The same measure as the h of the mesh statistics (Mesh::GetCharacteristics).
+  double h_min, h_max, kappa_min, kappa_max;
+  mesh.GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
+  double h_min_elements = mfem::infinity();
+  for (int i = 0; i < mesh.GetNE(); i++)
+  {
+    h_min_elements = std::min(h_min_elements, mesh.GetElementSize(i, 0));
+  }
+  Mpi::GlobalMin(1, &h_min_elements, mesh.GetComm());
+  CHECK(h_min == h_min_elements);
+  CHECK_THAT(h_min, Catch::Matchers::WithinRel(h_child, 1.0e-12));
+  CHECK_THAT(h_max, Catch::Matchers::WithinRel(h_parent, 1.0e-12));
+
+  // Floor at h_child / 2: every element is eligible (h >= 2 x floor = h_child).
+  for (bool eligible : ElementsEligibleForMarking(mesh, 0.5 * h_child * (1.0 - 1.0e-12)))
+  {
+    CHECK(eligible);
+  }
+  // Floor just above h_child / 2: the children are ineligible, the parent eligible.
+  {
+    const auto eligible = ElementsEligibleForMarking(mesh, 0.5 * h_child * (1.0 + 1.0e-12));
+    int num_eligible = 0;
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      CHECK(eligible[i] == (mesh.GetElementSize(i, 0) > h_child * (1.0 + 1.0e-13)));
+      num_eligible += eligible[i];
+    }
+    Mpi::GlobalSum(1, &num_eligible, mesh.GetComm());
+    CHECK(num_eligible == 1);
+  }
+
+  // Elements below a floor (the closure count after a refinement step).
+  CHECK(CountElementsBelowSize(mesh, h_child * (1.0 - 1.0e-12)) == 0);
+  CHECK(CountElementsBelowSize(mesh, h_child * (1.0 + 1.0e-12)) == 8);
+  CHECK(CountElementsBelowSize(mesh, h_parent * (1.0 + 1.0e-12)) == 9);
 }

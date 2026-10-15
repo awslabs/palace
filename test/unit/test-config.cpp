@@ -1010,6 +1010,21 @@ TEST_CASE("Config refinement MaxSizePredicted", "[config][Serial]")
   CHECK_FALSE(legacy.max_size_predicted);
 }
 
+TEST_CASE("Config refinement MinElementSize", "[config][Serial]")
+{
+  // Default: no element-size floor (every element is eligible for marking).
+  json unfloored = {{"MaxIts", 4}};
+  CHECK(config::RefinementData(unfloored).min_element_size == 0.0);
+
+  // A floor is a length in mesh units; parsed as written (nondimensionalized later).
+  json floored = {{"MaxIts", 4}, {"MinElementSize", 0.02}};
+  CHECK(config::RefinementData(floored).min_element_size == 0.02);
+
+  // A negative floor is refused.
+  json negative = {{"MaxIts", 4}, {"MinElementSize", -0.02}};
+  CHECK_THROWS(config::RefinementData(negative));
+}
+
 TEST_CASE("Config automatic interface dielectric edges", "[config][Serial]")
 {
   json dielectric = {{"Attributes", {1}},

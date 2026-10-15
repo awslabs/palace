@@ -16,6 +16,7 @@
 namespace mfem
 {
 class Mesh;
+class ParMesh;
 }  // namespace mfem
 
 namespace palace
@@ -110,6 +111,33 @@ long long int PredictRefinedSize(long long int ntdof, long long int initial_elem
 bool ExceedsPredictedMaxSize(const config::RefinementData &refinement, long long int ntdof,
                              long long int initial_elem_count,
                              long long int final_elem_count);
+
+// Refinement.MinElementSize applied to the local elements of a mesh: eligible[i] is true
+// when the volume-based size of element i (mfem::Mesh::GetElementSize(i, 0), the h whose
+// minimum and maximum the mesh statistics report) is at least 2 x min_element_size, so one
+// refinement of a marked element stays at or above the floor. Both lengths are
+// nondimensional, as the mesh coordinates.
+std::vector<bool> ElementsEligibleForMarking(mfem::Mesh &mesh, double min_element_size);
+
+// Global number of elements whose volume-based size is below min_element_size (after a
+// refinement step: the elements the conformity closure created below the floor).
+long long int CountElementsBelowSize(mfem::ParMesh &mesh, double min_element_size);
+
+// Dörfler marking over the eligible elements only: the threshold is computed on the
+// eligible indicators and an element is marked when it is eligible and its indicator
+// reaches the threshold. The ineligible elements are counted with their share of the total
+// squared indicator (global sums). When no element is eligible (globally) nothing is marked
+// and the threshold and marked_error are 0.
+struct FloorMarking
+{
+  mfem::Array<int> marked_elements;       // Local indices.
+  long long int ineligible_elements = 0;  // Global count.
+  double ineligible_error = 0.0;          // Share of the global sum of e^2.
+  double threshold = 0.0;                 // Dörfler threshold over the eligible set.
+  double marked_error = 0.0;              // Marked share of the eligible sum of e^2.
+};
+FloorMarking MarkEligibleElements(MPI_Comm comm, const Vector &e,
+                                  const std::vector<bool> &eligible, double fraction);
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder
 // "iterationXX" inside output_dir and moves all files and directories into it, leaving

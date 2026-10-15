@@ -19,6 +19,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - New optional `config["Model"]["Refinement"]["MinElementSize"]`, an element-size floor
+    for AMR marking (a length in mesh units; default `0` = off, bitwise the previous
+    marking). With a floor, only elements whose volume-based size `h` (the `h` of the mesh
+    statistics in the log) is at least twice the floor are eligible for marking, the Dörfler
+    threshold is computed over the eligible elements only, and the error estimate and the
+    `"Tol"` test keep every element. Each AMR iteration logs the floor, the ineligible count
+    with its share of the error and the number of elements below the floor created by the
+    conformity closure; AMR stops cleanly when no element is eligible.
   - Added `"CorrectionMode"` for electrostatic and Maxwell surface-response correction,
     with `"PostprocessOnly"`, `"SelfConsistent"`, and backward-compatible `"Both"`
     execution modes. SchemaVer 1-6-0.
