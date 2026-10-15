@@ -6,6 +6,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <limits>
+#include <set>
+#include "utils/communication.hpp"
+#include "utils/geodata.hpp"
+#include "utils/outputdir.hpp"
 
 namespace palace
 {
@@ -157,8 +163,9 @@ std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace
 namespace
 {
 
-// The point p of each point-tangent DOF u(p).t from its signature (t_b, p_a t_b):
-// p = Q t / |t|^2 with Q_ab = p_a t_b.
+// The point p of each DOF from its signature: the coordinates of an H1 DOF, and for a
+// point-tangent DOF u(p).t with the signature (t_b, p_a t_b), p = Q t / |t|^2 with
+// Q_ab = p_a t_b.
 std::vector<std::array<double, 3>> SignaturePoints(const std::vector<double> &sig,
                                                    int width)
 {
@@ -167,6 +174,11 @@ std::vector<std::array<double, 3>> SignaturePoints(const std::vector<double> &si
   for (int g = 0; g < n; g++)
   {
     const double *v = &sig[static_cast<std::size_t>(g) * width];
+    if (width == 3)
+    {
+      p[g] = {v[0], v[1], v[2]};
+      continue;
+    }
     const double t2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
     for (int a = 0; a < 3 && t2 > 0.0; a++)
     {
@@ -195,7 +207,7 @@ double SignatureTolerance(const std::vector<double> &saved)
 std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
                                        const std::vector<double> &saved, int width)
 {
-  MFEM_VERIFY(width == 12, "MatchSignaturePoints expects Nédélec signatures!");
+  MFEM_VERIFY(width == 3 || width == 12, "Unknown DOF signature width " << width << "!");
   const double tol = SignatureTolerance(saved);
   const auto pc = SignaturePoints(candidates, width), ps = SignaturePoints(saved, width);
   // The saved points by their first coordinate, searched within the tolerance.
@@ -342,6 +354,174 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
   MFEM_VERIFY(ok, "Online interface DOFs do not match the saved model (max mismatch "
                       << worst << "); the interface Gamma must be identical.");
   return map;
+}
+
+std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
+                                   const std::vector<int> &bdr_attributes)
+{
+  // Mark the local DOFs of the boundary elements, then the true DOFs they reach (|P|^T).
+  const auto &mesh = *fespace.GetParMesh();
+  mfem::Vector lmark(fespace.GetVSize()), tmark(fespace.GetTrueVSize());
+  lmark = 0.0;
+  mfem::Array<int> dofs;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    if (std::find(bdr_attributes.begin(), bdr_attributes.end(), mesh.GetBdrAttribute(be)) !=
+        bdr_attributes.end())
+    {
+      fespace.GetBdrElementDofs(be, dofs);
+      for (int d : dofs)
+      {
+        lmark(d >= 0 ? d : -1 - d) = 1.0;
+      }
+    }
+  }
+  fespace.Dof_TrueDof_Matrix()->AbsMultTranspose(1.0, lmark, 0.0, tmark);
+  std::vector<char> mark(fespace.GetTrueVSize(), 0);
+  for (int i = 0; i < fespace.GetTrueVSize(); i++)
+  {
+    mark[i] = tmark(i) > 0.0;
+  }
+  return mark;
+}
+
+std::string RegionMeshPath(const std::string &model_path)
+{
+  std::filesystem::path p(model_path);
+  return p.replace_filename(p.stem().string() + "_region.mesh").string();
+}
+
+namespace
+{
+
+// A serial mesh of the region, written without the boundary elements duplicated by the
+// cracking of interior boundaries (the online run cracks them again).
+class SerialRegionMesh : public mfem::Mesh
+{
+public:
+  explicit SerialRegionMesh(mfem::Mesh &&mesh) : mfem::Mesh(std::move(mesh)) {}
+
+  // Shift the attributes above shift back and drop the duplicated boundary elements (for
+  // writing only: the boundary tables are not updated).
+  void PrepareForPrint(int shift)
+  {
+    for (int e = 0; e < GetNE(); e++)
+    {
+      if (GetAttribute(e) > shift)
+      {
+        SetAttribute(e, GetAttribute(e) - shift);
+      }
+    }
+    std::set<std::vector<int>> seen;  // attribute, then the sorted vertices
+    int nbe = 0;
+    for (int be = 0; be < NumOfBdrElements; be++)
+    {
+      mfem::Array<int> v;
+      boundary[be]->GetVertices(v);
+      std::vector<int> key(v.begin(), v.end());
+      std::sort(key.begin(), key.end());
+      key.insert(key.begin(), boundary[be]->GetAttribute());
+      if (!seen.insert(key).second)
+      {
+        FreeElement(boundary[be]);
+        continue;
+      }
+      boundary[nbe++] = boundary[be];
+    }
+    NumOfBdrElements = nbe;
+    boundary.SetSize(nbe);
+    SetAttributes();
+  }
+};
+
+}  // namespace
+
+void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespace,
+                     const std::vector<int> &region_attributes,
+                     const std::vector<int> &environment_attributes,
+                     const std::vector<char> &keep, double length_scale)
+{
+  // On a copy of the mesh, the environment elements touching the kept DOFs take shifted
+  // attributes for the domain submesh, and get theirs back in the written mesh.
+  const auto &parent = *fespace.GetParMesh();
+  mfem::Vector tmark(fespace.GetTrueVSize()), lmark(fespace.GetVSize());
+  for (int i = 0; i < fespace.GetTrueVSize(); i++)
+  {
+    tmark(i) = keep[i] ? 1.0 : 0.0;
+  }
+  fespace.Dof_TrueDof_Matrix()->Mult(tmark, lmark);
+  mfem::ParMesh mesh(parent);
+  const int shift = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+  auto in = [](const std::vector<int> &s, int a)
+  { return std::find(s.begin(), s.end(), a) != s.end(); };
+  mfem::Array<int> dofs;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (!in(environment_attributes, parent.GetAttribute(e)))
+    {
+      continue;
+    }
+    fespace.GetElementDofs(e, dofs);
+    if (std::any_of(dofs.begin(), dofs.end(),
+                    [&](int d) { return lmark(d >= 0 ? d : -1 - d) != 0.0; }))
+    {
+      mesh.SetAttribute(e, parent.GetAttribute(e) + shift);
+    }
+  }
+  mesh.SetAttributes();
+  mfem::Array<int> attrs;
+  for (int a : region_attributes)
+  {
+    attrs.Append(a);
+  }
+  for (int a : environment_attributes)
+  {
+    attrs.Append(a + shift);
+  }
+
+  // The submesh is extracted from the whole mesh on rank 0 (gathering a parallel submesh
+  // can duplicate entities shared between ranks that hold few of its elements).
+  MPI_Comm comm = parent.GetComm();
+  auto write = [&](mfem::Mesh &smesh)
+  {
+    WriteRootOutputFile(path, comm,
+                        [&](std::ostream &out)
+                        {
+                          out << std::scientific;
+                          out.precision(std::numeric_limits<double>::max_digits10);
+                          mesh::DimensionalizeMesh(smesh, length_scale);
+                          smesh.Mesh::Print(out);
+                        });
+  };
+  if (mesh.Nonconforming())
+  {
+    // Written as cracked: the online run does not preprocess a nonconforming mesh.
+    mfem::Array<int> rank0(mesh.GetNE());
+    rank0 = 0;
+    mesh.Rebalance(rank0);
+    auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);
+    for (int e = 0; e < sub.GetNE(); e++)
+    {
+      if (sub.GetAttribute(e) > shift)
+      {
+        sub.SetAttribute(e, sub.GetAttribute(e) - shift);
+      }
+    }
+    sub.SetAttributes();
+    write(sub);
+  }
+  else
+  {
+    mfem::Mesh smesh = mesh.GetSerialMesh(0);
+    SerialRegionMesh sub(Mpi::Root(comm)
+                             ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
+                             : mfem::Mesh());
+    if (Mpi::Root(comm))
+    {
+      sub.PrepareForPrint(shift);
+    }
+    write(sub);
+  }
 }
 
 }  // namespace palace

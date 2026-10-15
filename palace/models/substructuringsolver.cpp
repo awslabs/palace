@@ -428,6 +428,11 @@ struct SubstructuringSolver::Impl
   mfem::Array<int> dbc_tdofs;
   int env_dbc_local = 0;                           // owned Dirichlet DOFs of env elements
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
+  std::vector<char> region_dbc;                    // Dirichlet DOFs of region elements
+  // Online on a mesh of the region (written offline next to the model): Γ also holds the
+  // region's boundary DOFs at the saved interface DOFs, and the environment is that of the
+  // model (not checked).
+  bool region_only = false;
 
   std::unique_ptr<RegionCondensedOperator> region_op;
   std::unique_ptr<KspSolver> region_ksp;  // CG on the region-condensed operator
@@ -548,6 +553,57 @@ struct SubstructuringSolver::Impl
         dbc_tdofs.Append(i);
       }
     }
+    region_dbc.assign(nt, 0);
+    for (int i = 0; i < nt; i++)
+    {
+      region_dbc[i] = rm[i] && dir_mark[i];
+    }
+
+    // A mesh of the region holds fewer environment DOFs than the model was condensed from.
+    std::vector<char> cut(nt, 0);
+    if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
+    {
+      const SavedHead head = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      double n_env = 0.0;
+      for (int i = 0; i < nt; i++)
+      {
+        n_env += em[i] && !dir_mark[i];
+      }
+      Mpi::GlobalSum(1, &n_env, parent_fes.GetComm());
+      region_only = !head.env_fp.empty() && head.width > 0 && n_env < head.env_fp[0];
+      if (region_only)
+      {
+        MFEM_VERIFY(iodata.model.refinement.max_it == 0,
+                    "Adaptive refinement with substructuring needs the full mesh, not the "
+                    "mesh of the region!");
+        std::vector<char> bdr =
+            BoundaryTrueDofs(parent_fes, std::vector<int>(parent.bdr_attributes.begin(),
+                                                          parent.bdr_attributes.end()));
+        std::vector<int> index(nt, -1);
+        int nc = 0;
+        for (int i = 0; i < nt; i++)
+        {
+          if (bdr[i] && rm[i] && !em[i] && !dir_mark[i])
+          {
+            index[i] = nc++;
+          }
+        }
+        int off = 0;
+        MPI_Exscan(&nc, &off, 1, MPI_INT, MPI_SUM, parent_fes.GetComm());
+        off = Mpi::Root(parent_fes.GetComm()) ? 0 : off;
+        Mpi::GlobalSum(1, &nc, parent_fes.GetComm());
+        for (auto &g : index)
+        {
+          g += (g >= 0) ? off : 0;
+        }
+        const auto match = MatchSignaturePoints(TrueDofSignatures(parent_fes, index, nc),
+                                                head.sig, head.width);
+        for (int i = 0; i < nt; i++)
+        {
+          cut[i] = (index[i] >= 0) && match[index[i]];
+        }
+      }
+    }
 
     is_gamma.assign(nt, 0);
     is_env_int.assign(nt, 0);
@@ -560,7 +616,7 @@ struct SubstructuringSolver::Impl
         continue;
       }
       const bool r = rm[i], e = em[i];
-      if (r && e)
+      if ((r && e) || cut[i])
       {
         is_gamma[i] = 1;
       }
@@ -1109,6 +1165,10 @@ struct SubstructuringSolver::Impl
         ok = false;
         continue;
       }
+      if (region_only)
+      {
+        continue;  // the environment, and so its sources, are those of the model
+      }
       // Relative to the larger pairing (either may vanish, up to rounding).
       const double scale =
           std::max({std::abs(fp[1]), std::abs(fp[2]), std::abs(src_fp[2 * col[j]]),
@@ -1259,6 +1319,10 @@ struct SubstructuringSolver::Impl
   // needs it only for environment fields).
   void EnsureEnv()
   {
+    MFEM_VERIFY(!region_only,
+                "Substructuring on the mesh of the region cannot solve the environment (an "
+                "excitation not in the saved model, or general Dirichlet data): run on the "
+                "full mesh!");
     if (!env_built)
     {
       BuildEnvSubmeshSolver();
@@ -1271,6 +1335,13 @@ struct SubstructuringSolver::Impl
   void RecoverEnvInterior(std::vector<mfem::Vector> &u,
                           const std::vector<mfem::Vector> *f = nullptr)
   {
+    if (region_only)
+    {
+      Mpi::Warning(parent_fes.GetComm(),
+                   "Substructuring on the mesh of the region writes the fields in the "
+                   "region and on the interface only!\n");
+      return;
+    }
     EnsureEnv();
     const int n = static_cast<int>(u.size());
     std::vector<mfem::Vector> rhs(n, mfem::Vector(nt));
@@ -1455,6 +1526,19 @@ struct SubstructuringSolver::Impl
   {
     col.assign(ids.size(), -1);
     bool ok = modes_ready;
+    if (region_only)
+    {
+      // The environment is that of the model: the modes are matched by id.
+      for (std::size_t j = 0; j < ids.size(); j++)
+      {
+        for (std::size_t k = 0; k < mode_ids.size(); k++)
+        {
+          col[j] = (mode_ids[k] == ids[j]) ? static_cast<int>(k) : col[j];
+        }
+        ok = ok && col[j] >= 0;
+      }
+      return ok;
+    }
     constexpr std::size_t kBlock = 4;  // bounds the memory of the full vectors
     std::vector<std::array<double, 2>> fps(xd.size());
     for (std::size_t j0 = 0; j0 < xd.size(); j0 += kBlock)
@@ -1547,20 +1631,75 @@ struct SubstructuringSolver::Impl
                  MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
   }
 
-  // Model-file sections following S_E: [kEnvFpMagic][environment fingerprint, 5 doubles],
+  // Model-file sections following S_E: [kLengthMagic][Model.Lc of the offline run],
+  // [kEnvFpMagic][environment fingerprint, 5 doubles],
   // [kSKenMagic][S^K nG x nG] (magnetostatics),
   // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
   // KxK], and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B
   // KxK].
-  static constexpr int kSKenMagic = 0x4e454b53;   // "SKEN"
-  static constexpr int kModesMagic = 0x33444f4d;  // "MOD3"
-  static constexpr int kEnvFpMagic = 0x33564e45;  // "ENV3"
-  // Fingerprint of the environment: global counts of the environment-closure DOFs and of
-  // the Dirichlet DOFs of environment elements, and the energies r^T A_env r of three fixed
-  // fields (projected polynomials). Independent of the region (A_env has no region
-  // contribution), of the partition, the DOF numbering and the H(curl) orientations, but it
-  // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
-  // Computed element by element (no assembled A_env). Collective.
+  static constexpr int kSKenMagic = 0x4e454b53;    // "SKEN"
+  static constexpr int kModesMagic = 0x33444f4d;   // "MOD3"
+  static constexpr int kEnvFpMagic = 0x33564e45;   // "ENV3"
+  static constexpr int kLengthMagic = 0x434e454c;  // "LENC"
+
+  // The interface signatures, reference length (0: not saved) and environment fingerprint
+  // (empty: not saved) of a model, from rank 0; nG < 0 if it cannot be read. Collective.
+  struct SavedHead
+  {
+    int nG = -1, width = 0;
+    std::vector<double> sig, env_fp;
+    double length = 0.0;
+  };
+  static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm)
+  {
+    SavedHead h;
+    int head[3] = {-1, 0, 0};  // nG, signature width, has fingerprint
+    if (Mpi::Root(comm))
+    {
+      std::ifstream f(path, std::ios::binary);
+      int sig_type = 0;
+      if (f.read(reinterpret_cast<char *>(&head[0]), sizeof(int)) &&
+          f.read(reinterpret_cast<char *>(&sig_type), sizeof(int)))
+      {
+        head[1] = (sig_type == 2) ? 12 : (sig_type == 1 ? 3 : 0);
+        h.sig.resize(static_cast<std::size_t>(head[0]) * head[1]);
+        f.read(reinterpret_cast<char *>(h.sig.data()), sizeof(double) * h.sig.size());
+        f.seekg(static_cast<std::streamoff>(sizeof(double)) * head[0] * head[0],
+                std::ios::cur);
+        int magic = 0;
+        f.read(reinterpret_cast<char *>(&magic), sizeof(int));
+        if (magic == kLengthMagic)
+        {
+          f.read(reinterpret_cast<char *>(&h.length), sizeof(double));
+          f.read(reinterpret_cast<char *>(&magic), sizeof(int));
+        }
+        if (f && magic == kEnvFpMagic)
+        {
+          h.env_fp.resize(5);
+          f.read(reinterpret_cast<char *>(h.env_fp.data()), sizeof(double) * 5);
+          head[2] = f ? 1 : 0;
+        }
+      }
+      else
+      {
+        head[0] = -1;
+      }
+    }
+    Mpi::Broadcast(3, head, 0, comm);
+    Mpi::Broadcast(1, &h.length, 0, comm);
+    h.nG = head[0];
+    h.width = head[1];
+    if (h.nG < 0)
+    {
+      return h;
+    }
+    h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
+    Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
+    h.env_fp.resize(head[2] ? 5 : 0);
+    Mpi::Broadcast(static_cast<int>(h.env_fp.size()), h.env_fp.data(), 0, comm);
+    return h;
+  }
+
   // Fixed projected polynomial field k of the fingerprints.
   mfem::Vector FingerprintField(int k) const
   {
@@ -1597,6 +1736,12 @@ struct SubstructuringSolver::Impl
     return r;
   }
 
+  // Fingerprint of the environment: global counts of the environment-closure DOFs and of
+  // the Dirichlet DOFs of environment elements, and the energies r^T A_env r of three fixed
+  // fields (projected polynomials). Independent of the region (A_env has no region
+  // contribution), of the partition, the DOF numbering and the H(curl) orientations, but it
+  // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
+  // Computed element by element (no assembled A_env). Collective.
   std::array<double, 5> EnvironmentFingerprint() const
   {
     // The environment does not change within a run: computed once.
@@ -1648,6 +1793,46 @@ struct SubstructuringSolver::Impl
       f.write(reinterpret_cast<const char *>(&kEnvFpMagic), sizeof(int));
       f.write(reinterpret_cast<const char *>(fp.data()), sizeof(double) * fp.size());
     }
+  }
+
+  // The mesh of the region for online runs: the region, with the environment elements
+  // touching the region's Dirichlet DOFs (set on Γ by boundary conditions of the
+  // environment) and, in magnetostatics, those of the surface currents and flux loops,
+  // whose excitations need their boundaries. Collective.
+  void WriteRegionMesh(const std::string &path)
+  {
+    std::vector<char> keep(region_dbc);
+    if (magnetostatic)
+    {
+      std::vector<int> attrs;
+      for (const auto &[idx, data] : iodata.boundaries.current)
+      {
+        for (const auto &elem : data.elements)
+        {
+          attrs.insert(attrs.end(), elem.attributes.begin(), elem.attributes.end());
+          if (elem.aperture)
+          {
+            attrs.insert(attrs.end(), elem.aperture->attributes.begin(),
+                         elem.aperture->attributes.end());
+          }
+        }
+      }
+      for (const auto &[idx, data] : iodata.boundaries.fluxloop)
+      {
+        attrs.insert(attrs.end(), data.film_attributes.begin(), data.film_attributes.end());
+        attrs.insert(attrs.end(), data.hole_attributes.begin(), data.hole_attributes.end());
+      }
+      const auto mark = BoundaryTrueDofs(parent_fes, attrs);
+      for (int i = 0; i < nt; i++)
+      {
+        keep[i] = keep[i] || mark[i];
+      }
+    }
+    const auto &sub = *iodata.solver.substructuring;
+    palace::WriteRegionMesh(path, parent_fes, sub.region_attributes,
+                            sub.environment_attributes, keep,
+                            iodata.units.GetMeshLengthRelativeScale());
+    Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
   }
 
   // Abort if a loaded model was condensed from a different environment than the current
@@ -1738,7 +1923,14 @@ struct SubstructuringSolver::Impl
         magic = 0;
       }
       MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
-      if (magic == kEnvFpMagic)
+      if (magic == kLengthMagic)
+      {
+        if (root)
+        {
+          f.seekg(sizeof(double), std::ios::cur);  // read by ReadSavedHead
+        }
+      }
+      else if (magic == kEnvFpMagic)
       {
         if (root)
         {
@@ -2106,24 +2298,23 @@ struct SubstructuringSolver::Impl
                              "environment factorization (the environment is too large "
                              "for one)!");
     PWMatrixCoefficient coef(parent.Dimension(), env_eps);
+    mfem::Vector mass(env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1);
+    mass = 0.0;
+    for (const auto &[attr, t] : env_eps)
+    {
+      mass(attr - 1) = mag_eps;
+    }
+    mfem::PWConstCoefficient mcoef(mass);
     mfem::ParBilinearForm a(env_sfes.get());
     if (magnetostatic)
     {
       a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef));
-      const int am = env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1;
-      mfem::Vector mass(am);
-      mass = 0.0;
-      for (const auto &[attr, t] : env_eps)
-      {
-        mass(attr - 1) = mag_eps;
-      }
-      mfem::PWConstCoefficient mcoef(mass);
       a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef));
-      a.Assemble();
-      a.Finalize();
-      return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
     }
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
+    else
+    {
+      a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
+    }
     a.Assemble();
     a.Finalize();
     return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
@@ -2144,6 +2335,7 @@ struct SubstructuringSolver::Impl
     }
     int off = 0, nglob = 0;
     MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
+    off = Mpi::Root(comm) ? 0 : off;
     MPI_Allreduce(&nloc, &nglob, 1, MPI_INT, MPI_SUM, comm);
     std::vector<int> I(nt + 1, 0);
     std::vector<HYPRE_BigInt> J;
@@ -2559,6 +2751,7 @@ void SubstructuringSolver::CondenseEnvironment()
   }
   int off = 0;
   MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
+  off = Mpi::Root(comm) ? 0 : off;
   impl->nG_global = 0;
   MPI_Allreduce(&nloc, &impl->nG_global, 1, MPI_INT, MPI_SUM, comm);
   impl->gamma_global.assign(impl->nt, -1);
@@ -2715,7 +2908,14 @@ void SubstructuringSolver::CondenseEnvironment()
         static_cast<std::streamoff>(sizeof(double)) * nG * file_w +
         static_cast<std::streamoff>(sizeof(double)) * nG * nG;
     impl->LoadSections(model_path, sections_pos, map);
-    impl->CheckEnvFingerprint();
+    if (impl->region_only)
+    {
+      Mpi::Print(" The mesh holds the region (the environment is that of the model)\n");
+    }
+    else
+    {
+      impl->CheckEnvFingerprint();
+    }
   }
   // MUMPS Schur materialization when available and the environment fits a direct
   // factorization; not when S^K is also materialized (its correction needs the lifted
@@ -2867,12 +3067,15 @@ void SubstructuringSolver::CondenseEnvironment()
         f.write(reinterpret_cast<const char *>(&sig_type), sizeof(int));
         f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
         f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
+        f.write(reinterpret_cast<const char *>(&Impl::kLengthMagic), sizeof(int));
+        f.write(reinterpret_cast<const char *>(&impl->iodata.model.Lc), sizeof(double));
         written = f.good() ? 1 : 0;
       }
       MPI_Bcast(&written, 1, MPI_INT, 0, comm);
       MFEM_VERIFY(written,
                   "Cannot write the substructuring model \"" << model_path << "\"!");
-      impl->AppendEnvFingerprint(model_path);  // collective
+      impl->AppendEnvFingerprint(model_path);             // collective
+      impl->WriteRegionMesh(RegionMeshPath(model_path));  // collective
       if (impl->have_sk)
       {
         impl->AppendSK(model_path);  // collective
@@ -3663,8 +3866,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
 mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids,
                                                      const std::vector<Vector> &lifts,
                                                      std::vector<Vector> *fields,
-                                                     int n_fields,
-                                                     std::vector<Vector> *region_fields)
+                                                     int n_fields)
 {
   MFEM_VERIFY(ids.size() == lifts.size(), "EnergyMatrix: one id per lift!");
   // Dirichlet data restricted to the Dirichlet DOF set (as SolveDirichlets does).
@@ -3673,7 +3875,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
   {
     lifts[k].GetSubVector(impl->dbc_tdofs, xd[k]);
   }
-  return EnergyMatrixDbc(ids, xd, fields, n_fields, region_fields);
+  return EnergyMatrixDbc(ids, xd, fields, n_fields, nullptr);
 }
 
 mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &ids,
@@ -3713,10 +3915,6 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     if (fields)
     {
       fields->assign(u.begin(), u.begin() + nf);
-    }
-    if (region_fields)
-    {
-      *region_fields = u;
     }
     return E;
   }
@@ -3950,6 +4148,25 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
   double global = 0.0;
   MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, impl->parent_fes.GetComm());
   return global;
+}
+
+void SubstructuringSolver::UseModelLength(IoData &iodata, MPI_Comm comm)
+{
+  const auto &sub = iodata.solver.substructuring;
+  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->save_model.empty())
+  {
+    return;
+  }
+  const double L = Impl::ReadSavedHead(sub->save_model, comm).length;
+  if (L > 0.0)
+  {
+    MFEM_VERIFY(!(iodata.model.Lc > 0.0) || std::abs(iodata.model.Lc - L) <= 1.0e-12 * L,
+                "\"Model\": \"Lc\" (" << iodata.model.Lc
+                                      << ") differs from that of the saved substructuring "
+                                         "model ("
+                                      << L << ")!");
+    iodata.model.Lc = L;
+  }
 }
 
 long long int SubstructuringSolver::GlobalTrueVSize() const

@@ -34,15 +34,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added substructuring for electrostatic and magnetostatic simulations
     (`config["Solver"]["Substructuring"]`): the environment of a region of interest is
     condensed exactly onto their shared interface, and the region is solved against it. A
-    saved environment model is reused across runs, including after the region is
-    re-meshed, and the capacitance or inductance matrix of a reused model needs no
-    environment solve. Includes optional block low-rank environment factorization with
-    MUMPS (`"FactorizationTol"`) and hierarchical compression of the interface operator
+    saved environment model is reused across runs, including after the region is re-meshed,
+    and the capacitance or inductance matrix of a reused model needs no environment solve.
+    The offline run also writes a mesh of the region, on which online runs read and
+    partition the region only, and in which `remesh_region.py` re-meshes a redesign.
+    Includes optional block low-rank environment factorization with MUMPS
+    (`"FactorizationTol"`) and hierarchical compression of the interface operator
     (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"` and
     `"SurfaceCurrent"` excitations, alone or together, with the films and `"Superconductor"`
-    boundaries as London sheets (kinetic inductance included). Adds substructuring examples in `examples/transmon` and
-    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops, on separate rings
-    and on one plate). SchemaVer 2-3-0.
+    boundaries as London sheets (kinetic inductance included). Adds substructuring examples
+    in `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of
+    flux loops, on separate rings and on one plate). SchemaVer 2-3-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
     uniform frequency sweeps condense the environment exactly at each frequency, with lumped
@@ -59,7 +61,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
-    must be updated. SchemaVer 2-0-0.
+    must be updated. SchemaVer 2-0-0
     [PR 929](https://github.com/awslabs/palace/pull/929).
   - Added `Solver.Eigenmode.NonlinearMaxIts` (default 100), the maximum number of
     quasi-Newton iterations of each attempt to converge an eigenpair in the hybrid nonlinear
@@ -82,24 +84,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
-    <<<<<<< HEAD
   - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
     aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
     estimates now accept any finite, nonzero diagonal, scaling by its absolute value
-    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
-  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
-    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
-    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
+    (unchanged for positive diagonals).
+    [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field
+    component in BoundaryMode and wave port mode solves, which sometimes used incorrect
+    boundary material properties. [PR 977](https://github.com/awslabs/palace/pull/977).
   - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
     metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
     the Spack package sets it from the resolved commit (`v<version>` for releases, from the
     next release on), and the containers embed the `git describe` of the built commit.
     [PR 974](https://github.com/awslabs/palace/pull/974).
-  - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
-    PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential field to a
-    regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
-    generator and relaxes freely. Re-run existing `FluxLoop` cases; the regression references
-    were re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the
+    `circular_hole` PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential
+    field to a regularized 2D surface-curl solution, whereas the film is now driven by a
+    curl-free cut generator and relaxes freely. Re-run existing `FluxLoop` cases; the
+    regression references were re-baselined.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
   - Fixed CG, GMRES, and FGMRES returning NaN when the initial residual is exactly zero
     (e.g. a zero right-hand side) and no absolute tolerance is set.
     [PR 941](https://github.com/awslabs/palace/pull/941).
@@ -118,9 +121,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
     conditions of the cross-section.
     [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed a memory leak in the AMS preconditioner at order 1, including the lowest-order
+    level of p-multigrid: the interpolation matrices that hypre builds from the vertex
+    coordinates were never freed, so memory grew at every operator update, such as each
+    frequency of a driven sweep (about 1.9 GiB per frequency for 3.9M unknowns on GPU).
+    [PR 1038](https://github.com/awslabs/palace/pull/1038).
   - Fixed integer range expansion in configuration files rewriting brackets inside strings,
     so a path such as `"mesh[1-3].msh"` is no longer read as `"mesh[1,2,3].msh"`, in both
-    Palace and `scripts/validate-config`. [PR 970](https://github.com/awslabs/palace/pull/970).
+    Palace and `scripts/validate-config`.
+    [PR 970](https://github.com/awslabs/palace/pull/970).
   - Fixed the electric surface flux (`surface-F.csv`) and boundary surface charge (`Q_s`)
     of complex fields in lossy dielectrics, which used the real permittivity only; they now
     use the complex permittivity `ε(1 − i tanδ)` of the material model, consistent with the
@@ -128,25 +137,29 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 953](https://github.com/awslabs/palace/pull/953).
   - Fixed a heap overflow in 2D surface flux postprocessing with an explicit `"Center"`.
     [PR 953](https://github.com/awslabs/palace/pull/953).
-  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
-    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
-    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
-    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
-  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
-    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
-    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
   - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
     quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
-    error since fewer eigenmodes than requested were found
+    error since fewer eigenmodes than requested were found.
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
-  - Fixed numeric wave-port and boundary-mode mode ordering on lossy cross-sections (e.g. with
-    absorbing or finite-conductivity boundaries) that could select a strongly evanescent
-    mode instead of the intended propagating mode. Exact and reduced (adaptive sweep) mode
-    solves now rank modes by the complex distance of the propagation constant from the target.
-    [PR 1019](https://github.com/awslabs/palace/pull/1019).
-  - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux error
-    estimators on processes without elements of a submesh.
+  - Fixed numeric wave-port and boundary-mode mode ordering on lossy cross-sections (e.g.
+    with absorbing or finite-conductivity boundaries) that could select a strongly
+    evanescent mode instead of the intended propagating mode. Exact and reduced (adaptive
+    sweep) mode solves now rank modes by the complex distance of the propagation constant
+    from the target. [PR 1019](https://github.com/awslabs/palace/pull/1019).
+  - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux
+    error estimators on processes without elements of a submesh.
     [PR 1022](https://github.com/awslabs/palace/pull/1022).
+  - Fixed silent misparsing of Nastran coordinates with implicit or Fortran `D` exponents
+    (e.g. `-7.-1` was read as `-7.0` instead of `-0.7`), and read blank or
+    trailing-trimmed fixed-width fields as zero instead of aborting.
+    [PR 951](https://github.com/awslabs/palace/pull/951).
+  - Fixed reading Nastran meshes exported by Gmsh, which have no `BEGIN BULK` line. Free
+    field (comma-separated) cards that omit trailing fields no longer reuse the previous
+    field (`CTRIA3,1,1,1,2,3` became a degenerate 6-node triangle), free field and
+    blank-field continuation lines are read, and the final line no longer needs a newline.
+    `GRID` points with a nonzero coordinate system (`CP`, or a `GRDSET` default) now abort,
+    since coordinate systems are not applied.
+    [PR 951](https://github.com/awslabs/palace/pull/951).
 
 #### Performance Improvements
 

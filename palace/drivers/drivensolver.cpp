@@ -5,7 +5,6 @@
 
 #include <complex>
 #include <cstddef>
-#include <filesystem>
 #include <iostream>
 #include <numbers>
 #include <Eigen/Dense>
@@ -85,13 +84,6 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 namespace
 {
-
-// The mesh of the region written with a saved model: <model>_region.mesh.
-std::string RegionMeshPath(const std::string &model_path)
-{
-  std::filesystem::path p(model_path);
-  return p.replace_filename(p.stem().string() + "_region.mesh").string();
-}
 
 // The lumped ports on the environment side (and its wave ports, as -index), and an abort
 // for lumped ports touching Γ (their excitation and voltage would depend on both sides).

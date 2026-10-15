@@ -1047,7 +1047,21 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][Regression]")
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-16;
   opts.paraview_fields = false;  // Solver.Electrostatic.Save defaults to 0
-  palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json", "",
+  palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json",
+                                  "base", opts);
+}
+
+// An online run on the mesh of the region written by the offline run (the environment's
+// terminal is not in it), against the reference of the full mesh.
+TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  opts.setup_config = "electrostatic.json";
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_online_region.json", "online_region",
                                   opts);
 }
 
@@ -1121,6 +1135,22 @@ TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][Regression]"
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_mixed.json", "mixed", opts);
+}
+
+// An online run on the mesh of the region written by the offline run of the mixed case
+// (with the environment elements at the surface current, its aperture and the flux-loop
+// film), against the references of the mixed case.
+TEST_CASE("substructuring_magnetostatic_mixed_region", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_mixed.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed_online_region.json",
+                                  "mixed_online_region", opts);
 }
 
 // As above with a finite-penetration-depth London disk (λ = 0.4 μm, d = 0.1 μm).

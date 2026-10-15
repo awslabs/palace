@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_SUBSTRUCTURE_HPP
 #define PALACE_FEM_SUBSTRUCTURE_HPP
 
+#include <string>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -50,8 +51,8 @@ struct SignatureMap
   std::vector<T> DualMatrix(const std::vector<T> &S) const;
 };
 
-// Which of a set of H(curl) DOFs (signatures of width 12) lie at the point of one of a
-// saved set of DOFs, within the tolerance of MatchSignatureBasis.
+// Which of a set of DOFs (H1 or H(curl) signatures) lie at the point of one of a saved set
+// of DOFs, within the tolerance of MatchSignatureBasis.
 std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
                                        const std::vector<double> &saved, int width);
 
@@ -100,6 +101,22 @@ std::vector<T> SignatureMap::DualMatrix(const std::vector<T> &S) const
   }
   return Y;
 }
+
+// Local true DOFs touched by the boundary elements with the given attributes (a true DOF
+// shared between ranks is marked on its owner).
+std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
+                                   const std::vector<int> &bdr_attributes);
+
+// The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
+std::string RegionMeshPath(const std::string &model_path);
+
+// Write a mesh of the region for online substructuring runs, from rank 0 in mesh length
+// units (coordinates times length_scale): the region, and the environment elements touching
+// the marked local true DOFs, with their boundary elements. Collective.
+void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespace,
+                     const std::vector<int> &region_attributes,
+                     const std::vector<int> &environment_attributes,
+                     const std::vector<char> &keep, double length_scale);
 
 }  // namespace palace
 

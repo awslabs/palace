@@ -20,6 +20,13 @@
 namespace palace
 {
 
+void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                                     MPI_Comm comm) const
+{
+  SubstructuringSolver::UseModelLength(iodata, comm);
+  BaseSolver::Preprocess(iodata, smesh, comm);
+}
+
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {

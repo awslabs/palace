@@ -76,6 +76,20 @@ TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]"
   CHECK(match[4]);
 }
 
+TEST_CASE("H1 DOFs at the points of saved ones", "[substructure][Serial]")
+{
+  // H1 signatures are the DOF coordinates: a DOF matches a saved one at its point, within
+  // the matching tolerance, and not off it.
+  const std::vector<double> saved = {0.1, 0.2, 0.3, 0.5, -0.2, 0.0},
+                            candidates = {0.5, -0.2, 0.0,  0.1,   0.2 + 1.0e-12,
+                                          0.3, 0.5,  -0.2, 1.0e-6};
+  const auto match = MatchSignaturePoints(candidates, saved, 3);
+  REQUIRE(match.size() == 3);
+  CHECK(match[0]);
+  CHECK(match[1]);
+  CHECK_FALSE(match[2]);
+}
+
 TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
           "[substructure][Serial][Parallel]")
 {

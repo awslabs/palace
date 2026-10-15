@@ -103,6 +103,13 @@ void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
 
 }  // namespace
 
+void MagnetostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                                     MPI_Comm comm) const
+{
+  SubstructuringSolver::UseModelLength(iodata, comm);
+  BaseSolver::Preprocess(iodata, smesh, comm);
+}
+
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
