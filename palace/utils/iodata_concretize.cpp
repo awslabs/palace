@@ -173,7 +173,8 @@ void ConcretizeMagnetostatic(const config::MagnetostaticSolverData &magnetostati
 {
   ApplyEntries(j_magnetostatic,
                {{"Save", magnetostatic.n_post},
-                {"InactivePorts", ToString(magnetostatic.inactive_port_mode)}});
+                {"InactivePorts", ToString(magnetostatic.inactive_port_mode)},
+                {"FluxLoopMatrixSweep", magnetostatic.flux_loop_matrix_sweep}});
 }
 
 void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm)
@@ -314,6 +315,25 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"Excitation", lp.excitation},
                             {"Active", lp.active},
                             {"IncludeInSynthesis", lp.include_in_synthesis}});
+    }
+  }
+
+  // FluxLoopExcitation: JSON array with Index, C++ map keyed by Index.
+  if (j_boundaries.contains("FluxLoopExcitation"))
+  {
+    for (auto &j_exc : j_boundaries["FluxLoopExcitation"])
+    {
+      auto idx_it = j_exc.find("Index");
+      if (idx_it == j_exc.end())
+      {
+        continue;
+      }
+      auto it = boundaries.fluxloopexcitation.find(idx_it->get<int>());
+      if (it == boundaries.fluxloopexcitation.end())
+      {
+        continue;
+      }
+      ApplyEntries(j_exc, {{"SaveField", it->second.save_field}});
     }
   }
 

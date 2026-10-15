@@ -952,11 +952,11 @@ FluxLoopData::FluxLoopData(const json &fluxloop)
 
 FluxLoopExcitationData::FluxLoopExcitationData(const json &excitation)
 {
-  MFEM_VERIFY(excitation.find("FluxLoops") != excitation.end(),
+  MFEM_VERIFY(excitation.contains("FluxLoops"),
               "Missing \"FluxLoops\" for \"FluxLoopExcitation\" boundary!");
   flux_loops = excitation.at("FluxLoops").get<std::vector<int>>();
 
-  MFEM_VERIFY(excitation.find("FluxAmounts") != excitation.end(),
+  MFEM_VERIFY(excitation.contains("FluxAmounts"),
               "Missing \"FluxAmounts\" for \"FluxLoopExcitation\" boundary!");
   flux_amounts = excitation.at("FluxAmounts").get<std::vector<double>>();
 

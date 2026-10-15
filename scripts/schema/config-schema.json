@@ -1663,6 +1663,8 @@
         "FluxLoops": {
           "type": "array",
           "description": "Indices of existing FluxLoop entries to drive together in this single-solve excitation.",
+          "minItems": 1,
+          "uniqueItems": true,
           "additionalItems": false,
           "items": {
             "type": "integer"
@@ -1670,7 +1672,8 @@
         },
         "FluxAmounts": {
           "type": "array",
-          "description": "Absolute nondimensional fluxoid to impose on each corresponding entry of FluxLoops. Must have the same length as FluxLoops.",
+          "description": "Absolute nondimensional fluxoid to impose on each corresponding entry of FluxLoops. Must have the same length as FluxLoops. All zero gives the zero state.",
+          "minItems": 1,
           "additionalItems": false,
           "items": {
             "type": "number"
@@ -1678,7 +1681,7 @@
         },
         "SaveField": {
           "type": "boolean",
-          "description": "Whether to save this excitation's ParaView field. Independent of the `/Solver/Magnetostatic/Save` sweep count.",
+          "description": "Whether to save this excitation's fields (in each enabled output format). Excitations do not count toward `/Solver/Magnetostatic/Save`, which applies to the swept sources only.",
           "default": true
         }
       }
@@ -2938,7 +2941,7 @@
       "properties": {
         "Save": {
           "type": "integer",
-          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. [`/Boundaries/FluxLoopExcitation`](@ref config-boundaries-fluxloopexcitation) fields follow their own `\"SaveField\"` instead. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
         },
