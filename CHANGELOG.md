@@ -31,6 +31,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
+    eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
+    `"Attributes"` are the domains of the PML regions (the other parameters have suitable
+    defaults). The stretch can be evaluated at a fixed reference frequency or at the
+    solve frequency (`"FrequencyDependent"`). SchemaVer 2-3-0
+    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes
 

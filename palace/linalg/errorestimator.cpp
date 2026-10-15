@@ -3,6 +3,7 @@
 
 #include "errorestimator.hpp"
 
+#include <cmath>
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -278,6 +279,12 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
 
 }  // namespace
 
+// The flux recovery uses the material properties of all attributes, which in the PML
+// regions are those of their background material (see MaterialOperator): the stretch
+// factors are continuous, so that the normal component of the flux of the background
+// material is continuous across the PML interface and between the elements of the PML up
+// to discretization error.
+
 template <typename VecType>
 GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
@@ -340,8 +347,9 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
 
       // Construct coefficient for discontinuous flux, then smooth flux.
-      auto mat_sqrtepsilon = linalg::MatrixSqrt(mat_op.GetPermittivityReal());
-      auto mat_invsqrtepsilon = linalg::MatrixPow(mat_op.GetPermittivityReal(), -0.5);
+      const auto mat_epsilon = mat_op.GetPermittivityReal();
+      auto mat_sqrtepsilon = linalg::MatrixSqrt(mat_epsilon);
+      auto mat_invsqrtepsilon = linalg::MatrixPow(mat_epsilon, -0.5);
       MaterialPropertyCoefficient sqrtepsilon_func(mat_op.GetAttributeToMaterial(),
                                                    mat_sqrtepsilon);
       MaterialPropertyCoefficient invsqrtepsilon_func(mat_op.GetAttributeToMaterial(),
@@ -465,8 +473,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
       // Construct coefficient for discontinuous flux, then smooth flux.
       // In 2D, the curl is scalar so we use scalar (1x1) √μ⁻¹ and √μ coefficients.
       const bool scalar_curl = (mesh.Dimension() == 2);
-      const auto &muinv_tensor =
-          scalar_curl ? mat_op.GetCurlCurlInvPermeability() : mat_op.GetInvPermeability();
+      const auto muinv_tensor = mat_op.GetCurlCurlInvPermeability();
       auto mat_invsqrtmu = linalg::MatrixSqrt(muinv_tensor);
       auto mat_sqrtmu = linalg::MatrixPow(muinv_tensor, -0.5);
       MaterialPropertyCoefficient invsqrtmu_func(mat_op.GetAttributeToMaterial(),

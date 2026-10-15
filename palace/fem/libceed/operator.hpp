@@ -34,6 +34,11 @@ class Operator : public palace::Operator
 protected:
   std::vector<CeedOperator> op, op_t;
   std::vector<CeedVector> u, v;
+
+  // For each thread and sub-operator, the (global) domain attributes of the elements to
+  // which the sub-operator is restricted (empty for all elements, see
+  // BilinearForm::AddDomainIntegratorOnAttributes).
+  std::vector<std::vector<std::vector<int>>> sub_op_attr;
   Vector dof_multiplicity;
   mutable Vector temp;
 
@@ -45,7 +50,13 @@ public:
 
   auto Size() const { return op.size(); }
 
-  void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr);
+  void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr,
+                      const std::vector<int> &attr_list = {});
+
+  const auto &GetSubOperatorAttributes(std::size_t i, std::size_t k) const
+  {
+    return sub_op_attr[i][k];
+  }
 
   void Finalize();
 
