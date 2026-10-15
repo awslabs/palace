@@ -311,10 +311,12 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
     sphere.r = 0.5;
     sphere.ref_levels = 2;
     data.GetSpheres().push_back(sphere);
+    data.min_element_size = 0.02;
 
     config::Nondimensionalize(units, data);
 
     const double Lc0 = units.GetMeshLengthRelativeScale();
+    CHECK(data.min_element_size == Approx(0.02 / Lc0));
     CHECK(data.GetBoxes()[0].bbmin[0] == Approx(1.0 / Lc0));
     CHECK(data.GetBoxes()[0].bbmin[1] == Approx(2.0 / Lc0));
     CHECK(data.GetBoxes()[0].bbmin[2] == Approx(3.0 / Lc0));

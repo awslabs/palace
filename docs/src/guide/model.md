@@ -69,6 +69,21 @@ Setting `"MaxSizePredicted": false` restores the previous rule, which checks `"M
 only against the last solved size and lets the final solve exceed it by the growth of one
 step; use it to reproduce runs made under that rule.
 
+An element-size floor, `"MinElementSize"` (a length in mesh units, scaled by `"L0"`; the
+default `0` disables it), keeps AMR from chasing a geometric singularity to element sizes
+that the linear solver can no longer resolve well. With a floor, an element is eligible for
+marking only when its size `h` is at least twice the floor, so that one refinement of a
+marked element stays at or above the floor; `h` is the volume-based element size whose
+minimum and maximum the mesh statistics in the log report as `h`. The Dörfler marking then
+selects the `"UpdateFraction"` of the error among the eligible elements only, while the
+error estimate and the `"Tol"` test keep every element. Each AMR iteration logs the floor,
+the number of ineligible elements with their share of the error, and, after the refinement
+step, the number of elements below the floor (the conformity closure of a nonconforming or
+conforming refinement can create elements smaller than a marked element's children; they
+are counted, not prevented). When no element is eligible, or every eligible element has a
+zero error indicator, AMR stops before the refinement step and the last solved mesh is the
+final result.
+
 ## Material models
 
 Material properties are handled by the

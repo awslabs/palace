@@ -2446,8 +2446,10 @@ std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
       {
         continue;  // unboxable in this frame
       }
-      // The dump of a complete JSON object starts with its "Box" entry (keys sorted), so a
-      // frame whose box dump exceeds the best frame's cannot serialise below it.
+      // Frames are ordered lexicographically on the serialised key TEXT; this is the
+      // canonical-frame convention of record (decision 828): deterministic and
+      // platform-independent given the fixed serialisation; NOT a numeric order (the text
+      // sorts "-3.59" before "-6.53"); changing it re-keys the library.
       nlohmann::json serialized = SignatureWithSupportInFrame(portions, vertices, origin, x,
                                                               y, radius, *frame_support);
       const std::string key = serialized.dump();
