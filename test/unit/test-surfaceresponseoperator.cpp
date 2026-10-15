@@ -4916,7 +4916,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner ang
       hexagon_correction["Library"] = library.string();
       IoData hexagon_iodata(hexagon_config, false);
       hexagon_iodata.boundaries.cracked_attributes.insert(9);
-      fs::remove(hexagon_patches_path);
+      // The shared patches CSV of the previous run is read by every rank (ReadPatchRows)
+      // with no collective after the reads, so only the root (the writer) removes it, and
+      // only once every rank has finished reading it.
+      Mpi::Barrier(Mpi::World());
+      if (Mpi::Root(Mpi::World()))
+      {
+        fs::remove(hexagon_patches_path);
+      }
       WriteSurfaceResponseRequirements(hexagon_iodata, *hexagon_mesh,
                                        hexagon_manifest_path.string());
       Mpi::Barrier(Mpi::World());
