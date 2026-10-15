@@ -141,6 +141,7 @@ protected:
   int output_delta_post = 0;                          // printing rate (TRANSIENT)
   int output_n_post = 0;                              // max printing (OTHER SOLVERS)
   std::vector<std::size_t> output_save_indices = {};  // explicit saves
+  bool output_excitation_saves = false;  // FluxLoopExcitation fields, outside the count
 
   // Whether any output formats were specified.
   bool AnyOutputFormats() const
@@ -149,7 +150,8 @@ protected:
   }
   bool AnythingToSave() const
   {
-    return (output_delta_post > 0) || (output_n_post > 0) || !output_save_indices.empty();
+    return (output_delta_post > 0) || (output_n_post > 0) || !output_save_indices.empty() ||
+           output_excitation_saves;
   }
 
   // Whether any fields should be written at all.
@@ -188,6 +190,9 @@ protected:
   // and we only want initialize it if ShouldWriteParaviewFields() returns true.
   std::optional<CeedParaViewDataCollection> paraview;
   std::optional<CeedParaViewDataCollection> paraview_bdr;
+
+  // Largest cycle written, so the final save never overwrites a step written out of order.
+  int paraview_max_cycle = -1;
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
@@ -261,18 +266,6 @@ public:
   // state hot across excitations.
   bool WillWriteFields() const { return ShouldWriteFields(); }
   bool WillWriteFields(int step) const { return ShouldWriteFields(step); }
-
-  // Force fields at this step to be written regardless of the Save count (e.g. for
-  // FluxLoopExcitation states). Keeps output_save_indices sorted for ShouldWriteFields.
-  void RequestFieldSave(std::size_t step)
-  {
-    auto it =
-        std::lower_bound(output_save_indices.begin(), output_save_indices.end(), step);
-    if (it == output_save_indices.end() || *it != step)
-    {
-      output_save_indices.insert(it, step);
-    }
-  }
 
 protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
@@ -484,7 +477,9 @@ public:
   double MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
     requires(solver_t == ProblemType::ELECTROSTATIC);
 
-  double MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx)
+  // Fields are written per the Save count unless save_fields overrides it (excitations).
+  double MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx,
+                            std::optional<bool> save_fields = std::nullopt)
     requires(solver_t == ProblemType::MAGNETOSTATIC);
 
   double MeasureAndPrintAll(int step, const Vector &e, const Vector &b, double time,
