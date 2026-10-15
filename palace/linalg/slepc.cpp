@@ -1162,6 +1162,8 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
+  x1.UseDevice(true);
+  y1.UseDevice(true);
 
   // Configure linear solver.
   if (first)
@@ -1526,6 +1528,8 @@ void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
+  x1.UseDevice(true);
+  y1.UseDevice(true);
 
   // Configure linear solver.
   if (first)
@@ -1592,6 +1596,8 @@ void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
+  x1.UseDevice(true);
+  y1.UseDevice(true);
 
   // Configure linear solver.
   if (first)

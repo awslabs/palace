@@ -190,6 +190,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
     the stiffness matrix as if it were symmetric.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Fixed SLP and TOAR (`PEPLinear: false`) eigenmode solves aborting on a GPU.
+    [PR 1068](https://github.com/awslabs/palace/pull/1068).
 
 #### Documentation
 
