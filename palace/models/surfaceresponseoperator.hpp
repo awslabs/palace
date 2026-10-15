@@ -222,13 +222,25 @@ private:
     std::array<double, 3> end{};
   };
 
+  // One chain of line integrals through consecutive trace coefficients (trace_indices; a
+  // PEC knot is in no chain: its trace is the zero initialisation). The first value is the
+  // start trace (a conductor state, or the anchored contour knot a cap-interior hat hangs
+  // from; 0 when there is none) minus the anchor line (from the patch's conductor anchor
+  // or from the start knot); every next value subtracts the line between the knots. A
+  // closed ring has no anchor start trace; an open path ends with end_line to the end
+  // conductor's anchor; a free arc of a ZeroTraceIndices ring ends with end_line to the
+  // next PEC knot and return_line from that knot back to the anchor (a true loop for the
+  // residual, decision 818 R1 / R4); a hat path has one knot and hat_check_line, the
+  // diagnostic line from the conductor anchor straight to the hat (the hat residual, R2).
   struct MaxwellContourPath
   {
     int anchor_line = -1;
     int contour_line_offset = 0;
     int contour_line_count = 0;
     int end_line = -1;
-    int start_conductor_trace = -1;
+    int return_line = -1;
+    int hat_check_line = -1;
+    int start_trace = -1;
     int end_conductor_trace = -1;
     bool closed = true;
     std::vector<int> trace_indices;
@@ -321,6 +333,11 @@ private:
     std::vector<OpenContourPath> open_contour_paths;
     // Trailing basis points in the interior of the matching-box caps (on no contour).
     int interior_trace_count = 0;
+    // The rim knot each cap-interior hat hangs from on the Maxwell path (decision 818 R2):
+    // the nearest contour knot of a path (never a PEC knot) in the hat's own cap plane,
+    // chosen from the model data on every rank (a hat without one is refused at
+    // configuration).
+    std::vector<int> hat_rim_knots;
     bool surface_mortar = false;
     bool spatial_mortar = false;
     // Translational surface mortar: the hat segments between consecutive contour vertices.
@@ -432,7 +449,7 @@ private:
   mutable Vector mortar_load, mortar_coefficients;
   mutable std::vector<double> point_owned_values, point_packed_values;
   mutable std::vector<double> point_owned_values_pair, point_packed_values_pair;
-  mutable Vector maxwell_point_values, maxwell_conductor_adjoint, maxwell_path_adjoint;
+  mutable Vector maxwell_point_values, maxwell_trace_adjoint, maxwell_path_adjoint;
 
   // Mesh-independent matching statistics are cached with the automatic geometry. The
   // remaining counters describe this mesh-specific interpolation and runtime operator.
@@ -611,6 +628,11 @@ public:
     double loop_residual = 0.0;
     double response_weighted_loop_residual = 0.0;
     double loop_response_failure_fraction = 0.0;
+    // Cap-interior hats (decision 818 R2): the maximum and the response-weighted RMS of
+    // |V_hat(rim route) - V_hat(anchor route)| / scale over the hat paths; information,
+    // not a gate (decision 814 (1)).
+    double hat_residual = 0.0;
+    double response_weighted_hat_residual = 0.0;
     double matched_length_fraction = 1.0;
     double corner_neighborhood_fraction = 0.0;
     std::map<int, double> matched_length_fraction_by_interface;
@@ -673,7 +695,10 @@ public:
   // index and replicated on all ranks.
   std::vector<PatchTrace> GetSpatialPatchTraces(const Vector &x) const;
   // The same for every applied patch (translational patches included; their coefficients
-  // are the surface-mortar projection or the collocated values of the trace coupling).
+  // are the surface-mortar projection or the collocated values of the trace coupling). On
+  // the Maxwell Collocated path the coefficients are the trace ApplyTrace builds from the
+  // real vector x (the contour line integrals of that one field); no production Maxwell
+  // caller, a unit-test read (decision 821).
   std::vector<PatchTrace> GetPatchTraces(const Vector &x) const;
 
 private:

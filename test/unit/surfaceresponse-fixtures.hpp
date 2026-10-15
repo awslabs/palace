@@ -167,6 +167,12 @@ struct SurfaceResponseFiles
       temp.temp_dir / "fabrication-process-strip-3d.json";
   const fs::path rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-3d.json";
+  // The rounded corner with PEC knots on BOTH metal rings (the sheet, z = 0, and the slab
+  // top, z = +0.02): the top ring's one free knot is reached by a free arc that starts at a
+  // slab-top PEC knot on main (the E1 defect) and at the conductor anchor from decision
+  // 818 R1 on.
+  const fs::path slab_top_rounded_library_3d_path =
+      temp.temp_dir / "fabrication-process-rounded-slab-top-3d.json";
   const fs::path constrained_perturbed_rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-constrained-perturbed-3d.json";
   const fs::path finite_impedance_rounded_library_3d_path =
@@ -215,6 +221,14 @@ struct SurfaceResponseFiles
       temp.temp_dir / "fabrication-process-spatial-cluster-cap-hats-no-trace-mesh-3d.json";
   const fs::path cap_hat_translational_library_3d_path =
       temp.temp_dir / "fabrication-process-cap-hats-translational-3d.json";
+  // The cap-hat cluster whose first hat sits at a plane no ring knot shares (local w = 0):
+  // the Maxwell path refuses it (decision 821 (2)); the electrostatic path loads it.
+  const fs::path cap_hat_off_plane_spatial_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-cap-hats-off-plane-3d.json";
+  const fs::path cap_hat_off_plane_points_path =
+      temp.temp_dir / "cap-hat-off-plane-basis-points.csv";
+  const fs::path cap_hat_off_plane_trace_vertices_path =
+      temp.temp_dir / "cap-hat-off-plane-trace-vertices.csv";
   const fs::path cap_hat_points_path = temp.temp_dir / "cap-hat-basis-points.csv";
   const fs::path cap_hat_trace_vertices_path = temp.temp_dir / "cap-hat-trace-vertices.csv";
   const fs::path cap_hat_trace_triangles_path =

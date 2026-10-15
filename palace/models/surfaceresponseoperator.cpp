@@ -24497,28 +24497,37 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(model.conductor_state_count == 0 || !model.open_contour_paths.empty(),
                 "Maxwell response correction requires OpenContourPaths for every "
                 "two-conductor coupon model!");
-    MFEM_VERIFY(model_config.interior_trace_count == 0,
-                "Maxwell response correction does not support cap-interior trace "
-                "coefficients (InteriorTraceCount): every coefficient must lie on a "
-                "Maxwell contour!");
     MFEM_VERIFY(model.contour_groups.empty() || model.open_contour_paths.empty(),
                 "Response-correction models cannot combine closed ContourGroups with "
                 "OpenContourPaths!");
     MFEM_VERIFY(model.zero_trace_indices.empty() || model.open_contour_paths.empty(),
                 "Response-correction models cannot combine ZeroTraceIndices with "
                 "OpenContourPaths!");
+    // Cap-interior hats (the trailing InteriorTraceCount basis points, on no contour) are
+    // trace coefficients on the Maxwell path too (decision 818 R2): each gets its own line
+    // from the nearest contour knot of its own cap plane below. The partition of the
+    // leading ring knots mirrors the electrostatic constructor's.
+    model.interior_trace_count = model_config.interior_trace_count;
+    MFEM_VERIFY(model.interior_trace_count >= 0 &&
+                    model.interior_trace_count < model.contour_size &&
+                    (model.interior_trace_count == 0 ||
+                     (model.spatial_basis && HasExplicitTraceMesh(model_config))),
+                "InteriorTraceCount requires a spatial response model with an explicit "
+                "TraceMesh and fewer interior points than BasisPoints!");
+    const int contour_point_count = model.contour_size - model.interior_trace_count;
     if (model.contour_groups.empty() && model.open_contour_paths.empty())
     {
-      model.contour_groups.push_back(model.contour_size);
+      model.contour_groups.push_back(contour_point_count);
     }
     if (!model.contour_groups.empty())
     {
       MFEM_VERIFY(std::accumulate(model.contour_groups.begin(), model.contour_groups.end(),
-                                  0) == model.contour_size,
-                  "Response-correction ContourGroups do not partition BasisPoints!");
+                                  0) == contour_point_count,
+                  "Response-correction ContourGroups do not partition the contour "
+                  "BasisPoints (BasisPoints minus the trailing InteriorTraceCount)!");
       MFEM_VERIFY(std::all_of(model.zero_trace_indices.begin(),
                               model.zero_trace_indices.end(), [&](int index)
-                              { return index >= 0 && index < model.contour_size; }),
+                              { return index >= 0 && index < contour_point_count; }),
                   "Response-correction ZeroTraceIndices contain an invalid BasisPoints "
                   "index!");
     }
@@ -24529,15 +24538,60 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         for (const int index : path.indices)
         {
-          MFEM_VERIFY(index >= 0 && index < model.contour_size && !assigned[index],
+          MFEM_VERIFY(index >= 0 && index < contour_point_count && !assigned[index],
                       "Response-correction OpenContourPaths contain an invalid or "
                       "duplicate BasisPoints index!");
           assigned[index] = true;
         }
       }
-      MFEM_VERIFY(
-          std::all_of(assigned.begin(), assigned.end(), [](bool value) { return value; }),
-          "Response-correction OpenContourPaths do not partition BasisPoints!");
+      MFEM_VERIFY(std::all_of(assigned.begin(), assigned.begin() + contour_point_count,
+                              [](bool value) { return value; }),
+                  "Response-correction OpenContourPaths do not partition the contour "
+                  "BasisPoints (BasisPoints minus the trailing InteriorTraceCount)!");
+    }
+    if (model.interior_trace_count > 0)
+    {
+      // Cap-interior hats (decision 818 R2): the rim knot of every hat = the nearest
+      // contour knot that some path carries (every ring or open-path knot except the PEC
+      // knots, whose trace is the zero initialisation) in the hat's own cap plane (the same
+      // local w within the signature tolerance). Decided here from the model data on every
+      // rank, so that a refusal fires on all ranks before any collective of the line setup.
+      std::vector<bool> anchored(contour_point_count, true);
+      for (const int index : model.zero_trace_indices)
+      {
+        anchored[index] = false;
+      }
+      const double plane_tolerance =
+          kSignatureParameterToleranceOverRadius * config.matching_radius;
+      for (int hat = contour_point_count; hat < model.contour_size; hat++)
+      {
+        int rim = -1;
+        double rim_distance = mfem::infinity();
+        for (int knot = 0; knot < contour_point_count; knot++)
+        {
+          if (!anchored[knot] ||
+              std::abs(points[knot][2] - points[hat][2]) > plane_tolerance)
+          {
+            continue;
+          }
+          double distance_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            distance_squared +=
+                (points[knot][d] - points[hat][d]) * (points[knot][d] - points[hat][d]);
+          }
+          if (distance_squared < rim_distance)
+          {
+            rim = knot;
+            rim_distance = distance_squared;
+          }
+        }
+        MFEM_VERIFY(rim >= 0, "Maxwell response correction: cap-interior hat "
+                                  << hat + 1 << " of model \"" << model.name
+                                  << "\" has no contour knot in its own cap plane (local w "
+                                  << points[hat][2] << ") to hang its line from!");
+        model.hat_rim_knots.push_back(rim);
+      }
     }
     auto domain_response = BuildDomainResponseMatrices(
         model_config, model.basis_size, model.zero_trace_indices, iodata.units);
@@ -24556,84 +24610,30 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   }
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
 
-  // Uncovered requirements (decision 394 F2) in the Maxwell operator record exactly as the
-  // electrostatic constructor records them (decision 751): the identification's uncovered
-  // portions, clipped by the matched clusters' support boxes (decision 399 MAJOR-1), keep
-  // their raw within-R energy in the postoperator's corrected interface energies
-  // (GetUncoveredPortions; PostOperator::MeasureSurfaceResponseCorrection).
-  if (dimension == 3)
-  {
-    std::vector<std::string> skipped;
-    const auto boxes = CollectSpatialSupports(
-        config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
-        { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale, dimension,
-        &skipped);
-    uncovered_portions = config.uncovered_portions;
-    uncovered_spatial_support_clipping =
-        ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
-    ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
-        uncovered_portions, &uncovered_spatial_support_clipping, config, coordinate_scale);
-    if (!uncovered_portions.empty())
-    {
-      Mpi::Warning(fespace.GetComm(),
-                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
-                   "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
-                   "surface energy in the corrected interface energies (reported per type "
-                   "in surface-response-uncovered-energy.csv)!\n",
-                   ownership_diagnostics["Uncovered"]["Count"].get<int>(),
-                   ownership_diagnostics["Uncovered"]["Features"].get<int>(),
-                   ownership_diagnostics["Uncovered"]["Length"].get<double>());
-    }
-    if (uncovered_spatial_support_clipping.clipped_portions > 0)
-    {
-      Mpi::Warning(
-          fespace.GetComm(),
-          "Uncovered requirements inside matched clusters' support boxes (decision "
-          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
-          "portions ({:d} wholly inside, {:d} split)\n",
-          uncovered_spatial_support_clipping.clipped_portions,
-          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
-          uncovered_spatial_support_clipping.removed_portions,
-          uncovered_spatial_support_clipping.split_portions);
-    }
-  }
+  // The placement-ownership stage (decision 818 R5) is the ONE function the electrostatic
+  // constructor runs: the spatial-cluster priority over overlapping corner / vertex
+  // patches, the continuation ownership that clips the translational cells inside a
+  // cluster's support box, the vertex ownership, the wholly trimmed arm cells, the
+  // DomainBoundary exclusions (their raw claims kept, F-DB-a) and the uncovered-portion
+  // record (decision 394 F2; clipped by the support boxes, decision 399 MAJOR-1). The
+  // applied patches are the placed ones it does not own, keyed by their placed index.
+  const auto placement =
+      ApplyPlacementOwnership(config, model_indices, basis_points, coordinate_scale,
+                              dimension, cached_geometry, false);
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
-  // The applied patches: a second-arm cell wholly before its corner's square exit
-  // (decision 394 F1) keeps weight 0 at construction and is not applied.
   std::vector<ResponsePatchData> applied_patches;
+  std::vector<int> applied_patch_indices;
+  applied_patches.reserve(placement.placed_patches.size());
+  applied_patch_indices.reserve(placement.placed_patches.size());
+  for (std::size_t patch_index = 0; patch_index < placement.placed_patches.size();
+       patch_index++)
   {
-    std::set<std::size_t> wholly_trimmed;
-    for (const auto &trim : config.corner_arm_trims)
+    if (!placement.owned_patches.count(patch_index))
     {
-      for (const auto &[patch, removed] : trim.cells)
-      {
-        (void)removed;
-        if (config.patches[patch].weight <= 0.0)
-        {
-          wholly_trimmed.insert(patch);
-        }
-      }
-    }
-    for (const auto &trim : config.mirror_arm_trims)
-    {
-      for (const auto &[patch, removed] : trim.cells)
-      {
-        (void)removed;
-        if (config.patches[patch].weight <= 0.0)
-        {
-          wholly_trimmed.insert(patch);
-        }
-      }
-    }
-    applied_patches.reserve(config.patches.size());
-    for (std::size_t patch_index = 0; patch_index < config.patches.size(); patch_index++)
-    {
-      if (!wholly_trimmed.count(patch_index))
-      {
-        applied_patches.push_back(config.patches[patch_index]);
-      }
+      applied_patches.push_back(placement.placed_patches[patch_index]);
+      applied_patch_indices.push_back(static_cast<int>(patch_index));
     }
   }
   global_patch_count = static_cast<int>(applied_patches.size());
@@ -24658,9 +24658,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const auto &model = models[model_it->second];
     if (rank == 0)
     {
-      patch_assignments.push_back({model.idx, patch_config.origin, patch_config.axis_u,
-                                   patch_config.axis_v, patch_config.axis_w,
-                                   patch_config.weight, static_cast<int>(patch_index)});
+      patch_assignments.push_back(
+          {model.idx, patch_config.origin, patch_config.axis_u, patch_config.axis_v,
+           patch_config.axis_w, patch_config.weight, applied_patch_indices[patch_index]});
     }
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
@@ -24745,7 +24745,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       anchors.push_back(std::move(anchor));
     }
 
-    patches.push_back(Patch{static_cast<int>(patches.size()), model_it->second, 0,
+    patches.push_back(Patch{applied_patch_indices[patch_index], model_it->second, 0,
                             basis_size, 0, patch_config.longitudinal_cell, 1, 0.0,
                             patch_config.weight, patch_config.domain_weight});
     basis_size += model.basis_size;
@@ -24768,6 +24768,15 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     line_geometry.push_back(geometry);
     maxwell_lines.emplace_back();
     return static_cast<int>(maxwell_lines.size()) - 1;
+  };
+  // A line between two points that may coincide (an anchor on a knot, a hat on its rim
+  // knot, a PEC knot on the anchor): no line (-1) within the coincidence tolerance.
+  auto AppendLineIfDistinct = [&](const mfem::Vector &p0, const mfem::Vector &p1)
+  {
+    mfem::Vector delta(p1);
+    delta -= p0;
+    return delta.Norml2() > 1.0e-14 * std::max(1.0, matching_radius) ? AppendLine(p0, p1)
+                                                                     : -1;
   };
 
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
@@ -24794,38 +24803,44 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                            group_offset + group_size);
       if (zero_begin != zero_end)
       {
-        // Each PEC knot has an exact zero trace. Reconstruct every free arc between
-        // consecutive knots independently, omitting segments whose two endpoints are
-        // both PEC constrained.
+        // Each PEC knot has an exact zero trace and is in no path (decision 818 R1: a PEC
+        // knot is never an integration start; a slab-top knot's potential differs from the
+        // conductor's). Every free arc between consecutive PEC knots is a path from the
+        // patch's conductor anchor, ON the thin conductor the coupon calls zero: the anchor
+        // line to the arc's first free knot, the lines between its free knots, the end line
+        // to the next PEC knot and the return line from that knot back to the anchor (R4: a
+        // true loop for the residual). An arc without a free knot gets no line.
         for (auto zero = zero_begin; zero != zero_end; zero++)
         {
           const int start = *zero;
           const int end = std::next(zero) != zero_end ? *std::next(zero) : *zero_begin;
-          MaxwellContourPath path;
-          path.closed = false;
-          std::vector<int> contour_indices = {start};
+          std::vector<int> free_indices;
           int index = group_offset + (start - group_offset + 1) % group_size;
           while (index != end)
           {
-            contour_indices.push_back(index);
+            free_indices.push_back(index);
             index = group_offset + (index - group_offset + 1) % group_size;
           }
-          if (contour_indices.size() == 1)
+          if (free_indices.empty())
           {
             continue;
           }
-          path.trace_indices.reserve(contour_indices.size());
-          for (const int contour_index : contour_indices)
+          MaxwellContourPath path;
+          path.closed = false;
+          path.trace_indices.reserve(free_indices.size());
+          for (const int free_index : free_indices)
           {
-            path.trace_indices.push_back(patch.trace_offset + contour_index);
+            path.trace_indices.push_back(patch.trace_offset + free_index);
           }
+          path.anchor_line = AppendLineIfDistinct(anchor, contour[free_indices.front()]);
           path.contour_line_offset = static_cast<int>(maxwell_lines.size());
-          path.contour_line_count = static_cast<int>(contour_indices.size()) - 1;
-          for (std::size_t i = 1; i < contour_indices.size(); i++)
+          path.contour_line_count = static_cast<int>(free_indices.size()) - 1;
+          for (std::size_t i = 1; i < free_indices.size(); i++)
           {
-            AppendLine(contour[contour_indices[i - 1]], contour[contour_indices[i]]);
+            AppendLine(contour[free_indices[i - 1]], contour[free_indices[i]]);
           }
-          path.end_line = AppendLine(contour[contour_indices.back()], contour[end]);
+          path.end_line = AppendLine(contour[free_indices.back()], contour[end]);
+          path.return_line = AppendLineIfDistinct(contour[end], anchor);
           maxwell_paths.push_back(std::move(path));
         }
         group_offset += group_size;
@@ -24852,10 +24867,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         path.trace_indices.push_back(patch.trace_offset + group_offset +
                                      (start + offset) % group_size);
       }
-      if (start_distance > 1.0e-14 * std::max(1.0, matching_radius))
-      {
-        path.anchor_line = AppendLine(anchor, contour[group_offset + start]);
-      }
+      path.anchor_line = AppendLineIfDistinct(anchor, contour[group_offset + start]);
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
       path.contour_line_count = group_size;
       for (int offset = 0; offset < group_size; offset++)
@@ -24879,7 +24891,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       path.closed = false;
       if (path_config.start_conductor > 0)
       {
-        path.start_conductor_trace =
+        path.start_trace =
             patch.trace_offset + model.contour_size + path_config.start_conductor - 1;
       }
       if (path_config.end_conductor > 0)
@@ -24894,24 +24906,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       }
       const auto &first = contour[path_config.indices.front()];
       const auto &last = contour[path_config.indices.back()];
-      mfem::Vector delta(first);
-      delta -= start_anchor;
-      if (delta.Norml2() > 1.0e-14 * std::max(1.0, matching_radius))
-      {
-        path.anchor_line = AppendLine(start_anchor, first);
-      }
+      path.anchor_line = AppendLineIfDistinct(start_anchor, first);
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
       path.contour_line_count = static_cast<int>(path_config.indices.size()) - 1;
       for (std::size_t i = 1; i < path_config.indices.size(); i++)
       {
         AppendLine(contour[path_config.indices[i - 1]], contour[path_config.indices[i]]);
       }
-      delta = last;
-      delta -= end_anchor;
-      if (delta.Norml2() > 1.0e-14 * std::max(1.0, matching_radius))
-      {
-        path.end_line = AppendLine(last, end_anchor);
-      }
+      path.end_line = AppendLineIfDistinct(last, end_anchor);
       open_path_indices.push_back(static_cast<int>(maxwell_paths.size()));
       maxwell_paths.push_back(std::move(path));
     }
@@ -24945,6 +24947,28 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(
         std::all_of(connected.begin(), connected.end(), [](bool value) { return value; }),
         "Maxwell OpenContourPaths must connect every conductor reference!");
+    if (model.interior_trace_count > 0)
+    {
+      // Cap-interior hats (decision 818 R2): each trailing hat is a one-knot path from its
+      // rim knot (model.hat_rim_knots: a knot of a path built above, so its trace is
+      // already a line integral from a conductor anchor) along a line inside the cap plane,
+      // in the box air (R6). The diagnostic line from the patch's conductor anchor straight
+      // to the hat gives the hat residual.
+      const int hat_begin = model.contour_size - model.interior_trace_count;
+      for (int hat = hat_begin; hat < model.contour_size; hat++)
+      {
+        const int rim = model.hat_rim_knots[hat - hat_begin];
+        MaxwellContourPath path;
+        path.closed = false;
+        path.start_trace = patch.trace_offset + rim;
+        path.trace_indices.push_back(patch.trace_offset + hat);
+        path.anchor_line = AppendLineIfDistinct(contour[rim], contour[hat]);
+        path.contour_line_offset = static_cast<int>(maxwell_lines.size());
+        path.contour_line_count = 0;
+        path.hat_check_line = AppendLineIfDistinct(anchor, contour[hat]);
+        maxwell_paths.push_back(std::move(path));
+      }
+    }
     maxwell_patch_paths.emplace_back(path_begin,
                                      static_cast<int>(maxwell_paths.size()) - path_begin);
   }
@@ -25831,9 +25855,10 @@ void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
   {
     MFEM_ASSERT(!path.trace_indices.empty(), "Empty Maxwell contour path!");
     double value = 0.0;
-    if (!path.closed && path.start_conductor_trace >= 0)
+    if (!path.closed && path.start_trace >= 0)
     {
-      value = values[path.start_conductor_trace];
+      // A conductor state, or the rim knot of a hat: set by a path built before this one.
+      value = values[path.start_trace];
     }
     if (path.anchor_line >= 0)
     {
@@ -25854,33 +25879,34 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
   line_values.SetSize(static_cast<int>(maxwell_lines.size()));
   line_values = 0.0;
-  maxwell_conductor_adjoint.SetSize(basis_size);
-  maxwell_conductor_adjoint = 0.0;
-  for (const auto &path : maxwell_conductor_paths)
+  // The adjoint of every trace coefficient: its own value plus the start-trace adjoints of
+  // the paths that hang from it (a hat from its rim knot, an open path from its conductor
+  // state). The paths are visited in reverse construction order so that a path's adjoint
+  // reaches its start trace before that trace's own path is visited (BuildMaxwellTrace
+  // visits them forward).
+  maxwell_trace_adjoint.SetSize(basis_size);
+  maxwell_trace_adjoint = values;
+  for (auto path = maxwell_paths.rbegin(); path != maxwell_paths.rend(); path++)
   {
-    maxwell_conductor_adjoint[path.trace_offset] = values[path.trace_offset];
-  }
-  for (const auto &path : maxwell_paths)
-  {
-    const int size = static_cast<int>(path.trace_indices.size());
+    const int size = static_cast<int>(path->trace_indices.size());
     MFEM_ASSERT(size > 0, "Empty Maxwell contour path!");
     maxwell_path_adjoint.SetSize(size);
     for (int i = 0; i < size; i++)
     {
-      maxwell_path_adjoint[i] = values[path.trace_indices[i]];
+      maxwell_path_adjoint[i] = maxwell_trace_adjoint[path->trace_indices[i]];
     }
     for (int i = size - 2; i >= 0; i--)
     {
-      line_values[path.contour_line_offset + i] -= maxwell_path_adjoint[i + 1];
+      line_values[path->contour_line_offset + i] -= maxwell_path_adjoint[i + 1];
       maxwell_path_adjoint[i] += maxwell_path_adjoint[i + 1];
     }
-    if (path.anchor_line >= 0)
+    if (path->anchor_line >= 0)
     {
-      line_values[path.anchor_line] -= maxwell_path_adjoint[0];
+      line_values[path->anchor_line] -= maxwell_path_adjoint[0];
     }
-    if (!path.closed && path.start_conductor_trace >= 0)
+    if (!path->closed && path->start_trace >= 0)
     {
-      maxwell_conductor_adjoint[path.start_conductor_trace] += maxwell_path_adjoint[0];
+      maxwell_trace_adjoint[path->start_trace] += maxwell_path_adjoint[0];
     }
   }
   auto AddPathIntegralTranspose = [&](const MaxwellContourPath &path, double value)
@@ -25901,12 +25927,12 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   for (auto path = maxwell_conductor_paths.rbegin(); path != maxwell_conductor_paths.rend();
        path++)
   {
-    const double value = maxwell_conductor_adjoint[path->trace_offset];
+    const double value = maxwell_trace_adjoint[path->trace_offset];
     AddPathIntegralTranspose(maxwell_paths[path->contour_path],
                              path->integral_sign * value);
     if (path->parent_trace_offset >= 0)
     {
-      maxwell_conductor_adjoint[path->parent_trace_offset] += value;
+      maxwell_trace_adjoint[path->parent_trace_offset] += value;
     }
   }
 }
@@ -26721,9 +26747,8 @@ SurfaceResponseOperator::GetPatchTraces(const Vector &x) const
 std::vector<SurfaceResponseOperator::PatchTrace>
 SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) const
 {
-  MFEM_VERIFY(!maxwell,
-              "Patch-trace export currently supports electrostatic response correction "
-              "only!");
+  // On the Maxwell Collocated path the coefficients are the trace ApplyTrace builds from
+  // the real vector x it is given (the line integrals of that one field; decision 821).
   ApplyTrace(x, trace);
   std::vector<double> local_records;
   for (const auto &patch : patches)
@@ -26826,6 +26851,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   double weighted_loop_residual_squared = 0.0;
   double loop_response_weight = 0.0;
   double failed_loop_response_weight = 0.0;
+  double weighted_hat_residual_squared = 0.0;
+  double hat_response_weight = 0.0;
   double weighted_trace_closure_spread_squared = 0.0;
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
@@ -26840,6 +26867,7 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     fixed_flux_imag.SetSize(model.basis_size);
 
     std::vector<std::pair<double, double>> path_diagnostics;
+    std::vector<std::pair<double, double>> hat_diagnostics;
     const auto [path_begin, path_count] = maxwell_patch_paths[patch_index];
     path_diagnostics.reserve(path_count);
     for (int path_index = path_begin; path_index < path_begin + path_count; path_index++)
@@ -26868,6 +26896,22 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
         loop_integral += scale * value;
         loop_scale += std::abs(value);
       };
+      if (path.hat_check_line >= 0)
+      {
+        // The hat loop (decision 818 R2): rim trace - rim line + anchor line = 0, i.e. the
+        // hat's value by its rim route equals its value by the direct anchor route.
+        // Information only (decision 814 (1)); not in the loop-residual gate.
+        AddTrace(path.start_trace, 1.0);
+        AddLine(path.anchor_line, -1.0);
+        AddLine(path.hat_check_line, 1.0);
+        if (loop_scale > 0.0)
+        {
+          const double residual = std::abs(loop_integral) / loop_scale;
+          result.hat_residual = std::max(result.hat_residual, residual);
+          hat_diagnostics.emplace_back(residual, loop_scale * loop_scale);
+        }
+        continue;
+      }
       if (!path.closed)
       {
         AddLine(path.anchor_line);
@@ -26879,7 +26923,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       if (!path.closed)
       {
         AddLine(path.end_line);
-        AddTrace(path.start_conductor_trace, -1.0);
+        AddLine(path.return_line);
+        AddTrace(path.start_trace, -1.0);
         AddTrace(path.end_conductor_trace, 1.0);
       }
       if (loop_scale > 0.0)
@@ -26947,14 +26992,33 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
         }
       }
     }
+    // The hat residuals, weighted like the loops (the patch's response split over its hats
+    // by the squared loop scale).
+    double hat_scale_squared = 0.0;
+    for (const auto &[residual, scale_squared] : hat_diagnostics)
+    {
+      (void)residual;
+      hat_scale_squared += scale_squared;
+    }
+    if (patch_response_energy > 0.0 && hat_scale_squared > 0.0)
+    {
+      for (const auto &[residual, scale_squared] : hat_diagnostics)
+      {
+        const double weight = patch_response_energy * scale_squared / hat_scale_squared;
+        weighted_hat_residual_squared += weight * residual * residual;
+        hat_response_weight += weight;
+      }
+    }
   }
   std::vector<double> reduction;
-  reduction.reserve(8 + 2 * result.fabricated_surface_energy.size());
+  reduction.reserve(10 + 2 * result.fabricated_surface_energy.size());
   reduction.push_back(result.domain_correction);
   reduction.push_back(result.domain_correction_fixed_flux);
   reduction.push_back(weighted_loop_residual_squared);
   reduction.push_back(loop_response_weight);
   reduction.push_back(failed_loop_response_weight);
+  reduction.push_back(weighted_hat_residual_squared);
+  reduction.push_back(hat_response_weight);
   reduction.push_back(weighted_trace_closure_spread_squared);
   reduction.push_back(trace_closure_response_weight);
   reduction.push_back(failed_trace_closure_response_weight);
@@ -26970,6 +27034,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   weighted_loop_residual_squared = reduction[i++];
   loop_response_weight = reduction[i++];
   failed_loop_response_weight = reduction[i++];
+  weighted_hat_residual_squared = reduction[i++];
+  hat_response_weight = reduction[i++];
   weighted_trace_closure_spread_squared = reduction[i++];
   trace_closure_response_weight = reduction[i++];
   failed_trace_closure_response_weight = reduction[i++];
@@ -26987,7 +27053,13 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     result.trace_closure_response_failure_fraction =
         failed_trace_closure_response_weight / trace_closure_response_weight;
   }
+  if (hat_response_weight > 0.0)
+  {
+    result.response_weighted_hat_residual =
+        std::sqrt(weighted_hat_residual_squared / hat_response_weight);
+  }
   Mpi::GlobalMax(1, &result.loop_residual, fespace.GetComm());
+  Mpi::GlobalMax(1, &result.hat_residual, fespace.GetComm());
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     auto &fixed_flux = result.fabricated_surface_energy_fixed_flux.at(interface);
