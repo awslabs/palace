@@ -2446,8 +2446,6 @@ std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
       {
         continue;  // unboxable in this frame
       }
-      // The dump of a complete JSON object starts with its "Box" entry (keys sorted), so a
-      // frame whose box dump exceeds the best frame's cannot serialise below it.
       // Frames are ordered lexicographically on the serialised key TEXT; this is the
       // canonical-frame convention of record (decision 828): deterministic and
       // platform-independent given the fixed serialisation; NOT a numeric order (the text

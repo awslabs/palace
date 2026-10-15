@@ -7618,12 +7618,13 @@ TEST_CASE("SurfaceResponseIdentification frame minimisation orders the key text"
   // CanonicalClusterSignatureWithSupport keeps the candidate frame whose serialised key
   // TEXT is lexicographically smallest. The serialisation starts with "Box", so two frames
   // whose boxes differ decide on the TEXT of the first box number: "-3.594979" sorts before
-  // "-6.534326" (the 5642 fixture's frame of record, SpatialSupportContractFaceCrossing
-  // TiltFrameOfRecord: x along device y) and "-1.5" before "-10.3", although -6.534326 and
-  // -10.3 are the smaller values. A numeric order would keep the other frame in both cases
-  // and re-key the library. One straight claim along x; the two frames whose y axis is +y
-  // (x = +x with handedness +1, x = -x with handedness -1) are boxable, every other frame
-  // is not; the +x frame's box starts at the text-smaller number.
+  // "-6.534326" (the 5642 fixture's frame of record,
+  // SurfaceResponseIdentificationFaceCrossingTiltFrameOfRecord: x along device y) and
+  // "-1.5" before "-10.3", although -6.534326 and -10.3 are the smaller values. A numeric
+  // order would keep the other frame in both cases and re-key the library. One straight
+  // claim along x; the two frames whose y axis is +y (x = +x with handedness +1, x = -x
+  // with handedness -1) are boxable, every other frame is not; the +x frame's box starts at
+  // the text-smaller number.
   const double R = 1.0;
   const std::vector<SignaturePortion> portions = {{{-1.0, 0.0, 0.0},
                                                    {1.0, 0.0, 0.0},
