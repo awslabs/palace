@@ -21,10 +21,14 @@ is re-tetrahedralized with Gmsh against the fixed interface, with element sizes 
 design mesh. The script checks that the design matches the model outside the region and at
 the interface.
 
+With --region-mesh, the mesh of the region written by the offline run next to its model
+(<model>_region.mesh), the output holds only the re-meshed region and the environment elements
+of that mesh, so that online runs read the region only.
+
 Usage:
 
     python3 remesh_region.py --model MODEL.msh2 --design DESIGN.msh2 --output OUT.msh2
-        [--region-attributes BELOW ABOVE] [--plane-z Z]
+        [--region-mesh MODEL_region.mesh] [--region-attributes BELOW ABOVE] [--plane-z Z]
 
 Requires the gmsh and numpy Python packages (pip install gmsh numpy).
 """
@@ -126,6 +130,60 @@ def write_msh2(path, names, nodes, elements):
             f.write(struct.pack("<iii", etype, 1, len(tags)))
             f.write(struct.pack("<%di" % (1 + len(tags) + len(nd)), num, *tags, *nd))
         f.write(b"\n$EndElements\n")
+
+
+def read_mfem_tetrahedra(path):
+    """The tetrahedra of an MFEM mesh (v1.0) as (attribute, corner coordinates). The vertex
+    coordinates of a curved mesh are the first nodes of its H1 nodal field."""
+    lines = open(path).read().split("\n")
+    i = lines.index("elements") + 1
+    elems = []
+    for line in lines[i + 1 : i + 1 + int(lines[i])]:
+        f = line.split()
+        if int(f[1]) == 4:  # TETRAHEDRON
+            elems.append((int(f[0]), [int(v) for v in f[2:6]]))
+    i = lines.index("vertices") + 1
+    nv = int(lines[i])
+    if lines[i + 1].strip():  # space dimension, then the coordinates
+        xyz = [[float(x) for x in line.split()] for line in lines[i + 2 : i + 2 + nv]]
+    else:
+        j = next(k for k in range(i, len(lines)) if lines[k].startswith("Ordering:"))
+        by_vdim = int(lines[j].split()[1]) == 1
+        values = [line.split() for line in lines[j + 1 :] if line.strip()]
+        if by_vdim:  # x y z per node
+            xyz = [[float(x) for x in v] for v in values[:nv]]
+        else:  # all x, then all y, then all z
+            flat = [float(x) for v in values for x in v]
+            n = len(flat) // 3
+            xyz = [[flat[k], flat[n + k], flat[2 * n + k]] for k in range(nv)]
+    return [(a, [xyz[v] for v in vs]) for a, vs in elems]
+
+
+def match_islands(path, region, nodes, elements):
+    """The indices in elements of the environment tetrahedra of the mesh of the region at
+    path, matched by their centroids."""
+    islands = [np.mean(c, axis=0) for a, c in read_mfem_tetrahedra(path) if a not in region]
+    pts = np.array(list(nodes.values()))
+    scale = float((pts.max(axis=0) - pts.min(axis=0)).max())
+    tol, cell = 1.0e-8 * scale, 1.0e-6 * scale
+    grid = collections.defaultdict(list)
+    for k, (t, tags, nd) in enumerate(elements):
+        if t in TETRAHEDRA and tags[0] not in region:
+            c = np.mean([nodes[v] for v in nd[:4]], axis=0)
+            grid[tuple(np.floor(c / cell).astype(int))].append((k, c))
+    found = set()
+    for c in islands:
+        key = np.floor(c / cell).astype(int)
+        hits = [
+            k
+            for d in np.ndindex(3, 3, 3)
+            for k, ck in grid.get(tuple(key + np.array(d) - 1), ())
+            if np.linalg.norm(ck - c) <= tol
+        ]
+        if not hits:
+            sys.exit("the mesh of the region has environment elements that the model does not")
+        found.add(hits[0])
+    return found
 
 
 class Layout:
@@ -418,6 +476,10 @@ def main():
     parser.add_argument("--design", required=True, help="full mesh of the new design")
     parser.add_argument("--output", required=True, help="output mesh (Gmsh 2.2)")
     parser.add_argument(
+        "--region-mesh",
+        help="mesh of the region written by the offline run: output the region only",
+    )
+    parser.add_argument(
         "--region-attributes",
         type=int,
         nargs=2,
@@ -527,13 +589,50 @@ def main():
             out.append((9 if order == 2 else 2, [a, a], conn))
             features[a] += 1
     old_plane = {frozenset(f) for f in plane}
-    kept = [
-        (t, tags, nd)
-        for t, tags, nd in elements
-        if (t in TETRAHEDRA and tags[0] not in region)
-        or (t not in TETRAHEDRA and frozenset(nd[:3]) not in old_plane)
-    ]
+    if args.region_mesh:
+        # The environment elements of the mesh of the region, and the boundary elements on
+        # their faces and on the region's fixed boundary.
+        islands = match_islands(args.region_mesh, region, nodes, elements)
+        faces = {frozenset(f) for f in fixed[1] + fixed[2]}
+        for k in islands:
+            faces |= {frozenset(elements[k][2][j] for j in f) for f in TET_FACES}
+        kept = [elements[k] for k in sorted(islands)] + [
+            (t, tags, nd)
+            for t, tags, nd in elements
+            if t in TRIANGLES and frozenset(nd[:3]) in faces - old_plane
+        ]
+    else:
+        kept = [
+            (t, tags, nd)
+            for t, tags, nd in elements
+            if (t in TETRAHEDRA and tags[0] not in region)
+            or (t not in TETRAHEDRA and frozenset(nd[:3]) not in old_plane)
+        ]
     elements = kept + out
+    if args.region_mesh:
+        # Boundary elements on the exterior faces without one (the interface), with a new
+        # attribute: an attribute Palace would add could be one of the configuration's.
+        attr = 1 + max(
+            [a for _, tags, _ in elements for a in tags] + [int(n.split()[1]) for n in names]
+        )
+        covered = {frozenset(nd[:3]) for t, _, nd in elements if t in TRIANGLES}
+        count, tri = collections.Counter(), {}
+        for t, _, nd in elements:
+            if t in TETRAHEDRA:
+                for f in TET_FACES:
+                    key = frozenset(nd[j] for j in f)
+                    count[key] += 1
+                    tri[key] = [nd[j] for j in f] + (
+                        [nd[4 + TET_EDGES.index(tuple(sorted((f[p], f[q]))))]
+                         for p, q in TRI_EDGES]
+                        if order == 2 else []
+                    )
+        elements += [
+            (9 if order == 2 else 2, [attr, attr], tri[k])
+            for k, c in count.items()
+            if c == 1 and k not in covered
+        ]
+        names = names + ['2 %d "region_mesh_boundary"' % attr]
     used = sorted({v for _, _, nd in elements for v in nd})
     write_msh2(args.output, names, {v: coord(v) for v in used}, elements)
     print(

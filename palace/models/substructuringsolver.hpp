@@ -122,6 +122,10 @@ public:
   // Global parent true-DOF size.
   long long int GlobalTrueVSize() const;
 
+  // Online, with a saved model: Model.Lc from the model (that of its offline run), which a
+  // configured one must equal. Collective.
+  static void UseModelLength(IoData &iodata, MPI_Comm comm);
+
   // Write full parent-space fields (V or A) to a ParaView collection under dir, one time
   // step per excitation (time = excitation index).
   void WriteParaView(const std::string &dir, const std::vector<int> &ids,

@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_SUBSTRUCTURE_HPP
 #define PALACE_FEM_SUBSTRUCTURE_HPP
 
+#include <string>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -21,6 +22,16 @@ int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &environment_attrs,
                           mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
                           mfem::Array<int> &interface_marker);
+
+// Geometric signatures of a set of true DOFs, replicated on all ranks (n x width,
+// row-major, width = SignatureWidth(fespace)), identifying them independently of the DOF
+// numbering: the DOF coordinates for H1 (width 3), the moments dof(e_b) and dof(x_a e_b)
+// for H(curl) (width 12), which identify an edge DOF up to an orientation flip (a flip
+// negates all of them) and give the point of a point-tangent DOF. index[i] is the position
+// of local true DOF i in the set (-1 if not in it), n the set size. Collective.
+int SignatureWidth(const mfem::ParFiniteElementSpace &fespace);
+std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace,
+                                      const std::vector<int> &index, int n);
 
 // Change of basis between the saved and the current DOF sets: current DOF values (of a
 // field) u_cur = M u_saved, with M a signed permutation (signed one-to-one matches) except
@@ -40,9 +51,13 @@ struct SignatureMap
   std::vector<T> DualMatrix(const std::vector<T> &S) const;
 };
 
-// The map from the saved to the current H(curl) signatures (width 12, see
-// SubstructuringSolver), aborting unless the current signatures equal M times the saved
-// ones within a relative tolerance.
+// Which of a set of DOFs (H1 or H(curl) signatures) lie at the point of one of a saved set
+// of DOFs, within the tolerance of MatchSignatureBasis.
+std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
+                                       const std::vector<double> &saved, int width);
+
+// The map from the saved to the current H(curl) signatures (width 12), aborting unless the
+// current signatures equal M times the saved ones within a relative tolerance.
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width);
 
@@ -86,6 +101,22 @@ std::vector<T> SignatureMap::DualMatrix(const std::vector<T> &S) const
   }
   return Y;
 }
+
+// Local true DOFs touched by the boundary elements with the given attributes (a true DOF
+// shared between ranks is marked on its owner).
+std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
+                                   const std::vector<int> &bdr_attributes);
+
+// The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
+std::string RegionMeshPath(const std::string &model_path);
+
+// Write a mesh of the region for online substructuring runs, from rank 0 in mesh length
+// units (coordinates times length_scale): the region, and the environment elements touching
+// the marked local true DOFs, with their boundary elements. Collective.
+void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespace,
+                     const std::vector<int> &region_attributes,
+                     const std::vector<int> &environment_attributes,
+                     const std::vector<char> &keep, double length_scale);
 
 }  // namespace palace
 

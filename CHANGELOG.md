@@ -36,7 +36,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     condensed exactly onto their shared interface, and the region is solved against it. A
     saved environment model is reused across runs, including after the region is
     re-meshed, and the capacitance or inductance matrix of a reused model needs no
-    environment solve. Includes optional block low-rank environment factorization with
+    environment solve. The offline run also writes a mesh of the region, on which online runs
+    read and partition the region only, and in which `remesh_region.py` re-meshes a redesign. Includes optional block low-rank environment factorization with
     MUMPS (`"FactorizationTol"`) and hierarchical compression of the interface operator
     (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"` and
     `"SurfaceCurrent"` excitations, alone or together, with the films and `"Superconductor"`

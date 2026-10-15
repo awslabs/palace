@@ -37,8 +37,9 @@ with ``\bm{S}_E``, so terminal energies need no environment solve.
 
 The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to a file. A later
 run loads it and solves only the region, possibly after re-meshing the region: its solves then
-follow the size of the region rather than of the device (the whole mesh is still read, and the
-environment is checked element by element against the model, without assembling it).
+follow the size of the region rather than of the device. On the full mesh the environment is
+checked element by element against the model, without assembling it; on the mesh of the region
+written with the model, only the region is read.
 
 ## Configuration
 
@@ -60,6 +61,19 @@ region and the environment are given by domain attributes, which together must c
     environment model to that file.
   - `"Mode": "Online"` loads the model from `"SaveModel"` and solves only the region. The region
     may be re-meshed between runs, as long as the environment and the interface are unchanged.
+
+An `"Offline"` run that saves a model also writes a mesh of the region next to it
+(`<model>_region.mesh` for `"SaveModel": "<model>.model"`), with the few environment elements
+along the boundary conditions of the environment that reach the interface and, in
+magnetostatics, at the surface currents and flux loops of the environment. An `"Online"` run on
+it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and partitions the region
+only. The environment is then that of the model, and its fingerprint is not checked; the
+interface is found from the saved interface DOFs, and the nondimensionalization is that of the
+model. Every excitation with sources in the environment must be in the model, the fields are
+written in the region and on the interface only, and adaptive refinement needs the full mesh. A
+redesign of the region is re-meshed inside the mesh of the region with
+[`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
+and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
 
 The remaining settings (terminals, materials, `"Solver"/"Order"`, ...) are those of the regular
 electrostatic or magnetostatic simulation. Field output follows
@@ -227,6 +241,19 @@ python3 remesh_region.py --model mesh/qubit_lattice_substructuring.msh2 \
     --design mesh/qubit_lattice_redesign_labeled.msh2 \
     --output mesh/qubit_lattice_substructuring_redesign.msh2
 palace qubit_lattice_redesign.json  # reuses the saved model
+```
+
+The offline run also writes the mesh of the region, `postpro/qubit_lattice_environment_region.mesh`,
+on which the online runs read only the region (10,205 of the mesh's 249,307 elements). With
+`--region-mesh`, the re-meshing script writes the redesign in the same way:
+
+```bash
+python3 remesh_region.py --model mesh/qubit_lattice_substructuring.msh2 \
+    --design mesh/qubit_lattice_redesign_labeled.msh2 \
+    --region-mesh postpro/qubit_lattice_environment_region.mesh \
+    --output mesh/qubit_lattice_redesign_region.msh2
+palace qubit_lattice_online_region.json    # the original region, on the mesh of the region
+palace qubit_lattice_redesign_region.json  # the redesign, on its mesh of the region
 ```
 
 The region box stops above the bottom of the substrate, so that the region contains a single
