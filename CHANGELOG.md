@@ -138,6 +138,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     on straight-sided elements. The wave port driven-field voltage no longer requires GSLIB
     or a point search over the full 3D mesh.
     [PR 1049](https://github.com/awslabs/palace/pull/1049).
+  - Fixed wave port modes depending on the mesh partitioning: for some partitionings, the
+    finite element spaces of the wave port cross-section were inconsistent between
+    processes, and the port eigenvalue problem gave spurious modes. This patches MFEM with
+    [mfem/mfem#5639](https://github.com/mfem/mfem/pull/5639) to order them consistently.
+    [PR 1056](https://github.com/awslabs/palace/pull/1056).
+  - Fixed wave port boundary conditions after nonconforming adaptive mesh refinement in
+    parallel: the boundary edges of the port cross-section could miss the attribute of the
+    adjacent boundary when that boundary was owned by another process, so its boundary
+    condition was not applied on the port. The edges were matched through mesh node ids,
+    which are not consistent between processes after parallel refinement and rebalancing;
+    they are now matched geometrically.
+    [PR 1056](https://github.com/awslabs/palace/pull/1056).
 
 #### Performance Improvements
 
