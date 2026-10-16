@@ -1152,6 +1152,23 @@ TEST_CASE("substructuring_magnetostatic_mixed_region", "[Serial][Parallel][Regre
                                   "mixed_online_region", opts);
 }
 
+// Online adaptive refinement of the region of the mixed case (one iteration), with the
+// environment of the saved model. The marked elements depend on the partition (one element
+// more on 2 or 4 processes, a 4e-5 change of the inductances, against 4e-3 for the
+// refinement).
+TEST_CASE("substructuring_magnetostatic_mixed_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_mixed.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed_online_amr.json", "mixed_online_amr",
+                                  opts);
+}
+
 // As above with a finite-penetration-depth London disk (λ = 0.4 μm, d = 0.1 μm).
 TEST_CASE("substructuring_magnetostatic_mixed_london", "[Serial][Parallel][Regression]")
 {

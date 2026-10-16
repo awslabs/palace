@@ -199,6 +199,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       Catch::Matchers::ContainsSubstring("\"MaxNCLevels\": 0"));
     config["Model"]["Refinement"]["MaxNCLevels"] = 0;
     CHECK_NOTHROW(IoData(config, false));
+    config["Problem"]["Type"] = "Magnetostatic";
+    CHECK_NOTHROW(IoData(config, false));
     config["Model"]["Refinement"]["Nonconformal"] = false;
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("nonconforming"));

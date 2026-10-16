@@ -76,12 +76,15 @@ public:
   // Magnetostatic energy matrix of surface currents and London flux states (currents
   // first), with the blocks of CurrentEnergyMatrix and SheetEnergyMatrix and a zero cross
   // block (the two kinds of states are energy-orthogonal). With the aperture flux
-  // functionals l_c of the ports, linked_flux(c, f) = l_c^T u_f for the flux states f.
+  // functionals l_c of the ports, linked_flux(c, f) = l_c^T u_f for the flux states f. If
+  // region_fields is non-null (with a saved model), it receives the solutions of all states
+  // on the region and interface (zero on the environment interior).
   mfem::DenseMatrix MagnetostaticEnergyMatrix(
       const std::vector<int> &current_ids, const std::vector<Vector> &J,
       const std::vector<int> &flux_ids, const std::vector<Vector> &a,
       const std::vector<Vector> &apertures, mfem::DenseMatrix *linked_flux,
-      std::vector<Vector> *fields = nullptr, int n_fields = 0);
+      std::vector<Vector> *fields = nullptr, int n_fields = 0,
+      std::vector<Vector> *region_fields = nullptr);
 
   // Whether the model has London superconductor sheets (magnetostatics).
   bool HasSheets() const;
@@ -94,9 +97,10 @@ public:
                                       int n_fields = 0,
                                       std::vector<Vector> *region_fields = nullptr);
 
-  // Error indicators for adaptive refinement of the region only (electrostatics): Palace's
-  // gradient-flux estimator on the region solutions of CapacitanceMatrix, normalized by the
-  // energies E_kk / 2, and zero on the environment.
+  // Error indicators for adaptive refinement of the region only: Palace's gradient-flux
+  // (electrostatics) or curl-flux (magnetostatics) estimator on the region solutions of
+  // CapacitanceMatrix or MagnetostaticEnergyMatrix, normalized by the energies E_kk / 2,
+  // and zero on the environment.
   ErrorIndicator RegionErrorIndicator(const std::vector<Vector> &region_fields,
                                       const mfem::DenseMatrix &E) const;
 
@@ -163,7 +167,8 @@ private:
                                        const std::vector<Source> &src,
                                        std::vector<Vector> *fields, int n_fields,
                                        std::vector<double> *work = nullptr,
-                                       Functionals *fun = nullptr);
+                                       Functionals *fun = nullptr,
+                                       std::vector<Vector> *region_fields = nullptr);
 
   struct Impl;
   std::unique_ptr<Impl> impl;

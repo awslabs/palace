@@ -16,11 +16,15 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/multigrid.hpp"
 #include "fem/substructure.hpp"
 #include "fixtures.hpp"
+#include "linalg/errorestimator.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/materialoperator.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
@@ -68,7 +72,7 @@ std::unique_ptr<mfem::ParMesh> MakeSplitCube(int nx)
 // split, while keeping the x=0 / x=1 terminal-face convention (bdr attr 1 / 2, sides 3).
 // With reorder, the same tetrahedra come in another element and vertex order (so other face
 // orientations, as another partition gives).
-std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx, bool reorder = false)
+mfem::Mesh MakeWavyTetSerial(int nx, bool reorder = false)
 {
   mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::TETRAHEDRON);
   if (reorder)
@@ -117,6 +121,18 @@ std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx, bool reorder = false)
     serial.SetBdrAttribute(b, xc < 1e-9 ? 1 : (xc > 1.0 - 1e-9 ? 2 : 3));
   }
   serial.SetAttributes();
+  return serial;
+}
+
+// With nonconforming, ready for nonconforming refinement, as Palace prepares a mesh for it.
+std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx, bool reorder = false,
+                                                bool nonconforming = false)
+{
+  mfem::Mesh serial = MakeWavyTetSerial(nx, reorder);
+  if (nonconforming)
+  {
+    serial.EnsureNCMesh(true);
+  }
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
@@ -2613,6 +2629,326 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const MPI_Comm comm = mesh1.back()->GetComm();
   CAPTURE(ind0.Norml2(pm0.GetComm()), ind1.Norml2(comm));
   CHECK(ind1.Norml2(comm) < ind0.Norml2(pm0.GetComm()));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver online magnetostatic region adaptation",
+                 "[substructure][Serial][Parallel]")
+{
+  // One step of online adaptive refinement of the region only, for a closed current on
+  // tetrahedra: the region error indicators are zero on the environment; nonconforming
+  // refinement of the marked region elements leaves the environment and the interface DOFs
+  // as condensed, so the saved model still applies without factoring the environment,
+  // matches a monolith on the refined mesh, and the estimated region error decreases.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const std::string model_path = (temp_dir / "substruct_mag_amr_model.bin").string();
+  auto make_config = [order, &model_path](const std::string &mode)
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials",
+                      {{{"Attributes", {1}}, {"Permeability", 1.0}},
+                       {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+                   {"Boundaries", {}},
+                   {"Solver",
+                    {{"Order", order},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", mode},
+                       {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  // J = curl (0, 0, phi) with phi = (x (1 - x) y (1 - y) z (1 - z))^2: divergence-free with
+  // no normal component, and integrated exactly, so that it is orthogonal to the discrete
+  // gradients (it closes).
+  mfem::VectorFunctionCoefficient jc(3,
+                                     [](const mfem::Vector &x, mfem::Vector &j)
+                                     {
+                                       const double a = x(0) * (1.0 - x(0)),
+                                                    b = x(1) * (1.0 - x(1)),
+                                                    c = x(2) * (1.0 - x(2));
+                                       j(0) = 2.0 * a * a * b * (1.0 - 2.0 * x(1)) * c * c;
+                                       j(1) = -2.0 * a * (1.0 - 2.0 * x(0)) * b * b * c * c;
+                                       j(2) = 0.0;
+                                     });
+  mfem::ND_FECollection fec(order, 3);
+  auto current = [&](mfem::ParMesh &pmesh)
+  {
+    mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+    mfem::ParLinearForm lf(&pfes);
+    auto *lfi = new mfem::VectorFEDomainLFIntegrator(jc);
+    lfi->SetIntRule(&mfem::IntRules.Get(mfem::Geometry::TETRAHEDRON, 2 * order + 12));
+    lf.AddDomainIntegrator(lfi);
+    lf.Assemble();
+    Vector J(pfes.GetTrueVSize());
+    lf.ParallelAssemble(J);
+    return J;
+  };
+  {
+    IoData iodata = make_config("Offline");
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
+    SubstructuringSolver off(iodata, mesh);
+    off.CondenseEnvironment();
+    (void)off.CurrentEnergyMatrix({1}, {current(mesh.back()->Get())});
+  }
+  IoData iodata_on = make_config("Online");
+  auto count_env = [](const mfem::ParMesh &m)
+  {
+    long c = 0;
+    for (int e = 0; e < m.GetNE(); e++)
+    {
+      c += (m.GetAttribute(e) == 2);
+    }
+    MPI_Allreduce(MPI_IN_PLACE, &c, 1, MPI_LONG, MPI_SUM, m.GetComm());
+    return c;
+  };
+  auto solve = [&](std::vector<std::unique_ptr<Mesh>> &mesh, double &energy)
+  {
+    SubstructuringSolver on(iodata_on, mesh);
+    on.CondenseEnvironment();
+    std::vector<Vector> region_fields;
+    const mfem::DenseMatrix E =
+        on.MagnetostaticEnergyMatrix({1}, {current(mesh.back()->Get())}, {}, {}, {},
+                                     nullptr, nullptr, 0, &region_fields);
+    CHECK_FALSE(on.EnvironmentFactored());
+    energy = E(0, 0);
+    return on.RegionErrorIndicator(region_fields, E);
+  };
+
+  // Online solve and region indicators on the initial mesh.
+  std::vector<std::unique_ptr<Mesh>> mesh0;
+  mesh0.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4, false, true)));
+  auto &pm0 = mesh0.back()->Get();
+  double e0 = 0.0;
+  const ErrorIndicator ind0 = solve(mesh0, e0);
+  REQUIRE(ind0.Local().Size() == pm0.GetNE());
+  double env_max = 0.0, reg_max = 0.0;
+  for (int e = 0; e < pm0.GetNE(); e++)
+  {
+    double &m = (pm0.GetAttribute(e) == 2) ? env_max : reg_max;
+    m = std::max(m, ind0.Local()(e));
+  }
+  Mpi::GlobalMax(1, &env_max, pm0.GetComm());
+  Mpi::GlobalMax(1, &reg_max, pm0.GetComm());
+  CHECK(env_max == 0.0);
+  CHECK(reg_max > 0.0);
+
+  // Refine the region elements with the largest indicators (nonconforming, no level
+  // constraint), on an identical copy of the mesh.
+  auto pm1 = MakeWavyTetSplit(4, false, true);
+  mfem::Array<int> marked;
+  for (int e = 0; e < pm0.GetNE(); e++)
+  {
+    if (ind0.Local()(e) >= 0.3 * reg_max)
+    {
+      marked.Append(e);
+    }
+  }
+  const long n_env = count_env(*pm1);
+  pm1->GeneralRefinement(marked, 1, 0);
+  CHECK(count_env(*pm1) == n_env);  // the environment is not refined
+  std::vector<std::unique_ptr<Mesh>> mesh1;
+  mesh1.push_back(std::make_unique<Mesh>(std::move(pm1)));
+  double e1 = 0.0;
+  const ErrorIndicator ind1 = solve(mesh1, e1);
+
+  // Monolith on the refined mesh: u = (K + eps M)^-1 J and E = 2 J^T u - u^T K u, with
+  // SubstructuringSolver's regularization.
+  auto &pm = mesh1.back()->Get();
+  mfem::ParFiniteElementSpace pfes(&pm, &fec);
+  const Vector J = current(pm);
+  mfem::Vector nu_by_attr(2), mass_by_attr(2);
+  nu_by_attr(0) = 1.0;
+  nu_by_attr(1) = 0.25;
+  mass_by_attr = 1.0e-3;
+  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
+  mfem::ParBilinearForm asolve(&pfes), aenergy(&pfes);
+  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
+  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
+  asolve.Assemble();
+  asolve.Finalize();
+  aenergy.Assemble();
+  aenergy.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> Ksolve(asolve.ParallelAssemble()),
+      Kpure(aenergy.ParallelAssemble());
+  mfem::HypreAMS ams(*Ksolve, &pfes);
+  ams.SetPrintLevel(0);
+  mfem::HyprePCG pcg(*Ksolve);
+  pcg.SetTol(1.0e-14);
+  pcg.SetMaxIter(4000);
+  pcg.SetPrintLevel(0);
+  pcg.SetPreconditioner(ams);
+  Vector u(pfes.GetTrueVSize()), t(pfes.GetTrueVSize());
+  u = 0.0;
+  pcg.Mult(J, u);
+  Kpure->Mult(u, t);
+  const double e_mono =
+      2.0 * mfem::InnerProduct(pm.GetComm(), J, u) - mfem::InnerProduct(pm.GetComm(), u, t);
+  CAPTURE(e0, e1, e_mono);
+  CHECK(std::abs(e1 - e_mono) <= 1.0e-8 * std::abs(e_mono));
+  CHECK(std::abs(e1 - e0) >= 1.0e3 * std::abs(e1 - e_mono));  // the refinement matters
+  CAPTURE(ind0.Norml2(pm0.GetComm()), ind1.Norml2(pm.GetComm()));
+  CHECK(ind1.Norml2(pm.GetComm()) < ind0.Norml2(pm0.GetComm()));
+}
+
+TEST_CASE("SubstructuringSolver region error indicators",
+          "[substructure][Serial][Parallel]")
+{
+  // The region's indicators (on the region submesh) must equal those of Palace's estimator
+  // on a serial mesh of the region alone, on any partition, also with the face DOFs of
+  // second-order Nédélec and first-order Raviart-Thomas spaces (in parallel, MFEM's
+  // submesh spaces need mfem/mfem#5518).
+  const int order = GENERATE(1, 2);
+  const bool magnetostatic = GENERATE(false, true);
+  CAPTURE(order, magnetostatic);
+  json config = {
+      {"Problem",
+       {{"Type", magnetostatic ? "Magnetostatic" : "Electrostatic"},
+        {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 2.0}, {"Permeability", 3.0}},
+          {{"Attributes", {2}}, {"Permittivity", 5.0}, {"Permeability", 7.0}}}}}},
+      {"Boundaries", {}},
+      {"Solver",
+       {{"Order", order},
+        {"Linear", {{"EstimatorTol", 1.0e-13}, {"EstimatorMaxIts", 1000}}},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+  const int nx = 4;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(nx)));
+  SubstructuringSolver sub(iodata, mesh);
+
+  // A smooth potential, V or A, on the parent and on a serial mesh of the region.
+  mfem::FunctionCoefficient vc(
+      [](const mfem::Vector &x)
+      { return std::sin(x(0) + 2.0 * x(1)) * std::cos(3.0 * x(2)); });
+  mfem::VectorFunctionCoefficient ac(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = std::sin(x(1) + 2.0 * x(2));
+                                       v(1) = std::cos(3.0 * x(0)) * x(2);
+                                       v(2) = std::exp(x(0)) * x(1);
+                                     });
+  auto make_fec = [&]() -> std::unique_ptr<mfem::FiniteElementCollection>
+  {
+    if (magnetostatic)
+    {
+      return std::make_unique<mfem::ND_FECollection>(order, 3);
+    }
+    return std::make_unique<mfem::H1_FECollection>(order, 3);
+  };
+  auto project = [&](mfem::ParFiniteElementSpace &fes)
+  {
+    mfem::ParGridFunction gf(&fes);
+    if (magnetostatic)
+    {
+      gf.ProjectCoefficient(ac);
+    }
+    else
+    {
+      gf.ProjectCoefficient(vc);
+    }
+    Vector u(fes.GetTrueVSize());
+    gf.GetTrueDofs(u);
+    return u;
+  };
+  const auto fec = make_fec();
+  mfem::ParFiniteElementSpace pfes(&mesh.back()->Get(), fec.get());
+  mfem::DenseMatrix E(1);
+  E(0, 0) = 2.0;  // unit energy
+  const ErrorIndicator ind = sub.RegionErrorIndicator({project(pfes)}, E);
+
+  // The reference, on every rank.
+  mfem::Mesh serial = MakeWavyTetSerial(nx);
+  mfem::Array<int> attrs({1});
+  mfem::Mesh region_serial = mfem::SubMesh::CreateFromDomain(serial, attrs);
+  std::vector<std::unique_ptr<Mesh>> rmesh;
+  rmesh.push_back(std::make_unique<Mesh>(MPI_COMM_SELF, region_serial));
+  MaterialOperator mat_op(iodata, *rmesh[0]);
+  ErrorIndicator ref;
+  const auto rfec = make_fec();
+  FiniteElementSpace rfes(*rmesh[0], rfec.get());
+  const Vector ur = project(rfes.Get());
+  if (magnetostatic)
+  {
+    auto nd_fecs = fem::ConstructFECollections<mfem::ND_FECollection>(
+        order, 3, 1, MultigridCoarsening::LINEAR, false);
+    auto nd_fespaces =
+        fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(1, rmesh, nd_fecs);
+    mfem::RT_FECollection rt_fec(order - 1, 3);
+    FiniteElementSpace rt_fespace(*rmesh[0], &rt_fec);
+    CurlFluxErrorEstimator<Vector> estimator(mat_op, rt_fespace, nd_fespaces, 1.0e-13, 1000,
+                                             0, false);
+    Vector b(rt_fespace.GetTrueVSize());
+    rt_fespace.GetDiscreteInterpolator(rfes).Mult(ur, b);
+    estimator.AddErrorIndicator(b, 1.0, ref);
+  }
+  else
+  {
+    mfem::ND_FECollection nd_fec(order, 3);
+    FiniteElementSpace nd_fespace(*rmesh[0], &nd_fec);
+    auto rt_fecs = fem::ConstructFECollections<mfem::RT_FECollection>(
+        order - 1, 3, 1, MultigridCoarsening::LINEAR, false);
+    auto rt_fespaces =
+        fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(1, rmesh, rt_fecs);
+    GradFluxErrorEstimator<Vector> estimator(mat_op, nd_fespace, rt_fespaces, 1.0e-13, 1000,
+                                             0, false);
+    Vector e(nd_fespace.GetTrueVSize());
+    e = 0.0;
+    nd_fespace.GetDiscreteInterpolator(rfes).AddMult(ur, e, -1.0);
+    estimator.AddErrorIndicator(e, 1.0, ref);
+  }
+
+  // Element by element, matched by their centers.
+  auto center = [](const mfem::Mesh &m, int e)
+  {
+    mfem::Vector c;
+    const_cast<mfem::Mesh &>(m).GetElementCenter(e, c);
+    return std::array<double, 3>{c(0), c(1), c(2)};
+  };
+  const auto &rm = rmesh[0]->Get();
+  const auto &pm = mesh.back()->Get();
+  double err = 0.0, scale = 0.0, env = 0.0, unmatched = 0.0;
+  for (int e = 0; e < pm.GetNE(); e++)
+  {
+    if (pm.GetAttribute(e) != 1)
+    {
+      env = std::max(env, std::abs(ind.Local()(e)));
+      continue;
+    }
+    const auto c = center(pm, e);
+    int match = -1;
+    for (int r = 0; r < rm.GetNE() && match < 0; r++)
+    {
+      const auto q = center(rm, r);
+      match = (std::hypot(c[0] - q[0], c[1] - q[1], c[2] - q[2]) < 1.0e-10) ? r : -1;
+    }
+    if (match < 0)
+    {
+      unmatched += 1.0;
+      continue;
+    }
+    err = std::max(err, std::abs(ind.Local()(e) - ref.Local()(match)));
+    scale = std::max(scale, ref.Local()(match));
+  }
+  Mpi::GlobalMax(1, &err, Mpi::World());
+  Mpi::GlobalMax(1, &scale, Mpi::World());
+  Mpi::GlobalMax(1, &env, Mpi::World());
+  Mpi::GlobalSum(1, &unmatched, Mpi::World());
+  CAPTURE(err, scale);
+  CHECK(unmatched == 0.0);
+  CHECK(scale > 0.0);
+  CHECK(env == 0.0);
+  CHECK(err <= 1.0e-8 * scale);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
