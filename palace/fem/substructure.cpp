@@ -73,11 +73,12 @@ int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
   region_marker.SetSize(nt);
   env_marker.SetSize(nt);
   interface_marker.SetSize(nt);
+  const double *rt = reg_t.HostRead(), *et = env_t.HostRead();
   int local_iface = 0;
   for (int i = 0; i < nt; i++)
   {
-    region_marker[i] = (reg_t(i) > 0.5) ? 1 : 0;
-    env_marker[i] = (env_t(i) > 0.5) ? 1 : 0;
+    region_marker[i] = (rt[i] > 0.5) ? 1 : 0;
+    env_marker[i] = (et[i] > 0.5) ? 1 : 0;
     interface_marker[i] = (region_marker[i] && env_marker[i]) ? 1 : 0;
     local_iface += interface_marker[i];
   }
@@ -113,11 +114,12 @@ std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace
   auto stamp = [&](int slot)
   {
     gf.GetTrueDofs(td);
+    const double *t = td.HostRead();
     for (int i = 0; i < nt; i++)
     {
       if (index[i] >= 0)
       {
-        loc[static_cast<std::size_t>(index[i]) * w + slot] = td(i);
+        loc[static_cast<std::size_t>(index[i]) * w + slot] = t[i];
       }
     }
   };
@@ -377,10 +379,11 @@ std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
     }
   }
   fespace.Dof_TrueDof_Matrix()->AbsMultTranspose(1.0, lmark, 0.0, tmark);
+  const double *t = tmark.HostRead();
   std::vector<char> mark(fespace.GetTrueVSize(), 0);
   for (int i = 0; i < fespace.GetTrueVSize(); i++)
   {
-    mark[i] = tmark(i) > 0.0;
+    mark[i] = t[i] > 0.0;
   }
   return mark;
 }
@@ -450,6 +453,7 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
     tmark(i) = keep[i] ? 1.0 : 0.0;
   }
   fespace.Dof_TrueDof_Matrix()->Mult(tmark, lmark);
+  const double *lm = lmark.HostRead();
   mfem::ParMesh mesh(parent);
   const int shift = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
   auto in = [](const std::vector<int> &s, int a)
@@ -463,7 +467,7 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
     }
     fespace.GetElementDofs(e, dofs);
     if (std::any_of(dofs.begin(), dofs.end(),
-                    [&](int d) { return lmark(d >= 0 ? d : -1 - d) != 0.0; }))
+                    [&](int d) { return lm[d >= 0 ? d : -1 - d] != 0.0; }))
     {
       mesh.SetAttribute(e, parent.GetAttribute(e) + shift);
     }

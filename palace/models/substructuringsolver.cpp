@@ -35,6 +35,7 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "utils/communication.hpp"
@@ -238,11 +239,13 @@ public:
   {
     A_region_free.Mult(x, y);
     dtn.Mult(x, td);
+    const double *t = td.HostRead();
+    double *yy = y.HostReadWrite();
     for (int i = 0; i < height; i++)
     {
       if (is_region_free[i])
       {
-        y(i) += td(i);
+        yy[i] += t[i];
       }
     }
   }
@@ -289,15 +292,17 @@ public:
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
     std::vector<double> xl(nG_global, 0.0), xg(nG_global, 0.0);
+    const double *xx = x.HostRead();
     for (int i = 0; i < height; i++)
     {
       if (gamma_global[i] >= 0)
       {
-        xl[gamma_global[i]] = x(i);
+        xl[gamma_global[i]] = xx[i];
       }
     }
     MPI_Allreduce(xl.data(), xg.data(), nG_global, MPI_DOUBLE, MPI_SUM, comm);
-    y = 0.0;
+    double *yy = y.HostWrite();
+    std::fill(yy, yy + height, 0.0);
     if (hodlr)
     {
       std::vector<double> xp(nG_global), yp(nG_global), yg(nG_global);
@@ -314,7 +319,7 @@ public:
       {
         if (gamma_global[i] >= 0)
         {
-          y(i) = yg[gamma_global[i]];
+          yy[i] = yg[gamma_global[i]];
         }
       }
       return;
@@ -330,7 +335,7 @@ public:
         {
           s += row[j] * xg[j];
         }
-        y(i) = s;
+        yy[i] = s;
       }
     }
   }
@@ -845,6 +850,11 @@ struct SubstructuringSolver::Impl
       YL[k] = 0.0;
     }
     std::vector<char> touched(n, 0);
+    std::vector<const double *> xl(n);
+    for (int k = 0; k < n; k++)
+    {
+      xl[k] = XL[k].HostRead();
+    }
     auto use = [&](const mfem::Array<int> &vdofs)
     {
       bool any = false;
@@ -853,7 +863,7 @@ struct SubstructuringSolver::Impl
         touched[k] = 0;
         for (int d : vdofs)
         {
-          if (XL[k](d >= 0 ? d : -1 - d) != 0.0)
+          if (xl[k][d >= 0 ? d : -1 - d] != 0.0)
           {
             touched[k] = 1;
             break;
@@ -975,19 +985,21 @@ struct SubstructuringSolver::Impl
     {
       b = std::move(EnvApply({src.a}, false, true)[0]);
     }
+    double *bb = b.HostReadWrite();
     if (src.HasJ())
     {
+      const double *J = src.J->HostRead();
       for (int i = 0; i < nt; i++)
       {
         if (is_env_int[i])
         {
-          b(i) += (*src.J)(i);
+          bb[i] += J[i];
         }
       }
     }
     for (int d = 0; d < dbc_tdofs.Size(); d++)
     {
-      b(dbc_tdofs[d]) = 0.0;
+      bb[dbc_tdofs[d]] = 0.0;
     }
     double loc[3] = {b.Normlinf(), CachedFingerprintField(0) * b,
                      CachedFingerprintField(1) * b},
@@ -1009,11 +1021,13 @@ struct SubstructuringSolver::Impl
     }
     if (src.HasJ())
     {
+      const double *J = src.J->HostRead();
+      double *bb = b.HostReadWrite();
       for (int i = 0; i < nt; i++)
       {
         if (is_region_free[i])
         {
-          b(i) += (*src.J)(i);
+          bb[i] += J[i];
         }
       }
     }
@@ -1058,11 +1072,12 @@ struct SubstructuringSolver::Impl
     mfem::Vector t(nt);
     auto rows = [&](std::vector<double> &out, int k, const mfem::Vector &v)
     {
+      const double *vv = v.HostRead();
       for (int i = 0; i < nt; i++)
       {
         if (is_gamma[i])
         {
-          out[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] = v(i);
+          out[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] = vv[i];
         }
       }
     };
@@ -1112,9 +1127,14 @@ struct SubstructuringSolver::Impl
         MsheetEnv().Mult(D[k], MD[k]);
       }
       JE[k] = 0.0;
-      for (int i = 0; src[k].HasJ() && i < nt; i++)
+      if (src[k].HasJ())
       {
-        JE[k](i) = is_env_int[i] ? (*src[k].J)(i) : 0.0;
+        const double *J = src[k].J->HostRead();
+        double *je = JE[k].HostWrite();
+        for (int i = 0; i < nt; i++)
+        {
+          je[i] = is_env_int[i] ? J[i] : 0.0;
+        }
       }
     }
     SB.assign(static_cast<std::size_t>(K) * K, 0.0);
@@ -1364,11 +1384,13 @@ struct SubstructuringSolver::Impl
     }
     for (int k = 0; k < n; k++)
     {
+      const double *r = rhs[k].HostRead();
+      double *uu = u[k].HostReadWrite();
       for (int i = 0; i < nt; i++)
       {
         if (is_env_int[i])
         {
-          u[k](i) = rhs[k](i);
+          uu[i] = r[i];
         }
       }
     }
@@ -1426,9 +1448,10 @@ struct SubstructuringSolver::Impl
       const auto fp = LiftFingerprint(x[k], t[k]);
       mode_fp[2 * k] = fp[0];
       mode_fp[2 * k + 1] = fp[1];
+      const double *tt = t[k].HostRead();
       for (int i = 0; i < nt && !touches[k]; i++)
       {
-        touches[k] = (is_env_int[i] && t[k](i) != 0.0);
+        touches[k] = (is_env_int[i] && tt[i] != 0.0);
       }
     }
     if (K > 0)
@@ -1465,12 +1488,13 @@ struct SubstructuringSolver::Impl
       for (int k = 0; k < K; k++)
       {
         Aenv().Mult(b[k], tmp);
+        const double *ak = a[k].HostRead(), *tt = tmp.HostRead();
         for (int i = 0; i < nt; i++)
         {
           if (is_gamma[i])
           {
             Grows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] =
-                a[k](i) - tmp(i);
+                ak[i] - tt[i];
           }
         }
       }
@@ -2132,6 +2156,8 @@ struct SubstructuringSolver::Impl
 
     env_srhs.SetSize(env_solve_fes->GetTrueVSize());
     env_ssol.SetSize(env_solve_fes->GetTrueVSize());
+    env_srhs.UseDevice(true);
+    env_ssol.UseDevice(true);
   }
 
   // Essential submesh DOFs (Gamma and the environment Dirichlet DOFs), from a transfer of
@@ -2149,10 +2175,11 @@ struct SubstructuringSolver::Impl
     env_submesh->Transfer(pg, sg);
     mfem::Vector st(env_solve_fes->GetTrueVSize());
     sg.GetTrueDofs(st);
+    const double *sv = st.HostRead();
     env_ess.SetSize(0);
     for (int i = 0; i < st.Size(); i++)
     {
-      if (std::abs(st(i)) > 0.5)  // fabs: ND transfer may flip the marker's sign
+      if (std::abs(sv[i]) > 0.5)  // fabs: ND transfer may flip the marker's sign
       {
         env_ess.Append(i);
       }
@@ -2174,9 +2201,10 @@ struct SubstructuringSolver::Impl
       submesh.Transfer(pg, sg);
       mfem::Vector st(scratch.GetTrueVSize());
       sg.GetTrueDofs(st);
+      const double *sv = st.HostRead();
       for (int i = 0; i < st.Size(); i++)
       {
-        if (std::abs(st(i)) > 0.5)
+        if (std::abs(sv[i]) > 0.5)
         {
           ess_set.insert(i);
         }
@@ -2442,6 +2470,8 @@ struct SubstructuringSolver::Impl
       return;
     }
     mfem::Vector b(nt), u(nt);
+    b.UseDevice(true);
+    u.UseDevice(true);
     for (int k = 0; k < n; k++)
     {
       b = 0.0;
@@ -2537,11 +2567,12 @@ struct SubstructuringSolver::Impl
     }
     for (auto *y : Y)
     {
+      double *yy = y->HostReadWrite();
       for (int i = 0; i < nt; i++)
       {
         if (!is_env_int[i])
         {
-          (*y)(i) = 0.0;
+          yy[i] = 0.0;
         }
       }
     }
@@ -2569,10 +2600,7 @@ struct SubstructuringSolver::Impl
     env_sgf = 0.0;
     env_submesh->Transfer(env_pgf, env_sgf);
     env_sgf.GetTrueDofs(env_srhs);
-    for (int i = 0; i < env_ess.Size(); i++)
-    {
-      env_srhs(env_ess[i]) = 0.0;
-    }
+    linalg::SetSubVector(env_srhs, env_ess, 0.0);
     env_ssol = 0.0;
     env_ksp->Mult(env_srhs, env_ssol);
     env_sgf.SetFromTrueDofs(env_ssol);
@@ -2580,11 +2608,12 @@ struct SubstructuringSolver::Impl
     env_submesh->Transfer(env_sgf, env_pgf);
     y_parent.SetSize(nt);
     env_pgf.GetTrueDofs(y_parent);
+    double *yy = y_parent.HostReadWrite();
     for (int i = 0; i < nt; i++)
     {
       if (!is_env_int[i])
       {
-        y_parent(i) = 0.0;
+        yy[i] = 0.0;
       }
     }
   }
@@ -2670,6 +2699,8 @@ struct SubstructuringSolver::Impl
     reg_sgf.SetSpace(reg_solve_fes);
     reg_srhs.SetSize(reg_solve_fes->GetTrueVSize());
     reg_ssol.SetSize(reg_solve_fes->GetTrueVSize());
+    reg_srhs.UseDevice(true);
+    reg_ssol.UseDevice(true);
     return true;
   }
 
@@ -2678,18 +2709,19 @@ struct SubstructuringSolver::Impl
   void ApplyRegionGmgPc(const mfem::Vector &r, mfem::Vector &z) const
   {
     z.SetSize(nt);
-    for (int i = 0; i < nt; i++)
     {
-      z(i) = is_region_free[i] ? 0.0 : r(i);
+      const double *rr = r.HostRead();
+      double *zz = z.HostWrite();
+      for (int i = 0; i < nt; i++)
+      {
+        zz[i] = is_region_free[i] ? 0.0 : rr[i];
+      }
     }
     reg_pgf.SetFromTrueDofs(r);
     reg_sgf = 0.0;
     reg_submesh->Transfer(reg_pgf, reg_sgf);
     reg_sgf.GetTrueDofs(reg_srhs);
-    for (int i = 0; i < reg_ess.Size(); i++)
-    {
-      reg_srhs(reg_ess[i]) = 0.0;
-    }
+    linalg::SetSubVector(reg_srhs, reg_ess, 0.0);
     reg_ssol = 0.0;
     reg_gmg_ksp->Mult(reg_srhs, reg_ssol);
     reg_sgf.SetFromTrueDofs(reg_ssol);
@@ -2697,11 +2729,13 @@ struct SubstructuringSolver::Impl
     reg_submesh->Transfer(reg_sgf, reg_pgf);
     mfem::Vector zr(nt);
     reg_pgf.GetTrueDofs(zr);
+    const double *zrr = zr.HostRead();
+    double *zz = z.HostReadWrite();
     for (int i = 0; i < nt; i++)
     {
       if (is_region_free[i])
       {
-        z(i) = zr(i);
+        zz[i] = zrr[i];
       }
     }
   }
@@ -2713,8 +2747,6 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
 {
   MFEM_VERIFY(iodata.solver.substructuring,
               "SubstructuringSolver requires a Solver.Substructuring configuration!");
-  MFEM_VERIFY(!mfem::Device::Allows(mfem::Backend::DEVICE_MASK),
-              "Substructuring runs on CPUs only (no device backend)!");
 }
 
 SubstructuringSolver::~SubstructuringSolver() = default;
@@ -2989,9 +3021,10 @@ void SubstructuringSolver::CondenseEnvironment()
           }
           // A_env e_c: its env-interior part is the solve RHS, its Gamma part is A_GG e_c.
           G->Mult(ec, t[k]);
+          const double *tk = t[k].HostRead();
           for (int r = 0; r < nloc; r++)
           {
-            agg[static_cast<std::size_t>(k) * nloc + r] = t[k](col_to_dof[r]);
+            agg[static_cast<std::size_t>(k) * nloc + r] = tk[col_to_dof[r]];
           }
           X[k] = &t[k];
           Y[k] = &t[k];  // solve in place
@@ -3000,11 +3033,12 @@ void SubstructuringSolver::CondenseEnvironment()
         for (int k = 0; k < nb; k++)
         {
           R->Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
+          const double *zz = z.HostRead();
           const int c = c0 + k;
           for (int r = 0; r < nloc; r++)
           {
             impl->S_rows[static_cast<std::size_t>(r) * nG + c] =
-                agg[static_cast<std::size_t>(k) * nloc + r] - z(r);
+                agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
           }
         }
         if (with_sk)
@@ -3017,12 +3051,13 @@ void SubstructuringSolver::CondenseEnvironment()
             t[k].Neg();
             if (c >= off && c < off + nloc)
             {
-              t[k](col_to_dof[c - off]) += 1.0;
+              t[k].HostReadWrite()[col_to_dof[c - off]] += 1.0;
             }
             Dm.Mult(t[k], v[k]);
+            const double *vk = v[k].HostRead();
             for (int r = 0; r < nloc; r++)
             {
-              agg[static_cast<std::size_t>(k) * nloc + r] = v[k](col_to_dof[r]);
+              agg[static_cast<std::size_t>(k) * nloc + r] = vk[col_to_dof[r]];
             }
             X[k] = &v[k];
             Y[k] = &v[k];
@@ -3031,12 +3066,13 @@ void SubstructuringSolver::CondenseEnvironment()
           for (int k = 0; k < nb; k++)
           {
             R->Mult(v[k], z);
+            const double *zz = z.HostRead();
             const int c = c0 + k;
             for (int r = 0; r < nloc; r++)
             {
               const std::size_t q = static_cast<std::size_t>(r) * nG + c;
               impl->SK_rows[q] =
-                  impl->S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - z(r));
+                  impl->S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - zz[r]);
             }
           }
         }
@@ -3294,14 +3330,12 @@ SubstructuringSolver::SolveDirichlets(const std::vector<Vector> &dbc_values)
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   // Prescribe an arbitrary field on the Dirichlet DOFs.
   std::vector<Vector> dbcs(dbc_values.size(), Vector(impl->nt));
+  Vector xd;
   for (std::size_t k = 0; k < dbc_values.size(); k++)
   {
     dbcs[k] = 0.0;
-    for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
-    {
-      const int d = impl->dbc_tdofs[i];
-      dbcs[k](d) = dbc_values[k](d);
-    }
+    dbc_values[k].GetSubVector(impl->dbc_tdofs, xd);
+    dbcs[k].SetSubVector(impl->dbc_tdofs, xd);
   }
   return SolveDirichletBatch(dbcs);
 }
@@ -3325,9 +3359,10 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   for (int k = 0; k < n; k++)
   {
     impl->Aenv().Mult(dbcs[k], t[k]);
+    const double *tt = t[k].HostRead();
     for (int i = 0; i < nt && !touches[k]; i++)
     {
-      if (impl->is_env_int[i] && t[k](i) != 0.0)
+      if (impl->is_env_int[i] && tt[i] != 0.0)
       {
         touches[k] = 1;
       }
@@ -3360,10 +3395,8 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
       if (touches[k])
       {
         impl->Aenv().Mult(gE[k], t2);
-        for (int i = 0; i < nt; i++)
-        {
-          gE[k](i) = t[k](i) - t2(i);
-        }
+        gE[k] = t[k];
+        gE[k] -= t2;
       }
       else
       {
@@ -3378,14 +3411,12 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   // entries.
   std::vector<Vector> x(n, Vector(impl->rf_idx.Size())), u(n);
   {
-    Vector tr(nt);
+    Vector tr(nt), g;
     for (int k = 0; k < n; k++)
     {
       impl->A_region->Mult(dbcs[k], tr);
-      for (int i : impl->gamma_idx)
-      {
-        tr(i) += gE[k](i);
-      }
+      gE[k].GetSubVector(impl->gamma_idx, g);
+      tr.AddElementVector(impl->gamma_idx, g);
       tr.Neg();
       tr.GetSubVector(impl->rf_idx, x[k]);
     }
@@ -3411,12 +3442,12 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
 
   // Environment interior source response: solve A_EE w = f_E, correction (A_env w)|_Gamma.
   Vector fE(nt), w(nt), Aw(nt);
-  fE = 0.0;
-  for (int i = 0; i < nt; i++)
+  const double *ff = f.HostRead();
   {
-    if (impl->is_env_int[i])
+    double *fe = fE.HostWrite();
+    for (int i = 0; i < nt; i++)
     {
-      fE(i) = f(i);
+      fe[i] = impl->is_env_int[i] ? ff[i] : 0.0;
     }
   }
   w = 0.0;
@@ -3425,19 +3456,13 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
 
   // RHS: region/interface source minus the environment source correction on the interface.
   Vector b(nt);
-  b = 0.0;
-  for (int i = 0; i < nt; i++)
   {
-    if (impl->is_region_free[i])
+    const double *aw = Aw.HostRead();
+    double *bb = b.HostWrite();
+    for (int i = 0; i < nt; i++)
     {
-      b(i) = f(i);
-    }
-  }
-  for (int i = 0; i < nt; i++)
-  {
-    if (impl->is_gamma[i])
-    {
-      b(i) -= Aw(i);
+      bb[i] = impl->is_region_free[i] ? ff[i] : 0.0;
+      bb[i] -= impl->is_gamma[i] ? aw[i] : 0.0;
     }
   }
 
@@ -3449,21 +3474,25 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
   // Recover environment interior: u_E = A_EE^-1 (f_E - (A_env u)|_E).
   Vector Au(nt), rhs(nt), uE(nt);
   impl->Aenv().Mult(u, Au);
-  rhs = 0.0;
-  for (int i = 0; i < nt; i++)
   {
-    if (impl->is_env_int[i])
+    const double *fe = fE.HostRead(), *au = Au.HostRead();
+    double *r = rhs.HostWrite();
+    for (int i = 0; i < nt; i++)
     {
-      rhs(i) = fE(i) - Au(i);
+      r[i] = impl->is_env_int[i] ? fe[i] - au[i] : 0.0;
     }
   }
   uE = 0.0;
   impl->ApplyAeeInv(rhs, uE);
-  for (int i = 0; i < nt; i++)
   {
-    if (impl->is_env_int[i])
+    const double *ue = uE.HostRead();
+    double *uu = u.HostReadWrite();
+    for (int i = 0; i < nt; i++)
     {
-      u(i) = uE(i);
+      if (impl->is_env_int[i])
+      {
+        uu[i] = ue[i];
+      }
     }
   }
   return u;
@@ -3625,10 +3654,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       {
         b += *src[k].J;
       }
-      for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
-      {
-        b(impl->dbc_tdofs[d]) = 0.0;
-      }
+      b.SetSubVector(impl->dbc_tdofs, 0.0);
       u[k] = SolveSource(b);
       if (work)
       {
@@ -3715,9 +3741,10 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   for (int j = 0; j < n; j++)
   {
     Vector bR = impl->RegionSource(src[j]);
+    double *br = bR.HostReadWrite();
     for (int i : gm)
     {
-      bR(i) += g_of(i, j);
+      br[i] += g_of(i, j);
     }
     bR.GetSubVector(impl->rf_idx, x[j]);
   }
@@ -3787,9 +3814,14 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
         impl->M_sheet_region->Mult(d, Md);
       }
       JR = 0.0;
-      for (int i = 0; src[j].HasJ() && i < nt; i++)
+      if (src[j].HasJ())
       {
-        JR(i) = impl->is_region_free[i] ? (*src[j].J)(i) : 0.0;
+        const double *J = src[j].J->HostRead();
+        double *jr = JR.HostWrite();
+        for (int i = 0; i < nt; i++)
+        {
+          jr[i] = impl->is_region_free[i] ? J[i] : 0.0;
+        }
       }
       u.GetSubVector(rc, uc[j]);
       Ku.GetSubVector(rc, Kuc[j]);
@@ -3960,9 +3992,10 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     for (int j = 0; j < n; j++)
     {
       impl->A_region->Mult(impl->DirichletField(xd[j]), tr);
+      double *trr = tr.HostReadWrite();
       for (int i : gm)
       {
-        tr(i) += impl->G_rows[row(i) + col[j]];
+        trr[i] += impl->G_rows[row(i) + col[j]];
       }
       tr.Neg();
       tr.GetSubVector(impl->rf_idx, xr[j]);
@@ -4085,6 +4118,8 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
   {
     mfem::ParGridFunction sgf(&fespace.Get());
     Vector u(fespace.GetTrueVSize()), f(flux_fespace.GetTrueVSize());
+    u.UseDevice(true);
+    f.UseDevice(true);
     for (std::size_t k = 0; k < region_fields.size(); k++)
     {
       pgf.SetFromTrueDofs(region_fields[k]);
@@ -4176,14 +4211,7 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
   impl->K_region_e->Mult(uj, t);
   impl->Kenv().Mult(uj, t2);
   t += t2;
-  double local = 0.0;
-  for (int i = 0; i < impl->nt; i++)
-  {
-    local += ui(i) * t(i);
-  }
-  double global = 0.0;
-  MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, impl->parent_fes.GetComm());
-  return global;
+  return mfem::InnerProduct(impl->parent_fes.GetComm(), ui, t);
 }
 
 void SubstructuringSolver::UseModelLength(IoData &iodata, MPI_Comm comm)
@@ -4226,6 +4254,7 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
   for (std::size_t j = 0; j < fields.size(); j++)
   {
     phi.SetFromTrueDofs(fields[j]);
+    phi.HostRead();  // the writer reads the host copy
     pv.SetCycle(static_cast<int>(j));
     pv.SetTime(static_cast<double>(ids[j]));
     pv.Save();

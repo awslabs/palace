@@ -130,12 +130,13 @@ environment field does not affect them near the interface.
 
 ### Solvers
 
-Substructuring runs on CPUs (`config["Solver"]["Device"]` `"CPU"`). The environment and the
-region are factored with a sparse direct solver (MUMPS, SuperLU_DIST or STRUMPACK, preferred
-in this order among those Palace is built with) when they fit, and solved iteratively
-otherwise. With MUMPS, the Schur complement of an electrostatic environment comes from a
-single partial factorization. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1`
-(or the equivalent for the BLAS in use) avoids oversubscribing cores.
+Substructuring also runs with a GPU device (`config["Solver"]["Device"]` `"GPU"`), with the dense
+interface operator and the sparse direct factorizations on the CPU. The environment and the region
+are factored with a sparse direct solver (MUMPS, SuperLU_DIST or STRUMPACK, preferred in this order
+among those Palace is built with) when they fit, and solved iteratively otherwise. With MUMPS, the
+Schur complement of an electrostatic environment comes from a single partial factorization. When
+running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the equivalent for the BLAS in use)
+avoids oversubscribing cores.
 
 ## Magnetostatics
 

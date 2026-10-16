@@ -35,6 +35,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
   A.HostRead();
   hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
+  A.HypreRead();
   const HYPRE_Int *Ip = csr->i;
 #if MFEM_HYPRE_VERSION >= 21600
   const HYPRE_BigInt *Jp = csr->big_j;

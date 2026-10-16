@@ -208,7 +208,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("Substructuring requires the CPU device")
+  SECTION("Static substructuring runs on any device")
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -219,9 +219,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
          {{"Device", "GPU"},
           {"Substructuring",
            {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
-    CHECK_THROWS_WITH(IoData(config, false),
-                      Catch::Matchers::ContainsSubstring("\"Solver.Device\": \"CPU\""));
-    config["Solver"]["Device"] = "CPU";
+    CHECK_NOTHROW(IoData(config, false));
+    config["Solver"]["Device"] = "Debug";
     CHECK_NOTHROW(IoData(config, false));
   }
 
