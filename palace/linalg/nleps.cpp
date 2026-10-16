@@ -742,8 +742,12 @@ int QuasiNewtonSolver::Solve()
         break;
       }
 
-      // End if residual below tolerance and eigenvalue above the target.
-      if (res < rtol)
+      // End if residual below tolerance and eigenvalue above the target. The iterate
+      // [v, v2] has unit norm, but the invariant pair stores v / ||v||, whose residual is
+      // res / ||v||: an iterate collapsing into the span of X has a small res without being
+      // an eigenpair.
+      const double norm_v = linalg::Norml2(GetComm(), v);
+      if (res < rtol * norm_v)
       {
         if (print > 0)
         {
@@ -753,7 +757,7 @@ int QuasiNewtonSolver::Solve()
                      k, it, eig.real(), eig.imag());
         }
         // Update the invariant pair with normalization.
-        const auto scale = linalg::Norml2(GetComm(), v);
+        const auto scale = norm_v;
         v *= 1.0 / scale;
         eigs.resize(k + 1);
         eigs[k] = eig;
