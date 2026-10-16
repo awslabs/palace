@@ -181,6 +181,22 @@ class PrForHead(unittest.TestCase):
         self.assertIsNone(api.pr_for_head(COMMIT, "team/real"))
 
 
+class IsOnMain(unittest.TestCase):
+    def _compare(self, status):
+        return StubApi({f"repos/{REPO}/compare/{COMMIT}...main": {"status": status}})
+
+    def test_ancestor_or_tip_is_on_main(self):
+        self.assertTrue(self._compare("ahead").is_on_main(COMMIT))
+        self.assertTrue(self._compare("identical").is_on_main(COMMIT))
+
+    def test_diverged_or_newer_is_not_on_main(self):
+        self.assertFalse(self._compare("diverged").is_on_main(COMMIT))
+        self.assertFalse(self._compare("behind").is_on_main(COMMIT))
+
+    def test_unknown_sha_is_not_on_main(self):
+        self.assertFalse(StubApi({}).is_on_main(COMMIT))
+
+
 class PrHasLabel(unittest.TestCase):
     def _labels(self, num, entries):
         return {f"repos/{REPO}/issues/{num}/labels": entries}

@@ -26,9 +26,11 @@ REPO = "awslabs/palace"
 class FakeApi:
     """Stand-in for GitHubApi. All lookups come from constructor data."""
 
-    def __init__(self, *, refs=None, pr_for_head=None, labels=None):
+    def __init__(self, *, refs=None, on_main=None, pr_for_head=None, labels=None):
         # refs: {("heads"|"tags", name): commit_sha}
         self._refs = refs or {}
+        # on_main: set of commit shas reachable from main
+        self._on_main = on_main or set()
         # pr_for_head: {(head_sha, head_ref): (number, head_repo_full_name, state)}
         self._pr = pr_for_head or {}
         # labels: {pr_number: set(label names)}
@@ -36,6 +38,9 @@ class FakeApi:
 
     def ref_sha(self, kind, name):
         return self._refs.get((kind, name))
+
+    def is_on_main(self, sha):
+        return sha in self._on_main
 
     def pr_for_head(self, sha, ref):
         return self._pr.get((sha, ref))
@@ -80,10 +85,18 @@ class PushMain(unittest.TestCase):
 
 class ReleaseTag(unittest.TestCase):
     def test_release_tag_authorizes_and_strips_v(self):
-        api = FakeApi(refs={("tags", "v0.18.0"): SHA})
+        api = FakeApi(refs={("tags", "v0.18.0"): SHA}, on_main={SHA})
         d = decide(facts(head_branch="v0.18.0", head_sha=SHA), api)
         self.assertTrue(d.authorized)
         self.assertEqual(d.selector, "0.18.0")
+
+    def test_release_tag_off_main_rejected(self):
+        # A tag on an unmerged branch commit must not publish a release.
+        api = FakeApi(refs={("tags", "v0.18.0"): SHA}, on_main=set())
+        d = decide(facts(head_branch="v0.18.0", head_sha=SHA), api)
+        self.assertFalse(d.authorized)
+        self.assertEqual(d.selector, "")
+        self.assertIn("not on main", d.reason)
 
     def test_release_tag_wrong_sha_rejected(self):
         api = FakeApi(refs={("tags", "v0.18.0"): OTHER_SHA})
