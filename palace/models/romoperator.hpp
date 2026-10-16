@@ -168,8 +168,9 @@ protected:
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
   // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
-  // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
-  //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
+  // - A2 stores the sparse part only (for PROM projection); the HDM system operator is
+  //   built locally in SolveHDM via SpaceOperator::GetSystemOperator, or from K, C, M and
+  //   GetExtraSystemOperator when the preconditioner cannot apply it.
   // - RHS1 is recomputed as the adaptive basis grows, then all final reduced RHS1 vectors
   //   are cached before frequency-major online evaluation.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
