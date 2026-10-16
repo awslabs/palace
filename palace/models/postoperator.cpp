@@ -2367,6 +2367,15 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   }
   MeasureAllImpl();
 
+  // Q contains every loss in the eigenvalue problem; add the interface dielectric loss,
+  // which is postprocessed, as 1/Q_total = 1/Q + Σ_j 1/Q_j.
+  double inv_Q_total = 1.0 / measurement_cache.eigenmode_Q;
+  for (const auto &data : measurement_cache.interface_eps_i)
+  {
+    inv_Q_total += 1.0 / data.quality_factor;
+  }
+  measurement_cache.eigenmode_Q_total = 1.0 / inv_Q_total;
+
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   if (ShouldWriteParaviewFields(step))

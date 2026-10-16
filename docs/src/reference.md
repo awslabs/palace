@@ -757,6 +757,19 @@ quality factor for interface ``j`` is given by
 where ``\bm{E}_n`` denotes the normal field to the interface and
 ``\bm{E}_t = \bm{E}-\bm{E}_n`` denotes the tangential field.
 
+The quality factor ``Q`` of an eigenvalue (see
+[Eigenmode calculations](#Eigenmode-calculations)) includes every loss in the eigenvalue
+problem, such as bulk dielectric loss, lumped and wave ports, impedance and conductivity
+boundaries, and absorbing boundaries. The interface dielectric loss is postprocessed from the
+eigenmode fields instead, so ``Q`` does not include it. When interface dielectric loss is
+postprocessed, the total quality factor
+
+```math
+\frac{1}{Q_{total}} = \frac{1}{Q} + \sum_j \frac{1}{Q_j}
+```
+
+is also written to `eig.csv`.
+
 ## Electrostatic Simulations
 
 For electrostatic simulations, the Maxwell capacitance matrix is computed in the following

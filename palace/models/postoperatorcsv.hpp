@@ -179,6 +179,9 @@ struct Measurement
 
   // Eigenmode data including error from solver.
   double eigenmode_Q = 0.0;
+  // Q combined with the interface dielectric loss, which is postprocessed rather than part
+  // of the eigenvalue problem: 1/Q_total = 1/Q + Σ_j 1/Q_j.
+  double eigenmode_Q_total = 0.0;
   double error_bkwd = 0.0;
   double error_abs = 0.0;
 
@@ -383,7 +386,7 @@ protected:
   // Eigenmode.
   std::optional<TableWithCSVFile> eig;
 
-  void InitializeEig()
+  void InitializeEig(const SurfacePostOperator &surf_post_op)
     requires(solver_t == ProblemType::EIGENMODE);
   void PrintEig()
     requires(solver_t == ProblemType::EIGENMODE);

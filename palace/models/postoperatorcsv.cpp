@@ -34,6 +34,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.ex_idx = nondim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = nondim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
+  measurement_cache.eigenmode_Q_total = nondim_measurement_cache.eigenmode_Q_total;  // NONE
   measurement_cache.error_abs = nondim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;                // NONE
 
@@ -178,6 +179,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.ex_idx = dim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = dim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
+  measurement_cache.eigenmode_Q_total = dim_measurement_cache.eigenmode_Q_total;  // NONE
   measurement_cache.error_abs = dim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = dim_measurement_cache.error_bkwd;                // NONE
 
@@ -1441,7 +1443,7 @@ void PostOperatorCSV<solver_t>::PrintFloquetPortS()
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeEig()
+void PostOperatorCSV<solver_t>::InitializeEig(const SurfacePostOperator &surf_post_op)
   requires(solver_t == ProblemType::EIGENMODE)
 {
   eig = TableWithCSVFile(post_dir / "eig.csv");
@@ -1452,6 +1454,10 @@ void PostOperatorCSV<solver_t>::InitializeEig()
   eig->table.insert("q", "Q");
   eig->table.insert("err_back", "Error (Bkwd.)");
   eig->table.insert("err_abs", "Error (Abs.)");
+  if (!surf_post_op.eps_surfs.empty())
+  {
+    eig->table.insert("q_total", "Q_total");
+  }
   WriteTable(*eig);
 }
 
@@ -1469,6 +1475,10 @@ void PostOperatorCSV<solver_t>::PrintEig()
   eig->table["q"] << measurement_cache.eigenmode_Q;
   eig->table["err_back"] << measurement_cache.error_bkwd;
   eig->table["err_abs"] << measurement_cache.error_abs;
+  if (eig->table.has("q_total"))
+  {
+    eig->table["q_total"] << measurement_cache.eigenmode_Q_total;
+  }
   WriteTable(*eig);
 }
 
@@ -1735,7 +1745,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
-    InitializeEig();
+    InitializeEig(post_op.surf_post_op);
     InitializeEigPortEPR(post_op.fem_op->GetLumpedPortOp());
     InitializeEigPortQ(post_op.fem_op->GetLumpedPortOp());
   }

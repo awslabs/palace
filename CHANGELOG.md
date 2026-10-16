@@ -31,6 +31,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added a `Q_total` column to `eig.csv` for eigenmode simulations with interface
+    dielectric loss postprocessing (`Boundaries.Postprocessing.Dielectric`). It combines the
+    quality factor of the eigenvalue, which includes every loss in the eigenvalue problem,
+    with the interface dielectric quality factors of `surface-Q.csv`, which are
+    postprocessed, as `1/Q_total = 1/Q + Σ_j 1/Q_j`.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
 
 #### Interface Changes
 

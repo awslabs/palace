@@ -75,6 +75,7 @@ auto RandomMeasurement(int ndomain = 5)
 
   cache.freq = std::complex(1 + randd(99), randd(100));
   cache.eigenmode_Q = 5e6 * (randd(99) + 1);
+  cache.eigenmode_Q_total = 1e6 * (randd(99) + 1);
   cache.error_abs = 1e-9 * (randd(99) + 1);
   cache.error_bkwd = 1e-9 * (randd(99) + 1);
 
@@ -194,6 +195,10 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   Units units(1e-6, 152 * 1e-6);  // μm, 152μm
   auto dim_cache = Measurement::Dimensionalize(units, cache);
   auto non_dim_cache = Measurement::Nondimensionalize(units, dim_cache);
+  CHECK(dim_cache.eigenmode_Q == cache.eigenmode_Q);
+  CHECK(non_dim_cache.eigenmode_Q == cache.eigenmode_Q);
+  CHECK(dim_cache.eigenmode_Q_total == cache.eigenmode_Q_total);
+  CHECK(non_dim_cache.eigenmode_Q_total == cache.eigenmode_Q_total);
   CHECK_THAT(cache.domain_E_field_energy_all,
              Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all));
   CHECK_THAT(cache.domain_E_field_energy_all,

@@ -106,7 +106,9 @@ file. These include:
     [https://arxiv.org/pdf/1509.01854.pdf](https://arxiv.org/pdf/1509.01854.pdf) or
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
-    written to the file `surface-Q.csv` in the specified output directory.
+    written to the file `surface-Q.csv` in the specified output directory. For eigenmode
+    simulations, the quality factor combining these with the quality factor of the
+    eigenvalue is written to the column `Q_total` of `eig.csv`.
 
 ## Visualization
 
