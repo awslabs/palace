@@ -16,11 +16,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
-#include "mms-solvers.hpp"
 #include "models/laplaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
@@ -55,6 +57,71 @@ MmsError ComputeMmsErrors(LaplaceOperator &laplace_op, const Vector &V,
           E_gf.ComputeL2Error(e_exact)};
 }
 
+// Solve -div(epsilon grad V) = rho with the production stiffness matrix, H1 space
+// hierarchy, and KspSolver, assembling only the manufactured data here. The production
+// driver has no volumetric source (its RHS comes from unit terminal voltages), so the
+// right-hand side mirrors LaplaceOperator::GetExcitationVector with the manufactured
+// quantities in place of the terminal excitation:
+//   RHS = P^T [ int rho phi dV + int_{Gamma_N} g phi dS ],
+//   X   = Dirichlet lift of V_exact on the PEC attributes (or 0 when homogeneous),
+// followed by EliminateRHS, which folds -K_ib X_b into RHS and pins the essential dofs.
+Vector SolveManufactured(const IoData &iodata, LaplaceOperator &laplace_op,
+                         mfem::Coefficient &rho, mfem::Coefficient *dirichlet = nullptr,
+                         mfem::Coefficient *neumann = nullptr,
+                         const std::vector<int> &neumann_attributes = {})
+{
+  auto K = laplace_op.GetStiffnessMatrix();
+  KspSolver ksp(iodata, laplace_op.GetH1Spaces());
+  ksp.SetOperators(*K, *K);
+
+  auto &h1 = laplace_op.GetH1Space();
+  const mfem::ParMesh &mesh = laplace_op.GetMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+
+  // Volumetric load. mfem::DomainLFIntegrator is the volume integrator; the similarly
+  // named palace::DomainLFIntegrator integrates over boundaries. The Neumann marker must
+  // outlive Assemble(), which holds a reference to it.
+  mfem::ParLinearForm b(&h1.Get());
+  b.AddDomainIntegrator(new mfem::DomainLFIntegrator(rho));
+  mfem::Array<int> neumann_marker;
+  if (neumann)
+  {
+    neumann_marker = mesh::AttrToMarker(bdr_attr_max, neumann_attributes);
+    b.AddBoundaryIntegrator(new mfem::BoundaryLFIntegrator(*neumann), neumann_marker);
+  }
+  b.Assemble();
+
+  Vector X(h1.GetTrueVSize()), RHS(h1.GetTrueVSize());
+  X.UseDevice(true);
+  RHS.UseDevice(true);
+  X = 0.0;
+  RHS = 0.0;
+  h1.GetProlongationMatrix()->MultTranspose(b, RHS);
+
+  // Non-homogeneous Dirichlet data on every PEC attribute (the essential set when there
+  // are no terminals). Values are only correct on master dofs until ParallelProject.
+  if (dirichlet)
+  {
+    const auto dbc_marker =
+        mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.pec.attributes);
+    mfem::ParGridFunction x(&h1.Get());
+    x = 0.0;
+    x.ProjectBdrCoefficient(*dirichlet, dbc_marker);
+    x.ParallelProject(X);
+  }
+
+  // Same unwrapping as LaplaceOperator::GetExcitationVector: with multigrid the stiffness
+  // matrix is a MultigridOperator whose finest level holds the eliminated ParOperator.
+  const auto *mg_K = dynamic_cast<const MultigridOperator *>(K.get());
+  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
+                            : dynamic_cast<const ParOperator *>(K.get());
+  REQUIRE(PtAP_K);
+  PtAP_K->EliminateRHS(X, RHS);
+
+  ksp.Mult(RHS, X);
+  return X;
+}
+
 MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_mesh,
                        int order, double linear_tol = 1.0e-9)
 {
@@ -84,16 +151,9 @@ MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_me
   mfem::FunctionCoefficient v_exact(mms.potential);
   mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, mms.electric_field);
   mfem::FunctionCoefficient rho_coef(mms.charge_density);
-  laplace_op.SetRhsSource(rho_coef);
-  if (mms.nonzero_dirichlet)
-  {
-    laplace_op.SetDbcCoefficient(v_exact);
-  }
-
-  ExposedElectrostaticSolver solver(iodata, /*root=*/false);
-  std::vector<Vector> V;
-  solver.Solve(V, laplace_op);
-  return ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact);
+  const Vector V = SolveManufactured(iodata, laplace_op, rho_coef,
+                                     mms.nonzero_dirichlet ? &v_exact : nullptr);
+  return ComputeMmsErrors(laplace_op, V, v_exact, e_exact);
 }
 
 MmsError
@@ -251,15 +311,10 @@ void CheckNeumannBoundary(const MmsCase &polynomial)
   mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, polynomial.electric_field);
   mfem::FunctionCoefficient rho_coef(polynomial.charge_density);
   mfem::FunctionCoefficient neumann_coef(polynomial.neumann_flux);
-  laplace_op.SetRhsSource(rho_coef);
-  laplace_op.SetDbcCoefficient(v_exact);
-  laplace_op.SetNeumannCoefficient(neumann_coef, {3});
+  const Vector V = SolveManufactured(iodata, laplace_op, rho_coef, &v_exact, &neumann_coef,
+                                     /*neumann_attributes=*/{3});
 
-  ExposedElectrostaticSolver solver(iodata, /*root=*/false);
-  std::vector<Vector> V;
-  solver.Solve(V, laplace_op);
-
-  const auto error = ComputeMmsErrors(laplace_op, V[0], v_exact, e_exact);
+  const auto error = ComputeMmsErrors(laplace_op, V, v_exact, e_exact);
   CHECK(error.potential < 1.0e-10);
   CHECK(error.electric < 1.0e-10);
 }
