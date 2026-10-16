@@ -366,4 +366,60 @@ double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,
   return computed_flux;
 }
 
+Vector FluxThroughSurfaceFunctional(const FiniteElementSpace &rt_fespace,
+                                    const std::vector<int> &attributes,
+                                    const mfem::Vector &flux_direction)
+{
+  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(rt_fespace.Get());
+  mfem::ParMesh &pmesh = *fes.GetParMesh();
+  mfem::Vector f_loc(fes.GetVSize());
+  f_loc = 0.0;
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  mfem::Array<int> vdofs;
+  mfem::DofTransformation doftrans;
+  mfem::DenseMatrix vshape;
+  mfem::Vector normal(pmesh.SpaceDimension()), elvec, vn;
+  for (int be = 0; be < pmesh.GetNBE(); be++)
+  {
+    if (std::ranges::find(attributes, pmesh.GetBdrAttribute(be)) == attributes.end())
+    {
+      continue;
+    }
+    mfem::ElementTransformation &T = *pmesh.GetBdrElementTransformation(be);
+    const mfem::IntegrationRule &ir = mfem::IntRules.Get(
+        pmesh.GetBdrElementGeometry(be), fem::DefaultIntegrationOrder::Get(T));
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(be, pmesh, FET, T1,
+                                                                     T2);
+    const int e1 = FET.Elem1No;  // always a local element
+    fes.GetElementVDofs(e1, vdofs, doftrans);
+    const mfem::FiniteElement &fe = *fes.GetFE(e1);
+    elvec.SetSize(fe.GetDof());
+    elvec = 0.0;
+    vshape.SetSize(fe.GetDof(), pmesh.SpaceDimension());
+    vn.SetSize(fe.GetDof());
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const mfem::IntegrationPoint &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(be, pmesh, FET, T1,
+                                                                       T2, &ip);
+      // B . n with n oriented by the reference direction, as ComputeFluxThroughSurface.
+      BdrGridFunctionCoefficient::GetNormal(T, normal);
+      const double alignment = normal * flux_direction;
+      MFEM_VERIFY(std::abs(alignment) > 1.0e-12 * flux_direction.Norml2(),
+                  "Surface flux reference direction is tangent to the surface and cannot "
+                  "orient its normal!");
+      fe.CalcVShape(*FET.Elem1, vshape);
+      vshape.Mult(normal, vn);
+      elvec.Add(((alignment < 0.0) ? -1.0 : 1.0) * ip.weight * T.Weight(), vn);
+    }
+    doftrans.TransformDual(elvec);
+    f_loc.AddElementVector(vdofs, elvec);
+  }
+  Vector f(fes.GetTrueVSize());
+  fes.GetProlongationMatrix()->MultTranspose(f_loc, f);
+  return f;
+}
+
 }  // namespace palace
