@@ -23,8 +23,9 @@ The electrostatic method-of-manufactured-solutions (MMS) tests solve
 \boldsymbol{E}=-\nabla V,
 ```
 
-using the production electrostatic solver. The source ``\rho`` and boundary values are
-derived from a prescribed potential ``V_{\mathrm{mms}}``. The computed potential and
+using the production electrostatic operator, finite element spaces, and linear solver. The
+source ``\rho`` and boundary values are derived from a prescribed potential
+``V_{\mathrm{mms}}`` and assembled into the right-hand side by the test. The computed potential and
 recovered electric field are compared with the manufactured solution using the absolute
 ``L^2`` errors
 
