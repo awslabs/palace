@@ -86,7 +86,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "enzyme",
         default=False,
         description="Build Enzyme-backed automatic-differentiation unit tests",
-        when="@0.18:",
+        when="@0.19:",
     )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
@@ -118,7 +118,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("scnlib~shared", when="~shared@0.14:")
     depends_on("eigen", type="build")
     depends_on("lcov@1.15:", when="+coverage@0.16:", type="run")
-    depends_on("enzyme@0.0.206:", when="+enzyme@0.18:")
+    depends_on("enzyme@0.0.206:", when="+enzyme@0.19:")
 
     conflicts(
         "~superlu-dist~strumpack~mumps",
