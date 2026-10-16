@@ -1,20 +1,18 @@
-# LeakSanitizer suppressions for third-party libraries.
-# These are known leaks in MPI/hwloc/libCEED internals, not Palace code.
+# LeakSanitizer suppressions for leaks outside Palace's control. Each entry names the
+# narrowest frame that identifies the leak, so leaks of objects Palace creates through
+# these libraries are still reported. Matching libCEED and MFEM frames requires
+# fast_unwind_on_malloc=0: libCEED is built without frame pointers, and the default fast
+# unwinder stops inside it before reaching Palace.
 # See https://clang.llvm.org/docs/AddressSanitizer.html#suppressing-memory-leaks
 
-# OpenMPI / PRRTE runtime (MPI_Init, event loop, hardware topology)
-leak:libopen-rte
-leak:libmpi
-leak:libhwloc
-leak:libopen-pal
-leak:libevent
+# Open MPI runtime: allocations made inside MPI_Init and MPI_Finalize, and by the runtime's
+# progress thread (a libevent loop in an MCA component, which shows as <unknown module>).
+leak:ompi_mpi_init
+leak:ompi_mpi_finalize
+leak:event_base_loop
 
-# libCEED backend initialization
-leak:CeedStringAllocCopy
-leak:libceed
+# libCEED backend contexts created by palace::ceed::Initialize survive CeedDestroy (#759).
+leak:palace::ceed::Initialize
 
-# MFEM (NCMesh element allocations not freed at shutdown)
-leak:libmfem
-
-# OpenMPI internal strdup calls (no debug symbols, shows as <unknown module>)
-leak:strdup
+# MFEM leaks the face-neighbor elements of nonconforming meshes (#646).
+leak:mfem::ParNCMesh::GetFaceNeighbors

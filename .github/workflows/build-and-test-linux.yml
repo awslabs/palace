@@ -382,9 +382,9 @@ jobs:
           if [[ "${{ matrix.with-sanitizers }}" == 'true' ]]; then
             export ASAN_OPTIONS=detect_leaks=1
             export UBSAN_OPTIONS=print_stacktrace=1
-            # Suppress known leaks in third-party MPI/hwloc/libCEED libraries.
-            # See test/unit/lsan_suppressions.txt for the suppression list.
-            export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/test/unit/lsan_suppressions.txt"
+            # Suppress known leaks outside Palace, see test/unit/lsan_suppressions.txt. The
+            # slow unwinder gives the full allocation stacks the suppressions match.
+            export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/test/unit/lsan_suppressions.txt:fast_unwind_on_malloc=0"
           fi
 
           # We don't compute coverage for the entire matrix because it slows
