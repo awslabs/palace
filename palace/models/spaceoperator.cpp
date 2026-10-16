@@ -456,6 +456,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     AddRealPeriodicCoefficients(1.0, f);
     AddImagPeriodicCoefficients(1.0, fc);
   }
+  RestrictToAssemblyDomains({&df, &f, &fc}, {&fb});
   int empty[2] = {AreExactlyZero(df, f, fb), fc.IsExactlyZero()};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -503,6 +504,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   {
     AddImagPeriodicCoefficients(1.0, fp);
   }
+  RestrictToAssemblyDomains({&f, &fp}, {&fb});
   int empty = AreExactlyZero(f, fb, fp);
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
@@ -541,6 +543,7 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddImagMassCoefficients(1.0, fi);
   }
+  RestrictToAssemblyDomains({&fr, &fi}, {&fbr, &fbi});
   int empty[2] = {AreExactlyZero(fr, fbr), AreExactlyZero(fi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -589,6 +592,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, include_wave_ports);
+  RestrictToAssemblyDomains({}, {&dfbr, &dfbi, &fbr, &fbi});
   int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -635,6 +639,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  RestrictToAssemblyDomains({}, {&dfbr, &dfbi, &fbr, &fbi});
   int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -1292,6 +1297,32 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 
   print_prec_hdr = false;
   return B;
+}
+
+SpaceOperator::AssemblyRestriction::AssemblyRestriction(
+    SpaceOperator &op, const std::vector<int> &domain_attrs)
+  : op(op), previous(std::move(op.assembly_domains))
+{
+  op.assembly_domains.emplace(op.GetMesh().GetCeedAttributes(domain_attrs),
+                              op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs));
+}
+
+void SpaceOperator::RestrictToAssemblyDomains(
+    std::initializer_list<MaterialPropertyCoefficient *> f,
+    std::initializer_list<MaterialPropertyCoefficient *> fb)
+{
+  if (!assembly_domains)
+  {
+    return;
+  }
+  for (auto *c : f)
+  {
+    c->RestrictCoefficient(assembly_domains->first);
+  }
+  for (auto *c : fb)
+  {
+    c->RestrictCoefficient(assembly_domains->second);
+  }
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,

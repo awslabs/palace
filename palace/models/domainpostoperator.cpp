@@ -20,6 +20,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const FiniteElementSpace &nd_fespace,
                                        const FiniteElementSpace &rt_fespace)
 {
+  partial = postpro.partial;
   // Mass operators are always partially assembled.
   const int dim = nd_fespace.Dimension();
   const auto curl_map = rt_fespace.GetFEColl().GetMapType(dim);
@@ -115,6 +116,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const MaterialOperator &mat_op,
                                        const FiniteElementSpace &fespace)
 {
+  partial = postpro.partial;
   const auto map_type = fespace.GetFEColl().GetMapType(fespace.Dimension());
   if (map_type == mfem::FiniteElement::VALUE)
   {

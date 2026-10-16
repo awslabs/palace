@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_MESH_HPP
 #define PALACE_FEM_MESH_HPP
 
+#include <algorithm>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -129,6 +130,26 @@ public:
       {
         const auto &bdr_attr_map = loc_bdr_attr.at(attr);
         for (const auto &[nbr_attr, ceed_attr] : bdr_attr_map)
+        {
+          loc_attr_list.Append(ceed_attr);
+        }
+      }
+    }
+    return loc_attr_list;
+  }
+
+  // The process-local libCEED boundary attributes of all boundary elements whose
+  // neighboring domain attribute is in the given list of global domain attributes.
+  template <typename T>
+  auto GetCeedBdrAttributesByNeighbor(const T &domain_attr_list) const
+  {
+    mfem::Array<int> loc_attr_list;
+    for (const auto &[attr, bdr_attr_map] : loc_bdr_attr)
+    {
+      for (const auto &[nbr_attr, ceed_attr] : bdr_attr_map)
+      {
+        if (std::ranges::find(domain_attr_list, nbr_attr) !=
+            std::ranges::end(domain_attr_list))
         {
           loc_attr_list.Append(ceed_attr);
         }

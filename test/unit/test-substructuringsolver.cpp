@@ -8,9 +8,11 @@
 #include <functional>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -23,8 +25,12 @@
 #include "fem/substructure.hpp"
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/mumpsschur.hpp"
+#include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/drivensubstructure.hpp"
 #include "models/materialoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
@@ -2289,6 +2295,764 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     }
   }
 }
+
+TEST_CASE("SpaceOperator assembly restricted to region and environment",
+          "[substructure][Serial][Parallel]")
+{
+  // The driven operators assembled on the region and on the environment add up to the
+  // full operators, and neither side couples to the other side's interior DOFs: lumped
+  // ports on both sides, a lossy dielectric region, a conducting environment, a
+  // second-order absorbing boundary on both sides and an impedance sheet crossing Γ.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 2.0}, {"LossTan", 0.01}},
+          {{"Attributes", {2}}, {"Permittivity", 4.0}, {"Conductivity", 1.0}}}}}},
+      {"Boundaries",
+       {{"LumpedPort",
+         {{{"Index", 1},
+           {"R", 1.0},
+           {"Attributes", {1}},
+           {"Direction", "+Y"},
+           {"Excitation", true}},
+          {{"Index", 2}, {"R", 1.0}, {"Attributes", {2}}, {"Direction", "+Y"}}}},
+        {"Absorbing", {{"Attributes", {3}}, {"Order", 2}}},
+        {"Impedance", {{{"Attributes", {4}}, {"Rs", 1.0}, {"Ls", 2.0}, {"Cs", 0.5}}}}}},
+      {"Solver",
+       {{"Order", order},
+        {"Device", "CPU"},
+        {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  IoData iodata(config, false);
+  RegionDesign design;
+  design.sheet = true;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 3, 4, design)));
+  SpaceOperator space_op(iodata, mesh);
+  auto &pmesh = mesh.back()->Get();
+  const auto &fes = space_op.GetNDSpace().Get();
+
+  // True DOFs of region (attribute 1) and environment (attribute 2) elements.
+  mfem::Array<int> marks[2];
+  for (int side = 0; side < 2; side++)
+  {
+    mfem::Vector m(fes.GetVSize()), mt(fes.GetTrueVSize());
+    m = 0.0;
+    mfem::Array<int> vdofs;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      if (pmesh.GetAttribute(e) == side + 1)
+      {
+        fes.GetElementVDofs(e, vdofs);
+        for (int d : vdofs)
+        {
+          m(d >= 0 ? d : -1 - d) = 1.0;
+        }
+      }
+    }
+    fes.GetProlongationMatrix()->MultTranspose(m, mt);
+    marks[side].SetSize(mt.Size());
+    for (int i = 0; i < mt.Size(); i++)
+    {
+      marks[side][i] = (mt(i) > 0.0);
+    }
+  }
+
+  const std::vector<int> region = {1}, environment = {2};
+  const double omega = 1.3;  // nondimensional (the configuration is not nondimensionalized)
+  auto assemble = [&](const std::vector<int> *domains)
+  {
+    std::optional<SpaceOperator::AssemblyRestriction> restriction;
+    if (domains)
+    {
+      restriction.emplace(space_op, *domains);
+    }
+    std::vector<std::unique_ptr<ComplexOperator>> ops;
+    ops.push_back(space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO));
+    ops.push_back(space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO));
+    ops.push_back(space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO));
+    ops.push_back(
+        space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO));
+    return ops;
+  };
+  auto full = assemble(nullptr), reg = assemble(&region), env = assemble(&environment);
+
+  // y = A x, for one part (real or imaginary) of an operator (zero if absent).
+  auto apply = [](const ComplexOperator *A, bool imag, const Vector &x, Vector &y)
+  {
+    y = 0.0;
+    const Operator *part = A ? (imag ? A->Imag() : A->Real()) : nullptr;
+    if (part)
+    {
+      part->Mult(x, y);
+    }
+  };
+  const int nt = fes.GetTrueVSize();
+  Vector x(nt), y_full(nt), y_reg(nt), y_env(nt), x_eint(nt), x_rint(nt);
+  x.Randomize(1 + Mpi::Rank(pmesh.GetComm()));
+  for (int i = 0; i < nt; i++)
+  {
+    x_eint(i) = (marks[1][i] && !marks[0][i]) ? x(i) : 0.0;  // environment interior
+    x_rint(i) = (marks[0][i] && !marks[1][i]) ? x(i) : 0.0;  // region interior
+  }
+  const char *names[4] = {"K", "C", "M", "A2"};
+  for (int k = 0; k < 4; k++)
+  {
+    for (const bool imag : {false, true})
+    {
+      CAPTURE(names[k], imag);
+      apply(full[k].get(), imag, x, y_full);
+      apply(reg[k].get(), imag, x, y_reg);
+      apply(env[k].get(), imag, x, y_env);
+      const double n_full = linalg::Norml2(pmesh.GetComm(), y_full);
+      y_reg += y_env;
+      y_reg -= y_full;
+      CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) <= 1.0e-12 * (n_full + 1.0e-300));
+      apply(reg[k].get(), imag, x_eint, y_reg);
+      apply(env[k].get(), imag, x_rint, y_env);
+      CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) <= 1.0e-12 * (n_full + 1.0e-300));
+      CHECK(linalg::Norml2(pmesh.GetComm(), y_env) <= 1.0e-12 * (n_full + 1.0e-300));
+    }
+  }
+  // Each side carries its own part: nonzero region and environment stiffness and damping.
+  for (int k : {0, 1})
+  {
+    apply(reg[k].get(), false, x, y_reg);
+    apply(env[k].get(), false, x, y_env);
+    CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) > 0.0);
+    CHECK(linalg::Norml2(pmesh.GetComm(), y_env) > 0.0);
+  }
+}
+
+TEST_CASE("Barycentric interpolation of a rational vector function",
+          "[substructure][Serial]")
+{
+  // x(ω) = Σ_k r_k / (ω - p_k) + c_0 + c_1 ω on [1, 2], with two near-real poles in the
+  // band and one outside it: greedy sampling at the least denominator converges with a few
+  // samples, interpolates them, and the interpolant matches x between them. (Once the fit
+  // is exact to round-off, further samples leave the weights undetermined.)
+  constexpr int n = 40;
+  const std::complex<double> p[3] = {{1.3, 1.0e-3}, {1.7, 2.0e-3}, {2.5, 0.1}};
+  std::vector<std::complex<double>> r[3], c[2];
+  std::uint32_t seed = 7;
+  auto rnd = [&]()
+  {
+    seed = 1664525u * seed + 1013904223u;
+    return static_cast<double>(seed) / 4294967296.0 - 0.5;
+  };
+  for (auto *v : {&r[0], &r[1], &r[2], &c[0], &c[1]})
+  {
+    for (int q = 0; q < n; q++)
+    {
+      v->emplace_back(rnd(), rnd());
+    }
+  }
+  auto x = [&](double omega)
+  {
+    std::vector<std::complex<double>> y(n);
+    for (int q = 0; q < n; q++)
+    {
+      y[q] = c[0][q] + omega * c[1][q];
+      for (int k = 0; k < 3; k++)
+      {
+        y[q] += r[k][q] / (omega - p[k]);
+      }
+    }
+    return y;
+  };
+  auto rel = [](const std::vector<std::complex<double>> &a,
+                const std::vector<std::complex<double>> &b)
+  {
+    double d = 0.0, m = 0.0;
+    for (std::size_t q = 0; q < a.size(); q++)
+    {
+      d += std::norm(a[q] - b[q]);
+      m += std::norm(b[q]);
+    }
+    return std::sqrt(d / m);
+  };
+  BarycentricInterpolant fit;
+  fit.AddSample(1.0, x(1.0));
+  fit.AddSample(2.0, x(2.0));
+  int memory = 0;
+  while (fit.Samples().size() < 20 && memory < 2)
+  {
+    const double omega = fit.FindMaxError();
+    const auto exact = x(omega);
+    memory = (rel(fit.Evaluate(omega), exact) < 1.0e-8) ? memory + 1 : 0;
+    fit.AddSample(omega, exact);
+  }
+  CAPTURE(fit.Samples().size());
+  CHECK(memory == 2);
+  CHECK(fit.Samples().size() <= 12);
+  for (double omega : fit.Samples())
+  {
+    CHECK(rel(fit.Evaluate(omega), x(omega)) <= 1.0e-12);
+  }
+  double worst = 0.0;
+  for (int i = 0; i <= 1000; i++)
+  {
+    const double omega = 1.0 + i / 1000.0;
+    worst = std::max(worst, rel(fit.Evaluate(omega), x(omega)));
+  }
+  CAPTURE(worst);
+  CHECK(worst <= 1.0e-7);
+  const auto a =
+      BarycentricInterpolant::Coefficients(fit.Samples(), fit.Weights(), fit.Samples()[2]);
+  CHECK(a[2] == 1.0);
+}
+
+TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
+{
+  // S = Re + i Im with Im = Q diag(d) Q^T (Q a rotation): the least eigenvalue of Im,
+  // relative to ‖S‖_F, for any scaling of S.
+  const double c = std::cos(0.3), s = std::sin(0.3);
+  auto lower = [&](double d0, double d1, double scale)
+  {
+    // Lower triangle by columns of the 2 x 2 S: (0,0), (1,0), (1,1).
+    const double i00 = c * c * d0 + s * s * d1, i10 = c * s * (d0 - d1),
+                 i11 = s * s * d0 + c * c * d1;
+    return std::vector<std::complex<double>>{scale * std::complex<double>(2.0, i00),
+                                             scale * std::complex<double>(0.5, i10),
+                                             scale * std::complex<double>(1.0, i11)};
+  };
+  auto norm = [](const std::vector<std::complex<double>> &S)
+  { return std::sqrt(std::norm(S[0]) + 2.0 * std::norm(S[1]) + std::norm(S[2])); };
+  for (double scale : {1.0, 1.0e-6})
+  {
+    const auto passive = lower(0.3, 0.1, scale), active = lower(0.3, -0.2, scale);
+    CHECK(DrivenSubstructureModel::Passivity(passive.data(), 2) ==
+          Catch::Approx(0.1 * scale / norm(passive)).epsilon(1.0e-12));
+    CHECK(DrivenSubstructureModel::Passivity(active.data(), 2) ==
+          Catch::Approx(-0.2 * scale / norm(active)).epsilon(1.0e-12));
+  }
+}
+
+TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")
+{
+  // Source fingerprints of a lumped port of the CPW resonator grid example (in the plane
+  // z = 0, along x), saved on 192 processes and recomputed on 8: the pairing with the first
+  // fingerprint field (z, x, y) vanishes, up to rounding that differs between partitions.
+  using Model = DrivenSubstructureModel;
+  const std::vector<double> online = {1.0,
+                                      0.0,
+                                      -5.2511761922216104e-16,
+                                      0.0,
+                                      9.2812996599596332e-04,
+                                      0.0,
+                                      -1.9606511512972598e-03},
+                            saved = {1.0,
+                                     0.0,
+                                     -4.8624843274134622e-16,
+                                     0.0,
+                                     9.2812996599596874e-04,
+                                     0.0,
+                                     -1.9606511512972719e-03},
+                            other = {1.0,
+                                     0.0,
+                                     -1.2238455583072405e-15,
+                                     0.0,
+                                     9.2812996599578388e-04,
+                                     0.0,
+                                     1.9606511512968894e-03};  // the port at the other end
+  REQUIRE(online.size() == static_cast<std::size_t>(Model::kSourceFp));
+  CHECK(Model::SameSource(online.data(), saved.data()));
+  CHECK_FALSE(Model::SameSource(online.data(), other.data()));
+  auto no_env = online;
+  no_env[0] = 0.0;
+  CHECK_FALSE(Model::SameSource(no_env.data(), saved.data()));
+
+  // A wave port's source follows its mode, reproducible to an eigensolver tolerance only:
+  // a change at that level matches to a tolerance above it, a different source does not.
+  auto perturbed = saved;
+  for (int q = 1; q < Model::kSourceFp; q++)
+  {
+    perturbed[q] *= 1.0 + 1.0e-7 * q;
+  }
+  CHECK_FALSE(Model::SameSource(online.data(), perturbed.data()));
+  CHECK(Model::SameSource(online.data(), perturbed.data(), 1.0e-4));
+  CHECK_FALSE(Model::SameSource(online.data(), other.data(), 1.0e-4));
+
+  // Environment fingerprints: counts, then quadratic forms with a vanishing imaginary part.
+  const std::vector<double> env = {100.0, 20.0, 3.0, 0.0, -2.0, 1.0e-3, 5.0, 0.0};
+  auto env2 = env;
+  env2[2] *= 1.0 + 1.0e-13;
+  CHECK(Model::SameEnvironment(env, env2));
+  env2[6] *= 1.0 + 1.0e-6;
+  CHECK_FALSE(Model::SameEnvironment(env, env2));
+  env2 = env;
+  env2[1] += 1.0;
+  CHECK_FALSE(Model::SameEnvironment(env, env2));
+}
+
+#if defined(MFEM_USE_MUMPS)
+TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
+          "[substructure][Serial][Parallel]")
+{
+  // A complex symmetric shifted Laplacian with Schur variables on a face of the cube,
+  // factored on all ranks and on fewer: the same Schur complement and internal solves,
+  // also after a refactorization with new values.
+  auto pmesh = MakeSplitCube(4);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
+  {
+    mine[i] = fes.GetMyTDofOffset() + face[i];
+  }
+  {
+    int n = face.Size();
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+  }
+  REQUIRE(!schur_vars.empty());
+  ComplexVector x(nt);
+  x.Real().Randomize(1 + Mpi::Rank(comm));
+  x.Imag().Randomize(2 + Mpi::Rank(comm));
+
+  struct Result
+  {
+    std::vector<std::complex<double>> S[2];
+    ComplexVector y[2];
+  };
+  auto run = [&](int procs)
+  {
+    ComplexMumpsSchurSolver::Coo coo;
+    std::vector<std::vector<double>> vals;
+    std::vector<int> row_ptr;
+    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+    for (double v : vals[0])
+    {
+      coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+    }
+    ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                   schur_vars, 0.0, procs, true, false);
+    Result res;
+    for (int k = 0; k < 2; k++)
+    {
+      if (k == 1)
+      {
+        for (auto &v : solver.Values())
+        {
+          v *= 2.0;
+        }
+        solver.Refactor();
+      }
+      res.S[k] = solver.Schur();
+      solver.SolveInternal({&x}, {&res.y[k]});
+    }
+    return res;
+  };
+  auto dist = [](const std::vector<std::complex<double>> &a,
+                 const std::vector<std::complex<double>> &b, std::complex<double> c)
+  {
+    double d = 0.0, m = 0.0;
+    for (std::size_t q = 0; q < b.size(); q++)
+    {
+      d = std::max(d, std::abs(a[q] - c * b[q]));
+      m = std::max(m, std::abs(c * b[q]));
+    }
+    return d / m;
+  };
+  const Result ref = run(0);
+  if (Mpi::Root(comm))
+  {
+    CHECK(dist(ref.S[1], ref.S[0], 2.0) <= 1.0e-12);
+  }
+  for (int procs : {1, 2})
+  {
+    CAPTURE(procs, nranks);
+    const Result res = run(procs);
+    for (int k = 0; k < 2; k++)
+    {
+      if (Mpi::Root(comm))
+      {
+        CHECK(dist(res.S[k], ref.S[k], 1.0) <= 1.0e-12);
+      }
+      ComplexVector d(res.y[k]);
+      d -= ref.y[k];
+      CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, ref.y[k]));
+    }
+  }
+}
+
+TEST_CASE("DrivenSubstructure condenses the environment exactly",
+          "[substructure][Serial][Parallel]")
+{
+  // S_E(ω) from the partial factorization of the environment operator (alone, and with the
+  // region) against a dense condensation of the same operator, and the substructured solve
+  // against the full system: PEC in the region, a lumped port in the environment, a
+  // second-order absorbing boundary on both sides, an impedance sheet crossing Γ, a lossy
+  // dielectric region and a conducting environment. A second frequency reuses the analyses.
+  // Hex meshes with an impedance sheet, conforming and nonconforming (hanging nodes on Γ
+  // and on the sheet from either side), and tet meshes with a non-planar interface (where
+  // second-order Nédélec face DOFs shared between ranks combine with signs).
+  enum class MeshKind
+  {
+    HEX,
+    NC_HEX,
+    TET
+  };
+  const auto kind = GENERATE(MeshKind::HEX, MeshKind::NC_HEX, MeshKind::TET);
+  const int order = GENERATE(1, 2);
+  const bool tet = (kind == MeshKind::TET);
+  CAPTURE(order, static_cast<int>(kind));
+  json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 2.0}, {"LossTan", 0.01}},
+          {{"Attributes", {2}}, {"Permittivity", 4.0}, {"Conductivity", 0.5}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {1}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"R", 1.0},
+           {"Attributes", {2}},
+           {"Direction", "+Y"},
+           {"Excitation", true}}}},
+        {"Absorbing", {{"Attributes", {3}}, {"Order", 2}}},
+        {"Impedance", {{{"Attributes", {4}}, {"Rs", 1.0}, {"Ls", 2.0}, {"Cs", 0.5}}}}}},
+      {"Solver",
+       {{"Order", order},
+        {"Device", "CPU"},
+        {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  if (tet)
+  {
+    config["Boundaries"].erase("Impedance");
+  }
+  IoData iodata(config, false);
+  RegionDesign design;
+  design.sheet = true;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(tet ? MakeWavyTetSplit(3)
+                                        : (kind == MeshKind::NC_HEX)
+                                            ? MakeRefinedGradedSplit(2, 3, 2, design)
+                                            : MakeGradedSplit(2, 3, 2, design)));
+  REQUIRE(mesh.back()->Get().Nonconforming() == (kind == MeshKind::NC_HEX));
+  SpaceOperator space_op(iodata, mesh);
+  const auto &fes = space_op.GetNDSpace().Get();
+  MPI_Comm comm = fes.GetComm();
+  const bool root = Mpi::Root(comm);
+  DrivenSubstructure ds(space_op, {1}, {2});
+  const int nG = ds.InterfaceSize();
+  REQUIRE(nG > 0);
+
+  // Global environment-interior and interface true DOFs (replicated), and the environment
+  // operator parts, for the dense reference.
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
+  std::vector<HYPRE_BigInt> E_loc, E;
+  for (int i = 0; i < nt; i++)
+  {
+    if (ds.EnvironmentInterior()[i])
+    {
+      E_loc.push_back(tstart + i);
+    }
+  }
+  {
+    int n = static_cast<int>(E_loc.size());
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    E.resize(disp[nranks - 1] + cnt[nranks - 1]);
+    MPI_Allgatherv(E_loc.data(), n, HYPRE_MPI_BIG_INT, E.data(), cnt.data(), disp.data(),
+                   HYPRE_MPI_BIG_INT, comm);
+  }
+  const std::vector<HYPRE_BigInt> &G = ds.InterfaceTrueDofs();
+  std::vector<HYPRE_BigInt> idx(E);
+  idx.insert(idx.end(), G.begin(), G.end());
+  const int nE = static_cast<int>(E.size()), n = nE + nG;
+  const std::vector<int> environment = {2};
+  std::unique_ptr<ComplexOperator> K, C, M;
+  {
+    SpaceOperator::AssemblyRestriction restriction(space_op, environment);
+    K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  }
+
+  // Dense A_E(ω) on (E, Γ) at rank 0 from the operators applied to unit vectors.
+  std::vector<int> cnt(nranks), disp(nranks, 0);
+  MPI_Allgather(&nt, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nranks; r++)
+  {
+    disp[r] = disp[r - 1] + cnt[r - 1];
+  }
+  auto dense_operator = [&](double omega)
+  {
+    std::unique_ptr<ComplexOperator> A2;
+    {
+      SpaceOperator::AssemblyRestriction restriction(space_op, environment);
+      A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+    }
+    std::vector<std::complex<double>> A(root ? static_cast<std::size_t>(n) * n : 0);
+    Vector x(nt), y(nt), yr(nt), yi(nt),
+        full(root ? disp[nranks - 1] + cnt[nranks - 1] : 0), full_i(full.Size());
+    auto add = [&](const ComplexOperator *X, std::complex<double> a)
+    {
+      for (const bool imag : {false, true})
+      {
+        const Operator *part = X ? (imag ? X->Imag() : X->Real()) : nullptr;
+        if (part)
+        {
+          part->Mult(x, y);
+          const std::complex<double> c = imag ? a * std::complex<double>(0.0, 1.0) : a;
+          yr.Add(c.real(), y);
+          yi.Add(c.imag(), y);
+        }
+      }
+    };
+    for (int j = 0; j < n; j++)
+    {
+      x = 0.0;
+      if (idx[j] >= tstart && idx[j] < tstart + nt)
+      {
+        x(static_cast<int>(idx[j] - tstart)) = 1.0;
+      }
+      yr = 0.0;
+      yi = 0.0;
+      add(K.get(), 1.0);
+      add(C.get(), {0.0, omega});
+      add(M.get(), -omega * omega);
+      add(A2.get(), 1.0);
+      MPI_Gatherv(yr.GetData(), nt, MPI_DOUBLE, full.GetData(), cnt.data(), disp.data(),
+                  MPI_DOUBLE, 0, comm);
+      MPI_Gatherv(yi.GetData(), nt, MPI_DOUBLE, full_i.GetData(), cnt.data(), disp.data(),
+                  MPI_DOUBLE, 0, comm);
+      for (int i = 0; root && i < n; i++)
+      {
+        A[static_cast<std::size_t>(j) * n + i] = {full(idx[i]), full_i(idx[i])};
+      }
+    }
+    return A;
+  };
+
+  // S_ref = A_GG - A_GE A_EE^-1 A_EG with the standard real representation [[Re, -Im],
+  // [Im, Re]] of the complex blocks.
+  auto dense_schur = [&](const std::vector<std::complex<double>> &A)
+  {
+    auto real_form = [&](int r0, int nr, int c0, int nc)
+    {
+      mfem::DenseMatrix T(2 * nr, 2 * nc);
+      for (int i = 0; i < nr; i++)
+      {
+        for (int j = 0; j < nc; j++)
+        {
+          const auto a = A[static_cast<std::size_t>(c0 + j) * n + (r0 + i)];
+          T(i, j) = T(nr + i, nc + j) = a.real();
+          T(i, nc + j) = -a.imag();
+          T(nr + i, j) = a.imag();
+        }
+      }
+      return T;
+    };
+    mfem::DenseMatrix Aee = real_form(0, nE, 0, nE), Aeg = real_form(0, nE, nE, nG),
+                      Age = real_form(nE, nG, 0, nE), Agg = real_form(nE, nG, nE, nG);
+    mfem::DenseMatrixInverse inv(Aee);
+    mfem::DenseMatrix X(2 * nE, 2 * nG), Y(2 * nG, 2 * nG);
+    inv.Mult(Aeg, X);
+    mfem::Mult(Age, X, Y);
+    Agg -= Y;
+    std::vector<std::complex<double>> S(static_cast<std::size_t>(nG) * nG);
+    for (int b = 0; b < nG; b++)
+    {
+      for (int a = 0; a < nG; a++)
+      {
+        S[static_cast<std::size_t>(b) * nG + a] = {Agg(a, b), Agg(nG + a, b)};
+      }
+    }
+    return S;
+  };
+
+  // Online, with the region only: given S_E and the environment's source condensation
+  // (offline), the region and interface solution must be the offline one.
+  DrivenSubstructure ds_online(space_op, {1}, {2}, true);
+  REQUIRE(ds_online.InterfaceSize() == nG);
+
+  for (const double omega : {1.3, 0.7})
+  {
+    CAPTURE(omega);
+    const auto A = dense_operator(omega);
+    const auto S_ref = root ? dense_schur(A) : std::vector<std::complex<double>>();
+    for (const bool region : {false, true})  // the environment alone, then both sides
+    {
+      ds.Condense(omega, region);
+      if (!root)
+      {
+        continue;
+      }
+      const auto &S = ds.Schur();
+      REQUIRE(S.size() == S_ref.size());
+      double d = 0.0, m = 0.0, asym = 0.0;
+      for (int b = 0; b < nG; b++)
+      {
+        for (int a = 0; a < nG; a++)
+        {
+          const std::size_t ab = static_cast<std::size_t>(b) * nG + a;
+          d = std::max(d, std::abs(S[ab] - S_ref[ab]));
+          m = std::max(m, std::abs(S_ref[ab]));
+          asym = std::max(asym, std::abs(S[ab] - S[static_cast<std::size_t>(a) * nG + b]));
+        }
+      }
+      CAPTURE(nG, nE, d, m, asym);
+      CHECK(d <= 1.0e-10 * m);
+      CHECK(asym <= 1.0e-10 * m);
+    }
+
+    // Substructured solves for the port excitation (an environment source) and random
+    // right-hand sides (sources on both sides; the third has the second's environment
+    // part): residuals of the full system.
+    std::vector<ComplexVector> b(3, ComplexVector(nt)), u;
+    space_op.GetExcitationVector(1, omega, b[0]);
+    b[1].Real().Randomize(3 + Mpi::Rank(comm));
+    b[1].Imag().Randomize(5 + Mpi::Rank(comm));
+    b[2].Real().Randomize(7 + Mpi::Rank(comm));
+    b[2].Imag().Randomize(11 + Mpi::Rank(comm));
+    for (int i = 0; i < nt; i++)
+    {
+      if (!ds.RegionInterior()[i])
+      {
+        b[2].Real()(i) = b[1].Real()(i);
+        b[2].Imag()(i) = b[1].Imag()(i);
+      }
+    }
+    for (int d : space_op.GetNDDbcTDofLists().back())
+    {
+      b[1].Real()(d) = b[1].Imag()(d) = b[2].Real()(d) = b[2].Imag()(d) = 0.0;
+    }
+    ds.Solve({&b[0], &b[1], &b[2]}, u);
+    const auto g_env = ds.EnvironmentSourceCondensation();
+    const auto u_gamma = ds.InterfaceSolution();
+
+    // A condensed environment functional (as for the environment's port voltages):
+    // l^T u_k = c + h^T u_Γ,k with c fixed by the environment sources, so the value for the
+    // third right-hand side follows from the second's.
+    {
+      ComplexVector l(nt);
+      l.Real().Randomize(13 + Mpi::Rank(comm));
+      l.Imag() = 0.0;
+      for (int i = 0; i < nt; i++)
+      {
+        if (!ds.EnvironmentInterior()[i])
+        {
+          l.Real()(i) = 0.0;
+        }
+      }
+      const auto h = ds.CondenseEnvironment({&l});
+      CHECK(ds.CondenseEnvironment({}).empty());  // an environment without ports
+      std::vector<ComplexVector> x;  // the environment interior solution for b[1]
+      ds.CondenseEnvironment({&b[1]}, &x);
+      double lx[2] = {mfem::InnerProduct(l.Real(), x[0].Real()),
+                      mfem::InnerProduct(l.Real(), x[0].Imag())};
+      Mpi::GlobalSum(2, lx, comm);
+      std::complex<double> V[2];
+      for (int k = 0; k < 2; k++)
+      {
+        double v[2] = {mfem::InnerProduct(l.Real(), u[k + 1].Real()),
+                       mfem::InnerProduct(l.Real(), u[k + 1].Imag())};
+        Mpi::GlobalSum(2, v, comm);
+        V[k] = {v[0], v[1]};
+      }
+      if (root)
+      {
+        std::complex<double> hu[2] = {0.0, 0.0};
+        for (int k = 0; k < 2; k++)
+        {
+          for (int a = 0; a < nG; a++)
+          {
+            hu[k] += h[a] * u_gamma[static_cast<std::size_t>(k + 1) * nG + a];
+          }
+        }
+        const double dv = std::abs(V[1] - (V[0] - hu[0] + hu[1]));
+        CAPTURE(dv, std::abs(V[1]));
+        CHECK(dv <= 1.0e-10 * std::abs(V[1]));
+        // and l^T u = l^T x + h^T u_Γ, with x the environment interior solution.
+        const double dc = std::abs(V[0] - (std::complex<double>(lx[0], lx[1]) + hu[0]));
+        CAPTURE(dc);
+        CHECK(dc <= 1.0e-10 * std::abs(V[0]));
+      }
+    }
+
+    // Online: the region and interface values of the offline solution, 0 in the
+    // environment interior.
+    {
+      std::vector<std::complex<double>> S_env;
+      if (root)
+      {
+        S_env = ds.Schur();
+      }
+      ds_online.Condense(omega, std::move(S_env));
+      std::vector<ComplexVector> u_online;
+      ds_online.Solve({&b[0], &b[1], &b[2]}, u_online, &g_env);
+      for (int k = 0; k < 3; k++)
+      {
+        double dmax[2] = {0.0, 0.0};
+        for (int i = 0; i < nt; i++)
+        {
+          const std::complex<double> x(u_online[k].Real()(i), u_online[k].Imag()(i)),
+              y(u[k].Real()(i), u[k].Imag()(i));
+          if (ds.EnvironmentInterior()[i])
+          {
+            dmax[1] = std::max(dmax[1], std::abs(x));
+          }
+          else
+          {
+            dmax[0] = std::max(dmax[0], std::abs(x - y));
+          }
+        }
+        Mpi::GlobalMax(2, dmax, comm);
+        const double unorm = linalg::Norml2(comm, u[k]);
+        CAPTURE(k, dmax[0], dmax[1], unorm);
+        CHECK(dmax[0] <= 1.0e-10 * unorm);
+        CHECK(dmax[1] == 0.0);
+      }
+    }
+    auto K1 = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C1 = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M1 = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A21 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+    auto A_full = space_op.GetSystemMatrix(
+        std::complex<double>(1.0, 0.0), std::complex<double>(0.0, omega),
+        std::complex<double>(-omega * omega, 0.0), K1.get(), C1.get(), M1.get(), A21.get());
+    for (int k = 0; k < 3; k++)
+    {
+      ComplexVector r(nt);
+      A_full->Mult(u[k], r);
+      r -= b[k];
+      const double res = linalg::Norml2(comm, r) / linalg::Norml2(comm, b[k]);
+      CAPTURE(k, res);
+      CHECK(res <= 1.0e-10);
+    }
+  }
+}
+#endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver on a nonconforming mesh",
