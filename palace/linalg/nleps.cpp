@@ -722,6 +722,7 @@ int QuasiNewtonSolver::Solve()
     double res = compute_residual(eig, v, v2, u, u2, A2n);
 
     int it = 0, diverged_it = 0;
+    bool stalled = false;  // σ was last moved because the line search failed
     while (it < nleps_it)
     {
       if (print > 0)
@@ -856,6 +857,7 @@ int QuasiNewtonSolver::Solve()
       // near-singular — observed on adapter/hybrid mode 3 at NP >= 32.
       double alpha = 1.0;
       int bt = 0;
+      bool descent = false;
       for (; bt < max_backtrack; bt++)
       {
         const std::complex<double> eig_trial = eig + alpha * delta_eig;
@@ -878,7 +880,8 @@ int QuasiNewtonSolver::Solve()
 
         // The merit function is the residual of d T, consistent with the step.
         const double scale = poles.RelativeScale(eig_trial, eig);
-        if (scale * res_trial <= (1.0 - armijo_c * alpha) * res || bt == max_backtrack - 1)
+        descent = scale * res_trial <= (1.0 - armijo_c * alpha) * res;
+        if (descent || bt == max_backtrack - 1)
         {
           std::swap(v, v_trial);
           std::swap(v2, v2_trial);
@@ -897,8 +900,16 @@ int QuasiNewtonSolver::Solve()
 
       // Lagged preconditioner update using the committed (post-line-search) eig.
       // Updating too close to an eigenvalue can cause numerical instability, so lag
-      // by preconditioner_lag iterations.
-      if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
+      // by preconditioner_lag iterations. Near a pole of A2, a failed line search means
+      // T(σ)⁻¹ at the lagged σ no longer gives a descent direction, and the iteration
+      // stalls above the tolerance unless σ moves, however small the residual. Moving it
+      // again while the line search keeps failing gains nothing: T(σ) is then nearly
+      // singular. Without poles, moving σ this way cost an eigenmode solve with a wave
+      // port some of its modes.
+      const bool refresh_stalled = !poles.Empty() && !descent && !stalled;
+      stalled = !descent;
+      if ((it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol) ||
+          refresh_stalled)
       {
         eig_opInv = eig;
         opA2 = (*funcA2)(eig_opInv);
