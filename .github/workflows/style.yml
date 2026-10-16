@@ -20,7 +20,7 @@ jobs:
   check-style:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Install clang-format-19 from LLVM (newer than the distro package)
       - name: Install clang-format
@@ -49,7 +49,7 @@ jobs:
   check-config:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check JSON Schema
         run: |
@@ -69,7 +69,7 @@ jobs:
     # Only meaningful for pull requests, where there is a base branch to diff against.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -81,7 +81,7 @@ jobs:
   check-changelog-schema-versions:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check changelog schema versions
         run: ./scripts/check-changelog-schema-versions
@@ -89,7 +89,7 @@ jobs:
   check-tests-tags:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check test tags
         run: ./scripts/check-test-tags test/unit
@@ -100,7 +100,7 @@ jobs:
   check-license:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: viperproject/check-license-header@e06c65614fa9f32e099838df4dd25440c5344b32 # v2.0.3
         with:
           config: .github/license-check/config.json
@@ -112,6 +112,6 @@ jobs:
   check-publish-scripts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run publish script tests
         run: python3 -m unittest discover -s .github/publish_containers -p 'test_*.py' -v

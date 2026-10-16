@@ -183,7 +183,7 @@ class PrForHead(unittest.TestCase):
 
 class IsOnMain(unittest.TestCase):
     def _compare(self, status):
-        return StubApi({f"repos/{REPO}/compare/{COMMIT}...main": {"status": status}})
+        return StubApi({f"repos/{REPO}/compare/{COMMIT}...refs/heads/main": {"status": status}})
 
     def test_ancestor_or_tip_is_on_main(self):
         self.assertTrue(self._compare("ahead").is_on_main(COMMIT))
