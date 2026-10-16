@@ -175,12 +175,13 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Superconductor), as is every "Superconductor" boundary. Only the fields to be saved
     // need the environment interior.
     const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
-    std::vector<Vector> A;
+    const bool adapt = (iodata.model.refinement.max_it > 0);
+    std::vector<Vector> A, region_fields;
     mfem::DenseMatrix linked_flux(nc, nf);
     linked_flux = 0.0;
     const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
         current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
-        &A, n_save);
+        &A, n_save, adapt ? &region_fields : nullptr);
     // Excitations in the layout of the regular solve (currents first, zero elsewhere).
     I_inc.resize(nc + nf, 0.0);
     Phi_inc.insert(Phi_inc.begin(), nc, 0.0);
@@ -193,7 +194,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       sub.WriteParaView(post_dir.string(), ids, A);
     }
     Mpi::Print("\nSubstructuring inductance sweep complete\n");
-    return {ErrorIndicator(), sub.GlobalTrueVSize()};
+    // Adaptive refinement of the region only (the indicators are zero on the environment).
+    ErrorIndicator indicator =
+        adapt ? sub.RegionErrorIndicator(region_fields, E) : ErrorIndicator();
+    return {indicator, sub.GlobalTrueVSize()};
   }
 
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are

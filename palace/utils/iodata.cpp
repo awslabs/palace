@@ -740,9 +740,6 @@ void IoData::CheckConfiguration()
     // does not spread into it.
     if (model.refinement.max_it > 0)
     {
-      MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
-                  "Adaptive mesh refinement with substructuring is only supported for "
-                  "electrostatic problems!");
       MFEM_VERIFY(sub.mode == SubstructuringMode::ONLINE,
                   "Adaptive mesh refinement with substructuring refines the region of an "
                   "\"Online\" run; to refine the full model, run the adaptation without "
@@ -758,6 +755,10 @@ void IoData::CheckConfiguration()
       // Floquet ports and periodic boundaries make the system non-symmetric.
       MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
+      MFEM_VERIFY(model.refinement.max_it == 0,
+                  "Adaptive mesh refinement with driven substructuring refines the full "
+                  "model: run the adaptation without \"Solver.Substructuring\" (with "
+                  "\"SaveAdaptMesh\") and condense the saved mesh offline!");
       MFEM_VERIFY(boundaries.floquetport.empty() &&
                       boundaries.periodic.boundary_pairs.empty(),
                   "Driven substructuring does not support Floquet ports or periodic "

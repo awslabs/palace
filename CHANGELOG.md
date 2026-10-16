@@ -37,14 +37,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     saved environment model is reused across runs, including after the region is re-meshed,
     and the capacitance or inductance matrix of a reused model needs no environment solve.
     The offline run also writes a mesh of the region, on which online runs read and
-    partition the region only, and in which `remesh_region.py` re-meshes a redesign.
-    Includes optional block low-rank environment factorization with MUMPS
-    (`"FactorizationTol"`) and hierarchical compression of the interface operator
-    (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"` and
-    `"SurfaceCurrent"` excitations, alone or together, with the films and `"Superconductor"`
-    boundaries as London sheets (kinetic inductance included). Adds substructuring examples
-    in `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of
-    flux loops, on separate rings and on one plate). SchemaVer 2-3-0.
+    partition the region only, and in which `remesh_region.py` re-meshes a redesign. Online
+    runs can refine the region adaptively. Includes optional block low-rank environment
+    factorization with MUMPS (`"FactorizationTol"`) and hierarchical compression of the
+    interface operator (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports
+    `"FluxLoop"` and `"SurfaceCurrent"` excitations, alone or together, with the films and
+    `"Superconductor"` boundaries as London sheets (kinetic inductance included). Adds
+    substructuring examples in `examples/transmon` and `examples/substructuring` (5 x 5
+    lattices of qubits and of flux loops, on separate rings and on one plate). SchemaVer
+    2-3-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
     uniform frequency sweeps condense the environment exactly at each frequency, with lumped
@@ -208,6 +209,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     were bumped to their latest releases. The Spack package now uses a libCEED release
     instead of a development commit.
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
+  - The superbuild and the Spack recipe patch MFEM with
+    [mfem/mfem#5518](https://github.com/mfem/mfem/pull/5518), which fixes the orientation of
+    some shared faces of a parallel `mfem::ParSubMesh`: spaces with several DOFs per face
+    (Nédélec of order 2 and above, H1 of order 4 and above) were wrong across processes, and
+    so were the region error indicators of substructuring.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
   - Builds with MUMPS now also need its complex double precision library (ZMUMPS), used by
     driven substructuring; the superbuild and the Spack recipe build it.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).

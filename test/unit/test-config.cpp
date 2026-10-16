@@ -199,6 +199,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       Catch::Matchers::ContainsSubstring("\"MaxNCLevels\": 0"));
     config["Model"]["Refinement"]["MaxNCLevels"] = 0;
     CHECK_NOTHROW(IoData(config, false));
+    config["Problem"]["Type"] = "Magnetostatic";
+    CHECK_NOTHROW(IoData(config, false));
     config["Model"]["Refinement"]["Nonconformal"] = false;
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("nonconforming"));
@@ -277,6 +279,12 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
     CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
 #endif
+    json amr = make_config(uniform, json::object());
+    amr["Model"]["Refinement"] = {{"MaxIts", 1}, {"MaxNCLevels", 0}};
+    amr["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    amr["Solver"]["Substructuring"]["Mode"] = "Online";
+    CHECK_THROWS_WITH(IoData(amr, false),
+                      Catch::Matchers::ContainsSubstring("driven substructuring refines"));
     const json periodic = {
         {"Periodic",
          {{"BoundaryPairs", {{{"DonorAttributes", {5}}, {"ReceiverAttributes", {6}}}}}}}};
