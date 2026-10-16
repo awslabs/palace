@@ -33,8 +33,8 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -58,12 +58,12 @@ jobs:
       # than the runner's slots. OpenMPI 5 delegates mapping to PRRTE.
       PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           submodules: 'recursive'
 
       - name: Setup Spack
-        uses: spack/setup-spack@v3
+        uses: spack/setup-spack@16b756799ede8b28951287f89bcd3fdb32ec1ca3 # v3.0.0
         with:
           spack_ref: releases/v1.2
           packages_ref: ${{ env.SPACK_PACKAGES_COMMIT }}
