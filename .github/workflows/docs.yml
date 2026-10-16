@@ -42,8 +42,8 @@ jobs:
     outputs:
       should_build: ${{ steps.decide.outputs.should_build }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -73,14 +73,14 @@ jobs:
     needs: filter
     runs-on: palace_ubuntu-latest_16-core
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.filter.outputs.should_build == 'true'
         with:
           ref: ${{ inputs.deploy_tag || github.ref }}
 
       - name: Setup Spack
         if: needs.filter.outputs.should_build == 'true'
-        uses: spack/setup-spack@v3
+        uses: spack/setup-spack@16b756799ede8b28951287f89bcd3fdb32ec1ca3 # v3.0.0
         with:
           # Pin to the Spack 1.2 release series (matching the self-hosted
           # runners) instead of the moving `develop` branch. spack@1.2 pairs
@@ -205,12 +205,12 @@ jobs:
         # If you want to use the branch-local source instead (should we always do this?)
         # spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
 
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9 # v2.7.0
         if: needs.filter.outputs.should_build == 'true'
         with:
           version: '1'
 
-      - uses: julia-actions/cache@v3
+      - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
         if: needs.filter.outputs.should_build == 'true'
 
       - name: Build and deploy
@@ -247,7 +247,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: needs.filter.outputs.should_build == 'true'
         with:
           name: docs
