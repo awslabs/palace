@@ -161,11 +161,12 @@ class GitHubApi:
     def is_on_main(self, sha: str) -> bool:
         """Whether ``sha`` is ``main`` or one of its ancestors.
 
-        Comparing ``sha...main`` reports ``main`` as ``ahead`` of (or
-        ``identical`` to) ``sha`` exactly when ``main`` contains it. An unknown
-        sha is a 404, which reads as not on main.
+        Comparing ``sha...refs/heads/main`` reports ``main`` as ``ahead`` of
+        (or ``identical`` to) ``sha`` exactly when ``main`` contains it. The
+        full ref keeps a tag named ``main`` from being compared instead. An
+        unknown sha is a 404, which reads as not on main.
         """
-        comparison = self._get(f"repos/{self.repo}/compare/{sha}...main")
+        comparison = self._get(f"repos/{self.repo}/compare/{sha}...refs/heads/main")
         if not isinstance(comparison, dict):
             return False
         return comparison.get("status") in ("ahead", "identical")
@@ -209,8 +210,8 @@ def decide(facts, api) -> Decision:
     """Decide whether ``facts`` authorizes a publish, and to which selector.
 
     ``api`` is anything providing ref_sha(kind, name), is_on_main(sha),
-    pr_for_head(sha, ref), and pr_has_label(number, label) — the live GitHubApi in production, a fake
-    in tests. Every branch re-derives from trusted facts / live API state, so
+    pr_for_head(sha, ref), and pr_has_label(number, label) — the live GitHubApi
+    in production, a fake in tests. Every branch re-derives from trusted facts / live API state, so
     calling ``decide`` again just before the writes is a valid TOCTOU re-check.
     """
     # Forks never publish, regardless of event. A maintainer approving a fork

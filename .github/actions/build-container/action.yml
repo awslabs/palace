@@ -271,14 +271,11 @@ runs:
       run: |
         # SPDX 2.3 SBOM of Palace's Spack dependency DAG, kept in the image by
         # PalaceDockerfile.
-        container="$(sudo podman create "$IMAGE_NAME:latest")"
-        trap 'sudo podman rm "$container" >/dev/null' EXIT
-        sudo podman cp "$container:/opt/spack-environment/palace.spdx.json" "$IMAGE_NAME.spdx.json"
-        sudo chmod a+r "$IMAGE_NAME.spdx.json"
+        sudo podman run --rm --entrypoint cat "$IMAGE_NAME:latest" \
+          /opt/spack-environment/palace.spdx.json > "$IMAGE_NAME.spdx.json"
 
     - name: Upload SBOM
       if: steps.name.outputs.publish_artifacts == 'true'
-      # Kept with the workflow run (default retention), not published to AWS.
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.name.outputs.image_name }}-sbom
