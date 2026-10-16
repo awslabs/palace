@@ -56,8 +56,8 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -102,7 +102,7 @@ jobs:
       #
       # (Release tags are handled by build-containers-release, which has no
       # filter.)
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         with:
           # Full history and tags, so `git describe` can stamp the version.
@@ -131,7 +131,7 @@ jobs:
           - {runner: gpu,      target: x86_64_v3}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # Fetch tags so the release channel can derive the version from the ref.
           fetch-depth: 0
