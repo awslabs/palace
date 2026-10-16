@@ -198,6 +198,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     were bumped to their latest releases. The Spack package now uses a libCEED release
     instead of a development commit.
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
+  - The superbuild and the Spack recipe patch MFEM with
+    [mfem/mfem#5518](https://github.com/mfem/mfem/pull/5518), which fixes the orientation of
+    some shared faces of a parallel `mfem::ParSubMesh`: spaces with several DOFs per face
+    (Nédélec of order 2 and above, H1 of order 4 and above) were wrong across processes, and
+    so were the region error indicators of substructuring.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 ## [0.18.1] - 2026-09-21
 
