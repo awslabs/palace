@@ -2047,8 +2047,8 @@ struct SubstructuringSolver::Impl
     const int mg_levels = iodata.solver.linear.mg_max_levels;
     // Direct A_EE (when the environment fits): factor A_env with the
     // non-environment-interior true DOFs eliminated, in the parent space (no submesh
-    // transfer per solve). Higher-order H(curl) always takes this path: the submesh
-    // transfer mishandles higher-order tetrahedral edge/face orientation across the cut.
+    // transfer per solve). Higher-order H(curl) always takes this path (the iterative
+    // submesh solve is validated at order 1 only).
     const bool hcurl_high_order = magnetostatic && iodata.solver.order > 1;
     MFEM_VERIFY(kHasDirectSolver || !hcurl_high_order,
                 "Magnetostatic substructuring at order > 1 needs a sparse direct solver!");

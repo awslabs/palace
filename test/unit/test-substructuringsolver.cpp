@@ -1438,11 +1438,6 @@ TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
       scale = std::max(scale, std::abs(M_mono(i, j)));
     }
   }
-  // Known limitation: order >= 2 H(curl) on tetrahedra is exact serially but wrong in
-  // parallel (the higher-order tetrahedral edge/face DOF orientation across a partition cut
-  // is mishandled in the interface identification -- order-1 tets and order-2 hexes are
-  // fine). Skip that combination in parallel until the signed higher-order simplex map is
-  // fixed.
   for (int i = 0; i < 2; i++)
   {
     for (int j = 0; j < 2; j++)
