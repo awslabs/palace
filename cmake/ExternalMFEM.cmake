@@ -463,6 +463,13 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/641e56439e63a1774f43bc2ba904797694a047ad.diff"
   2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe
 )
+# https://github.com/mfem/mfem/pull/5518
+# ParSubMesh: orientation of the shared faces whose parent orientation is a rotation.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5518.diff
+  "https://github.com/mfem/mfem/compare/3001edfcf4fd91535273ebdf450e9fa4c7bd6776...ec92e77c63715a2673fdfe415b7935fcfb8d62ce.diff"
+  7d39edc1f76e05242a30f42a2cd17f8d76bf5d657c1c0a66d251b2024e4601e7
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem

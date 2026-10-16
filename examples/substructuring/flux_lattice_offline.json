@@ -1,0 +1,416 @@
+{
+  "Problem": {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/flux_lattice_offline"
+  },
+  "Model": {
+    "Mesh": "mesh/flux_lattice.msh",
+    "L0": 1e-06
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1,
+          2
+        ],
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        1
+      ]
+    },
+    "Superconductor": [
+      {
+        "Attributes": [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35
+        ],
+        "PenetrationDepth": 0.4,
+        "Thickness": 0.1
+      }
+    ],
+    "FluxLoop": [
+      {
+        "Index": 1,
+        "FilmAttributes": [
+          11
+        ],
+        "HoleAttributes": [
+          41
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 2,
+        "FilmAttributes": [
+          12
+        ],
+        "HoleAttributes": [
+          42
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 3,
+        "FilmAttributes": [
+          13
+        ],
+        "HoleAttributes": [
+          43
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 4,
+        "FilmAttributes": [
+          14
+        ],
+        "HoleAttributes": [
+          44
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 5,
+        "FilmAttributes": [
+          15
+        ],
+        "HoleAttributes": [
+          45
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 6,
+        "FilmAttributes": [
+          16
+        ],
+        "HoleAttributes": [
+          46
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 7,
+        "FilmAttributes": [
+          17
+        ],
+        "HoleAttributes": [
+          47
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 8,
+        "FilmAttributes": [
+          18
+        ],
+        "HoleAttributes": [
+          48
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 9,
+        "FilmAttributes": [
+          19
+        ],
+        "HoleAttributes": [
+          49
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 10,
+        "FilmAttributes": [
+          20
+        ],
+        "HoleAttributes": [
+          50
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 11,
+        "FilmAttributes": [
+          21
+        ],
+        "HoleAttributes": [
+          51
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 12,
+        "FilmAttributes": [
+          22
+        ],
+        "HoleAttributes": [
+          52
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 13,
+        "FilmAttributes": [
+          23
+        ],
+        "HoleAttributes": [
+          53
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 14,
+        "FilmAttributes": [
+          24
+        ],
+        "HoleAttributes": [
+          54
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 15,
+        "FilmAttributes": [
+          25
+        ],
+        "HoleAttributes": [
+          55
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 16,
+        "FilmAttributes": [
+          26
+        ],
+        "HoleAttributes": [
+          56
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 17,
+        "FilmAttributes": [
+          27
+        ],
+        "HoleAttributes": [
+          57
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 18,
+        "FilmAttributes": [
+          28
+        ],
+        "HoleAttributes": [
+          58
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 19,
+        "FilmAttributes": [
+          29
+        ],
+        "HoleAttributes": [
+          59
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 20,
+        "FilmAttributes": [
+          30
+        ],
+        "HoleAttributes": [
+          60
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 21,
+        "FilmAttributes": [
+          31
+        ],
+        "HoleAttributes": [
+          61
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 22,
+        "FilmAttributes": [
+          32
+        ],
+        "HoleAttributes": [
+          62
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 23,
+        "FilmAttributes": [
+          33
+        ],
+        "HoleAttributes": [
+          63
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 24,
+        "FilmAttributes": [
+          34
+        ],
+        "HoleAttributes": [
+          64
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      },
+      {
+        "Index": 25,
+        "FilmAttributes": [
+          35
+        ],
+        "HoleAttributes": [
+          65
+        ],
+        "FluxAmounts": [
+          1.0
+        ],
+        "Direction": "+Z"
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic": {
+      "Save": 0
+    },
+    "Linear": {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1e-08,
+      "MaxIts": 500
+    },
+    "Substructuring": {
+      "Region": {
+        "Attributes": [
+          1
+        ]
+      },
+      "Environment": {
+        "Attributes": [
+          2
+        ]
+      },
+      "Mode": "Offline",
+      "SaveModel": "postpro/flux_lattice_environment.model"
+    }
+  }
+}
