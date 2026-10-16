@@ -1303,12 +1303,9 @@ struct SubstructuringSolver::Impl
         other.Append(i);
       }
     }
-    mfem::HypreParMatrix A_sch(Aenv());
-    {
-      std::unique_ptr<mfem::HypreParMatrix> e(A_sch.EliminateRowsCols(other));
-    }
     env_mumps = std::make_unique<MumpsSchurSolver>(
-        A_sch, InterfaceTrueDofs(), iodata.solver.substructuring->factorization_tol);
+        *EliminateToIdentity(Aenv(), other), InterfaceTrueDofs(),
+        iodata.solver.substructuring->factorization_tol);
     // The Schur is symmetric (column-major == row-major): scatter its rows to their owners.
     ScatterRows(env_mumps->Schur(), nG_global, S_rows);
     env_built = true;
@@ -2086,11 +2083,7 @@ struct SubstructuringSolver::Impl
           non_env_int.Append(i);
         }
       }
-      env_A_ee_parent = std::make_unique<mfem::HypreParMatrix>(Aenv());
-      {
-        std::unique_ptr<mfem::HypreParMatrix> e(
-            env_A_ee_parent->EliminateRowsCols(non_env_int));
-      }
+      env_A_ee_parent = EliminateToIdentity(Aenv(), non_env_int);
       env_lu_parent = std::make_unique<BlockedDirectSolver>(
           MakeDirectSolver(iodata, parent_fes.GetComm()));
       env_lu_parent->SetOperator(*env_A_ee_parent);
@@ -2757,7 +2750,6 @@ void SubstructuringSolver::CondenseEnvironment()
   Impl *pi = impl.get();
 
   // A_region restricted to region-free true DOFs (non-region-free pinned to identity).
-  impl->A_region_free = std::make_unique<mfem::HypreParMatrix>(*impl->A_region);
   mfem::Array<int> non_rfree;
   for (int i = 0; i < impl->nt; i++)
   {
@@ -2766,10 +2758,7 @@ void SubstructuringSolver::CondenseEnvironment()
       non_rfree.Append(i);
     }
   }
-  {
-    std::unique_ptr<mfem::HypreParMatrix> tmp(
-        impl->A_region_free->EliminateRowsCols(non_rfree));
-  }
+  impl->A_region_free = EliminateToIdentity(*impl->A_region, non_rfree);
 
   // Global interface enumeration.
   MPI_Comm comm = impl->parent_fes.GetComm();

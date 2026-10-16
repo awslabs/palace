@@ -388,6 +388,21 @@ std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
   return mark;
 }
 
+std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMatrix &A,
+                                                          const mfem::Array<int> &dofs)
+{
+  mfem::HypreParMatrix B(A);
+  B.EliminateBC(dofs, mfem::Operator::DiagonalPolicy::DIAG_ZERO);
+  mfem::SparseMatrix diag(A.Height());
+  for (int d : dofs)
+  {
+    diag.Set(d, d, 1.0);
+  }
+  diag.Finalize();
+  mfem::HypreParMatrix I(A.GetComm(), A.GetGlobalNumRows(), A.GetRowStarts(), &diag);
+  return std::unique_ptr<mfem::HypreParMatrix>(mfem::ParAdd(&B, &I));
+}
+
 std::string RegionMeshPath(const std::string &model_path)
 {
   std::filesystem::path p(model_path);
