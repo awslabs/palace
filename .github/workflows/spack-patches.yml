@@ -1,0 +1,73 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Spack Patches
+
+# Open a pull request removing the patches in spack_repo/patches whose spack-packages
+# pull request has been merged into the spack-packages commit CI pins. Rerunning updates
+# the same pull request.
+#
+# NOTE: Pull requests opened with the GITHUB_TOKEN do not trigger other workflows, so CI
+# does not run on the pull request until a maintainer closes and reopens it or pushes to it.
+
+on:
+  schedule:
+    - cron: '41 5 * * 1'  # Weekly, Monday 05:41 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  remove-merged-patches:
+    if: github.repository == 'awslabs/palace'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: automation/remove-merged-spack-patches
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Find merged patches
+        id: find
+        run: |
+          patches=$(./.github/spack_patches/merged-patches)
+          if [[ -n "$patches" ]]; then
+            {
+              echo 'patches<<EOF'
+              echo "$patches"
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the pull request
+        if: steps.find.outputs.patches != ''
+        env:
+          PATCHES: ${{ steps.find.outputs.patches }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$BRANCH"
+          # One path per line, none with spaces.
+          git rm --quiet $PATCHES
+          git commit --quiet -m 'Remove Spack patches merged upstream' \
+            -m "The spack-packages pull requests of these patches are merged into the pinned commit:" \
+            -m "$PATCHES"
+          git push --force origin "$BRANCH"
+
+          body=$(printf '%s\n\n%s\n' \
+            'The spack-packages pull requests of these patches are merged into the spack-packages commit CI pins, so the patches are no longer needed:' \
+            "$(echo "$PATCHES" | sed 's/^/- `/; s/$/`/')")
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')
+          if [[ -z "$pr" ]]; then
+            gh pr create --base main --head "$BRANCH" \
+              --title 'Remove Spack patches merged upstream' --body "$body"
+          else
+            gh pr edit "$pr" --body "$body"
+          fi

@@ -18,4 +18,7 @@ git diff > package-name-description.diff
 
 Please remove outdated patches if you find any (e.g., when upstream PRs are
 merged). To this end, we recommend including the PR number to the name of the
-file, e.g., `pr2580.diff`.
+file, e.g., `pr2580.diff`. A weekly workflow
+(`.github/workflows/spack-patches.yml`) opens a pull request removing every
+patch named `pr<NUMBER>*.diff` whose pull request is merged into the
+spack-packages commit that CI pins.

@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Print the patches in spack_repo/patches that are no longer needed: those named
+# pr<NUMBER>_*.diff whose spack/spack-packages pull request is merged into the
+# spack-packages commit that CI pins. A merged pull request is not enough on its own,
+# since CI builds from the pinned commit until the pin is bumped. Progress for each
+# patch goes to stderr. Requires an authenticated `gh` (GH_TOKEN).
+
+set -euo pipefail
+
+SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+UPSTREAM=spack/spack-packages
+
+# Every pinned spack-packages commit: the SPACK_PACKAGES_COMMIT workflow variables and
+# the spack-packages-commit input defaults of the composite actions. A patch can go only
+# once all of them contain the merge.
+PINS=$(
+    {
+        grep -rhE 'SPACK_PACKAGES_COMMIT: [0-9a-f]{40}' "$SOURCE_DIR/.github/workflows"
+        grep -rh -A3 'spack-packages-commit:' "$SOURCE_DIR/.github/actions" | grep 'default:'
+    } | grep -oE '[0-9a-f]{40}' | sort -u
+)
+if [[ -z "$PINS" ]]; then
+    echo "Error: no pinned spack-packages commit found under .github" >&2
+    exit 1
+fi
+
+for patch in "$SOURCE_DIR"/spack_repo/patches/pr*.diff; do
+    [[ -f "$patch" ]] || continue
+    name=$(basename "$patch")
+    pr=$(echo "$name" | sed -nE 's/^pr([0-9]+).*/\1/p')
+    if [[ -z "$pr" ]]; then
+        echo "$name: no pull request number, skipped" >&2
+        continue
+    fi
+    merge=$(gh pr view "$pr" --repo "$UPSTREAM" --json mergeCommit --jq '.mergeCommit.oid // ""')
+    if [[ -z "$merge" ]]; then
+        echo "$name: $UPSTREAM#$pr is not merged" >&2
+        continue
+    fi
+    contained=true
+    for pin in $PINS; do
+        # "ahead" or "identical": the pin descends from (or is) the merge commit.
+        status=$(gh api "repos/$UPSTREAM/compare/$merge...$pin" --jq '.status')
+        if [[ "$status" != "ahead" && "$status" != "identical" ]]; then
+            contained=false
+        fi
+    done
+    if $contained; then
+        echo "$name: $UPSTREAM#$pr is merged into the pinned commit, remove" >&2
+        echo "spack_repo/patches/$name"
+    else
+        echo "$name: $UPSTREAM#$pr is merged but not yet in the pinned commit" >&2
+    fi
+done
