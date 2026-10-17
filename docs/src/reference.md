@@ -81,6 +81,33 @@ where ``\lambda_L = \sqrt{m/\mu n_s e^2}/L_0`` is the nondimensionalized London 
 depth. In this case, the term ``+i\omega\sigma \bm{E}`` arising for a normal conductor in
 the time-harmonic Maxwell's equations becomes ``+(\mu_r \lambda_L^2)^{-1}\bm{E}``.
 
+A superconducting domain may instead be described by a frequency-dependent complex
+conductivity ``\sigma(\omega) = \sigma_1(\omega) - i\sigma_2(\omega)``, for which the term
+``+i\omega\sigma \bm{E}`` becomes ``+i\omega\sigma(\omega)\bm{E}``. The two-fluid model,
+``\sigma(\omega) = \sigma_1 - i/(\omega\mu_0\lambda^2)``, corresponds to a conductivity
+``\sigma_1`` and a London penetration depth ``\lambda``. For the Mattis-Bardeen model in the
+local limit [[13]](#References),
+
+```math
+\begin{aligned}
+\frac{\sigma_1}{\sigma_n} &= \frac{2}{\hbar\omega}\int_\Delta^\infty
+  [f(E)-f(E+\hbar\omega)]\,g(E)\,dE + \frac{1}{\hbar\omega}\int_{\Delta-\hbar\omega}^{-\Delta}
+  [1-2f(E+\hbar\omega)]\,|g(E)|\,dE \\
+\frac{\sigma_2}{\sigma_n} &= \frac{1}{\hbar\omega}\int_{\max(\Delta-\hbar\omega,-\Delta)}^{\Delta}
+  \frac{[1-2f(E+\hbar\omega)]\,(E^2+\Delta^2+\hbar\omega E)}
+  {\sqrt{\Delta^2-E^2}\,\sqrt{(E+\hbar\omega)^2-\Delta^2}}\,dE
+\end{aligned}
+```
+
+where ``g(E) = (E^2+\Delta^2+\hbar\omega E)/(\sqrt{E^2-\Delta^2}\sqrt{(E+\hbar\omega)^2-\Delta^2})``,
+``f`` is the Fermi function at temperature ``T``, ``\Delta`` is the superconducting gap, and
+``\sigma_n`` is the normal-state conductivity. The second term of ``\sigma_1`` is present only
+for ``\hbar\omega > 2\Delta``. A dispersive conductivity is split into a
+frequency-independent part, the two-fluid model ``\sigma_a(\omega) = \sigma_1(\omega_{ref}) - i\omega_{ref}\sigma_2(\omega_{ref})/\omega`` matching ``\sigma`` at a reference frequency
+``\omega_{ref}``, which enters the system like a conductivity and a London penetration depth,
+and the remainder ``i\omega(\sigma(\omega)-\sigma_a(\omega))``, which vanishes at
+``\omega_{ref}`` and is assembled at each frequency.
+
 The domain boundary ``\Gamma = \Gamma_{PEC}\cup\Gamma_{PMC}\cup\Gamma_{Z}``, is separated
 into perfect electric conductor (PEC), perfect magnetic conductor (PMC), and impedance
 boundaries, respectively. The PEC boundary condition is a homogeneous Dirichlet condition,
@@ -956,4 +983,6 @@ problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
 Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
-[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
+[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
+[13] D. C. Mattis and J. Bardeen, Theory of the anomalous skin effect in normal and
+superconducting metals, *Physical Review* 111, 412 (1958).

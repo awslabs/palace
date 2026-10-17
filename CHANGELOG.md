@@ -19,6 +19,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added complex conductivity models for superconducting domains,
+    `Domains.Materials[].ComplexConductivity`: Mattis-Bardeen, tabulated, and classical or
+    enhanced two-fluid. The frequency-dependent models are supported for driven
+    simulations, with uniform and adaptive sweeps, and boundary mode simulations.
+    SchemaVer 2-3-0
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly

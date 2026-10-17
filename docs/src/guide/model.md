@@ -56,8 +56,9 @@ from driven problems in the time domain.
 
 Material properties are handled by the
 [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
-object. *Palace* supports linear, frequency independent constitutive laws for material
-modeling.
+object. *Palace* supports linear constitutive laws for material modeling, which are
+frequency independent except for the complex conductivity models of superconducting domains
+described below.
 
 Materials with scalar or symmetric matrix-valued material properties are supported. For most
 simulation types, each material in the model requires a specified relative permittivity and
@@ -71,3 +72,22 @@ Modeling of superconducting domains is performed using the current-field constit
 relations given by the London equations. The user can specify a London penetration depth to
 activate this model. It can also be used in conjunction with a material conductivity when
 wishing to model both superconducting and normal currents.
+
+Alternatively, a superconducting domain can be described by a complex conductivity
+``\sigma(\omega) = \sigma_1(\omega) - i\sigma_2(\omega)``, specified with
+[`config["Domains"]["Materials"][]["ComplexConductivity"]`](../config/reference.md#config-domains-materials):
+
+  - `"TwoFluid"`: frequency-independent ``\sigma_1`` and London penetration depth, computed
+    from the normal-state conductivity, the zero-temperature penetration depth, and the
+    temperature with the classical (Gorter-Casimir) or enhanced (Vendik) temperature law.
+    This is equivalent to `"Conductivity"` and `"LondonDepth"`.
+  - `"MattisBardeen"`: the local (dirty-limit) Mattis-Bardeen conductivity, from the
+    normal-state conductivity, the temperature, and the gap or the critical temperature
+    (weak-coupling BCS gap). It captures the frequency dependence up to and above the gap
+    frequency ``2\Delta/h``, as needed for picosecond pulses on superconducting lines.
+  - `"Table"`: tabulated ``\sigma_1`` and ``\sigma_2``, interpolated in frequency.
+
+The dispersive models (`"MattisBardeen"` and `"Table"`) are supported for driven
+simulations, with uniform or adaptive frequency sweeps, and for boundary mode simulations.
+They are not yet supported for eigenmode or transient simulations, wave ports adjacent to
+dispersive domains, or adaptive circuit synthesis.
