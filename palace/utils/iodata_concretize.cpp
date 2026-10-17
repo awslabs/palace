@@ -246,6 +246,18 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
     for (std::size_t i = 0; i < n; ++i)
     {
       const auto &m = domains.materials[i];
+      if (m.complex_sigma)
+      {
+        // "Conductivity", "LondonDepth", and "LossTan" are exclusive with this block.
+        ApplyEntries(j_mats[i],
+                     {{"Permeability", m.mu_r.s[0]}, {"Permittivity", m.epsilon_r.s[0]}});
+        if (m.complex_sigma->IsDispersive())
+        {
+          Concretize(j_mats[i]["ComplexConductivity"], "ReferenceFrequency",
+                     m.complex_sigma->reference_freq);
+        }
+        continue;
+      }
       ApplyEntries(j_mats[i], {{"Permeability", m.mu_r.s[0]},
                                {"Permittivity", m.epsilon_r.s[0]},
                                {"LossTan", m.tandelta.s[0]},

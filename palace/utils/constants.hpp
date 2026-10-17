@@ -33,6 +33,18 @@ inline constexpr double epsilon0_ = 1.0 / (mu0_ * c0_ * c0_);
 // CODATA value with error: 376.730 313 412(59)
 inline constexpr double Z0_ = mu0_ * c0_;  // = sqrt(mu0 / epsilon0)
 
+// Planck constant [J·s].
+// Exact.
+inline constexpr double h_ = 6.626'070'15e-34;
+
+// Elementary charge [C] (and the electronvolt [J]).
+// Exact.
+inline constexpr double e_ = 1.602'176'634e-19;
+
+// Boltzmann constant [J/K].
+// Exact.
+inline constexpr double kB_ = 1.380'649e-23;
+
 }  // namespace palace::electromagnetics
 
 #endif  // PALACE_UTILS_CONSTANTS_HPP

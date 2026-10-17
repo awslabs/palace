@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iterator>
 #include <numbers>
 #include <sstream>
@@ -59,6 +60,8 @@ PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
 PALACE_JSON_SERIALIZE_ENUM(Device)
 PALACE_JSON_SERIALIZE_ENUM(InactivePortMode)
+PALACE_JSON_SERIALIZE_ENUM(ComplexConductivityType)
+PALACE_JSON_SERIALIZE_ENUM(TwoFluidModel)
 }  // namespace palace
 
 namespace palace::config
@@ -283,6 +286,48 @@ ModelData::ModelData(const json &model)
   refinement = ParseOptional<RefinementData>(model, "Refinement");
 }
 
+ComplexConductivityData::ComplexConductivityData(const json &data)
+{
+  type = data.at("Model");  // Required
+  sigma_n = data.value("NormalConductivity", sigma_n);
+  temperature = data.value("Temperature", temperature);
+  critical_temperature = data.value("CriticalTemperature", critical_temperature);
+  gap = data.value("Gap", gap);
+  reference_freq = data.value("ReferenceFrequency", reference_freq);
+  two_fluid_model = data.value("TwoFluidModel", two_fluid_model);
+  lambda_0 = data.value("LondonDepth0", lambda_0);
+  table_f = data.value("Frequency", table_f);
+  table_sigma1 = data.value("Sigma1", table_sigma1);
+  table_sigma2 = data.value("Sigma2", table_sigma2);
+  switch (type)
+  {
+    case ComplexConductivityType::MATTIS_BARDEEN:
+      MFEM_VERIFY(sigma_n > 0.0 && temperature >= 0.0 && gap >= 0.0 &&
+                      (gap > 0.0 || critical_temperature > temperature),
+                  "\"MattisBardeen\" conductivity requires \"NormalConductivity\" > 0, "
+                  "\"Temperature\" >= 0, and \"Gap\" > 0 or \"CriticalTemperature\" > "
+                  "\"Temperature\"!");
+      break;
+    case ComplexConductivityType::TWO_FLUID:
+      MFEM_VERIFY(sigma_n >= 0.0 && lambda_0 > 0.0 && temperature >= 0.0 &&
+                      critical_temperature > temperature,
+                  "\"TwoFluid\" conductivity requires \"NormalConductivity\" >= 0, "
+                  "\"LondonDepth0\" > 0, and 0 <= \"Temperature\" < "
+                  "\"CriticalTemperature\"!");
+      break;
+    case ComplexConductivityType::TABLE:
+      MFEM_VERIFY(table_f.size() >= 2 && table_sigma1.size() == table_f.size() &&
+                      table_sigma2.size() == table_f.size(),
+                  "\"Table\" conductivity requires \"Frequency\", \"Sigma1\", and "
+                  "\"Sigma2\" arrays of equal length >= 2!");
+      MFEM_VERIFY(table_f[0] > 0.0 && std::ranges::adjacent_find(
+                                          table_f, std::greater_equal<>()) == table_f.end(),
+                  "\"Table\" conductivity \"Frequency\" must be positive and strictly "
+                  "increasing!");
+      break;
+  }
+}
+
 MaterialData::MaterialData(const json &domain)
 {
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
@@ -292,6 +337,24 @@ MaterialData::MaterialData(const json &domain)
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
   ParseSymmetricMatrixData(domain, "Conductivity", sigma);
   lambda_L = domain.value("LondonDepth", lambda_L);
+  if (auto it = domain.find("ComplexConductivity"); it != domain.end())
+  {
+    MFEM_VERIFY(!domain.contains("Conductivity") && !domain.contains("LondonDepth") &&
+                    !domain.contains("LossTan"),
+                "Material \"ComplexConductivity\" cannot be combined with "
+                "\"Conductivity\", \"LondonDepth\", or \"LossTan\"!");
+    const auto &cs = complex_sigma.emplace(*it);
+    if (cs.type == ComplexConductivityType::TWO_FLUID)
+    {
+      // Classical (Gorter-Casimir): σ1 = σn t⁴, λ = λ0 / √(1 - t⁴). Enhanced (Vendik):
+      // σ1 = σn √t, λ = λ0 / √(1 - t^(3/2)).
+      const double t = cs.temperature / cs.critical_temperature;
+      const bool classical = (cs.two_fluid_model == TwoFluidModel::CLASSICAL);
+      sigma.s.fill(cs.sigma_n * (classical ? std::pow(t, 4) : std::sqrt(t)));
+      lambda_L =
+          cs.lambda_0 / std::sqrt(1.0 - (classical ? std::pow(t, 4) : std::pow(t, 1.5)));
+    }
+  }
 }
 
 DomainEnergyData::DomainEnergyData(const json &domain)
@@ -1703,6 +1766,32 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
+
+  if (data.complex_sigma)
+  {
+    auto &cs = *data.complex_sigma;
+    const double sigma_c = units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+    const auto omega = [&units](double f)
+    {
+      return 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+    };
+    const auto omega_E = [&omega](double E)
+    { return omega(1.0e-9 * E / electromagnetics::h_); };
+    cs.sigma_n /= sigma_c;
+    cs.temperature = omega_E(electromagnetics::kB_ * cs.temperature);
+    cs.critical_temperature = omega_E(electromagnetics::kB_ * cs.critical_temperature);
+    cs.gap = omega_E(electromagnetics::e_ * cs.gap);
+    cs.reference_freq = omega(cs.reference_freq);
+    std::ranges::transform(cs.table_f, cs.table_f.begin(), omega);
+    for (auto &s : cs.table_sigma1)
+    {
+      s /= sigma_c;
+    }
+    for (auto &s : cs.table_sigma2)
+    {
+      s /= sigma_c;
+    }
+  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)

@@ -1802,12 +1802,59 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(m2.lambda_L == m1.lambda_L);
 
     // Coverage gate. MaterialAxes is opt-in: omission means "diagonal in standard
-    // basis". Concretize does not synthesize one.
+    // basis". ComplexConductivity is opt-in: omission means no conductivity model.
+    // Concretize does not synthesize either.
     auto mat_gaps = SchemaCoverageGaps("/properties/Domains/properties/Materials/items",
                                        config["Domains"]["Materials"][0],
-                                       /*skip=*/{"MaterialAxes"});
+                                       /*skip=*/{"MaterialAxes", "ComplexConductivity"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
+  }
+
+  SECTION("Round-trip: complex conductivity models are not combined with Conductivity")
+  {
+    // "Conductivity", "LondonDepth", and "LossTan" are exclusive with
+    // "ComplexConductivity", so ConcretizeDefaults must not add them (a two-fluid model
+    // resolves into the conductivity and London depth internally).
+    for (const auto &model : {json{{"Model", "TwoFluid"},
+                                   {"NormalConductivity", 2.0e7},
+                                   {"Temperature", 4.2},
+                                   {"CriticalTemperature", 9.0},
+                                   {"LondonDepth0", 0.08}},
+                              json{{"Model", "MattisBardeen"},
+                                   {"NormalConductivity", 1.6e7},
+                                   {"Temperature", 4.2},
+                                   {"Gap", 1.343e-3}}})
+    {
+      json config = {
+          {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains",
+           {{"Materials", {{{"Attributes", {1}}, {"ComplexConductivity", model}}}}}},
+          {"Boundaries", json::object()},
+          {"Solver",
+           {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+      IoData iodata1(config, false);
+      config = IoData::ConcretizeDefaults(iodata1, config);
+      std::string err = ValidateConfig(config);
+      INFO("schema validation error: " << err);
+      CHECK(err.empty());
+      auto &j_mat = config["Domains"]["Materials"][0];
+      CHECK(j_mat.contains("Permittivity"));
+      CHECK_FALSE(j_mat.contains("Conductivity"));
+      CHECK_FALSE(j_mat.contains("LondonDepth"));
+      CHECK_FALSE(j_mat.contains("LossTan"));
+      IoData iodata2(config, false);
+      const auto &m1 = iodata1.domains.materials[0];
+      const auto &m2 = iodata2.domains.materials[0];
+      CHECK(m2.sigma.s[0] == m1.sigma.s[0]);
+      CHECK(m2.lambda_L == m1.lambda_L);
+      REQUIRE(m2.complex_sigma);
+      CHECK(m2.complex_sigma->type == m1.complex_sigma->type);
+      CHECK(m2.complex_sigma->reference_freq == m1.complex_sigma->reference_freq);
+      CHECK(j_mat["ComplexConductivity"].contains("ReferenceFrequency") ==
+            m1.complex_sigma->IsDispersive());
+    }
   }
 }
 

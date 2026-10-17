@@ -236,6 +236,38 @@ public:
   }
 };
 
+// Complex conductivity σ(ω) = σ1(ω) - iσ2(ω) of a superconducting domain. Nondimensionalize
+// converts the frequencies and the energies kB T, kB Tc, and Δ to angular frequencies.
+struct ComplexConductivityData
+{
+public:
+  // Conductivity model.
+  ComplexConductivityType type = ComplexConductivityType::MATTIS_BARDEEN;
+
+  // Normal-state conductivity [S/m].
+  double sigma_n = 0.0;
+
+  // Temperature and critical temperature [K], and gap Δ(T) [eV]. A zero gap is computed
+  // from Tc with the weak-coupling BCS gap equation.
+  double temperature = 0.0, critical_temperature = 0.0, gap = 0.0;
+
+  // Reference frequency of the frequency-independent part of a dispersive model [GHz].
+  double reference_freq = 0.0;
+
+  // Two-fluid temperature law and London penetration depth at T = 0 [mesh length units].
+  TwoFluidModel two_fluid_model = TwoFluidModel::ENHANCED;
+  double lambda_0 = 0.0;
+
+  // Tabulated frequencies [GHz] and conductivities σ1, σ2 [S/m].
+  std::vector<double> table_f = {}, table_sigma1 = {}, table_sigma2 = {};
+
+  // A two-fluid model is resolved into the material conductivity and London depth.
+  bool IsDispersive() const { return type != ComplexConductivityType::TWO_FLUID; }
+
+  ComplexConductivityData() = default;
+  ComplexConductivityData(const json &data);
+};
+
 struct MaterialData
 {
 public:
@@ -253,6 +285,9 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
+
+  // Complex conductivity model for superconductors.
+  std::optional<ComplexConductivityData> complex_sigma = std::nullopt;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};

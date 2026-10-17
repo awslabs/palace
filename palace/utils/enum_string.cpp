@@ -152,6 +152,14 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
 PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
 
+PALACE_ENUM_STRING_DEFINE(ComplexConductivityType,
+                          {{ComplexConductivityType::MATTIS_BARDEEN, "MattisBardeen"},
+                           {ComplexConductivityType::TWO_FLUID, "TwoFluid"},
+                           {ComplexConductivityType::TABLE, "Table"}})
+
+PALACE_ENUM_STRING_DEFINE(TwoFluidModel, {{TwoFluidModel::CLASSICAL, "Classical"},
+                                          {TwoFluidModel::ENHANCED, "Enhanced"}})
+
 #undef PALACE_ENUM_STRING_DEFINE
 
 }  // namespace palace

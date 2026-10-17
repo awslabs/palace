@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-2-0",
+  "$id": "urn:palace:schema:2-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -652,6 +652,10 @@
           "description": "London penetration depth for this material, specified in mesh length units. Activates the London equations-based model relating superconducting current and electromagnetic fields in this domain.",
           "default": 0.0
         },
+        "ComplexConductivity": {
+          "$ref": "#/$defs/ComplexConductivity",
+          "description": "Complex conductivity `σ(ω) = σ1(ω) - iσ2(ω)` of a superconducting domain. Exclusive with `\"Conductivity\"`, `\"LondonDepth\"`, and `\"LossTan\"`."
+        },
         "MaterialAxes": {
           "type": "array",
           "description": "Axes directions for specification of anisotropic material properties. Required to be unit length and orthogonal.",
@@ -677,6 +681,91 @@
           },
           "minItems": 3,
           "maxItems": 3
+        }
+      }
+    },
+    "ComplexConductivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Model"
+      ],
+      "properties": {
+        "Model": {
+          "type": "string",
+          "enum": [
+            "MattisBardeen",
+            "TwoFluid",
+            "Table"
+          ],
+          "description": "Conductivity model: `\"MattisBardeen\"` (local limit), `\"TwoFluid\"` (frequency-independent `\"Conductivity\"` and `\"LondonDepth\"` computed from the temperature), or `\"Table\"` (interpolated `σ1(f)` and `σ2(f)`). `\"MattisBardeen\"` and `\"Table\"` are dispersive, and supported for driven and boundary mode problems."
+        },
+        "NormalConductivity": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Normal-state conductivity `σn`, S/m (`\"MattisBardeen\"`, `\"TwoFluid\"`)."
+        },
+        "Temperature": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Temperature, K (`\"MattisBardeen\"`, `\"TwoFluid\"`).",
+          "default": 0.0
+        },
+        "CriticalTemperature": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Critical temperature, K (`\"TwoFluid\"`, and `\"MattisBardeen\"` without `\"Gap\"`, which then uses the weak-coupling BCS gap)."
+        },
+        "Gap": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Superconducting gap `Δ(T)` at the temperature, eV (`\"MattisBardeen\"`)."
+        },
+        "ReferenceFrequency": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Frequency at which the frequency-independent part of a dispersive model is matched to `σ(ω)`, GHz. Defaults to the geometric mean of the driven sweep band; boundary mode problems use the mode frequency."
+        },
+        "TwoFluidModel": {
+          "type": "string",
+          "enum": [
+            "Classical",
+            "Enhanced"
+          ],
+          "description": "Two-fluid temperature law, with `t = T/Tc`: `\"Classical\"` (`σ1 = σn t^4`, `λ = λ0/sqrt(1 - t^4)`) or `\"Enhanced\"` (`σ1 = σn t^(1/2)`, `λ = λ0/sqrt(1 - t^(3/2))`).",
+          "default": "Enhanced"
+        },
+        "LondonDepth0": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "London penetration depth at zero temperature `λ0`, in mesh length units (`\"TwoFluid\"`)."
+        },
+        "Frequency": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0.0
+          },
+          "minItems": 2,
+          "description": "Strictly increasing frequencies, GHz (`\"Table\"`)."
+        },
+        "Sigma1": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0.0
+          },
+          "minItems": 2,
+          "description": "Conductivity `σ1` at each frequency, S/m (`\"Table\"`)."
+        },
+        "Sigma2": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0.0
+          },
+          "minItems": 2,
+          "description": "Conductivity `σ2` at each frequency, S/m (`\"Table\"`)."
         }
       }
     },

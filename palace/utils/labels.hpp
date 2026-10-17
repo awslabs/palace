@@ -221,6 +221,21 @@ enum class InactivePortMode : char
   DEFAULT = OPEN
 };
 
+// Frequency-dependent complex conductivity models for superconducting domains.
+enum class ComplexConductivityType : char
+{
+  MATTIS_BARDEEN,
+  TWO_FLUID,
+  TABLE
+};
+
+// Temperature dependence of the two-fluid superconductor model.
+enum class TwoFluidModel : char
+{
+  CLASSICAL,
+  ENHANCED
+};
+
 }  // namespace palace
 
 #endif  // PALACE_UTILS_LABELS_HPP
