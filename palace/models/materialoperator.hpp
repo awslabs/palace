@@ -44,8 +44,9 @@ private:
   mfem::Array<bool> attr_is_isotropic;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
-  // London penetration depth, or Floquet wave vector.
-  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
+  // London penetration depth, Floquet wave vector, or dispersive complex conductivity.
+  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr,
+      has_dispersive_attr;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
@@ -145,6 +146,7 @@ public:
   bool HasConductivity() const { return has_conductivity_attr; }
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
+  bool HasDispersiveConductivity() const { return has_dispersive_attr; }
   const mfem::Vector &GetWaveVector() const { return wave_vector; }
   const mfem::Vector &GetWaveVectorBZ() const { return wave_vector_bz; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }

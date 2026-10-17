@@ -13,6 +13,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
+#include "models/dispersiveconductivityoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -70,6 +71,9 @@ private:
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
+
+  // Operator for the frequency-dependent part of dispersive conductivity domains.
+  DispersiveConductivityOperator disp_sigma_op;
 
   // Operators for boundary conditions and source excitations.
   CurrentDipoleOperator current_dipole_op;
@@ -181,6 +185,7 @@ public:
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
   const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
   const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
+  const auto &GetDispersiveConductivityOp() const { return disp_sigma_op; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
   // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
@@ -302,6 +307,14 @@ public:
   template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
+
+  // Construct the ω-independent domain mass matrix M_g for dispersive conductivity group
+  // `group_idx`, with unit coefficient, on the imaginary slot: the A2 contribution at
+  // frequency ω is (δy_g(ω)/i)·M_g with δy_g from GetDispersiveConductivityOp(). Returns
+  // null if the group contributes no DoFs on any rank (the check is collective).
+  template <OperatorType OperType>
+  std::unique_ptr<OperType>
+  GetDispersiveConductivityMassMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
   // idx, with unit coefficient (including crack scaling), stored on the real slot. The

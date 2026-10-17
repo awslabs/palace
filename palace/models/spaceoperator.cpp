@@ -52,6 +52,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
     mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back()),
+    disp_sigma_op(domains.materials, problem_type, units, mat_op),
     current_dipole_op(domains.current_dipole, units, *mesh.back()),
     farfield_op(boundaries.farfield, problem_type, mat_op, *mesh.back()),
     surf_sigma_op(boundaries.conductivity, problem_type, units, mat_op, *mesh.back()),
@@ -587,23 +588,28 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-      fbi(mat_op.MaxCeedBdrAttribute());
+      fbi(mat_op.MaxCeedBdrAttribute()), fr(mat_op.MaxCeedAttribute()),
+      fi(mat_op.MaxCeedAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, include_wave_ports);
-  int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
+  disp_sigma_op.AddExtraSystemCoefficients(omega, fr, fi);
+  int empty[2] = {AreExactlyZero(dfbr, fbr, fr), AreExactlyZero(dfbi, fbi, fi)};
   Mpi::GlobalMin(2, empty, GetComm());
-  if (empty[0] && empty[1])
+  // Dispersive domains give an operator even at the reference frequency, where their term
+  // vanishes, since callers detect frequency dependence from a non-null A2.
+  const bool has_dispersive = !disp_sigma_op.Empty();
+  if (empty[0] && empty[1] && !has_dispersive)
   {
     return {};
   }
   constexpr bool skip_zeros = false;
   std::unique_ptr<Operator> ar, ai;
-  if (!empty[0])
+  if (!empty[0] || (empty[1] && has_dispersive))
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), nullptr, &fr, &dfbr, &fbr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), nullptr, &fi, &dfbi, &fbi, nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -757,6 +763,39 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
   constexpr bool skip_zeros = false;
   auto m =
       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
+template <OperatorType OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetDispersiveConductivityMassMatrix(int group_idx,
+                                                   Operator::DiagonalPolicy diag_policy)
+{
+  // Unit-coefficient domain mass M_g of dispersive conductivity group group_idx, on the
+  // imaginary slot. Null if the group has no DoFs on any rank (collective).
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+  disp_sigma_op.AddUnitCoefficients(static_cast<std::size_t>(group_idx), f);
+  int empty = f.IsExactlyZero();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -1112,6 +1151,8 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+  // Dispersive domains only occur in driven problems, where a3 = ω is real.
+  disp_sigma_op.AddExtraSystemCoefficients(std::real(a3), fr, fi);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     // k₀-based tensors: cross terms scale with a1, mass term with a2.
@@ -1164,6 +1205,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+  disp_sigma_op.AddExtraSystemCoefficients(std::real(a3), fr, fr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
@@ -1706,6 +1748,10 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<Operator>
+SpaceOperator::GetDispersiveConductivityMassMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetDispersiveConductivityMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);

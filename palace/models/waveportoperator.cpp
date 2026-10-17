@@ -741,6 +741,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // attribute lookups which correctly reference the remapped submesh.
   port_mat_op = std::make_unique<MaterialOperator>(domains.materials, boundaries.periodic,
                                                    problem_type, *port_mesh);
+  // The port mode problem only includes the frequency-independent part of a dispersive
+  // conductivity.
+  MFEM_VERIFY(!port_mat_op->HasDispersiveConductivity(),
+              "Wave ports adjacent to dispersive \"ComplexConductivity\" domains are not "
+              "yet supported!");
   port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(
       boundaries.impedance, boundaries.cracked_attributes, units, *port_mat_op, mesh);
   port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(

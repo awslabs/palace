@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <fmt/format.h>
 #include "linalg/densematrix.hpp"
+#include "models/complexconductivitymodel.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -194,7 +195,8 @@ void MaterialOperator::SetUpMaterialProperties(
   mat_muinvkx.SetSize(sdim, sdim, nmats);
   mat_kxTmuinvkx.SetSize(sdim, sdim, nmats);
   mat_kx.SetSize(sdim, sdim, nmats);
-  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
+  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr =
+      has_dispersive_attr = false;
 
   // Set up Floquet wave vector for periodic meshes with phase-delay constraints.
   SetUpFloquetWaveVector(periodic, problem_type, mesh);
@@ -220,7 +222,7 @@ void MaterialOperator::SetUpMaterialProperties(
       MFEM_VERIFY(internal::mat::IsValid(data.epsilon_r),
                   "Material has no valid permittivity defined!");
       if (!internal::mat::IsIdentity(data.mu_r) || internal::mat::IsValid(data.sigma) ||
-          std::abs(data.lambda_L) > 0.0)
+          std::abs(data.lambda_L) > 0.0 || data.complex_sigma)
       {
         Mpi::Warning(
             "Electrostatic problem type does not account for material permeability,\n"
@@ -233,7 +235,7 @@ void MaterialOperator::SetUpMaterialProperties(
                   "Material has no valid permeability defined!");
       if (!internal::mat::IsIdentity(data.epsilon_r) ||
           internal::mat::IsValid(data.tandelta) || internal::mat::IsValid(data.sigma) ||
-          std::abs(data.lambda_L) > 0.0)
+          std::abs(data.lambda_L) > 0.0 || data.complex_sigma)
       {
         Mpi::Warning(
             "Magnetostatic problem type does not account for material permittivity,\n"
@@ -363,6 +365,38 @@ void MaterialOperator::SetUpMaterialProperties(
       }
     }
 
+    // Frequency-independent part of a dispersive complex conductivity: the two-fluid model
+    // σ1(ω_ref) - i ω_ref σ2(ω_ref)/ω, whose superfluid term ω_ref σ2(ω_ref) replaces
+    // μ⁻¹λ⁻². DispersiveConductivityOperator adds the frequency-dependent remainder.
+    if (data.complex_sigma && data.complex_sigma->IsDispersive() &&
+        problem_type != ProblemType::ELECTROSTATIC &&
+        problem_type != ProblemType::MAGNETOSTATIC)
+    {
+      const double omega_ref = data.complex_sigma->reference_freq;
+      const auto sigma_ref = ComplexConductivityModel(*data.complex_sigma)(omega_ref);
+      const double sigma_1 = sigma_ref.real(),
+                   omega_sigma_2 = -omega_ref * sigma_ref.imag();
+      for (int d = 0; d < sdim; d++)
+      {
+        mat_sigma(count)(d, d) = sigma_1;
+        mat_invLondon(count)(d, d) = omega_sigma_2;
+      }
+      if (sdim == 2)
+      {
+        mat_sigma_scalar(count)(0, 0) = sigma_1;
+        mat_invLondon_scalar(count)(0, 0) = omega_sigma_2;
+      }
+      if (sigma_1 > 0.0)
+      {
+        has_conductivity_attr = true;
+      }
+      if (omega_sigma_2 > 0.0)
+      {
+        has_london_attr = true;
+      }
+      has_dispersive_attr = true;
+    }
+
     // μ⁻¹ [k x]
     Mult(mat_muinv(count), wave_vector_cross, mat_muinvkx(count));
 
@@ -403,13 +437,14 @@ void MaterialOperator::SetUpMaterialProperties(
                           "config[\"Domains\"][\"Materials\"]!",
                           missing_attr));
 
-  bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
-                      has_wave_attr};
-  Mpi::GlobalOr(4, has_attr, mesh.GetComm());
+  bool has_attr[5] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
+                      has_wave_attr, has_dispersive_attr};
+  Mpi::GlobalOr(5, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
+  has_dispersive_attr = has_attr[4];
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const
