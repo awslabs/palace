@@ -245,6 +245,10 @@ protected:
   std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
   std::vector<std::unique_ptr<ComplexOperator>> Arz_b_;
   std::vector<Eigen::MatrixXcd> Arz_b_r;
+  // Dispersive conductivity domain masses M_g (imaginary slot), with term δy_g(ω)·M_g.
+  // Not folded into circuit synthesis.
+  std::vector<std::unique_ptr<ComplexOperator>> Mdisp_g_;
+  std::vector<Eigen::MatrixXcd> Mdisp_g_r;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the

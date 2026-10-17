@@ -619,6 +619,16 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     }
   }
 
+  // Per-group dispersive conductivity domain mass (imaginary slot, matching the
+  // convention). The online scalar is δy_g(ω)/i.
+  Mdisp_g_.resize(space_op.GetDispersiveConductivityOp().Size());
+  Mdisp_g_r.resize(Mdisp_g_.size());
+  for (std::size_t g = 0; g < Mdisp_g_.size(); g++)
+  {
+    Mdisp_g_[g] = space_op.GetDispersiveConductivityMassMatrix<ComplexOperator>(
+        static_cast<int>(g), Operator::DIAG_ZERO);
+  }
+
   // Capture sweep band and synthesis controls for later use in
   // CalculateNormalizedPROMMatrices. After config::Nondimensionalize, sample_f stores
   // 2π·f_nondim, i.e. ω in nondimensional units. Use AdaptiveTol for the scalar fit
@@ -1199,6 +1209,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       ProjectMatInternal(comm, V, *Arz_b_[b], Arz_b_r[b], r, dim_V_old, true);
     }
   }
+  for (std::size_t g = 0; g < Mdisp_g_.size(); g++)
+  {
+    if (Mdisp_g_[g])
+    {
+      Mdisp_g_r[g].conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *Mdisp_g_[g], Mdisp_g_r[g], r, dim_V_old, true);
+    }
+  }
   // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
   for (auto &[port_idx, Mp_r] : M_floquet_p_r)
   {
@@ -1361,6 +1379,17 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
           Ar += s * Arz_b_r[b];
         }
       }
+      // Factored dispersive conductivity, per domain group: A2_g(ω) = δy_g(ω)·M_g, with
+      // M_g on the imaginary slot of Mdisp_g_r[g].
+      const auto &disp_op = space_op.GetDispersiveConductivityOp();
+      for (std::size_t g = 0; g < Mdisp_g_.size(); g++)
+      {
+        if (Mdisp_g_[g] && Mdisp_g_r[g].rows() == static_cast<long>(V.size()))
+        {
+          Ar += (disp_op.EvaluateScalar(g, omega) / std::complex<double>(0.0, 1.0)) *
+                Mdisp_g_r[g];
+        }
+      }
       // Factored Floquet port Robin BC: A2_floquet,p(ω) = i·γ₀,p(ω)·M_floquet_p.
       // M_floquet_p_r carries the µ⁻¹ boundary mass on the imaginary slot (the i), so
       // the scalar multiplier is γ₀ (real, refreshed by the Initialize(omega) at the top
@@ -1399,6 +1428,13 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         if (Arz_b_[b])
         {
           (Arz_b_r[b].rows() == n) ? (any_factored = true) : (all_present = false);
+        }
+      }
+      for (std::size_t g = 0; g < Mdisp_g_.size(); g++)
+      {
+        if (Mdisp_g_[g])
+        {
+          (Mdisp_g_r[g].rows() == n) ? (any_factored = true) : (all_present = false);
         }
       }
       for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
