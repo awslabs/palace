@@ -2272,8 +2272,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelEnergies(double output_ind
   // electrostatic driver writes them per source: every model at evaluation 0 (fixed trace)
   // and 1 (fixed flux) on the raw field when postprocessing ran; every model at
   // evaluation 2 on the self-consistent corrected field when it exists (its `domain
-  // correction` is the fixed-trace defect the self-consistent normalization carries, its
-  // energies the fixed-trace ones). Rows accumulate over the prints.
+  // correction` is the fixed-trace defect the self-consistent normalization carries = the
+  // electrostatic driver's evaluation-2 row under the default TranslationalDomainCorrection
+  // FixedTrace; its energies the fixed-trace ones). Rows accumulate over the prints: a
+  // reader of a multi-frequency sweep keys the rows by "f (GHz)" / "m" and "exc".
   using VT = Units::ValueType;
   const auto &result = *surface_response_measurement;
   if (!surface_response_model_energy)

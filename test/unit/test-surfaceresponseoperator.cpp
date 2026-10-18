@@ -6555,6 +6555,9 @@ TEST_CASE_METHOD(
       maxwell_sum.fabricated_surface_energy_fixed_flux[interface] +=
           m.fabricated_surface_energy_fixed_flux.at(interface);
       electrostatic_sum.fabricated_surface_energy[interface] += energy;
+      replicated.insert(replicated.end(),
+                        {m.fabricated_surface_energy.at(interface),
+                         m.fabricated_surface_energy_fixed_flux.at(interface)});
     }
     applied_models += m.patch_count > 0.0 ? 1.0 : 0.0;
     maxwell_sum.patch_count += m.patch_count;
@@ -6586,7 +6589,7 @@ TEST_CASE_METHOD(
                WithinRel(electrostatic.fabricated_surface_energy.at(interface), 1.0e-12));
   }
   // Replicated on every rank (decision 822: no rank-dependent collective, no rank-local
-  // value).
+  // value): the whole entry, the per-interface energies included.
   std::vector<double> minimum = replicated, maximum = replicated;
   Mpi::GlobalMin(static_cast<int>(minimum.size()), minimum.data(), Mpi::World());
   Mpi::GlobalMax(static_cast<int>(maximum.size()), maximum.data(), Mpi::World());

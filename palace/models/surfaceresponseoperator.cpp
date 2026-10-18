@@ -27098,22 +27098,19 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       return QuadraticForm(matrix, real, workspace) +
              QuadraticForm(matrix, imag, workspace);
     };
-    result.domain_correction +=
-        0.5 * patch.weight * patch.domain_weight *
+    // The patch's domain defects, evaluated once and added to the totals and to the model's
+    // own entry (M-5) by the same `+= domain_weight * form` statement, so that the totals'
+    // floating-point result is unchanged and the per-model sums are the totals to roundoff.
+    const double domain_weight = 0.5 * patch.weight * patch.domain_weight;
+    const double domain_defect_form =
         HermitianForm(model.domain_defect, patch_trace_real, patch_trace_imag);
-    result.domain_correction_fixed_flux +=
-        0.5 * patch.weight * patch.domain_weight *
-        (HermitianForm(model.fabricated_domain, fixed_flux_real, fixed_flux_imag) -
-         HermitianForm(model.thin_domain, patch_trace_real, patch_trace_imag));
-    // The model's own increments (M-5), the totals' expressions repeated verbatim so that
-    // the totals stay bitwise and the per-model sums are the totals to roundoff.
-    contribution.domain_correction +=
-        0.5 * patch.weight * patch.domain_weight *
-        HermitianForm(model.domain_defect, patch_trace_real, patch_trace_imag);
-    contribution.domain_correction_fixed_flux +=
-        0.5 * patch.weight * patch.domain_weight *
-        (HermitianForm(model.fabricated_domain, fixed_flux_real, fixed_flux_imag) -
-         HermitianForm(model.thin_domain, patch_trace_real, patch_trace_imag));
+    const double fixed_flux_defect_form =
+        HermitianForm(model.fabricated_domain, fixed_flux_real, fixed_flux_imag) -
+        HermitianForm(model.thin_domain, patch_trace_real, patch_trace_imag);
+    result.domain_correction += domain_weight * domain_defect_form;
+    result.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
+    contribution.domain_correction += domain_weight * domain_defect_form;
+    contribution.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
     double patch_response_energy = 0.0;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
