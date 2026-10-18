@@ -8,6 +8,7 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "models/dispersiveconductivityoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -15,10 +16,49 @@
 namespace palace
 {
 
+namespace
+{
+
+// Kinetic energy and loss as weighted sums of the forms 1/2 eᴴ M e, with M = get_M(form).
+template <typename GetOperator>
+std::pair<double, double>
+KineticEnergyAndLoss(const std::vector<DomainPostOperator::ConductionForm> &forms,
+                     GetOperator &&get_M, const GridFunction &E, double omega, Vector &D)
+{
+  if (forms.empty())
+  {
+    return {0.0, 0.0};
+  }
+  std::vector<double> dots(forms.size(), 0.0);
+  for (std::size_t k = 0; k < forms.size(); k++)
+  {
+    const Operator &M = get_M(forms[k]);
+    M.Mult(E.Real(), D);
+    dots[k] = linalg::LocalDot(E.Real(), D);
+    if (E.HasImag())
+    {
+      M.Mult(E.Imag(), D);
+      dots[k] += linalg::LocalDot(E.Imag(), D);
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(dots.size()), dots.data(), E.GetComm());
+  double kinetic = 0.0, loss = 0.0;
+  for (std::size_t k = 0; k < forms.size(); k++)
+  {
+    const auto [w_kinetic, w_loss] = forms[k].weights(omega);
+    kinetic += 0.5 * w_kinetic * dots[k];
+    loss += 0.5 * w_loss * dots[k];
+  }
+  return {kinetic, loss};
+}
+
+}  // namespace
+
 DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const MaterialOperator &mat_op,
                                        const FiniteElementSpace &nd_fespace,
-                                       const FiniteElementSpace &rt_fespace)
+                                       const FiniteElementSpace &rt_fespace,
+                                       const DispersiveConductivityOperator *disp_op)
 {
   // Mass operators are always partially assembled.
   const int dim = nd_fespace.Dimension();
@@ -101,6 +141,62 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       }
     }
     M_i.emplace(idx, std::make_pair(std::move(M_elec_i), std::move(M_mag_i)));
+  }
+
+  // Kinetic energy and conduction loss forms.
+  if (!disp_op)
+  {
+    return;
+  }
+  auto add_form = [&](const MaterialPropertyCoefficient &coeff,
+                      std::function<std::pair<double, double>(double)> weights)
+  {
+    auto assemble = [&](const MaterialPropertyCoefficient &q)
+    {
+      // Processes without elements of the attributes have an empty coefficient.
+      BilinearForm m(nd_fespace);
+      if (!q.empty())
+      {
+        m.AddDomainIntegrator<VectorFEMassIntegrator>(q);
+      }
+      return m.PartialAssemble();
+    };
+    auto &form = cond_forms.emplace_back();
+    form.M = assemble(coeff);
+    for (const auto &[idx, data] : postpro.energy)
+    {
+      MaterialPropertyCoefficient coeff_i(coeff);
+      coeff_i.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
+      form.M_i.emplace(idx, assemble(coeff_i));
+    }
+    form.weights = std::move(weights);
+  };
+  if (mat_op.HasLondonDepth())
+  {
+    has_kinetic = true;
+    add_form({mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth()},
+             [](double omega) { return std::make_pair(1.0 / (omega * omega), 0.0); });
+  }
+  if (mat_op.HasConductivity())
+  {
+    has_loss = true;
+    add_form({mat_op.GetAttributeToMaterial(), mat_op.GetConductivity()},
+             [](double) { return std::make_pair(0.0, 1.0); });
+  }
+  for (std::size_t g = 0; g < disp_op->Size(); g++)
+  {
+    if (disp_op->IsActive(g))
+    {
+      has_kinetic = has_loss = true;
+      MaterialPropertyCoefficient unit(mat_op.MaxCeedAttribute());
+      disp_op->AddUnitCoefficients(g, unit);
+      add_form(unit,
+               [disp_op, g](double omega)
+               {
+                 return std::make_pair(disp_op->EvaluateKineticScalar(g, omega),
+                                       disp_op->EvaluateLossScalar(g, omega));
+               });
+    }
   }
 }
 
@@ -296,6 +392,25 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
   }
   Mpi::GlobalSum(1, &dot, B.GetComm());
   return 0.5 * dot;
+}
+
+std::pair<double, double> DomainPostOperator::GetKineticEnergyAndLoss(const GridFunction &E,
+                                                                      double omega) const
+{
+  return KineticEnergyAndLoss(
+      cond_forms, [](const ConductionForm &form) -> const Operator & { return *form.M; }, E,
+      omega, D);
+}
+
+std::pair<double, double>
+DomainPostOperator::GetDomainKineticEnergyAndLoss(int idx, const GridFunction &E,
+                                                  double omega) const
+{
+  MFEM_VERIFY(M_i.contains(idx),
+              "Invalid domain index when postprocessing domain kinetic energy and loss!");
+  return KineticEnergyAndLoss(
+      cond_forms, [idx](const ConductionForm &form) -> const Operator &
+      { return *form.M_i.at(idx); }, E, omega, D);
 }
 
 }  // namespace palace

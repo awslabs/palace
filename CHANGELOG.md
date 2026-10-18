@@ -26,6 +26,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mode simulations. Added `Boundaries.WavePort[].Target`, the effective index near which
     the port modes are sought, for lines whose modes are slower than bulk waves, such as
     superconducting lines. SchemaVer 2-3-0
+  - Added kinetic energy and conduction loss postprocessing for superconducting and
+    conducting domains in driven and eigenmode simulations, written to `domain-E.csv` as
+    `E_kin` and `P_cond` in total and for each postprocessing domain.
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly

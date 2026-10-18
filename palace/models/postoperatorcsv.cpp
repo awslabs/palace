@@ -55,6 +55,24 @@ Measurement Measurement::Dimensionalize(const Units &units,
         e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
         e.participation_ratio});
   }
+  measurement_cache.domain_kinetic_energy_all =
+      units.Dimensionalize<Units::ValueType::ENERGY>(
+          nondim_measurement_cache.domain_kinetic_energy_all);
+  measurement_cache.domain_conduction_loss_all =
+      units.Dimensionalize<Units::ValueType::POWER>(
+          nondim_measurement_cache.domain_conduction_loss_all);
+  for (const auto &e : nondim_measurement_cache.domain_kinetic_energy_i)
+  {
+    measurement_cache.domain_kinetic_energy_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
+        e.participation_ratio});
+  }
+  for (const auto &e : nondim_measurement_cache.domain_conduction_loss_i)
+  {
+    measurement_cache.domain_conduction_loss_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Dimensionalize<Units::ValueType::POWER>(e.energy),
+        e.participation_ratio});
+  }
   measurement_cache.lumped_port_capacitor_energy =
       units.Dimensionalize<Units::ValueType::ENERGY>(
           nondim_measurement_cache.lumped_port_capacitor_energy);
@@ -197,6 +215,24 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   {
     measurement_cache.domain_H_field_energy_i.emplace_back(Measurement::DomainData{
         e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
+        e.participation_ratio});
+  }
+  measurement_cache.domain_kinetic_energy_all =
+      units.Nondimensionalize<Units::ValueType::ENERGY>(
+          dim_measurement_cache.domain_kinetic_energy_all);
+  measurement_cache.domain_conduction_loss_all =
+      units.Nondimensionalize<Units::ValueType::POWER>(
+          dim_measurement_cache.domain_conduction_loss_all);
+  for (const auto &e : dim_measurement_cache.domain_kinetic_energy_i)
+  {
+    measurement_cache.domain_kinetic_energy_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
+        e.participation_ratio});
+  }
+  for (const auto &e : dim_measurement_cache.domain_conduction_loss_i)
+  {
+    measurement_cache.domain_conduction_loss_i.emplace_back(Measurement::DomainData{
+        e.idx, units.Nondimensionalize<Units::ValueType::POWER>(e.energy),
         e.participation_ratio});
   }
   measurement_cache.lumped_port_capacitor_energy =
@@ -551,8 +587,9 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
   domain_E = TableWithCSVFile(post_dir / "domain-E.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
+  const std::size_t n_cond = dom_post_op.has_kinetic + dom_post_op.has_loss;
   auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * 4 * (1 + dom_post_op.M_i.size());
+      1 + ex_idx_v_all.size() * (4 + n_cond + (4 + 2 * n_cond) * dom_post_op.M_i.size());
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
   for (const auto ex_idx : ex_idx_v_all)
@@ -563,6 +600,14 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
     t.insert(fmt::format("Em_{}", ex_idx), fmt::format("E_mag{} (J)", ex_label), ex_idx);
     t.insert(fmt::format("Ec_{}", ex_idx), fmt::format("E_cap{} (J)", ex_label), ex_idx);
     t.insert(fmt::format("Ei_{}", ex_idx), fmt::format("E_ind{} (J)", ex_label), ex_idx);
+    if (dom_post_op.has_kinetic)
+    {
+      t.insert(fmt::format("Ek_{}", ex_idx), fmt::format("E_kin{} (J)", ex_label), ex_idx);
+    }
+    if (dom_post_op.has_loss)
+    {
+      t.insert(fmt::format("Pc_{}", ex_idx), fmt::format("P_cond{} (W)", ex_label), ex_idx);
+    }
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
@@ -574,6 +619,20 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
                fmt::format("E_mag[{}]{} (J)", idx, ex_label), ex_idx);
       t.insert(fmt::format("pm_{}_{}", idx, ex_idx),
                fmt::format("p_mag[{}]{}", idx, ex_label), ex_idx);
+      if (dom_post_op.has_kinetic)
+      {
+        t.insert(fmt::format("Ek_{}_{}", idx, ex_idx),
+                 fmt::format("E_kin[{}]{} (J)", idx, ex_label), ex_idx);
+        t.insert(fmt::format("pk_{}_{}", idx, ex_idx),
+                 fmt::format("p_kin[{}]{}", idx, ex_label), ex_idx);
+      }
+      if (dom_post_op.has_loss)
+      {
+        t.insert(fmt::format("Pc_{}_{}", idx, ex_idx),
+                 fmt::format("P_cond[{}]{} (W)", idx, ex_label), ex_idx);
+        t.insert(fmt::format("pc_{}_{}", idx, ex_idx),
+                 fmt::format("p_cond[{}]{}", idx, ex_label), ex_idx);
+      }
     }
   }
   MoveTableValidateReload(*domain_E, std::move(t));
@@ -610,6 +669,28 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
     domain_E->table[fmt::format("Em_{}_{}", data.idx, m_ex_idx)] << data.energy;
     domain_E->table[fmt::format("pm_{}_{}", data.idx, m_ex_idx)]
         << data.participation_ratio;
+  }
+  if (domain_E->table.has(fmt::format("Ek_{}", m_ex_idx)))
+  {
+    domain_E->table[fmt::format("Ek_{}", m_ex_idx)]
+        << measurement_cache.domain_kinetic_energy_all;
+    for (const auto &data : measurement_cache.domain_kinetic_energy_i)
+    {
+      domain_E->table[fmt::format("Ek_{}_{}", data.idx, m_ex_idx)] << data.energy;
+      domain_E->table[fmt::format("pk_{}_{}", data.idx, m_ex_idx)]
+          << data.participation_ratio;
+    }
+  }
+  if (domain_E->table.has(fmt::format("Pc_{}", m_ex_idx)))
+  {
+    domain_E->table[fmt::format("Pc_{}", m_ex_idx)]
+        << measurement_cache.domain_conduction_loss_all;
+    for (const auto &data : measurement_cache.domain_conduction_loss_i)
+    {
+      domain_E->table[fmt::format("Pc_{}_{}", data.idx, m_ex_idx)] << data.energy;
+      domain_E->table[fmt::format("pc_{}_{}", data.idx, m_ex_idx)]
+          << data.participation_ratio;
+    }
   }
   WriteTable(*domain_E);
 }

@@ -51,14 +51,19 @@ private:
   // slopes d, held constant outside the table.
   std::vector<double> log_omega, y1, d1, y2, d2;
 
-  double EvalTable(double log_w, const std::vector<double> &y,
-                   const std::vector<double> &d) const;
+  // Interpolant value, or its derivative in log(ω).
+  double EvalTable(double log_w, const std::vector<double> &y, const std::vector<double> &d,
+                   bool derivative = false) const;
 
 public:
   ComplexConductivityModel(const config::ComplexConductivityData &data);
 
   // Complex conductivity at angular frequency ω > 0.
   std::complex<double> operator()(double omega) const;
+
+  // Frequency derivative dσ/dω at angular frequency ω > 0 (central difference for
+  // Mattis-Bardeen).
+  std::complex<double> Derivative(double omega) const;
 
   ComplexConductivityType GetType() const { return type; }
 

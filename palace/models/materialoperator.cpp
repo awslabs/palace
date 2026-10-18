@@ -889,22 +889,23 @@ MaterialPropertyCoefficient &MaterialPropertyCoefficient::operator*=(double a)
 void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &attr_list)
 {
   // Create a new material property coefficient with materials corresponding to only the
-  // unique ones in the given attribute list.
+  // unique ones in the given attribute list. Attributes without a material property stay
+  // zero.
   const mfem::Array<int> attr_mat_orig(attr_mat);
   const mfem::DenseTensor mat_coeff_orig(mat_coeff);
   attr_mat = -1;
   mat_coeff.SetSize(mat_coeff_orig.SizeI(), mat_coeff_orig.SizeJ(), 0);
   for (auto attr : attr_list)
   {
-    if (attr_mat[attr - 1] >= 0)
+    const int orig_mat_idx = attr_mat_orig[attr - 1];
+    if (attr_mat[attr - 1] >= 0 || orig_mat_idx < 0)
     {
-      // Attribute has already been processed.
+      // Attribute has already been processed, or has no material property.
       continue;
     }
 
     // Find all attributes in restricted list of attributes which map to this material index
     // and process them together.
-    const int orig_mat_idx = attr_mat_orig[attr - 1];
     const int new_mat_idx = mat_coeff.SizeK();
     for (auto attr2 : attr_list)
     {

@@ -66,6 +66,11 @@ public:
   // Residual coefficient δy_g(ω) of group g.
   std::complex<double> EvaluateScalar(std::size_t g, double omega) const;
 
+  // Residual coefficients of group g for the kinetic energy (-dσ2/dω) and conduction loss
+  // (σ1) densities.
+  double EvaluateKineticScalar(std::size_t g, double omega) const;
+  double EvaluateLossScalar(std::size_t g, double omega) const;
+
   // Add the residual coefficients of all groups to the real and imaginary parts of the A2
   // domain coefficient.
   void AddExtraSystemCoefficients(double omega, MaterialPropertyCoefficient &fr,

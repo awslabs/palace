@@ -86,6 +86,21 @@ std::complex<double> DispersiveConductivityOperator::EvaluateScalar(std::size_t 
          group.omega_ref * group.sigma_ref.imag();
 }
 
+double DispersiveConductivityOperator::EvaluateKineticScalar(std::size_t g,
+                                                             double omega) const
+{
+  // -dσ2/dω = Im dσ/dω, less ω_ref σ2,ref / ω² of the London anchor.
+  const auto &group = groups[g];
+  return group.model.Derivative(omega).imag() +
+         group.omega_ref * group.sigma_ref.imag() / (omega * omega);
+}
+
+double DispersiveConductivityOperator::EvaluateLossScalar(std::size_t g, double omega) const
+{
+  const auto &group = groups[g];
+  return group.model(omega).real() - group.sigma_ref.real();
+}
+
 void DispersiveConductivityOperator::AddExtraSystemCoefficients(
     double omega, MaterialPropertyCoefficient &fr, MaterialPropertyCoefficient &fi) const
 {

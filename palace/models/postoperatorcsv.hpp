@@ -190,6 +190,14 @@ struct Measurement
   std::vector<DomainData> domain_E_field_energy_i;
   std::vector<DomainData> domain_H_field_energy_i;
 
+  // Kinetic energy and conduction loss of superconducting and conducting domains (driven
+  // and eigenmode). The loss entries hold the power in `energy`.
+  double domain_kinetic_energy_all = 0.0;
+  double domain_conduction_loss_all = 0.0;
+
+  std::vector<DomainData> domain_kinetic_energy_i;
+  std::vector<DomainData> domain_conduction_loss_i;
+
   double lumped_port_capacitor_energy = 0.0;
   double lumped_port_inductor_energy = 0.0;
 

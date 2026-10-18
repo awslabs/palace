@@ -296,6 +296,8 @@ protected:
   bool reduced_postprocessing_checked = false;
   Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
+  std::vector<std::pair<Eigen::MatrixXd, std::map<int, Eigen::MatrixXd>>>
+      reduced_cond_forms;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -326,6 +328,7 @@ protected:
   // They dispatch on solver type within the function itself using `if constexpr`, and do
   // nothing if the measurement is not solver appropriate.
   void MeasureDomainFieldEnergy() const;
+  void MeasureKineticEnergyAndLoss() const;
   void MeasureLumpedPorts() const;
   void MeasureWavePorts() const;
   void MeasureFloquetPorts() const;
@@ -336,11 +339,17 @@ protected:
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
   void MeasureProbes() const;
 
+  // Fill the kinetic energy and conduction loss measurements from (kinetic, loss) of the
+  // entire domain (index -1) or a postprocessing domain.
+  template <typename F>
+  void SetKineticEnergyAndLoss(F &&kinetic_loss) const;
+
   // Helper function called by all solvers. Has to ensure correct call order to deal with
   // dependent measurements.
   void MeasureAllImpl() const
   {
     MeasureDomainFieldEnergy();
+    MeasureKineticEnergyAndLoss();
     MeasureLumpedPorts();
     MeasureWavePorts();
     MeasureFloquetPorts();

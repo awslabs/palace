@@ -126,8 +126,16 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
           else
           {
+            // Kinetic energy and conduction loss for driven and eigenmode problems.
+            const DispersiveConductivityOperator *disp_op = nullptr;
+            if constexpr (solver_t == ProblemType::DRIVEN ||
+                          solver_t == ProblemType::EIGENMODE)
+            {
+              disp_op = &fem_op_.GetDispersiveConductivityOp();
+            }
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace());
+                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace(),
+                                      disp_op);
           }
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
@@ -1647,6 +1655,44 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureKineticEnergyAndLoss() const
+{
+  // At the real part of the frequency.
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
+    const double omega = measurement_cache.freq.real();
+    if (!dom_post_op.cond_forms.empty() && omega > 0.0)
+    {
+      SetKineticEnergyAndLoss(
+          [&](int idx)
+          {
+            return (idx < 0) ? dom_post_op.GetKineticEnergyAndLoss(*E, omega)
+                             : dom_post_op.GetDomainKineticEnergyAndLoss(idx, *E, omega);
+          });
+    }
+  }
+}
+
+template <ProblemType solver_t>
+template <typename F>
+void PostOperator<solver_t>::SetKineticEnergyAndLoss(F &&kinetic_loss) const
+{
+  const auto [kinetic, loss] = kinetic_loss(-1);
+  measurement_cache.domain_kinetic_energy_all = kinetic;
+  measurement_cache.domain_conduction_loss_all = loss;
+  measurement_cache.domain_kinetic_energy_i.clear();
+  measurement_cache.domain_conduction_loss_i.clear();
+  for (const auto &[idx, data] : dom_post_op.M_i)
+  {
+    const auto [kinetic_i, loss_i] = kinetic_loss(idx);
+    measurement_cache.domain_kinetic_energy_i.push_back(
+        {idx, kinetic_i, (kinetic != 0.0) ? kinetic_i / kinetic : 0.0});
+    measurement_cache.domain_conduction_loss_i.push_back(
+        {idx, loss_i, (loss != 0.0) ? loss_i / loss : 0.0});
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureLumpedPorts() const
 {
   measurement_cache.lumped_port_vi.clear();
@@ -2200,6 +2246,16 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
     reduced_domain_energy.emplace(idx, std::make_pair(project(ops.first.get(), basis_E),
                                                       project(ops.second.get(), basis_B)));
   }
+  reduced_cond_forms.clear();
+  for (const auto &form : dom_post_op.cond_forms)
+  {
+    auto &[Q, Q_i] = reduced_cond_forms.emplace_back(project(form.M.get(), basis_E),
+                                                     std::map<int, Eigen::MatrixXd>{});
+    for (const auto &[idx, M] : form.M_i)
+    {
+      Q_i.emplace(idx, project(M.get(), basis_E));
+    }
+  }
   reduced_postprocessing_ready = true;
 }
 
@@ -2238,6 +2294,27 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
              ? energy_H / measurement_cache.domain_H_field_energy_all
              : 0.0});
   }
+  if (!reduced_cond_forms.empty())
+  {
+    std::vector<std::pair<double, double>> weights;
+    for (const auto &form : dom_post_op.cond_forms)
+    {
+      weights.push_back(form.weights(omega.real()));
+    }
+    SetKineticEnergyAndLoss(
+        [&](int idx)
+        {
+          double kinetic = 0.0, loss = 0.0;
+          for (std::size_t k = 0; k < weights.size(); k++)
+          {
+            const auto &[Q, Q_i] = reduced_cond_forms[k];
+            const double q = quadratic((idx < 0) ? Q : Q_i.at(idx));
+            kinetic += weights[k].first * q;
+            loss += weights[k].second * q;
+          }
+          return std::make_pair(kinetic, loss);
+        });
+  }
   if (!reduced_postprocessing_checked)
   {
     ComplexVector b(fem_op->GetCurlMatrix().Height());
@@ -2271,8 +2348,42 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
       exact_domain_H.push_back(
           {idx, energy_H, (exact_H != 0.0) ? energy_H / exact_H : 0.0});
     }
+
+    // The exact kinetic energy and loss replace the reduced ones. The loss is compared to
+    // its own reference, as it can be much smaller than the energies.
+    double max_loss_error = 0.0, max_loss_reference = 0.0;
+    if (!reduced_cond_forms.empty())
+    {
+      const auto reduced_kinetic = measurement_cache.domain_kinetic_energy_i;
+      const auto reduced_loss = measurement_cache.domain_conduction_loss_i;
+      const double reduced_kinetic_all = measurement_cache.domain_kinetic_energy_all;
+      const double reduced_loss_all = measurement_cache.domain_conduction_loss_all;
+      SetKineticEnergyAndLoss(
+          [&](int idx)
+          {
+            return (idx < 0)
+                       ? dom_post_op.GetKineticEnergyAndLoss(*E, omega.real())
+                       : dom_post_op.GetDomainKineticEnergyAndLoss(idx, *E, omega.real());
+          });
+      auto compare_loss = [&](double reduced, double exact)
+      {
+        max_loss_error = std::max(max_loss_error, std::abs(reduced - exact));
+        max_loss_reference = std::max(max_loss_reference, std::abs(exact));
+      };
+      compare(reduced_kinetic_all, measurement_cache.domain_kinetic_energy_all);
+      compare_loss(reduced_loss_all, measurement_cache.domain_conduction_loss_all);
+      for (std::size_t k = 0; k < reduced_kinetic.size(); k++)
+      {
+        compare(reduced_kinetic[k].energy,
+                measurement_cache.domain_kinetic_energy_i[k].energy);
+        compare_loss(reduced_loss[k].energy,
+                     measurement_cache.domain_conduction_loss_i[k].energy);
+      }
+    }
     reduced_postprocessing_checked = true;
-    if (max_error > 1.0e-9 * std::max(max_reference, 1.0e-300))
+    const double error = std::max(max_error / std::max(max_reference, 1.0e-300),
+                                  max_loss_error / std::max(max_loss_reference, 1.0e-300));
+    if (error > 1.0e-9)
     {
       reduced_postprocessing_ready = false;
       measurement_cache.domain_E_field_energy_all = exact_E;
@@ -2281,7 +2392,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
       measurement_cache.domain_H_field_energy_i = std::move(exact_domain_H);
       Mpi::Warning("Reduced domain-energy postprocessing disagrees with full evaluation "
                    "(relative error {:.3e}); reverting to full postprocessing.\n",
-                   max_error / std::max(max_reference, 1.0e-300));
+                   error);
     }
   }
   const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);

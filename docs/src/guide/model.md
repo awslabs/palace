@@ -90,4 +90,6 @@ Alternatively, a superconducting domain can be described by a complex conductivi
 The dispersive models (`"MattisBardeen"` and `"Table"`) are supported for driven
 simulations, with uniform or adaptive frequency sweeps and lumped or wave ports, and for
 boundary mode simulations. They are not yet supported for eigenmode or transient
-simulations, or adaptive circuit synthesis.
+simulations, or adaptive circuit synthesis. The kinetic energy and conduction loss of
+superconducting domains are postprocessed in driven and eigenmode simulations (see
+[Domain postprocessing](postprocessing.md#Domain-postprocessing)).

@@ -259,20 +259,27 @@ ComplexConductivityModel::ComplexConductivityModel(
 }
 
 double ComplexConductivityModel::EvalTable(double log_w, const std::vector<double> &y,
-                                           const std::vector<double> &d) const
+                                           const std::vector<double> &d,
+                                           bool derivative) const
 {
   const std::size_t n = log_omega.size();
-  if (log_w <= log_omega[0])
+  if (log_w < log_omega[0])
   {
-    return y[0];
+    return derivative ? 0.0 : y[0];
   }
-  if (log_w >= log_omega[n - 1])
+  if (log_w > log_omega[n - 1])
   {
-    return y[n - 1];
+    return derivative ? 0.0 : y[n - 1];
   }
-  const std::size_t i =
-      std::upper_bound(log_omega.begin(), log_omega.end(), log_w) - log_omega.begin() - 1;
+  const std::size_t i = std::min<std::size_t>(
+      std::upper_bound(log_omega.begin(), log_omega.end(), log_w) - log_omega.begin() - 1,
+      n - 2);
   const double h = log_omega[i + 1] - log_omega[i], s = (log_w - log_omega[i]) / h;
+  if (derivative)
+  {
+    return 6.0 * s * (s - 1.0) / h * (y[i] - y[i + 1]) +
+           (1.0 - s) * (1.0 - 3.0 * s) * d[i] + s * (3.0 * s - 2.0) * d[i + 1];
+  }
   return (1.0 + 2.0 * s) * (1.0 - s) * (1.0 - s) * y[i] +
          s * (1.0 - s) * (1.0 - s) * h * d[i] + s * s * (3.0 - 2.0 * s) * y[i + 1] +
          s * s * (s - 1.0) * h * d[i + 1];
@@ -288,6 +295,23 @@ std::complex<double> ComplexConductivityModel::operator()(double omega) const
   }
   const double log_w = std::log(omega);
   return {EvalTable(log_w, y1, d1), -EvalTable(log_w, y2, d2) / omega};
+}
+
+std::complex<double> ComplexConductivityModel::Derivative(double omega) const
+{
+  MFEM_VERIFY(omega > 0.0, "Complex conductivity requires a positive frequency!");
+  if (type == ComplexConductivityType::MATTIS_BARDEEN)
+  {
+    // The step balances truncation and the 1e-13 quadrature tolerance.
+    constexpr double h = 1.0e-4;
+    return ((*this)(omega * (1.0 + h)) - (*this)(omega * (1.0 - h))) / (2.0 * h * omega);
+  }
+  // σ1 = Y1(log ω) and σ2 = Y2(log ω) / ω.
+  const double log_w = std::log(omega);
+  const double dsigma1 = EvalTable(log_w, y1, d1, true) / omega;
+  const double dsigma2 =
+      (EvalTable(log_w, y2, d2, true) - EvalTable(log_w, y2, d2)) / (omega * omega);
+  return {dsigma1, -dsigma2};
 }
 
 }  // namespace palace

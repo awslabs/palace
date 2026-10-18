@@ -15,12 +15,15 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fem/bilinearform.hpp"
+#include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/complexconductivitymodel.hpp"
 #include "models/dispersiveconductivityoperator.hpp"
+#include "models/domainpostoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -243,6 +246,44 @@ TEST_CASE("ComplexConductivityModel", "[complexconductivity][Serial]")
       CHECK(s >= prev - 1.0e-14);
       prev = s;
     }
+  }
+
+  SECTION("Frequency derivative")
+  {
+    // Table: σ1 linear in log(ω) and ωσ2 constant are reproduced exactly, so dσ/dω =
+    // 2/ω + 4i/ω² (σ = σ1 - iσ2), and dσ1/dω = 0 outside the table.
+    config::ComplexConductivityData data;
+    data.type = ComplexConductivityType::TABLE;
+    data.table_f = {1.0, 2.0, 5.0, 10.0};
+    for (double f : data.table_f)
+    {
+      data.table_sigma1.push_back(1.0 + 2.0 * std::log(f));
+      data.table_sigma2.push_back(4.0 / f);
+    }
+    const ComplexConductivityModel table(data);
+    for (double omega : {1.0, 1.3, 2.0, 3.7, 9.9, 10.0})
+    {
+      CHECK_THAT(table.Derivative(omega).real(), WithinRel(2.0 / omega, 1.0e-12));
+      CHECK_THAT(table.Derivative(omega).imag(), WithinRel(4.0 / (omega * omega), 1.0e-12));
+    }
+    CHECK(table.Derivative(20.0).real() == 0.0);
+    CHECK_THAT(table.Derivative(20.0).imag(), WithinRel(4.0 / 400.0, 1.0e-14));
+
+    // Mattis-Bardeen: a Richardson-extrapolated difference with larger steps, and the
+    // London limit -ω dσ2/dω = σ2 well below the gap.
+    const ComplexConductivityModel mb(MattisBardeenData(5.0, 2.0, 0.5));
+    for (double omega : {0.3, 1.5, 3.0, 6.0})
+    {
+      auto difference = [&](double h)
+      { return (mb(omega * (1.0 + h)) - mb(omega * (1.0 - h))) / (2.0 * h * omega); };
+      const auto ref = (4.0 * difference(5.0e-3) - difference(1.0e-2)) / 3.0;
+      CHECK_THAT(mb.Derivative(omega).real(), WithinRel(ref.real(), 1.0e-6));
+      CHECK_THAT(mb.Derivative(omega).imag(), WithinRel(ref.imag(), 1.0e-6));
+    }
+    const ComplexConductivityModel cold(MattisBardeenData(5.0, 2.0, 0.1));
+    const double omega = 0.02;
+    CHECK_THAT(omega * cold.Derivative(omega).imag(),
+               WithinRel(-cold(omega).imag(), 1.0e-3));
   }
 }
 
@@ -502,6 +543,68 @@ TEST_CASE("Dispersive conductivity anchor and residual",
       CHECK(k_i < 0);
     }
   }
+}
+
+TEST_CASE("DomainPostOperator kinetic energy and conduction loss",
+          "[complexconductivity][Serial][Parallel]")
+{
+  // A uniform field in the unit cube, with a London conductor (λ_L, σ) on x < 1/2 and a
+  // Mattis-Bardeen domain, matched at a reference frequency away from ω, on x > 1/2.
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh = TwoAttributeMesh(comm);
+  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
+  config::SolverData solver;
+  solver.order = 1;
+  IntegrationSettingsGuard settings_guard(solver);
+
+  const double lambda = 0.3, sigma = 2.0, omega = 1.5;
+  config::MaterialData london, dispersive;
+  london.attributes = {1};
+  london.lambda_L = lambda;
+  london.sigma = config::SymmetricMatrixData<3>(sigma);
+  dispersive.attributes = {2};
+  dispersive.complex_sigma = MattisBardeenData(5.0, 2.0, 0.4, 0.7);
+  const std::vector<config::MaterialData> materials = {london, dispersive};
+  config::PeriodicBoundaryData periodic;
+  config::DomainPostData postpro;
+  postpro.energy[1].attributes = {2};
+  MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, palace_mesh);
+  const Units units(1.0, 1.0);
+  DispersiveConductivityOperator disp_op(materials, ProblemType::DRIVEN, units, mat_op);
+
+  mfem::ND_FECollection nd_fec(solver.order, 3);
+  mfem::RT_FECollection rt_fec(solver.order - 1, 3);
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec), rt_fespace(palace_mesh, &rt_fec);
+  DomainPostOperator dom_post_op(postpro, mat_op, nd_fespace, rt_fespace, &disp_op);
+  CHECK(dom_post_op.has_kinetic);
+  CHECK(dom_post_op.has_loss);
+
+  // E = (0.5, 0, 0) + i (0, 0, 1), |E|² = 1.25.
+  GridFunction E(nd_fespace, true);
+  mfem::VectorConstantCoefficient E_r(mfem::Vector({0.5, 0.0, 0.0})),
+      E_i(mfem::Vector({0.0, 0.0, 1.0}));
+  E.Real().ProjectCoefficient(E_r);
+  E.Imag().ProjectCoefficient(E_i);
+  const double E2 = 1.25;
+
+  // Kinetic energy 1/2 ∫ -dσ2/dω |E|², with σ2 = 1/(ω λ²) for the London conductor, and
+  // conduction loss 1/2 ∫ σ1 |E|². Each domain has volume 1/2.
+  const ComplexConductivityModel model(*dispersive.complex_sigma);
+  const double kinetic_2 = 0.25 * E2 * model.Derivative(omega).imag();
+  const double loss_2 = 0.25 * E2 * model(omega).real();
+  const double kinetic_1 = 0.25 * E2 / (omega * omega * lambda * lambda);
+  const double loss_1 = 0.25 * E2 * sigma;
+  const auto [kinetic, loss] = dom_post_op.GetKineticEnergyAndLoss(E, omega);
+  CHECK_THAT(kinetic, WithinRel(kinetic_1 + kinetic_2, 1.0e-12));
+  CHECK_THAT(loss, WithinRel(loss_1 + loss_2, 1.0e-12));
+  const auto [kinetic_i, loss_i] = dom_post_op.GetDomainKineticEnergyAndLoss(1, E, omega);
+  CHECK_THAT(kinetic_i, WithinRel(kinetic_2, 1.0e-12));
+  CHECK_THAT(loss_i, WithinRel(loss_2, 1.0e-12));
+
+  // Without the dispersive operator, these are not postprocessed.
+  DomainPostOperator dom_post_op_static(postpro, mat_op, nd_fespace, rt_fespace);
+  CHECK(dom_post_op_static.cond_forms.empty());
+  CHECK(dom_post_op_static.GetKineticEnergyAndLoss(E, omega) == std::make_pair(0.0, 0.0));
 }
 
 TEST_CASE("SpaceOperator dispersive conductivity",
