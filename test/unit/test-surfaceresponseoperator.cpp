@@ -6433,6 +6433,171 @@ TEST_CASE_METHOD(
 #endif
 }
 
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell model contributions",
+    "[surfaceresponseoperator][3d][maxwell][spatial][placement][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // M-5 (decisions 845 O-C / 846): the Maxwell response's per-model entries are the
+  // electrostatic driver's aggregation (a model's row = the sum over its applied patches
+  // of the same per-patch terms). On the U4 pair (the offset corner pair with the
+  // hat-free cluster library: the cluster, the corners and the isolated-edge continuations
+  // placed identically by both constructors) a constant field E0 and the potential
+  // V = -E0 . x have the same traces, so every per-model value agrees to roundoff, and the
+  // per-model sums are the totals. Both operators run under MPI-2 too: the per-model
+  // entries ride the one batched reduction (the model list is replicated), and the result
+  // is replicated on every rank.
+  json island_config = IslandConfig();
+  auto cluster_electrostatic_config = island_config;
+  cluster_electrostatic_config["Boundaries"]["Terminal"] = {
+      {{"Index", 1}, {"Attributes", {9}}}, {{"Index", 2}, {"Attributes", {10}}}};
+  cluster_electrostatic_config["Boundaries"]["Postprocessing"]["Dielectric"][0]
+                              ["Attributes"] = {9, 10};
+  cluster_electrostatic_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      spatial_cluster_library_3d_path.string();
+  IoData cluster_electrostatic_iodata(cluster_electrostatic_config, false);
+  cluster_electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+  cluster_electrostatic_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> cluster_electrostatic_meshes;
+  cluster_electrostatic_meshes.push_back(
+      std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  LaplaceOperator cluster_laplace(cluster_electrostatic_iodata,
+                                  cluster_electrostatic_meshes);
+  SurfaceResponseOperator cluster_electrostatic_response(cluster_electrostatic_iodata,
+                                                         cluster_laplace);
+
+  json convex_maxwell_island_config = ConvexMaxwellIslandConfig();
+  auto cluster_maxwell_config = convex_maxwell_island_config;
+  cluster_maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
+  cluster_maxwell_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {
+      9, 10};
+  cluster_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      spatial_cluster_library_3d_path.string();
+  IoData cluster_maxwell_iodata(cluster_maxwell_config, false);
+  cluster_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  cluster_maxwell_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> cluster_maxwell_meshes;
+  cluster_maxwell_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator cluster_maxwell_space(cluster_maxwell_iodata, cluster_maxwell_meshes);
+  SurfaceResponseOperator cluster_maxwell_response(cluster_maxwell_iodata,
+                                                   cluster_maxwell_space);
+  REQUIRE(cluster_maxwell_response.GetPatchCount() ==
+          cluster_electrostatic_response.GetPatchCount());
+
+  // The field is NORMAL to the islands' plane y = 0.5 (a PEC island carries no tangential
+  // field; the Maxwell trace gauges every conductor at its own anchor, the electrostatic
+  // trace samples the potential on it) and the potential vanishes on the islands, so the
+  // two traces agree coefficient by coefficient: knot -E0 . (p - a), conductor 0.
+  mfem::Vector normal_field(3);
+  normal_field = 0.0;
+  normal_field[1] = -0.4;
+  mfem::VectorConstantCoefficient field_coefficient(normal_field);
+  mfem::FunctionCoefficient potential_coefficient([](const mfem::Vector &x)
+                                                  { return 0.4 * (x[1] - 0.5); });
+  mfem::ParGridFunction potential(&cluster_laplace.GetH1Space().Get());
+  potential.ProjectCoefficient(potential_coefficient);
+  Vector potential_true;
+  potential.GetTrueDofs(potential_true);
+  GridFunction field(cluster_maxwell_space.GetNDSpace(), true);
+  field.Real().ProjectCoefficient(field_coefficient);
+  field.Imag() = 0.0;
+
+  const auto electrostatic =
+      cluster_electrostatic_response.GetElectrostaticResponse(potential_true, true, false);
+  const auto maxwell = cluster_maxwell_response.GetMaxwellResponse(field, 0.0);
+  // No loop-residual clause here: under a normal field every in-plane closed ring (the
+  // corner model's) carries roundoff only, so its residual is a 0 / 0 ratio by construction
+  // (the inplane review MINOR-4 class); the coefficient identity below is the exactness
+  // check of this field.
+  REQUIRE(electrostatic.model_contributions.size() > 1);
+  REQUIRE(maxwell.model_contributions.size() == electrostatic.model_contributions.size());
+  const auto maxwell_names = cluster_maxwell_response.GetModelNames();
+  const auto electrostatic_names = cluster_electrostatic_response.GetModelNames();
+  CHECK(maxwell_names == electrostatic_names);
+
+  auto CheckEnergy = [](double value, double reference)
+  {
+    if (std::abs(reference) > 0.0)
+    {
+      CHECK_THAT(value, WithinRel(reference, 1.0e-10));
+    }
+    else
+    {
+      CHECK(value == 0.0);
+    }
+  };
+  SurfaceResponseOperator::ModelContribution maxwell_sum, electrostatic_sum;
+  double applied_models = 0.0;
+  std::vector<double> replicated;
+  for (std::size_t i = 0; i < maxwell.model_contributions.size(); i++)
+  {
+    const auto &m = maxwell.model_contributions[i];
+    const auto &e = electrostatic.model_contributions[i];
+    INFO("model " << m.model << " " << maxwell_names.at(m.model));
+    CHECK(m.model == e.model);
+    CHECK(m.patch_count == e.patch_count);
+    CHECK_THAT(m.patch_weight, WithinRel(e.patch_weight, 1.0e-12));
+    CheckEnergy(m.domain_correction, e.domain_correction);
+    CheckEnergy(m.domain_correction_fixed_flux, e.domain_correction_fixed_flux);
+    REQUIRE(m.fabricated_surface_energy.size() == e.fabricated_surface_energy.size());
+    REQUIRE(m.fabricated_surface_energy_fixed_flux.size() ==
+            e.fabricated_surface_energy_fixed_flux.size());
+    for (const auto &[interface, energy] : e.fabricated_surface_energy)
+    {
+      REQUIRE(m.fabricated_surface_energy.count(interface) == 1);
+      CheckEnergy(m.fabricated_surface_energy.at(interface), energy);
+      CheckEnergy(m.fabricated_surface_energy_fixed_flux.at(interface),
+                  e.fabricated_surface_energy_fixed_flux.at(interface));
+      maxwell_sum.fabricated_surface_energy[interface] +=
+          m.fabricated_surface_energy.at(interface);
+      maxwell_sum.fabricated_surface_energy_fixed_flux[interface] +=
+          m.fabricated_surface_energy_fixed_flux.at(interface);
+      electrostatic_sum.fabricated_surface_energy[interface] += energy;
+      replicated.insert(replicated.end(),
+                        {m.fabricated_surface_energy.at(interface),
+                         m.fabricated_surface_energy_fixed_flux.at(interface)});
+    }
+    applied_models += m.patch_count > 0.0 ? 1.0 : 0.0;
+    maxwell_sum.patch_count += m.patch_count;
+    maxwell_sum.patch_weight += m.patch_weight;
+    maxwell_sum.domain_correction += m.domain_correction;
+    maxwell_sum.domain_correction_fixed_flux += m.domain_correction_fixed_flux;
+    replicated.insert(replicated.end(), {m.patch_count, m.patch_weight, m.domain_correction,
+                                         m.domain_correction_fixed_flux});
+  }
+  // Several models carry patches (the cluster, the corners, the isolated edges).
+  CHECK(applied_models > 1.0);
+  // The per-model sums are the totals (the count, the weight, the domain defects, the
+  // surface energies of every interface).
+  CHECK(maxwell_sum.patch_count ==
+        static_cast<double>(cluster_maxwell_response.GetPatchCount()));
+  CHECK_THAT(maxwell_sum.patch_weight,
+             WithinRel(cluster_maxwell_response.GetPatchWeight(), 1.0e-12));
+  CHECK_THAT(maxwell_sum.domain_correction, WithinRel(maxwell.domain_correction, 1.0e-12));
+  CHECK_THAT(maxwell_sum.domain_correction_fixed_flux,
+             WithinRel(maxwell.domain_correction_fixed_flux, 1.0e-12));
+  for (const auto &[interface, energy] : maxwell.fabricated_surface_energy)
+  {
+    CHECK_THAT(maxwell_sum.fabricated_surface_energy.at(interface),
+               WithinRel(energy, 1.0e-12));
+    CHECK_THAT(
+        maxwell_sum.fabricated_surface_energy_fixed_flux.at(interface),
+        WithinRel(maxwell.fabricated_surface_energy_fixed_flux.at(interface), 1.0e-12));
+    CHECK_THAT(electrostatic_sum.fabricated_surface_energy.at(interface),
+               WithinRel(electrostatic.fabricated_surface_energy.at(interface), 1.0e-12));
+  }
+  // Replicated on every rank (decision 822: no rank-dependent collective, no rank-local
+  // value): the whole entry, the per-interface energies included.
+  std::vector<double> minimum = replicated, maximum = replicated;
+  Mpi::GlobalMin(static_cast<int>(minimum.size()), minimum.data(), Mpi::World());
+  Mpi::GlobalMax(static_cast<int>(maximum.size()), maximum.data(), Mpi::World());
+  CHECK(minimum == replicated);
+  CHECK(maximum == replicated);
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "SurfaceResponseOperator Maxwell stage 1 refusals",
                  "[surfaceresponseoperator][3d][maxwell][spatial][Serial][Parallel]")

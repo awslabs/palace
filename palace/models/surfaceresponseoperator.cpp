@@ -26979,12 +26979,17 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   result.boundary_law_verified = boundary_law_verified;
   for (const auto &model : models)
   {
+    ModelContribution contribution;
+    contribution.model = model.idx;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       (void)matrix;
       result.fabricated_surface_energy.try_emplace(interface, 0.0);
       result.fabricated_surface_energy_fixed_flux.try_emplace(interface, 0.0);
+      contribution.fabricated_surface_energy.try_emplace(interface, 0.0);
+      contribution.fabricated_surface_energy_fixed_flux.try_emplace(interface, 0.0);
     }
+    result.model_contributions.push_back(std::move(contribution));
   }
 
   Vector field_real, field_imag, line_real, line_imag, trace_real, trace_imag;
@@ -27008,6 +27013,9 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   {
     const auto &patch = patches[patch_index];
     const auto &model = models[patch.model];
+    auto &contribution = result.model_contributions[patch.model];
+    contribution.patch_count += 1.0;
+    contribution.patch_weight += patch.weight;
     Vector patch_trace_real(trace_real.GetData() + patch.trace_offset, model.basis_size);
     Vector patch_trace_imag(trace_imag.GetData() + patch.trace_offset, model.basis_size);
     fixed_flux_real.SetSize(model.basis_size);
@@ -27090,13 +27098,19 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       return QuadraticForm(matrix, real, workspace) +
              QuadraticForm(matrix, imag, workspace);
     };
-    result.domain_correction +=
-        0.5 * patch.weight * patch.domain_weight *
+    // The patch's domain defects, evaluated once and added to the totals and to the model's
+    // own entry (M-5) by the same `+= domain_weight * form` statement, so that the totals'
+    // floating-point result is unchanged and the per-model sums are the totals to roundoff.
+    const double domain_weight = 0.5 * patch.weight * patch.domain_weight;
+    const double domain_defect_form =
         HermitianForm(model.domain_defect, patch_trace_real, patch_trace_imag);
-    result.domain_correction_fixed_flux +=
-        0.5 * patch.weight * patch.domain_weight *
-        (HermitianForm(model.fabricated_domain, fixed_flux_real, fixed_flux_imag) -
-         HermitianForm(model.thin_domain, patch_trace_real, patch_trace_imag));
+    const double fixed_flux_defect_form =
+        HermitianForm(model.fabricated_domain, fixed_flux_real, fixed_flux_imag) -
+        HermitianForm(model.thin_domain, patch_trace_real, patch_trace_imag);
+    result.domain_correction += domain_weight * domain_defect_form;
+    result.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
+    contribution.domain_correction += domain_weight * domain_defect_form;
+    contribution.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
     double patch_response_energy = 0.0;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
@@ -27106,6 +27120,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
           patch.weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
+      contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
+      contribution.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
       const double weight =
           std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
       patch_response_energy += weight;
@@ -27158,7 +27174,9 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     }
   }
   std::vector<double> reduction;
-  reduction.reserve(10 + 2 * result.fabricated_surface_energy.size());
+  reduction.reserve(10 + 2 * result.fabricated_surface_energy.size() +
+                    result.model_contributions.size() *
+                        (4 + 2 * result.fabricated_surface_energy.size()));
   reduction.push_back(result.domain_correction);
   reduction.push_back(result.domain_correction_fixed_flux);
   reduction.push_back(weighted_loop_residual_squared);
@@ -27173,6 +27191,20 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   {
     reduction.push_back(fixed_trace);
     reduction.push_back(result.fabricated_surface_energy_fixed_flux.at(interface));
+  }
+  // The per-model entries (M-5) after the totals: the model list and each model's
+  // interface set are replicated, so every rank contributes the same layout.
+  for (const auto &contribution : result.model_contributions)
+  {
+    reduction.push_back(contribution.patch_count);
+    reduction.push_back(contribution.patch_weight);
+    reduction.push_back(contribution.domain_correction);
+    reduction.push_back(contribution.domain_correction_fixed_flux);
+    for (const auto &[interface, fixed_trace] : contribution.fabricated_surface_energy)
+    {
+      reduction.push_back(fixed_trace);
+      reduction.push_back(contribution.fabricated_surface_energy_fixed_flux.at(interface));
+    }
   }
   Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), fespace.GetComm());
   std::size_t i = 0;
@@ -27213,6 +27245,19 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     fixed_trace = reduction[i++];
     fixed_flux = reduction[i++];
   }
+  for (auto &contribution : result.model_contributions)
+  {
+    contribution.patch_count = reduction[i++];
+    contribution.patch_weight = reduction[i++];
+    contribution.domain_correction = reduction[i++];
+    contribution.domain_correction_fixed_flux = reduction[i++];
+    for (auto &[interface, fixed_trace] : contribution.fabricated_surface_energy)
+    {
+      fixed_trace = reduction[i++];
+      contribution.fabricated_surface_energy_fixed_flux.at(interface) = reduction[i++];
+    }
+  }
+  MFEM_ASSERT(i == reduction.size(), "Incorrect batched Maxwell response reduction!");
 
   constexpr double maximum_kR = 0.1;
   constexpr double maximum_weighted_loop_residual = 0.05;

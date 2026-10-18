@@ -2253,7 +2253,99 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   table["weighted_hat_residual"]
       << (result.has_postprocessed ? confidence.response_weighted_hat_residual : nan);
   surface_response_confidence->WriteFullTableTrunc();
+  PrintSurfaceResponseModelEnergies(output_index, excitation);
   PrintSurfaceResponsePortionEnergies(output_index, excitation);
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponseModelEnergies(double output_index,
+                                                               int excitation) const
+{
+  // Root only (the caller returns on the other ranks); the ModelContribution entries are
+  // replicated by the response's batched reduction. Decisions 845 O-C / 846: the
+  // electrostatic driver's surface-response-model-energy.csv column set EXACTLY and in
+  // order as a strict prefix (`source`, `evaluation`, `model`, `patch count`,
+  // `patch weight`, `domain correction (J)`, `fabricated surface energy[k] (J)` for every
+  // postprocessing interface, 0 for a non-target interface), then the Maxwell keys
+  // "f (GHz)" / "m" and "exc". `source` is the excitation index on a driven solve and
+  // the mode index on an eigenmode / boundary-mode solve. Rows per print as the
+  // electrostatic driver writes them per source: every model at evaluation 0 (fixed trace)
+  // and 1 (fixed flux) on the raw field when postprocessing ran; every model at
+  // evaluation 2 on the self-consistent corrected field when it exists (its `domain
+  // correction` is the fixed-trace defect the self-consistent normalization carries = the
+  // electrostatic driver's evaluation-2 row under the default TranslationalDomainCorrection
+  // FixedTrace; its energies the fixed-trace ones). Rows accumulate over the prints: a
+  // reader of a multi-frequency sweep keys the rows by "f (GHz)" / "m" and "exc".
+  using VT = Units::ValueType;
+  const auto &result = *surface_response_measurement;
+  if (!surface_response_model_energy)
+  {
+    surface_response_model_energy =
+        std::make_unique<TableWithCSVFile>(post_dir / "surface-response-model-energy.csv");
+    auto &table = surface_response_model_energy->table;
+    table.insert(Column("source", "source", 0, 0, 2, ""));
+    table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
+    table.insert(Column("model", "model", 0, 0, 2, ""));
+    table.insert(Column("patch_count", "patch count", 0, 0, 2, ""));
+    table.insert("patch_weight", "patch weight");
+    table.insert("domain_correction", "domain correction (J)");
+    for (const auto &[interface, data] : result.interfaces)
+    {
+      (void)data;
+      table.insert(fmt::format("interface_{}", interface),
+                   fmt::format("fabricated surface energy[{}] (J)", interface));
+    }
+    table.insert("idx", solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m");
+    table.insert("excitation", "exc");
+    table["excitation"].print_as_int = true;
+    if constexpr (solver_t == ProblemType::EIGENMODE ||
+                  solver_t == ProblemType::BOUNDARYMODE)
+    {
+      table["idx"].print_as_int = true;
+    }
+  }
+  auto &table = surface_response_model_energy->table;
+  const int source = solver_t == ProblemType::DRIVEN
+                         ? excitation
+                         : static_cast<int>(std::lround(output_index));
+  auto Append = [&](int evaluation, const SurfaceResponseOperator::ModelContribution &data,
+                    bool fixed_flux)
+  {
+    table["source"] << source;
+    table["evaluation"] << evaluation;
+    table["model"] << data.model;
+    table["patch_count"] << data.patch_count;
+    table["patch_weight"] << data.patch_weight;
+    table["domain_correction"] << units.Dimensionalize<VT::ENERGY>(
+        fixed_flux ? data.domain_correction_fixed_flux : data.domain_correction);
+    const auto &energies = fixed_flux ? data.fabricated_surface_energy_fixed_flux
+                                      : data.fabricated_surface_energy;
+    for (const auto &[interface, interface_data] : result.interfaces)
+    {
+      (void)interface_data;
+      const auto energy = energies.find(interface);
+      table[fmt::format("interface_{}", interface)] << units.Dimensionalize<VT::ENERGY>(
+          energy != energies.end() ? energy->second : 0.0);
+    }
+    table["idx"] << output_index;
+    table["excitation"] << excitation;
+  };
+  if (result.has_postprocessed)
+  {
+    for (const auto &contribution : result.confidence.model_contributions)
+    {
+      Append(0, contribution, false);
+      Append(1, contribution, true);
+    }
+  }
+  if (result.has_self_consistent)
+  {
+    for (const auto &contribution : result.self_consistent_confidence.model_contributions)
+    {
+      Append(2, contribution, false);
+    }
+  }
+  surface_response_model_energy->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>

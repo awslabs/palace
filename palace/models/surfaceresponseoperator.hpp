@@ -647,6 +647,11 @@ public:
     double trace_closure_response_failure_fraction = 0.0;
     bool closure_independent_confident = true;
     bool confident = true;
+    // Per model (decision 845 O-C, M-5): the same per-patch increments as the totals above,
+    // summed over the model's applied patches (the electrostatic driver's aggregation of
+    // surface-response-model-energy.csv), one entry per runtime model in model-index order,
+    // gathered by the one batched reduction and replicated on all ranks.
+    std::vector<ModelContribution> model_contributions;
   };
 
   SurfaceResponseOperator(
