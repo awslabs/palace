@@ -15,6 +15,7 @@
 namespace palace
 {
 
+class DispersiveConductivityOperator;
 class FarfieldBoundaryOperator;
 class FiniteElementSpace;
 class MaterialOperator;
@@ -35,7 +36,8 @@ enum class CoefficientType
   OMEGA_SQUARED,
   SHIFT,
   SURFACE_CONDUCTIVITY,
-  RATIONAL_IMPEDANCE
+  RATIONAL_IMPEDANCE,
+  DISPERSIVE_CONDUCTIVITY
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -63,6 +65,7 @@ class ModeOperatorModel
 private:
   SurfaceConductivityOperator &surf_sigma_op;
   SurfaceRationalImpedanceOperator &surf_rz_op;
+  const DispersiveConductivityOperator &disp_sigma_op;
   std::vector<OperatorComponent> components;
 
 public:
@@ -72,6 +75,7 @@ public:
                     FarfieldBoundaryOperator &farfield_op,
                     SurfaceConductivityOperator &surf_sigma_op,
                     SurfaceRationalImpedanceOperator &surf_rz_op,
+                    const DispersiveConductivityOperator &disp_sigma_op,
                     const mfem::HypreParMatrix &Bttr, const mfem::HypreParMatrix *Atnr,
                     const mfem::HypreParMatrix *Atni, const mfem::HypreParMatrix *Btnr,
                     const mfem::Array<int> &dbc_tdof_list);

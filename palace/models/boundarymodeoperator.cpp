@@ -5,6 +5,7 @@
 
 #include "fem/multigrid.hpp"
 #include "linalg/operator.hpp"
+#include "models/dispersiveconductivityoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/modeoperatorassembly.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -35,6 +36,8 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, mat_op, pmesh);
   surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(iodata, mat_op, pmesh);
   surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(iodata, mat_op, pmesh);
+  disp_sigma_op = std::make_unique<DispersiveConductivityOperator>(
+      iodata.domains.materials, iodata.problem.type, iodata.units, mat_op);
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
   // Btn = -Atn^T, Btt is the ND mass.

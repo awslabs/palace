@@ -369,13 +369,18 @@ TEST_CASE("ComplexConductivity reference frequency", "[complexconductivity][Seri
     CHECK(iodata2->domains.materials[0].complex_sigma->reference_freq == 300.0);
   }
 
-  SECTION("Boundary mode: always the mode frequency")
+  SECTION("Boundary mode: the mode frequency, or the given value")
   {
     auto iodata = setup(ProblemType::BOUNDARYMODE);
     iodata->solver.boundary_mode.freq = 42.0;
-    iodata->domains.materials[0].complex_sigma->reference_freq = 300.0;
     iodata->CheckConfiguration();
     CHECK(iodata->domains.materials[0].complex_sigma->reference_freq == 42.0);
+
+    auto iodata2 = setup(ProblemType::BOUNDARYMODE);
+    iodata2->solver.boundary_mode.freq = 42.0;
+    iodata2->domains.materials[0].complex_sigma->reference_freq = 300.0;
+    iodata2->CheckConfiguration();
+    CHECK(iodata2->domains.materials[0].complex_sigma->reference_freq == 300.0);
   }
 
   SECTION("Unsupported problem types and table ranges")
@@ -392,16 +397,24 @@ TEST_CASE("ComplexConductivity reference frequency", "[complexconductivity][Seri
     synthesis->boundaries.lumpedport[1];
     CHECK_THROWS_WITH(synthesis->CheckConfiguration(),
                       Matchers::ContainsSubstring("dispersive \"ComplexConductivity\""));
-    auto table = setup(ProblemType::DRIVEN);
-    auto &cs = *table->domains.materials[0].complex_sigma;
-    cs.type = ComplexConductivityType::TABLE;
-    cs.table_f = {1.0, 100.0};
-    cs.table_sigma1 = {1.0, 1.0};
-    cs.table_sigma2 = {1.0, 1.0};
-    table->solver.driven.sample_f = {10.0, 200.0};
-    CHECK_THROWS_WITH(
-        table->CheckConfiguration(),
-        Matchers::ContainsSubstring("within the \"ComplexConductivity\" table"));
+    auto table = [&](ProblemType type)
+    {
+      auto iodata = setup(type);
+      auto &cs = *iodata->domains.materials[0].complex_sigma;
+      cs.type = ComplexConductivityType::TABLE;
+      cs.table_f = {1.0, 100.0};
+      cs.table_sigma1 = {1.0, 1.0};
+      cs.table_sigma2 = {1.0, 1.0};
+      iodata->solver.driven.sample_f = {10.0, 200.0};
+      iodata->solver.boundary_mode.freq = 200.0;
+      return iodata;
+    };
+    for (auto type : {ProblemType::DRIVEN, ProblemType::BOUNDARYMODE})
+    {
+      CHECK_THROWS_WITH(
+          table(type)->CheckConfiguration(),
+          Matchers::ContainsSubstring("within the \"ComplexConductivity\" table"));
+    }
   }
 }
 
@@ -425,7 +438,6 @@ TEST_CASE("Dispersive conductivity anchor and residual",
   const auto sigma_ref = model(omega_ref);
 
   MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, palace_mesh);
-  CHECK(mat_op.HasDispersiveConductivity());
   CHECK(mat_op.HasConductivity());
   CHECK(mat_op.HasLondonDepth());
   if (palace_mesh.GetCeedAttributes().contains(1))

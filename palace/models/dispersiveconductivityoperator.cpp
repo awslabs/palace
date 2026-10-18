@@ -33,11 +33,14 @@ DispersiveConductivityOperator::DispersiveConductivityOperator(
     ComplexConductivityModel model(*data.complex_sigma);
     const double omega_ref = data.complex_sigma->reference_freq;
     const auto sigma_ref = model(omega_ref);
-    groups.push_back({std::move(model), data.attributes, omega_ref, sigma_ref});
+    bool active = mat_op.GetCeedAttributes(data.attributes).Size() > 0;
+    Mpi::GlobalOr(1, &active, mat_op.GetMesh().GetComm());
+    groups.push_back({std::move(model), data.attributes, omega_ref, sigma_ref, active});
   }
-  MFEM_VERIFY(groups.empty() || problem_type == ProblemType::DRIVEN,
-              "Dispersive complex conductivity domains are only available for driven "
-              "simulations!");
+  MFEM_VERIFY(groups.empty() || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::BOUNDARYMODE,
+              "Dispersive complex conductivity domains are only available for driven and "
+              "boundary mode simulations!");
   PrintDomainInfo(units);
 }
 

@@ -474,9 +474,9 @@ void IoData::CheckConfiguration()
   }
 
   // Dispersive complex conductivity models are supported for driven and boundary mode
-  // problems. Their frequency-independent part is matched to σ(ω) at a reference frequency:
-  // by default the geometric mean of the driven sweep band, and always the mode frequency
-  // of a boundary mode problem, where it is then exact.
+  // problems. Their frequency-independent part is matched to σ(ω) at a reference frequency,
+  // by default the geometric mean of the driven sweep band. A boundary mode problem is a
+  // band of one frequency.
   for (auto &data : domains.materials)
   {
     if (!data.complex_sigma || !data.complex_sigma->IsDispersive())
@@ -484,33 +484,20 @@ void IoData::CheckConfiguration()
       continue;
     }
     auto &cs = *data.complex_sigma;
+    double f_min, f_max;
     if (problem.type == ProblemType::DRIVEN)
     {
-      const auto [f_min, f_max] = std::ranges::minmax(solver.driven.sample_f);
-      MFEM_VERIFY(f_min > 0.0,
-                  "Dispersive \"ComplexConductivity\" requires positive driven "
-                  "frequencies!");
+      const auto band = std::ranges::minmax(solver.driven.sample_f);
+      f_min = band.min;
+      f_max = band.max;
       MFEM_VERIFY(
           !solver.driven.adaptive_circuit_synthesis,
           "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
           "yet support dispersive \"ComplexConductivity\" domains!");
-      MFEM_VERIFY(cs.type != ComplexConductivityType::TABLE ||
-                      (f_min >= cs.table_f.front() * (1.0 - 1.0e-9) &&
-                       f_max <= cs.table_f.back() * (1.0 + 1.0e-9)),
-                  "Driven frequencies must lie within the \"ComplexConductivity\" table!");
-      if (cs.reference_freq <= 0.0)
-      {
-        cs.reference_freq = std::sqrt(f_min * f_max);
-      }
     }
     else if (problem.type == ProblemType::BOUNDARYMODE)
     {
-      if (cs.reference_freq > 0.0 && cs.reference_freq != solver.boundary_mode.freq)
-      {
-        Mpi::Warning("\"ComplexConductivity\" \"ReferenceFrequency\" is replaced by the "
-                     "boundary mode frequency!\n");
-      }
-      cs.reference_freq = solver.boundary_mode.freq;
+      f_min = f_max = solver.boundary_mode.freq;
     }
     else
     {
@@ -520,6 +507,17 @@ void IoData::CheckConfiguration()
           "Dispersive \"ComplexConductivity\" models (\"MattisBardeen\", \"Table\") "
           "are only supported for driven and boundary mode problems; use "
           "\"TwoFluid\"!");
+      continue;
+    }
+    MFEM_VERIFY(f_min > 0.0,
+                "Dispersive \"ComplexConductivity\" requires positive frequencies!");
+    MFEM_VERIFY(cs.type != ComplexConductivityType::TABLE ||
+                    (f_min >= cs.table_f.front() * (1.0 - 1.0e-9) &&
+                     f_max <= cs.table_f.back() * (1.0 + 1.0e-9)),
+                "Frequencies must lie within the \"ComplexConductivity\" table!");
+    if (cs.reference_freq <= 0.0)
+    {
+      cs.reference_freq = std::sqrt(f_min * f_max);
     }
   }
 

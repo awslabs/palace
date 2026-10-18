@@ -724,7 +724,7 @@
         "ReferenceFrequency": {
           "type": "number",
           "minimum": 0.0,
-          "description": "Frequency at which the frequency-independent part of a dispersive model is matched to `σ(ω)`, GHz. Defaults to the geometric mean of the driven sweep band; boundary mode problems use the mode frequency."
+          "description": "Frequency at which the frequency-independent part of a dispersive model is matched to `σ(ω)`, GHz. Defaults to the geometric mean of the driven sweep band, or the boundary mode frequency."
         },
         "TwoFluidModel": {
           "type": "string",
@@ -747,7 +747,7 @@
             "exclusiveMinimum": 0.0
           },
           "minItems": 2,
-          "description": "Strictly increasing frequencies, GHz (`\"Table\"`)."
+          "description": "Strictly increasing frequencies, GHz (`\"Table\"`). The simulated frequencies must lie within the table."
         },
         "Sigma1": {
           "type": "array",

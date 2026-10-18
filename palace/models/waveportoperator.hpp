@@ -24,6 +24,7 @@
 namespace palace
 {
 
+class DispersiveConductivityOperator;
 class FarfieldBoundaryOperator;
 class IoData;
 class MaterialOperator;
@@ -121,6 +122,7 @@ private:
   std::unique_ptr<FarfieldBoundaryOperator> port_farfield_op;
   std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> port_surf_rz_op;
+  std::unique_ptr<DispersiveConductivityOperator> port_disp_sigma_op;
 
   // Port-local linear solver configuration and boundary mode eigenvalue problem solver.
   // The local copy allows per-port overrides without changing the full 3D linear solver.

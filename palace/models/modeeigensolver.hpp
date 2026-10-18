@@ -21,6 +21,7 @@ namespace palace
 {
 
 class BoundaryModeOperator;
+class DispersiveConductivityOperator;
 class FarfieldBoundaryOperator;
 class FiniteElementSpace;
 class FiniteElementSpaceHierarchy;
@@ -72,6 +73,7 @@ public:
                   FarfieldBoundaryOperator &farfield_op,
                   SurfaceConductivityOperator &surf_sigma_op,
                   SurfaceRationalImpedanceOperator &surf_rz_op,
+                  const DispersiveConductivityOperator &disp_sigma_op,
                   const FiniteElementSpace &nd_fespace,
                   const FiniteElementSpace &h1_fespace,
                   const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec,
@@ -159,6 +161,7 @@ private:
   FarfieldBoundaryOperator &farfield_op;
   SurfaceConductivityOperator &surf_sigma_op;
   SurfaceRationalImpedanceOperator &surf_rz_op;
+  const DispersiveConductivityOperator &disp_sigma_op;
 
   // References to FE spaces (not owned). Finest level of bmo's hierarchies when set.
   const FiniteElementSpace &nd_fespace;

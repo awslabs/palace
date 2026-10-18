@@ -23,6 +23,8 @@
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
+#include "models/complexconductivitymodel.hpp"
+#include "models/dispersiveconductivityoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/modeeigensolver.hpp"
@@ -113,6 +115,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
   SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
   SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+  DispersiveConductivityOperator disp_sigma_op(iodata.domains.materials,
+                                               iodata.problem.type, iodata.units, mat_op);
 
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
@@ -137,11 +141,11 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   // ModeEigenSolver requires a positive Krylov subspace size (num_vec). Mirror the
   // formula used by IoData::CheckConfiguration for eigenmode.max_size.
   const int num_vec = std::max(2 * num_modes, num_modes + 15);
-  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, num_modes,
-                              num_vec, eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL,
-                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
-                              nd_fespace.GetComm());
+  ModeEigenSolver mode_solver(
+      mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op, surf_rz_op, disp_sigma_op,
+      nd_fespace, h1_fespace, dbc_tdof_list, num_modes, num_vec, eig_tol,
+      EigenvalueSolver::WhichType::LARGEST_REAL, iodata.solver.linear,
+      iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
 
   auto target_at = [&](std::complex<double> w)
   { return w.real() * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon()); };
@@ -290,6 +294,7 @@ private:
   std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
   std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
+  std::unique_ptr<DispersiveConductivityOperator> disp_sigma_op;
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Bttr;
   mfem::Array<int> dbc_tdof_list;
   std::unique_ptr<mode_assembly::ModeOperatorModel> model;
@@ -342,6 +347,8 @@ public:
         std::make_unique<SurfaceConductivityOperator>(iodata, *mat_op, mesh->Get());
     surf_rz_op =
         std::make_unique<SurfaceRationalImpedanceOperator>(iodata, *mat_op, mesh->Get());
+    disp_sigma_op = std::make_unique<DispersiveConductivityOperator>(
+        iodata.domains.materials, iodata.problem.type, iodata.units, *mat_op);
 
     std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op);
     Btnr.reset(Atnr->Transpose());
@@ -364,8 +371,8 @@ public:
     }
     model = std::make_unique<mode_assembly::ModeOperatorModel>(
         *nd_fespace, *h1_fespace, *mat_op, nullptr, *surf_z_op, *farfield_op,
-        *surf_sigma_op, *surf_rz_op, *Bttr, Atnr.get(), Atni.get(), Btnr.get(),
-        dbc_tdof_list);
+        *surf_sigma_op, *surf_rz_op, *disp_sigma_op, *Bttr, Atnr.get(), Atni.get(),
+        Btnr.get(), dbc_tdof_list);
   }
 
   const auto &GetModel() const { return *model; }
@@ -530,6 +537,8 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
   SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
   SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+  DispersiveConductivityOperator disp_sigma_op(iodata.domains.materials,
+                                               iodata.problem.type, iodata.units, mat_op);
 
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
@@ -552,11 +561,11 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
   // Shift-and-invert about the target, as in BoundaryModeSolver with a target n_eff.
   const int num_vec = 16;
-  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec,
-                              1.0e-12, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
-                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
-                              nd_fespace.GetComm());
+  ModeEigenSolver mode_solver(
+      mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op, surf_rz_op, disp_sigma_op,
+      nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec, 1.0e-12,
+      EigenvalueSolver::WhichType::LARGEST_MAGNITUDE, iodata.solver.linear,
+      iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
   const double kn_target = omega * n_target;
   auto result = mode_solver.Solve(omega, -kn_target * kn_target);
   REQUIRE(result.num_converged >= 1);
@@ -785,6 +794,66 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator]
           imp.Ls = 1.0e-8;
         });
   }
+}
+
+TEST_CASE("ModeOperatorModel dispersive conductivity component",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A Mattis-Bardeen substrate matched at a reference frequency away from ω assembles the
+  // same mode operator at ω as the static conductivity and London depth of σ(ω). A
+  // dispersive material absent from the mesh adds no component.
+  constexpr double L0 = 1.0e-6, f_ghz = 50.0;
+  const Units units(L0, L0);
+  config::MaterialData dispersive;
+  auto &cs = dispersive.complex_sigma.emplace();
+  cs.sigma_n = 1.0e6;
+  cs.temperature = 4.2;
+  cs.gap = 1.4e-3;
+  cs.reference_freq = 300.0;
+  config::MaterialData nondim = dispersive;
+  config::Nondimensionalize(units, nondim);
+  const double omega =
+      2.0 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_ghz);
+  const auto sigma = ComplexConductivityModel(*nondim.complex_sigma)(omega);
+
+  RectangleModeModel model_dispersive(
+      [&](IoData &iodata)
+      {
+        auto &substrate = iodata.domains.materials[0];
+        substrate.epsilon_r.s = {1.0, 1.0, 1.0};
+        substrate.complex_sigma = dispersive.complex_sigma;
+        auto &absent = iodata.domains.materials.emplace_back(dispersive);
+        absent.attributes = {3};
+      });
+  RectangleModeModel model_static(
+      [&](IoData &iodata)
+      {
+        auto &substrate = iodata.domains.materials[0];
+        substrate.epsilon_r.s = {1.0, 1.0, 1.0};
+        substrate.sigma.s.fill(sigma.real() *
+                               units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>());
+        substrate.lambda_L = 1.0 / std::sqrt(-omega * sigma.imag());
+      });
+  const auto &components = model_dispersive.GetModel().GetComponents();
+  CHECK(std::ranges::count_if(
+            components,
+            [](const auto &component)
+            {
+              return component.type ==
+                     mode_assembly::CoefficientType::DISPERSIVE_CONDUCTIVITY;
+            }) == 1);
+
+  const double shift = -4.0 * omega * omega;
+  auto A_dispersive = model_dispersive.GetModel().Assemble(omega, shift);
+  auto A_static = model_static.GetModel().Assemble(omega, shift);
+  MPI_Comm comm = Mpi::World();
+  ComplexVector x(A_static->Width()), y(A_static->Height()), z(A_static->Height());
+  linalg::SetRandom(comm, x);
+  A_static->Mult(x, y);
+  A_dispersive->Mult(x, z);
+  const double norm = linalg::Norml2(comm, y);
+  z -= y;
+  CHECK(linalg::Norml2(comm, z) < 1.0e-12 * norm);
 }
 
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",

@@ -88,6 +88,6 @@ Alternatively, a superconducting domain can be described by a complex conductivi
   - `"Table"`: tabulated ``\sigma_1`` and ``\sigma_2``, interpolated in frequency.
 
 The dispersive models (`"MattisBardeen"` and `"Table"`) are supported for driven
-simulations, with uniform or adaptive frequency sweeps, and for boundary mode simulations.
-They are not yet supported for eigenmode or transient simulations, wave ports adjacent to
-dispersive domains, or adaptive circuit synthesis.
+simulations, with uniform or adaptive frequency sweeps and lumped or wave ports, and for
+boundary mode simulations. They are not yet supported for eigenmode or transient
+simulations, or adaptive circuit synthesis.

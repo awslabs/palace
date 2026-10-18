@@ -26,6 +26,7 @@
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "models/boundarymodeoperator.hpp"
+#include "models/dispersiveconductivityoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -51,16 +52,17 @@ ModeEigenSolver::ModeEigenSolver(
     const MaterialOperator &mat_op, const mfem::Vector *normal,
     SurfaceImpedanceOperator &surf_z_op, FarfieldBoundaryOperator &farfield_op,
     SurfaceConductivityOperator &surf_sigma_op,
-    SurfaceRationalImpedanceOperator &surf_rz_op, const FiniteElementSpace &nd_fespace,
-    const FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list,
-    int num_modes, int num_vec, double eig_tol, EigenvalueSolver::WhichType which_eig,
-    const config::LinearSolverData &linear, EigenSolverBackend eigen_backend, int verbose,
-    MPI_Comm solver_comm)
+    SurfaceRationalImpedanceOperator &surf_rz_op,
+    const DispersiveConductivityOperator &disp_sigma_op,
+    const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,
+    const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec, double eig_tol,
+    EigenvalueSolver::WhichType which_eig, const config::LinearSolverData &linear,
+    EigenSolverBackend eigen_backend, int verbose, MPI_Comm solver_comm)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
     normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
-    surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op), nd_fespace(nd_fespace),
-    h1_fespace(h1_fespace), dbc_tdof_list(dbc_tdof_list)
+    surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op), disp_sigma_op(disp_sigma_op),
+    nd_fespace(nd_fespace), h1_fespace(h1_fespace), dbc_tdof_list(dbc_tdof_list)
 {
   // Assemble Atn, Btn = -Atn^T, Btt locally (no BMO available on this path).
   std::tie(owned_Atnr, owned_Atni) =
@@ -82,7 +84,7 @@ ModeEigenSolver::ModeEigenSolver(
   Bttr = owned_Bttr.get();
   mode_op_model = std::make_unique<mode_assembly::ModeOperatorModel>(
       nd_fespace, h1_fespace, mat_op, normal, surf_z_op, farfield_op, surf_sigma_op,
-      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
+      surf_rz_op, disp_sigma_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
 
   Init(solver_comm);
 }
@@ -97,8 +99,9 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
     linear(linear), eigen_backend(eigen_backend), verbose(verbose),
     mat_op(bmo.GetMaterialOp()), normal(nullptr), surf_z_op(bmo.GetSurfZOp()),
     farfield_op(bmo.GetFarfieldOp()), surf_sigma_op(bmo.GetSurfSigmaOp()),
-    surf_rz_op(bmo.GetSurfRZOp()), nd_fespace(bmo.GetNDSpace()),
-    h1_fespace(bmo.GetH1Space()), bmo(&bmo), dbc_tdof_list(dbc_tdof_list)
+    surf_rz_op(bmo.GetSurfRZOp()), disp_sigma_op(bmo.GetDispSigmaOp()),
+    nd_fespace(bmo.GetNDSpace()), h1_fespace(bmo.GetH1Space()), bmo(&bmo),
+    dbc_tdof_list(dbc_tdof_list)
 {
   // Alias BMO-owned frequency-independent matrices; no local assembly.
   Atnr = bmo.GetAtnr();
@@ -108,7 +111,7 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
   Bttr = bmo.GetBtt();
   mode_op_model = std::make_unique<mode_assembly::ModeOperatorModel>(
       nd_fespace, h1_fespace, mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
+      surf_rz_op, disp_sigma_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
 
   Init(nd_fespace.GetComm());
 }
@@ -743,6 +746,11 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
     eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),
                                   mat_op.GetInvLondonDepth(), 1.0);
   }
+  {
+    // Real (London-like) part of the dispersive conductivity residual.
+    MaterialPropertyCoefficient disp_i(mat_op.MaxCeedAttribute());
+    disp_sigma_op.AddExtraSystemCoefficients(omega, eps_shifted_pc, disp_i);
+  }
 
   // Boundary coefficients for preconditioner (real part only, matching SpaceOperator).
   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
@@ -822,6 +830,18 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),
                                   mat_op.GetInvLondonDepthScalar(), -1.0);
+  }
+  {
+    // Real part of the dispersive conductivity residual, with the sign of the London term.
+    MaterialPropertyCoefficient disp_r(mat_op.MaxCeedAttribute()),
+        disp_i(mat_op.MaxCeedAttribute());
+    disp_sigma_op.AddExtraSystemCoefficients(omega, disp_r, disp_i);
+    if (!disp_r.empty())
+    {
+      disp_r *= -1.0;
+      poseps_h1_func.AddCoefficient(disp_r.GetAttributeToMaterial(),
+                                    disp_r.GetMaterialProperties());
+    }
   }
 
   // Boundary coefficients (real part only).

@@ -10,6 +10,7 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/rap.hpp"
+#include "models/dispersiveconductivityoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -105,10 +106,11 @@ ModeOperatorModel::ModeOperatorModel(
     const MaterialOperator &mat_op, const mfem::Vector *normal,
     SurfaceImpedanceOperator &surf_z_op, FarfieldBoundaryOperator &farfield_op,
     SurfaceConductivityOperator &surf_sigma_op,
-    SurfaceRationalImpedanceOperator &surf_rz_op, const mfem::HypreParMatrix &Bttr,
+    SurfaceRationalImpedanceOperator &surf_rz_op,
+    const DispersiveConductivityOperator &disp_sigma_op, const mfem::HypreParMatrix &Bttr,
     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
     const mfem::HypreParMatrix *Btnr, const mfem::Array<int> &dbc_tdof_list)
-  : surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op)
+  : surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op), disp_sigma_op(disp_sigma_op)
 {
   auto assemble_nd = [&](BilinearForm &form)
   {
@@ -316,22 +318,30 @@ ModeOperatorModel::ModeOperatorModel(
   *shift *= -1.0;
   add_component(CoefficientType::SHIFT, -1, std::move(shift), nullptr, nullptr, nullptr);
 
-  auto add_boundary_component =
-      [&](CoefficientType type, int index, MaterialPropertyCoefficient &unit)
+  // Components with a scalar coefficient on a unit boundary or domain mass: the tangential
+  // mass and the negative normal mass. Processes without elements of the attributes have
+  // an empty coefficient and assemble their (zero) part of the component without the
+  // integrators.
+  auto add_mass_component = [&](CoefficientType type, int index,
+                                const MaterialPropertyCoefficient &unit, bool bdr)
   {
-    // Processes without elements on the boundary have an empty coefficient and assemble
-    // their (zero) part of the component without the integrators.
+    MaterialPropertyCoefficient neg_unit(unit);
+    neg_unit *= -1.0;
     BilinearForm att(nd_fespace), ann(h1_fespace);
     if (!unit.empty())
     {
-      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+      if (bdr)
+      {
+        att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+        ann.AddBoundaryIntegrator<MassIntegrator>(neg_unit);
+      }
+      else
+      {
+        att.AddDomainIntegrator<VectorFEMassIntegrator>(unit);
+        ann.AddDomainIntegrator<MassIntegrator>(neg_unit);
+      }
     }
     auto Attr = assemble_nd(att);
-    unit *= -1.0;
-    if (!unit.empty())
-    {
-      ann.AddBoundaryIntegrator<MassIntegrator>(unit);
-    }
     add_component(type, index, std::move(Attr), nullptr, assemble_h1(ann), nullptr);
   };
   for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
@@ -340,15 +350,28 @@ ModeOperatorModel::ModeOperatorModel(
     {
       MaterialPropertyCoefficient unit(max_bdr_attr);
       surf_sigma_op.AddBoundaryMassBdrCoefficients(g, unit);
-      add_boundary_component(CoefficientType::SURFACE_CONDUCTIVITY, static_cast<int>(g),
-                             unit);
+      add_mass_component(CoefficientType::SURFACE_CONDUCTIVITY, static_cast<int>(g), unit,
+                         true);
     }
   }
   for (int b = 0; b < surf_rz_op.GetNumBoundaries(); b++)
   {
     MaterialPropertyCoefficient unit(max_bdr_attr);
     surf_rz_op.AddUnitBdrCoefficients(b, unit);
-    add_boundary_component(CoefficientType::RATIONAL_IMPEDANCE, b, unit);
+    add_mass_component(CoefficientType::RATIONAL_IMPEDANCE, b, unit, true);
+  }
+
+  // Residual of dispersive conductivity domains, added to their conductivity and London
+  // terms.
+  for (std::size_t g = 0; g < disp_sigma_op.Size(); g++)
+  {
+    if (disp_sigma_op.IsActive(g))
+    {
+      MaterialPropertyCoefficient unit(n_attr);
+      disp_sigma_op.AddUnitCoefficients(g, unit);
+      add_mass_component(CoefficientType::DISPERSIVE_CONDUCTIVITY, static_cast<int>(g),
+                         unit, false);
+    }
   }
 }
 
@@ -371,6 +394,11 @@ ModeOperatorModel::EvaluateCoefficient(const OperatorComponent &component,
     case CoefficientType::RATIONAL_IMPEDANCE:
       return surf_rz_op.EvalRobinCoefficient(component.index,
                                              std::complex<double>(0.0, 1.0) * omega);
+    case CoefficientType::DISPERSIVE_CONDUCTIVITY:
+      MFEM_VERIFY(omega.imag() == 0.0,
+                  "Dispersive conductivity is only evaluated at real frequencies!");
+      return disp_sigma_op.EvaluateScalar(static_cast<std::size_t>(component.index),
+                                          omega.real());
   }
   MFEM_ABORT("Unknown mode-operator coefficient type!");
   return 0.0;

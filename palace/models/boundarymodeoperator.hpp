@@ -17,6 +17,7 @@
 namespace palace
 {
 
+class DispersiveConductivityOperator;
 class FarfieldBoundaryOperator;
 class SurfaceConductivityOperator;
 class SurfaceRationalImpedanceOperator;
@@ -68,6 +69,7 @@ public:
   FarfieldBoundaryOperator &GetFarfieldOp() { return *farfield_op; }
   SurfaceConductivityOperator &GetSurfSigmaOp() { return *surf_sigma_op; }
   SurfaceRationalImpedanceOperator &GetSurfRZOp() { return *surf_rz_op; }
+  const DispersiveConductivityOperator &GetDispSigmaOp() const { return *disp_sigma_op; }
 
   // Frequency-independent block matrices, assembled in the constructor.
   //   Atn = -(mu^{-1} grad_t u, v)           (ND / H1 gradient coupling)
@@ -129,6 +131,7 @@ private:
   std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
   std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
+  std::unique_ptr<DispersiveConductivityOperator> disp_sigma_op;
 
   // Frequency-independent block matrices.
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Btni, Bttr;

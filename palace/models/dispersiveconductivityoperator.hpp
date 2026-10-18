@@ -45,6 +45,7 @@ private:
     std::vector<int> attributes;
     double omega_ref;
     std::complex<double> sigma_ref;
+    bool active;
   };
   std::vector<DispersiveGroup> groups;
 
@@ -58,6 +59,9 @@ public:
   // Number of dispersive material groups (the same on all processes).
   std::size_t Size() const { return groups.size(); }
   bool Empty() const { return groups.empty(); }
+
+  // Whether group g has elements on the mesh (the same on all processes).
+  bool IsActive(std::size_t g) const { return groups[g].active; }
 
   // Residual coefficient δy_g(ω) of group g.
   std::complex<double> EvaluateScalar(std::size_t g, double omega) const;

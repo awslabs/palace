@@ -24,6 +24,7 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
+#include "models/dispersiveconductivityoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -741,11 +742,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // attribute lookups which correctly reference the remapped submesh.
   port_mat_op = std::make_unique<MaterialOperator>(domains.materials, boundaries.periodic,
                                                    problem_type, *port_mesh);
-  // The port mode problem only includes the frequency-independent part of a dispersive
-  // conductivity.
-  MFEM_VERIFY(!port_mat_op->HasDispersiveConductivity(),
-              "Wave ports adjacent to dispersive \"ComplexConductivity\" domains are not "
-              "yet supported!");
   port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(
       boundaries.impedance, boundaries.cracked_attributes, units, *port_mat_op, mesh);
   port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(
@@ -755,6 +751,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   port_surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(
       boundaries.rational_impedance, boundaries.cracked_attributes, problem_type, units,
       *port_mat_op, mesh);
+  port_disp_sigma_op = std::make_unique<DispersiveConductivityOperator>(
+      domains.materials, problem_type, units, *port_mat_op);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -810,7 +808,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
     }
   }
 
-
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();
   int color = (port_nd_fespace->GetVSize() > 0 || port_h1_fespace->GetVSize() > 0)
@@ -830,8 +827,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   {
     mode_solver = std::make_unique<ModeEigenSolver>(
         *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
-        *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
-        data.max_size, data.eig_tol,
+        *port_surf_rz_op, *port_disp_sigma_op, *port_nd_fespace, *port_h1_fespace,
+        port_dbc_tdof_list, mode_idx, data.max_size, data.eig_tol,
         (data.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                             : EigenvalueSolver::WhichType::LARGEST_REAL,
         port_linear, data.eigen_solver, data.verbose, port_comm);

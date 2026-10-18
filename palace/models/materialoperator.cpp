@@ -195,8 +195,7 @@ void MaterialOperator::SetUpMaterialProperties(
   mat_muinvkx.SetSize(sdim, sdim, nmats);
   mat_kxTmuinvkx.SetSize(sdim, sdim, nmats);
   mat_kx.SetSize(sdim, sdim, nmats);
-  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr =
-      has_dispersive_attr = false;
+  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
 
   // Set up Floquet wave vector for periodic meshes with phase-delay constraints.
   SetUpFloquetWaveVector(periodic, problem_type, mesh);
@@ -394,7 +393,6 @@ void MaterialOperator::SetUpMaterialProperties(
       {
         has_london_attr = true;
       }
-      has_dispersive_attr = true;
     }
 
     // μ⁻¹ [k x]
@@ -437,14 +435,13 @@ void MaterialOperator::SetUpMaterialProperties(
                           "config[\"Domains\"][\"Materials\"]!",
                           missing_attr));
 
-  bool has_attr[5] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
-                      has_wave_attr, has_dispersive_attr};
-  Mpi::GlobalOr(5, has_attr, mesh.GetComm());
+  bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
+                      has_wave_attr};
+  Mpi::GlobalOr(4, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
-  has_dispersive_attr = has_attr[4];
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const
