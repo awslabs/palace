@@ -4,15 +4,18 @@
 #include "fixtures.hpp"
 #include "surfaceresponse-fixtures.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <map>
 #include <memory>
 #include <optional>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string_view>
@@ -5624,6 +5627,40 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell is
 #endif
 }
 
+namespace
+{
+
+// U6 (decision 818 / 821 (3)): M = Pᵀ W D P (SurfaceResponseOperator::Mult on the Maxwell
+// path: ApplyDomainDefect in the fixed-trace mode) with W the diagonal patch weights and D
+// the block-diagonal model domain defects S_fabricated - S_thin, each a symmetric response
+// matrix, so W D is symmetric and <x, M y> = <y, M x> on random vectors holds iff
+// ApplyTraceTranspose is the adjoint of ApplyTrace (hats, free arcs and open paths
+// included).
+void CheckMaxwellTraceAdjoint(const SurfaceResponseOperator &response, unsigned seed)
+{
+  auto SeededVector = [](Vector &x, unsigned vector_seed)
+  {
+    std::mt19937 generator(vector_seed + 1000 * Mpi::Rank(Mpi::World()));
+    std::uniform_real_distribution<double> uniform(-1.0, 1.0);
+    for (int i = 0; i < x.Size(); i++)
+    {
+      x[i] = uniform(generator);
+    }
+  };
+  Vector x(response.Height()), y(response.Height()), Mx(response.Height()),
+      My(response.Height());
+  SeededVector(x, seed);
+  SeededVector(y, seed + 7);
+  response.Mult(x, Mx);
+  response.Mult(y, My);
+  const double xMy = linalg::Dot(Mpi::World(), x, My);
+  const double yMx = linalg::Dot(Mpi::World(), y, Mx);
+  REQUIRE(std::abs(xMy) > 0.0);
+  CHECK_THAT(yMx, WithinRel(xMy, 1.0e-12));
+}
+
+}  // namespace
+
 TEST_CASE_METHOD(
     test::SurfaceResponseFiles, "SurfaceResponseOperator spatial cluster Maxwell",
     "[surfaceresponseoperator][3d][maxwell][spatial][placement][Serial][Parallel]")
@@ -5665,8 +5702,11 @@ TEST_CASE_METHOD(
   CHECK_THAT(spatial_cluster_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
   CHECK(spatial_cluster_result.corner_neighborhood_fraction == 0.0);
 
-  // Maxwell response correction refuses cap-interior trace coefficients
-  // (InteriorTraceCount): every Maxwell coefficient must lie on a contour.
+  // U1 (decision 818 R2; DESIGN 5.1): the cap-interior hats (InteriorTraceCount) are
+  // Maxwell trace coefficients too: each hat hangs from the nearest contour knot of its own
+  // cap plane. On the constant field E0 every coefficient is exact: a knot's trace is
+  // -E0 . (p - a0) from the reference conductor's anchor a0 (the open paths start there),
+  // the conductor state is -E0 . (a1 - a0), the loop and hat residuals vanish.
   {
     auto cap_hat_maxwell_config = spatial_cluster_config;
     cap_hat_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
@@ -5674,10 +5714,92 @@ TEST_CASE_METHOD(
     IoData cap_hat_maxwell_iodata(cap_hat_maxwell_config, false);
     cap_hat_maxwell_iodata.boundaries.cracked_attributes.insert(9);
     cap_hat_maxwell_iodata.boundaries.cracked_attributes.insert(10);
-    CHECK_THROWS_WITH(
-        SurfaceResponseOperator(cap_hat_maxwell_iodata, spatial_cluster_space),
-        Catch::Matchers::ContainsSubstring(
-            "Maxwell response correction does not support cap-interior"));
+    SurfaceResponseOperator cap_hat_maxwell_response(cap_hat_maxwell_iodata,
+                                                     spatial_cluster_space);
+    CHECK(cap_hat_maxwell_response.GetPatchCount() ==
+          spatial_cluster_response.GetPatchCount());
+    CHECK(cap_hat_maxwell_response.GetBasisSize() ==
+          spatial_cluster_response.GetBasisSize() + 2);
+    const auto cap_hat_maxwell_result =
+        cap_hat_maxwell_response.GetMaxwellResponse(spatial_cluster_field, 0.0);
+    CHECK(cap_hat_maxwell_result.loop_residual < 1.0e-10);
+    CHECK(cap_hat_maxwell_result.hat_residual < 1.0e-10);
+    CHECK(cap_hat_maxwell_result.response_weighted_hat_residual < 1.0e-10);
+    CHECK_THAT(cap_hat_maxwell_result.domain_correction,
+               WithinRel(spatial_cluster_result.domain_correction, 1.0e-12));
+    const double coordinate_scale =
+        cap_hat_maxwell_iodata.units.GetMeshLengthRelativeScale();
+    REQUIRE(coordinate_scale == 1.0);
+    const std::array<std::array<double, 3>, 6> cap_hat_points = {{{0.025, -0.025, 0.02},
+                                                                  {0.050, -0.050, 0.02},
+                                                                  {0.075, -0.075, -0.02},
+                                                                  {0.100, -0.100, -0.02},
+                                                                  {0.060, -0.030, 0.02},
+                                                                  {0.030, -0.060, -0.02}}};
+    const std::array<std::array<double, 3>, 2> cap_hat_references = {
+        {{0.0, 0.0, 0.0}, {0.125, -0.125, 0.0}}};
+    const mfem::Vector &constant_field = field_coefficient.GetVec();
+    Vector spatial_cluster_true;
+    spatial_cluster_field.Real().GetTrueDofs(spatial_cluster_true);
+    const auto cap_hat_traces =
+        cap_hat_maxwell_response.GetPatchTraces(spatial_cluster_true);
+    const auto cap_hat_names = cap_hat_maxwell_response.GetModelNames();
+    int cap_hat_patches = 0;
+    if (Mpi::Root(Mpi::World()))
+    {
+      for (const auto &entry : cap_hat_traces)
+      {
+        if (cap_hat_names.at(entry.model) != "offset-corner-pair-cap-hats")
+        {
+          continue;
+        }
+        cap_hat_patches++;
+        const auto &assignments = cap_hat_maxwell_response.GetPatchAssignments();
+        const auto assignment =
+            std::find_if(assignments.begin(), assignments.end(),
+                         [&](const auto &a) { return a.global_index == entry.patch; });
+        // CHECKs only on the root-only branch: a rank-0 early exit would leave rank 1 in
+        // the next collective.
+        CHECK(entry.coefficients.size() == 7);
+        CHECK(assignment != assignments.end());
+        if (entry.coefficients.size() != 7 || assignment == assignments.end())
+        {
+          continue;
+        }
+        auto Device = [&](const std::array<double, 3> &local)
+        {
+          std::array<double, 3> p{};
+          for (int d = 0; d < 3; d++)
+          {
+            p[d] = assignment->origin[d] +
+                   (local[0] * assignment->axis_u[d] + local[1] * assignment->axis_v[d] +
+                    local[2] * assignment->axis_w[d]) /
+                       coordinate_scale;
+          }
+          return p;
+        };
+        auto Trace = [&](const std::array<double, 3> &p, const std::array<double, 3> &a)
+        {
+          double value = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            value -= constant_field[d] * (p[d] - a[d]);
+          }
+          return value;
+        };
+        const auto a0 = Device(cap_hat_references[0]);
+        const auto a1 = Device(cap_hat_references[1]);
+        for (std::size_t i = 0; i < cap_hat_points.size(); i++)
+        {
+          CHECK_THAT(entry.coefficients[i],
+                     WithinAbs(Trace(Device(cap_hat_points[i]), a0), 1.0e-10));
+        }
+        CHECK_THAT(entry.coefficients[6], WithinAbs(Trace(a1, a0), 1.0e-10));
+      }
+      CHECK(cap_hat_patches == 1);
+    }
+    // U6 on hats + open paths.
+    CheckMaxwellTraceAdjoint(cap_hat_maxwell_response, 29);
   }
 
   auto missing_spatial_cluster_config = spatial_cluster_config;
@@ -6065,6 +6187,317 @@ TEST_CASE_METHOD(
   CheckSpatialClusterMismatch(spatial_cluster_extra_edge_library_3d_path);
   CheckSpatialClusterMismatch(spatial_cluster_impedance_mismatch_library_3d_path);
 
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator Maxwell free arc anchor start",
+                 "[surfaceresponseoperator][3d][maxwell][corner][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  mfem::VectorConstantCoefficient field_coefficient = ConstantFieldCoefficient();
+  const mfem::Vector &constant_field = field_coefficient.GetVec();
+  // U3 (R1, the E1 semantics): the rounded corner whose top metal ring (z = 0.02, the slab
+  // top in the thin device's air) carries three PEC knots and one free knot. The free
+  // knot's trace is -E0 . (p - a) from the conductor anchor a = the Reference inside the
+  // footprint, not -E0 . (p - p_PEC) from the arc's PEC knot (main ad2b39fd52: off by
+  // -E0 . (p_PEC - a), E0_z t included); the PEC knots are exactly 0; the arc closes a true
+  // loop (R4: loop residual < 1e-10 with the return line).
+  json rounded_island_config = RoundedIslandConfig();
+  auto slab_top_maxwell_config = rounded_island_config;
+  slab_top_maxwell_config["Problem"]["Type"] = "Eigenmode";
+  slab_top_maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  slab_top_maxwell_config["Boundaries"].erase("Terminal");
+  slab_top_maxwell_config["Solver"] = {
+      {"Order", 1},
+      {"Eigenmode", {{"Target", 1.0}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", slab_top_rounded_library_3d_path.string()},
+        {"TargetInterfaces", {4}},
+        {"UnmatchedPolicy", "Error"},
+        {"PatchConstruction", "Legacy"}}}};
+  IoData slab_top_maxwell_iodata(slab_top_maxwell_config, false);
+  slab_top_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> slab_top_maxwell_meshes;
+  slab_top_maxwell_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh(true, true)));
+  SpaceOperator slab_top_maxwell_space(slab_top_maxwell_iodata, slab_top_maxwell_meshes);
+  SurfaceResponseOperator slab_top_maxwell_response(slab_top_maxwell_iodata,
+                                                    slab_top_maxwell_space);
+  constexpr int rounded_corner_count = 4;
+  CHECK(slab_top_maxwell_response.GetPatchCount() > rounded_corner_count);
+  const double coordinate_scale =
+      slab_top_maxwell_iodata.units.GetMeshLengthRelativeScale();
+  REQUIRE(coordinate_scale == 1.0);
+  GridFunction slab_top_field(slab_top_maxwell_space.GetNDSpace(), true);
+  slab_top_field.Real().ProjectCoefficient(field_coefficient);
+  slab_top_field.Imag() = 0.0;
+  const auto slab_top_result =
+      slab_top_maxwell_response.GetMaxwellResponse(slab_top_field, 0.0);
+  CHECK(slab_top_result.loop_residual < 1.0e-10);
+  CHECK(slab_top_result.hat_residual == 0.0);
+  Vector slab_top_true;
+  slab_top_field.Real().GetTrueDofs(slab_top_true);
+  const auto slab_top_traces = slab_top_maxwell_response.GetPatchTraces(slab_top_true);
+  const auto slab_top_names = slab_top_maxwell_response.GetModelNames();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::vector<std::array<double, 3>> corner_points;
+    for (const double z : {-0.02, 0.0, 0.02})
+    {
+      corner_points.push_back({0.02, 0.02, z});
+      corner_points.push_back({0.08, 0.02, z});
+      corner_points.push_back({0.08, 0.08, z});
+      corner_points.push_back({0.02, 0.08, z});
+    }
+    const std::set<int> slab_top_zero_knots = {4, 5, 6, 7, 9, 10, 11};
+    const std::array<double, 3> rounded_reference = {0.125, 0.125, 0.0};
+    int slab_top_corners = 0;
+    for (const auto &entry : slab_top_traces)
+    {
+      if (slab_top_names.at(entry.model) != "convex-corner-90-r0.125-slab-top")
+      {
+        continue;
+      }
+      slab_top_corners++;
+      const auto &assignments = slab_top_maxwell_response.GetPatchAssignments();
+      const auto assignment =
+          std::find_if(assignments.begin(), assignments.end(),
+                       [&](const auto &a) { return a.global_index == entry.patch; });
+      CHECK(entry.coefficients.size() == corner_points.size());
+      CHECK(assignment != assignments.end());
+      if (entry.coefficients.size() != corner_points.size() ||
+          assignment == assignments.end())
+      {
+        continue;
+      }
+      auto Device = [&](const std::array<double, 3> &local)
+      {
+        std::array<double, 3> p{};
+        for (int d = 0; d < 3; d++)
+        {
+          p[d] = assignment->origin[d] +
+                 (local[0] * assignment->axis_u[d] + local[1] * assignment->axis_v[d] +
+                  local[2] * assignment->axis_w[d]) /
+                     coordinate_scale;
+        }
+        return p;
+      };
+      const auto anchor = Device(rounded_reference);
+      for (std::size_t i = 0; i < corner_points.size(); i++)
+      {
+        double expected = 0.0;
+        if (!slab_top_zero_knots.count(static_cast<int>(i)))
+        {
+          const auto p = Device(corner_points[i]);
+          for (int d = 0; d < 3; d++)
+          {
+            expected -= constant_field[d] * (p[d] - anchor[d]);
+          }
+        }
+        CHECK_THAT(entry.coefficients[i], WithinAbs(expected, 1.0e-10));
+      }
+    }
+    CHECK(slab_top_corners == rounded_corner_count);
+  }
+  CheckMaxwellTraceAdjoint(slab_top_maxwell_response, 11);
+
+#endif
+}
+
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell placement ownership",
+    "[surfaceresponseoperator][3d][maxwell][spatial][placement][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // U4 (R5): the electrostatic and the Maxwell constructor place the SAME patches on the
+  // same geometry and library (the offset corner pair with the hat-free cluster library,
+  // loadable on main: the cluster, the corners and the isolated-edge continuations clipped
+  // at its support box): the rank-0 assignment lists agree entry by entry (model, frame,
+  // weight, placed index), as do the counts and the total weight. Main ad2b39fd52 runs no
+  // ownership stage on Maxwell.
+  json island_config = IslandConfig();
+  auto cluster_electrostatic_config = island_config;
+  cluster_electrostatic_config["Boundaries"]["Terminal"] = {
+      {{"Index", 1}, {"Attributes", {9}}}, {{"Index", 2}, {"Attributes", {10}}}};
+  cluster_electrostatic_config["Boundaries"]["Postprocessing"]["Dielectric"][0]
+                              ["Attributes"] = {9, 10};
+  cluster_electrostatic_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      spatial_cluster_library_3d_path.string();
+  IoData cluster_electrostatic_iodata(cluster_electrostatic_config, false);
+  cluster_electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+  cluster_electrostatic_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> cluster_electrostatic_meshes;
+  cluster_electrostatic_meshes.push_back(
+      std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  LaplaceOperator cluster_laplace(cluster_electrostatic_iodata,
+                                  cluster_electrostatic_meshes);
+  SurfaceResponseOperator cluster_electrostatic_response(cluster_electrostatic_iodata,
+                                                         cluster_laplace);
+
+  json convex_maxwell_island_config = ConvexMaxwellIslandConfig();
+  auto cluster_maxwell_config = convex_maxwell_island_config;
+  cluster_maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
+  cluster_maxwell_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {
+      9, 10};
+  cluster_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      spatial_cluster_library_3d_path.string();
+  IoData cluster_maxwell_iodata(cluster_maxwell_config, false);
+  cluster_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  cluster_maxwell_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> cluster_maxwell_meshes;
+  cluster_maxwell_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator cluster_maxwell_space(cluster_maxwell_iodata, cluster_maxwell_meshes);
+  SurfaceResponseOperator cluster_maxwell_response(cluster_maxwell_iodata,
+                                                   cluster_maxwell_space);
+  CHECK(cluster_maxwell_response.GetPatchCount() ==
+        cluster_electrostatic_response.GetPatchCount());
+  CHECK(cluster_maxwell_response.GetBasisSize() ==
+        cluster_electrostatic_response.GetBasisSize());
+  CHECK_THAT(cluster_maxwell_response.GetPatchWeight(),
+             WithinRel(cluster_electrostatic_response.GetPatchWeight(), 1.0e-12));
+  if (Mpi::Root(Mpi::World()))
+  {
+    const auto &electrostatic = cluster_electrostatic_response.GetPatchAssignments();
+    const auto &maxwell = cluster_maxwell_response.GetPatchAssignments();
+    CHECK(maxwell.size() == electrostatic.size());
+    for (std::size_t i = 0; i < std::min(electrostatic.size(), maxwell.size()); i++)
+    {
+      CHECK(maxwell[i].model == electrostatic[i].model);
+      CHECK(maxwell[i].global_index == electrostatic[i].global_index);
+      CHECK_THAT(maxwell[i].weight, WithinRel(electrostatic[i].weight, 1.0e-12));
+      for (int d = 0; d < 3; d++)
+      {
+        CHECK_THAT(maxwell[i].origin[d], WithinAbs(electrostatic[i].origin[d], 1.0e-12));
+        CHECK_THAT(maxwell[i].axis_u[d], WithinAbs(electrostatic[i].axis_u[d], 1.0e-12));
+        CHECK_THAT(maxwell[i].axis_v[d], WithinAbs(electrostatic[i].axis_v[d], 1.0e-12));
+        CHECK_THAT(maxwell[i].axis_w[d], WithinAbs(electrostatic[i].axis_w[d], 1.0e-12));
+      }
+    }
+  }
+  // The ownership stage's own record: the ES Diagnostics keys it writes (the
+  // domain-boundary classification is always among them in 3D) are present on Maxwell and
+  // equal mod the wall times and the mirror band (the identification sets MirrorBandOverR 0
+  // on Maxwell: no DomainBoundary mirror there, M-4). Main ad2b39fd52 writes only
+  // "Uncovered" on Maxwell.
+  {
+    const auto electrostatic_statistics = cluster_electrostatic_response.GetStatistics();
+    const auto maxwell_statistics = cluster_maxwell_response.GetStatistics();
+    REQUIRE(electrostatic_statistics.contains("Diagnostics"));
+    REQUIRE(maxwell_statistics.contains("Diagnostics"));
+    const auto &electrostatic_diagnostics = electrostatic_statistics["Diagnostics"];
+    const auto &maxwell_diagnostics = maxwell_statistics["Diagnostics"];
+    std::function<void(json &)> StripWallTime = [&](json &value)
+    {
+      if (value.is_object())
+      {
+        value.erase("WallTime");
+        value.erase("MirrorBandOverR");
+        for (auto &[key, child] : value.items())
+        {
+          (void)key;
+          StripWallTime(child);
+        }
+      }
+      else if (value.is_array())
+      {
+        for (auto &child : value)
+        {
+          StripWallTime(child);
+        }
+      }
+    };
+    REQUIRE(electrostatic_diagnostics.contains("DomainBoundaryExclusions"));
+    for (const char *key : {"DomainBoundaryExclusions", "ContinuationOwnership",
+                            "TranslationalStretchesInsideSpatialSupport", "Uncovered",
+                            "CornerArmTrim", "CornerArmExtension", "MirrorArmTrim"})
+    {
+      if (!electrostatic_diagnostics.contains(key))
+      {
+        continue;
+      }
+      INFO("Diagnostics key " << key);
+      REQUIRE(maxwell_diagnostics.contains(key));
+      json electrostatic_value = electrostatic_diagnostics[key];
+      json maxwell_value = maxwell_diagnostics[key];
+      StripWallTime(electrostatic_value);
+      StripWallTime(maxwell_value);
+      CHECK(maxwell_value == electrostatic_value);
+    }
+  }
+  CheckMaxwellTraceAdjoint(cluster_maxwell_response, 23);
+
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator Maxwell stage 1 refusals",
+                 "[surfaceresponseoperator][3d][maxwell][spatial][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  json convex_maxwell_island_config = ConvexMaxwellIslandConfig();
+  auto cluster_maxwell_config = convex_maxwell_island_config;
+  cluster_maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
+  cluster_maxwell_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {
+      9, 10};
+  cluster_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      cap_hat_spatial_cluster_library_3d_path.string();
+  IoData cluster_maxwell_iodata(cluster_maxwell_config, false);
+  cluster_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  cluster_maxwell_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> cluster_maxwell_meshes;
+  cluster_maxwell_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator cluster_maxwell_space(cluster_maxwell_iodata, cluster_maxwell_meshes);
+  // U5: what stays refused on the Maxwell path. A hat whose cap plane holds no contour knot
+  // (decision 821 (2)); a closed-contour key (ZeroTraceIndices, ContourGroups) on the
+  // open-path cluster, refused at the library load before the constructor's own
+  // combination check; the corner family's trace basis (M-3: stage 2); SurfaceMortar.
+  {
+    auto off_plane_config = cluster_maxwell_config;
+    off_plane_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+        cap_hat_off_plane_spatial_cluster_library_3d_path.string();
+    IoData off_plane_iodata(off_plane_config, false);
+    off_plane_iodata.boundaries.cracked_attributes.insert(9);
+    off_plane_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(off_plane_iodata, cluster_maxwell_space),
+        Catch::Matchers::ContainsSubstring("has no contour knot in its own cap plane"));
+    auto zero_trace_open_paths_config = cluster_maxwell_config;
+    zero_trace_open_paths_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+        cap_hat_zero_trace_open_paths_library_3d_path.string();
+    IoData zero_trace_open_paths_iodata(zero_trace_open_paths_config, false);
+    zero_trace_open_paths_iodata.boundaries.cracked_attributes.insert(9);
+    zero_trace_open_paths_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(zero_trace_open_paths_iodata, cluster_maxwell_space),
+        Catch::Matchers::ContainsSubstring(
+            "ZeroTraceIndices requires closed response-model contours"));
+    auto contour_groups_open_paths_config = cluster_maxwell_config;
+    contour_groups_open_paths_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+        cap_hat_contour_groups_open_paths_library_3d_path.string();
+    IoData contour_groups_open_paths_iodata(contour_groups_open_paths_config, false);
+    contour_groups_open_paths_iodata.boundaries.cracked_attributes.insert(9);
+    contour_groups_open_paths_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(contour_groups_open_paths_iodata, cluster_maxwell_space),
+        Catch::Matchers::ContainsSubstring(
+            "OpenContourPaths requires a version-2 DifferentConductorGap or edge-cluster "
+            "model with ConductorReferences and no ContourGroups"));
+    auto mortar_config = cluster_maxwell_config;
+    mortar_config["Solver"]["SurfaceResponseCorrection"]["TraceCoupling"] = "SurfaceMortar";
+    IoData mortar_iodata(mortar_config, false);
+    mortar_iodata.boundaries.cracked_attributes.insert(9);
+    mortar_iodata.boundaries.cracked_attributes.insert(10);
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(mortar_iodata, cluster_maxwell_space),
+        Catch::Matchers::ContainsSubstring(
+            "Maxwell SurfaceMortar response trace coupling is not implemented"));
+  }
 #endif
 }
 
@@ -6833,6 +7266,36 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBas
       CHECK(per_patch.at(interpolated) < 2.0 * ninety);
     }
   }
+#endif
+}
+
+TEST_CASE_METHOD(CornerTraceBasisFixture,
+                 "SurfaceResponseOperatorCornerTraceBasisMaxwellRefused",
+                 "[surfaceresponseoperator][corner][tracebasis][maxwell][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // U5 (decision 818, stage 1): the corner family's trace basis (slave box-corner vertices;
+  // the constructed basis of an interpolated angle) stays REFUSED on the Maxwell path until
+  // stage 2 (M-3): the steep house places exact 90 / 135 corners (slave vertices) and the
+  // constructed 112.5-degree corner.
+  auto maxwell_config = ConfigFor(libraries.at("family"));
+  maxwell_config["Problem"]["Type"] = "Eigenmode";
+  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  maxwell_config["Boundaries"].erase("Terminal");
+  const auto correction = maxwell_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  maxwell_config["Solver"] = {{"Order", 1},
+                              {"Eigenmode", {{"Target", 1.0}}},
+                              {"SurfaceResponseCorrection", correction}};
+  IoData iodata(maxwell_config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(*steep_mesh)));
+  SpaceOperator space_op(iodata, meshes);
+  CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space_op),
+                    Catch::Matchers::ContainsSubstring(
+                        "does not support trace meshes with slave vertices"));
 #endif
 }
 

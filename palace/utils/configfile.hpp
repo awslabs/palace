@@ -1295,8 +1295,8 @@ public:
     // carries hats in the interior of the box caps (above / below claimed features much
     // smaller than the box): the number of trailing BasisPoints on no closed contour and
     // no open path. They are trace coefficients like the ring knots (collocated or
-    // surface-mortar projection on the explicit TraceMesh) but carry no Maxwell contour
-    // line; electrostatic only.
+    // surface-mortar projection on the explicit TraceMesh); on the Maxwell path each gets
+    // its own line from a contour knot of its cap plane (decision 818 R2).
     int interior_trace_count = 0;
 
     // Internal metadata for contour traces interrupted by independent conductors. Each

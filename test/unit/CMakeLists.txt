@@ -55,6 +55,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-loaderconductors.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwellinplanelines.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-maxwelllinecoverage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp

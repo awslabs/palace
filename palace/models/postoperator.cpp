@@ -2101,6 +2101,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       table.insert("self_consistent_frequency_im", "Im{f self-consistent} (GHz)");
       table.insert("self_consistent_mode_overlap", "self-consistent M-overlap");
     }
+    // Cap-interior hats (decision 818 R2), the last columns: information, not a gate
+    // (decision 814 (1)).
+    table.insert("hat_residual", "hat residual");
+    table.insert("weighted_hat_residual", "response-weighted hat residual");
   }
 
   using VT = Units::ValueType;
@@ -2245,6 +2249,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   }
   table["self_consistent_confident"]
       << (result.has_self_consistent ? (self_consistent_confident ? 1.0 : 0.0) : nan);
+  table["hat_residual"] << (result.has_postprocessed ? confidence.hat_residual : nan);
+  table["weighted_hat_residual"]
+      << (result.has_postprocessed ? confidence.response_weighted_hat_residual : nan);
   surface_response_confidence->WriteFullTableTrunc();
   PrintSurfaceResponsePortionEnergies(output_index, excitation);
 }

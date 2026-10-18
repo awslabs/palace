@@ -384,10 +384,15 @@ private:
   {
     return GetLinearSimplexReference(element, point, reference) &&
            mfem::Geometry::CheckPoint(mesh.GetElement(element)->GetGeometryType(),
-                                      reference, 1.0e-9);
+                                      reference, kLinearSimplexReferenceTolerance);
   }
 
 public:
+  // A point is inside a linear simplex when every barycentric coordinate is >= minus this
+  // (Find); a segment is coplanar with a face when both its ends are within it of that
+  // face's plane (FindSegmentIntersections).
+  static constexpr double kLinearSimplexReferenceTolerance = 1.0e-9;
+
   ElementPointLocator(mfem::ParMesh &mesh_, int dimension_)
     : mesh(mesh_), dimension(dimension_),
       linear_mesh(!mesh.GetNodes() ||
@@ -552,9 +557,19 @@ public:
     return false;
   }
 
+  // The exact intersections of the segment p0-p1 with the local linear simplices, as
+  // parameter intervals in [0, 1] (`intervals`: the segment clipped to each candidate's
+  // barycentric half-spaces lambda_i >= -64 eps), and the intersections with the faces the
+  // segment is COPLANAR with taken as not clipping (`in_face_intervals`: a face is coplanar
+  // when both ends lie within kLinearSimplexReferenceTolerance of its plane; the other
+  // faces clip as above; only candidates with such a face contribute). The second list
+  // covers a segment lying in a cracked internal-boundary face, which the exact clip
+  // rejects from both sides (decisions 829 / 831); ResolveMaxwellLineCoverage consults it
+  // only where the exact intervals leave a true gap.
   void FindSegmentIntersections(const std::array<double, 3> &p0,
                                 const std::array<double, 3> &p1, double tolerance,
                                 std::vector<std::pair<double, double>> &intervals,
+                                std::vector<std::pair<double, double>> &in_face_intervals,
                                 std::vector<int> &candidates) const
   {
     MFEM_ASSERT(linear_mesh, "Exact segment intersections require a linear mesh!");
@@ -562,6 +577,7 @@ public:
     FindSegmentCandidates(0, p0, p1, tolerance, candidates);
     std::sort(candidates.begin(), candidates.end());
     intervals.clear();
+    in_face_intervals.clear();
     constexpr double reference_tolerance = 64.0 * std::numeric_limits<double>::epsilon();
     for (const int element : candidates)
     {
@@ -577,36 +593,63 @@ public:
       std::array<double, 4> lambda_second = {1.0 - second.x - second.y -
                                                  (dimension == 3 ? second.z : 0.0),
                                              second.x, second.y, second.z};
-      double begin = 0.0, end = 1.0;
-      for (int i = 0; i < dimension + 1; i++)
+      // The segment clipped to the half-spaces of every face but the skipped ones.
+      auto Clip = [&](const std::array<bool, 4> &skip)
       {
-        const double value = lambda_first[i];
-        const double slope = lambda_second[i] - value;
-        if (slope == 0.0)
+        double begin = 0.0, end = 1.0;
+        for (int i = 0; i < dimension + 1; i++)
         {
-          if (value < -reference_tolerance)
+          if (skip[i])
           {
-            begin = 1.0;
-            end = 0.0;
-            break;
+            continue;
           }
-          continue;
+          const double value = lambda_first[i];
+          const double slope = lambda_second[i] - value;
+          if (slope == 0.0)
+          {
+            if (value < -reference_tolerance)
+            {
+              begin = 1.0;
+              end = 0.0;
+              break;
+            }
+            continue;
+          }
+          const double crossing = (-reference_tolerance - value) / slope;
+          if (slope > 0.0)
+          {
+            begin = std::max(begin, crossing);
+          }
+          else
+          {
+            end = std::min(end, crossing);
+          }
         }
-        const double crossing = (-reference_tolerance - value) / slope;
-        if (slope > 0.0)
-        {
-          begin = std::max(begin, crossing);
-        }
-        else
-        {
-          end = std::min(end, crossing);
-        }
-      }
-      begin = std::clamp(begin, 0.0, 1.0);
-      end = std::clamp(end, 0.0, 1.0);
+        begin = std::clamp(begin, 0.0, 1.0);
+        end = std::clamp(end, 0.0, 1.0);
+        return std::make_pair(begin, end);
+      };
+      const auto [begin, end] = Clip({false, false, false, false});
       if (end > begin)
       {
         intervals.emplace_back(begin, end);
+      }
+      std::array<bool, 4> coplanar = {false, false, false, false};
+      bool any_coplanar = false;
+      for (int i = 0; i < dimension + 1; i++)
+      {
+        coplanar[i] = std::abs(lambda_first[i]) <= kLinearSimplexReferenceTolerance &&
+                      std::abs(lambda_second[i]) <= kLinearSimplexReferenceTolerance;
+        any_coplanar = any_coplanar || coplanar[i];
+      }
+      if (!any_coplanar)
+      {
+        continue;
+      }
+      const auto [face_begin, face_end] = Clip(coplanar);
+      if (face_end > face_begin)
+      {
+        in_face_intervals.emplace_back(face_begin, face_end);
       }
     }
   }
@@ -22505,6 +22548,532 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   return records;
 }
 
+SurfaceResponseOperator::PlacementOwnership
+SurfaceResponseOperator::ApplyPlacementOwnership(
+    const ResponseCorrectionData &config, const std::unordered_map<int, int> &model_indices,
+    const std::vector<std::vector<std::array<double, 3>>> &basis_points,
+    double coordinate_scale, int dimension,
+    const std::shared_ptr<const SurfaceResponseGeometry> &cached_geometry,
+    bool setup_timing)
+{
+  auto &response_mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
+  // A three-dimensional spatial response represents one complete coupon volume and has
+  // unit weight. Such volumes must never overlap: adding both dense defects would count
+  // the shared physical domain twice. Use transformed matching-contour bounds as a
+  // conservative fail-closed ownership check until an explicit partition-of-unity
+  // representation is available.
+  struct SpatialSupport
+  {
+    std::size_t patch = 0;
+    ElementBox box;
+  };
+  std::vector<SpatialSupport> spatial_supports;
+  std::set<std::size_t> spatially_owned_patches;
+  // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
+  std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
+  // The placed patches: the configured ones with the continuation ownership applied (3D).
+  std::vector<ResponsePatchData> placed_patches = config.patches;
+  // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
+  // weight 0 at construction and is skipped like a wholly owned cell.
+  for (const auto &trim : config.corner_arm_trims)
+  {
+    for (const auto &[patch, removed] : trim.cells)
+    {
+      (void)removed;
+      if (placed_patches[patch].weight <= 0.0)
+      {
+        spatially_owned_patches.insert(patch);
+      }
+    }
+  }
+  // A real-arm cell wholly before its virtual corner's s_half (boundary-cut DESIGN 2.2.3,
+  // ApplyMirrorArmTrim) likewise.
+  for (const auto &trim : config.mirror_arm_trims)
+  {
+    for (const auto &[patch, removed] : trim.cells)
+    {
+      (void)removed;
+      if (placed_patches[patch].weight <= 0.0)
+      {
+        spatially_owned_patches.insert(patch);
+      }
+    }
+  }
+  if (dimension == 3)
+  {
+    std::vector<std::string> skipped;
+    const auto boxes = CollectSpatialSupports(
+        config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+        { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale, dimension,
+        &skipped);
+    const auto margin_overlaps = FindSpatialSupportMarginOverlaps(
+        boxes, dimension, kSignatureParameterToleranceOverRadius * config.matching_radius);
+    for (std::size_t patch_idx = 0; patch_idx < config.patches.size(); patch_idx++)
+    {
+      const auto &patch_config = config.patches[patch_idx];
+      const auto model_it = model_indices.find(patch_config.model);
+      MFEM_ASSERT(model_it != model_indices.end(), "Unknown response model!");
+      const auto &model = models[model_it->second];
+      if (!model.spatial_basis)
+      {
+        continue;
+      }
+      auto &support = spatial_supports.emplace_back();
+      support.patch = patch_idx;
+      for (const auto &local : basis_points[model_it->second])
+      {
+        ElementBox point_box;
+        for (int d = 0; d < dimension; d++)
+        {
+          const double coordinate =
+              patch_config.origin[d] +
+              (local[0] * patch_config.axis_u[d] + local[1] * patch_config.axis_v[d] +
+               local[2] * patch_config.axis_w[d]) /
+                  coordinate_scale;
+          point_box.min[d] = point_box.max[d] = coordinate;
+        }
+        support.box.Add(point_box);
+      }
+    }
+    for (std::size_t i = 0; i < spatial_supports.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < spatial_supports.size(); j++)
+      {
+        const auto first = spatial_supports[i].patch;
+        const auto second = spatial_supports[j].patch;
+        if (spatially_owned_patches.count(first) || spatially_owned_patches.count(second))
+        {
+          continue;
+        }
+        const int interpolation_group = config.patches[first].interpolation_group;
+        if (interpolation_group > 0 &&
+            interpolation_group == config.patches[second].interpolation_group)
+        {
+          continue;
+        }
+        if (!spatial_supports[i].box.InteriorOverlaps(spatial_supports[j].box, 3))
+        {
+          continue;
+        }
+        const auto &first_model = models[model_indices.at(config.patches[first].model)];
+        const auto &second_model = models[model_indices.at(config.patches[second].model)];
+        const bool first_cluster = first_model.topology == "spatial edge cluster";
+        const bool second_cluster = second_model.topology == "spatial edge cluster";
+        if (first_cluster != second_cluster)
+        {
+          // Exact spatial clusters own their complete local interaction neighborhood.
+          // Give them deterministic priority over any overlapping corner/vertex patch;
+          // retaining both would double count the intersection, while clipping the dense
+          // coupon operator is not yet supported.
+          const auto subordinate = first_cluster ? j : i;
+          spatially_owned_patches.insert(spatial_supports[subordinate].patch);
+          vertex_coupon_exclusion_reasons.emplace(spatial_supports[subordinate].patch,
+                                                  "SpatialClusterPriority");
+          continue;
+        }
+        // Two clusters (decision 244): a margins-only overlap (no claim of either inside
+        // the other's claims hull) is recorded below with its double-counted length; a
+        // claim inside the other's hull is a true overlap of two coupon domains.
+        const auto overlap = std::find_if(
+            margin_overlaps.begin(), margin_overlaps.end(), [&](const auto &entry)
+            { return entry.first_patch == first && entry.second_patch == second; });
+        if (first_cluster && second_cluster && overlap != margin_overlaps.end() &&
+            !overlap->claim_in_hull)
+        {
+          continue;
+        }
+        MFEM_ABORT("Three-dimensional response-correction matching volumes for patches "
+                   << first + 1 << " (" << first_model.name << ") and " << second + 1
+                   << " (" << second_model.name
+                   << ") overlap without complete spatial-cluster ownership"
+                   << (first_cluster && second_cluster
+                           ? " (a claim of one cluster lies inside the other's claims)"
+                           : "")
+                   << ". Replace them with one coupled spatial model or an explicit "
+                      "nonoverlapping partition!");
+      }
+    }
+    // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of
+    // the built (or cached) patches in the operator record: the applied cells are the
+    // trimmed ones; the uncovered portions, clipped by the matched clusters' support boxes
+    // (decision 399 MAJOR-1) as the continuation ownership clips the cells below, keep
+    // their raw within-R energy in the driver's corrected interface energies
+    // (GetUncoveredPortions).
+    ownership_diagnostics["CornerArmTrim"] =
+        DescribeCornerArmTrims(config.corner_arm_trims, config, coordinate_scale);
+    ownership_diagnostics["CornerArmExtension"] =
+        DescribeCornerArmExtensions(config.corner_arm_extensions, config, coordinate_scale);
+    ownership_diagnostics["MirrorArmTrim"] =
+        DescribeMirrorArmTrims(config.mirror_arm_trims, config, coordinate_scale);
+    if (nlohmann::json placements =
+            DescribeMirrorFormedPlacements(config, coordinate_scale);
+        placements["Count"].get<int>() > 0)
+    {
+      ownership_diagnostics["MirrorFormedPlacement"] = placements;
+    }
+    uncovered_portions = config.uncovered_portions;
+    mirror_planes = config.mirror_planes;
+    mirror_band = config.mirror_band_over_radius * config.matching_radius;
+    mirror_tolerance = kSignatureParameterToleranceOverRadius * config.matching_radius;
+    uncovered_spatial_support_clipping =
+        ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
+    ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
+        uncovered_portions, &uncovered_spatial_support_clipping, config, coordinate_scale);
+    if (!config.corner_arm_trims.empty())
+    {
+      Mpi::Print(fespace.GetComm(),
+                 "Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+                 "second-arm cells removed ({:.6e} geometric)\n",
+                 ownership_diagnostics["CornerArmTrim"]["Count"].get<int>(),
+                 ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
+                 ownership_diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
+    }
+    if (!config.corner_arm_extensions.empty())
+    {
+      Mpi::Print(
+          fespace.GetComm(), "{}",
+          DescribeCornerArmExtensionSummary(ownership_diagnostics["CornerArmExtension"]));
+      if (ownership_diagnostics["CornerArmExtension"]["UnhostedLength"].get<double>() > 0.0)
+      {
+        Mpi::Warning(fespace.GetComm(), "{}",
+                     DescribeCornerArmExtensionUnhostedWarning(
+                         ownership_diagnostics["CornerArmExtension"]));
+      }
+    }
+    if (!uncovered_portions.empty())
+    {
+      Mpi::Warning(fespace.GetComm(),
+                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
+                   "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
+                   "surface energy in the corrected interface energies (reported per type "
+                   "in surface-response-uncovered-energy.csv)!\n",
+                   ownership_diagnostics["Uncovered"]["Count"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Features"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Length"].get<double>());
+    }
+    if (uncovered_spatial_support_clipping.clipped_portions > 0)
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Uncovered requirements inside matched clusters' support boxes (decision "
+          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
+          "portions ({:d} wholly inside, {:d} split)\n",
+          uncovered_spatial_support_clipping.clipped_portions,
+          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
+          uncovered_spatial_support_clipping.removed_portions,
+          uncovered_spatial_support_clipping.split_portions);
+    }
+    if (!config.quantum_near_match.empty())
+    {
+      // Quantum near-matches (block (b) DESIGN section 4) in the operator record: the
+      // cluster models applied for feature keys within the near-match of their own.
+      nlohmann::json keys = nlohmann::json::array();
+      for (const auto &entry : config.quantum_near_match)
+      {
+        keys.push_back({{"Model", entry.model},
+                        {"ModelKey", entry.model_key},
+                        {"FeatureKey", entry.feature_key},
+                        {"MaxDeltaQuanta", entry.max_delta_quanta},
+                        {"DifferingNumbers", entry.differing_numbers},
+                        {"Features", entry.features}});
+      }
+      ownership_diagnostics["QuantumNearMatch"] = {
+          {"Count", keys.size()},
+          {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
+          {"Keys", std::move(keys)},
+          {"Rule", "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster model "
+                   "applied for a feature key of the same topology within MaxQuanta "
+                   "signature quanta of the model's key (the same geometry at the 1e-6 R "
+                   "grid; the feature placed in its own canonical frame)"}};
+    }
+    if (!config.legacy_contract.empty())
+    {
+      // Legacy-contract aliases (USER decision 283) in the operator record: the legacy
+      // models applied for contract-3 keys the library lists explicitly.
+      nlohmann::json aliases = nlohmann::json::array();
+      for (const auto &entry : config.legacy_contract)
+      {
+        aliases.push_back({{"Model", entry.model},
+                           {"Key", entry.key},
+                           {"ContextDigest", entry.context_digest},
+                           {"Reason", entry.reason},
+                           {"Features", entry.features}});
+      }
+      ownership_diagnostics["LegacyContract"] = {
+          {"Count", aliases.size()},
+          {"Aliases", std::move(aliases)},
+          {"Rule", "USER decision 283: a legacy model (decision-236 straight-continuation "
+                   "coupon) applied for a contract-3 key through the library's explicit "
+                   "LegacyContractAliases entry (key + verified context digest); never a "
+                   "fallback for any other key"}};
+      Mpi::Warning("Legacy-contract aliases applied (USER decision 283): {:d} model(s) "
+                   "serve contract-3 keys through explicit library aliases!\n",
+                   static_cast<int>(config.legacy_contract.size()));
+    }
+    if (!margin_overlaps.empty())
+    {
+      ownership_diagnostics["SpatialSupportMarginOverlaps"] =
+          DescribeSpatialSupportMarginOverlaps(margin_overlaps, config, coordinate_scale);
+      Mpi::Warning(fespace.GetComm(), "{}",
+                   DescribeSpatialSupportMarginOverlapWarning(
+                       ownership_diagnostics["SpatialSupportMarginOverlaps"]));
+    }
+    // Translational patches against the spatial supports (decisions 224 / 236 / 244):
+    // every translational stretch wholly inside one spatial support is recorded
+    // (Diagnostics + warning), never an abort — a Foreign one is a model mismatch of the
+    // coupon (the S1p 41-edge loop end: three leads split by 1.738 um pieces of a 3-edge
+    // stack between the cluster's claims, now absorbed by the identification); then the
+    // continuation ownership clips the placed cells of every stretch continuing a
+    // cluster's claims at that cluster's box face (the accepted transmon library: 112.4 um
+    // of isolated-edge and strip cells on the continuations of its five coupons).
+    // The stretch records are read BEFORE the ownership pass (as the preflight does): a
+    // wholly owned stretch's cells collapse to {0, 0} and would otherwise leave the record
+    // (decision 553: every owned Foreign stretch is recorded with its sub-class, never
+    // silent).
+    const auto records = FindTranslationalStretchInsideSpatialSupport(
+        placed_patches, boxes, dimension,
+        kSignatureParameterToleranceOverRadius * config.matching_radius);
+    const ContinuationOwnership ownership = ApplyContinuationOwnership(
+        placed_patches, boxes, dimension,
+        kSignatureParameterToleranceOverRadius * config.matching_radius,
+        config.matching_radius);
+    {
+      for (const auto &cell : ownership.cells)
+      {
+        if (placed_patches[cell.patch].weight <= 0.0)
+        {
+          spatially_owned_patches.insert(cell.patch);
+        }
+      }
+      for (const auto &vertex : ownership.vertices)
+      {
+        spatially_owned_patches.insert(vertex.patch);
+        vertex_coupon_exclusion_reasons.emplace(vertex.patch, "VertexOwnership");
+      }
+      ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
+          DescribeTranslationalOwnershipRecords(records, boxes, config, coordinate_scale,
+                                                skipped, &ownership);
+      ownership_diagnostics["ContinuationOwnership"] =
+          DescribeContinuationOwnership(ownership, boxes, config, coordinate_scale);
+      if (!records.empty())
+      {
+        Mpi::Warning(
+            fespace.GetComm(), "{}",
+            DescribeTranslationalOwnershipWarning(
+                ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"]));
+      }
+      if (!ownership.cells.empty() || !ownership.foreign_excluded_cells.empty())
+      {
+        Mpi::Print(fespace.GetComm(), "{}",
+                   DescribeContinuationOwnershipSummary(
+                       ownership_diagnostics["ContinuationOwnership"]));
+      }
+    }
+    // Domain-boundary exclusion (decision 258): the placed patches with coupon points
+    // outside the device mesh are not applied (weight 0, recorded). The same collective
+    // test as the preflight's, on the placed patches not already owned; the mortar
+    // resolution lookup and the point location below see applied patches only.
+    // Across AMR cycles (decision 734 F2) the first construction's result is kept with the
+    // cached automatic geometry and reused on a first-order mesh whose tested input
+    // (DomainBoundaryContainmentSignature) is the first's; a curved mesh (its boundary
+    // moves under refinement), a changed input, or PALACE_RESPONSE_CONTAINMENT_RECHECK
+    // recompute, the recheck failing closed on any classification difference and on a
+    // changed input (decision 740 MAJOR-1).
+    {
+      auto BasisPointsOf = [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+      { return &basis_points[model_indices.at(model_idx)]; };
+      const double containment_mirror_band =
+          config.mirror_band_over_radius * config.matching_radius;
+      const bool first_order_mesh =
+          !response_mesh.GetNodes() ||
+          response_mesh.GetNodes()->FESpace()->GetMaxElementOrder() <= 1;
+      const bool containment_recheck = DomainBoundaryContainmentRechecks();
+      std::optional<DomainBoundaryContainmentCache> *containment_cache =
+          cached_geometry ? &cached_geometry->impl->containment : nullptr;
+      const auto containment_signature = DomainBoundaryContainmentSignature(
+          placed_patches, spatially_owned_patches, BasisPointsOf, coordinate_scale,
+          config.matching_radius, containment_mirror_band);
+      const bool containment_hit = containment_cache && *containment_cache &&
+                                   (*containment_cache)->signature == containment_signature;
+      const bool containment_mismatch =
+          containment_cache && *containment_cache && !containment_hit;
+      // The guard fails closed on a changed tested input too (decision 740 MAJOR-1): a
+      // present entry for a different signature is never replaced silently under RECHECK.
+      if (containment_mismatch && containment_recheck)
+      {
+        MFEM_ABORT("The domain-boundary containment cache holds the first construction's "
+                   "result for a different tested-patch signature ("
+                   << DescribeDomainBoundaryContainmentSignatureMismatch(
+                          (*containment_cache)->signature, containment_signature)
+                   << "); PALACE_RESPONSE_CONTAINMENT_RECHECK refuses to replace it!");
+      }
+      if (cached_geometry && !first_order_mesh)
+      {
+        Mpi::Print(fespace.GetComm(),
+                   " Domain-boundary containment result not reused across AMR cycles: the "
+                   "mesh is curved (order {:d}), its boundary moves under refinement\n",
+                   response_mesh.GetNodes()->FESpace()->GetMaxElementOrder());
+      }
+      DomainBoundaryExclusions exclusions;
+      if (containment_hit && first_order_mesh && !containment_recheck)
+      {
+        const auto reuse_start = std::chrono::steady_clock::now();
+        exclusions = (*containment_cache)->exclusions;
+        for (const auto &exclusion : exclusions.patches)
+        {
+          placed_patches[exclusion.patch].weight = 0.0;
+        }
+        exclusions.phase_times.clear();
+        exclusions.wall_time =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - reuse_start)
+                .count();
+        Mpi::GlobalMax(1, &exclusions.wall_time, fespace.GetComm());
+        domain_boundary_containment_reused = true;
+      }
+      else
+      {
+        exclusions = FindDomainBoundaryExclusions(
+            response_mesh, placed_patches, BasisPointsOf, [&](int model_idx)
+            { return models[model_indices.at(model_idx)].spatial_basis; },
+            [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
+            coordinate_scale, config.matching_radius, spatially_owned_patches,
+            config.mirror_planes, containment_mirror_band, config.mirror_unmerged_portions);
+        if (containment_hit && first_order_mesh)
+        {
+          VerifyDomainBoundaryContainmentReproduces((*containment_cache)->exclusions,
+                                                    exclusions);
+          Mpi::Print(fespace.GetComm(),
+                     " Domain-boundary containment test recomputed and verified against "
+                     "the first construction's result (PALACE_RESPONSE_CONTAINMENT_RECHECK)"
+                     "\n");
+        }
+        else if (containment_cache && first_order_mesh)
+        {
+          if (containment_mismatch)
+          {
+            Mpi::Print(fespace.GetComm(),
+                       " Domain-boundary containment result recomputed: the tested-patch "
+                       "signature differs from the first construction's ({}); the cached "
+                       "result is replaced\n",
+                       DescribeDomainBoundaryContainmentSignatureMismatch(
+                           (*containment_cache)->signature, containment_signature));
+          }
+          *containment_cache =
+              DomainBoundaryContainmentCache{containment_signature, exclusions};
+        }
+      }
+      for (const auto &exclusion : exclusions.patches)
+      {
+        spatially_owned_patches.insert(exclusion.patch);
+        vertex_coupon_exclusion_reasons.emplace(exclusion.patch, "DomainBoundary");
+      }
+      ownership_diagnostics["DomainBoundaryExclusions"] =
+          DescribeDomainBoundaryExclusions(exclusions, config, coordinate_scale);
+      // F-DB-a (decisions 442 / 454): the excluded patches' raw claims are kept in the
+      // corrected interface energies (GetDomainBoundaryPortions), never dropped.
+      domain_boundary_portions = CollectDomainBoundaryPortions(
+          exclusions, placed_patches, config, ownership, uncovered_spatial_support_clipping,
+          config.matching_radius);
+      ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
+          DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
+      // S7diag R1 (decision 758): the raw claim of every applied patch the
+      // conductor-consistency gate can probe, by the same rule, kept for the gate (which
+      // runs per excitation, when `placed_patches` is gone) on every rank.
+      conductor_consistency_claim_tolerance =
+          kSignatureParameterToleranceOverRadius * config.matching_radius;
+      for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
+      {
+        const auto &patch_config = placed_patches[patch_idx];
+        if (spatially_owned_patches.count(patch_idx) || patch_config.weight <= 0.0)
+        {
+          continue;
+        }
+        const auto model_it = model_indices.find(patch_config.model);
+        if (model_it == model_indices.end() ||
+            models[model_it->second].plane_conductor_vertices.empty())
+        {
+          continue;
+        }
+        AppendExcludedPatchClaim(conductor_consistency_claims[static_cast<int>(patch_idx)],
+                                 patch_idx, placed_patches, config, ownership,
+                                 uncovered_spatial_support_clipping,
+                                 conductor_consistency_claim_tolerance);
+      }
+      if (!config.mirror_band.empty())
+      {
+        ownership_diagnostics["MirrorBand"] = nlohmann::json::parse(config.mirror_band);
+      }
+      if (!exclusions.mirrored.empty())
+      {
+        Mpi::Print(fespace.GetComm(),
+                   " Mirrored patches (boundary-cut DESIGN 2.2.3): {:d} patch(es) on {:d} "
+                   "feature(s) with {:d} placed point(s) beyond a natural truncation plane "
+                   "applied with their reflections\n",
+                   static_cast<int>(exclusions.mirrored.size()),
+                   ownership_diagnostics["DomainBoundaryExclusions"]["Mirrored"]["Features"]
+                       .get<int>(),
+                   exclusions.reflected_points);
+      }
+      Mpi::Print(
+          fespace.GetComm(),
+          " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
+          exclusions.tested_patches, exclusions.tested_points, exclusions.wall_time);
+      if (domain_boundary_containment_reused)
+      {
+        Mpi::Print(fespace.GetComm(),
+                   " Domain-boundary containment result reused from the first construction "
+                   "(decision 734 F2; PALACE_RESPONSE_CONTAINMENT_RECHECK=1 recomputes and "
+                   "verifies)\n");
+      }
+      if (setup_timing)
+      {
+        for (const auto &[phase, seconds] : exclusions.phase_times)
+        {
+          Mpi::Print(fespace.GetComm(), "  containment phase {} at {:.3f} s\n", phase,
+                     seconds);
+        }
+      }
+      if (!exclusions.patches.empty())
+      {
+        Mpi::Print(fespace.GetComm(), "{}",
+                   DescribeDomainBoundaryExclusionSummary(
+                       ownership_diagnostics["DomainBoundaryExclusions"]));
+        Mpi::Warning(fespace.GetComm(),
+                     "DomainBoundary raw claims kept (F-DB-a, decisions 442 / 454): {:d} "
+                     "portion(s) ({:d} geometric cells, {:d} split patches folded), {:.6e} "
+                     "mesh units keep their raw within-R surface energy in the corrected "
+                     "interface energies (reported per type in "
+                     "surface-response-domain-boundary-energy.csv)!\n",
+                     static_cast<int>(domain_boundary_portions.portions.size()),
+                     domain_boundary_portions.geometric_cells,
+                     domain_boundary_portions.duplicate_patches,
+                     domain_boundary_portions.length * coordinate_scale);
+      }
+    }
+    // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
+    ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
+        DescribeCornerArmTrimExcludedCoupons(
+            config.corner_arm_trims, config,
+            [&](std::size_t patch_idx) -> std::optional<std::string>
+            {
+              const auto it = vertex_coupon_exclusion_reasons.find(patch_idx);
+              return it == vertex_coupon_exclusion_reasons.end()
+                         ? std::nullopt
+                         : std::optional<std::string>(it->second);
+            },
+            coordinate_scale);
+    if (ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not applied "
+          "(decision 399 MINOR-7): their second arm's [R, s) is modelled by nothing\n",
+          ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
+    }
+  }
+  return {std::move(placed_patches), std::move(spatially_owned_patches)};
+}
+
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
     std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
@@ -23140,48 +23709,6 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   dbc_tdof_list = laplace_op.GetDbcTDofList();
 
-  // A three-dimensional spatial response represents one complete coupon volume and has
-  // unit weight. Such volumes must never overlap: adding both dense defects would count
-  // the shared physical domain twice. Use transformed matching-contour bounds as a
-  // conservative fail-closed ownership check until an explicit partition-of-unity
-  // representation is available.
-  struct SpatialSupport
-  {
-    std::size_t patch = 0;
-    ElementBox box;
-  };
-  std::vector<SpatialSupport> spatial_supports;
-  std::set<std::size_t> spatially_owned_patches;
-  // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
-  std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
-  // The placed patches: the configured ones with the continuation ownership applied (3D).
-  std::vector<ResponsePatchData> placed_patches = config->patches;
-  // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
-  // weight 0 at construction and is skipped like a wholly owned cell.
-  for (const auto &trim : config->corner_arm_trims)
-  {
-    for (const auto &[patch, removed] : trim.cells)
-    {
-      (void)removed;
-      if (placed_patches[patch].weight <= 0.0)
-      {
-        spatially_owned_patches.insert(patch);
-      }
-    }
-  }
-  // A real-arm cell wholly before its virtual corner's s_half (boundary-cut DESIGN 2.2.3,
-  // ApplyMirrorArmTrim) likewise.
-  for (const auto &trim : config->mirror_arm_trims)
-  {
-    for (const auto &[patch, removed] : trim.cells)
-    {
-      (void)removed;
-      if (placed_patches[patch].weight <= 0.0)
-      {
-        spatially_owned_patches.insert(patch);
-      }
-    }
-  }
   // The consistent mortar (decision 404 D1): the constrained metal-band vertices of every
   // translational model's surface-mortar hat basis and the rule that produced them.
   SetupStamp("model matrices and mortars");
@@ -23200,479 +23727,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         ownership_diagnostics["ConsistentMortar"]["WithZeroTraceIndices"].get<int>(),
         ownership_diagnostics["ConsistentMortar"]["WithoutBand"].get<int>());
   }
-  if (dimension == 3)
-  {
-    std::vector<std::string> skipped;
-    const auto boxes = CollectSpatialSupports(
-        *config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
-        { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale, dimension,
-        &skipped);
-    const auto margin_overlaps = FindSpatialSupportMarginOverlaps(
-        boxes, dimension, kSignatureParameterToleranceOverRadius * config->matching_radius);
-    for (std::size_t patch_idx = 0; patch_idx < config->patches.size(); patch_idx++)
-    {
-      const auto &patch_config = config->patches[patch_idx];
-      const auto model_it = model_indices.find(patch_config.model);
-      MFEM_ASSERT(model_it != model_indices.end(), "Unknown response model!");
-      const auto &model = models[model_it->second];
-      if (!model.spatial_basis)
-      {
-        continue;
-      }
-      auto &support = spatial_supports.emplace_back();
-      support.patch = patch_idx;
-      for (const auto &local : basis_points[model_it->second])
-      {
-        ElementBox point_box;
-        for (int d = 0; d < dimension; d++)
-        {
-          const double coordinate =
-              patch_config.origin[d] +
-              (local[0] * patch_config.axis_u[d] + local[1] * patch_config.axis_v[d] +
-               local[2] * patch_config.axis_w[d]) /
-                  coordinate_scale;
-          point_box.min[d] = point_box.max[d] = coordinate;
-        }
-        support.box.Add(point_box);
-      }
-    }
-    for (std::size_t i = 0; i < spatial_supports.size(); i++)
-    {
-      for (std::size_t j = i + 1; j < spatial_supports.size(); j++)
-      {
-        const auto first = spatial_supports[i].patch;
-        const auto second = spatial_supports[j].patch;
-        if (spatially_owned_patches.count(first) || spatially_owned_patches.count(second))
-        {
-          continue;
-        }
-        const int interpolation_group = config->patches[first].interpolation_group;
-        if (interpolation_group > 0 &&
-            interpolation_group == config->patches[second].interpolation_group)
-        {
-          continue;
-        }
-        if (!spatial_supports[i].box.InteriorOverlaps(spatial_supports[j].box, 3))
-        {
-          continue;
-        }
-        const auto &first_model = models[model_indices.at(config->patches[first].model)];
-        const auto &second_model = models[model_indices.at(config->patches[second].model)];
-        const bool first_cluster = first_model.topology == "spatial edge cluster";
-        const bool second_cluster = second_model.topology == "spatial edge cluster";
-        if (first_cluster != second_cluster)
-        {
-          // Exact spatial clusters own their complete local interaction neighborhood.
-          // Give them deterministic priority over any overlapping corner/vertex patch;
-          // retaining both would double count the intersection, while clipping the dense
-          // coupon operator is not yet supported.
-          const auto subordinate = first_cluster ? j : i;
-          spatially_owned_patches.insert(spatial_supports[subordinate].patch);
-          vertex_coupon_exclusion_reasons.emplace(spatial_supports[subordinate].patch,
-                                                  "SpatialClusterPriority");
-          continue;
-        }
-        // Two clusters (decision 244): a margins-only overlap (no claim of either inside
-        // the other's claims hull) is recorded below with its double-counted length; a
-        // claim inside the other's hull is a true overlap of two coupon domains.
-        const auto overlap = std::find_if(
-            margin_overlaps.begin(), margin_overlaps.end(), [&](const auto &entry)
-            { return entry.first_patch == first && entry.second_patch == second; });
-        if (first_cluster && second_cluster && overlap != margin_overlaps.end() &&
-            !overlap->claim_in_hull)
-        {
-          continue;
-        }
-        MFEM_ABORT("Three-dimensional response-correction matching volumes for patches "
-                   << first + 1 << " (" << first_model.name << ") and " << second + 1
-                   << " (" << second_model.name
-                   << ") overlap without complete spatial-cluster ownership"
-                   << (first_cluster && second_cluster
-                           ? " (a claim of one cluster lies inside the other's claims)"
-                           : "")
-                   << ". Replace them with one coupled spatial model or an explicit "
-                      "nonoverlapping partition!");
-      }
-    }
-    // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of
-    // the built (or cached) patches in the operator record: the applied cells are the
-    // trimmed ones; the uncovered portions, clipped by the matched clusters' support boxes
-    // (decision 399 MAJOR-1) as the continuation ownership clips the cells below, keep
-    // their raw within-R energy in the driver's corrected interface energies
-    // (GetUncoveredPortions).
-    ownership_diagnostics["CornerArmTrim"] =
-        DescribeCornerArmTrims(config->corner_arm_trims, *config, coordinate_scale);
-    ownership_diagnostics["CornerArmExtension"] = DescribeCornerArmExtensions(
-        config->corner_arm_extensions, *config, coordinate_scale);
-    ownership_diagnostics["MirrorArmTrim"] =
-        DescribeMirrorArmTrims(config->mirror_arm_trims, *config, coordinate_scale);
-    if (nlohmann::json placements =
-            DescribeMirrorFormedPlacements(*config, coordinate_scale);
-        placements["Count"].get<int>() > 0)
-    {
-      ownership_diagnostics["MirrorFormedPlacement"] = placements;
-    }
-    uncovered_portions = config->uncovered_portions;
-    mirror_planes = config->mirror_planes;
-    mirror_band = config->mirror_band_over_radius * config->matching_radius;
-    mirror_tolerance = kSignatureParameterToleranceOverRadius * config->matching_radius;
-    uncovered_spatial_support_clipping =
-        ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
-    ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
-        uncovered_portions, &uncovered_spatial_support_clipping, *config, coordinate_scale);
-    if (!config->corner_arm_trims.empty())
-    {
-      Mpi::Print(fespace.GetComm(),
-                 "Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
-                 "second-arm cells removed ({:.6e} geometric)\n",
-                 ownership_diagnostics["CornerArmTrim"]["Count"].get<int>(),
-                 ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
-                 ownership_diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
-    }
-    if (!config->corner_arm_extensions.empty())
-    {
-      Mpi::Print(
-          fespace.GetComm(), "{}",
-          DescribeCornerArmExtensionSummary(ownership_diagnostics["CornerArmExtension"]));
-      if (ownership_diagnostics["CornerArmExtension"]["UnhostedLength"].get<double>() > 0.0)
-      {
-        Mpi::Warning(fespace.GetComm(), "{}",
-                     DescribeCornerArmExtensionUnhostedWarning(
-                         ownership_diagnostics["CornerArmExtension"]));
-      }
-    }
-    if (!uncovered_portions.empty())
-    {
-      Mpi::Warning(fespace.GetComm(),
-                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
-                   "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
-                   "surface energy in the corrected interface energies (reported per type "
-                   "in surface-response-uncovered-energy.csv)!\n",
-                   ownership_diagnostics["Uncovered"]["Count"].get<int>(),
-                   ownership_diagnostics["Uncovered"]["Features"].get<int>(),
-                   ownership_diagnostics["Uncovered"]["Length"].get<double>());
-    }
-    if (uncovered_spatial_support_clipping.clipped_portions > 0)
-    {
-      Mpi::Warning(
-          fespace.GetComm(),
-          "Uncovered requirements inside matched clusters' support boxes (decision "
-          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
-          "portions ({:d} wholly inside, {:d} split)\n",
-          uncovered_spatial_support_clipping.clipped_portions,
-          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
-          uncovered_spatial_support_clipping.removed_portions,
-          uncovered_spatial_support_clipping.split_portions);
-    }
-    if (!config->quantum_near_match.empty())
-    {
-      // Quantum near-matches (block (b) DESIGN section 4) in the operator record: the
-      // cluster models applied for feature keys within the near-match of their own.
-      nlohmann::json keys = nlohmann::json::array();
-      for (const auto &entry : config->quantum_near_match)
-      {
-        keys.push_back({{"Model", entry.model},
-                        {"ModelKey", entry.model_key},
-                        {"FeatureKey", entry.feature_key},
-                        {"MaxDeltaQuanta", entry.max_delta_quanta},
-                        {"DifferingNumbers", entry.differing_numbers},
-                        {"Features", entry.features}});
-      }
-      ownership_diagnostics["QuantumNearMatch"] = {
-          {"Count", keys.size()},
-          {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
-          {"Keys", std::move(keys)},
-          {"Rule", "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster model "
-                   "applied for a feature key of the same topology within MaxQuanta "
-                   "signature quanta of the model's key (the same geometry at the 1e-6 R "
-                   "grid; the feature placed in its own canonical frame)"}};
-    }
-    if (!config->legacy_contract.empty())
-    {
-      // Legacy-contract aliases (USER decision 283) in the operator record: the legacy
-      // models applied for contract-3 keys the library lists explicitly.
-      nlohmann::json aliases = nlohmann::json::array();
-      for (const auto &entry : config->legacy_contract)
-      {
-        aliases.push_back({{"Model", entry.model},
-                           {"Key", entry.key},
-                           {"ContextDigest", entry.context_digest},
-                           {"Reason", entry.reason},
-                           {"Features", entry.features}});
-      }
-      ownership_diagnostics["LegacyContract"] = {
-          {"Count", aliases.size()},
-          {"Aliases", std::move(aliases)},
-          {"Rule", "USER decision 283: a legacy model (decision-236 straight-continuation "
-                   "coupon) applied for a contract-3 key through the library's explicit "
-                   "LegacyContractAliases entry (key + verified context digest); never a "
-                   "fallback for any other key"}};
-      Mpi::Warning("Legacy-contract aliases applied (USER decision 283): {:d} model(s) "
-                   "serve contract-3 keys through explicit library aliases!\n",
-                   static_cast<int>(config->legacy_contract.size()));
-    }
-    if (!margin_overlaps.empty())
-    {
-      ownership_diagnostics["SpatialSupportMarginOverlaps"] =
-          DescribeSpatialSupportMarginOverlaps(margin_overlaps, *config, coordinate_scale);
-      Mpi::Warning(fespace.GetComm(), "{}",
-                   DescribeSpatialSupportMarginOverlapWarning(
-                       ownership_diagnostics["SpatialSupportMarginOverlaps"]));
-    }
-    // Translational patches against the spatial supports (decisions 224 / 236 / 244):
-    // every translational stretch wholly inside one spatial support is recorded
-    // (Diagnostics + warning), never an abort — a Foreign one is a model mismatch of the
-    // coupon (the S1p 41-edge loop end: three leads split by 1.738 um pieces of a 3-edge
-    // stack between the cluster's claims, now absorbed by the identification); then the
-    // continuation ownership clips the placed cells of every stretch continuing a
-    // cluster's claims at that cluster's box face (the accepted transmon library: 112.4 um
-    // of isolated-edge and strip cells on the continuations of its five coupons).
-    // The stretch records are read BEFORE the ownership pass (as the preflight does): a
-    // wholly owned stretch's cells collapse to {0, 0} and would otherwise leave the record
-    // (decision 553: every owned Foreign stretch is recorded with its sub-class, never
-    // silent).
-    const auto records = FindTranslationalStretchInsideSpatialSupport(
-        placed_patches, boxes, dimension,
-        kSignatureParameterToleranceOverRadius * config->matching_radius);
-    const ContinuationOwnership ownership = ApplyContinuationOwnership(
-        placed_patches, boxes, dimension,
-        kSignatureParameterToleranceOverRadius * config->matching_radius,
-        config->matching_radius);
-    {
-      for (const auto &cell : ownership.cells)
-      {
-        if (placed_patches[cell.patch].weight <= 0.0)
-        {
-          spatially_owned_patches.insert(cell.patch);
-        }
-      }
-      for (const auto &vertex : ownership.vertices)
-      {
-        spatially_owned_patches.insert(vertex.patch);
-        vertex_coupon_exclusion_reasons.emplace(vertex.patch, "VertexOwnership");
-      }
-      ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
-          DescribeTranslationalOwnershipRecords(records, boxes, *config, coordinate_scale,
-                                                skipped, &ownership);
-      ownership_diagnostics["ContinuationOwnership"] =
-          DescribeContinuationOwnership(ownership, boxes, *config, coordinate_scale);
-      if (!records.empty())
-      {
-        Mpi::Warning(
-            fespace.GetComm(), "{}",
-            DescribeTranslationalOwnershipWarning(
-                ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"]));
-      }
-      if (!ownership.cells.empty() || !ownership.foreign_excluded_cells.empty())
-      {
-        Mpi::Print(fespace.GetComm(), "{}",
-                   DescribeContinuationOwnershipSummary(
-                       ownership_diagnostics["ContinuationOwnership"]));
-      }
-    }
-    // Domain-boundary exclusion (decision 258): the placed patches with coupon points
-    // outside the device mesh are not applied (weight 0, recorded). The same collective
-    // test as the preflight's, on the placed patches not already owned; the mortar
-    // resolution lookup and the point location below see applied patches only.
-    // Across AMR cycles (decision 734 F2) the first construction's result is kept with the
-    // cached automatic geometry and reused on a first-order mesh whose tested input
-    // (DomainBoundaryContainmentSignature) is the first's; a curved mesh (its boundary
-    // moves under refinement), a changed input, or PALACE_RESPONSE_CONTAINMENT_RECHECK
-    // recompute, the recheck failing closed on any classification difference and on a
-    // changed input (decision 740 MAJOR-1).
-    {
-      auto BasisPointsOf = [&](int model_idx) -> const std::vector<std::array<double, 3>> *
-      { return &basis_points[model_indices.at(model_idx)]; };
-      const double containment_mirror_band =
-          config->mirror_band_over_radius * config->matching_radius;
-      const bool first_order_mesh =
-          !response_mesh.GetNodes() ||
-          response_mesh.GetNodes()->FESpace()->GetMaxElementOrder() <= 1;
-      const bool containment_recheck = DomainBoundaryContainmentRechecks();
-      std::optional<DomainBoundaryContainmentCache> *containment_cache =
-          cached_geometry ? &cached_geometry->impl->containment : nullptr;
-      const auto containment_signature = DomainBoundaryContainmentSignature(
-          placed_patches, spatially_owned_patches, BasisPointsOf, coordinate_scale,
-          config->matching_radius, containment_mirror_band);
-      const bool containment_hit = containment_cache && *containment_cache &&
-                                   (*containment_cache)->signature == containment_signature;
-      const bool containment_mismatch =
-          containment_cache && *containment_cache && !containment_hit;
-      // The guard fails closed on a changed tested input too (decision 740 MAJOR-1): a
-      // present entry for a different signature is never replaced silently under RECHECK.
-      if (containment_mismatch && containment_recheck)
-      {
-        MFEM_ABORT("The domain-boundary containment cache holds the first construction's "
-                   "result for a different tested-patch signature ("
-                   << DescribeDomainBoundaryContainmentSignatureMismatch(
-                          (*containment_cache)->signature, containment_signature)
-                   << "); PALACE_RESPONSE_CONTAINMENT_RECHECK refuses to replace it!");
-      }
-      if (cached_geometry && !first_order_mesh)
-      {
-        Mpi::Print(fespace.GetComm(),
-                   " Domain-boundary containment result not reused across AMR cycles: the "
-                   "mesh is curved (order {:d}), its boundary moves under refinement\n",
-                   response_mesh.GetNodes()->FESpace()->GetMaxElementOrder());
-      }
-      DomainBoundaryExclusions exclusions;
-      if (containment_hit && first_order_mesh && !containment_recheck)
-      {
-        const auto reuse_start = std::chrono::steady_clock::now();
-        exclusions = (*containment_cache)->exclusions;
-        for (const auto &exclusion : exclusions.patches)
-        {
-          placed_patches[exclusion.patch].weight = 0.0;
-        }
-        exclusions.phase_times.clear();
-        exclusions.wall_time =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - reuse_start)
-                .count();
-        Mpi::GlobalMax(1, &exclusions.wall_time, fespace.GetComm());
-        domain_boundary_containment_reused = true;
-      }
-      else
-      {
-        exclusions = FindDomainBoundaryExclusions(
-            response_mesh, placed_patches, BasisPointsOf, [&](int model_idx)
-            { return models[model_indices.at(model_idx)].spatial_basis; },
-            [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
-            coordinate_scale, config->matching_radius, spatially_owned_patches,
-            config->mirror_planes, containment_mirror_band,
-            config->mirror_unmerged_portions);
-        if (containment_hit && first_order_mesh)
-        {
-          VerifyDomainBoundaryContainmentReproduces((*containment_cache)->exclusions,
-                                                    exclusions);
-          Mpi::Print(fespace.GetComm(),
-                     " Domain-boundary containment test recomputed and verified against "
-                     "the first construction's result (PALACE_RESPONSE_CONTAINMENT_RECHECK)"
-                     "\n");
-        }
-        else if (containment_cache && first_order_mesh)
-        {
-          if (containment_mismatch)
-          {
-            Mpi::Print(fespace.GetComm(),
-                       " Domain-boundary containment result recomputed: the tested-patch "
-                       "signature differs from the first construction's ({}); the cached "
-                       "result is replaced\n",
-                       DescribeDomainBoundaryContainmentSignatureMismatch(
-                           (*containment_cache)->signature, containment_signature));
-          }
-          *containment_cache =
-              DomainBoundaryContainmentCache{containment_signature, exclusions};
-        }
-      }
-      for (const auto &exclusion : exclusions.patches)
-      {
-        spatially_owned_patches.insert(exclusion.patch);
-        vertex_coupon_exclusion_reasons.emplace(exclusion.patch, "DomainBoundary");
-      }
-      ownership_diagnostics["DomainBoundaryExclusions"] =
-          DescribeDomainBoundaryExclusions(exclusions, *config, coordinate_scale);
-      // F-DB-a (decisions 442 / 454): the excluded patches' raw claims are kept in the
-      // corrected interface energies (GetDomainBoundaryPortions), never dropped.
-      domain_boundary_portions = CollectDomainBoundaryPortions(
-          exclusions, placed_patches, *config, ownership,
-          uncovered_spatial_support_clipping, config->matching_radius);
-      ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
-          DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
-      // S7diag R1 (decision 758): the raw claim of every applied patch the
-      // conductor-consistency gate can probe, by the same rule, kept for the gate (which
-      // runs per excitation, when `placed_patches` is gone) on every rank.
-      conductor_consistency_claim_tolerance =
-          kSignatureParameterToleranceOverRadius * config->matching_radius;
-      for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
-      {
-        const auto &patch_config = placed_patches[patch_idx];
-        if (spatially_owned_patches.count(patch_idx) || patch_config.weight <= 0.0)
-        {
-          continue;
-        }
-        const auto model_it = model_indices.find(patch_config.model);
-        if (model_it == model_indices.end() ||
-            models[model_it->second].plane_conductor_vertices.empty())
-        {
-          continue;
-        }
-        AppendExcludedPatchClaim(conductor_consistency_claims[static_cast<int>(patch_idx)],
-                                 patch_idx, placed_patches, *config, ownership,
-                                 uncovered_spatial_support_clipping,
-                                 conductor_consistency_claim_tolerance);
-      }
-      if (!config->mirror_band.empty())
-      {
-        ownership_diagnostics["MirrorBand"] = nlohmann::json::parse(config->mirror_band);
-      }
-      if (!exclusions.mirrored.empty())
-      {
-        Mpi::Print(fespace.GetComm(),
-                   " Mirrored patches (boundary-cut DESIGN 2.2.3): {:d} patch(es) on {:d} "
-                   "feature(s) with {:d} placed point(s) beyond a natural truncation plane "
-                   "applied with their reflections\n",
-                   static_cast<int>(exclusions.mirrored.size()),
-                   ownership_diagnostics["DomainBoundaryExclusions"]["Mirrored"]["Features"]
-                       .get<int>(),
-                   exclusions.reflected_points);
-      }
-      Mpi::Print(
-          fespace.GetComm(),
-          " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
-          exclusions.tested_patches, exclusions.tested_points, exclusions.wall_time);
-      if (domain_boundary_containment_reused)
-      {
-        Mpi::Print(fespace.GetComm(),
-                   " Domain-boundary containment result reused from the first construction "
-                   "(decision 734 F2; PALACE_RESPONSE_CONTAINMENT_RECHECK=1 recomputes and "
-                   "verifies)\n");
-      }
-      if (setup_timing)
-      {
-        for (const auto &[phase, seconds] : exclusions.phase_times)
-        {
-          Mpi::Print(fespace.GetComm(), "  containment phase {} at {:.3f} s\n", phase,
-                     seconds);
-        }
-      }
-      if (!exclusions.patches.empty())
-      {
-        Mpi::Print(fespace.GetComm(), "{}",
-                   DescribeDomainBoundaryExclusionSummary(
-                       ownership_diagnostics["DomainBoundaryExclusions"]));
-        Mpi::Warning(fespace.GetComm(),
-                     "DomainBoundary raw claims kept (F-DB-a, decisions 442 / 454): {:d} "
-                     "portion(s) ({:d} geometric cells, {:d} split patches folded), {:.6e} "
-                     "mesh units keep their raw within-R surface energy in the corrected "
-                     "interface energies (reported per type in "
-                     "surface-response-domain-boundary-energy.csv)!\n",
-                     static_cast<int>(domain_boundary_portions.portions.size()),
-                     domain_boundary_portions.geometric_cells,
-                     domain_boundary_portions.duplicate_patches,
-                     domain_boundary_portions.length * coordinate_scale);
-      }
-    }
-    // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
-    ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
-        DescribeCornerArmTrimExcludedCoupons(
-            config->corner_arm_trims, *config,
-            [&](std::size_t patch_idx) -> std::optional<std::string>
-            {
-              const auto it = vertex_coupon_exclusion_reasons.find(patch_idx);
-              return it == vertex_coupon_exclusion_reasons.end()
-                         ? std::nullopt
-                         : std::optional<std::string>(it->second);
-            },
-            coordinate_scale);
-    if (ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
-    {
-      Mpi::Warning(
-          fespace.GetComm(),
-          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not applied "
-          "(decision 399 MINOR-7): their second arm's [R, s) is modelled by nothing\n",
-          ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
-    }
-  }
+  auto placement =
+      ApplyPlacementOwnership(*config, model_indices, basis_points, coordinate_scale,
+                              dimension, cached_geometry, setup_timing);
+  const auto &placed_patches = placement.placed_patches;
+  const auto &spatially_owned_patches = placement.owned_patches;
 
   SetupStamp("ownership and domain-boundary classification");
   const int rank = Mpi::Rank(fespace.GetComm());
@@ -24481,28 +24540,37 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(model.conductor_state_count == 0 || !model.open_contour_paths.empty(),
                 "Maxwell response correction requires OpenContourPaths for every "
                 "two-conductor coupon model!");
-    MFEM_VERIFY(model_config.interior_trace_count == 0,
-                "Maxwell response correction does not support cap-interior trace "
-                "coefficients (InteriorTraceCount): every coefficient must lie on a "
-                "Maxwell contour!");
     MFEM_VERIFY(model.contour_groups.empty() || model.open_contour_paths.empty(),
                 "Response-correction models cannot combine closed ContourGroups with "
                 "OpenContourPaths!");
     MFEM_VERIFY(model.zero_trace_indices.empty() || model.open_contour_paths.empty(),
                 "Response-correction models cannot combine ZeroTraceIndices with "
                 "OpenContourPaths!");
+    // Cap-interior hats (the trailing InteriorTraceCount basis points, on no contour) are
+    // trace coefficients on the Maxwell path too (decision 818 R2): each gets its own line
+    // from the nearest contour knot of its own cap plane below. The partition of the
+    // leading ring knots mirrors the electrostatic constructor's.
+    model.interior_trace_count = model_config.interior_trace_count;
+    MFEM_VERIFY(model.interior_trace_count >= 0 &&
+                    model.interior_trace_count < model.contour_size &&
+                    (model.interior_trace_count == 0 ||
+                     (model.spatial_basis && HasExplicitTraceMesh(model_config))),
+                "InteriorTraceCount requires a spatial response model with an explicit "
+                "TraceMesh and fewer interior points than BasisPoints!");
+    const int contour_point_count = model.contour_size - model.interior_trace_count;
     if (model.contour_groups.empty() && model.open_contour_paths.empty())
     {
-      model.contour_groups.push_back(model.contour_size);
+      model.contour_groups.push_back(contour_point_count);
     }
     if (!model.contour_groups.empty())
     {
       MFEM_VERIFY(std::accumulate(model.contour_groups.begin(), model.contour_groups.end(),
-                                  0) == model.contour_size,
-                  "Response-correction ContourGroups do not partition BasisPoints!");
+                                  0) == contour_point_count,
+                  "Response-correction ContourGroups do not partition the contour "
+                  "BasisPoints (BasisPoints minus the trailing InteriorTraceCount)!");
       MFEM_VERIFY(std::all_of(model.zero_trace_indices.begin(),
                               model.zero_trace_indices.end(), [&](int index)
-                              { return index >= 0 && index < model.contour_size; }),
+                              { return index >= 0 && index < contour_point_count; }),
                   "Response-correction ZeroTraceIndices contain an invalid BasisPoints "
                   "index!");
     }
@@ -24513,15 +24581,60 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         for (const int index : path.indices)
         {
-          MFEM_VERIFY(index >= 0 && index < model.contour_size && !assigned[index],
+          MFEM_VERIFY(index >= 0 && index < contour_point_count && !assigned[index],
                       "Response-correction OpenContourPaths contain an invalid or "
                       "duplicate BasisPoints index!");
           assigned[index] = true;
         }
       }
-      MFEM_VERIFY(
-          std::all_of(assigned.begin(), assigned.end(), [](bool value) { return value; }),
-          "Response-correction OpenContourPaths do not partition BasisPoints!");
+      MFEM_VERIFY(std::all_of(assigned.begin(), assigned.begin() + contour_point_count,
+                              [](bool value) { return value; }),
+                  "Response-correction OpenContourPaths do not partition the contour "
+                  "BasisPoints (BasisPoints minus the trailing InteriorTraceCount)!");
+    }
+    if (model.interior_trace_count > 0)
+    {
+      // Cap-interior hats (decision 818 R2): the rim knot of every hat = the nearest
+      // contour knot that some path carries (every ring or open-path knot except the PEC
+      // knots, whose trace is the zero initialisation) in the hat's own cap plane (the same
+      // local w within the signature tolerance). Decided here from the model data on every
+      // rank, so that a refusal fires on all ranks before any collective of the line setup.
+      std::vector<bool> anchored(contour_point_count, true);
+      for (const int index : model.zero_trace_indices)
+      {
+        anchored[index] = false;
+      }
+      const double plane_tolerance =
+          kSignatureParameterToleranceOverRadius * config.matching_radius;
+      for (int hat = contour_point_count; hat < model.contour_size; hat++)
+      {
+        int rim = -1;
+        double rim_distance = mfem::infinity();
+        for (int knot = 0; knot < contour_point_count; knot++)
+        {
+          if (!anchored[knot] ||
+              std::abs(points[knot][2] - points[hat][2]) > plane_tolerance)
+          {
+            continue;
+          }
+          double distance_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            distance_squared +=
+                (points[knot][d] - points[hat][d]) * (points[knot][d] - points[hat][d]);
+          }
+          if (distance_squared < rim_distance)
+          {
+            rim = knot;
+            rim_distance = distance_squared;
+          }
+        }
+        MFEM_VERIFY(rim >= 0, "Maxwell response correction: cap-interior hat "
+                                  << hat + 1 << " of model \"" << model.name
+                                  << "\" has no contour knot in its own cap plane (local w "
+                                  << points[hat][2] << ") to hang its line from!");
+        model.hat_rim_knots.push_back(rim);
+      }
     }
     auto domain_response = BuildDomainResponseMatrices(
         model_config, model.basis_size, model.zero_trace_indices, iodata.units);
@@ -24540,84 +24653,30 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   }
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
 
-  // Uncovered requirements (decision 394 F2) in the Maxwell operator record exactly as the
-  // electrostatic constructor records them (decision 751): the identification's uncovered
-  // portions, clipped by the matched clusters' support boxes (decision 399 MAJOR-1), keep
-  // their raw within-R energy in the postoperator's corrected interface energies
-  // (GetUncoveredPortions; PostOperator::MeasureSurfaceResponseCorrection).
-  if (dimension == 3)
-  {
-    std::vector<std::string> skipped;
-    const auto boxes = CollectSpatialSupports(
-        config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
-        { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale, dimension,
-        &skipped);
-    uncovered_portions = config.uncovered_portions;
-    uncovered_spatial_support_clipping =
-        ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
-    ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
-        uncovered_portions, &uncovered_spatial_support_clipping, config, coordinate_scale);
-    if (!uncovered_portions.empty())
-    {
-      Mpi::Warning(fespace.GetComm(),
-                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
-                   "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
-                   "surface energy in the corrected interface energies (reported per type "
-                   "in surface-response-uncovered-energy.csv)!\n",
-                   ownership_diagnostics["Uncovered"]["Count"].get<int>(),
-                   ownership_diagnostics["Uncovered"]["Features"].get<int>(),
-                   ownership_diagnostics["Uncovered"]["Length"].get<double>());
-    }
-    if (uncovered_spatial_support_clipping.clipped_portions > 0)
-    {
-      Mpi::Warning(
-          fespace.GetComm(),
-          "Uncovered requirements inside matched clusters' support boxes (decision "
-          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
-          "portions ({:d} wholly inside, {:d} split)\n",
-          uncovered_spatial_support_clipping.clipped_portions,
-          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
-          uncovered_spatial_support_clipping.removed_portions,
-          uncovered_spatial_support_clipping.split_portions);
-    }
-  }
+  // The placement-ownership stage (decision 818 R5) is the ONE function the electrostatic
+  // constructor runs: the spatial-cluster priority over overlapping corner / vertex
+  // patches, the continuation ownership that clips the translational cells inside a
+  // cluster's support box, the vertex ownership, the wholly trimmed arm cells, the
+  // DomainBoundary exclusions (their raw claims kept, F-DB-a) and the uncovered-portion
+  // record (decision 394 F2; clipped by the support boxes, decision 399 MAJOR-1). The
+  // applied patches are the placed ones it does not own, keyed by their placed index.
+  const auto placement =
+      ApplyPlacementOwnership(config, model_indices, basis_points, coordinate_scale,
+                              dimension, cached_geometry, false);
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
-  // The applied patches: a second-arm cell wholly before its corner's square exit
-  // (decision 394 F1) keeps weight 0 at construction and is not applied.
   std::vector<ResponsePatchData> applied_patches;
+  std::vector<int> applied_patch_indices;
+  applied_patches.reserve(placement.placed_patches.size());
+  applied_patch_indices.reserve(placement.placed_patches.size());
+  for (std::size_t patch_index = 0; patch_index < placement.placed_patches.size();
+       patch_index++)
   {
-    std::set<std::size_t> wholly_trimmed;
-    for (const auto &trim : config.corner_arm_trims)
+    if (!placement.owned_patches.count(patch_index))
     {
-      for (const auto &[patch, removed] : trim.cells)
-      {
-        (void)removed;
-        if (config.patches[patch].weight <= 0.0)
-        {
-          wholly_trimmed.insert(patch);
-        }
-      }
-    }
-    for (const auto &trim : config.mirror_arm_trims)
-    {
-      for (const auto &[patch, removed] : trim.cells)
-      {
-        (void)removed;
-        if (config.patches[patch].weight <= 0.0)
-        {
-          wholly_trimmed.insert(patch);
-        }
-      }
-    }
-    applied_patches.reserve(config.patches.size());
-    for (std::size_t patch_index = 0; patch_index < config.patches.size(); patch_index++)
-    {
-      if (!wholly_trimmed.count(patch_index))
-      {
-        applied_patches.push_back(config.patches[patch_index]);
-      }
+      applied_patches.push_back(placement.placed_patches[patch_index]);
+      applied_patch_indices.push_back(static_cast<int>(patch_index));
     }
   }
   global_patch_count = static_cast<int>(applied_patches.size());
@@ -24642,9 +24701,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const auto &model = models[model_it->second];
     if (rank == 0)
     {
-      patch_assignments.push_back({model.idx, patch_config.origin, patch_config.axis_u,
-                                   patch_config.axis_v, patch_config.axis_w,
-                                   patch_config.weight, static_cast<int>(patch_index)});
+      patch_assignments.push_back(
+          {model.idx, patch_config.origin, patch_config.axis_u, patch_config.axis_v,
+           patch_config.axis_w, patch_config.weight, applied_patch_indices[patch_index]});
     }
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
@@ -24729,7 +24788,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       anchors.push_back(std::move(anchor));
     }
 
-    patches.push_back(Patch{static_cast<int>(patches.size()), model_it->second, 0,
+    patches.push_back(Patch{applied_patch_indices[patch_index], model_it->second, 0,
                             basis_size, 0, patch_config.longitudinal_cell, 1, 0.0,
                             patch_config.weight, patch_config.domain_weight});
     basis_size += model.basis_size;
@@ -24752,6 +24811,15 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     line_geometry.push_back(geometry);
     maxwell_lines.emplace_back();
     return static_cast<int>(maxwell_lines.size()) - 1;
+  };
+  // A line between two points that may coincide (an anchor on a knot, a hat on its rim
+  // knot, a PEC knot on the anchor): no line (-1) within the coincidence tolerance.
+  auto AppendLineIfDistinct = [&](const mfem::Vector &p0, const mfem::Vector &p1)
+  {
+    mfem::Vector delta(p1);
+    delta -= p0;
+    return delta.Norml2() > 1.0e-14 * std::max(1.0, matching_radius) ? AppendLine(p0, p1)
+                                                                     : -1;
   };
 
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
@@ -24778,38 +24846,44 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                            group_offset + group_size);
       if (zero_begin != zero_end)
       {
-        // Each PEC knot has an exact zero trace. Reconstruct every free arc between
-        // consecutive knots independently, omitting segments whose two endpoints are
-        // both PEC constrained.
+        // Each PEC knot has an exact zero trace and is in no path (decision 818 R1: a PEC
+        // knot is never an integration start; a slab-top knot's potential differs from the
+        // conductor's). Every free arc between consecutive PEC knots is a path from the
+        // patch's conductor anchor, ON the thin conductor the coupon calls zero: the anchor
+        // line to the arc's first free knot, the lines between its free knots, the end line
+        // to the next PEC knot and the return line from that knot back to the anchor (R4: a
+        // true loop for the residual). An arc without a free knot gets no line.
         for (auto zero = zero_begin; zero != zero_end; zero++)
         {
           const int start = *zero;
           const int end = std::next(zero) != zero_end ? *std::next(zero) : *zero_begin;
-          MaxwellContourPath path;
-          path.closed = false;
-          std::vector<int> contour_indices = {start};
+          std::vector<int> free_indices;
           int index = group_offset + (start - group_offset + 1) % group_size;
           while (index != end)
           {
-            contour_indices.push_back(index);
+            free_indices.push_back(index);
             index = group_offset + (index - group_offset + 1) % group_size;
           }
-          if (contour_indices.size() == 1)
+          if (free_indices.empty())
           {
             continue;
           }
-          path.trace_indices.reserve(contour_indices.size());
-          for (const int contour_index : contour_indices)
+          MaxwellContourPath path;
+          path.closed = false;
+          path.trace_indices.reserve(free_indices.size());
+          for (const int free_index : free_indices)
           {
-            path.trace_indices.push_back(patch.trace_offset + contour_index);
+            path.trace_indices.push_back(patch.trace_offset + free_index);
           }
+          path.anchor_line = AppendLineIfDistinct(anchor, contour[free_indices.front()]);
           path.contour_line_offset = static_cast<int>(maxwell_lines.size());
-          path.contour_line_count = static_cast<int>(contour_indices.size()) - 1;
-          for (std::size_t i = 1; i < contour_indices.size(); i++)
+          path.contour_line_count = static_cast<int>(free_indices.size()) - 1;
+          for (std::size_t i = 1; i < free_indices.size(); i++)
           {
-            AppendLine(contour[contour_indices[i - 1]], contour[contour_indices[i]]);
+            AppendLine(contour[free_indices[i - 1]], contour[free_indices[i]]);
           }
-          path.end_line = AppendLine(contour[contour_indices.back()], contour[end]);
+          path.end_line = AppendLine(contour[free_indices.back()], contour[end]);
+          path.return_line = AppendLineIfDistinct(contour[end], anchor);
           maxwell_paths.push_back(std::move(path));
         }
         group_offset += group_size;
@@ -24836,10 +24910,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         path.trace_indices.push_back(patch.trace_offset + group_offset +
                                      (start + offset) % group_size);
       }
-      if (start_distance > 1.0e-14 * std::max(1.0, matching_radius))
-      {
-        path.anchor_line = AppendLine(anchor, contour[group_offset + start]);
-      }
+      path.anchor_line = AppendLineIfDistinct(anchor, contour[group_offset + start]);
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
       path.contour_line_count = group_size;
       for (int offset = 0; offset < group_size; offset++)
@@ -24863,7 +24934,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       path.closed = false;
       if (path_config.start_conductor > 0)
       {
-        path.start_conductor_trace =
+        path.start_trace =
             patch.trace_offset + model.contour_size + path_config.start_conductor - 1;
       }
       if (path_config.end_conductor > 0)
@@ -24878,24 +24949,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       }
       const auto &first = contour[path_config.indices.front()];
       const auto &last = contour[path_config.indices.back()];
-      mfem::Vector delta(first);
-      delta -= start_anchor;
-      if (delta.Norml2() > 1.0e-14 * std::max(1.0, matching_radius))
-      {
-        path.anchor_line = AppendLine(start_anchor, first);
-      }
+      path.anchor_line = AppendLineIfDistinct(start_anchor, first);
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
       path.contour_line_count = static_cast<int>(path_config.indices.size()) - 1;
       for (std::size_t i = 1; i < path_config.indices.size(); i++)
       {
         AppendLine(contour[path_config.indices[i - 1]], contour[path_config.indices[i]]);
       }
-      delta = last;
-      delta -= end_anchor;
-      if (delta.Norml2() > 1.0e-14 * std::max(1.0, matching_radius))
-      {
-        path.end_line = AppendLine(last, end_anchor);
-      }
+      path.end_line = AppendLineIfDistinct(last, end_anchor);
       open_path_indices.push_back(static_cast<int>(maxwell_paths.size()));
       maxwell_paths.push_back(std::move(path));
     }
@@ -24929,6 +24990,28 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(
         std::all_of(connected.begin(), connected.end(), [](bool value) { return value; }),
         "Maxwell OpenContourPaths must connect every conductor reference!");
+    if (model.interior_trace_count > 0)
+    {
+      // Cap-interior hats (decision 818 R2): each trailing hat is a one-knot path from its
+      // rim knot (model.hat_rim_knots: a knot of a path built above, so its trace is
+      // already a line integral from a conductor anchor) along a line inside the cap plane,
+      // in the box air (R6). The diagnostic line from the patch's conductor anchor straight
+      // to the hat gives the hat residual.
+      const int hat_begin = model.contour_size - model.interior_trace_count;
+      for (int hat = hat_begin; hat < model.contour_size; hat++)
+      {
+        const int rim = model.hat_rim_knots[hat - hat_begin];
+        MaxwellContourPath path;
+        path.closed = false;
+        path.start_trace = patch.trace_offset + rim;
+        path.trace_indices.push_back(patch.trace_offset + hat);
+        path.anchor_line = AppendLineIfDistinct(contour[rim], contour[hat]);
+        path.contour_line_offset = static_cast<int>(maxwell_lines.size());
+        path.contour_line_count = 0;
+        path.hat_check_line = AppendLineIfDistinct(anchor, contour[hat]);
+        maxwell_paths.push_back(std::move(path));
+      }
+    }
     maxwell_patch_paths.emplace_back(path_begin,
                                      static_cast<int>(maxwell_paths.size()) - path_begin);
   }
@@ -24967,6 +25050,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
 MaxwellLineCoverage
 ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
+                           std::vector<std::pair<double, double>> in_face_intervals,
                            double line_length, double coordinate_scale, int line_index,
                            const std::array<double, 3> &begin_point,
                            const std::array<double, 3> &end_point)
@@ -24976,25 +25060,63 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
                                  std::numeric_limits<double>::epsilon() *
                                  std::max(coordinate_scale, line_length);
   MaxwellLineCoverage coverage;
-  std::vector<double> breakpoints = {0.0, 1.0};
-  for (auto &[begin, end] : element_intervals)
+  auto SnapEnds = [&](std::vector<std::pair<double, double>> &intervals)
   {
-    if (begin <= parameter_tolerance)
+    for (auto &[begin, end] : intervals)
     {
-      begin = 0.0;
+      if (begin <= parameter_tolerance)
+      {
+        begin = 0.0;
+      }
+      if (end >= 1.0 - parameter_tolerance)
+      {
+        end = 1.0;
+      }
     }
-    if (end >= 1.0 - parameter_tolerance)
+  };
+  SnapEnds(element_intervals);
+  SnapEnds(in_face_intervals);
+  // The breakpoints of `intervals` inside [lower, upper] (with the two ends), sorted and
+  // uniqued at the parameter tolerance.
+  auto Breakpoints = [&](const std::vector<std::pair<double, double>> &intervals,
+                         double lower, double upper)
+  {
+    std::vector<double> breakpoints = {lower, upper};
+    for (const auto &[begin, end] : intervals)
     {
-      end = 1.0;
+      for (const double bound : {begin, end})
+      {
+        if (bound > lower && bound < upper)
+        {
+          breakpoints.push_back(bound);
+        }
+      }
     }
-    breakpoints.push_back(begin);
-    breakpoints.push_back(end);
-  }
-  std::sort(breakpoints.begin(), breakpoints.end());
-  breakpoints.erase(std::unique(breakpoints.begin(), breakpoints.end(),
-                                [](double a, double b)
-                                { return std::abs(a - b) <= parameter_tolerance; }),
-                    breakpoints.end());
+    std::sort(breakpoints.begin(), breakpoints.end());
+    breakpoints.erase(std::unique(breakpoints.begin(), breakpoints.end(),
+                                  [](double a, double b)
+                                  { return std::abs(a - b) <= parameter_tolerance; }),
+                      breakpoints.end());
+    return breakpoints;
+  };
+  auto Covers =
+      [&](const std::vector<std::pair<double, double>> &intervals, double begin, double end)
+  {
+    const double midpoint = 0.5 * (begin + end);
+    return std::any_of(intervals.begin(), intervals.end(),
+                       [&](const auto &interval)
+                       {
+                         return midpoint >= interval.first - parameter_tolerance &&
+                                midpoint <= interval.second + parameter_tolerance;
+                       });
+  };
+  auto CloseCrack = [&](double gap)
+  {
+    coverage.closed_crack_count++;
+    coverage.max_closed_crack = std::max(coverage.max_closed_crack, gap);
+  };
+  const auto breakpoints = Breakpoints(element_intervals, 0.0, 1.0);
+  bool previous_in_face = false;
   for (std::size_t i = 0; i + 1 < breakpoints.size(); i++)
   {
     const double begin = breakpoints[i];
@@ -25003,32 +25125,62 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
     {
       continue;
     }
-    const double midpoint = 0.5 * (begin + end);
-    const bool covered =
-        std::any_of(element_intervals.begin(), element_intervals.end(),
-                    [&](const auto &interval)
-                    {
-                      return midpoint >= interval.first - parameter_tolerance &&
-                             midpoint <= interval.second + parameter_tolerance;
-                    });
     const double gap = (end - begin) * line_length;
-    if (!covered && gap <= crack_tolerance)
+    if (Covers(element_intervals, begin, end))
     {
-      coverage.closed_crack_count++;
-      coverage.max_closed_crack = std::max(coverage.max_closed_crack, gap);
+      coverage.intervals.emplace_back(begin, end);
+      previous_in_face = false;
       continue;
     }
-    MFEM_VERIFY(covered,
-                "Maxwell response contour line "
-                    << line_index << " leaves the finite-element mesh over parameter "
-                    << begin << " to " << end << " (begin = " << begin_point[0] << ", "
-                    << begin_point[1] << ", " << begin_point[2]
-                    << "; end = " << end_point[0] << ", " << end_point[1] << ", "
-                    << end_point[2] << ")! The gap is " << gap
-                    << " mesh units, above the floating-point crack tolerance "
-                    << crack_tolerance << " (" << kMaxwellLineCrackUlps
-                    << " ULP of the coordinate scale " << coordinate_scale << ").");
-    coverage.intervals.emplace_back(begin, end);
+    if (gap <= crack_tolerance)
+    {
+      CloseCrack(gap);
+      previous_in_face = false;
+      continue;
+    }
+    // A true gap for the exact intersections: a line lying in a face no element covers (a
+    // cracked internal boundary). The piece is integrated from the in-face intervals, split
+    // at their breakpoints so every quadrature interval lies in one element.
+    double in_face_length = 0.0;
+    const auto face_breakpoints = Breakpoints(in_face_intervals, begin, end);
+    for (std::size_t j = 0; j + 1 < face_breakpoints.size(); j++)
+    {
+      const double face_begin = face_breakpoints[j];
+      const double face_end = face_breakpoints[j + 1];
+      if (face_end - face_begin <= parameter_tolerance)
+      {
+        continue;
+      }
+      const double face_gap = (face_end - face_begin) * line_length;
+      const bool covered = Covers(in_face_intervals, face_begin, face_end);
+      if (covered)
+      {
+        coverage.intervals.emplace_back(face_begin, face_end);
+        in_face_length += face_gap;
+        continue;
+      }
+      if (face_gap <= crack_tolerance)
+      {
+        CloseCrack(face_gap);
+        continue;
+      }
+      MFEM_VERIFY(covered,
+                  "Maxwell response contour line "
+                      << line_index << " leaves the finite-element mesh over parameter "
+                      << face_begin << " to " << face_end << " (begin = " << begin_point[0]
+                      << ", " << begin_point[1] << ", " << begin_point[2]
+                      << "; end = " << end_point[0] << ", " << end_point[1] << ", "
+                      << end_point[2] << ")! The gap is " << face_gap
+                      << " mesh units, above the floating-point crack tolerance "
+                      << crack_tolerance << " (" << kMaxwellLineCrackUlps
+                      << " ULP of the coordinate scale " << coordinate_scale
+                      << "); no element intersection, exact or in a coplanar face, "
+                         "covers it.");
+    }
+    // Consecutive uncovered pieces (split by an exact sliver) are one stretch.
+    coverage.in_face_count += previous_in_face ? 0 : 1;
+    coverage.in_face_length += in_face_length;
+    previous_in_face = true;
   }
   return coverage;
 }
@@ -25080,6 +25232,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   int exact_intersections = locator.SupportsExactSegmentIntersections() ? 1 : 0;
   Mpi::GlobalMin(1, &exact_intersections, comm);
   std::vector<std::vector<std::pair<double, double>>> line_intervals(line_geometry.size());
+  std::vector<std::vector<std::pair<double, double>>> line_in_face_intervals(
+      line_geometry.size());
   if (exact_intersections)
   {
     constexpr int routing_box_count = 8;
@@ -25179,9 +25333,12 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
                    query_receive_coordinate_counts.data(),
                    query_receive_coordinate_offsets.data(), comm);
 
+    // Per destination rank: the line index, 0 (exact) / 1 (in-face) and the bounds of
+    // every returned interval.
     std::vector<std::vector<int>> returned_indices(size);
+    std::vector<std::vector<int>> returned_kinds(size);
     std::vector<std::vector<double>> returned_bounds(size);
-    std::vector<std::pair<double, double>> intersections;
+    std::vector<std::pair<double, double>> intersections, in_face_intersections;
     std::vector<int> candidates;
     for (int source = 0; source < size; source++)
     {
@@ -25195,10 +25352,18 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
           finish[d] = query_receive_coordinates[6 * packed + 3 + d];
         }
         locator.FindSegmentIntersections(begin, finish, box_tolerance, intersections,
-                                         candidates);
+                                         in_face_intersections, candidates);
         for (const auto &[interval_begin, interval_end] : intersections)
         {
           returned_indices[source].push_back(query_receive_indices[packed]);
+          returned_kinds[source].push_back(0);
+          returned_bounds[source].push_back(interval_begin);
+          returned_bounds[source].push_back(interval_end);
+        }
+        for (const auto &[interval_begin, interval_end] : in_face_intersections)
+        {
+          returned_indices[source].push_back(query_receive_indices[packed]);
+          returned_kinds[source].push_back(1);
           returned_bounds[source].push_back(interval_begin);
           returned_bounds[source].push_back(interval_end);
         }
@@ -25216,21 +25381,28 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     const int interval_send_total = SetOffsets(interval_send_counts, interval_send_offsets);
     const int interval_receive_total =
         SetOffsets(interval_receive_counts, interval_receive_offsets);
-    std::vector<int> interval_send_indices;
+    std::vector<int> interval_send_indices, interval_send_kinds;
     std::vector<double> interval_send_bounds;
     interval_send_indices.reserve(interval_send_total);
+    interval_send_kinds.reserve(interval_send_total);
     interval_send_bounds.reserve(2 * interval_send_total);
     for (int rank = 0; rank < size; rank++)
     {
       interval_send_indices.insert(interval_send_indices.end(),
                                    returned_indices[rank].begin(),
                                    returned_indices[rank].end());
+      interval_send_kinds.insert(interval_send_kinds.end(), returned_kinds[rank].begin(),
+                                 returned_kinds[rank].end());
       interval_send_bounds.insert(interval_send_bounds.end(), returned_bounds[rank].begin(),
                                   returned_bounds[rank].end());
     }
     std::vector<int> interval_receive_indices(interval_receive_total);
     Mpi::Alltoallv(interval_send_indices.data(), interval_send_counts.data(),
                    interval_send_offsets.data(), interval_receive_indices.data(),
+                   interval_receive_counts.data(), interval_receive_offsets.data(), comm);
+    std::vector<int> interval_receive_kinds(interval_receive_total);
+    Mpi::Alltoallv(interval_send_kinds.data(), interval_send_counts.data(),
+                   interval_send_offsets.data(), interval_receive_kinds.data(),
                    interval_receive_counts.data(), interval_receive_offsets.data(), comm);
     const auto interval_send_bound_counts = ScaleCommunicationPlan(interval_send_counts, 2);
     const auto interval_send_bound_offsets =
@@ -25249,8 +25421,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
       const int line = interval_receive_indices[i];
       MFEM_ASSERT(line >= 0 && line < static_cast<int>(line_intervals.size()),
                   "Invalid returned Maxwell line index!");
-      line_intervals[line].emplace_back(interval_receive_bounds[2 * i],
-                                        interval_receive_bounds[2 * i + 1]);
+      (interval_receive_kinds[i] == 0 ? line_intervals : line_in_face_intervals)[line]
+          .emplace_back(interval_receive_bounds[2 * i], interval_receive_bounds[2 * i + 1]);
     }
   }
   else
@@ -25285,6 +25457,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   std::vector<PendingQuadraturePoint> pending_points;
   int closed_crack_count = 0;
   double max_closed_crack = 0.0;
+  int in_face_count = 0;
+  double in_face_length = 0.0;
   const auto &line_rule =
       mfem::IntRules.Get(mfem::Geometry::SEGMENT, maxwell_quadrature_order);
   for (std::size_t line_index = 0; line_index < line_geometry.size(); line_index++)
@@ -25301,11 +25475,14 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     if (exact_intersections)
     {
       auto coverage = ResolveMaxwellLineCoverage(
-          std::move(line_intervals[line_index]), Norm(tangent), coordinate_scale,
+          std::move(line_intervals[line_index]),
+          std::move(line_in_face_intervals[line_index]), Norm(tangent), coordinate_scale,
           static_cast<int>(line_index), line.begin, line.end);
       integration_intervals = std::move(coverage.intervals);
       closed_crack_count += coverage.closed_crack_count;
       max_closed_crack = std::max(max_closed_crack, coverage.max_closed_crack);
+      in_face_count += coverage.in_face_count;
+      in_face_length += coverage.in_face_length;
     }
     else
     {
@@ -25343,6 +25520,16 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
         closed_crack_count, closed_crack_count > 1 ? "s" : "", max_closed_crack,
         max_closed_crack / (std::numeric_limits<double>::epsilon() * coordinate_scale),
         coordinate_scale, kMaxwellLineCrackUlps);
+  }
+  Mpi::GlobalSum(1, &in_face_count, comm);
+  Mpi::GlobalSum(1, &in_face_length, comm);
+  if (in_face_count > 0)
+  {
+    Mpi::Print(comm,
+               " Integrated {:d} stretch{} of the Maxwell contour lines lying in a mesh "
+               "face no element intersection covers (a cracked internal boundary), {:.6e} "
+               "mesh units in total, each quadrature point owned by one rank / element\n",
+               in_face_count, in_face_count > 1 ? "es" : "", in_face_length);
   }
 
   mfem::Vector xyz(dimension * pending_points.size());
@@ -25815,9 +26002,10 @@ void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
   {
     MFEM_ASSERT(!path.trace_indices.empty(), "Empty Maxwell contour path!");
     double value = 0.0;
-    if (!path.closed && path.start_conductor_trace >= 0)
+    if (!path.closed && path.start_trace >= 0)
     {
-      value = values[path.start_conductor_trace];
+      // A conductor state, or the rim knot of a hat: set by a path built before this one.
+      value = values[path.start_trace];
     }
     if (path.anchor_line >= 0)
     {
@@ -25838,33 +26026,34 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
   line_values.SetSize(static_cast<int>(maxwell_lines.size()));
   line_values = 0.0;
-  maxwell_conductor_adjoint.SetSize(basis_size);
-  maxwell_conductor_adjoint = 0.0;
-  for (const auto &path : maxwell_conductor_paths)
+  // The adjoint of every trace coefficient: its own value plus the start-trace adjoints of
+  // the paths that hang from it (a hat from its rim knot, an open path from its conductor
+  // state). The paths are visited in reverse construction order so that a path's adjoint
+  // reaches its start trace before that trace's own path is visited (BuildMaxwellTrace
+  // visits them forward).
+  maxwell_trace_adjoint.SetSize(basis_size);
+  maxwell_trace_adjoint = values;
+  for (auto path = maxwell_paths.rbegin(); path != maxwell_paths.rend(); path++)
   {
-    maxwell_conductor_adjoint[path.trace_offset] = values[path.trace_offset];
-  }
-  for (const auto &path : maxwell_paths)
-  {
-    const int size = static_cast<int>(path.trace_indices.size());
+    const int size = static_cast<int>(path->trace_indices.size());
     MFEM_ASSERT(size > 0, "Empty Maxwell contour path!");
     maxwell_path_adjoint.SetSize(size);
     for (int i = 0; i < size; i++)
     {
-      maxwell_path_adjoint[i] = values[path.trace_indices[i]];
+      maxwell_path_adjoint[i] = maxwell_trace_adjoint[path->trace_indices[i]];
     }
     for (int i = size - 2; i >= 0; i--)
     {
-      line_values[path.contour_line_offset + i] -= maxwell_path_adjoint[i + 1];
+      line_values[path->contour_line_offset + i] -= maxwell_path_adjoint[i + 1];
       maxwell_path_adjoint[i] += maxwell_path_adjoint[i + 1];
     }
-    if (path.anchor_line >= 0)
+    if (path->anchor_line >= 0)
     {
-      line_values[path.anchor_line] -= maxwell_path_adjoint[0];
+      line_values[path->anchor_line] -= maxwell_path_adjoint[0];
     }
-    if (!path.closed && path.start_conductor_trace >= 0)
+    if (!path->closed && path->start_trace >= 0)
     {
-      maxwell_conductor_adjoint[path.start_conductor_trace] += maxwell_path_adjoint[0];
+      maxwell_trace_adjoint[path->start_trace] += maxwell_path_adjoint[0];
     }
   }
   auto AddPathIntegralTranspose = [&](const MaxwellContourPath &path, double value)
@@ -25885,12 +26074,12 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   for (auto path = maxwell_conductor_paths.rbegin(); path != maxwell_conductor_paths.rend();
        path++)
   {
-    const double value = maxwell_conductor_adjoint[path->trace_offset];
+    const double value = maxwell_trace_adjoint[path->trace_offset];
     AddPathIntegralTranspose(maxwell_paths[path->contour_path],
                              path->integral_sign * value);
     if (path->parent_trace_offset >= 0)
     {
-      maxwell_conductor_adjoint[path->parent_trace_offset] += value;
+      maxwell_trace_adjoint[path->parent_trace_offset] += value;
     }
   }
 }
@@ -26705,9 +26894,8 @@ SurfaceResponseOperator::GetPatchTraces(const Vector &x) const
 std::vector<SurfaceResponseOperator::PatchTrace>
 SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) const
 {
-  MFEM_VERIFY(!maxwell,
-              "Patch-trace export currently supports electrostatic response correction "
-              "only!");
+  // On the Maxwell Collocated path the coefficients are the trace ApplyTrace builds from
+  // the real vector x it is given (the line integrals of that one field; decision 821).
   ApplyTrace(x, trace);
   std::vector<double> local_records;
   for (const auto &patch : patches)
@@ -26810,6 +26998,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   double weighted_loop_residual_squared = 0.0;
   double loop_response_weight = 0.0;
   double failed_loop_response_weight = 0.0;
+  double weighted_hat_residual_squared = 0.0;
+  double hat_response_weight = 0.0;
   double weighted_trace_closure_spread_squared = 0.0;
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
@@ -26824,6 +27014,7 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     fixed_flux_imag.SetSize(model.basis_size);
 
     std::vector<std::pair<double, double>> path_diagnostics;
+    std::vector<std::pair<double, double>> hat_diagnostics;
     const auto [path_begin, path_count] = maxwell_patch_paths[patch_index];
     path_diagnostics.reserve(path_count);
     for (int path_index = path_begin; path_index < path_begin + path_count; path_index++)
@@ -26852,6 +27043,22 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
         loop_integral += scale * value;
         loop_scale += std::abs(value);
       };
+      if (path.hat_check_line >= 0)
+      {
+        // The hat loop (decision 818 R2): rim trace - rim line + anchor line = 0, i.e. the
+        // hat's value by its rim route equals its value by the direct anchor route.
+        // Information only (decision 814 (1)); not in the loop-residual gate.
+        AddTrace(path.start_trace, 1.0);
+        AddLine(path.anchor_line, -1.0);
+        AddLine(path.hat_check_line, 1.0);
+        if (loop_scale > 0.0)
+        {
+          const double residual = std::abs(loop_integral) / loop_scale;
+          result.hat_residual = std::max(result.hat_residual, residual);
+          hat_diagnostics.emplace_back(residual, loop_scale * loop_scale);
+        }
+        continue;
+      }
       if (!path.closed)
       {
         AddLine(path.anchor_line);
@@ -26863,7 +27070,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       if (!path.closed)
       {
         AddLine(path.end_line);
-        AddTrace(path.start_conductor_trace, -1.0);
+        AddLine(path.return_line);
+        AddTrace(path.start_trace, -1.0);
         AddTrace(path.end_conductor_trace, 1.0);
       }
       if (loop_scale > 0.0)
@@ -26931,14 +27139,33 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
         }
       }
     }
+    // The hat residuals, weighted like the loops (the patch's response split over its hats
+    // by the squared loop scale).
+    double hat_scale_squared = 0.0;
+    for (const auto &[residual, scale_squared] : hat_diagnostics)
+    {
+      (void)residual;
+      hat_scale_squared += scale_squared;
+    }
+    if (patch_response_energy > 0.0 && hat_scale_squared > 0.0)
+    {
+      for (const auto &[residual, scale_squared] : hat_diagnostics)
+      {
+        const double weight = patch_response_energy * scale_squared / hat_scale_squared;
+        weighted_hat_residual_squared += weight * residual * residual;
+        hat_response_weight += weight;
+      }
+    }
   }
   std::vector<double> reduction;
-  reduction.reserve(8 + 2 * result.fabricated_surface_energy.size());
+  reduction.reserve(10 + 2 * result.fabricated_surface_energy.size());
   reduction.push_back(result.domain_correction);
   reduction.push_back(result.domain_correction_fixed_flux);
   reduction.push_back(weighted_loop_residual_squared);
   reduction.push_back(loop_response_weight);
   reduction.push_back(failed_loop_response_weight);
+  reduction.push_back(weighted_hat_residual_squared);
+  reduction.push_back(hat_response_weight);
   reduction.push_back(weighted_trace_closure_spread_squared);
   reduction.push_back(trace_closure_response_weight);
   reduction.push_back(failed_trace_closure_response_weight);
@@ -26954,6 +27181,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   weighted_loop_residual_squared = reduction[i++];
   loop_response_weight = reduction[i++];
   failed_loop_response_weight = reduction[i++];
+  weighted_hat_residual_squared = reduction[i++];
+  hat_response_weight = reduction[i++];
   weighted_trace_closure_spread_squared = reduction[i++];
   trace_closure_response_weight = reduction[i++];
   failed_trace_closure_response_weight = reduction[i++];
@@ -26971,7 +27200,13 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     result.trace_closure_response_failure_fraction =
         failed_trace_closure_response_weight / trace_closure_response_weight;
   }
+  if (hat_response_weight > 0.0)
+  {
+    result.response_weighted_hat_residual =
+        std::sqrt(weighted_hat_residual_squared / hat_response_weight);
+  }
   Mpi::GlobalMax(1, &result.loop_residual, fespace.GetComm());
+  Mpi::GlobalMax(1, &result.hat_residual, fespace.GetComm());
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     auto &fixed_flux = result.fabricated_surface_energy_fixed_flux.at(interface);

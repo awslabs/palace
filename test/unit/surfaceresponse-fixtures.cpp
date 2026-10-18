@@ -706,6 +706,51 @@ SurfaceResponseFiles::SurfaceResponseFiles()
     std::ofstream cap_hat_output_3d(cap_hat_spatial_cluster_library_3d_path);
     cap_hat_output_3d << cap_hat_library_3d.dump(2) << "\n";
 
+    {
+      // Hat 5 moved to local w = 0, a plane without a ring knot (the rings lie at +-0.02).
+      std::ofstream points(cap_hat_off_plane_points_path);
+      points << "x,y,z\n"
+             << "0.025,-0.025,0.02\n"
+             << "0.050,-0.050,0.02\n"
+             << "0.075,-0.075,-0.02\n"
+             << "0.100,-0.100,-0.02\n"
+             << "0.060,-0.030,0.0\n"
+             << "0.030,-0.060,-0.02\n";
+      std::ofstream vertices(cap_hat_off_plane_trace_vertices_path);
+      vertices << "# index,x,y,z,basis,conductor\n"
+               << "1,0.025,-0.025,0.02,1,0\n"
+               << "2,0.050,-0.050,0.02,2,0\n"
+               << "3,0.075,-0.075,-0.02,3,0\n"
+               << "4,0.100,-0.100,-0.02,4,0\n"
+               << "5,0.060,-0.030,0.0,5,0\n"
+               << "6,0.030,-0.060,-0.02,6,0\n";
+      auto cap_hat_off_plane_library_3d = cap_hat_library_3d;
+      cap_hat_off_plane_library_3d["Name"] =
+          "unit-test-process-spatial-cluster-cap-hats-off-plane-3d";
+      auto &off_plane_model = cap_hat_off_plane_library_3d["Models"].back();
+      off_plane_model["Name"] = "offset-corner-pair-cap-hats-off-plane";
+      off_plane_model["BasisPoints"] = cap_hat_off_plane_points_path.string();
+      off_plane_model["TraceMesh"]["Vertices"] =
+          cap_hat_off_plane_trace_vertices_path.string();
+      std::ofstream output(cap_hat_off_plane_spatial_cluster_library_3d_path);
+      output << cap_hat_off_plane_library_3d.dump(2) << "\n";
+    }
+
+    {
+      auto zero_trace_open_paths_library_3d = cap_hat_library_3d;
+      zero_trace_open_paths_library_3d["Name"] =
+          "unit-test-process-spatial-cluster-cap-hats-zero-trace-open-paths-3d";
+      zero_trace_open_paths_library_3d["Models"].back()["ZeroTraceIndices"] = {1};
+      std::ofstream output(cap_hat_zero_trace_open_paths_library_3d_path);
+      output << zero_trace_open_paths_library_3d.dump(2) << "\n";
+      auto contour_groups_open_paths_library_3d = cap_hat_library_3d;
+      contour_groups_open_paths_library_3d["Name"] =
+          "unit-test-process-spatial-cluster-cap-hats-contour-groups-open-paths-3d";
+      contour_groups_open_paths_library_3d["Models"].back()["ContourGroups"] = {4};
+      std::ofstream groups_output(cap_hat_contour_groups_open_paths_library_3d_path);
+      groups_output << contour_groups_open_paths_library_3d.dump(2) << "\n";
+    }
+
     auto cap_hat_loaded_library_3d = cap_hat_library_3d;
     cap_hat_loaded_library_3d["Name"] =
         "unit-test-process-spatial-cluster-cap-hats-loaded-3d";
@@ -892,6 +937,19 @@ SurfaceResponseFiles::SurfaceResponseFiles()
     rounded_library_3d["Models"][1]["ZeroTraceIndices"] = {5, 6, 7, 8};
     std::ofstream rounded_output_3d(rounded_library_3d_path);
     rounded_output_3d << rounded_library_3d.dump(2) << "\n";
+
+    {
+      auto slab_top_rounded_library_3d = rounded_library_3d;
+      slab_top_rounded_library_3d["Name"] = "unit-test-process-rounded-slab-top-3d";
+      slab_top_rounded_library_3d["Models"][1]["Name"] = "convex-corner-90-r0.125-slab-top";
+      // One-based: the z = 0 ring's four knots and the three top-ring knots over the metal
+      // ((0.08, 0.02), (0.08, 0.08), (0.02, 0.08) at z = 0.02); the top ring's (0.02, 0.02,
+      // 0.02) stays free.
+      slab_top_rounded_library_3d["Models"][1]["ZeroTraceIndices"] = {5,  6,  7, 8,
+                                                                      10, 11, 12};
+      std::ofstream slab_top_rounded_output_3d(slab_top_rounded_library_3d_path);
+      slab_top_rounded_output_3d << slab_top_rounded_library_3d.dump(2) << "\n";
+    }
 
     auto constrained_perturbed_rounded_library_3d = rounded_library_3d;
     constrained_perturbed_rounded_library_3d["Name"] =
