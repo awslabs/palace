@@ -2414,6 +2414,285 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// M-5 (decisions 845 O-C / 846): the Maxwell path writes surface-response-model-energy.csv
+// with the electrostatic driver's column set exactly and in order as a strict prefix, then
+// the Maxwell keys "m" / "exc". On the lead fixture above (one isolated-edge model, three
+// Region cells, two Missing corners; the ES comparator = the Mirror-Off operator of the
+// same mesh and library) the eigenmode PostOperator fed E = -grad V writes, for mode 1, the
+// rows (ev 0 fixed trace, ev 1 fixed flux, ev 2 self-consistent = the same field) whose
+// values are the electrostatic operator's ModelContribution of V to 1e-10 relative (the
+// line integrals of the exact gradient of a p1 potential are its differences), with
+// `source` = the mode index, 0 for the three non-target interfaces, and the ev-0 row's
+// model term equal to surface-Q-corrected.csv's corrected minus outside minus uncovered
+// energy.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell model energies are written as the electrostatic rows",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "maxwell-model-energy-lead.mesh";
+  const auto basis_path = temp.temp_dir / "maxwell-model-energy-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-maxwell-model-energy-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-maxwell-model-energy-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    REQUIRE(models.size() == 1);
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+  const json target = dielectric[0];
+  int index = 5;
+  for (const std::array<double, 6> &segment :
+       {std::array<double, 6>{0.25, 0.5, 0.0, 0.25, 0.5, 0.5 - R},
+        std::array<double, 6>{0.25 + R, 0.5, 0.5, 0.75 - R, 0.5, 0.5},
+        std::array<double, 6>{0.75, 0.5, 0.0, 0.75, 0.5, 0.5 - R}})
+  {
+    json cell = target;
+    cell["Index"] = index++;
+    cell.erase("AutomaticEdges");
+    cell.erase("EdgeDistances");
+    cell.erase("EdgeFrameNormal");
+    cell["Region"] = {
+        {"Segments", {segment}}, {"Distance", R}, {"Normal", {0.0, 1.0, 0.0}}};
+    dielectric.push_back(cell);
+  }
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = edge_library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["DomainBoundary"] = {{"Mirror", "Off"}};
+  IoData electrostatic_iodata(config, false);
+  electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> electrostatic_meshes;
+  electrostatic_meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  LaplaceOperator laplace_op(electrostatic_iodata, electrostatic_meshes);
+  SurfaceResponseOperator electrostatic_response(electrostatic_iodata, laplace_op);
+
+  const fs::path output_dir = temp.temp_dir / "maxwell-model-energy";
+  json maxwell_config = config;
+  maxwell_config["Problem"]["Type"] = "Eigenmode";
+  maxwell_config["Problem"]["Output"] = output_dir.string();
+  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  maxwell_config["Boundaries"].erase("Terminal");
+  maxwell_config["Solver"] = {{"Order", 1},
+                              {"Eigenmode", {{"Target", 1.0}}},
+                              {"SurfaceResponseCorrection",
+                               {{"Library", edge_library_path.string()},
+                                {"TargetInterfaces", {4}},
+                                {"UnmatchedPolicy", "Warn"},
+                                {"CorrectionMode", "Both"}}}};
+  IoData iodata(maxwell_config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->GetPatchCount() == electrostatic_response.GetPatchCount());
+
+  // The same smooth potential on both meshes (the same serial mesh and partition): the
+  // electrostatic operator reads V, the Maxwell operator E = -grad V. V vanishes on the
+  // lead's plane y = 0.5 and its field is normal to it (a PEC carries no tangential field;
+  // the Maxwell trace gauges the conductor at 0 where the electrostatic trace samples V on
+  // it), so the two traces agree coefficient by coefficient.
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
+  mfem::ParGridFunction electrostatic_potential(&laplace_op.GetH1Space().Get());
+  electrostatic_potential.ProjectCoefficient(potential_coefficient);
+  Vector electrostatic_potential_true;
+  electrostatic_potential.GetTrueDofs(electrostatic_potential_true);
+  const auto electrostatic =
+      electrostatic_response.GetElectrostaticResponse(electrostatic_potential_true);
+  REQUIRE(electrostatic.model_contributions.size() == 1);
+  const auto &reference = electrostatic.model_contributions.front();
+  CHECK(reference.patch_count > 0.0);
+  CHECK(reference.fabricated_surface_energy.at(4) > 0.0);
+
+  mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                           &space_op.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(space_op.GetNDSpace(), true);
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  e.Imag() = 0.0;
+  field.Real().SetFromTrueDofs(e.Real());
+  field.Imag() = 0.0;
+  field.Real().ExchangeFaceNbrData();
+  field.Imag().ExchangeFaceNbrData();
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  post_op.SetSurfaceResponseCorrectedField(e, nullptr, omega, 1.0);
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+
+  // The operator's own per-model entry of the same field equals the electrostatic one
+  // (every rank; the entries are replicated).
+  const auto maxwell = response->GetMaxwellResponse(field, omega);
+  REQUIRE(maxwell.model_contributions.size() == 1);
+  const auto &entry = maxwell.model_contributions.front();
+  CHECK(entry.model == reference.model);
+  CHECK(entry.patch_count == reference.patch_count);
+  CHECK_THAT(entry.patch_weight, WithinRel(reference.patch_weight, 1.0e-12));
+  CHECK_THAT(entry.domain_correction, WithinRel(reference.domain_correction, 1.0e-10));
+  CHECK_THAT(entry.domain_correction_fixed_flux,
+             WithinRel(reference.domain_correction_fixed_flux, 1.0e-10));
+  CHECK_THAT(entry.fabricated_surface_energy.at(4),
+             WithinRel(reference.fabricated_surface_energy.at(4), 1.0e-10));
+  CHECK_THAT(entry.fabricated_surface_energy_fixed_flux.at(4),
+             WithinRel(reference.fabricated_surface_energy_fixed_flux.at(4), 1.0e-10));
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(4, field);
+  REQUIRE(edge_energies.size() == 1);
+  const double outside = edge_energies[0].energy_outside;
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+  }
+  const auto uncovered_energies =
+      surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, perimeter);
+  REQUIRE(uncovered_energies.size() == 1);
+  const double uncovered = uncovered_energies.at(4).energy;
+
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Joule = [&](double energy)
+  { return iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy); };
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-model-energy.csv"));
+  const TextCsv table = ReadTrimmedCsv(output_dir / "surface-response-model-energy.csv");
+  // The electrostatic driver's column set, in order, as a strict prefix (every
+  // postprocessing interface: the target 4 and the three Region cells 5-7), then the keys.
+  const std::vector<std::string> expected_header = {"source",
+                                                    "evaluation",
+                                                    "model",
+                                                    "patch count",
+                                                    "patch weight",
+                                                    "domain correction (J)",
+                                                    "fabricated surface energy[4] (J)",
+                                                    "fabricated surface energy[5] (J)",
+                                                    "fabricated surface energy[6] (J)",
+                                                    "fabricated surface energy[7] (J)",
+                                                    "m",
+                                                    "exc"};
+  CHECK(table.header == expected_header);
+  REQUIRE(table.rows.size() == 3);
+  const TextCsv corrected_table = ReadTrimmedCsv(output_dir / "surface-Q-corrected.csv");
+  const std::size_t interface_column = corrected_table.Column("interface");
+  const auto corrected_row =
+      std::find_if(corrected_table.rows.begin(), corrected_table.rows.end(),
+                   [&](const auto &row) { return std::stoi(row[interface_column]) == 4; });
+  REQUIRE(corrected_row != corrected_table.rows.end());
+  const double csv_ft =
+      std::stod((*corrected_row)[corrected_table.Column("E_surf corrected (J)")]);
+  for (int evaluation = 0; evaluation < 3; evaluation++)
+  {
+    const auto &row = table.rows[evaluation];
+    INFO("evaluation " << evaluation);
+    CHECK(std::stoi(row[table.Column("evaluation")]) == evaluation);
+    CHECK(std::stoi(row[table.Column("source")]) == 1);
+    CHECK(std::stoi(row[table.Column("m")]) == 1);
+    CHECK(std::stoi(row[table.Column("exc")]) == 0);
+    CHECK(std::stoi(row[table.Column("model")]) == reference.model);
+    CHECK(std::stod(row[table.Column("patch count")]) == reference.patch_count);
+    CHECK_THAT(std::stod(row[table.Column("patch weight")]),
+               WithinRel(reference.patch_weight, 1.0e-10));
+    const bool fixed_flux = evaluation == 1;
+    CHECK_THAT(std::stod(row[table.Column("domain correction (J)")]),
+               WithinRel(Joule(fixed_flux ? reference.domain_correction_fixed_flux
+                                          : reference.domain_correction),
+                         1.0e-10));
+    CHECK_THAT(
+        std::stod(row[table.Column("fabricated surface energy[4] (J)")]),
+        WithinRel(Joule(fixed_flux ? reference.fabricated_surface_energy_fixed_flux.at(4)
+                                   : reference.fabricated_surface_energy.at(4)),
+                  1.0e-10));
+    for (int cell = 5; cell <= 7; cell++)
+    {
+      CHECK(
+          std::stod(
+              row[table.Column(fmt::format("fabricated surface energy[{}] (J)", cell))]) ==
+          0.0);
+    }
+  }
+  // The ev-0 model term is the coupon term of surface-Q-corrected.csv: corrected minus the
+  // outside and the uncovered raw energy.
+  CHECK_THAT(std::stod(table.rows[0][table.Column("fabricated surface energy[4] (J)")]),
+             WithinRel(csv_ft - Joule(outside + uncovered), 1.0e-9));
+#endif
+}
+
 // Decision 399 MAJOR-1: an uncovered portion inside a matched spatial cluster's support box
 // would be counted twice (the cluster coupon models its whole box; F2 keeps the raw
 // within-R energy of the portion), so the placement clips the uncovered portions by every

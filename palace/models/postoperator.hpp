@@ -308,12 +308,23 @@ protected:
   mutable std::optional<MaxwellSurfaceResponseMeasurement> surface_response_measurement;
   mutable std::unique_ptr<TableWithCSVFile> surface_Q_corrected;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_confidence;
+  // surface-response-model-energy.csv on the Maxwell path (decisions 845 O-C / 846): the
+  // electrostatic driver's column set EXACTLY and in order as a strict prefix (`source` =
+  // the excitation index on Driven, the mode index on Eigenmode / BoundaryMode), then the
+  // Maxwell key columns "f (GHz)" / "m" and "exc" so that every row of a multi-frequency
+  // sweep is unambiguous; rows accumulate over the prints like surface-Q-corrected.csv.
+  mutable std::unique_ptr<TableWithCSVFile> surface_response_model_energy;
   mutable bool surface_response_warning_printed = false;
   mutable bool surface_response_portion_tables_started = false;
   // The per-type portion tables of the Maxwell correction (decision 751): the uncovered
   // requirements' and the DomainBoundary claims' raw within-R energies and shares per
   // evaluation, written like the electrostatic driver's tables of the same names.
   void PrintSurfaceResponsePortionEnergies(double output_index, int excitation) const;
+  // The per-model rows of the Maxwell correction (M-5): per model (ev 0 fixed trace, ev 1
+  // fixed flux on the raw field; ev 2 self-consistent on the corrected field when it
+  // exists) as the electrostatic driver writes them, from the response's ModelContribution
+  // entries.
+  void PrintSurfaceResponseModelEnergies(double output_index, int excitation) const;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
