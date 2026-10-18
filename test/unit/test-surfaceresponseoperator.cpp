@@ -7444,6 +7444,110 @@ int ExpectedCornerPatchLineCount(const ConstructedCornerTraceBasis &basis)
   return lines;
 }
 
+// The line integral of the curl field E = c x r (curl E = 2 c) along the straight leg
+// p -> q: (c x r) . dl = c . (r x dl) and the integral of r x dl over the leg is p x q, so
+// the value is c . (p x q) exactly (the integrand is constant along the leg). It depends on
+// the leg's end points, not only on the step's chord.
+double CurlFieldLegIntegral(const std::array<double, 3> &c, const std::array<double, 3> &p,
+                            const std::array<double, 3> &q)
+{
+  return c[0] * (p[1] * q[2] - p[2] * q[1]) + c[1] * (p[2] * q[0] - p[0] * q[2]) +
+         c[2] * (p[0] * q[1] - p[1] * q[0]);
+}
+
+// The curl-field reading of one corner patch's Maxwell traces (code review d836 MINOR-2:
+// on a curl-free field the trace identity holds for ANY slave position, so it cannot see a
+// misplaced slave). On E = c x r the trace difference between consecutive free knots of a
+// ring is minus the sum of CurlFieldLegIntegral over the legs of that step along the ring
+// polyline (knot -> the edge's slave box corners in their order along the edge -> knot,
+// mapped into the device frame by `device`), which a chord across the corner or a slave
+// off its box corner does not give. A PEC-free ring's chain starts at the knot nearest the
+// anchor and runs around the ring once, so exactly one consecutive pair (its closing step)
+// differs by the circulation of the routed ring polygon, 2 c . A; a free arc of a ring
+// with PEC knots has no closing step (the PEC knots' traces are exact zeros and are not
+// part of the chain). `coefficients` are the patch's traces in basis order.
+void CheckCornerPatchCurlFieldTraces(
+    const ConstructedCornerTraceBasis &basis,
+    const std::function<std::array<double, 3>(const std::array<double, 3> &)> &device,
+    const std::array<double, 3> &c, const std::vector<double> &coefficients,
+    double tolerance)
+{
+  REQUIRE(coefficients.size() >= basis.knots.size());
+  REQUIRE(basis.zero.size() == basis.knots.size());
+  int offset = 0;
+  for (const int size : basis.contour_groups)
+  {
+    auto Step = [&](int from, int to)
+    {
+      std::vector<std::pair<double, std::array<double, 3>>> via;
+      for (const auto &vertex : basis.vertices)
+      {
+        if (vertex.basis >= 0)
+        {
+          continue;
+        }
+        if (vertex.parent_a == from && vertex.parent_b == to)
+        {
+          via.emplace_back(1.0 - vertex.weight_a, vertex.point);
+        }
+        else if (vertex.parent_a == to && vertex.parent_b == from)
+        {
+          via.emplace_back(vertex.weight_a, vertex.point);
+        }
+      }
+      std::sort(via.begin(), via.end(),
+                [](const auto &a, const auto &b) { return a.first < b.first; });
+      double integral = 0.0;
+      auto previous = device(basis.knots[from]);
+      for (const auto &[fraction, point] : via)
+      {
+        const auto slave = device(point);
+        integral += CurlFieldLegIntegral(c, previous, slave);
+        previous = slave;
+      }
+      return integral + CurlFieldLegIntegral(c, previous, device(basis.knots[to]));
+    };
+    bool any_pec = false;
+    double circulation = 0.0;
+    std::vector<double> residuals;
+    for (int i = 0; i < size; i++)
+    {
+      const int from = offset + i, to = offset + (i + 1) % size;
+      const double step = Step(from, to);
+      circulation += step;
+      any_pec = any_pec || basis.zero[from];
+      if (basis.zero[from] || basis.zero[to])
+      {
+        continue;
+      }
+      residuals.push_back(coefficients[to] - coefficients[from] + step);
+    }
+    if (any_pec)
+    {
+      for (const double residual : residuals)
+      {
+        CHECK_THAT(residual, WithinAbs(0.0, tolerance));
+      }
+    }
+    else
+    {
+      REQUIRE(static_cast<int>(residuals.size()) == size);
+      const auto closing =
+          std::max_element(residuals.begin(), residuals.end(),
+                           [](double a, double b) { return std::abs(a) < std::abs(b); });
+      for (auto residual = residuals.begin(); residual != residuals.end(); residual++)
+      {
+        if (residual != closing)
+        {
+          CHECK_THAT(*residual, WithinAbs(0.0, tolerance));
+        }
+      }
+      CHECK_THAT(*closing, WithinAbs(circulation, tolerance));
+    }
+    offset += size;
+  }
+}
+
 // A box mesh whose metal sheet (cracked boundary attribute 9 on the plane y = 0.5) has one
 // rectangular aperture [x0, x1] x [z0, z1]: the sheet's four aperture corners are concave
 // (reentrant) metal corners.
@@ -7505,9 +7609,23 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBas
   // the vertex; PEC knots exactly 0): the slave-routed lines sum to the chord value (path
   // independence), the free arcs close true loops (loop residual < 1e-10), the line count
   // is the ring polyline's (one leg per slave vertex on a traversed edge, no chord), and
-  // Mult is symmetric (the transpose is the adjoint with slave routing, U6).
+  // Mult is symmetric (the transpose is the adjoint with slave routing, U6). On the curl
+  // field E = c x r (in the lowest-order Nedelec space exactly, so its line integrals are
+  // exact to roundoff) every corner patch's trace steps read the routed legs through the
+  // slave box corners at their positions, CheckCornerPatchCurlFieldTraces (code review
+  // d836 MINOR-2; the constant field cannot see a misplaced slave).
   mfem::VectorConstantCoefficient field_coefficient =
       test::SurfaceResponseFiles::ConstantFieldCoefficient();
+  const std::array<double, 3> curl_axis = {0.3, -0.5, 0.8};
+  mfem::VectorFunctionCoefficient curl_field_coefficient(
+      3,
+      [&](const mfem::Vector &x, mfem::Vector &E)
+      {
+        E.SetSize(3);
+        E[0] = curl_axis[1] * x[2] - curl_axis[2] * x[1];
+        E[1] = curl_axis[2] * x[0] - curl_axis[0] * x[2];
+        E[2] = curl_axis[0] * x[1] - curl_axis[1] * x[0];
+      });
   const mfem::Vector &constant_field = field_coefficient.GetVec();
   mfem::FunctionCoefficient potential_coefficient(
       [&](const mfem::Vector &x)
@@ -7521,23 +7639,21 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBas
   // angle and connectivity, the interpolated 112.5-degree basis with the segment's
   // connectivity (the runtime's BuildCornerTraceBasis call), the concave coupon, and the
   // isolated edge (a four-knot ring: the anchor line + four lines).
-  auto ExpectedLines = [&](const std::string &name)
+  // The rule's basis of a corner runtime model (the knots, slaves and zero set the runtime
+  // serves: the files of an exact node, the constructed basis of the interpolated one).
+  auto CornerBasisFor = [&](const std::string &name)
   {
-    if (name == "isolated")
-    {
-      return 5;
-    }
     if (name == "concave-corner-90")
     {
-      return ExpectedCornerPatchLineCount(
-          BuildCornerTraceBasis(seed_concave.points, seed_concave.contour_groups,
-                                seed_concave.zero_trace_indices, 0.5 * M_PI, false, rule));
+      return BuildCornerTraceBasis(seed_concave.points, seed_concave.contour_groups,
+                                   seed_concave.zero_trace_indices, 0.5 * M_PI, false,
+                                   rule);
     }
     if (name.find("@corner-angle112.5") != std::string::npos)
     {
-      return ExpectedCornerPatchLineCount(BuildCornerTraceBasis(
-          seed_convex.points, seed_convex.contour_groups, seed_convex.zero_trace_indices,
-          112.5 * M_PI / 180.0, true, rule, 112.5 * M_PI / 180.0));
+      return BuildCornerTraceBasis(seed_convex.points, seed_convex.contour_groups,
+                                   seed_convex.zero_trace_indices, 112.5 * M_PI / 180.0,
+                                   true, rule, 112.5 * M_PI / 180.0);
     }
     for (const auto &node : family_nodes)
     {
@@ -7548,13 +7664,21 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBas
         {
           connectivity = *node.connectivity * M_PI / 180.0;
         }
-        return ExpectedCornerPatchLineCount(BuildCornerTraceBasis(
-            seed_convex.points, seed_convex.contour_groups, seed_convex.zero_trace_indices,
-            node.angle * M_PI / 180.0, true, rule, connectivity));
+        return BuildCornerTraceBasis(seed_convex.points, seed_convex.contour_groups,
+                                     seed_convex.zero_trace_indices,
+                                     node.angle * M_PI / 180.0, true, rule, connectivity);
       }
     }
     FAIL("Unexpected runtime model \"" << name << "\"");
-    return 0;
+    return ConstructedCornerTraceBasis{};
+  };
+  auto ExpectedLines = [&](const std::string &name)
+  {
+    if (name == "isolated")
+    {
+      return 5;
+    }
+    return ExpectedCornerPatchLineCount(CornerBasisFor(name));
   };
   auto RunIsland = [&](mfem::ParMesh &mesh, const fs::path &library, unsigned seed,
                        int expected_corner_patches)
@@ -7645,6 +7769,66 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBas
     }
     CHECK(statistics["Correction"]["ContourLines"]["Total"].get<long long>() ==
           expected_lines);
+    // The curl field: the routed legs at the slaves' positions, corner patch by corner
+    // patch, in the device frame of its placement (the assignments are gathered on the
+    // root rank; the traces are replicated). Read at Order 2: on the radially mapped
+    // (trilinear, non-affine) hexes of these island meshes the lowest-order Nedelec space
+    // carries constants and gradients exactly but not c x r (a 1e-4 interpolation error in
+    // its line integrals), while ND(2) carries every linear field on a trilinear hex (the
+    // reference field J^T E(x(xi)) lies in Q_{1,2,2} x Q_{2,1,2} x Q_{2,2,1}), so the
+    // reading is exact to roundoff. The order changes the isolated-edge cell count, not
+    // the corner patches (one per corner), hence a second operator beside the p1 one of
+    // the electrostatic comparison.
+    auto curl_config = maxwell_config;
+    curl_config["Solver"]["Order"] = 2;
+    IoData curl_iodata(curl_config, false);
+    curl_iodata.boundaries.cracked_attributes.insert(9);
+    const double coordinate_scale = curl_iodata.units.GetMeshLengthRelativeScale();
+    REQUIRE(coordinate_scale == 1.0);
+    std::vector<std::unique_ptr<Mesh>> curl_meshes;
+    curl_meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh)));
+    SpaceOperator curl_space_op(curl_iodata, curl_meshes);
+    SurfaceResponseOperator curl_response(curl_iodata, curl_space_op);
+    GridFunction curl_field(curl_space_op.GetNDSpace(), true);
+    curl_field.Real().ProjectCoefficient(curl_field_coefficient);
+    curl_field.Imag() = 0.0;
+    Vector curl_field_true;
+    curl_field.Real().GetTrueDofs(curl_field_true);
+    const auto curl_traces = curl_response.GetPatchTraces(curl_field_true);
+    const auto curl_names = curl_response.GetModelNames();
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto &assignments = curl_response.GetPatchAssignments();
+      int curl_corner_patches = 0;
+      for (const auto &entry : curl_traces)
+      {
+        const auto &name = curl_names.at(entry.model);
+        if (name.find("corner") == std::string::npos)
+        {
+          continue;
+        }
+        curl_corner_patches++;
+        const auto assignment =
+            std::find_if(assignments.begin(), assignments.end(),
+                         [&](const auto &a) { return a.global_index == entry.patch; });
+        REQUIRE(assignment != assignments.end());
+        auto Device = [&](const std::array<double, 3> &local)
+        {
+          std::array<double, 3> p{};
+          for (int d = 0; d < 3; d++)
+          {
+            p[d] = assignment->origin[d] +
+                   (local[0] * assignment->axis_u[d] + local[1] * assignment->axis_v[d] +
+                    local[2] * assignment->axis_w[d]) /
+                       coordinate_scale;
+          }
+          return p;
+        };
+        CheckCornerPatchCurlFieldTraces(CornerBasisFor(name), Device, curl_axis,
+                                        entry.coefficients, 1.0e-10);
+      }
+      CHECK(curl_corner_patches == expected_corner_patches);
+    }
     CheckMaxwellTraceAdjoint(maxwell_response, seed);
   };
   RunIsland(*house_mesh, libraries.at("family"), 31, 5);
