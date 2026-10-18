@@ -46,6 +46,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     PML subdomain with STRUMPACK, `"PMLSubdomainSinglePrecision"`). The superbuild now
     builds MUMPS with complex double precision (`zmumps`), which is required with
     `PALACE_WITH_MUMPS`. SchemaVer 4-4-0
+    [PR 1058](https://github.com/awslabs/palace/pull/1058).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
@@ -325,6 +326,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,
     which *Palace* does not use, and clones PETSc and SLEPc shallowly.
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - The superbuild patches the BLACS of ScaLAPACK to receive messages with derived datatypes
+    packed and unpack them locally. This works around an MPICH bug for processes on the same
+    node, which corrupts complex-valued distributed factorizations of STRUMPACK and MUMPS
+    (packed messages received in several shared memory segments cannot be unpacked into
+    complex-valued elements split across segments).
+    [PR 1058](https://github.com/awslabs/palace/pull/1058).
 
 ## [0.19.0] - 2026-11-02
 
