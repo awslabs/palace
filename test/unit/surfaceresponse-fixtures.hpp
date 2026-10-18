@@ -173,6 +173,18 @@ struct SurfaceResponseFiles
   // 818 R1 on.
   const fs::path slab_top_rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-slab-top-3d.json";
+  // The slab-top rounded corner with an explicit TraceMesh whose ring edges carry slave
+  // vertices (the corner family's trace basis form: a vertex between two consecutive ring
+  // knots, no coefficient of its own): refused on the Maxwell path before decision 818 R3,
+  // routed knot -> slave -> knot from then on (two slaves on the free bottom ring, one on
+  // the top ring's free-to-PEC step, one on its PEC-to-free step that the anchor line
+  // replaces).
+  const fs::path slab_top_rounded_slave_library_3d_path =
+      temp.temp_dir / "fabrication-process-rounded-slab-top-slaves-3d.json";
+  const fs::path slab_top_rounded_slave_trace_vertices_path =
+      temp.temp_dir / "rounded-slab-top-slaves-trace-vertices.csv";
+  const fs::path slab_top_rounded_slave_trace_triangles_path =
+      temp.temp_dir / "rounded-slab-top-slaves-trace-triangles.csv";
   const fs::path constrained_perturbed_rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-constrained-perturbed-3d.json";
   const fs::path finite_impedance_rounded_library_3d_path =
