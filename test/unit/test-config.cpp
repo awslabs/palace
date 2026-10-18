@@ -205,6 +205,9 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
                        {"PEC", {{"Attributes", {3}}}},
                        {"Absorbing", {{"Attributes", {4}}}}};
     config::BoundaryData boundary_ex_bool(boundaries);
+    CHECK(boundary_ex_bool.waveport.at(4).target == 0.0);
+    CHECK(config::WavePortData(json{{"Index", 7}, {"Attributes", {19}}, {"Target", 3.1}})
+              .target == 3.1);
 
     CHECK(boundary_ex_bool.lumpedport.at(1).active);
     CHECK(boundary_ex_bool.lumpedport.at(3).active == false);
@@ -1753,10 +1756,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // so they are deliberately not concretized. ComplexCoarseSolve is an opt-in per-port
     // override: an explicit value also takes precedence over Solver.Linear.PCMatReal, so
     // absence (inherit both global settings) has no equivalent explicit value to emit.
+    // Target is opt-in: absence means the eigenvalue target from the port materials.
     auto wp_gaps = SchemaCoverageGaps(
         "/properties/Boundaries/properties/WavePort/items",
         config["Boundaries"]["WavePort"][0],
-        /*skip=*/{"VoltagePath", "PolarityAttributes", "ComplexCoarseSolve"});
+        /*skip=*/{"VoltagePath", "PolarityAttributes", "ComplexCoarseSolve", "Target"});
     INFO("Boundaries.WavePort[] missing keys: " << json(wp_gaps).dump());
     CHECK(wp_gaps.empty());
   }
