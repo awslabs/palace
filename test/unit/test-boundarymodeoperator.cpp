@@ -43,6 +43,7 @@
 namespace palace
 {
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 namespace
 {
@@ -445,24 +446,52 @@ double ExactLondonSlabIndex(double h, double d, double lambda, double k0, bool p
   return 0.5 * (lo + hi);
 }
 
+// Exact mode index as for ExactLondonSlabIndex, for a slab of nondimensional complex
+// conductivity sigma: eps = 1 - i sigma / k0 and q^2 = p^2 + i k0 sigma, which is the
+// London slab for sigma = -i / (k0 lambda^2). Secant iterations from n0.
+std::complex<double> ExactConductingSlabIndex(double h, double d,
+                                              std::complex<double> sigma, double k0,
+                                              bool pec_back, std::complex<double> n0)
+{
+  const std::complex<double> eps = 1.0 - 1i * sigma / k0;
+  auto F = [&](std::complex<double> n)
+  {
+    const auto p = k0 * std::sqrt(n * n - 1.0);
+    const auto q = std::sqrt(p * p + 1i * k0 * sigma);
+    const auto g = pec_back ? std::tanh(q * d) : 1.0 / std::tanh(q * d);
+    return p * std::tanh(p * h) + q * g / eps;
+  };
+  std::complex<double> n1 = n0, n2 = n0 * (1.0 + 1.0e-6), F1 = F(n1), F2 = F(n2);
+  for (int it = 0; it < 100 && std::abs(n2 - n1) > 1.0e-15 * std::abs(n2); it++)
+  {
+    const auto n3 = n2 - F2 * (n2 - n1) / (F2 - F1);
+    n1 = n2;
+    F1 = F2;
+    n2 = n3;
+    F2 = F(n2);
+  }
+  return n2;
+}
+
 // Propagation constant normalized by the free-space wavenumber (n_eff) of a mode of a 2D
 // cross-section of width w, in um: a PEC plate at y = 0 (attribute 1), a vacuum gap of
-// height h, and a London superconductor slab of thickness d with penetration depth lambda
-// above it, whose back face y = h + d (attribute 2) is PEC or left free (PMC). The sides x
-// = 0, w (attribute 3) are PEC or free.
-double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec_back,
-                           bool pec_sides, double freq_ghz, double n_target, int order,
-                           int ny_gap = 8)
+// height h, and a superconductor slab of thickness d above it, resolved for penetration
+// depth lambda, whose back face y = h + d (attribute 2) is PEC or left free (PMC). The
+// sides x = 0, w (attribute 3) are PEC or free.
+std::complex<double> SolveSlabMode(double w, double h, double d, double lambda,
+                                   const config::MaterialData &slab, bool pec_back,
+                                   bool pec_sides, double freq_ghz, double n_target,
+                                   int order, int ny_gap = 8)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0e-6, 1.0e-6);
   IoData iodata(units);
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
   iodata.model.Lc = 1.0;
   auto &vacuum = iodata.domains.materials.emplace_back();
   vacuum.attributes = {1};
-  auto &london = iodata.domains.materials.emplace_back();
-  london.attributes = {2};
-  london.lambda_L = lambda;
+  auto &material = iodata.domains.materials.emplace_back(slab);
+  material.attributes = {2};
   iodata.boundaries.pec.attributes = {1};
   if (pec_back)
   {
@@ -569,9 +598,20 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   const double kn_target = omega * n_target;
   auto result = mode_solver.Solve(omega, -kn_target * kn_target);
   REQUIRE(result.num_converged >= 1);
-  const auto kn = mode_solver.GetPropagationConstant(0);
-  CHECK(std::abs(kn.imag()) < 1.0e-6 * std::abs(kn.real()));
-  return kn.real() / omega;
+  return mode_solver.GetPropagationConstant(0) / omega;
+}
+
+// SolveSlabMode for a London slab of penetration depth lambda (lossless).
+double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec_back,
+                           bool pec_sides, double freq_ghz, double n_target, int order,
+                           int ny_gap = 8)
+{
+  config::MaterialData london;
+  london.lambda_L = lambda;
+  const auto n_eff = SolveSlabMode(w, h, d, lambda, london, pec_back, pec_sides, freq_ghz,
+                                   n_target, order, ny_gap);
+  CHECK(std::abs(n_eff.imag()) < 1.0e-6 * std::abs(n_eff.real()));
+  return n_eff.real();
 }
 
 }  // namespace
@@ -1029,6 +1069,39 @@ TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Paralle
         SolveLondonSlabMode(50.0, h, d, lambda, false, true, freq_ghz, n_exact, 3, 32);
     CAPTURE(n_exact, n_pec, n_eff);
     CHECK_THAT(n_eff - n_pec, WithinRel(n_exact - n_pec, 1.0e-5));
+  }
+}
+
+TEST_CASE("ModeEigenSolver Mattis-Bardeen slab", "[boundarymodeoperator][Serial][Parallel]")
+{
+  // TM0 mode of the out-of-plane current London slab guide with a Mattis-Bardeen Nb slab
+  // (4.2 K, matched at 100 GHz), below and above the gap frequency (650 GHz), compared to
+  // the exact dispersion relation.
+  constexpr double h = 0.5, d = 0.2;
+  const Units units(1.0e-6, 1.0e-6);
+  config::MaterialData slab;
+  auto &cs = slab.complex_sigma.emplace();
+  cs.type = ComplexConductivityType::MATTIS_BARDEEN;
+  cs.sigma_n = 1.605e7;
+  cs.temperature = 4.2;
+  cs.gap = 1.343e-3;
+  cs.reference_freq = 100.0;
+  config::MaterialData nondim = slab;
+  config::Nondimensionalize(units, nondim);
+  const ComplexConductivityModel model(*nondim.complex_sigma);
+  for (double freq_ghz : {100.0, 600.0, 1000.0})
+  {
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
+    const auto sigma = model(k0);
+    const double lambda = 1.0 / std::sqrt(-k0 * sigma.imag());
+    const auto n_exact = ExactConductingSlabIndex(
+        h, d, sigma, k0, false, ExactLondonSlabIndex(h, d, lambda, k0, false));
+    const auto n_eff =
+        SolveSlabMode(1.0, h, d, lambda, slab, false, false, freq_ghz, n_exact.real(), 3);
+    CAPTURE(freq_ghz, n_exact, n_eff);
+    CHECK_THAT(n_eff.real(), WithinRel(n_exact.real(), 1.0e-8));
+    CHECK_THAT(n_eff.imag(), WithinRel(n_exact.imag(), 1.0e-6));
   }
 }
 
