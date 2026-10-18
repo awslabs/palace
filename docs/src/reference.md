@@ -1884,7 +1884,22 @@ the electrostatic path (fixed trace and fixed flux on the raw field, self-consis
 the corrected field); that share is reported per feature type in the Maxwell
 `surface-response-uncovered-energy.csv`, the electrostatic table's columns with the mode
 `m` (or `f (GHz)` for a driven solve) and `exc` in place of `source`, written only when
-something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. Every
+something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. The
+Maxwell correction also writes `surface-response-model-energy.csv` (decisions 845 / 846):
+the electrostatic driver's column set exactly and in order as a strict prefix — `source`,
+`evaluation`, `model`, `patch count`, `patch weight`, `domain correction (J)` and
+`fabricated surface energy[k] (J)` for every postprocessing interface (0 for an interface
+that is not a target) — followed by the Maxwell key columns `f (GHz)` (or `m`) and `exc`,
+so that every row of a multi-frequency sweep is unambiguous; `source` is the excitation
+index of a driven solve and the mode index of an eigenmode or boundary-mode solve. The rows
+and codes are the electrostatic ones: per solve, every runtime model at `evaluation` 0
+(fixed trace) and 1 (fixed flux) on the raw field, then every model at `evaluation` 2 on
+the self-consistent corrected field when `CorrectionMode` produces one (its `domain
+correction` is the fixed-trace defect the self-consistent normalization carries and its
+energies are the fixed-trace ones). A model's row is the sum over its applied patches of
+the same per-patch terms that make the interface totals, so the rows of one evaluation sum
+to the coupon term of `surface-Q-corrected.csv` to roundoff, and `palace.json`'s
+`SurfaceResponse.ModelCatalog` names the model indices as on the electrostatic path. Every
 3D target interface must therefore enable `AutomaticEdges`; every 2D
 boundary-mode target must specify `EdgeAttributes` and `EdgeFrameNormal`. In both cases,
 `EdgeDistances` must include the library `MatchingRadius`.
