@@ -24500,15 +24500,6 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     auto points = ModelBasisPoints(model_config);
     MFEM_VERIFY(points.size() >= 3,
                 "Maxwell response-correction contours require at least three points!");
-    // The corner family's trace basis rule (slave trace vertices at the box corners, or a
-    // basis constructed at the device angle) is electrostatic only: the Maxwell contour
-    // lines run between basis knots and would cut the box corners.
-    MFEM_VERIFY(model_config.constructed_basis_points.empty() &&
-                    (model_config.trace_vertices.empty() ||
-                     !ModelTraceMesh(model_config).HasSlaveVertices()),
-                "Maxwell surface response correction does not support trace meshes with "
-                "slave vertices (the corner family's trace basis rule is electrostatic "
-                "only)!");
     ResponseModel model;
     model.idx = model_config.idx;
     model.name =
@@ -24558,6 +24549,27 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                 "InteriorTraceCount requires a spatial response model with an explicit "
                 "TraceMesh and fewer interior points than BasisPoints!");
     const int contour_point_count = model.contour_size - model.interior_trace_count;
+    if (HasExplicitTraceMesh(model_config))
+    {
+      // The ring edges the contour lines follow through the trace mesh's slave vertices
+      // (decision 818 R3; the corner family's box corners, and the constructed basis of an
+      // angle-interpolated corner, which ModelTraceMesh serves alike). A slave whose two
+      // parents are not consecutive knots of one ring (a cap-centre slave) lies on no ring
+      // edge and is routed by no line.
+      for (const auto &vertex : ModelTraceMesh(model_config).vertices)
+      {
+        if (vertex.parent_a <= 0)
+        {
+          continue;
+        }
+        MFEM_VERIFY(vertex.parent_a <= contour_point_count &&
+                        vertex.parent_b <= contour_point_count,
+                    "A slave response trace vertex names a parent outside the contour "
+                    "basis!");
+        model.ring_slave_vertices.push_back(
+            {vertex.parent_a - 1, vertex.parent_b - 1, vertex.weight_a, vertex.point});
+      }
+    }
     if (model.contour_groups.empty() && model.open_contour_paths.empty())
     {
       model.contour_groups.push_back(contour_point_count);
@@ -24692,6 +24704,16 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   maxwell_contours.reserve(local_patch_capacity);
   maxwell_conductor_anchors.reserve(local_patch_capacity);
   maxwell_paths.reserve(local_patch_capacity);
+  // Per local patch, the model's ring slave vertices in the device frame (decision 818 R3).
+  struct ContourSlaveVertex
+  {
+    int parent_a = 0;
+    int parent_b = 0;
+    double weight_a = 0.0;
+    mfem::Vector point;
+  };
+  std::vector<std::vector<ContourSlaveVertex>> contour_slaves;
+  contour_slaves.reserve(local_patch_capacity);
   for (std::size_t patch_index = 0; patch_index < applied_patches.size(); patch_index++)
   {
     const auto &patch_config = applied_patches[patch_index];
@@ -24745,9 +24767,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                   "dimensional coupon frame!");
     }
 
-    auto &contour = maxwell_contours.emplace_back();
-    contour.reserve(basis_points[model_it->second].size());
-    for (const auto &local : basis_points[model_it->second])
+    auto DevicePoint = [&](const std::array<double, 3> &local)
     {
       MFEM_VERIFY(model.spatial_basis || std::abs(local[2]) <= 1.0e-12,
                   "Response-correction basis points must lie in the local coupon "
@@ -24763,7 +24783,20 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           point[d] += local[2] * patch_config.axis_w[d] / coordinate_scale;
         }
       }
-      contour.push_back(std::move(point));
+      return point;
+    };
+    auto &contour = maxwell_contours.emplace_back();
+    contour.reserve(basis_points[model_it->second].size());
+    for (const auto &local : basis_points[model_it->second])
+    {
+      contour.push_back(DevicePoint(local));
+    }
+    auto &slaves = contour_slaves.emplace_back();
+    slaves.reserve(model.ring_slave_vertices.size());
+    for (const auto &slave : model.ring_slave_vertices)
+    {
+      slaves.push_back(
+          {slave.parent_a, slave.parent_b, slave.weight_a, DevicePoint(slave.point)});
     }
     auto &anchors = maxwell_conductor_anchors.emplace_back();
     anchors.reserve(anchor_count);
@@ -24827,12 +24860,42 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const auto &patch = patches[patch_index];
     const auto &model = models[patch.model];
     const auto &contour = maxwell_contours[patch_index];
+    const auto &slaves = contour_slaves[patch_index];
     const auto &anchors = maxwell_conductor_anchors[patch_index];
     const auto &anchor = anchors.front();
     MFEM_ASSERT(static_cast<int>(contour.size()) == model.contour_size,
                 "Inconsistent Maxwell response contour size!");
     MFEM_ASSERT(static_cast<int>(anchors.size()) == model.conductor_state_count + 1,
                 "Inconsistent Maxwell conductor-anchor count!");
+    // The lines of one step along the ring edge from knot `from` to knot `to` (decision
+    // 818 R3): through the edge's slave vertices in their order along the edge (weight_a
+    // is the trace weight of parent_a, 1 at parent_a and 0 at parent_b), else the one
+    // straight line. Returns the number of lines appended.
+    auto AppendStep = [&](int from, int to)
+    {
+      std::vector<std::pair<double, const mfem::Vector *>> via;
+      for (const auto &slave : slaves)
+      {
+        if (slave.parent_a == from && slave.parent_b == to)
+        {
+          via.emplace_back(1.0 - slave.weight_a, &slave.point);
+        }
+        else if (slave.parent_a == to && slave.parent_b == from)
+        {
+          via.emplace_back(slave.weight_a, &slave.point);
+        }
+      }
+      std::sort(via.begin(), via.end(),
+                [](const auto &a, const auto &b) { return a.first < b.first; });
+      const mfem::Vector *previous = &contour[from];
+      for (const auto &[fraction, point] : via)
+      {
+        AppendLine(*previous, *point);
+        previous = point;
+      }
+      AppendLine(*previous, contour[to]);
+      return static_cast<int>(via.size()) + 1;
+    };
 
     const int path_begin = static_cast<int>(maxwell_paths.size());
 
@@ -24850,8 +24913,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         // knot is never an integration start; a slab-top knot's potential differs from the
         // conductor's). Every free arc between consecutive PEC knots is a path from the
         // patch's conductor anchor, ON the thin conductor the coupon calls zero: the anchor
-        // line to the arc's first free knot, the lines between its free knots, the end line
-        // to the next PEC knot and the return line from that knot back to the anchor (R4: a
+        // line to the arc's first free knot, the steps between its free knots, the step to
+        // the next PEC knot and the return line from that knot back to the anchor (R4: a
         // true loop for the residual). An arc without a free knot gets no line.
         for (auto zero = zero_begin; zero != zero_end; zero++)
         {
@@ -24877,12 +24940,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           }
           path.anchor_line = AppendLineIfDistinct(anchor, contour[free_indices.front()]);
           path.contour_line_offset = static_cast<int>(maxwell_lines.size());
-          path.contour_line_count = static_cast<int>(free_indices.size()) - 1;
+          path.step_line_counts.reserve(free_indices.size() - 1);
           for (std::size_t i = 1; i < free_indices.size(); i++)
           {
-            AppendLine(contour[free_indices[i - 1]], contour[free_indices[i]]);
+            path.step_line_counts.push_back(
+                AppendStep(free_indices[i - 1], free_indices[i]));
+            path.contour_line_count += path.step_line_counts.back();
           }
-          path.end_line = AppendLine(contour[free_indices.back()], contour[end]);
+          path.contour_line_count += AppendStep(free_indices.back(), end);
           path.return_line = AppendLineIfDistinct(contour[end], anchor);
           maxwell_paths.push_back(std::move(path));
         }
@@ -24912,12 +24977,17 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       }
       path.anchor_line = AppendLineIfDistinct(anchor, contour[group_offset + start]);
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
-      path.contour_line_count = group_size;
+      path.step_line_counts.reserve(group_size - 1);
       for (int offset = 0; offset < group_size; offset++)
       {
         const int i = group_offset + (start + offset) % group_size;
         const int next = group_offset + (start + offset + 1) % group_size;
-        AppendLine(contour[i], contour[next]);
+        const int step_line_count = AppendStep(i, next);
+        if (offset + 1 < group_size)
+        {
+          path.step_line_counts.push_back(step_line_count);
+        }
+        path.contour_line_count += step_line_count;
       }
       maxwell_paths.push_back(std::move(path));
       group_offset += group_size;
@@ -24951,10 +25021,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       const auto &last = contour[path_config.indices.back()];
       path.anchor_line = AppendLineIfDistinct(start_anchor, first);
       path.contour_line_offset = static_cast<int>(maxwell_lines.size());
-      path.contour_line_count = static_cast<int>(path_config.indices.size()) - 1;
+      path.step_line_counts.reserve(path_config.indices.size() - 1);
       for (std::size_t i = 1; i < path_config.indices.size(); i++)
       {
-        AppendLine(contour[path_config.indices[i - 1]], contour[path_config.indices[i]]);
+        path.step_line_counts.push_back(
+            AppendStep(path_config.indices[i - 1], path_config.indices[i]));
+        path.contour_line_count += path.step_line_counts.back();
       }
       path.end_line = AppendLineIfDistinct(last, end_anchor);
       open_path_indices.push_back(static_cast<int>(maxwell_paths.size()));
@@ -26000,7 +26072,9 @@ void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
   }
   for (const auto &path : maxwell_paths)
   {
-    MFEM_ASSERT(!path.trace_indices.empty(), "Empty Maxwell contour path!");
+    MFEM_ASSERT(!path.trace_indices.empty() &&
+                    path.step_line_counts.size() + 1 == path.trace_indices.size(),
+                "Inconsistent Maxwell contour path!");
     double value = 0.0;
     if (!path.closed && path.start_trace >= 0)
     {
@@ -26012,9 +26086,14 @@ void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
       value -= line_values[path.anchor_line];
     }
     values[path.trace_indices.front()] = value;
+    int line = path.contour_line_offset;
     for (std::size_t i = 1; i < path.trace_indices.size(); i++)
     {
-      value -= line_values[path.contour_line_offset + static_cast<int>(i) - 1];
+      // The step to the next knot: its lines along the ring edge (decision 818 R3).
+      for (int leg = 0; leg < path.step_line_counts[i - 1]; leg++)
+      {
+        value -= line_values[line++];
+      }
       values[path.trace_indices[i]] = value;
     }
   }
@@ -26036,15 +26115,25 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   for (auto path = maxwell_paths.rbegin(); path != maxwell_paths.rend(); path++)
   {
     const int size = static_cast<int>(path->trace_indices.size());
-    MFEM_ASSERT(size > 0, "Empty Maxwell contour path!");
+    MFEM_ASSERT(size > 0 && static_cast<int>(path->step_line_counts.size()) == size - 1,
+                "Inconsistent Maxwell contour path!");
     maxwell_path_adjoint.SetSize(size);
     for (int i = 0; i < size; i++)
     {
       maxwell_path_adjoint[i] = maxwell_trace_adjoint[path->trace_indices[i]];
     }
+    // The steps in reverse: every line of the step to knot i + 1 carries that knot's
+    // adjoint (and the adjoints of the knots after it, accumulated in
+    // maxwell_path_adjoint).
+    int line = path->contour_line_offset + std::accumulate(path->step_line_counts.begin(),
+                                                           path->step_line_counts.end(), 0);
     for (int i = size - 2; i >= 0; i--)
     {
-      line_values[path->contour_line_offset + i] -= maxwell_path_adjoint[i + 1];
+      line -= path->step_line_counts[i];
+      for (int leg = 0; leg < path->step_line_counts[i]; leg++)
+      {
+        line_values[line + leg] -= maxwell_path_adjoint[i + 1];
+      }
       maxwell_path_adjoint[i] += maxwell_path_adjoint[i + 1];
     }
     if (path->anchor_line >= 0)

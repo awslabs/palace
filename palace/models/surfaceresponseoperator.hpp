@@ -226,10 +226,15 @@ private:
   // PEC knot is in no chain: its trace is the zero initialisation). The first value is the
   // start trace (a conductor state, or the anchored contour knot a cap-interior hat hangs
   // from; 0 when there is none) minus the anchor line (from the patch's conductor anchor
-  // or from the start knot); every next value subtracts the line between the knots. A
-  // closed ring has no anchor start trace; an open path ends with end_line to the end
-  // conductor's anchor; a free arc of a ZeroTraceIndices ring ends with end_line to the
-  // next PEC knot and return_line from that knot back to the anchor (a true loop for the
+  // or from the start knot); every next value subtracts the lines of the step to the next
+  // knot. A step between two consecutive ring knots follows the trace mesh's ring polyline
+  // (decision 818 R3): one straight line per leg, through the slave vertices (box corners)
+  // of that edge, never a chord across a box corner; step_line_counts holds the number of
+  // legs of every step between consecutive trace knots, and the contour lines after the
+  // last trace step close the loop (a closed ring's step back to its start knot; a free
+  // arc's step to the next PEC knot). A closed ring has no anchor start trace; an open path
+  // ends with end_line to the end conductor's anchor; a free arc of a ZeroTraceIndices
+  // ring ends with return_line from its PEC knot back to the anchor (a true loop for the
   // residual, decision 818 R1 / R4); a hat path has one knot and hat_check_line, the
   // diagnostic line from the conductor anchor straight to the hat (the hat residual, R2).
   struct MaxwellContourPath
@@ -244,6 +249,7 @@ private:
     int end_conductor_trace = -1;
     bool closed = true;
     std::vector<int> trace_indices;
+    std::vector<int> step_line_counts;
   };
 
   struct MaxwellConductorPath
@@ -340,6 +346,18 @@ private:
     // kSignatureParameterToleranceOverRadius x the library matching radius, which is 0 for
     // an explicit (non-library) model: there the knot's w must equal the hat's exactly.
     std::vector<int> hat_rim_knots;
+    // The trace mesh's slave vertices (the corner family's box corners, between two
+    // consecutive ring knots): the Maxwell contour line of that ring edge runs knot ->
+    // slave -> knot instead of the chord (decision 818 R3). Parents are 0-based basis
+    // indices; the point is in the model's local coupon coordinates.
+    struct RingSlaveVertex
+    {
+      int parent_a = 0;
+      int parent_b = 0;
+      double weight_a = 0.0;
+      std::array<double, 3> point{};
+    };
+    std::vector<RingSlaveVertex> ring_slave_vertices;
     bool surface_mortar = false;
     bool spatial_mortar = false;
     // Translational surface mortar: the hat segments between consecutive contour vertices.

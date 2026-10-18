@@ -6306,6 +6306,104 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator Maxwell rounded corner slave routing",
+                 "[surfaceresponseoperator][3d][maxwell][corner][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // U2, the rounded half (decision 818, stage 2: M-3 lifted; R1 / R3 / R4 on a
+  // ZeroTraceIndices corner whose Reference lies inside the PEC footprint): the slab-top
+  // rounded corner with an explicit TraceMesh carrying slave vertices on its ring edges
+  // loads on the Maxwell path (refused on main by the slave-vertex rule) and reproduces the
+  // slave-free model's traces on the constant field (the free bottom ring routed through
+  // two slaves, the top ring's step from its free knot to the PEC knot through one; the
+  // slave on the PEC-to-free edge that the anchor line replaces is on no line), with
+  // exactly three more line functionals per corner patch; the arcs close true loops; Mult
+  // stays symmetric with slave routing (U6).
+  mfem::VectorConstantCoefficient field_coefficient = ConstantFieldCoefficient();
+  auto MaxwellConfig = [&](const fs::path &library)
+  {
+    auto config = RoundedIslandConfig();
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+    config["Boundaries"].erase("Terminal");
+    config["Solver"] = {{"Order", 1},
+                        {"Eigenmode", {{"Target", 1.0}}},
+                        {"SurfaceResponseCorrection",
+                         {{"Library", library.string()},
+                          {"TargetInterfaces", {4}},
+                          {"UnmatchedPolicy", "Error"},
+                          {"PatchConstruction", "Legacy"}}}};
+    return config;
+  };
+  struct Island
+  {
+    std::unique_ptr<IoData> iodata;
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    std::unique_ptr<SpaceOperator> space_op;
+    std::unique_ptr<SurfaceResponseOperator> response;
+  };
+  auto Build = [&](const fs::path &library)
+  {
+    Island island;
+    island.iodata = std::make_unique<IoData>(MaxwellConfig(library), false);
+    island.iodata->boundaries.cracked_attributes.insert(9);
+    island.meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh(true, true)));
+    island.space_op = std::make_unique<SpaceOperator>(*island.iodata, island.meshes);
+    island.response =
+        std::make_unique<SurfaceResponseOperator>(*island.iodata, *island.space_op);
+    return island;
+  };
+  const auto with_slaves = Build(slab_top_rounded_slave_library_3d_path);
+  const auto without_slaves = Build(slab_top_rounded_library_3d_path);
+  constexpr int rounded_corner_count = 4;
+  REQUIRE(with_slaves.response->GetPatchCount() ==
+          without_slaves.response->GetPatchCount());
+  CHECK(with_slaves.response->GetPatchCount() > rounded_corner_count);
+
+  auto Traces = [&](const Island &island)
+  {
+    GridFunction field(island.space_op->GetNDSpace(), true);
+    field.Real().ProjectCoefficient(field_coefficient);
+    field.Imag() = 0.0;
+    const auto result = island.response->GetMaxwellResponse(field, 0.0);
+    CHECK(result.loop_residual < 1.0e-10);
+    Vector field_true;
+    field.Real().GetTrueDofs(field_true);
+    return island.response->GetPatchTraces(field_true);
+  };
+  const auto slave_traces = Traces(with_slaves);
+  const auto plain_traces = Traces(without_slaves);
+  REQUIRE(slave_traces.size() == plain_traces.size());
+  const auto slave_names = with_slaves.response->GetModelNames();
+  int corner_patches = 0;
+  for (std::size_t i = 0; i < slave_traces.size(); i++)
+  {
+    REQUIRE(slave_traces[i].patch == plain_traces[i].patch);
+    REQUIRE(slave_traces[i].coefficients.size() == plain_traces[i].coefficients.size());
+    const bool corner =
+        slave_names.at(slave_traces[i].model) == "convex-corner-90-r0.125-slab-top-slaves";
+    corner_patches += corner ? 1 : 0;
+    for (std::size_t k = 0; k < slave_traces[i].coefficients.size(); k++)
+    {
+      CHECK_THAT(slave_traces[i].coefficients[k],
+                 WithinAbs(plain_traces[i].coefficients[k], 1.0e-10));
+    }
+  }
+  CHECK(corner_patches == rounded_corner_count);
+  const auto slave_lines =
+      with_slaves.response->GetStatistics()["Correction"]["ContourLines"]["Total"]
+          .get<long long>();
+  const auto plain_lines =
+      without_slaves.response->GetStatistics()["Correction"]["ContourLines"]["Total"]
+          .get<long long>();
+  CHECK(slave_lines == plain_lines + 3 * rounded_corner_count);
+  CheckMaxwellTraceAdjoint(*with_slaves.response, 13);
+#endif
+}
+
 TEST_CASE_METHOD(
     test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell placement ownership",
     "[surfaceresponseoperator][3d][maxwell][spatial][placement][Serial][Parallel]")
@@ -6939,6 +7037,21 @@ CornerTraceBasisFixture::CornerTraceBasisFixture()
     libraries["family"] = temp.temp_dir / "library-family.json";
     std::ofstream output(libraries["family"]);
     output << family.dump(2) << "\n";
+    // The concave 90-degree coupon in the rule's layout (slave box-corner vertices on every
+    // ring; the zero set on the metal side of a reentrant corner), for the aperture mesh
+    // of the Maxwell case.
+    auto concave = base_library;
+    concave["Name"] = "unit-test-corner-trace-basis-concave";
+    const auto concave_files =
+        WriteCornerBasisFiles(temp.temp_dir, "concave-90", 90.0, false, R, t, oe, true);
+    json concave_model = CornerModel(90.0, concave_files, true);
+    concave_model["Name"] = "concave-corner-90";
+    concave_model["Topology"] = "ConcaveCorner";
+    concave_model["Convexity"] = "Concave";
+    concave["Models"].push_back(concave_model);
+    libraries["concave"] = temp.temp_dir / "library-concave.json";
+    std::ofstream concave_output(libraries["concave"]);
+    concave_output << concave.dump(2) << "\n";
   }
   else
   {
@@ -6952,6 +7065,7 @@ CornerTraceBasisFixture::CornerTraceBasisFixture()
       }
     }
     libraries["family"] = temp.temp_dir / "library-family.json";
+    libraries["concave"] = temp.temp_dir / "library-concave.json";
   }
   Mpi::Barrier(Mpi::World());
 
@@ -7434,33 +7548,459 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBas
 #endif
 }
 
-TEST_CASE_METHOD(CornerTraceBasisFixture,
-                 "SurfaceResponseOperatorCornerTraceBasisMaxwellRefused",
+namespace
+{
+
+// The number of Maxwell contour line functionals one patch of a corner-family trace basis
+// builds (decision 818 R1 / R3 / R4): a ring without PEC knots = the anchor line + one step
+// per ring edge; a ring with PEC knots = per free arc the anchor line, one step per edge
+// that leaves a free knot (the steps between its free knots and the step to the next PEC
+// knot) and the return line; every step is one line per leg through the edge's slave
+// vertices (the box corners). The anchors of these fixtures (the corner vertex) coincide
+// with no knot.
+int ExpectedCornerPatchLineCount(const ConstructedCornerTraceBasis &basis)
+{
+  int lines = 0;
+  int offset = 0;
+  for (const int size : basis.contour_groups)
+  {
+    auto Zero = [&](int i) { return basis.zero[offset + i]; };
+    auto StepLines = [&](int i)
+    {
+      const int from = offset + i, to = offset + (i + 1) % size;
+      int legs = 1;
+      for (const auto &vertex : basis.vertices)
+      {
+        if (vertex.basis < 0 && ((vertex.parent_a == from && vertex.parent_b == to) ||
+                                 (vertex.parent_a == to && vertex.parent_b == from)))
+        {
+          legs++;
+        }
+      }
+      return legs;
+    };
+    bool any_pec = false;
+    for (int i = 0; i < size; i++)
+    {
+      any_pec = any_pec || Zero(i);
+    }
+    if (!any_pec)
+    {
+      lines += 1;
+      for (int i = 0; i < size; i++)
+      {
+        lines += StepLines(i);
+      }
+    }
+    else
+    {
+      for (int i = 0; i < size; i++)
+      {
+        if (Zero(i))
+        {
+          continue;
+        }
+        lines += StepLines(i) + (Zero((i + size - 1) % size) ? 1 : 0) +
+                 (Zero((i + 1) % size) ? 1 : 0);
+      }
+    }
+    offset += size;
+  }
+  return lines;
+}
+
+// The line integral of the curl field E = c x r (curl E = 2 c) along the straight leg
+// p -> q: (c x r) . dl = c . (r x dl) and the integral of r x dl over the leg is p x q, so
+// the value is c . (p x q) exactly (the integrand is constant along the leg). It depends on
+// the leg's end points, not only on the step's chord.
+double CurlFieldLegIntegral(const std::array<double, 3> &c, const std::array<double, 3> &p,
+                            const std::array<double, 3> &q)
+{
+  return c[0] * (p[1] * q[2] - p[2] * q[1]) + c[1] * (p[2] * q[0] - p[0] * q[2]) +
+         c[2] * (p[0] * q[1] - p[1] * q[0]);
+}
+
+// The curl-field reading of one corner patch's Maxwell traces (code review d836 MINOR-2:
+// on a curl-free field the trace identity holds for ANY slave position, so it cannot see a
+// misplaced slave). On E = c x r the trace difference between consecutive free knots of a
+// ring is minus the sum of CurlFieldLegIntegral over the legs of that step along the ring
+// polyline (knot -> the edge's slave box corners in their order along the edge -> knot,
+// mapped into the device frame by `device`), which a chord across the corner or a slave
+// off its box corner does not give. A PEC-free ring's chain starts at the knot nearest the
+// anchor and runs around the ring once, so exactly one consecutive pair (its closing step)
+// differs by the circulation of the routed ring polygon, 2 c . A; a free arc of a ring
+// with PEC knots has no closing step (the PEC knots' traces are exact zeros and are not
+// part of the chain). `coefficients` are the patch's traces in basis order.
+void CheckCornerPatchCurlFieldTraces(
+    const ConstructedCornerTraceBasis &basis,
+    const std::function<std::array<double, 3>(const std::array<double, 3> &)> &device,
+    const std::array<double, 3> &c, const std::vector<double> &coefficients,
+    double tolerance)
+{
+  REQUIRE(coefficients.size() >= basis.knots.size());
+  REQUIRE(basis.zero.size() == basis.knots.size());
+  int offset = 0;
+  for (const int size : basis.contour_groups)
+  {
+    auto Step = [&](int from, int to)
+    {
+      std::vector<std::pair<double, std::array<double, 3>>> via;
+      for (const auto &vertex : basis.vertices)
+      {
+        if (vertex.basis >= 0)
+        {
+          continue;
+        }
+        if (vertex.parent_a == from && vertex.parent_b == to)
+        {
+          via.emplace_back(1.0 - vertex.weight_a, vertex.point);
+        }
+        else if (vertex.parent_a == to && vertex.parent_b == from)
+        {
+          via.emplace_back(vertex.weight_a, vertex.point);
+        }
+      }
+      std::sort(via.begin(), via.end(),
+                [](const auto &a, const auto &b) { return a.first < b.first; });
+      double integral = 0.0;
+      auto previous = device(basis.knots[from]);
+      for (const auto &[fraction, point] : via)
+      {
+        const auto slave = device(point);
+        integral += CurlFieldLegIntegral(c, previous, slave);
+        previous = slave;
+      }
+      return integral + CurlFieldLegIntegral(c, previous, device(basis.knots[to]));
+    };
+    bool any_pec = false;
+    double circulation = 0.0;
+    std::vector<double> residuals;
+    for (int i = 0; i < size; i++)
+    {
+      const int from = offset + i, to = offset + (i + 1) % size;
+      const double step = Step(from, to);
+      circulation += step;
+      any_pec = any_pec || basis.zero[from];
+      if (basis.zero[from] || basis.zero[to])
+      {
+        continue;
+      }
+      residuals.push_back(coefficients[to] - coefficients[from] + step);
+    }
+    if (any_pec)
+    {
+      for (const double residual : residuals)
+      {
+        CHECK_THAT(residual, WithinAbs(0.0, tolerance));
+      }
+    }
+    else
+    {
+      REQUIRE(static_cast<int>(residuals.size()) == size);
+      const auto closing =
+          std::max_element(residuals.begin(), residuals.end(),
+                           [](double a, double b) { return std::abs(a) < std::abs(b); });
+      for (auto residual = residuals.begin(); residual != residuals.end(); residual++)
+      {
+        if (residual != closing)
+        {
+          CHECK_THAT(*residual, WithinAbs(0.0, tolerance));
+        }
+      }
+      CHECK_THAT(*closing, WithinAbs(circulation, tolerance));
+    }
+    offset += size;
+  }
+}
+
+// A box mesh whose metal sheet (cracked boundary attribute 9 on the plane y = 0.5) has one
+// rectangular aperture [x0, x1] x [z0, z1]: the sheet's four aperture corners are concave
+// (reentrant) metal corners.
+std::unique_ptr<mfem::ParMesh> MakeSingleApertureMesh(double extent, double h, double x0,
+                                                      double x1, double z0, double z1)
+{
+  const int n = static_cast<int>(std::lround(extent / h));
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON, extent, 1.0, extent);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent, xmax = 0.0, zmin = extent, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool in_aperture = xmin >= x0 - 1.0e-12 && xmax <= x1 + 1.0e-12 &&
+                             zmin >= z0 - 1.0e-12 && zmax <= z1 + 1.0e-12;
+    if (on_plane && !in_aperture)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerTraceBasisMaxwell",
                  "[surfaceresponseoperator][corner][tracebasis][maxwell][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  // U5 (decision 818, stage 1): the corner family's trace basis (slave box-corner vertices;
-  // the constructed basis of an interpolated angle) stays REFUSED on the Maxwell path until
-  // stage 2 (M-3): the steep house places exact 90 / 135 corners (slave vertices) and the
-  // constructed 112.5-degree corner.
-  auto maxwell_config = ConfigFor(libraries.at("family"));
-  maxwell_config["Problem"]["Type"] = "Eigenmode";
-  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
-  maxwell_config["Boundaries"].erase("Terminal");
-  const auto correction = maxwell_config["Solver"]["Electrostatic"]["ResponseCorrection"];
-  maxwell_config["Solver"] = {{"Order", 1},
-                              {"Eigenmode", {{"Target", 1.0}}},
-                              {"SurfaceResponseCorrection", correction}};
-  IoData iodata(maxwell_config, false);
-  iodata.boundaries.cracked_attributes.insert(9);
-  std::vector<std::unique_ptr<Mesh>> meshes;
-  meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(*steep_mesh)));
-  SpaceOperator space_op(iodata, meshes);
-  CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space_op),
-                    Catch::Matchers::ContainsSubstring(
-                        "does not support trace meshes with slave vertices"));
+  // U2 (decision 818, stage 2: M-3 lifted). The corner family's trace basis (slave
+  // box-corner vertices on every ring; the basis constructed at an interpolated angle)
+  // loads on the Maxwell Collocated path: the house (exact 90 / 120 nodes), the gable (90 /
+  // 165 / 105), the steep house (the constructed 112.5-degree basis + 135) and a single
+  // aperture (four concave 90-degree corners). On the constant field E0 every corner
+  // patch's Maxwell trace equals the electrostatic collocated trace of V = -E0 . x on the
+  // same mesh and library (every knot -E0 . (p - anchor) with the anchor = the Reference,
+  // the vertex; PEC knots exactly 0): the slave-routed lines sum to the chord value (path
+  // independence), the free arcs close true loops (loop residual < 1e-10), the line count
+  // is the ring polyline's (one leg per slave vertex on a traversed edge, no chord), and
+  // Mult is symmetric (the transpose is the adjoint with slave routing, U6). On the curl
+  // field E = c x r (in the lowest-order Nedelec space exactly, so its line integrals are
+  // exact to roundoff) every corner patch's trace steps read the routed legs through the
+  // slave box corners at their positions, CheckCornerPatchCurlFieldTraces (code review
+  // d836 MINOR-2; the constant field cannot see a misplaced slave).
+  mfem::VectorConstantCoefficient field_coefficient =
+      test::SurfaceResponseFiles::ConstantFieldCoefficient();
+  const std::array<double, 3> curl_axis = {0.3, -0.5, 0.8};
+  mfem::VectorFunctionCoefficient curl_field_coefficient(
+      3,
+      [&](const mfem::Vector &x, mfem::Vector &E)
+      {
+        E.SetSize(3);
+        E[0] = curl_axis[1] * x[2] - curl_axis[2] * x[1];
+        E[1] = curl_axis[2] * x[0] - curl_axis[0] * x[2];
+        E[2] = curl_axis[0] * x[1] - curl_axis[1] * x[0];
+      });
+  const mfem::Vector &constant_field = field_coefficient.GetVec();
+  mfem::FunctionCoefficient potential_coefficient(
+      [&](const mfem::Vector &x)
+      {
+        return -(constant_field[0] * x[0] + constant_field[1] * x[1] +
+                 constant_field[2] * x[2]);
+      });
+  const auto seed_convex = MakeCornerBoxSeed(R, t, oe, true, rule);
+  const auto seed_concave = MakeCornerBoxSeed(R, t, oe, false, rule);
+  // Lines per patch of every model of the two libraries: the exact nodes at their own
+  // angle and connectivity, the interpolated 112.5-degree basis with the segment's
+  // connectivity (the runtime's BuildCornerTraceBasis call), the concave coupon, and the
+  // isolated edge (a four-knot ring: the anchor line + four lines).
+  // The rule's basis of a corner runtime model (the knots, slaves and zero set the runtime
+  // serves: the files of an exact node, the constructed basis of the interpolated one).
+  auto CornerBasisFor = [&](const std::string &name)
+  {
+    if (name == "concave-corner-90")
+    {
+      return BuildCornerTraceBasis(seed_concave.points, seed_concave.contour_groups,
+                                   seed_concave.zero_trace_indices, 0.5 * M_PI, false,
+                                   rule);
+    }
+    if (name.find("@corner-angle112.5") != std::string::npos)
+    {
+      return BuildCornerTraceBasis(seed_convex.points, seed_convex.contour_groups,
+                                   seed_convex.zero_trace_indices, 112.5 * M_PI / 180.0,
+                                   true, rule, 112.5 * M_PI / 180.0);
+    }
+    for (const auto &node : family_nodes)
+    {
+      if (node.name == name)
+      {
+        std::optional<double> connectivity;
+        if (node.connectivity)
+        {
+          connectivity = *node.connectivity * M_PI / 180.0;
+        }
+        return BuildCornerTraceBasis(seed_convex.points, seed_convex.contour_groups,
+                                     seed_convex.zero_trace_indices,
+                                     node.angle * M_PI / 180.0, true, rule, connectivity);
+      }
+    }
+    FAIL("Unexpected runtime model \"" << name << "\"");
+    return ConstructedCornerTraceBasis{};
+  };
+  auto ExpectedLines = [&](const std::string &name)
+  {
+    if (name == "isolated")
+    {
+      return 5;
+    }
+    return ExpectedCornerPatchLineCount(CornerBasisFor(name));
+  };
+  auto RunIsland = [&](mfem::ParMesh &mesh, const fs::path &library, unsigned seed,
+                       int expected_corner_patches)
+  {
+    auto maxwell_config = ConfigFor(library);
+    maxwell_config["Problem"]["Type"] = "Eigenmode";
+    maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+    maxwell_config["Boundaries"].erase("Terminal");
+    const auto correction = maxwell_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    maxwell_config["Solver"] = {{"Order", 1},
+                                {"Eigenmode", {{"Target", 1.0}}},
+                                {"SurfaceResponseCorrection", correction}};
+    IoData maxwell_iodata(maxwell_config, false);
+    maxwell_iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> maxwell_meshes;
+    maxwell_meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh)));
+    SpaceOperator space_op(maxwell_iodata, maxwell_meshes);
+    SurfaceResponseOperator maxwell_response(maxwell_iodata, space_op);
+    REQUIRE(maxwell_response.GetPatchCount() > 0);
+
+    // The comparator: the electrostatic COLLOCATED trace (the Maxwell coupling of record,
+    // decisions 743 / 745; stated explicitly).
+    auto electrostatic_config = ConfigFor(library);
+    electrostatic_config["Solver"]["Electrostatic"]["ResponseCorrection"]["TraceCoupling"] =
+        "Collocated";
+    IoData electrostatic_iodata(electrostatic_config, false);
+    electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> electrostatic_meshes;
+    electrostatic_meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh)));
+    LaplaceOperator laplace(electrostatic_iodata, electrostatic_meshes);
+    SurfaceResponseOperator electrostatic_response(electrostatic_iodata, laplace);
+    CHECK(electrostatic_response.GetPatchCount() == maxwell_response.GetPatchCount());
+
+    GridFunction field(space_op.GetNDSpace(), true);
+    field.Real().ProjectCoefficient(field_coefficient);
+    field.Imag() = 0.0;
+    const auto result = maxwell_response.GetMaxwellResponse(field, 0.0);
+    CHECK(result.loop_residual < 1.0e-10);
+    CHECK(result.hat_residual == 0.0);
+    Vector field_true;
+    field.Real().GetTrueDofs(field_true);
+    const auto maxwell_traces = maxwell_response.GetPatchTraces(field_true);
+    mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+    potential.ProjectCoefficient(potential_coefficient);
+    Vector potential_true;
+    potential.GetTrueDofs(potential_true);
+    const auto electrostatic_traces = electrostatic_response.GetPatchTraces(potential_true);
+    const auto names = maxwell_response.GetModelNames();
+    const auto basis_sizes = maxwell_response.GetModelBasisSizes();
+    std::map<int, const SurfaceResponseOperator::PatchTrace *> electrostatic_by_patch;
+    for (const auto &entry : electrostatic_traces)
+    {
+      electrostatic_by_patch[entry.patch] = &entry;
+    }
+    int corner_patches = 0;
+    for (const auto &entry : maxwell_traces)
+    {
+      const auto &name = names.at(entry.model);
+      if (name.find("corner") == std::string::npos)
+      {
+        continue;
+      }
+      corner_patches++;
+      const auto electrostatic = electrostatic_by_patch.find(entry.patch);
+      REQUIRE(electrostatic != electrostatic_by_patch.end());
+      REQUIRE(electrostatic->second->model == entry.model);
+      REQUIRE(electrostatic->second->coefficients.size() == entry.coefficients.size());
+      REQUIRE(static_cast<int>(entry.coefficients.size()) ==
+              basis_sizes.at(entry.model).first);
+      int zero_knots = 0;
+      for (std::size_t i = 0; i < entry.coefficients.size(); i++)
+      {
+        CHECK_THAT(entry.coefficients[i],
+                   WithinAbs(electrostatic->second->coefficients[i], 1.0e-10));
+        zero_knots += entry.coefficients[i] == 0.0 ? 1 : 0;
+      }
+      CHECK(zero_knots == basis_sizes.at(entry.model).second);
+    }
+    CHECK(corner_patches == expected_corner_patches);
+    // The line count of the ring polylines, model by model.
+    const auto statistics = maxwell_response.GetStatistics();
+    long long expected_lines = 0;
+    for (const auto &model : statistics["ModelCatalog"])
+    {
+      expected_lines += model["PatchCount"].get<long long>() *
+                        ExpectedLines(model["Name"].get<std::string>());
+    }
+    CHECK(statistics["Correction"]["ContourLines"]["Total"].get<long long>() ==
+          expected_lines);
+    // The curl field: the routed legs at the slaves' positions, corner patch by corner
+    // patch, in the device frame of its placement (the assignments are gathered on the
+    // root rank; the traces are replicated). Read at Order 2: on the radially mapped
+    // (trilinear, non-affine) hexes of these island meshes the lowest-order Nedelec space
+    // carries constants and gradients exactly but not c x r (a 1e-4 interpolation error in
+    // its line integrals), while ND(2) carries every linear field on a trilinear hex (the
+    // reference field J^T E(x(xi)) lies in Q_{1,2,2} x Q_{2,1,2} x Q_{2,2,1}), so the
+    // reading is exact to roundoff. The order changes the isolated-edge cell count, not
+    // the corner patches (one per corner), hence a second operator beside the p1 one of
+    // the electrostatic comparison.
+    auto curl_config = maxwell_config;
+    curl_config["Solver"]["Order"] = 2;
+    IoData curl_iodata(curl_config, false);
+    curl_iodata.boundaries.cracked_attributes.insert(9);
+    const double coordinate_scale = curl_iodata.units.GetMeshLengthRelativeScale();
+    REQUIRE(coordinate_scale == 1.0);
+    std::vector<std::unique_ptr<Mesh>> curl_meshes;
+    curl_meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(mesh)));
+    SpaceOperator curl_space_op(curl_iodata, curl_meshes);
+    SurfaceResponseOperator curl_response(curl_iodata, curl_space_op);
+    GridFunction curl_field(curl_space_op.GetNDSpace(), true);
+    curl_field.Real().ProjectCoefficient(curl_field_coefficient);
+    curl_field.Imag() = 0.0;
+    Vector curl_field_true;
+    curl_field.Real().GetTrueDofs(curl_field_true);
+    const auto curl_traces = curl_response.GetPatchTraces(curl_field_true);
+    const auto curl_names = curl_response.GetModelNames();
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto &assignments = curl_response.GetPatchAssignments();
+      int curl_corner_patches = 0;
+      for (const auto &entry : curl_traces)
+      {
+        const auto &name = curl_names.at(entry.model);
+        if (name.find("corner") == std::string::npos)
+        {
+          continue;
+        }
+        curl_corner_patches++;
+        const auto assignment =
+            std::find_if(assignments.begin(), assignments.end(),
+                         [&](const auto &a) { return a.global_index == entry.patch; });
+        REQUIRE(assignment != assignments.end());
+        auto Device = [&](const std::array<double, 3> &local)
+        {
+          std::array<double, 3> p{};
+          for (int d = 0; d < 3; d++)
+          {
+            p[d] = assignment->origin[d] +
+                   (local[0] * assignment->axis_u[d] + local[1] * assignment->axis_v[d] +
+                    local[2] * assignment->axis_w[d]) /
+                       coordinate_scale;
+          }
+          return p;
+        };
+        CheckCornerPatchCurlFieldTraces(CornerBasisFor(name), Device, curl_axis,
+                                        entry.coefficients, 1.0e-10);
+      }
+      CHECK(curl_corner_patches == expected_corner_patches);
+    }
+    CheckMaxwellTraceAdjoint(maxwell_response, seed);
+  };
+  RunIsland(*house_mesh, libraries.at("family"), 31, 5);
+  RunIsland(*gable_mesh, libraries.at("family"), 37, 6);
+  RunIsland(*steep_mesh, libraries.at("family"), 41, 5);
+  const auto aperture_mesh = MakeSingleApertureMesh(8.0, 0.1, 3.0, 5.0, 3.0, 5.0);
+  RunIsland(*aperture_mesh, libraries.at("concave"), 43, 4);
 #endif
 }
 

@@ -949,6 +949,56 @@ SurfaceResponseFiles::SurfaceResponseFiles()
                                                                       10, 11, 12};
       std::ofstream slab_top_rounded_output_3d(slab_top_rounded_library_3d_path);
       slab_top_rounded_output_3d << slab_top_rounded_library_3d.dump(2) << "\n";
+
+      // The same model with an explicit TraceMesh: the 12 knots (rows 1-12; conductor 1 on
+      // the PEC knots) and four slave vertices on ring edges (rows 13-16; one-based
+      // parents, weight_a 0.5): the bottom ring's edges 1-2 and 3-4, the top ring's edge
+      // 9-10 (free knot 9 to PEC knot 10) and its edge 12-9 (PEC knot 12 to free knot 9).
+      // The triangles connect consecutive rings through the knots (the collocated paths
+      // read no triangle; a valid non-degenerate list suffices).
+      auto slab_top_rounded_slave_library_3d = slab_top_rounded_library_3d;
+      slab_top_rounded_slave_library_3d["Name"] =
+          "unit-test-process-rounded-slab-top-slaves-3d";
+      slab_top_rounded_slave_library_3d["Models"][1]["Name"] =
+          "convex-corner-90-r0.125-slab-top-slaves";
+      slab_top_rounded_slave_library_3d["Models"][1]["TraceMesh"] = {
+          {"Vertices", slab_top_rounded_slave_trace_vertices_path.string()},
+          {"Triangles", slab_top_rounded_slave_trace_triangles_path.string()}};
+      {
+        const std::set<int> slab_top_pec = {5, 6, 7, 8, 10, 11, 12};
+        std::ofstream vertices(slab_top_rounded_slave_trace_vertices_path);
+        vertices << "vertex,x,y,z,basis,conductor,parent_a,parent_b,weight_a\n";
+        int row = 0;
+        for (const double z : {-0.02, 0.0, 0.02})
+        {
+          for (const auto &[x, y] : {std::pair{0.02, 0.02}, std::pair{0.08, 0.02},
+                                     std::pair{0.08, 0.08}, std::pair{0.02, 0.08}})
+          {
+            row++;
+            vertices << row << "," << x << "," << y << "," << z << "," << row << ","
+                     << (slab_top_pec.count(row) ? 1 : 0) << ",0,0,0\n";
+          }
+        }
+        vertices << "13,0.05,0.02,-0.02,0,0,1,2,0.5\n"
+                 << "14,0.05,0.08,-0.02,0,0,3,4,0.5\n"
+                 << "15,0.05,0.02,0.02,0,0,9,10,0.5\n"
+                 << "16,0.02,0.05,0.02,0,0,12,9,0.5\n";
+        std::ofstream triangles(slab_top_rounded_slave_trace_triangles_path);
+        triangles << "triangle,vertex_i,vertex_j,vertex_k\n";
+        int triangle = 0;
+        for (int ring = 0; ring < 2; ring++)
+        {
+          for (int i = 0; i < 4; i++)
+          {
+            const int a = 4 * ring + i + 1, b = 4 * ring + (i + 1) % 4 + 1;
+            triangles << ++triangle << "," << a << "," << b << "," << b + 4 << "\n"
+                      << ++triangle << "," << a << "," << b + 4 << "," << a + 4 << "\n";
+          }
+        }
+      }
+      std::ofstream slab_top_rounded_slave_output_3d(
+          slab_top_rounded_slave_library_3d_path);
+      slab_top_rounded_slave_output_3d << slab_top_rounded_slave_library_3d.dump(2) << "\n";
     }
 
     auto constrained_perturbed_rounded_library_3d = rounded_library_3d;
