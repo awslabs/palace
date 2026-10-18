@@ -112,7 +112,9 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
-  double mu_eps_max;
+
+  // Squared effective index of the eigenvalue shift, σ = -(n ω)².
+  double n_target_sq;
 
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.

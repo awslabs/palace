@@ -543,6 +543,10 @@ public:
   // Port offset for de-embedding [m].
   double d_offset = 0.0;
 
+  // Target effective index for the boundary mode eigenvalue solver. When zero, modes are
+  // sought below the bulk propagation constants of the port materials.
+  double target = 0.0;
+
   // Eigenvalue solver type for boundary mode calculation.
   EigenSolverBackend eigen_solver = EigenSolverBackend::DEFAULT;
 

@@ -572,6 +572,7 @@ WavePortData::WavePortData(const json &port)
   std::ranges::sort(attributes);
   mode_idx = port.value("Mode", mode_idx);
   d_offset = port.value("Offset", d_offset);
+  target = port.value("Target", target);
   eigen_solver = port.value("SolverType", eigen_solver);
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);

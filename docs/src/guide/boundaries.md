@@ -143,6 +143,16 @@ for implementation details.
     wave port currently being considered, in the case wave ports are touching and share one
     or more edges, are also considered as PEC for the wave port boundary mode analysis.
 
+    By default, the port modes are sought below the bulk propagation constants of the port
+    materials and ranked by decreasing wave number. The kinetic inductance of
+    superconducting lines makes their modes slower than bulk waves, so for wave ports on
+    superconducting domains set
+    [`"Target"`](../config/reference.md#config-boundaries-waveport-target) to an estimate
+    of the effective index of the mode; the modes are then ranked by their distance to it.
+    The driven wave port boundary condition models a lossless port line: for a lossy line,
+    the reflection coefficient of a matched port is of the order of the ratio of the
+    attenuation to the phase constant.
+
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of

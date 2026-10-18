@@ -48,6 +48,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
+    kinetic inductance makes the line modes slower than bulk waves, outside the default
+    mode window. Added `Boundaries.WavePort[].Target`, the effective index near which the
+    port modes are sought, and a warning for ports bordering London domains without it.
+    SchemaVer 2-3-0
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

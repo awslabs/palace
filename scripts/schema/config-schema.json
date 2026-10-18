@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-2-0",
+  "$id": "urn:palace:schema:2-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1335,7 +1335,7 @@
         },
         "Mode": {
           "type": "integer",
-          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked in order of decreasing wave number.",
+          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked in order of decreasing wave number, or of distance to `\"Target\"` when given.",
           "exclusiveMinimum": 0,
           "default": 1
         },
@@ -1344,6 +1344,11 @@
           "description": "Offset distance used for S-parameter de-embedding for this wave port, specified in mesh length units.",
           "minimum": 0.0,
           "default": 0.0
+        },
+        "Target": {
+          "type": "number",
+          "description": "Target effective index ``n_\\text{eff} = k_n / k_0`` for the boundary mode eigenvalue solver: the port modes are ranked by their distance to it, as for [`/Solver/BoundaryMode/Target`](@ref config-solver-boundarymode-target). If omitted, the modes are ranked in order of decreasing wave number below the bulk propagation constants of the port materials. Superconducting lines, whose kinetic inductance makes the modes slower than bulk waves, require it.",
+          "exclusiveMinimum": 0.0
         },
         "SolverType": {
           "type": "string",
