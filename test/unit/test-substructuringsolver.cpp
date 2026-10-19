@@ -1237,6 +1237,70 @@ TEST_CASE("SubstructuringSolver block low-rank environment factorization",
   CHECK(d <= 1.0e-6 * m);
 }
 
+TEST_CASE("SubstructuringSolver iterative environment and region solves",
+          "[substructure][Serial][Parallel]")
+{
+  // Solver.Substructuring.DirectMaxSize = 0 solves the environment (on its submesh) and the
+  // region by preconditioned conjugate gradients: BoomerAMG for electrostatics at order 1,
+  // geometric multigrid at order 2, AMS for magnetostatics (whose environment is factored
+  // at order 2). The energy matrices of the two terminal excitations must match those of
+  // the direct solves, to the CG tolerances (the regularized curl-curl operator is less
+  // well conditioned).
+  const int c = GENERATE(0, 1, 2, 3);
+  const bool magnetostatic = (c >= 2);
+  const int order = (c % 2 == 1) ? 2 : 1;
+  CAPTURE(magnetostatic, order);
+  auto energies = [&](int direct_max_size)
+  {
+    json config = {
+        {"Problem",
+         {{"Type", magnetostatic ? "Magnetostatic" : "Electrostatic"},
+          {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}, {"Permeability", 4.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"DirectMaxSize", direct_max_size}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    std::vector<Vector> u = {ss.SolveExcitation(1), ss.SolveExcitation(2)};
+    mfem::DenseMatrix E(2);
+    for (int i = 0; i < 2; i++)
+    {
+      for (int j = 0; j < 2; j++)
+      {
+        E(i, j) = ss.MutualEnergy(u[i], u[j]);
+      }
+    }
+    return E;
+  };
+  const mfem::DenseMatrix E0 = energies(2000000), E1 = energies(0);
+  double d = 0.0, m = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      d = std::max(d, std::abs(E1(i, j) - E0(i, j)));
+      m = std::max(m, std::abs(E0(i, j)));
+    }
+  }
+  CHECK(m > 0.0);
+  CHECK(d > 0.0);  // the iterative solves are not the direct ones
+  CHECK(d <= (magnetostatic ? 1.0e-6 : 1.0e-8) * m);
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver capacitance from a model without terminal modes",
                  "[substructure][Serial][Parallel]")

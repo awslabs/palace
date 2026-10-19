@@ -907,10 +907,6 @@ struct SubstructuringSolver::Impl
   static constexpr double kMaxRegularizationFraction = 1.0e-2;
   double mag_eps = kMagRegularization;
 
-  // Environment/region size (global true DOFs) up to which a sparse direct factorization is
-  // used; above it, iterative solves.
-  static constexpr long long kDirectMaxDofs = 2000000;
-
   // London superconductor sheets (magnetostatics): per local boundary element, 1/L_ksq
   // (with the factor for a cracked sheet, whose two sides each carry half) on the side it
   // belongs to. A sheet face belongs to the region if it bounds a region element (all its
@@ -2073,7 +2069,9 @@ struct SubstructuringSolver::Impl
     const bool hcurl_high_order = magnetostatic && iodata.solver.order > 1;
     MFEM_VERIFY(kHasDirectSolver || !hcurl_high_order,
                 "Magnetostatic substructuring at order > 1 needs a sparse direct solver!");
-    if (kHasDirectSolver && (EnvDirectSize() <= kDirectMaxDofs || hcurl_high_order))
+    if (kHasDirectSolver &&
+        (EnvDirectSize() <= iodata.solver.substructuring->direct_max_size ||
+         hcurl_high_order))
     {
       non_env_int.SetSize(0);
       for (int i = 0; i < nt; i++)
@@ -2316,8 +2314,8 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<mfem::HypreParMatrix> AssembleEnvSubmesh()
   {
     MFEM_VERIFY(!has_sheets, "Superconductor sheets in substructuring need a direct "
-                             "environment factorization (the environment is too large "
-                             "for one)!");
+                             "environment factorization: a sparse direct solver and an "
+                             "environment within \"Solver.Substructuring.DirectMaxSize\"!");
     PWMatrixCoefficient coef(parent.Dimension(), env_eps);
     mfem::Vector mass(env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1);
     mass = 0.0;
@@ -2944,7 +2942,7 @@ void SubstructuringSolver::CondenseEnvironment()
   bool mumps_done = false;
 #if defined(MFEM_USE_MUMPS)
   if (!loaded && nG > 0 && !(impl->EnergyDiffers() && !model_path.empty()) &&
-      impl->EnvDirectSize() <= Impl::kDirectMaxDofs)
+      impl->EnvDirectSize() <= subcfg.direct_max_size)
   {
     impl->MaterializeMumps();
     mumps_done = true;
@@ -3224,7 +3222,7 @@ void SubstructuringSolver::CondenseEnvironment()
       }
       MPI_Allreduce(&reg_loc, &reg_glob, 1, MPI_LONG_LONG, MPI_SUM, comm);
     }
-    if (kHasDirectSolver && reg_glob <= Impl::kDirectMaxDofs)
+    if (kHasDirectSolver && reg_glob <= subcfg.direct_max_size)
     {
       // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified
       // S_E is a worse preconditioner than none) or A_region_free, chosen at the first

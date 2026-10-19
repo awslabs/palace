@@ -1516,6 +1516,7 @@ SubstructuringData::SubstructuringData(const json &substructuring)
   interface_offdiag_tol =
       substructuring.value("InterfaceOffdiagTol", interface_offdiag_tol);
   factorization_tol = substructuring.value("FactorizationTol", factorization_tol);
+  direct_max_size = substructuring.value("DirectMaxSize", direct_max_size);
 }
 
 SolverData::SolverData(const json &solver)

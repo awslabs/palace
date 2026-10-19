@@ -1064,6 +1064,18 @@ TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regres
                                   opts);
 }
 
+// The electrostatic case with "DirectMaxSize": 0: the environment (on its submesh) and the
+// region are solved by conjugate gradients with geometric multigrid.
+TEST_CASE("substructuring_electrostatic_iterative", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_iterative.json", "iterative", opts);
+}
+
 // Region-condensed (substructuring) magnetostatic solve on the mirror-split
 // double-circular- hole slab: the environment (right hole, attr 2) is condensed to a DtN
 // operator and the region (left hole, attr 1) is solved against it for each flux-loop
@@ -1106,6 +1118,21 @@ TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][GPU][Regre
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_current.json", "current", opts);
+}
+
+// The surface-current case with "DirectMaxSize": 0: the environment (on its submesh) and
+// the region are solved by conjugate gradients with AMS.
+TEST_CASE("substructuring_magnetostatic_current_iterative",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current_iterative.json",
+                                  "current_iterative", opts);
 }
 
 // As above with a finite-penetration-depth London film (λ = 0.4 μm, d = 0.1 μm), whose

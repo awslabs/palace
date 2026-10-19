@@ -1211,6 +1211,10 @@ public:
   // exact factorization).
   double factorization_tol = 0.0;
 
+  // Global number of true DOFs up to which the environment and the region are factored with
+  // a sparse direct solver; larger ones are solved iteratively.
+  int direct_max_size = 2000000;
+
   SubstructuringData() = default;
   SubstructuringData(const json &substructuring);
 };
