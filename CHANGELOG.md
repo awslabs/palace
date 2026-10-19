@@ -208,6 +208,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the discrete field on affine elements, and the wave port voltage no longer needs GSLIB
     or a point search over the full 3D mesh.
     [PR 1049](https://github.com/awslabs/palace/pull/1049).
+  - Fixed wave port frequency sweeps selecting the wrong port mode for `Mode` above a
+    degenerate pair: starting each mode solve from the previous frequency's mode could miss
+    one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Performance Improvements
 
