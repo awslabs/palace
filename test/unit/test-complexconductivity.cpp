@@ -733,6 +733,95 @@ TEST_CASE("DomainPostOperator kinetic energy and conduction loss",
   CHECK(dom_post_op_static.GetKineticEnergyAndLoss(E, omega) == std::make_pair(0.0, 0.0));
 }
 
+TEST_CASE("DomainPostOperator boundary mode energies",
+          "[complexconductivity][Serial][Parallel]")
+{
+  // Uniform fields in the unit square, with a London conductor (μ_r = 2, ε_r = 4) on x <
+  // 1/2 and a Mattis-Bardeen domain on x > 1/2. The energies, kinetic energy, and loss
+  // include the out-of-plane E and the in-plane B.
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(i, center);
+    serial_mesh->SetAttribute(i, center(0) < 0.5 ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
+  config::SolverData solver;
+  solver.order = 1;
+  IntegrationSettingsGuard settings_guard(solver);
+
+  const double mu = 2.0, eps = 4.0, lambda = 0.3, sigma = 2.0, omega = 1.5;
+  config::MaterialData london, dispersive;
+  london.attributes = {1};
+  london.mu_r = config::SymmetricMatrixData<3>(mu);
+  london.epsilon_r = config::SymmetricMatrixData<3>(eps);
+  london.lambda_L = lambda;
+  london.sigma = config::SymmetricMatrixData<3>(sigma);
+  dispersive.attributes = {2};
+  dispersive.complex_sigma = MattisBardeenData(5.0, 2.0, 0.4, 0.7);
+  const std::vector<config::MaterialData> materials = {london, dispersive};
+  config::PeriodicBoundaryData periodic;
+  config::DomainPostData postpro;
+  postpro.energy[1].attributes = {2};
+  MaterialOperator mat_op(materials, periodic, ProblemType::BOUNDARYMODE, palace_mesh);
+  const Units units(1.0, 1.0);
+  DispersiveConductivityOperator disp_op(materials, ProblemType::BOUNDARYMODE, units,
+                                         mat_op);
+
+  mfem::ND_FECollection nd_fec(solver.order, 2);
+  mfem::H1_FECollection h1_fec(solver.order, 2);
+  mfem::L2_FECollection l2_fec(solver.order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec), h1_fespace(palace_mesh, &h1_fec),
+      l2_fespace(palace_mesh, &l2_fec);
+  DomainPostOperator dom_post_op(postpro, mat_op, nd_fespace, h1_fespace, l2_fespace,
+                                 disp_op);
+
+  // E = (1, 2, 3) + i (0.5, 0, -1), |E|² = 15.25, and B = (0.3, 0.4, 0), |B|² = 0.25.
+  GridFunction Et(nd_fespace, true), En(h1_fespace, true), Bt(nd_fespace, true),
+      Bz(l2_fespace, true);
+  mfem::VectorConstantCoefficient Et_r(mfem::Vector({1.0, 2.0})),
+      Et_i(mfem::Vector({0.5, 0.0})), Bt_r(mfem::Vector({0.3, 0.4})),
+      zero_t(mfem::Vector({0.0, 0.0}));
+  mfem::ConstantCoefficient En_r(3.0), En_i(-1.0);
+  Et.Real().ProjectCoefficient(Et_r);
+  Et.Imag().ProjectCoefficient(Et_i);
+  En.Real().ProjectCoefficient(En_r);
+  En.Imag().ProjectCoefficient(En_i);
+  Bt.Real().ProjectCoefficient(Bt_r);
+  Bt.Imag().ProjectCoefficient(zero_t);
+  Bz.Real() = 0.0;
+  Bz.Imag() = 0.0;
+  const double E2 = 15.25, B2 = 0.25;
+
+  // Each domain has area 1/2.
+  CHECK_THAT(dom_post_op.GetElectricFieldEnergy(Et, &En),
+             WithinRel(0.25 * (eps + 1.0) * E2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetMagneticFieldEnergy(Bz, &Bt),
+             WithinRel(0.25 * (1.0 / mu + 1.0) * B2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetDomainElectricFieldEnergy(1, Et, &En),
+             WithinRel(0.25 * E2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetDomainMagneticFieldEnergy(1, Bz, &Bt),
+             WithinRel(0.25 * B2, 1.0e-12));
+
+  const ComplexConductivityModel model(*dispersive.complex_sigma);
+  const double kinetic_2 = 0.25 * E2 * model.Derivative(omega).imag();
+  const double loss_2 = 0.25 * E2 * model(omega).real();
+  const auto [kinetic, loss] = dom_post_op.GetKineticEnergyAndLoss(Et, omega, &En);
+  CHECK_THAT(
+      kinetic,
+      WithinRel(0.25 * E2 / (omega * omega * mu * lambda * lambda) + kinetic_2, 1.0e-12));
+  CHECK_THAT(loss, WithinRel(0.25 * E2 * sigma + loss_2, 1.0e-12));
+  const auto [kinetic_i, loss_i] =
+      dom_post_op.GetDomainKineticEnergyAndLoss(1, Et, omega, &En);
+  CHECK_THAT(kinetic_i, WithinRel(kinetic_2, 1.0e-12));
+  CHECK_THAT(loss_i, WithinRel(loss_2, 1.0e-12));
+}
+
 TEST_CASE("SpaceOperator dispersive conductivity",
           "[complexconductivity][Serial][Parallel]")
 {

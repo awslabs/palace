@@ -120,9 +120,11 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
           else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
-            // Mode analysis: E on ND space, B (Hz) on L2 curl space.
+            // Mode analysis: in-plane fields on the ND space, out-of-plane E on the H1
+            // space and B on the L2 curl space.
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace());
+                                      fem_op_.GetNDSpace(), fem_op_.GetH1Space(),
+                                      fem_op_.GetCurlSpace(), fem_op_.GetDispSigmaOp());
           }
           else
           {
@@ -1584,14 +1586,14 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 
   if constexpr (HasEGridFunction<solver_t>())
   {
-    // Use V if it has it rather than E.
+    // Use V if it has it rather than E. Mode analysis adds the out-of-plane E.
     auto &field = V ? *V : *E;
-    auto energy = dom_post_op.GetElectricFieldEnergy(field);
+    auto energy = dom_post_op.GetElectricFieldEnergy(field, En.get());
     measurement_cache.domain_E_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      auto energy_i = dom_post_op.GetDomainElectricFieldEnergy(idx, field);
+      auto energy_i = dom_post_op.GetDomainElectricFieldEnergy(idx, field, En.get());
       auto participation_ratio = std::abs(energy_i) > 0.0 ? energy_i / energy : 0.0;
       measurement_cache.domain_E_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, participation_ratio});
@@ -1610,13 +1612,15 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 
   if (HasBGridFunction<solver_t>())
   {
+    // Mode analysis adds the in-plane B.
     auto &field = A ? *A : *B;
-    auto energy = dom_post_op.GetMagneticFieldEnergy(field);
+    auto energy = dom_post_op.GetMagneticFieldEnergy(field, Bt_inplane.get());
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      auto energy_i = dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
+      auto energy_i =
+          dom_post_op.GetDomainMagneticFieldEnergy(idx, field, Bt_inplane.get());
       auto participation_ratio = std::abs(energy) > 0.0 ? energy_i / energy : 0.0;
       measurement_cache.domain_H_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, participation_ratio});
@@ -1658,7 +1662,8 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureKineticEnergyAndLoss() const
 {
   // At the real part of the frequency.
-  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+                solver_t == ProblemType::BOUNDARYMODE)
   {
     const double omega = measurement_cache.freq.real();
     if (!dom_post_op.cond_forms.empty() && omega > 0.0)
@@ -1666,8 +1671,9 @@ void PostOperator<solver_t>::MeasureKineticEnergyAndLoss() const
       SetKineticEnergyAndLoss(
           [&](int idx)
           {
-            return (idx < 0) ? dom_post_op.GetKineticEnergyAndLoss(*E, omega)
-                             : dom_post_op.GetDomainKineticEnergyAndLoss(idx, *E, omega);
+            return (idx < 0) ? dom_post_op.GetKineticEnergyAndLoss(*E, omega, En.get())
+                             : dom_post_op.GetDomainKineticEnergyAndLoss(idx, *E, omega,
+                                                                         En.get());
           });
     }
   }
@@ -2692,6 +2698,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   }
 
   measurement_cache = {};
+  measurement_cache.freq = omega;
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
 

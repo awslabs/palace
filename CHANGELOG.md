@@ -29,8 +29,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sought, for lines whose modes are slower than bulk waves, such as superconducting
     lines. SchemaVer 2-3-0
   - Added kinetic energy and conduction loss postprocessing for superconducting and
-    conducting domains in driven and eigenmode simulations, written to `domain-E.csv` as
-    `E_kin` and `P_cond` in total and for each postprocessing domain.
+    conducting domains in driven, eigenmode, and boundary mode simulations, written to
+    `domain-E.csv` as `E_kin` and `P_cond` in total and for each postprocessing domain.
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
@@ -60,6 +60,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane
+    electric field and the in-plane magnetic flux density.
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

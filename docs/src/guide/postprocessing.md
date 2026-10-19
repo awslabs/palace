@@ -84,10 +84,10 @@ These include:
     for electrostatics). For each computed field, the postprocessed values are written to
     `probe-E.csv` and `probe-B.csv` in the specified output directory.
 
-For driven and eigenmode simulations of models with superconducting (London depth or
-complex conductivity) or conducting domains, `domain-E.csv` also includes the kinetic
-energy of the supercurrent, `E_kin`, and the conduction loss, `P_cond`, in total and for
-each postprocessing domain:
+For driven, eigenmode, and boundary mode simulations of models with superconducting
+(London depth or complex conductivity) or conducting domains, `domain-E.csv` also includes
+the kinetic energy of the supercurrent, `E_kin`, and the conduction loss, `P_cond`, in
+total and for each postprocessing domain:
 
 ```math
 E_\text{kin} = \frac{1}{2}\int_\Omega -\frac{d\sigma_2}{d\omega}|\bm{E}|^2\,dV \,,
@@ -102,7 +102,9 @@ assumes low loss: it is not defined at the gap frequency ``2\Delta/h`` and appro
 above it. The kinetic inductance fraction is ``E_\text{kin}/(E_\text{mag} + E_\text{kin})``
 and, for an eigenmode, the quality factor due to conduction loss is
 ``\omega(E_\text{elec} + E_\text{cap})/P_\text{cond}``. The participation ratios `p_kin` and
-`p_cond` are the fractions of the totals in each domain.
+`p_cond` are the fractions of the totals in each domain. For boundary mode simulations, the
+energies and loss are per unit length of the line. They do not include the fields inside
+films modeled as [finite conductivity boundaries](boundaries.md#Finite-conductivity-boundary).
 
 ## Boundary postprocessing
 

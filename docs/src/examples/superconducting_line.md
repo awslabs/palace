@@ -108,6 +108,17 @@ and the surface impedance model gives
 include_example_file("superconducting_line/mode_surface", "mode-kn.csv") # hide
 ```
 
+With the meshed films, `domain-E.csv` also gives the kinetic energy of the supercurrent and
+the conduction loss per unit length,
+
+```@example include_example
+include_example_file("superconducting_line/mode", "domain-E.csv") # hide
+```
+
+so that the kinetic inductance fraction of the line is
+``E_\text{kin}/(E_\text{mag} + E_\text{kin}) = 0.30``, and
+``E_\text{elec} = E_\text{mag} + E_\text{kin}`` as for a quasi-TEM mode.
+
 The surface impedance is exact for wide films, but not near the edges of the strip, where
 the field penetrates from two sides within a penetration depth of the corners: here the
 effective index is 2% lower and the attenuation 13% lower. The difference decreases for

@@ -19,11 +19,26 @@ namespace palace
 namespace
 {
 
-// Kinetic energy and loss as weighted sums of the forms 1/2 eᴴ M e, with M = get_M(form).
-template <typename GetOperator>
+// Local part of uᴴ M u for the real and imaginary parts of u.
+double LocalQuadratic(const Operator &M, const GridFunction &u, Vector &w)
+{
+  M.Mult(u.Real(), w);
+  double dot = linalg::LocalDot(u.Real(), w);
+  if (u.HasImag())
+  {
+    M.Mult(u.Imag(), w);
+    dot += linalg::LocalDot(u.Imag(), w);
+  }
+  return dot;
+}
+
+// Kinetic energy and loss as weighted sums of the forms 1/2 eᴴ M e, with (M, M_n) =
+// get_M(form) the forms of E and, for mode analysis, En.
+template <typename GetOperators>
 std::pair<double, double>
 KineticEnergyAndLoss(const std::vector<DomainPostOperator::ConductionForm> &forms,
-                     GetOperator &&get_M, const GridFunction &E, double omega, Vector &D)
+                     GetOperators &&get_M, const GridFunction &E, const GridFunction *En,
+                     double omega, Vector &D, Vector &D_n)
 {
   if (forms.empty())
   {
@@ -32,14 +47,8 @@ KineticEnergyAndLoss(const std::vector<DomainPostOperator::ConductionForm> &form
   std::vector<double> dots(forms.size(), 0.0);
   for (std::size_t k = 0; k < forms.size(); k++)
   {
-    const Operator &M = get_M(forms[k]);
-    M.Mult(E.Real(), D);
-    dots[k] = linalg::LocalDot(E.Real(), D);
-    if (E.HasImag())
-    {
-      M.Mult(E.Imag(), D);
-      dots[k] += linalg::LocalDot(E.Imag(), D);
-    }
+    const auto [M, M_n] = get_M(forms[k]);
+    dots[k] = LocalQuadratic(*M, E, D) + (En ? LocalQuadratic(*M_n, *En, D_n) : 0.0);
   }
   Mpi::GlobalSum(static_cast<int>(dots.size()), dots.data(), E.GetComm());
   double kinetic = 0.0, loss = 0.0;
@@ -50,6 +59,26 @@ KineticEnergyAndLoss(const std::vector<DomainPostOperator::ConductionForm> &form
     loss += 0.5 * w_loss * dots[k];
   }
   return {kinetic, loss};
+}
+
+// Partially assembled mass form of a coefficient: vector on ND and scalar on H1 spaces.
+// Processes without elements of the attributes have an empty coefficient.
+std::unique_ptr<Operator> AssembleMass(const FiniteElementSpace &fespace,
+                                       const MaterialPropertyCoefficient &q)
+{
+  BilinearForm m(fespace);
+  if (!q.empty())
+  {
+    if (fespace.GetFEColl().GetMapType(fespace.Dimension()) == mfem::FiniteElement::H_CURL)
+    {
+      m.AddDomainIntegrator<VectorFEMassIntegrator>(q);
+    }
+    else
+    {
+      m.AddDomainIntegrator<MassIntegrator>(q);
+    }
+  }
+  return m.PartialAssemble();
 }
 
 }  // namespace
@@ -143,59 +172,103 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     M_i.emplace(idx, std::make_pair(std::move(M_elec_i), std::move(M_mag_i)));
   }
 
-  // Kinetic energy and conduction loss forms.
-  if (!disp_op)
+  if (disp_op)
   {
-    return;
+    AddConductionForms(postpro, mat_op, nd_fespace, nullptr, *disp_op);
   }
-  auto add_form = [&](const MaterialPropertyCoefficient &coeff,
+}
+
+DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
+                                       const MaterialOperator &mat_op,
+                                       const FiniteElementSpace &nd_fespace,
+                                       const FiniteElementSpace &h1_fespace,
+                                       const FiniteElementSpace &l2_fespace,
+                                       const DispersiveConductivityOperator &disp_op)
+  : DomainPostOperator(postpro, mat_op, nd_fespace, l2_fespace)
+{
+  // Out-of-plane permittivity on the H1 space, and in-plane inverse permeability on the ND
+  // space.
+  const MaterialPropertyCoefficient eps_n(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetPermittivityScalar()),
+      muinv_t(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability());
+  M_elec_n = AssembleMass(h1_fespace, eps_n);
+  M_mag_t = AssembleMass(nd_fespace, muinv_t);
+  D_n.SetSize(M_elec_n->Height());
+  D_n.UseDevice(true);
+  for (const auto &[idx, data] : postpro.energy)
+  {
+    const auto attr_list = mat_op.GetCeedAttributes(data.attributes);
+    MaterialPropertyCoefficient eps_n_i(eps_n), muinv_t_i(muinv_t);
+    eps_n_i.RestrictCoefficient(attr_list);
+    muinv_t_i.RestrictCoefficient(attr_list);
+    M_n_i.emplace(idx, std::make_pair(AssembleMass(h1_fespace, eps_n_i),
+                                      AssembleMass(nd_fespace, muinv_t_i)));
+  }
+  AddConductionForms(postpro, mat_op, nd_fespace, &h1_fespace, disp_op);
+}
+
+void DomainPostOperator::AddConductionForms(const config::DomainPostData &postpro,
+                                            const MaterialOperator &mat_op,
+                                            const FiniteElementSpace &nd_fespace,
+                                            const FiniteElementSpace *h1_fespace,
+                                            const DispersiveConductivityOperator &disp_op)
+{
+  // Forms of a coefficient on the ND space and, for mode analysis, of its out-of-plane part
+  // make_n() on the H1 space, for the entire domain and the postprocessing domains.
+  auto add_form = [&](const MaterialPropertyCoefficient &coeff, auto &&make_n,
                       std::function<std::pair<double, double>(double)> weights)
   {
-    auto assemble = [&](const MaterialPropertyCoefficient &q)
+    auto add = [&](const FiniteElementSpace &fespace, const MaterialPropertyCoefficient &q,
+                   std::unique_ptr<Operator> &M,
+                   std::map<int, std::unique_ptr<Operator>> &M_i)
     {
-      // Processes without elements of the attributes have an empty coefficient.
-      BilinearForm m(nd_fespace);
-      if (!q.empty())
+      M = AssembleMass(fespace, q);
+      for (const auto &[idx, data] : postpro.energy)
       {
-        m.AddDomainIntegrator<VectorFEMassIntegrator>(q);
+        MaterialPropertyCoefficient q_i(q);
+        q_i.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
+        M_i.emplace(idx, AssembleMass(fespace, q_i));
       }
-      return m.PartialAssemble();
     };
     auto &form = cond_forms.emplace_back();
-    form.M = assemble(coeff);
-    for (const auto &[idx, data] : postpro.energy)
+    add(nd_fespace, coeff, form.M, form.M_i);
+    if (h1_fespace)
     {
-      MaterialPropertyCoefficient coeff_i(coeff);
-      coeff_i.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
-      form.M_i.emplace(idx, assemble(coeff_i));
+      add(*h1_fespace, make_n(), form.M_n, form.M_n_i);
     }
     form.weights = std::move(weights);
   };
+  const auto &attr_mat = mat_op.GetAttributeToMaterial();
   if (mat_op.HasLondonDepth())
   {
     has_kinetic = true;
-    add_form({mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth()},
-             [](double omega) { return std::make_pair(1.0 / (omega * omega), 0.0); });
+    add_form(
+        {attr_mat, mat_op.GetInvLondonDepth()}, [&]() -> MaterialPropertyCoefficient
+        { return {attr_mat, mat_op.GetInvLondonDepthScalar()}; },
+        [](double omega) { return std::make_pair(1.0 / (omega * omega), 0.0); });
   }
   if (mat_op.HasConductivity())
   {
     has_loss = true;
-    add_form({mat_op.GetAttributeToMaterial(), mat_op.GetConductivity()},
-             [](double) { return std::make_pair(0.0, 1.0); });
+    add_form(
+        {attr_mat, mat_op.GetConductivity()}, [&]() -> MaterialPropertyCoefficient
+        { return {attr_mat, mat_op.GetConductivityScalar()}; },
+        [](double) { return std::make_pair(0.0, 1.0); });
   }
-  for (std::size_t g = 0; g < disp_op->Size(); g++)
+  for (std::size_t g = 0; g < disp_op.Size(); g++)
   {
-    if (disp_op->IsActive(g))
+    if (disp_op.IsActive(g))
     {
       has_kinetic = has_loss = true;
       MaterialPropertyCoefficient unit(mat_op.MaxCeedAttribute());
-      disp_op->AddUnitCoefficients(g, unit);
-      add_form(unit,
-               [disp_op, g](double omega)
-               {
-                 return std::make_pair(disp_op->EvaluateKineticScalar(g, omega),
-                                       disp_op->EvaluateLossScalar(g, omega));
-               });
+      disp_op.AddUnitCoefficients(g, unit);
+      add_form(
+          unit, [&]() { return unit; },
+          [&disp_op, g](double omega)
+          {
+            return std::make_pair(disp_op.EvaluateKineticScalar(g, omega),
+                                  disp_op.EvaluateLossScalar(g, omega));
+          });
     }
   }
 }
@@ -314,44 +387,32 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   }
 }
 
-double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
+double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E,
+                                                  const GridFunction *En) const
 {
-  if (M_elec)
-  {
-    M_elec->Mult(E.Real(), D);
-    double dot = linalg::LocalDot(E.Real(), D);
-    if (E.HasImag())
-    {
-      M_elec->Mult(E.Imag(), D);
-      dot += linalg::LocalDot(E.Imag(), D);
-    }
-    Mpi::GlobalSum(1, &dot, E.GetComm());
-    return 0.5 * dot;
-  }
-  MFEM_ABORT(
+  MFEM_VERIFY(
+      M_elec,
       "Domain postprocessing is not configured for electric field energy calculation!");
-  return 0.0;
+  double dot =
+      LocalQuadratic(*M_elec, E, D) + (En ? LocalQuadratic(*M_elec_n, *En, D_n) : 0.0);
+  Mpi::GlobalSum(1, &dot, E.GetComm());
+  return 0.5 * dot;
 }
 
-double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
+double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B,
+                                                  const GridFunction *Bt) const
 {
-  if (M_mag)
+  if (!M_mag)
   {
-    M_mag->Mult(B.Real(), H);
-    double dot = linalg::LocalDot(B.Real(), H);
-    if (B.HasImag())
-    {
-      M_mag->Mult(B.Imag(), H);
-      dot += linalg::LocalDot(B.Imag(), H);
-    }
-    Mpi::GlobalSum(1, &dot, B.GetComm());
-    return 0.5 * dot;
+    return 0.0;
   }
-  return 0.0;
+  double dot = LocalQuadratic(*M_mag, B, H) + (Bt ? LocalQuadratic(*M_mag_t, *Bt, D) : 0.0);
+  Mpi::GlobalSum(1, &dot, B.GetComm());
+  return 0.5 * dot;
 }
 
-double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
-                                                        const GridFunction &E) const
+double DomainPostOperator::GetDomainElectricFieldEnergy(int idx, const GridFunction &E,
+                                                        const GridFunction *En) const
 {
   // Compute the electric field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -361,19 +422,14 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
   {
     return 0.0;
   }
-  it->second.first->Mult(E.Real(), D);
-  double dot = linalg::LocalDot(E.Real(), D);
-  if (E.HasImag())
-  {
-    it->second.first->Mult(E.Imag(), D);
-    dot += linalg::LocalDot(E.Imag(), D);
-  }
+  double dot = LocalQuadratic(*it->second.first, E, D) +
+               (En ? LocalQuadratic(*M_n_i.at(idx).first, *En, D_n) : 0.0);
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return 0.5 * dot;
 }
 
-double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
-                                                        const GridFunction &B) const
+double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx, const GridFunction &B,
+                                                        const GridFunction *Bt) const
 {
   // Compute the magnetic field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -383,34 +439,34 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
   {
     return 0.0;
   }
-  it->second.second->Mult(B.Real(), H);
-  double dot = linalg::LocalDot(B.Real(), H);
-  if (B.HasImag())
-  {
-    it->second.second->Mult(B.Imag(), H);
-    dot += linalg::LocalDot(B.Imag(), H);
-  }
+  double dot = LocalQuadratic(*it->second.second, B, H) +
+               (Bt ? LocalQuadratic(*M_n_i.at(idx).second, *Bt, D) : 0.0);
   Mpi::GlobalSum(1, &dot, B.GetComm());
   return 0.5 * dot;
 }
 
-std::pair<double, double> DomainPostOperator::GetKineticEnergyAndLoss(const GridFunction &E,
-                                                                      double omega) const
+std::pair<double, double>
+DomainPostOperator::GetKineticEnergyAndLoss(const GridFunction &E, double omega,
+                                            const GridFunction *En) const
 {
   return KineticEnergyAndLoss(
-      cond_forms, [](const ConductionForm &form) -> const Operator & { return *form.M; }, E,
-      omega, D);
+      cond_forms, [](const ConductionForm &form)
+      { return std::make_pair(form.M.get(), form.M_n.get()); }, E, En, omega, D, D_n);
 }
 
-std::pair<double, double>
-DomainPostOperator::GetDomainKineticEnergyAndLoss(int idx, const GridFunction &E,
-                                                  double omega) const
+std::pair<double, double> DomainPostOperator::GetDomainKineticEnergyAndLoss(
+    int idx, const GridFunction &E, double omega, const GridFunction *En) const
 {
   MFEM_VERIFY(M_i.contains(idx),
               "Invalid domain index when postprocessing domain kinetic energy and loss!");
   return KineticEnergyAndLoss(
-      cond_forms, [idx](const ConductionForm &form) -> const Operator &
-      { return *form.M_i.at(idx); }, E, omega, D);
+      cond_forms,
+      [idx, En](const ConductionForm &form)
+      {
+        return std::make_pair(form.M_i.at(idx).get(),
+                              En ? form.M_n_i.at(idx).get() : nullptr);
+      },
+      E, En, omega, D, D_n);
 }
 
 }  // namespace palace
