@@ -25275,8 +25275,9 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
       continue;
     }
     // A true gap for the exact intersections: a line lying in a face no element covers (a
-    // cracked internal boundary). The piece is integrated from the in-face intervals, split
-    // at their breakpoints so every quadrature interval lies in one element.
+    // cracked internal boundary or a mesh edge the line follows). The piece is integrated
+    // from the in-face intervals, split at their breakpoints so every quadrature interval
+    // lies in one element.
     double in_face_length = 0.0;
     const auto face_breakpoints = Breakpoints(in_face_intervals, begin, end);
     for (std::size_t j = 0; j + 1 < face_breakpoints.size(); j++)
