@@ -6,7 +6,9 @@
 #include <cmath>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <sstream>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -1910,6 +1912,289 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     CHECK_THAT(normal[2], WithinAbs(1.0, 1.0e-12));
   }
   CHECK(ambiguous_count == 40);
+}
+
+TEST_CASE("Automatic metal edge extraction treats a junction face as the open gap",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  // Decision 876 (5) (DESIGN v3h/maxwell-ports A1.4 as fixed by decision 875): a chip's
+  // junction is a small, purely reactive LumpedPort (R 0, L_J / C_J) whose face sits
+  // between the junction leads of the island and the ground. The ES reference models the
+  // same face as the open gap, so the identification treats a JUNCTION FACE like the gap it
+  // replaced: the bordering lead-end segments stay PHYSICAL SA edges (no Port cut), and the
+  // Maxwell run with the port, the ES comparator with the face listed in its SA attributes,
+  // and the record's open gap see the same perimeter. An R 50 port and an oversize reactive
+  // port (the face extent at or above the smallest EdgeDistances) stay Port cuts.
+  //
+  // Fixture: a hex box with interior faces on the plane z = 0.5 (cells 0.1 x 0.1): the
+  // ground sheet (attribute 11, y in [0.1, 0.4]) and the pad (attribute 12, x in [0.3,
+  // 0.6], y in [0.5, 0.8]) are PEC; the junction square (attribute 14) is the single cell
+  // x in [0.4, 0.5], y in [0.4, 0.5] with one edge on the ground, one on the pad and two on
+  // the gap (the chip form); the gap sheet (attribute 13) is the rest of the plane (the box
+  // faces keep MakeCartesian3D's attributes 1-6).
+  constexpr int n = 10;
+  constexpr double h = 1.0 / n;
+  constexpr double tolerance = 1.0e-12;
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(n, n, 2, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector center(3);
+    serial.GetElementCenter(e, center);
+    serial.SetAttribute(e, center[2] < 0.5 ? 1 : 2);
+  }
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = 1.0, xmax = 0.0, ymin = 1.0, ymax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[2] - 0.5) < tolerance;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      ymin = std::min(ymin, point[1]);
+      ymax = std::max(ymax, point[1]);
+    }
+    if (!on_plane)
+    {
+      continue;
+    }
+    auto Inside = [&](double x0, double x1, double y0, double y1)
+    {
+      return xmin >= x0 - tolerance && xmax <= x1 + tolerance && ymin >= y0 - tolerance &&
+             ymax <= y1 + tolerance;
+    };
+    int attribute = 13;
+    if (Inside(0.1, 0.9, 0.1, 0.4))
+    {
+      attribute = 11;
+    }
+    else if (Inside(0.3, 0.6, 0.5, 0.8))
+    {
+      attribute = 12;
+    }
+    else if (Inside(0.4, 0.5, 0.4, 0.5))
+    {
+      attribute = 14;
+    }
+    serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+    serial.SetBdrAttribute(serial.GetNBE() - 1, attribute);
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  mfem::ParMesh mesh(Mpi::World(), serial);
+
+  // The junction square's extent (its bounding-box diagonal) is h sqrt(2) = 0.1414.
+  const double junction_extent = h * std::sqrt(2.0);
+  auto MakeBoundaries = [&](const std::vector<int> &sa_attributes,
+                            const std::vector<double> &edge_distances,
+                            std::optional<config::LumpedPortData> port)
+  {
+    config::BoundaryData boundaries;
+    boundaries.pec.attributes = {11, 12};
+    config::InterfaceDielectricData dielectric;
+    dielectric.type = InterfaceDielectric::SA;
+    dielectric.attributes = sa_attributes;
+    dielectric.automatic_edges = true;
+    dielectric.edge_distances = edge_distances;
+    boundaries.postpro.dielectric.emplace(1, std::move(dielectric));
+    if (port)
+    {
+      boundaries.lumpedport.emplace(1, std::move(*port));
+    }
+    return boundaries;
+  };
+  auto MakePort = [](double R, double L, double C)
+  {
+    config::LumpedPortData port;
+    port.R = R;
+    port.L = L;
+    port.C = C;
+    config::internal::ElementData element;
+    element.direction = {0.0, 1.0, 0.0};
+    element.attributes = {14};
+    port.elements.push_back(std::move(element));
+    return port;
+  };
+  // A lead-end segment borders the junction square: on the ground's edge y = 0.4 or the
+  // pad's edge y = 0.5, with x in [0.4, 0.5].
+  auto BordersJunction =
+      [&](const MetalEdgeGeometry &geometry, const MetalEdgeSegment &segment)
+  {
+    const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+    const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+    const bool y_on_square =
+        (std::abs(p0[1] - 0.4) < tolerance || std::abs(p0[1] - 0.5) < tolerance) &&
+        std::abs(p1[1] - p0[1]) < tolerance;
+    const bool x_on_square = std::min(p0[0], p1[0]) >= 0.4 - tolerance &&
+                             std::max(p0[0], p1[0]) <= 0.5 + tolerance;
+    return y_on_square && x_on_square;
+  };
+  // The perimeter as a canonical, partition-independent record: every segment's end
+  // coordinates with its type and interface memberships, and every vertex's cut flags.
+  struct SegmentRecord
+  {
+    std::array<double, 3> p0, p1;
+    MetalEdgeSegmentType type;
+    std::vector<int> sa_interfaces;
+    std::vector<int> port_attributes;
+    std::vector<int> truncation_attributes;
+    bool on_port_boundary;
+    bool operator==(const SegmentRecord &other) const
+    {
+      return p0 == other.p0 && p1 == other.p1 && type == other.type &&
+             sa_interfaces == other.sa_interfaces &&
+             port_attributes == other.port_attributes &&
+             truncation_attributes == other.truncation_attributes &&
+             on_port_boundary == other.on_port_boundary;
+    }
+  };
+  auto Perimeter = [&](const MetalEdgeGeometry &geometry)
+  {
+    std::vector<SegmentRecord> records;
+    for (const auto &segment : geometry.segments)
+    {
+      SegmentRecord record;
+      record.p0 = geometry.vertices[segment.vertices[0]].coordinate;
+      record.p1 = geometry.vertices[segment.vertices[1]].coordinate;
+      if (record.p1 < record.p0)
+      {
+        std::swap(record.p0, record.p1);
+      }
+      record.type = segment.type;
+      record.sa_interfaces = segment.sa_interfaces;
+      record.port_attributes = segment.port_attributes;
+      record.truncation_attributes = segment.truncation_attributes;
+      record.on_port_boundary = geometry.vertices[segment.vertices[0]].on_port_boundary ||
+                                geometry.vertices[segment.vertices[1]].on_port_boundary;
+      records.push_back(std::move(record));
+    }
+    std::sort(records.begin(), records.end(), [](const auto &a, const auto &b)
+              { return std::tie(a.p0, a.p1) < std::tie(b.p0, b.p1); });
+    return records;
+  };
+  struct Counts
+  {
+    int physical = 0, port = 0, truncation = 0, port_vertices = 0, bordering = 0,
+        bordering_physical_sa = 0;
+  };
+  auto Count = [&](const MetalEdgeGeometry &geometry)
+  {
+    Counts counts;
+    for (const auto &segment : geometry.segments)
+    {
+      counts.physical += segment.type == MetalEdgeSegmentType::PHYSICAL;
+      counts.port += segment.type == MetalEdgeSegmentType::PORT;
+      counts.truncation += segment.type == MetalEdgeSegmentType::TRUNCATION;
+      if (BordersJunction(geometry, segment))
+      {
+        counts.bordering++;
+        counts.bordering_physical_sa += segment.type == MetalEdgeSegmentType::PHYSICAL &&
+                                        segment.sa_interfaces == std::vector<int>{1};
+      }
+    }
+    for (const auto &vertex : geometry.vertices)
+    {
+      counts.port_vertices += vertex.on_port_boundary;
+    }
+    return counts;
+  };
+  const MetalSurfaceExtraction surface = JointNoiseExtraction(0.3);
+
+  // (0) The open gap of the ES reference and of the ES same-mesh comparator: the junction
+  // face is listed in the SA interface's attributes, no LumpedPort.
+  const auto control =
+      ExtractMetalEdgeGeometry(mesh, MakeBoundaries({13, 14}, {0.3}, {}), surface);
+  const auto control_counts = Count(control);
+  REQUIRE(control.segments.size() == 2 * (8 + 3) + 2 * (3 + 3));
+  CHECK(control_counts.physical == static_cast<int>(control.segments.size()));
+  CHECK(control_counts.port == 0);
+  CHECK(control_counts.truncation == 0);
+  CHECK(control_counts.port_vertices == 0);
+  CHECK(control_counts.bordering == 2);
+  CHECK(control_counts.bordering_physical_sa == 2);
+  CHECK(control.metal_components == 2);
+  CHECK(control.physical_chains == 8);
+  for (const auto &segment : control.segments)
+  {
+    CHECK(segment.sa_interfaces == std::vector<int>{1});
+  }
+
+  // (a) The Maxwell run: the junction face is a reactive LumpedPort below the smallest
+  // EdgeDistances -> the same perimeter as the open gap.
+  {
+    REQUIRE(junction_extent < 0.3);
+    const auto geometry = ExtractMetalEdgeGeometry(
+        mesh, MakeBoundaries({13}, {0.3}, MakePort(0.0, 1.0e-9, 1.0e-15)), surface);
+    const auto counts = Count(geometry);
+    CHECK(counts.port == 0);
+    CHECK(counts.port_vertices == 0);
+    CHECK(counts.truncation == 0);
+    CHECK(counts.bordering == 2);
+    CHECK(counts.bordering_physical_sa == 2);
+    CHECK(geometry.physical_chains == control.physical_chains);
+    CHECK(Perimeter(geometry) == Perimeter(control));
+  }
+  // The excitation flag and an L-only / C-only junction play no part.
+  {
+    auto port = MakePort(0.0, 1.0e-9, 0.0);
+    port.excitation = 1;
+    const auto geometry = ExtractMetalEdgeGeometry(
+        mesh, MakeBoundaries({13}, {0.3}, std::move(port)), surface);
+    CHECK(Perimeter(geometry) == Perimeter(control));
+    const auto capacitive = ExtractMetalEdgeGeometry(
+        mesh, MakeBoundaries({13}, {0.3}, MakePort(0.0, 0.0, 1.0e-15)), surface);
+    CHECK(Perimeter(capacitive) == Perimeter(control));
+  }
+
+  // (b) An R 50 port on the same face is a Port cut (decision 82(5), unchanged): the two
+  // bordering lead-end segments are PORT with no SA membership, their 4 vertices port cuts.
+  auto CheckPortCut = [&](const MetalEdgeGeometry &geometry)
+  {
+    const auto counts = Count(geometry);
+    CHECK(counts.port == 2);
+    CHECK(counts.port_vertices == 4);
+    CHECK(counts.truncation == 0);
+    CHECK(counts.bordering == 2);
+    CHECK(counts.bordering_physical_sa == 0);
+    CHECK(counts.physical == static_cast<int>(geometry.segments.size()) - 2);
+    CHECK(geometry.physical_chains == control.physical_chains + 2);
+    for (const auto &segment : geometry.segments)
+    {
+      if (segment.type == MetalEdgeSegmentType::PORT)
+      {
+        CHECK(BordersJunction(geometry, segment));
+        CHECK(segment.port_attributes == std::vector<int>{14});
+        CHECK(segment.sa_interfaces.empty());
+      }
+      else
+      {
+        CHECK(segment.sa_interfaces == std::vector<int>{1});
+      }
+    }
+    CHECK_FALSE(Perimeter(geometry) == Perimeter(control));
+  };
+  CheckPortCut(ExtractMetalEdgeGeometry(
+      mesh, MakeBoundaries({13}, {0.3}, MakePort(50.0, 0.0, 0.0)), surface));
+  CheckPortCut(ExtractMetalEdgeGeometry(
+      mesh, MakeBoundaries({13}, {0.3}, MakePort(50.0, 1.0e-9, 1.0e-15)), surface));
+
+  // (c) A reactive port whose extent is not below the smallest EdgeDistances is a Port cut
+  // (the size bound), as is one with no EdgeDistances configured (no radius to compare).
+  REQUIRE(junction_extent > 0.1);
+  CheckPortCut(ExtractMetalEdgeGeometry(
+      mesh, MakeBoundaries({13}, {0.1}, MakePort(0.0, 1.0e-9, 1.0e-15)), surface));
+  CheckPortCut(ExtractMetalEdgeGeometry(
+      mesh, MakeBoundaries({13}, {}, MakePort(0.0, 1.0e-9, 1.0e-15)), surface));
 }
 
 TEST_CASE("Automatic metal edge classification is partition independent",
