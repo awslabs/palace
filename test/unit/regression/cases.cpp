@@ -1651,7 +1651,9 @@ TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum", "Minimum"};
+  // Without volume currents, the 2D magnetic flux density is uniform, so the error
+  // estimate is round-off.
+  opts.excluded_files = {"error-indicators.csv"};
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_magnetostatic.json",
                                   "magnetostatic", opts);
