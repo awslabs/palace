@@ -1205,6 +1205,21 @@ TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]
                                   "driven_wave_tm_cutoff", opts);
 }
 
+// TM01 (Mode 3) swept across 3.5 GHz with TE21 propagating below it. Starting each port
+// mode solve from the previous frequency's mode converged one mode of the TE11 pair and
+// TE21, which then took the place of TM01 for the rest of the sweep. Either mode reflects
+// all the power, so |S11| is round-off around 0 dB and the phase is compared.
+TEST_CASE("cylinder_driven_wave_tm_sweep", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "(dB)"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_sweep.json",
+                                  "driven_wave_tm_sweep", opts);
+}
+
 // Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
 // 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
 // TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
