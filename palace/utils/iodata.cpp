@@ -474,16 +474,11 @@ void IoData::CheckConfiguration()
   }
 
   // Dispersive complex conductivity models are supported for driven and boundary mode
-  // problems. Their frequency-independent part is matched to σ(ω) at a reference frequency,
-  // by default the geometric mean of the driven sweep band. A boundary mode problem is a
-  // band of one frequency.
-  for (auto &data : domains.materials)
+  // problems. The frequency-independent part of a domain model is matched to σ(ω) at a
+  // reference frequency, by default the geometric mean of the driven sweep band. A boundary
+  // mode problem is a band of one frequency.
+  auto check_dispersive = [this](config::ComplexConductivityData &cs, bool domain)
   {
-    if (!data.complex_sigma || !data.complex_sigma->IsDispersive())
-    {
-      continue;
-    }
-    auto &cs = *data.complex_sigma;
     double f_min, f_max;
     if (problem.type == ProblemType::DRIVEN)
     {
@@ -491,7 +486,7 @@ void IoData::CheckConfiguration()
       f_min = band.min;
       f_max = band.max;
       MFEM_VERIFY(
-          !solver.driven.adaptive_circuit_synthesis,
+          !domain || !solver.driven.adaptive_circuit_synthesis,
           "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
           "yet support dispersive \"ComplexConductivity\" domains!");
     }
@@ -507,7 +502,7 @@ void IoData::CheckConfiguration()
           "Dispersive \"ComplexConductivity\" models (\"MattisBardeen\", \"Table\") "
           "are only supported for driven and boundary mode problems; use "
           "\"TwoFluid\"!");
-      continue;
+      return;
     }
     MFEM_VERIFY(f_min > 0.0,
                 "Dispersive \"ComplexConductivity\" requires positive frequencies!");
@@ -515,9 +510,23 @@ void IoData::CheckConfiguration()
                     (f_min >= cs.table_f.front() * (1.0 - 1.0e-9) &&
                      f_max <= cs.table_f.back() * (1.0 + 1.0e-9)),
                 "Frequencies must lie within the \"ComplexConductivity\" table!");
-    if (cs.reference_freq <= 0.0)
+    if (domain && cs.reference_freq <= 0.0)
     {
       cs.reference_freq = std::sqrt(f_min * f_max);
+    }
+  };
+  for (auto &data : domains.materials)
+  {
+    if (data.complex_sigma && data.complex_sigma->IsDispersive())
+    {
+      check_dispersive(*data.complex_sigma, true);
+    }
+  }
+  for (auto &data : boundaries.conductivity)
+  {
+    if (data.complex_sigma && data.complex_sigma->IsDispersive())
+    {
+      check_dispersive(*data.complex_sigma, false);
     }
   }
 

@@ -92,4 +92,6 @@ simulations, with uniform or adaptive frequency sweeps and lumped or wave ports,
 boundary mode simulations. They are not yet supported for eigenmode or transient
 simulations, or adaptive circuit synthesis. The kinetic energy and conduction loss of
 superconducting domains are postprocessed in driven and eigenmode simulations (see
-[Domain postprocessing](postprocessing.md#Domain-postprocessing)).
+[Domain postprocessing](postprocessing.md#Domain-postprocessing)). The same models can
+describe superconducting films as
+[finite conductivity boundaries](boundaries.md#Finite-conductivity-boundary).

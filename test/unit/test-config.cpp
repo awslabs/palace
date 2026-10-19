@@ -1545,9 +1545,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("Boundaries.Absorbing missing keys: " << json(abs_gaps).dump());
     CHECK(abs_gaps.empty());
 
-    auto cond_gaps =
-        SchemaCoverageGaps("/properties/Boundaries/properties/Conductivity/items",
-                           config["Boundaries"]["Conductivity"][0]);
+    // ComplexConductivity is opt-in: it replaces Conductivity.
+    auto cond_gaps = SchemaCoverageGaps(
+        "/properties/Boundaries/properties/Conductivity/items",
+        config["Boundaries"]["Conductivity"][0], /*skip=*/{"ComplexConductivity"});
     INFO("Boundaries.Conductivity[] missing keys: " << json(cond_gaps).dump());
     CHECK(cond_gaps.empty());
 

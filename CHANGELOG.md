@@ -23,9 +23,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Domains.Materials[].ComplexConductivity`: Mattis-Bardeen, tabulated, and classical or
     enhanced two-fluid. The frequency-dependent models are supported for driven
     simulations, with uniform and adaptive sweeps and lumped or wave ports, and boundary
-    mode simulations. Added `Boundaries.WavePort[].Target`, the effective index near which
-    the port modes are sought, for lines whose modes are slower than bulk waves, such as
-    superconducting lines. SchemaVer 2-3-0
+    mode simulations. The models also apply to finite conductivity boundaries,
+    `Boundaries.Conductivity[].ComplexConductivity`, for superconducting films. Added
+    `Boundaries.WavePort[].Target`, the effective index near which the port modes are
+    sought, for lines whose modes are slower than bulk waves, such as superconducting
+    lines. SchemaVer 2-3-0
   - Added kinetic energy and conduction loss postprocessing for superconducting and
     conducting domains in driven and eigenmode simulations, written to `domain-E.csv` as
     `E_kin` and `P_cond` in total and for each postprocessing domain.
@@ -164,6 +166,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - CSV output tables are now appended row by row instead of rewritten at every measurement,
     so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
     [PR 942](https://github.com/awslabs/palace/pull/942).
+
+#### Documentation
+
+  - Corrected the denominator of the finite-thickness surface impedance in the reference
+    to `cosh ν - cos ν`, as implemented.
 
 #### Build system
 

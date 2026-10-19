@@ -86,6 +86,15 @@ information see the
 [Other boundary conditions](../reference.md#Other-boundary-conditions) section of the
 reference.
 
+The conductivity can instead be a complex conductivity model of a superconductor,
+[`"ComplexConductivity"`](../config/reference.md#config-boundaries-conductivity-complexconductivity),
+as for [domain materials](model.md), with the surface impedance
+``Z_s = \sqrt{i\omega\mu/\sigma}``, or ``Z_s \coth(kh/2)``, ``k^2 = i\omega\mu\sigma``, for a
+thickness ``h`` (``2h`` for `"External"` boundaries). This models superconducting films
+without resolving the penetration depth in the mesh, when the film is wide compared to its
+thickness. The dispersive models (`"MattisBardeen"` and `"Table"`) are supported for driven
+and boundary mode simulations, and `"TwoFluid"` also for eigenmode simulations.
+
 ## Periodic boundary
 
 Periodic boundary conditions on an existing mesh can be specified using the

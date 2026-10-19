@@ -724,7 +724,7 @@
         "ReferenceFrequency": {
           "type": "number",
           "minimum": 0.0,
-          "description": "Frequency at which the frequency-independent part of a dispersive model is matched to `σ(ω)`, GHz. Defaults to the geometric mean of the driven sweep band, or the boundary mode frequency."
+          "description": "Frequency at which the frequency-independent part of a dispersive model of a domain material is matched to `σ(ω)`, GHz. Defaults to the geometric mean of the driven sweep band, or the boundary mode frequency. Not used for boundaries."
         },
         "TwoFluidModel": {
           "type": "string",
@@ -1107,8 +1107,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "Attributes",
-        "Conductivity"
+        "Attributes"
       ],
       "properties": {
         "Attributes": {
@@ -1117,7 +1116,11 @@
         },
         "Conductivity": {
           "type": "number",
-          "description": "Electrical conductivity for this boundary, S/m."
+          "description": "Electrical conductivity for this boundary, S/m. Required unless `\"ComplexConductivity\"` is given, and exclusive with it."
+        },
+        "ComplexConductivity": {
+          "$ref": "#/$defs/ComplexConductivity",
+          "description": "Complex conductivity `σ(ω) = σ1(ω) - iσ2(ω)` of a superconducting conductor, for the surface impedance `√(iωμ/σ)`. Exclusive with `\"Conductivity\"`."
         },
         "Permeability": {
           "type": "number",

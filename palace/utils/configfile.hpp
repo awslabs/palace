@@ -420,6 +420,11 @@ public:
   // Electrical conductivity of the conductor [S/m].
   double sigma = 0.0;
 
+  // Complex conductivity model, exclusive with sigma. A two-fluid model is resolved into
+  // sigma and the London penetration depth [mesh length units].
+  std::optional<ComplexConductivityData> complex_sigma;
+  double lambda_L = 0.0;
+
   // Conductor relative permeability.
   double mu_r = 1.0;
 

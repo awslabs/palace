@@ -5,8 +5,10 @@
 #define PALACE_MODELS_SURFACE_CONDUCTIVITY_OPERATOR_HPP
 
 #include <complex>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
+#include "models/complexconductivitymodel.hpp"
 
 namespace palace
 {
@@ -35,10 +37,12 @@ private:
   const MaterialOperator &mat_op;
 
   // Surface properties for finite conductivity boundary attributes: conductor conductivity
-  // and permeability, and (optionally) thickness.
+  // and London penetration depth, or a dispersive model of σ(ω), permeability, and
+  // (optionally) thickness.
   struct ConductivityData
   {
-    double sigma, mu, h;
+    double sigma, lambda, mu, h;
+    std::optional<ComplexConductivityModel> model;
     mfem::Array<int> attr_list;
   };
   std::vector<ConductivityData> boundaries;
@@ -48,11 +52,8 @@ private:
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
   // Per-group complex surface-admittance coefficient i·ω/Z(ω) for the boundary BC,
-  // evaluated at (possibly complex) ω. Z is the skin-depth surface impedance with the
-  // optional finite-thickness HFSS correction. The skin-depth √ and the cosh/cos/sinh/sin
-  // thickness terms accept complex ω directly (analytic continuation ω = -i·λ); for real
-  // ω this returns the same scalar the real-ω stamping always used. The formula lives
-  // here so both AddExtraSystemBdrCoefficients overloads share it.
+  // evaluated at (possibly complex) ω. Z is the surface impedance of the conductor with the
+  // optional finite-thickness correction. Dispersive models are only evaluated at real ω.
   std::complex<double> EvaluateScalarImpl(std::size_t group_idx,
                                           std::complex<double> omega) const;
 
@@ -81,10 +82,12 @@ public:
   // own frequency-dependent surface admittance i·ω/Z(ω)).
   std::size_t Size() const { return boundaries.size(); }
 
-  // Whether group `g` is active (nonzero conductivity).
+  // Whether group `g` is active (nonzero conductivity or London depth, or a dispersive
+  // model).
   bool IsActive(std::size_t g) const
   {
-    return g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0;
+    return g < boundaries.size() &&
+           (boundaries[g].sigma > 0.0 || boundaries[g].lambda > 0.0 || boundaries[g].model);
   }
 
   // Per-group surface-admittance scalar i·ω/Z_g(ω), evaluated at (possibly complex) ω.

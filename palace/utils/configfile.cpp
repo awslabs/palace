@@ -10,6 +10,8 @@
 #include <numbers>
 #include <sstream>
 #include <string_view>
+#include <tuple>
+#include <utility>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
@@ -157,6 +159,17 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
     os << ", v" << j++ << ": " << x;
   }
   return os;
+}
+
+// Conductivity σ1 and London penetration depth of a two-fluid model. Classical
+// (Gorter-Casimir): σ1 = σn t⁴, λ = λ0 / √(1 - t⁴). Enhanced (Vendik): σ1 = σn √t, λ = λ0 /
+// √(1 - t^(3/2)).
+std::pair<double, double> TwoFluidConductivity(const ComplexConductivityData &cs)
+{
+  const double t = cs.temperature / cs.critical_temperature;
+  const bool classical = (cs.two_fluid_model == TwoFluidModel::CLASSICAL);
+  return {cs.sigma_n * (classical ? std::pow(t, 4) : std::sqrt(t)),
+          cs.lambda_0 / std::sqrt(1.0 - (classical ? std::pow(t, 4) : std::pow(t, 1.5)))};
 }
 
 }  // namespace
@@ -346,13 +359,9 @@ MaterialData::MaterialData(const json &domain)
     const auto &cs = complex_sigma.emplace(*it);
     if (cs.type == ComplexConductivityType::TWO_FLUID)
     {
-      // Classical (Gorter-Casimir): σ1 = σn t⁴, λ = λ0 / √(1 - t⁴). Enhanced (Vendik):
-      // σ1 = σn √t, λ = λ0 / √(1 - t^(3/2)).
-      const double t = cs.temperature / cs.critical_temperature;
-      const bool classical = (cs.two_fluid_model == TwoFluidModel::CLASSICAL);
-      sigma.s.fill(cs.sigma_n * (classical ? std::pow(t, 4) : std::sqrt(t)));
-      lambda_L =
-          cs.lambda_0 / std::sqrt(1.0 - (classical ? std::pow(t, 4) : std::pow(t, 1.5)));
+      const auto [sigma_1, lambda] = TwoFluidConductivity(cs);
+      sigma.s.fill(sigma_1);
+      lambda_L = lambda;
     }
   }
 }
@@ -462,7 +471,26 @@ ConductivityData::ConductivityData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
   std::ranges::sort(attributes);
-  sigma = boundary.at("Conductivity");  // Required
+  if (auto it = boundary.find("ComplexConductivity"); it != boundary.end())
+  {
+    MFEM_VERIFY(!boundary.contains("Conductivity"),
+                "Conductivity boundary \"ComplexConductivity\" cannot be combined with "
+                "\"Conductivity\"!");
+    const auto &cs = complex_sigma.emplace(*it);
+    MFEM_VERIFY(cs.reference_freq == 0.0,
+                "\"ReferenceFrequency\" only applies to domain materials!");
+    if (cs.type == ComplexConductivityType::TWO_FLUID)
+    {
+      std::tie(sigma, lambda_L) = TwoFluidConductivity(cs);
+    }
+  }
+  else
+  {
+    MFEM_VERIFY(boundary.contains("Conductivity"),
+                "Conductivity boundary requires \"Conductivity\" or "
+                "\"ComplexConductivity\"!");
+    sigma = boundary.at("Conductivity");
+  }
   mu_r = boundary.value("Permeability", mu_r);
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
@@ -1746,6 +1774,32 @@ inline auto LengthScaler(const Units &units)
   return [Lc0 = units.GetMeshLengthRelativeScale()](double val) { return val / Lc0; };
 }
 
+// Conductivities, and frequencies and energies (kB T, kB Tc, Δ) to angular frequencies.
+void NondimensionalizeComplexConductivity(const Units &units, ComplexConductivityData &cs)
+{
+  const double sigma_c = units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+  const auto omega = [&units](double f)
+  {
+    return 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+  };
+  const auto omega_E = [&omega](double E)
+  { return omega(1.0e-9 * E / electromagnetics::h_); };
+  cs.sigma_n /= sigma_c;
+  cs.temperature = omega_E(electromagnetics::kB_ * cs.temperature);
+  cs.critical_temperature = omega_E(electromagnetics::kB_ * cs.critical_temperature);
+  cs.gap = omega_E(electromagnetics::e_ * cs.gap);
+  cs.reference_freq = omega(cs.reference_freq);
+  std::ranges::transform(cs.table_f, cs.table_f.begin(), omega);
+  for (auto &s : cs.table_sigma1)
+  {
+    s /= sigma_c;
+  }
+  for (auto &s : cs.table_sigma2)
+  {
+    s /= sigma_c;
+  }
+}
+
 }  // namespace
 
 void Nondimensionalize(const Units &units, RefinementData &data)
@@ -1767,31 +1821,9 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
-
   if (data.complex_sigma)
   {
-    auto &cs = *data.complex_sigma;
-    const double sigma_c = units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
-    const auto omega = [&units](double f)
-    {
-      return 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
-    };
-    const auto omega_E = [&omega](double E)
-    { return omega(1.0e-9 * E / electromagnetics::h_); };
-    cs.sigma_n /= sigma_c;
-    cs.temperature = omega_E(electromagnetics::kB_ * cs.temperature);
-    cs.critical_temperature = omega_E(electromagnetics::kB_ * cs.critical_temperature);
-    cs.gap = omega_E(electromagnetics::e_ * cs.gap);
-    cs.reference_freq = omega(cs.reference_freq);
-    std::ranges::transform(cs.table_f, cs.table_f.begin(), omega);
-    for (auto &s : cs.table_sigma1)
-    {
-      s /= sigma_c;
-    }
-    for (auto &s : cs.table_sigma2)
-    {
-      s /= sigma_c;
-    }
+    NondimensionalizeComplexConductivity(units, *data.complex_sigma);
   }
 }
 
@@ -1808,7 +1840,12 @@ void Nondimensionalize(const Units &units, CurrentDipoleData &data)
 void Nondimensionalize(const Units &units, ConductivityData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+  data.lambda_L /= units.GetMeshLengthRelativeScale();
   data.h /= units.GetMeshLengthRelativeScale();
+  if (data.complex_sigma)
+  {
+    NondimensionalizeComplexConductivity(units, *data.complex_sigma);
+  }
 }
 
 void Nondimensionalize(const Units &units, ImpedanceData &data)

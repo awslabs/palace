@@ -655,20 +655,24 @@ boundary condition with constant impedance ``Z_s``, a more accurate model taking
 account the frequency dependence of the skin depth is
 
 ```math
-Z_s = \frac{1+i}{\delta\sigma}
+Z_s = \sqrt{\frac{i\omega\mu}{\sigma}} = \frac{1+i}{\delta\sigma}
 ```
 
-where ``\delta = \sqrt{2/\mu_r\sigma\omega}`` is the skin depth and ``\sigma`` is the
+where ``\delta = \sqrt{2/\mu\sigma\omega}`` is the skin depth and ``\sigma`` is the
 conductivity of the metal. Another model, which takes into account finite thickness effects,
 is given by
 
 ```math
-Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}+\cos{\nu}}
-    + i\frac{\sinh{\nu}-\sin{\nu}}{\cosh{\nu}+\cos{\nu}}\right)
+Z_s = \sqrt{\frac{i\omega\mu}{\sigma}}\coth{\frac{kh}{2}}
+    = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}-\cos{\nu}}
+    + i\frac{\sinh{\nu}-\sin{\nu}}{\cosh{\nu}-\cos{\nu}}\right)
 ```
 
-where ``\nu = h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
-DC limit when ``h\ll\delta``.
+where ``k = \sqrt{i\omega\mu\sigma} = (1+i)/\delta``, ``\nu = h/\delta``, and ``h`` is the
+layer thickness (twice the conductor thickness for `"External"` boundaries). This model
+correctly produces the DC limit when ``h\ll\delta``. The first forms hold for a complex
+conductivity ``\sigma = \sigma_1 - i\sigma_2`` as well: for a London superconductor,
+``Z_s = i\omega\mu\lambda_L\coth(h/2\lambda_L)``.
 
 ## Energy-participation ratios
 

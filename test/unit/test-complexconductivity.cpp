@@ -26,6 +26,7 @@
 #include "models/domainpostoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfaceconductivityoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/constants.hpp"
@@ -355,6 +356,30 @@ TEST_CASE("ComplexConductivity configuration", "[complexconductivity][Serial]")
         "ComplexConductivity": {"Model": "Table", "Frequency": [2.0, 1.0],
         "Sigma1": [1.0, 1.0], "Sigma2": [1.0, 1.0]}})")));
   }
+
+  SECTION("Conductivity boundaries")
+  {
+    const config::ConductivityData mb(json::parse(R"({"Attributes": [1], "Thickness": 0.2,
+        "ComplexConductivity": {"Model": "MattisBardeen", "NormalConductivity": 1.6e7,
+        "Gap": 1.4e-3}})"));
+    REQUIRE(mb.complex_sigma);
+    CHECK(mb.complex_sigma->IsDispersive());
+    CHECK(mb.sigma == 0.0);
+    CHECK(mb.h == 0.2);
+    const config::ConductivityData two_fluid(json::parse(R"({"Attributes": [1],
+        "ComplexConductivity": {"Model": "TwoFluid", "NormalConductivity": 2.0e7,
+        "Temperature": 0.0, "CriticalTemperature": 9.0, "LondonDepth0": 0.08}})"));
+    CHECK(two_fluid.sigma == 0.0);
+    CHECK(two_fluid.lambda_L == 0.08);
+    CHECK_THROWS_WITH(config::ConductivityData(json::parse(R"({"Attributes": [1],
+        "Conductivity": 1.0, "ComplexConductivity": {"Model": "MattisBardeen",
+        "NormalConductivity": 1.0, "Gap": 1.0e-3}})")),
+                      Matchers::ContainsSubstring("cannot be combined"));
+    CHECK_THROWS_WITH(config::ConductivityData(json::parse(R"({"Attributes": [1],
+        "ComplexConductivity": {"Model": "MattisBardeen", "NormalConductivity": 1.0,
+        "Gap": 1.0e-3, "ReferenceFrequency": 10.0}})")),
+                      Matchers::ContainsSubstring("only applies to domain materials"));
+  }
 }
 
 TEST_CASE("ComplexConductivity reference frequency", "[complexconductivity][Serial]")
@@ -457,6 +482,42 @@ TEST_CASE("ComplexConductivity reference frequency", "[complexconductivity][Seri
           Matchers::ContainsSubstring("within the \"ComplexConductivity\" table"));
     }
   }
+
+  SECTION("Conductivity boundaries")
+  {
+    // The same checks apply to dispersive surface models, which have no reference
+    // frequency and are supported by circuit synthesis.
+    auto boundary = [&](ProblemType type)
+    {
+      auto iodata = setup(type);
+      auto &cond = iodata->boundaries.conductivity.emplace_back();
+      cond.attributes = {1};
+      cond.complex_sigma = iodata->domains.materials[0].complex_sigma;
+      iodata->domains.materials[0].complex_sigma.reset();
+      iodata->solver.driven.sample_f = {10.0, 200.0};
+      return iodata;
+    };
+    for (auto type : {ProblemType::EIGENMODE, ProblemType::TRANSIENT})
+    {
+      CHECK_THROWS_WITH(boundary(type)->CheckConfiguration(),
+                        Matchers::ContainsSubstring("only supported for driven"));
+    }
+    auto synthesis = boundary(ProblemType::DRIVEN);
+    synthesis->solver.driven.adaptive_tol = 1.0e-6;
+    synthesis->solver.driven.adaptive_circuit_synthesis = true;
+    synthesis->boundaries.lumpedport[1];
+    synthesis->CheckConfiguration();
+    CHECK(synthesis->boundaries.conductivity[0].complex_sigma->reference_freq == 0.0);
+    auto table = boundary(ProblemType::DRIVEN);
+    auto &cs = *table->boundaries.conductivity[0].complex_sigma;
+    cs.type = ComplexConductivityType::TABLE;
+    cs.table_f = {1.0, 100.0};
+    cs.table_sigma1 = {1.0, 1.0};
+    cs.table_sigma2 = {1.0, 1.0};
+    CHECK_THROWS_WITH(
+        table->CheckConfiguration(),
+        Matchers::ContainsSubstring("within the \"ComplexConductivity\" table"));
+  }
 }
 
 TEST_CASE("Dispersive conductivity anchor and residual",
@@ -542,6 +603,71 @@ TEST_CASE("Dispersive conductivity anchor and residual",
       CHECK(k_r < 0);
       CHECK(k_i < 0);
     }
+  }
+}
+
+TEST_CASE("SurfaceConductivityOperator complex conductivity",
+          "[complexconductivity][Serial][Parallel]")
+{
+  // The surface admittance iω/Z = (k/μ) tanh(kh/2), k² = iωμσ, against the finite-thickness
+  // formula for a real conductivity, the London limit, and a Mattis-Bardeen model.
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh = TwoAttributeMesh(comm);
+  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
+  config::MaterialData vacuum;
+  vacuum.attributes = {1, 2};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum}, periodic, ProblemType::DRIVEN, palace_mesh);
+
+  constexpr double mu = 1.5, h = 0.3, lambda = 0.2;
+  std::vector<config::ConductivityData> conductivity(4);
+  for (int b = 0; b < 4; b++)
+  {
+    conductivity[b].attributes = {b + 1};
+    conductivity[b].mu_r = mu;
+  }
+  conductivity[0].sigma = 5.0;
+  conductivity[1].sigma = 5.0;
+  conductivity[1].h = h;
+  conductivity[2].lambda_L = lambda;
+  conductivity[2].h = h;
+  conductivity[3].complex_sigma = MattisBardeenData(5.0, 2.0, 0.4);
+  conductivity[3].h = h;
+  const Units units(1.0, 1.0);
+  const SurfaceConductivityOperator surf_sigma_op(conductivity, ProblemType::DRIVEN, units,
+                                                  mat_op, palace_mesh.Get());
+  const ComplexConductivityModel model(*conductivity[3].complex_sigma);
+
+  for (double omega : {0.3, 1.5, 4.0})
+  {
+    // HFSS finite-thickness formula, with skin depth δ and ν = h/δ.
+    const double delta = std::sqrt(2.0 / (mu * 5.0 * omega)), nu = h / delta;
+    const std::complex<double> Z_hfss =
+        ((std::sinh(nu) + std::sin(nu)) + 1i * (std::sinh(nu) - std::sin(nu))) /
+        ((std::cosh(nu) - std::cos(nu)) * 5.0 * delta);
+    const std::complex<double> Z_bulk(1.0 / (5.0 * delta), 1.0 / (5.0 * delta));
+    CHECK(std::abs(surf_sigma_op.EvaluateScalar(0, omega) - 1i * omega / Z_bulk) <
+          1.0e-12 * std::abs(1i * omega / Z_bulk));
+    CHECK(std::abs(surf_sigma_op.EvaluateScalar(1, omega) - 1i * omega / Z_hfss) <
+          1.0e-12 * std::abs(1i * omega / Z_hfss));
+
+    // London: Z = iωμλ coth(h/2λ), for real and complex ω.
+    for (std::complex<double> w : {std::complex<double>(omega), omega * (1.0 + 0.1i)})
+    {
+      const auto Z = 1i * w * mu * lambda / std::tanh(0.5 * h / lambda);
+      CHECK(std::abs(surf_sigma_op.EvaluateScalar(2, w) - 1i * w / Z) <
+            1.0e-12 * std::abs(1i * w / Z));
+    }
+
+    // Mattis-Bardeen: Z = √(iωμ/σ(ω)) coth(kh/2).
+    const auto k = std::sqrt(1i * omega * mu * model(omega));
+    const auto Z = std::sqrt(1i * omega * mu / model(omega)) / std::tanh(0.5 * k * h);
+    CHECK(std::abs(surf_sigma_op.EvaluateScalar(3, omega) - 1i * omega / Z) <
+          1.0e-12 * std::abs(1i * omega / Z));
+  }
+  for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
+  {
+    CHECK(surf_sigma_op.IsActive(g));
   }
 }
 

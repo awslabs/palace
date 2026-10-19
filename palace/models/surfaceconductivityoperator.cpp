@@ -6,6 +6,7 @@
 #include <set>
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
@@ -80,12 +81,18 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
   boundaries.reserve(conductivity.size());
   for (const auto &data : conductivity)
   {
-    MFEM_VERIFY(data.sigma > 0.0 && data.mu_r > 0.0,
+    const bool dispersive = data.complex_sigma && data.complex_sigma->IsDispersive();
+    MFEM_VERIFY((data.sigma > 0.0 || data.lambda_L > 0.0 || dispersive) && data.mu_r > 0.0,
                 "Conductivity boundary has no conductivity or no "
                 "permeability defined!");
     MFEM_VERIFY(data.h >= 0.0, "Conductivity boundary should have non-negative thickness!");
     auto &bdr = boundaries.emplace_back();
     bdr.sigma = data.sigma;
+    bdr.lambda = data.lambda_L;
+    if (dispersive)
+    {
+      bdr.model.emplace(*data.complex_sigma);
+    }
     bdr.mu = data.mu_r;
     bdr.h = data.h;
     if (data.external)
@@ -123,8 +130,20 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const Units &units,
   {
     for (auto attr : bdr.attr_list)
     {
-      Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
-                 units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(bdr.sigma));
+      if (bdr.model)
+      {
+        Mpi::Print(" {:d}: {} model", attr, ToString(bdr.model->GetType()));
+      }
+      else
+      {
+        Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
+                   units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(bdr.sigma));
+      }
+      if (bdr.lambda > 0.0)
+      {
+        Mpi::Print(", λ = {:.3e} m",
+                   units.Dimensionalize<Units::ValueType::LENGTH>(bdr.lambda));
+      }
       if (bdr.h > 0.0)
       {
         Mpi::Print(", h = {:.3e} m", units.Dimensionalize<Units::ValueType::LENGTH>(bdr.h));
@@ -148,37 +167,31 @@ std::complex<double>
 SurfaceConductivityOperator::EvaluateScalarImpl(std::size_t group_idx,
                                                 std::complex<double> omega) const
 {
-  // If the provided conductor thickness is empty (zero), prescribe a surface impedance
-  // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
-  // modification which correctly produces the DC limit when h << δ. See the Ansys HFSS
-  // user manual section titled "Surface Impedance Boundary Condition for Metal Traces of
-  // Finite Thickness." The skin depth δ = √(2/(μσω)) and the cosh/cos/sinh/sin thickness
-  // terms are evaluated with std::complex, so this is the analytic continuation of the
-  // real-ω formula: for upper-half-plane λ → ω = -i·λ in the right half-plane, the
-  // principal branch of std::sqrt keeps Re(δ) > 0 (physical decaying sheet). For real ω
-  // (imag = 0) it reduces bit-for-bit to the original real-ω expression.
+  // Surface impedance Z = iωμ/k, k² = iωμσ: (1 + i)/(σδ) for a normal conductor, iωμλ for
+  // a London superconductor, and Z coth(kh/2) for a thickness h (Ansys HFSS user manual,
+  // "Surface Impedance Boundary Condition for Metal Traces of Finite Thickness"). The BC
+  // coefficient iω/Z = (k/μ) tanh(kh/2) is analytic in ω.
   MFEM_ASSERT(group_idx < boundaries.size(),
               "SurfaceConductivityOperator::EvaluateScalar: group_idx out of range!");
   const auto &bdr = boundaries[group_idx];
-  const std::complex<double> delta = std::sqrt(2.0 / (bdr.mu * bdr.sigma * omega));
-  const std::complex<double> base = 1.0 / (bdr.sigma * delta);
-  // Half-space limit: Z = (1 + i)·base.
-  std::complex<double> Z = std::complex<double>(1.0, 1.0) * base;
-  if (bdr.h > 0.0)
+  std::complex<double> k2;
+  if (bdr.model)
   {
-    // Finite-thickness HFSS correction. The real-ω implementation scales Re(Z) and Im(Z)
-    // by (sinh ν ± sin ν)/(cosh ν − cos ν) separately; the equivalent complex form is
-    //   Z = base·[(sinh ν + sin ν) + i·(sinh ν − sin ν)] / (cosh ν − cos ν),
-    // with ν = h/δ. cosh, cos, sinh, sin of complex ν are entire functions (no new branch
-    // points), and at real ω this matches the original two-ratio expression exactly.
-    const std::complex<double> nu = bdr.h / delta;
-    const std::complex<double> den = std::cosh(nu) - std::cos(nu);
-    const std::complex<double> shp = std::sinh(nu) + std::sin(nu);
-    const std::complex<double> shm = std::sinh(nu) - std::sin(nu);
-    Z = base * (shp + std::complex<double>(0.0, 1.0) * shm) / den;
+    MFEM_VERIFY(omega.imag() == 0.0,
+                "Dispersive surface conductivity is only evaluated at real frequencies!");
+    k2 = 1i * omega * bdr.mu * (*bdr.model)(omega.real());
   }
-  // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
-  return 1i * omega / Z;
+  else
+  {
+    // σ = σ1 - i/(ωμλ²).
+    k2 = 1i * omega * bdr.mu * bdr.sigma;
+    if (bdr.lambda > 0.0)
+    {
+      k2 += 1.0 / (bdr.lambda * bdr.lambda);
+    }
+  }
+  const auto k = std::sqrt(k2);
+  return (bdr.h > 0.0) ? k / bdr.mu * std::tanh(0.5 * k * bdr.h) : k / bdr.mu;
 }
 
 void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
@@ -187,7 +200,7 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
   // Real-ω stamping: per-group coefficient i·ω/Z(ω) split into (fbr, fbi).
   for (std::size_t g = 0; g < boundaries.size(); g++)
   {
-    if (std::abs(boundaries[g].sigma) > 0.0)
+    if (IsActive(g))
     {
       const std::complex<double> s =
           EvaluateScalarImpl(g, std::complex<double>(omega, 0.0));
@@ -207,7 +220,7 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
   // genuinely complex ω (analytic continuation, ω = -i·λ).
   for (std::size_t g = 0; g < boundaries.size(); g++)
   {
-    if (std::abs(boundaries[g].sigma) > 0.0)
+    if (IsActive(g))
     {
       const std::complex<double> s = EvaluateScalarImpl(g, omega);
       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
@@ -224,7 +237,7 @@ void SurfaceConductivityOperator::AddBoundaryMassBdrCoefficients(
   // ω-independent unit-coefficient boundary mass for group g (the operator that the scalar
   // i·ω/Z_g(ω) multiplies). Factored out so circuit synthesis can project it once and apply
   // the frequency dependence as a fitted scalar. No contribution for an inactive group.
-  if (g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0)
+  if (IsActive(g))
   {
     fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list), 1.0);
   }
