@@ -1,0 +1,95 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/waveport"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/superconducting_line_l10.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [2],  // SiO₂
+        "Permeability": 1.0,
+        "Permittivity": 4.2,
+        "LossTan": 1.0e-3
+      },
+      {
+        "Attributes": [3],  // Vacuum
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1]
+    },
+    "PMC":
+    {
+      "Attributes": [2]  // Symmetry plane
+    },
+    "Conductivity":
+    [
+      {
+        "Attributes": [3],  // Nb surfaces
+        "ComplexConductivity":
+        {
+          "Model": "MattisBardeen",
+          "NormalConductivity": 1.605e7,
+          "Temperature": 4.2,
+          "Gap": 1.343e-3
+        },
+        "Thickness": 0.2,
+        "External": true
+      }
+    ],
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Mode": 1,
+        "Target": 3.0,
+        "Excitation": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [6],
+        "Mode": 1,
+        "Target": 3.0
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Point",
+          "Freq": [10.0, 50.0, 100.0, 300.0, 500.0, 700.0, 1000.0]
+        }
+      ],
+      "Save": []
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 500,
+      "MGMaxLevels": 1  // Sparse direct preconditioner: the thin SiO₂ layer stretches the elements
+    }
+  }
+}

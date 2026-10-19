@@ -1695,6 +1695,33 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// superconducting_line boundary-mode cases: Mattis-Bardeen Nb films as domains and as
+// surface impedance boundaries.
+TEST_CASE("superconducting_line_mode", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-10;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"};
+  opts.skip_rowcount = true;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("superconducting_line", "superconducting_line_mode.json",
+                                  "mode", opts);
+}
+
+TEST_CASE("superconducting_line_mode_surface", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-10;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"};
+  opts.skip_rowcount = true;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("superconducting_line",
+                                  "superconducting_line_mode_surface.json", "mode_surface",
+                                  opts);
+}
+
 // 2D mode analysis from a 3D mesh: back to reltol=1e-4, atol still 1e-10.
 TEST_CASE("cpw_wave_2dmode", "[Serial][Parallel][GPU][Regression]")
 {

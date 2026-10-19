@@ -169,6 +169,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - Added the superconducting line example, which reproduces the propagation of
+    picosecond pulses on a Nb microstrip with the Mattis-Bardeen complex conductivity of the
+    films, meshed or as surface impedance boundaries.
   - Corrected the denominator of the finite-thickness surface impedance in the reference
     to `cosh ν - cos ν`, as implemented.
 

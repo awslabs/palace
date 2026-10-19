@@ -1,0 +1,72 @@
+{
+  "Problem":
+  {
+    "Type": "BoundaryMode",
+    "Verbose": 2,
+    "Output": "postpro/mode"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/superconducting_line.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Nb
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "ComplexConductivity":
+        {
+          "Model": "MattisBardeen",
+          "NormalConductivity": 1.605e7,
+          "Temperature": 4.2,
+          "Gap": 1.343e-3
+        }
+      },
+      {
+        "Attributes": [2],  // SiO₂
+        "Permeability": 1.0,
+        "Permittivity": 4.2,
+        "LossTan": 1.0e-3
+      },
+      {
+        "Attributes": [3],  // Vacuum
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1]
+    },
+    "PMC":
+    {
+      "Attributes": [2, 4]  // Symmetry plane, back face of the ground plane
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "BoundaryMode":
+    {
+      "Freq": 100.0,
+      "N": 1,
+      "Save": 1,
+      "Target": 3.0,
+      "Tol": 1.0e-10
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-12,
+      "MaxIts": 200
+    }
+  }
+}
