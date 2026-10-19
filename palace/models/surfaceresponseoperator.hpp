@@ -1646,7 +1646,13 @@ nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &porti
 // crack, outside both adjacent tets by delta / h ~ 1e-14 .. 1e-12 in barycentric terms,
 // beyond the 64-eps clip, while a line in an uncracked interior face is kept by both tets.
 // `in_face_intervals` are the same candidates' intersections with the face the line is
-// coplanar with (both ends within the point locator's 1e-9 barycentric acceptance) taken as
+// coplanar with (within the point locator's 1e-9 barycentric acceptance over the line's
+// portion inside the element's bounding box: a property of the line near the element, not
+// of its far ends, so that the two grazing faces through a mesh edge the line follows are
+// skipped as well and the interval is the clip by the transversal faces only, decision 862
+// / OI-LOC-HANG: the C4 iteration-11 abort of the Maxwell-at-scale pilot, where a 2.4-um
+// hat line following the trace edge over 20-nm elements of a nonconforming fan was cut by
+// those faces at ill-conditioned crossings and a 0.09-nm stretch stayed uncovered) taken as
 // not clipping: such a piece is split at their breakpoints (element-aligned quadrature)
 // and integrated once, each quadrature point then located by the rank / element rule of
 // DistributedPointLocator (the lowest candidate rank, its lowest element). The one-sided
@@ -1660,6 +1666,25 @@ nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &porti
 // untouched by this pass: a line without a true gap is bitwise the pre-existing
 // resolution. A piece neither pass covers still fails closed.
 constexpr double kMaxwellLineCrackUlps = 4096.0;
+
+// The bounding-box tolerance of the Maxwell line locator (ConfigureMaxwellLines): the
+// candidate search and the box portion of the coplanarity test above.
+double MaxwellLineBoxTolerance(double coordinate_scale);
+
+// The exact and in-face intersection intervals (line parameter in [0, 1]) of one segment
+// with the elements of the LOCAL mesh (ElementPointLocator::FindSegmentIntersections with
+// the box tolerance of `coordinate_scale`): the per-rank input of the resolution below,
+// exposed for the unit tests of the locator (decision 862).
+struct MaxwellSegmentIntersections
+{
+  std::vector<std::pair<double, double>> exact;
+  std::vector<std::pair<double, double>> in_face;
+};
+MaxwellSegmentIntersections
+FindMaxwellSegmentIntersections(mfem::ParMesh &mesh, int dimension,
+                                const std::array<double, 3> &begin,
+                                const std::array<double, 3> &end, double coordinate_scale);
+
 struct MaxwellLineCoverage
 {
   std::vector<std::pair<double, double>> intervals;
