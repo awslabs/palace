@@ -143,6 +143,17 @@ struct ElementBox
                          int dimension, double tolerance) const
   {
     double begin = 0.0, end = 1.0;
+    return SegmentParameterRange(p0, p1, dimension, tolerance, begin, end);
+  }
+
+  // The parameter range [begin, end] of the segment p0-p1 inside the box expanded by
+  // `tolerance` (false when the segment misses it): the slab clip of IntersectsSegment.
+  bool SegmentParameterRange(const std::array<double, 3> &p0,
+                             const std::array<double, 3> &p1, int dimension,
+                             double tolerance, double &begin, double &end) const
+  {
+    begin = 0.0;
+    end = 1.0;
     for (int d = 0; d < dimension; d++)
     {
       const double delta = p1[d] - p0[d];
@@ -561,10 +572,27 @@ public:
   // parameter intervals in [0, 1] (`intervals`: the segment clipped to each candidate's
   // barycentric half-spaces lambda_i >= -64 eps), and the intersections with the faces the
   // segment is COPLANAR with taken as not clipping (`in_face_intervals`: a face is coplanar
-  // when both ends lie within kLinearSimplexReferenceTolerance of its plane; the other
-  // faces clip as above; only candidates with such a face contribute). The second list
-  // covers a segment lying in a cracked internal-boundary face, which the exact clip
-  // rejects from both sides (decisions 829 / 831); ResolveMaxwellLineCoverage consults it
+  // when the segment lies within kLinearSimplexReferenceTolerance of its plane over the
+  // whole portion of the segment inside the candidate's bounding box expanded by
+  // `tolerance` (the barycentric coordinate is affine along the segment, so its two ends
+  // are tested); the other faces clip as above; only candidates with such a face
+  // contribute). The second list covers a segment lying in a cracked internal-boundary
+  // face, which the exact clip rejects from both sides (decisions 829 / 831), and a segment
+  // following a mesh edge, whose two faces through that edge are grazing (decision 862):
+  // the coplanarity is a property of the segment NEAR the element, not of its far ends. A
+  // whole-segment test (|lambda| at p0 and p1) misses a face the segment follows over the
+  // element when the line is 2.4 um long and the element 20 nm: the identification's
+  // rounding angle of ~1e-10 rad between the line and the mesh edge reads 1e-9 .. 1e-8 at
+  // the far end, the face then CLIPS the in-face interval at a crossing (-64 eps -
+  // lambda) / slope with a slope of that same 1e-9, i.e. an ill-conditioned cut anywhere
+  // within the element's footprint, and with the fan of elements around the edge
+  // nonconforming (coarse master faces / fine slave faces) every element's cut is
+  // independent and a stretch no element covers remains (the C4 iteration-11 abort of the
+  // Maxwell-at-scale pilot, OI-LOC-HANG). Tested over the element's own extent the grazing
+  // faces are coplanar (|lambda| ~ 1e-11 there) and skipped, so the in-face interval is
+  // the clip by the transversal faces only: the edge's extent, well conditioned. For a
+  // segment shorter than the element the box portion is the whole segment and the rule is
+  // the former one to the bit. ResolveMaxwellLineCoverage consults the in-face intervals
   // only where the exact intervals leave a true gap.
   void FindSegmentIntersections(const std::array<double, 3> &p0,
                                 const std::array<double, 3> &p1, double tolerance,
@@ -634,12 +662,27 @@ public:
       {
         intervals.emplace_back(begin, end);
       }
+      // The segment's portion inside the element's box (a candidate: never empty; the
+      // ends of the whole segment when the box contains it).
+      double box_begin = 0.0, box_end = 1.0;
+      if (!element_boxes[element].SegmentParameterRange(p0, p1, dimension, tolerance,
+                                                        box_begin, box_end))
+      {
+        box_begin = 0.0;
+        box_end = 1.0;
+      }
+      auto Lambda = [&](int i, double t)
+      {
+        return t <= 0.0   ? lambda_first[i]
+               : t >= 1.0 ? lambda_second[i]
+                          : lambda_first[i] + t * (lambda_second[i] - lambda_first[i]);
+      };
       std::array<bool, 4> coplanar = {false, false, false, false};
       bool any_coplanar = false;
       for (int i = 0; i < dimension + 1; i++)
       {
-        coplanar[i] = std::abs(lambda_first[i]) <= kLinearSimplexReferenceTolerance &&
-                      std::abs(lambda_second[i]) <= kLinearSimplexReferenceTolerance;
+        coplanar[i] = std::abs(Lambda(i, box_begin)) <= kLinearSimplexReferenceTolerance &&
+                      std::abs(Lambda(i, box_end)) <= kLinearSimplexReferenceTolerance;
         any_coplanar = any_coplanar || coplanar[i];
       }
       if (!any_coplanar)
@@ -25120,6 +25163,27 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 #endif
 }
 
+double MaxwellLineBoxTolerance(double coordinate_scale)
+{
+  return 1.0e-11 * coordinate_scale +
+         64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, coordinate_scale);
+}
+
+MaxwellSegmentIntersections
+FindMaxwellSegmentIntersections(mfem::ParMesh &mesh, int dimension,
+                                const std::array<double, 3> &begin,
+                                const std::array<double, 3> &end, double coordinate_scale)
+{
+  ElementPointLocator locator(mesh, dimension);
+  MFEM_VERIFY(locator.SupportsExactSegmentIntersections(),
+              "Exact Maxwell segment intersections require a linear simplex mesh!");
+  MaxwellSegmentIntersections intersections;
+  std::vector<int> candidates;
+  locator.FindSegmentIntersections(begin, end, MaxwellLineBoxTolerance(coordinate_scale),
+                                   intersections.exact, intersections.in_face, candidates);
+  return intersections;
+}
+
 MaxwellLineCoverage
 ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
                            std::vector<std::pair<double, double>> in_face_intervals,
@@ -25211,8 +25275,9 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
       continue;
     }
     // A true gap for the exact intersections: a line lying in a face no element covers (a
-    // cracked internal boundary). The piece is integrated from the in-face intervals, split
-    // at their breakpoints so every quadrature interval lies in one element.
+    // cracked internal boundary or a mesh edge the line follows). The piece is integrated
+    // from the in-face intervals, split at their breakpoints so every quadrature interval
+    // lies in one element.
     double in_face_length = 0.0;
     const auto face_breakpoints = Breakpoints(in_face_intervals, begin, end);
     for (std::size_t j = 0; j + 1 < face_breakpoints.size(); j++)
@@ -25297,9 +25362,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
                                  std::abs(bounds.max[d]), bounds.max[d] - bounds.min[d]});
   }
   Mpi::GlobalMax(1, &coordinate_scale, comm);
-  const double box_tolerance =
-      1.0e-11 * coordinate_scale +
-      64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, coordinate_scale);
+  const double box_tolerance = MaxwellLineBoxTolerance(coordinate_scale);
 
   int exact_intersections = locator.SupportsExactSegmentIntersections() ? 1 : 0;
   Mpi::GlobalMin(1, &exact_intersections, comm);
@@ -25599,8 +25662,9 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   {
     Mpi::Print(comm,
                " Integrated {:d} stretch{} of the Maxwell contour lines lying in a mesh "
-               "face no element intersection covers (a cracked internal boundary), {:.6e} "
-               "mesh units in total, each quadrature point owned by one rank / element\n",
+               "face no element intersection covers (a cracked internal boundary or a mesh "
+               "edge the line follows), {:.6e} mesh units in total, each quadrature point "
+               "owned by one rank / element\n",
                in_face_count, in_face_count > 1 ? "es" : "", in_face_length);
   }
 
