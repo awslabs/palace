@@ -48,6 +48,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the magnetic field energy and the error estimates of 2D simulations, which used
+    the out-of-plane magnetic flux density scaled by the element Jacobian determinant, so
+    that the magnetic energy was wrong by orders of magnitude. The mass integrator now
+    supports L2 spaces with the integral map type.
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

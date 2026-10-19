@@ -65,15 +65,26 @@ public:
   void AssembleQuadratureData() { assemble_q_data = true; }
 };
 
-// Integrator for a(u, v) = (Q u, v) for H1 elements (also for vector (H1)ᵈ spaces).
+// Integrator for a(u, v) = (Q u, v) for H1 and L2 elements (also for vector (H1)ᵈ
+// spaces).
 class MassIntegrator : public BilinearFormIntegrator
 {
+protected:
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
 };
 
 // Integrator for a(u, v) = (Q u, v) for vector finite elements.

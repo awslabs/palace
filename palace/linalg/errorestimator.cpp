@@ -497,6 +497,10 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
                      << ") for CurlFluxErrorEstimator!");
       }
       info.trial_ops = info.test_ops = ceed::EvalMode::Interp;
+      if (scalar_curl)
+      {
+        info.trial_ops |= ceed::EvalMode::Weight;
+      }
 
       CeedOperator sub_op;
       ceed::AssembleCeedElementErrorIntegrator(

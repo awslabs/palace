@@ -187,4 +187,59 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
   }
 }
 
+// In 2D, B = ∇ × E is a scalar in an L2 space with INTEGRAL map type (B = 1 / det(J) ̂B).
+// Its smooth H1 reconstruction is exact for a uniform B, so the estimate vanishes,
+// including on a graded mesh where det(J) varies between elements.
+TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const auto elem_type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  auto smesh = mfem::Mesh::MakeCartesian2D(4, 4, elem_type);
+  for (int i = 0; i < smesh.GetNV(); i++)
+  {
+    double *v = smesh.GetVertex(i);
+    v[0] = v[0] * v[0];
+    v[1] = 0.5 * v[1] * (1.0 + v[1]);
+  }
+  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.mu_r.s = {2.0, 2.0, 2.0};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::EIGENMODE, mesh);
+
+  mfem::ND_FECollection nd_fec(order, 2);
+  mfem::H1_FECollection h1_fec(order, 2);
+  mfem::L2_FECollection l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), l2_fespace(mesh, &l2_fec);
+  FiniteElementSpaceHierarchy h1_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &h1_fec));
+
+  // B = ∇ × E = 1 for E = (-y, x) / 2.
+  mfem::ParGridFunction E(&nd_fespace.Get());
+  mfem::VectorFunctionCoefficient E_coeff(2,
+                                          [](const mfem::Vector &x, mfem::Vector &v)
+                                          {
+                                            v(0) = -0.5 * x(1);
+                                            v(1) = 0.5 * x(0);
+                                          });
+  E.ProjectCoefficient(E_coeff);
+  Vector e(nd_fespace.GetTrueVSize()), b(l2_fespace.GetTrueVSize());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  E.GetTrueDofs(e);
+  l2_fespace.GetDiscreteInterpolator(nd_fespace).Mult(e, b);
+
+  CurlFluxErrorEstimator<Vector> estimator(mat_op, l2_fespace, h1_fespaces, 1.0e-14, 1000,
+                                           0, false);
+  ErrorIndicator indicator;
+  estimator.AddErrorIndicator(b, 1.0, indicator);
+  CHECK(indicator.Max(comm) < 1.0e-10);
+}
+
 }  // namespace palace

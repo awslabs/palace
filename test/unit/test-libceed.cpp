@@ -1158,6 +1158,65 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
   }
 
+  // Tests on L2 spaces of order p - 1, with VALUE (u = ̂u) and INTEGRAL (u = 1 / det(J) ̂u)
+  // map types, at MFEM's integration order for them. Boundary integrators do not apply.
+  SECTION("L2 Integrators")
+  {
+    mfem::H1_FECollection h1_fec(order, dim);
+    FiniteElementSpace h1_fespace(mesh, &h1_fec);
+    const bool add = !bdr_integ && coeff_type != CoeffType::Matrix;
+    SECTION("L2 Mass Integrator")
+    {
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = -2;
+      mesh.ResetCeedObjects();
+      for (const int map_type : {mfem::FiniteElement::VALUE, mfem::FiniteElement::INTEGRAL})
+      {
+        INFO("Map type: " << map_type);
+        mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                                     map_type);
+        FiniteElementSpace l2_fespace(mesh, &l2_fec);
+        BilinearForm a_test(l2_fespace);
+        mfem::BilinearForm a_ref(&l2_fespace.Get());
+        if (add && coeff_type == CoeffType::Const)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+        }
+        else if (add)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                               Q_ref);
+        }
+        TestCeedOperator(a_test, a_ref);
+      }
+    }
+    SECTION("Mixed L2-H1 Mass Integrator")
+    {
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -1;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = -1;
+      mesh.ResetCeedObjects();
+      for (const int map_type : {mfem::FiniteElement::VALUE, mfem::FiniteElement::INTEGRAL})
+      {
+        INFO("Map type: " << map_type);
+        mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                                     map_type);
+        FiniteElementSpace l2_fespace(mesh, &l2_fec);
+        BilinearForm a_test(l2_fespace, h1_fespace);
+        mfem::MixedBilinearForm a_ref(&l2_fespace.Get(), &h1_fespace.Get());
+        if (add && coeff_type == CoeffType::Const)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+        }
+        else if (add)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                               Q_ref);
+        }
+        TestCeedOperator(a_test, a_ref);
+      }
+    }
+  }
+
   // Tests on mixed H1-(H1)ᵈ spaces.
   SECTION("Mixed H1-Vector H1 Integrators")
   {
