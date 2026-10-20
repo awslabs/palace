@@ -607,8 +607,95 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
             std::to_string(gathered.size()) + " gathered on the root");
 
   // Collective preliminaries of the perimeter classification (every rank takes part in
-  // the gathers inside; the trees are used on the root only): the dielectric-interface
-  // support trees and the simulation-cut (truncation) surfaces.
+  // the gathers inside; the trees are used on the root only): the junction faces, the
+  // dielectric-interface support trees and the simulation-cut (truncation) surfaces.
+  //
+  // A JUNCTION FACE (decision 876 (5); DESIGN v3h/maxwell-ports A1.4 as fixed by decision
+  // 875) is the face of a purely reactive LumpedPort (R == 0 and L or C != 0: a chip's
+  // junction L_J / C_J) whose extent (the bounding-box diagonal of the attribute's faces)
+  // is below the smallest configured EdgeDistances. The ES reference and the ES same-mesh
+  // comparator model that face as the open gap between the junction leads (the comparator
+  // lists it in its SA interface attributes), so the identification treats it like that
+  // gap: it is neither a port cut nor a truncation, and its faces join the support tree of
+  // the SA interface whose nonmetal sheet it borders, so the bordering lead-end segments
+  // stay physical SA edges and the Maxwell run keys the same perimeter as the ES. The port
+  // keeps its boundary condition, drive and port quantities; its area is not an interface
+  // unless listed. A reactive port at or above the bound and every R > 0 port stay cuts.
+  std::set<int> junction_attributes;
+  {
+    double smallest_edge_distance = std::numeric_limits<double>::infinity();
+    for (const auto &[index, dielectric] : boundaries.postpro.dielectric)
+    {
+      (void)index;
+      for (const double distance : dielectric.edge_distances)
+      {
+        smallest_edge_distance = std::min(smallest_edge_distance, distance);
+      }
+    }
+    for (const auto &[index, port] : boundaries.lumpedport)
+    {
+      (void)index;
+      const bool reactive =
+          port.R == 0.0 && port.Rs == 0.0 &&
+          (port.L != 0.0 || port.C != 0.0 || port.Ls != 0.0 || port.Cs != 0.0);
+      if (!reactive || !std::isfinite(smallest_edge_distance))
+      {
+        continue;
+      }
+      for (const auto &element : port.elements)
+      {
+        for (const int attribute : element.attributes)
+        {
+          if (attribute_conditions.find(attribute) != attribute_conditions.end())
+          {
+            continue;  // a metal attribute is metal, not a port face
+          }
+          const auto segments = mesh::GetBoundaryElementEdgeSegments(
+              mesh, mesh::BdrAttrToMarker(mesh, std::vector<int>{attribute}, true), false);
+          if (segments.empty())
+          {
+            continue;
+          }
+          std::array<double, 3> box_min, box_max;
+          box_min.fill(std::numeric_limits<double>::infinity());
+          box_max.fill(-std::numeric_limits<double>::infinity());
+          for (const auto &segment : segments)
+          {
+            for (const auto &point : {segment.p0, segment.p1})
+            {
+              for (int d = 0; d < 3; d++)
+              {
+                box_min[d] = std::min(box_min[d], point[d]);
+                box_max[d] = std::max(box_max[d], point[d]);
+              }
+            }
+          }
+          double extent_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            extent_squared += (box_max[d] - box_min[d]) * (box_max[d] - box_min[d]);
+          }
+          if (std::sqrt(extent_squared) < smallest_edge_distance)
+          {
+            junction_attributes.insert(attribute);
+          }
+        }
+      }
+    }
+    if (!junction_attributes.empty())
+    {
+      std::string attributes;
+      for (const int attribute : junction_attributes)
+      {
+        attributes += (attributes.empty() ? "" : ", ") + std::to_string(attribute);
+      }
+      StageLine(std::to_string(junction_attributes.size()) +
+                " junction-class reactive port faces treated as the open gap (attributes " +
+                attributes + "; extent below the smallest EdgeDistances " +
+                std::to_string(smallest_edge_distance) + " nondimensional)");
+    }
+  }
+
   // An interface defined on metal attributes (MS / MA on the metal itself) supports every
   // perimeter segment of those attributes; an interface on nonmetal attributes (the SA
   // sheet) supports the segments coincident with its own perimeter.
@@ -653,6 +740,41 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
         tree_it->second = BuildSupportTree(mesh, nonmetal, true);
       }
       support.tree = tree_it->second;
+      if (dielectric.type == InterfaceDielectric::SA && !junction_attributes.empty() &&
+          support.tree)
+      {
+        // The junction faces sharing an edge with this SA sheet (an element edge of the
+        // face on the sheet's perimeter) join the sheet: its perimeter becomes the open
+        // gap's, the lead-end segments between the metal and the junction face included.
+        std::vector<int> with_junctions = nonmetal;
+        for (const int attribute : junction_attributes)
+        {
+          if (std::find(nonmetal.begin(), nonmetal.end(), attribute) != nonmetal.end())
+          {
+            continue;
+          }
+          const auto segments = mesh::GetBoundaryElementEdgeSegments(
+              mesh, mesh::BdrAttrToMarker(mesh, std::vector<int>{attribute}, true), false);
+          if (std::any_of(
+                  segments.begin(), segments.end(),
+                  [&](const mesh::BoundaryEdgeSegment &segment)
+                  { return IsCoincident(segment, *support.tree, tolerance_squared); }))
+          {
+            with_junctions.push_back(attribute);
+          }
+        }
+        if (with_junctions.size() > nonmetal.size())
+        {
+          std::sort(with_junctions.begin(), with_junctions.end());
+          auto [junction_tree_it, junction_inserted] =
+              interface_support_trees.try_emplace(with_junctions);
+          if (junction_inserted)
+          {
+            junction_tree_it->second = BuildSupportTree(mesh, with_junctions, true);
+          }
+          support.tree = junction_tree_it->second;
+        }
+      }
     }
     if (support.tree || !support.metal_attributes.empty())
     {
@@ -689,6 +811,10 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       {
         continue;  // a metal attribute is metal, not a port face
       }
+      if (junction_attributes.find(attribute) != junction_attributes.end())
+      {
+        continue;  // a junction face is the open gap, not a port cut
+      }
       auto tree = BuildSupportTree(mesh, std::vector<int>{attribute}, false, false);
       if (tree)
       {
@@ -709,7 +835,8 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   {
     if (!boundary_attribute_present[attribute - 1] ||
         attribute_conditions.find(attribute) != attribute_conditions.end() ||
-        interface_attributes.find(attribute) != interface_attributes.end())
+        interface_attributes.find(attribute) != interface_attributes.end() ||
+        junction_attributes.find(attribute) != junction_attributes.end())
     {
       continue;
     }
