@@ -114,6 +114,9 @@ private:
   mfem::Array<int> port_dbc_tdof_list;
   double mu_eps_max;
 
+  // Shift-and-invert target of the mode solve at ω, below −k_n² of every mode.
+  double ModeShift(double omega) const;
+
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.
   std::unique_ptr<MaterialOperator> port_mat_op;

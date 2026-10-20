@@ -18,6 +18,7 @@
 #include "fem/bilinearform.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "test-helpers.hpp"
@@ -1089,6 +1090,70 @@ TEST_CASE("MaterialOperator wave-number bound is global", "[materialoperator][Pa
   Mpi::GlobalMax(1, &bound_max, comm);
   CHECK(bound_min == Approx(9.0));
   CHECK(bound_max == Approx(9.0));
+}
+
+TEST_CASE("MaterialOperator dispersive wave-number bound", "[materialoperator][Serial]")
+{
+  // A Debye term χ(s) = Δε/(1 + sτ) raises Re ε above ε∞ to ε∞ + Δε/(1 + ω²τ²), which
+  // bounds the wave number of a port mode in the material at ω.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+
+  const double eps_inf = 2.0, delta = 3.0, tau = 0.5;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.mu_r.s = {2.0, 2.0, 2.0};
+  material.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  material.permittivity_pole_terms.push_back({-1.0 / tau, delta / tau});
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
+
+  CHECK(mat_op.GetMaxMuEpsilon() == Approx(2.0 * eps_inf));
+  for (double omega : {0.1, 1.0, 10.0})
+  {
+    CAPTURE(omega);
+    CHECK(mat_op.GetFrequencyDependentMaxMuEpsilon(omega) ==
+          Approx(2.0 * (eps_inf + delta / (1.0 + omega * omega * tau * tau))));
+  }
+}
+
+TEST_CASE("Absorbing boundaries next to dispersive materials",
+          "[materialoperator][Serial][Parallel]")
+{
+  // Two elements along x: a dispersive one at x < 1 and vacuum at x > 1. The absorbing
+  // boundary condition uses the neighboring material's high-frequency properties, so it is
+  // rejected on the face x = 0 (attribute 5) and accepted on x = 2 (attribute 3).
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(i, center);
+    serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+
+  config::MaterialData dispersive, vacuum;
+  dispersive.attributes = {1};
+  dispersive.permittivity_pole_terms.push_back({-1.0, 1.0});
+  vacuum.attributes = {2};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({dispersive, vacuum}, periodic, ProblemType::DRIVEN, palace_mesh);
+
+  CHECK(mat_op.HasFrequencyDependentPermittivityOnBoundary(mfem::Array<int>({5})));
+  CHECK_FALSE(mat_op.HasFrequencyDependentPermittivityOnBoundary(mfem::Array<int>({3})));
+  config::FarfieldBoundaryData farfield;
+  farfield.attributes = {5};
+  CHECK_THROWS_WITH(
+      FarfieldBoundaryOperator(farfield, ProblemType::DRIVEN, mat_op, palace_mesh.Get()),
+      Catch::Matchers::ContainsSubstring("Absorbing boundaries cannot neighbor"));
+  farfield.attributes = {3};
+  CHECK_NOTHROW(
+      FarfieldBoundaryOperator(farfield, ProblemType::DRIVEN, mat_op, palace_mesh.Get()));
 }
 
 TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")

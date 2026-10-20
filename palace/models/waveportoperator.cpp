@@ -1054,6 +1054,14 @@ void WavePortData::SetUpExcitationVoltagePath()
   }
 }
 
+double WavePortData::ModeShift(double omega) const
+{
+  // A dispersive material on the port exceeds its high-frequency permittivity below its
+  // resonances, so the bound on k_n²/ω² is taken at ω.
+  return -omega * omega *
+         std::max(mu_eps_max, 1.1 * port_mat_op->GetFrequencyDependentMaxMuEpsilon(omega));
+}
+
 void WavePortData::Initialize(double omega)
 {
   if (omega == omega0)
@@ -1063,7 +1071,7 @@ void WavePortData::Initialize(double omega)
 
   // Solve the generalized eigenvalue problem for the desired wave port mode using the
   // ModeEigenSolver. Frequency-independent matrices were assembled in the constructor.
-  const double sigma = -omega * omega * mu_eps_max;
+  const double sigma = ModeShift(omega);
   std::complex<double> lambda;
   {
     BlockTimer bt(Timer::WAVE_PORT_SOLVE);
@@ -1265,7 +1273,7 @@ const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<dou
     return mode_cache;
   }
   const double omega_ref = omega.real();
-  const double sigma = -omega_ref * omega_ref * mu_eps_max;
+  const double sigma = ModeShift(omega_ref);
   const bool has_solver = (port_comm != MPI_COMM_NULL);
   std::complex<double> lambda;
   ComplexVector e_tmp;

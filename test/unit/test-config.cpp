@@ -1349,23 +1349,14 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
     config["Boundaries"]["LumpedPort"] = json::array({port});
     CHECK_NOTHROW(IoData(config, false));
   }
-  SECTION("Numeric wave ports are rejected")
+  SECTION("Numeric wave ports and absorbing boundaries are accepted")
   {
+    // Absorbing boundaries are checked against the neighboring material on the mesh.
     auto config = MakeConfig();
     config["Boundaries"]["WavePort"] = {{{"Index", 1}, {"Attributes", {2}}}};
-    CheckRejected(config);
-  }
-  SECTION("Numeric wave port PEC boundaries are rejected")
-  {
-    auto config = MakeConfig();
-    config["Boundaries"]["WavePortPEC"] = {{"Attributes", {2}}};
-    CheckRejected(config);
-  }
-  SECTION("Absorbing boundaries are rejected")
-  {
-    auto config = MakeConfig();
-    config["Boundaries"]["Absorbing"] = {{"Attributes", {2}}};
-    CheckRejected(config);
+    config["Boundaries"]["WavePortPEC"] = {{"Attributes", {3}}};
+    config["Boundaries"]["Absorbing"] = {{"Attributes", {4}}};
+    CHECK_NOTHROW(IoData(config, false));
   }
   SECTION("Floquet ports are rejected")
   {

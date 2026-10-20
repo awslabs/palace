@@ -35,7 +35,8 @@ enum class CoefficientType
   OMEGA_SQUARED,
   SHIFT,
   SURFACE_CONDUCTIVITY,
-  RATIONAL_IMPEDANCE
+  RATIONAL_IMPEDANCE,
+  FREQUENCY_DEPENDENT_PERMITTIVITY
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -61,6 +62,7 @@ struct OperatorComponent
 class ModeOperatorModel
 {
 private:
+  const MaterialOperator &mat_op;
   SurfaceConductivityOperator &surf_sigma_op;
   SurfaceRationalImpedanceOperator &surf_rz_op;
   std::vector<OperatorComponent> components;

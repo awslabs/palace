@@ -335,13 +335,6 @@ void IoData::CheckConfiguration()
                     problem.type == ProblemType::EIGENMODE,
                 "Frequency-dependent material Permittivity is only supported for Driven "
                 "and Eigenmode simulations!");
-    MFEM_VERIFY(boundaries.waveport.empty() && boundaries.auxpec.empty(),
-                "Frequency-dependent material Permittivity does not support numeric "
-                "WavePort or WavePortPEC boundary conditions!");
-    MFEM_VERIFY(boundaries.farfield.empty(),
-                "Frequency-dependent material Permittivity does not support Absorbing "
-                "boundary conditions because they use the high-frequency material "
-                "properties!");
     MFEM_VERIFY(boundaries.floquetport.empty(),
                 "Frequency-dependent material Permittivity does not support FloquetPort "
                 "boundary conditions because Floquet ports use the high-frequency material "

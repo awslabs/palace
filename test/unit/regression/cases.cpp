@@ -1220,6 +1220,23 @@ TEST_CASE("cylinder_driven_wave_tm_sweep", "[Serial][Parallel][GPU][Regression]"
                                   "driven_wave_tm_sweep", opts);
 }
 
+// TM01 port of the guide filled with a lossless Lorentz medium, whose Re ε exceeds the
+// high-frequency value by 50%. The reference S-parameters are from the constant
+// permittivity ε(ω) solved at each frequency. TE21 propagates below TM01 above 3.02 GHz.
+// Both modes reflect all the power, so |S11| is round-off around 0 dB and the phase is
+// compared; the energy and error indicators use ε∞ and are not compared.
+TEST_CASE("cylinder_driven_wave_tm_dispersive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"(dB)"};
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_dispersive.json",
+                                  "driven_wave_tm_dispersive", opts);
+}
+
 // Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
 // 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
 // TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
