@@ -594,6 +594,29 @@ double MaterialOperator::GetMaxMuEpsilon() const
   return mu_eps_max;
 }
 
+std::complex<double>
+MaterialOperator::EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
+                                                         std::complex<double> s) const
+{
+  MFEM_VERIFY(s != 0.0, "Frequency-dependent permittivity evaluation requires s != 0!");
+  return frequency_dependent_permittivity_eps_inf.at(material_idx) +
+         EvaluateFrequencyDependentPermittivityA2(material_idx, s) / (s * s);
+}
+
+int MaterialOperator::GetFrequencyDependentPermittivityMaterial(int attr) const
+{
+  for (std::size_t i = 0; i < frequency_dependent_permittivity_attributes.size(); i++)
+  {
+    const auto &attrs = frequency_dependent_permittivity_attributes[i];
+    if (HasFrequencyDependentPermittivityA2(i) &&
+        std::find(attrs.begin(), attrs.end(), attr) != attrs.end())
+    {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
 double MaterialOperator::GetFrequencyDependentMaxMuEpsilon(double omega) const
 {
   // Re ε(ω) = ε∞ + Re χ(iω), where the nonlinear system term is s² χ(s) at s = iω.
@@ -603,9 +626,9 @@ double MaterialOperator::GetFrequencyDependentMaxMuEpsilon(double omega) const
     if (frequency_dependent_permittivity_support[i] &&
         HasFrequencyDependentPermittivityA2(i))
     {
-      const std::complex<double> s(0.0, omega);
-      const double eps = frequency_dependent_permittivity_eps_inf[i] +
-                         (EvaluateFrequencyDependentPermittivityA2(i, s) / (s * s)).real();
+      const double eps =
+          EvaluateFrequencyDependentPermittivity(i, std::complex<double>(0.0, omega))
+              .real();
       mu_eps_max = std::max(mu_eps_max, frequency_dependent_permittivity_mu_max[i] * eps);
     }
   }

@@ -239,6 +239,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     {
       c_local = mat_op.GetLightSpeedMin(port_vol_attr);
       muinv_local = mat_op.GetInvPermeability(port_vol_attr)(0, 0);
+      port_material = mat_op.GetFrequencyDependentPermittivityMaterial(port_vol_attr);
     }
 
     // Broadcast from the rank that found a valid attribute.
@@ -248,9 +249,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
                 "Could not find volume element adjacent to Floquet port!");
     MPI_Bcast(&c_local, 1, MPI_DOUBLE, found_rank, comm);
     MPI_Bcast(&muinv_local, 1, MPI_DOUBLE, found_rank, comm);
+    MPI_Bcast(&port_material, 1, MPI_INT, found_rank, comm);
 
     MFEM_VERIFY(c_local > 0.0, "Invalid material speed of light at Floquet port!");
-    mu_eps_port = 1.0 / (c_local * c_local);
+    mu_eps_port = mu_eps_port_inf = 1.0 / (c_local * c_local);
     mu_r_port = 1.0 / muinv_local;
   }
 
@@ -620,6 +622,15 @@ void FloquetPortData::Initialize(double omega)
     return;
   }
   omega0 = omega;
+
+  // A frequency-dependent port medium uses Re ε(ω), as the port does a loss tangent.
+  mu_eps_port = (port_material < 0)
+                    ? mu_eps_port_inf
+                    : mu_r_port * mat_op
+                                      .EvaluateFrequencyDependentPermittivity(
+                                          static_cast<std::size_t>(port_material),
+                                          std::complex<double>(0.0, omega))
+                                      .real();
 
   // Compute k_F at this frequency. When frequency scaling is active, the stored k_F is
   // k₀ = k_F/ω (frequency-independent), so k_F(ω) = ω × k₀. Without scaling, k_F is the

@@ -1367,19 +1367,14 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
     config["Boundaries"]["Absorbing"] = {{"Attributes", {4}}};
     CHECK_NOTHROW(IoData(config, false));
   }
-  SECTION("Floquet ports are rejected")
+  SECTION("Floquet ports and nonzero periodic Floquet wave vectors are accepted")
   {
     auto config = MakeConfig();
-    config["Boundaries"]["FloquetPort"] = {{{"Index", 1}, {"Attributes", {2}}}};
-    CheckRejected(config);
-  }
-  SECTION("Nonzero periodic Floquet wave vectors are rejected")
-  {
-    auto config = MakeConfig();
+    config["Boundaries"]["FloquetPort"] = {{{"Index", 1}, {"Attributes", {4}}}};
     config["Boundaries"]["Periodic"] = {
         {"FloquetWaveVector", {0.0, 0.1, 0.0}},
         {"BoundaryPairs", {{{"DonorAttributes", {2}}, {"ReceiverAttributes", {3}}}}}};
-    CheckRejected(config);
+    CHECK_NOTHROW(IoData(config, false));
   }
 }
 

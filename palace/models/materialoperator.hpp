@@ -213,6 +213,12 @@ public:
   }
   std::complex<double> EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
                                                               std::complex<double> s) const;
+  // The relative permittivity ε∞ + χ(s) of a frequency-dependent material, at s ≠ 0.
+  std::complex<double> EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
+                                                              std::complex<double> s) const;
+  // The frequency-dependent material with a nonlinear term on the given domain attribute,
+  // or -1 if there is none.
+  int GetFrequencyDependentPermittivityMaterial(int attr) const;
   bool HasDjordjevicSarkarPermittivity(std::size_t material_idx) const
   {
     return !djordjevic_sarkar_terms.at(material_idx).empty();

@@ -336,15 +336,6 @@ void IoData::CheckConfiguration()
     MFEM_VERIFY(problem.type != ProblemType::TRANSIENT,
                 "Frequency-dependent material Permittivity is not supported for Transient "
                 "simulations!");
-    MFEM_VERIFY(boundaries.floquetport.empty(),
-                "Frequency-dependent material Permittivity does not support FloquetPort "
-                "boundary conditions because Floquet ports use the high-frequency material "
-                "properties!");
-    MFEM_VERIFY(std::all_of(boundaries.periodic.wave_vector.begin(),
-                            boundaries.periodic.wave_vector.end(),
-                            [](double x) { return x == 0.0; }),
-                "Frequency-dependent material Permittivity does not support a nonzero "
-                "Periodic.FloquetWaveVector!");
   }
 
   // Check that the provided domain and boundary objects are all supported by the requested
