@@ -14,16 +14,16 @@
   {
     "Materials":
     [
-      { "Attributes": [1], "Permeability": 1.0 }
+      { "Attributes": [1, 2, 3], "Permeability": 1.0 }  // Air, gap, and beyond the ends
     ],
     "Postprocessing":
     {
-      "Energy": [ { "Index": 1, "Attributes": [1] } ]
+      "Energy": [ { "Index": 1, "Attributes": [1, 2, 3] } ]
     }
   },
   "Boundaries":
   {
-    "PEC": { "Attributes": [2, 3] },  // Farfield + conductor: geometric inductance (λ → 0 limit)
+    "PEC": { "Attributes": [2, 3, 5, 6] },  // Farfield, plates, and walls: λ → 0 limit
     "SurfaceCurrent":
     [
       { "Index": 1, "Attributes": [4], "Direction": [1.0, 0.0, 0.0] }  // Terminal patch on strip

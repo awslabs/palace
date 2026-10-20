@@ -1626,6 +1626,36 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_lumped_eigen.json", "lumped_eigen", opts);
 }
 
+// The microstrip loop read as a line on a Djordjevic-Sarkar FR4 substrate (Re ε ≈ 4.3,
+// tan δ ≈ 0.02) between wave ports, in an air box whose absorbing faces neighbor only air:
+// the air beyond the ends has no material, so it is removed and the end planes become the
+// ports. The reference S-parameters are from the constant permittivity ε(ω), with its loss
+// tangent, solved at each frequency; the energy and error indicators use ε∞ and are not
+// compared. The port modes see the box faces as WavePortPEC here, and as absorbing in the
+// adaptive case.
+TEST_CASE("microstrip_wave_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_wave_pec.json", "wave_pec",
+                                  opts);
+}
+
+TEST_CASE("microstrip_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_wave_adaptive.json",
+                                  "wave_adaptive", opts);
+}
+
 TEST_CASE("cpw_wave_eigen", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

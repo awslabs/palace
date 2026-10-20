@@ -1,0 +1,91 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/wave_pec"
+  },
+  "Model":
+  {
+    // The magnetostatic cases' loop read in units of 0.1 mm: a 10 mm line, 4 mm wide, on
+    // a 0.2 mm substrate. The air beyond the ends (attribute 3) has no material, so it is
+    // removed and the end planes become the ports.
+    "Mesh": "mesh/microstrip.msh",
+    "L0": 1.0e-4
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1]  // Air around the line
+      },
+      {
+        "Attributes": [2],  // FR4 between the plates
+        "Permittivity":
+        {
+          "HighFrequency": 4.0,
+          "Terms":
+          [
+            {
+              // Re ε ≈ 4.3 and tan δ ≈ 0.02 over the sweep
+              "Type": "DjordjevicSarkar",
+              "Strength": 0.056,
+              "LowerFrequency": 1.0e-3,  // GHz
+              "UpperFrequency": 1.0e3    // GHz
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [3, 4]  // Plates and terminal
+    },
+    "Absorbing":
+    {
+      "Attributes": [2],  // Box faces, which neighbor only air
+      "Order": 1
+    },
+    "WavePortPEC":
+    {
+      "Attributes": [2]  // The port modes see PEC box faces instead
+    },
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5, 7],  // End plane at x = -5 mm
+        "Mode": 1,
+        "Excitation": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [6, 8],  // End plane at x = +5 mm
+        "Mode": 1
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 2.0,   // GHz
+      "MaxFreq": 26.0,  // GHz
+      "FreqStep": 8.0,  // GHz
+      "SaveStep": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 200
+    }
+  }
+}
