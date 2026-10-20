@@ -185,8 +185,10 @@ private:
   double port_area;
 
   // Material properties at the port.
-  double mu_eps_port;  // mu_r * eps_r (for propagation constant)
-  double mu_r_port;    // mu_r (for DtN coefficient and excitation)
+  double mu_eps_port;      // mu_r * eps_r (for propagation constant), at omega0
+  double mu_eps_port_inf;  // mu_r * eps_r with the high-frequency permittivity
+  int port_material = -1;  // Frequency-dependent material of the port medium, or -1
+  double mu_r_port;        // mu_r (for DtN coefficient and excitation)
 
 private:
   // Diffraction order limits.

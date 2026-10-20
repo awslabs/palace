@@ -1444,6 +1444,21 @@ TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// floquet_wave filled with a lossless Lorentz medium, at oblique incidence. The reference
+// wave-port S-parameters, including the coupling from the Floquet port, are from the
+// constant permittivity ε(ω) solved at each frequency. The Floquet S-parameters of the
+// orders that are not excited are round-off below -170 dB and are not compared.
+TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.excluded_files = {"port-floquet-S.csv", "domain-E.csv", "error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("floquet_wave", "floquet_wave_dispersive.json",
+                                  "floquet_wave_dispersive", opts);
+}
+
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
