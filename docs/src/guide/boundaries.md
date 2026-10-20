@@ -88,8 +88,8 @@ reference.
 
 On an interior boundary (a conducting sheet), the boundary condition represents the
 conductor surfaces on both sides of the sheet, each with the surface impedance of the
-conductor, as independent surfaces by default (see
-[Interior boundaries](#Interior-boundaries)). For a sheet on the exterior of the
+conductor: as a single sheet by default, or as independent surfaces with `"Crack": true`
+(see [Interior boundaries](#Interior-boundaries)). For a sheet on the exterior of the
 computational domain (only one conductor surface), the
 [`"External"`](../config/reference.md#config-boundaries-conductivity) flag should be set
 for the thickness correction.
@@ -97,8 +97,8 @@ for the thickness correction.
 ## Interior boundaries
 
 Boundary conditions can also be specified on interior boundaries of the computational
-domain, that is boundary elements with domain elements on both sides (wave ports and Floquet
-ports are always exterior boundaries). Boundary conditions which apply to either side
+domain, that is, boundary elements with domain elements on both sides (wave ports and
+Floquet ports are always exterior boundaries). Boundary conditions which apply to each side
 separately, and would otherwise have no effect on an interior boundary, are imposed by
 duplicating the mesh vertices ("cracking" the mesh) along the boundary, such that the
 elements on the two sides are no longer coupled:
@@ -112,7 +112,8 @@ charge:
     [`"Ground"`](../config/reference.md#config-boundaries-ground)) and
     [`"Terminal"`](../config/reference.md#config-boundaries-terminal) metal boundaries
     are infinitely thin perfect conductors. The fields on the two sides are not coupled
-    through the sheet, since the tangential electric field vanishes on it.
+    through the sheet, since the tangential electric field vanishes on it. The mesh is not
+    cracked along them by default.
 
   - [`"Superconductor"`](../config/reference.md#config-boundaries-superconductor)
     boundaries, and the films of
@@ -123,8 +124,8 @@ charge:
 
   - [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport) and
     [`"SurfaceCurrent"`](../config/reference.md#config-boundaries-surfacecurrent)
-    boundaries are sheets carrying the port or source surface current. The mesh is never
-    cracked along them.
+    boundaries are sheets carrying the port or source surface current. The mesh is not
+    cracked along them by default (and never along lumped ports).
 
   - [`"Impedance"`](../config/reference.md#config-boundaries-impedance),
     [`"RationalImpedance"`](../config/reference.md#config-boundaries-rationalimpedance),
@@ -150,7 +151,7 @@ charge:
     The default is `false`. For conductivity boundaries, the two models give the same result
     when the currents on the two faces of the sheet are equal, and differ when they are not:
     for a conductor much thicker than its skin depth with fields on one side only, for
-    example, the uncracked sheet spreads the current over the conductance of both faces,
+    example, the uncracked sheet shares the current equally between its two faces,
     which halves the conductor loss. Use `"Crack": true` for such conductors.
 
 The fields on the two sides of an uncracked sheet are generally discontinuous: the normal
@@ -165,14 +166,15 @@ cracked mesh.
 
 For postprocessing on uncracked sheets:
 
-  - [Interface dielectric](postprocessing.md#Boundary-postprocessing) energies are the same as
-    on a cracked mesh. Types `"MA"` and `"MS"` use the fields on the air side and on the
-    substrate side of a metal sheet, respectively, and type `"Default"` sums the
+  - [Interface dielectric](postprocessing.md#Boundary-postprocessing) energies are the
+    same as on a cracked mesh. Types `"MA"` and `"MS"` use the fields on the air side and on
+    the substrate side of a metal sheet, respectively, and type `"Default"` sums the
     contributions of both faces, each with its own dielectric layer. On a sheet with the
     same material on both sides, such as an air bridge, the `"MA"` (or `"MS"`) energies of
-    both faces are summed as well. These are models of a metal film: for a dielectric layer
-    on a substrate-air interface, with or without a sheet capacitance, use the `"SA"` type,
-    which evaluates the fields on the substrate and air sides separately.
+    both faces are summed as well. The `"MA"`, `"MS"`, and `"Default"` types model a metal
+    film: for a dielectric layer on a substrate-air interface, with or without a sheet
+    capacitance, use the `"SA"` type, which evaluates the fields on the substrate and air
+    sides separately.
   - [Surface flux](postprocessing.md#Boundary-postprocessing) postprocessing with
     `"TwoSided": true` gives the total flux through both faces of the sheet, as on a cracked
     mesh, for example the charge on a metal sheet. With `"TwoSided": false`, it gives the

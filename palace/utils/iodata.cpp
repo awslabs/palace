@@ -292,17 +292,19 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 void IoData::CheckConfiguration()
 {
   // Mesh cracking of interior boundaries is no longer required for error estimation, and is
-  // selected per boundary with the "Crack" option of impedance and conductivity boundaries.
+  // selected per boundary with the "Crack" option of impedance, rational impedance, and
+  // conductivity boundaries.
   if (model.crack_bdr_elements.has_value())
   {
     Mpi::Warning(
         "config[\"Model\"][\"CrackInternalBoundaryElements\"] is deprecated and "
         "will be removed in a future release! By default, the mesh is only cracked "
         "along interior boundaries with PMC or absorbing boundary conditions, and "
-        "along impedance and conductivity boundaries with \"Crack\": true.\n");
+        "along impedance, rational impedance, and conductivity boundaries with "
+        "\"Crack\": true.\n");
     // The global option overrides the per-boundary choice. The legacy behavior also cracks
-    // impedance and conductivity boundaries with the default "Crack": false, while
-    // disabling mesh cracking contradicts the boundaries which request it.
+    // impedance, rational impedance, and conductivity boundaries with the default "Crack":
+    // false, while disabling mesh cracking contradicts the boundaries which request it.
     if (*model.crack_bdr_elements)
     {
       auto NotCracked = [](const auto &data) { return !data.crack; };
@@ -315,8 +317,8 @@ void IoData::CheckConfiguration()
       {
         Mpi::Warning(
             "config[\"Model\"][\"CrackInternalBoundaryElements\"] = true overrides "
-            "\"Crack\": false of impedance and conductivity boundaries, which are "
-            "then modeled as two independent surfaces (cracked)!\n");
+            "\"Crack\": false of impedance, rational impedance, and conductivity "
+            "boundaries, which are then modeled as two independent surfaces (cracked)!\n");
       }
     }
     else

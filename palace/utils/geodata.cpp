@@ -3569,7 +3569,7 @@ struct UnorderedPairHasher
 int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
-  // By default, interior boundaries with boundary conditions applying to either side
+  // By default, interior boundaries with boundary conditions applying to each side
   // separately are cracked, as well as impedance and conductivity sheets modeled as two
   // independent surfaces ("Crack"). Lumped ports are never cracked, which would give
   // invalid results.

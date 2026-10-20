@@ -1241,7 +1241,7 @@ BoundaryData::GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) con
     return attr_list;
   }
 
-  // Default: boundary conditions which apply to either side of an interior boundary
+  // Default: boundary conditions which apply to each side of an interior boundary
   // separately, and would otherwise have no effect there (wave and Floquet ports are
   // always exterior boundaries), and sheets with a surface impedance which are modeled as
   // two independent surfaces (a conductor much thicker than the penetration depth).
