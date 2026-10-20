@@ -27,6 +27,11 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(
     const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(farfield, problem_type, mesh))
 {
+  // The absorbing BC uses the high-frequency properties of the neighboring material, which
+  // are only correct when it is not dispersive.
+  MFEM_VERIFY(!mat_op.HasFrequencyDependentPermittivityOnBoundary(farfield_attr),
+              "Absorbing boundaries cannot neighbor a frequency-dependent material "
+              "Permittivity!");
   // Print out BC info for all farfield attributes.
   if (farfield_attr.Size())
   {

@@ -65,6 +65,10 @@ private:
   std::vector<std::vector<PermittivityPoleTerm>> permittivity_pole_terms;
   std::vector<std::vector<config::DjordjevicSarkarData>> djordjevic_sarkar_terms;
   std::vector<bool> frequency_dependent_permittivity_support;
+  // Largest relative permeability and the high-frequency permittivity of each
+  // frequency-dependent material, for GetFrequencyDependentMaxMuEpsilon.
+  std::vector<double> frequency_dependent_permittivity_mu_max,
+      frequency_dependent_permittivity_eps_inf;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
@@ -159,6 +163,15 @@ public:
   // Keeping the tensor extrema separate is required for anisotropic media because the
   // electric and magnetic polarizations generally lie on different material axes.
   double GetMaxMuEpsilon() const;
+
+  // max(mu_r) * Re(epsilon_r(omega)) over the globally supported frequency-dependent
+  // materials, or zero without any. GetMaxMuEpsilon uses the high-frequency permittivity,
+  // which a dispersive material exceeds below its resonances. Not collective.
+  double GetFrequencyDependentMaxMuEpsilon(double omega) const;
+
+  // Whether a frequency-dependent material neighbors any of the given mesh boundary
+  // attributes on any process.
+  bool HasFrequencyDependentPermittivityOnBoundary(const mfem::Array<int> &bdr_attrs) const;
 
   bool HasLossTangent() const { return has_losstan_attr; }
   bool HasConductivity() const { return has_conductivity_attr; }

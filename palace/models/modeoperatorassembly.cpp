@@ -108,7 +108,7 @@ ModeOperatorModel::ModeOperatorModel(
     SurfaceRationalImpedanceOperator &surf_rz_op, const mfem::HypreParMatrix &Bttr,
     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
     const mfem::HypreParMatrix *Btnr, const mfem::Array<int> &dbc_tdof_list)
-  : surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op)
+  : mat_op(mat_op), surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op)
 {
   auto assemble_nd = [&](BilinearForm &form)
   {
@@ -312,6 +312,32 @@ ModeOperatorModel::ModeOperatorModel(
                   assemble_h1(annr), std::move(Anni));
   }
 
+  // Frequency-dependent permittivity beyond ε∞: the ω² ε terms above gain ω² χ(iω) = −g(iω)
+  // on each dispersive material, with g = s² χ(s) the nonlinear 3D system coefficient. One
+  // unit mass per material, like the 3D A2, since its terms share one coefficient. The
+  // material is isotropic, so the normal projection of χ in the H1 block is χ itself.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (!mat_op.HasFrequencyDependentPermittivityA2(i) ||
+        !mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      continue;
+    }
+    const auto attrs =
+        mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+    MaterialPropertyCoefficient unit_t(n_attr), unit_n(n_attr);
+    unit_t.AddMaterialProperty(attrs, 1.0);
+    unit_n.AddMaterialProperty(attrs, -1.0);
+    BilinearForm att(nd_fespace), ann(h1_fespace);
+    if (!unit_t.empty())
+    {
+      att.AddDomainIntegrator<VectorFEMassIntegrator>(unit_t);
+      ann.AddDomainIntegrator<MassIntegrator>(unit_n);
+    }
+    add_component(CoefficientType::FREQUENCY_DEPENDENT_PERMITTIVITY, static_cast<int>(i),
+                  assemble_nd(att), nullptr, assemble_h1(ann), nullptr);
+  }
+
   auto shift = std::make_unique<mfem::HypreParMatrix>(Bttr);
   *shift *= -1.0;
   add_component(CoefficientType::SHIFT, -1, std::move(shift), nullptr, nullptr, nullptr);
@@ -371,6 +397,10 @@ ModeOperatorModel::EvaluateCoefficient(const OperatorComponent &component,
     case CoefficientType::RATIONAL_IMPEDANCE:
       return surf_rz_op.EvalRobinCoefficient(component.index,
                                              std::complex<double>(0.0, 1.0) * omega);
+    case CoefficientType::FREQUENCY_DEPENDENT_PERMITTIVITY:
+      return mat_op.EvaluateFrequencyDependentPermittivityA2(
+          static_cast<std::size_t>(component.index),
+          std::complex<double>(0.0, 1.0) * omega);
   }
   MFEM_ABORT("Unknown mode-operator coefficient type!");
   return 0.0;

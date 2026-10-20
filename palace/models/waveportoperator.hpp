@@ -114,8 +114,14 @@ private:
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
 
-  // Squared effective index of the eigenvalue shift, σ = -(n ω)².
+  // Squared effective index of the eigenvalue shift, σ = -(n ω)², given by the Target of
+  // the port or else by the bulk materials of the port.
   double n_target_sq;
+  bool has_target;
+
+  // Shift-and-invert target of the mode solve at ω: the given Target, or below −k_n² of
+  // every mode.
+  double ModeShift(double omega) const;
 
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.

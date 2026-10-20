@@ -142,6 +142,8 @@ void MaterialOperator::SetUpMaterialProperties(
   permittivity_pole_terms.resize(materials.size());
   djordjevic_sarkar_terms.resize(materials.size());
   frequency_dependent_permittivity_support.assign(materials.size(), false);
+  frequency_dependent_permittivity_mu_max.assign(materials.size(), 0.0);
+  frequency_dependent_permittivity_eps_inf.assign(materials.size(), 0.0);
   std::vector<double> permittivity_pole_conductivity(materials.size(), 0.0);
   has_frequency_dependent_permittivity = false;
   for (std::size_t i = 0; i < materials.size(); i++)
@@ -163,6 +165,12 @@ void MaterialOperator::SetUpMaterialProperties(
                             [](double x) { return x == 0.0; }),
                 "Frequency-dependent material Permittivity is incompatible with LossTan!");
     frequency_dependent_permittivity_attributes[i] = data.attributes;
+    frequency_dependent_permittivity_eps_inf[i] = data.epsilon_r.s[0];
+    for (auto mu : data.mu_r.s)
+    {
+      frequency_dependent_permittivity_mu_max[i] =
+          std::max(frequency_dependent_permittivity_mu_max[i], std::abs(mu));
+    }
     for (const auto &term : data.permittivity_pole_terms)
     {
       MFEM_VERIFY(std::isfinite(term.pole.real()) && std::isfinite(term.pole.imag()) &&
@@ -565,6 +573,47 @@ double MaterialOperator::GetMaxMuEpsilon() const
   MFEM_VERIFY(mu_eps_max > 0.0 && mu_eps_max < mfem::infinity(),
               "Invalid material permeability or permittivity!");
   return mu_eps_max;
+}
+
+double MaterialOperator::GetFrequencyDependentMaxMuEpsilon(double omega) const
+{
+  // Re ε(ω) = ε∞ + Re χ(iω), where the nonlinear system term is s² χ(s) at s = iω.
+  double mu_eps_max = 0.0;
+  for (std::size_t i = 0; i < permittivity_pole_terms.size(); i++)
+  {
+    if (frequency_dependent_permittivity_support[i] &&
+        HasFrequencyDependentPermittivityA2(i))
+    {
+      const std::complex<double> s(0.0, omega);
+      const double eps = frequency_dependent_permittivity_eps_inf[i] +
+                         (EvaluateFrequencyDependentPermittivityA2(i, s) / (s * s)).real();
+      mu_eps_max = std::max(mu_eps_max, frequency_dependent_permittivity_mu_max[i] * eps);
+    }
+  }
+  return mu_eps_max;
+}
+
+bool MaterialOperator::HasFrequencyDependentPermittivityOnBoundary(
+    const mfem::Array<int> &bdr_attrs) const
+{
+  bool found = false;
+  for (auto bdr_attr : bdr_attrs)
+  {
+    auto it = mesh.GetCeedBdrAttributes().find(bdr_attr);
+    if (it == mesh.GetCeedBdrAttributes().end())
+    {
+      continue;
+    }
+    for (const auto &[nbr_attr, ceed_attr] : it->second)
+    {
+      for (const auto &attrs : frequency_dependent_permittivity_attributes)
+      {
+        found = found || std::find(attrs.begin(), attrs.end(), nbr_attr) != attrs.end();
+      }
+    }
+  }
+  Mpi::GlobalOr(1, &found, mesh.GetComm());
+  return found;
 }
 
 void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,

@@ -54,8 +54,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 979](https://github.com/awslabs/palace/pull/979).
   - Added scalar frequency-dependent material `Permittivity` objects with additive Drude,
     Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms, including in adaptive
-    frequency sweeps and circuit synthesis. Existing scalar and three-component
-    `Permittivity` inputs remain supported. SchemaVer 2-3-0
+    frequency sweeps, circuit synthesis, and numeric wave ports. Existing scalar and
+    three-component `Permittivity` inputs remain supported. SchemaVer 2-3-0
     [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
