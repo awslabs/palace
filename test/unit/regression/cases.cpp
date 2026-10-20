@@ -1041,7 +1041,7 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 // condensed to a Dirichlet-to-Neumann operator and the region (attr 1) is solved against
 // it, producing the terminal capacitance matrix. Exercises the SubstructuringSolver driver
 // path.
-TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1053,7 +1053,7 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][Regression]")
 
 // An online run on the mesh of the region written by the offline run (the environment's
 // terminal is not in it), against the reference of the full mesh.
-TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1065,12 +1065,24 @@ TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][Regression]
                                   opts);
 }
 
+// The electrostatic case with "DirectMaxSize": 0: the environment (on its submesh) and the
+// region are solved by conjugate gradients with geometric multigrid.
+TEST_CASE("substructuring_electrostatic_iterative", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_iterative.json", "iterative", opts);
+}
+
 // Region-condensed (substructuring) magnetostatic solve on the mirror-split
 // double-circular- hole slab: the environment (right hole, attr 2) is condensed to a DtN
 // operator and the region (left hole, attr 1) is solved against it for each flux-loop
 // excitation, giving the 2x2 mutual-inductance matrix. The shared film is a London sheet
 // with the small PecPenetrationDepth, as in the native solver, which the result matches.
-TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
@@ -1084,7 +1096,7 @@ TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][Regression]")
 // Magnetostatic substructuring with a finite-penetration-depth London film (λ = 0.4 μm,
 // d = 0.1 μm) shared by both flux loops and crossing the interface: the film is a free
 // London sheet in the condensation, and the total inductance includes the kinetic part.
-TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
@@ -1098,7 +1110,7 @@ TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][Regression]
 // Magnetostatic substructuring with surface currents across two square holes of a film
 // that crosses the interface, one hole in the region and one in the environment. The
 // references are regular simulations of the same configuration.
-TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
@@ -1109,9 +1121,25 @@ TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][Regression
                                   "magnetostatic_current.json", "current", opts);
 }
 
+// The surface-current case with "DirectMaxSize": 0: the environment (on its submesh) and
+// the region are solved by conjugate gradients with AMS.
+TEST_CASE("substructuring_magnetostatic_current_iterative",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current_iterative.json",
+                                  "current_iterative", opts);
+}
+
 // As above with a finite-penetration-depth London film (λ = 0.4 μm, d = 0.1 μm), whose
 // supercurrent closes the port currents.
-TEST_CASE("substructuring_magnetostatic_current_london", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_magnetostatic_current_london",
+          "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
@@ -1126,7 +1154,7 @@ TEST_CASE("substructuring_magnetostatic_current_london", "[Serial][Parallel][Reg
 // Mixed surface-current and flux-loop extraction with substructuring on a small ring-disk
 // mesh: the region holds the ring terminal, and the ring's aperture crosses the interface.
 // The references are regular simulations of the same configurations.
-TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
@@ -1140,7 +1168,8 @@ TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][Regression]"
 // An online run on the mesh of the region written by the offline run of the mixed case
 // (with the environment elements at the surface current, its aperture and the flux-loop
 // film), against the references of the mixed case.
-TEST_CASE("substructuring_magnetostatic_mixed_region", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_magnetostatic_mixed_region",
+          "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
@@ -1171,7 +1200,8 @@ TEST_CASE("substructuring_magnetostatic_mixed_amr", "[Serial][Parallel][Regressi
 }
 
 // As above with a finite-penetration-depth London disk (λ = 0.4 μm, d = 0.1 μm).
-TEST_CASE("substructuring_magnetostatic_mixed_london", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_magnetostatic_mixed_london",
+          "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;

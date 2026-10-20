@@ -150,6 +150,13 @@ void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
       vals[p][pos] += rv[perm[q]];
     }
   }
+  for (const auto *X : A)
+  {
+    if (X)
+    {
+      X->HypreRead();
+    }
+  }
 }
 
 namespace
@@ -178,6 +185,7 @@ void AddToPatternT(const mfem::HypreParMatrix &X, T a, const std::vector<int> &r
                         }
                       });
   }
+  X.HypreRead();
 }
 
 }  // namespace

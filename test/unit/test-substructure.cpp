@@ -206,4 +206,45 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
   CHECK(dM <= 1.0e-12 * mM);
 }
 
+TEST_CASE("Eliminated rows without a stored diagonal become identity rows",
+          "[substructure][Serial][Parallel]")
+{
+  // Per rank: rows 0 and 3 store no entry (as a device-assembled matrix has for a DOF
+  // without element contributions), rows 1 and 2 are coupled, rows 4 and 5 diagonal.
+  // Eliminating rows 0, 1 and 3 leaves the identity on them and decouples row 2.
+  MPI_Comm comm = Mpi::World();
+  const int n = 6, rank = Mpi::Rank(comm), size = Mpi::Size(comm);
+  const HYPRE_BigInt off = static_cast<HYPRE_BigInt>(rank) * n,
+                     glob = static_cast<HYPRE_BigInt>(size) * n;
+  std::vector<HYPRE_BigInt> part;
+  if (HYPRE_AssumedPartitionCheck())
+  {
+    part = {off, off + n};
+  }
+  else
+  {
+    for (int r = 0; r <= size; r++)
+    {
+      part.push_back(static_cast<HYPRE_BigInt>(r) * n);
+    }
+  }
+  std::vector<int> I = {0, 0, 2, 4, 4, 5, 6};
+  std::vector<HYPRE_BigInt> J = {off + 1, off + 2, off + 1, off + 2, off + 4, off + 5};
+  std::vector<double> V = {2.0, -1.0, -1.0, 2.0, 2.0, 2.0};
+  mfem::HypreParMatrix A(comm, n, glob, glob, I.data(), J.data(), V.data(), part.data(),
+                         part.data());
+  mfem::Array<int> dofs({0, 1, 3});
+  std::unique_ptr<mfem::HypreParMatrix> B = EliminateToIdentity(A, dofs);
+  mfem::Vector x(n), y(n);
+  x = 1.0;
+  B->Mult(x, y);
+  const double *yy = y.HostRead();
+  const std::array<double, 6> expected = {1.0, 1.0, 2.0, 1.0, 2.0, 2.0};
+  for (int i = 0; i < n; i++)
+  {
+    CAPTURE(i);
+    CHECK(yy[i] == expected[i]);
+  }
+}
+
 }  // namespace palace

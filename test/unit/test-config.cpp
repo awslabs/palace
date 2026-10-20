@@ -208,7 +208,22 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("Substructuring requires the CPU device")
+  SECTION("Substructuring direct factorization size limit")
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    CHECK(IoData(config, false).solver.substructuring->direct_max_size == 2000000);
+    config["Solver"]["Substructuring"]["DirectMaxSize"] = 0;
+    CHECK(IoData(config, false).solver.substructuring->direct_max_size == 0);
+  }
+
+  SECTION("Static substructuring runs on any device")
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -219,9 +234,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
          {{"Device", "GPU"},
           {"Substructuring",
            {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
-    CHECK_THROWS_WITH(IoData(config, false),
-                      Catch::Matchers::ContainsSubstring("\"Solver.Device\": \"CPU\""));
-    config["Solver"]["Device"] = "CPU";
+    CHECK_NOTHROW(IoData(config, false));
+    config["Solver"]["Device"] = "Debug";
     CHECK_NOTHROW(IoData(config, false));
   }
 
@@ -275,6 +289,10 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     adaptive["AdaptiveCircuitSynthesis"] = true;
     CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
                       Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+    json gpu = make_config(uniform, json::object());
+    gpu["Solver"]["Device"] = "GPU";
+    CHECK_THROWS_WITH(IoData(gpu, false),
+                      Catch::Matchers::ContainsSubstring("\"Solver.Device\": \"CPU\""));
 #if defined(MFEM_USE_MUMPS)
     const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
     CHECK_NOTHROW(IoData(make_config(uniform, wave), false));

@@ -2945,6 +2945,12 @@
           "minimum": 0,
           "default": 0,
           "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used when Palace is built with MUMPS."
+        },
+        "DirectMaxSize": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2000000,
+          "description": "Number of unknowns up to which the environment and the region of electrostatic and magnetostatic substructuring are factored with a sparse direct solver; larger ones are solved by preconditioned conjugate gradients (geometric multigrid, BoomerAMG or AMS). Magnetostatic environments at order 2 and higher are always factored, and an environment with superconductor sheets must be."
         }
       }
     },

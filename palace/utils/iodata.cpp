@@ -731,8 +731,6 @@ void IoData::CheckConfiguration()
                 "driven problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
-    MFEM_VERIFY(solver.device == Device::CPU,
-                "Substructuring requires \"Solver.Device\": \"CPU\"!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
                 "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
     // Adaptive refinement refines the region of an online run only: the environment was
@@ -752,6 +750,8 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::DRIVEN)
     {
+      MFEM_VERIFY(solver.device == Device::CPU,
+                  "Driven substructuring requires \"Solver.Device\": \"CPU\"!");
       // Floquet ports and periodic boundaries make the system non-symmetric.
       MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");

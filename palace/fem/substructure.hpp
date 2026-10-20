@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_SUBSTRUCTURE_HPP
 #define PALACE_FEM_SUBSTRUCTURE_HPP
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -106,6 +107,12 @@ std::vector<T> SignatureMap::DualMatrix(const std::vector<T> &S) const
 // shared between ranks is marked on its owner).
 std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
                                    const std::vector<int> &bdr_attributes);
+
+// A with the rows and columns of the given local true DOFs replaced by the identity. The
+// identity is added rather than set by the elimination: a matrix assembled on the device
+// stores no diagonal entry in a row without element contributions.
+std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMatrix &A,
+                                                          const mfem::Array<int> &dofs);
 
 // The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
 std::string RegionMeshPath(const std::string &model_path);

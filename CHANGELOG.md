@@ -38,14 +38,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and the capacitance or inductance matrix of a reused model needs no environment solve.
     The offline run also writes a mesh of the region, on which online runs read and
     partition the region only, and in which `remesh_region.py` re-meshes a redesign. Online
-    runs can refine the region adaptively. Includes optional block low-rank environment
-    factorization with MUMPS (`"FactorizationTol"`) and hierarchical compression of the
-    interface operator (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports
-    `"FluxLoop"` and `"SurfaceCurrent"` excitations, alone or together, with the films and
-    `"Superconductor"` boundaries as London sheets (kinetic inductance included). Adds
-    substructuring examples in `examples/transmon` and `examples/substructuring` (5 x 5
-    lattices of qubits and of flux loops, on separate rings and on one plate). SchemaVer
-    2-3-0.
+    runs can refine the region adaptively. Runs on CPUs and GPUs, with the direct
+    factorizations on the CPU. Includes optional block low-rank environment factorization
+    with MUMPS (`"FactorizationTol"`), hierarchical compression of the interface operator
+    (`"InterfaceOffdiagTol"`), and iterative environment and region solves above a size
+    limit (`"DirectMaxSize"`). Magnetostatic substructuring supports `"FluxLoop"` and
+    `"SurfaceCurrent"` excitations, alone or together, with the films and `"Superconductor"`
+    boundaries as London sheets (kinetic inductance included). Adds substructuring examples
+    in `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of
+    flux loops, on separate rings and on one plate). SchemaVer 2-3-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
     uniform frequency sweeps condense the environment exactly at each frequency, with lumped
@@ -53,9 +54,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     at saved frequencies solves a redesigned region against the saved environment. Adaptive
     sweeps condense it at frequencies chosen greedily for a rational model, checked for
     passivity, which online sweeps evaluate anywhere in its band, with the region reduced as
-    in the adaptive fast frequency sweep. The offline sweep also writes a mesh of the region,
-    on which online sweeps read and partition the region only. Adds a driven example in
-    `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 2-3-1.
+    in the adaptive fast frequency sweep. The offline sweep also writes a mesh of the
+    region, on which online sweeps read and partition the region only. Runs on CPUs. Adds a
+    driven example in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer
+    2-3-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes
