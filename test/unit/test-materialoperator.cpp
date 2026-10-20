@@ -1092,6 +1092,48 @@ TEST_CASE("MaterialOperator wave-number bound is global", "[materialoperator][Pa
   CHECK(bound_max == Approx(9.0));
 }
 
+TEST_CASE("MaterialOperator static limit of dispersive materials",
+          "[materialoperator][Serial]")
+{
+  // Electrostatics uses ε(0) = ε∞ + χ(0): Δε for a Debye term, Δε for a Lorentz pair, and
+  // Strength log(ω_hi/ω_lo) for Djordjevic-Sarkar. A pole at zero (Drude) has no finite
+  // static permittivity and is rejected. Magnetostatics ignores the permittivity.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+  config::PeriodicBoundaryData periodic;
+
+  const double eps_inf = 2.0, tau = 0.5, w0 = 3.0, gamma = 0.2;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  material.permittivity_pole_terms.push_back({-1.0 / tau, 1.5 / tau});  // Debye, Δε = 1.5
+  {
+    // Lorentz with Δε = 0.7, as r/(s - p) + conj with p the upper root of s² + γs + ω₀²
+    const std::complex<double> p(-0.5 * gamma, std::sqrt(w0 * w0 - 0.25 * gamma * gamma));
+    material.permittivity_pole_terms.push_back({p, 0.7 * w0 * w0 / (p - std::conj(p))});
+  }
+  material.djordjevic_sarkar_terms.push_back({0.1, 1.0e-3, 1.0e3});
+  const double eps0 = eps_inf + 1.5 + 0.7 + 0.1 * std::log(1.0e6);
+  CHECK(material.StaticPermittivity() == Approx(eps0));
+
+  MaterialOperator electrostatic({material}, periodic, ProblemType::ELECTROSTATIC,
+                                 palace_mesh);
+  CHECK_FALSE(electrostatic.HasFrequencyDependentPermittivity());
+  CHECK(electrostatic.GetPermittivityReal()(0, 0, 0) == Approx(eps0));
+  MaterialOperator magnetostatic({material}, periodic, ProblemType::MAGNETOSTATIC,
+                                 palace_mesh);
+  CHECK_FALSE(magnetostatic.HasFrequencyDependentPermittivity());
+
+  config::MaterialData drude;
+  drude.attributes = {1};
+  drude.permittivity_pole_terms = {{0.0, 1.0}, {-0.1, -1.0}};
+  CHECK_THROWS_WITH(
+      MaterialOperator({drude}, periodic, ProblemType::ELECTROSTATIC, palace_mesh),
+      Catch::Matchers::ContainsSubstring("finite static material permittivity"));
+}
+
 TEST_CASE("MaterialOperator dispersive wave-number bound", "[materialoperator][Serial]")
 {
   // A Debye term χ(s) = Δε/(1 + sτ) raises Re ε above ε∞ to ε∞ + Δε/(1 + ω²τ²), which

@@ -153,7 +153,11 @@ void MaterialOperator::SetUpMaterialProperties(
     {
       MFEM_VERIFY(attr > 0, "Material attribute tags must be positive!");
     }
-    if (!data.HasFrequencyDependentPermittivity())
+    // Static problems see a frequency-dependent material at zero frequency: electrostatics
+    // through its static permittivity below, and magnetostatics not at all.
+    if (!data.HasFrequencyDependentPermittivity() ||
+        problem_type == ProblemType::ELECTROSTATIC ||
+        problem_type == ProblemType::MAGNETOSTATIC)
     {
       continue;
     }
@@ -286,7 +290,14 @@ void MaterialOperator::SetUpMaterialProperties(
     {
       continue;
     }
-    const auto &data = materials[i];
+    // Electrostatics uses the static permittivity of a frequency-dependent material.
+    config::MaterialData data = materials[i];
+    if (problem_type == ProblemType::ELECTROSTATIC &&
+        data.HasFrequencyDependentPermittivity())
+    {
+      const double eps = data.StaticPermittivity();
+      data.epsilon_r.s = {eps, eps, eps};
+    }
     double mu_max = 0.0, eps_max = 0.0;
     for (std::size_t d = 0; d < data.mu_r.s.size(); d++)
     {
@@ -299,6 +310,10 @@ void MaterialOperator::SetUpMaterialProperties(
     {
       MFEM_VERIFY(internal::mat::IsValid(data.epsilon_r),
                   "Material has no valid permittivity defined!");
+      MFEM_VERIFY(
+          std::ranges::all_of(data.epsilon_r.s, [](double x) { return std::isfinite(x); }),
+          "Electrostatic problem type requires a finite static material "
+          "permittivity, which a pole at zero frequency (Drude) does not have!");
       if (!internal::mat::IsIdentity(data.mu_r) || internal::mat::IsValid(data.sigma) ||
           std::abs(data.lambda_L) > 0.0)
       {
@@ -311,7 +326,11 @@ void MaterialOperator::SetUpMaterialProperties(
     {
       MFEM_VERIFY(internal::mat::IsValid(data.mu_r),
                   "Material has no valid permeability defined!");
+      MFEM_VERIFY(
+          std::ranges::all_of(data.mu_r.s, [](double x) { return std::isfinite(x); }),
+          "Magnetostatic problem type requires a finite material permeability!");
       if (!internal::mat::IsIdentity(data.epsilon_r) ||
+          data.HasFrequencyDependentPermittivity() ||
           internal::mat::IsValid(data.tandelta) || internal::mat::IsValid(data.sigma) ||
           std::abs(data.lambda_L) > 0.0)
       {
