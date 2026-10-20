@@ -66,6 +66,10 @@ generate_schema_compatibility_table()
 include(joinpath(@__DIR__, "generate_coaxial_schematic.jl"))
 generate_coaxial_schematic()
 
+# Draw the Lorentz-filled cavity schematic used by examples/cylinder.md.
+include(joinpath(@__DIR__, "generate_cavity_schematic.jl"))
+generate_cavity_schematic()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)
