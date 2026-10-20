@@ -184,7 +184,7 @@ public:
 
   // Split, or "crack", boundary elements lying on internal boundaries to decouple the
   // elements on either side. If unset, interior boundaries with boundary conditions which
-  // apply to either side separately (PMC and absorbing) are cracked, as well as impedance,
+  // apply to each side separately (PMC and absorbing) are cracked, as well as impedance,
   // rational impedance, and conductivity boundaries with "Crack" enabled. If true, all
   // interior boundaries with boundary conditions except lumped ports are cracked (legacy
   // behavior, deprecated). If false, no boundaries are cracked.
@@ -427,10 +427,9 @@ public:
   // Crack the mesh along this boundary where it lies in the interior of the domain. If
   // true, the two faces of the sheet are independent surfaces, each with its own current
   // and no coupling through the sheet (a conductor much thicker than the penetration
-  // depth), with the impedance of each face scaled such that equal currents on both faces
-  // give the same result as the uncut sheet. If false, the boundary is a thin sheet with a
-  // single tangential electric field on it (a film much thinner than the penetration
-  // depth).
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
   bool crack = false;
 
   ImpedanceData() = default;
@@ -452,10 +451,9 @@ public:
   // Crack the mesh along this boundary where it lies in the interior of the domain. If
   // true, the two faces of the sheet are independent surfaces, each with its own current
   // and no coupling through the sheet (a conductor much thicker than the penetration
-  // depth), with the impedance of each face scaled such that equal currents on both faces
-  // give the same result as the uncut sheet. If false, the boundary is a thin sheet with a
-  // single tangential electric field on it (a film much thinner than the penetration
-  // depth).
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
   bool crack = false;
 
   RationalImpedanceData() = default;

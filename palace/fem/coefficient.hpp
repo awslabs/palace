@@ -240,9 +240,9 @@ public:
       GetLocalFlux(*FET.Elem2, VL);
       if (two_sided)
       {
-        // Add result with opposite normal. This only happens when crack_bdr_elements =
-        // false (two_sided = true doesn't make sense for an internal boundary without an
-        // associated BC).
+        // Add result with opposite normal. This happens on interior boundaries which are
+        // not cracked, such as metal sheets (two_sided = true doesn't make sense for an
+        // interior boundary without an associated BC).
         VU -= VL;
       }
       else
