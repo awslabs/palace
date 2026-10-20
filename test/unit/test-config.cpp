@@ -1459,11 +1459,20 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
   }
   SECTION("Unsupported problem types are rejected")
   {
-    for (const auto *type : {"Transient", "Electrostatic", "Magnetostatic", "BoundaryMode"})
+    for (const auto *type : {"Transient", "BoundaryMode"})
     {
       auto config = MakeConfig();
       config["Problem"]["Type"] = type;
       CheckRejected(config);
+    }
+  }
+  SECTION("Static problem types are accepted")
+  {
+    for (const auto *type : {"Electrostatic", "Magnetostatic"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      CHECK_NOTHROW(IoData(config, false));
     }
   }
   SECTION("Adaptive circuit synthesis is accepted")

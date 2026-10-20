@@ -284,6 +284,10 @@ public:
     return !permittivity_pole_terms.empty() || !djordjevic_sarkar_terms.empty();
   }
 
+  // The scalar relative permittivity at zero frequency, ε∞ + χ(0), for a
+  // frequency-dependent permittivity. Infinite for a pole at zero (Drude).
+  double StaticPermittivity() const;
+
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
 

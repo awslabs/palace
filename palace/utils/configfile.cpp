@@ -1885,6 +1885,27 @@ void Nondimensionalize(const Units &units, RefinementData &data)
   }
 }
 
+double MaterialData::StaticPermittivity() const
+{
+  // χ(0) of r/(s - p) is -r/p, with the conjugate of an upper-half-plane pole included, and
+  // that of Strength log((s + ω_hi)/(s + ω_lo)) is Strength log(ω_hi/ω_lo).
+  double eps = epsilon_r.s[0];
+  for (const auto &term : permittivity_pole_terms)
+  {
+    if (term.pole == std::complex<double>(0.0, 0.0))
+    {
+      return std::numeric_limits<double>::infinity();
+    }
+    const auto chi = -term.residue / term.pole;
+    eps += (term.pole.imag() > 0.0) ? 2.0 * chi.real() : chi.real();
+  }
+  for (const auto &term : djordjevic_sarkar_terms)
+  {
+    eps += term.strength * std::log(term.omega_upper / term.omega_lower);
+  }
+  return eps;
+}
+
 void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
