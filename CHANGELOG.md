@@ -37,6 +37,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     defaults). The stretch can be evaluated at a fixed reference frequency or at the
     solve frequency (`"FrequencyDependent"`). SchemaVer 2-3-0
     [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+  - Improved the multigrid preconditioner for problems with PML regions: the smoothers do not
+    update the unknowns of strongly stretched PML elements (`"PMLSmootherThreshold"`), and
+    the complex-valued PML subdomain and coarse-level (`"ComplexCoarseSolve"`) matrices are
+    factored in complex arithmetic by SuperLU_DIST, STRUMPACK, and MUMPS, with half of the
+    memory of the equivalent real-valued systems (optionally in single precision for the
+    PML subdomain with STRUMPACK, `"PMLSubdomainSinglePrecision"`). The superbuild now
+    builds MUMPS with complex double precision (`zmumps`), which is required with
+    `PALACE_WITH_MUMPS`. [PR 1058](https://github.com/awslabs/palace/pull/1058).
 
 #### Interface Changes
 
@@ -189,6 +197,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     were bumped to their latest releases. The Spack package now uses a libCEED release
     instead of a development commit.
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
+  - The superbuild patches the BLACS of ScaLAPACK to receive messages with derived datatypes
+    packed and unpack them locally. This works around an MPICH bug for processes on the same
+    node, which corrupts complex-valued distributed factorizations of STRUMPACK and MUMPS
+    (packed messages received in several shared memory segments cannot be unpacked into
+    complex-valued elements split across segments).
+    [PR 1058](https://github.com/awslabs/palace/pull/1058).
 
 ## [0.18.1] - 2026-09-21
 

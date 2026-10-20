@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 #define PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 
+#include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
@@ -43,7 +44,14 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
+  // Local true DOFs which are not updated by the smoother.
+  std::vector<int> mask_tdofs;
+
 public:
+  // Set the local true DOFs which are not updated by the smoother (their diagonal scaling
+  // is zero), used at the next call to SetOperator.
+  void SetMask(const std::vector<int> &tdofs) { mask_tdofs = tdofs; }
+
   ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
@@ -107,7 +115,14 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
+  // Local true DOFs which are not updated by the smoother.
+  std::vector<int> mask_tdofs;
+
 public:
+  // Set the local true DOFs which are not updated by the smoother (their diagonal scaling
+  // is zero), used at the next call to SetOperator.
+  void SetMask(const std::vector<int> &tdofs) { mask_tdofs = tdofs; }
+
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
                            double sf_min);
 
