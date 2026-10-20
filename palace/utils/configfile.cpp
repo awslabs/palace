@@ -1137,11 +1137,6 @@ BoundaryData::BoundaryData(const json &boundaries)
 
 std::vector<double> ConstructLinearRange(double start, double end, double delta)
 {
-  // GetNumSteps returns a single step for an empty range, which would silently sample only
-  // the start.
-  MFEM_VERIFY(end >= start, "\"MaxFreq\" ("
-                                << end << ") must not be less than \"MinFreq\" (" << start
-                                << ") with \"FreqStep\"!");
   auto n_step = GetNumSteps(start, end, delta);
   std::vector<double> f(n_step);
   std::iota(f.begin(), f.end(), 0);
@@ -1224,7 +1219,6 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     double min_f = driven.at("MinFreq");     // Required
     double max_f = driven.at("MaxFreq");     // Required
     double delta_f = driven.at("FreqStep");  // Required
-    MFEM_VERIFY(delta_f > 0.0, "\"FreqStep\" must be positive!");
     sample_f = ConstructLinearRange(min_f, max_f, delta_f);
     if (int save_step = driven.value("SaveStep", 0); save_step > 0)
     {
@@ -1536,19 +1530,18 @@ SolverData::SolverData(const json &solver)
 
 int GetNumSteps(double start, double end, double delta)
 {
-  if (end < start)
-  {
-    return 1;
-  }
+  MFEM_VERIFY(delta > 0.0 && end >= start,
+              "Invalid range from " << start << " to " << end << " in steps of " << delta
+                                    << ": the step must be positive and the end must not "
+                                       "be less than the start!");
   constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
-  double dn = std::abs(end - start) / std::abs(delta);
+  double dn = (end - start) / delta;
   MFEM_VERIFY(dn < std::numeric_limits<int>::max() - 2,
               "Step " << delta << " is too small for the range [" << start << ", " << end
                       << "]: " << dn << " steps!");
   int n_step = 1 + static_cast<int>(dn);
   double dfinal = start + n_step * delta;
-  return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
-                   (delta > 0.0 && dfinal - end < delta_eps * end));
+  return n_step + (dfinal - end < delta_eps * end);
 }
 
 std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::string str,

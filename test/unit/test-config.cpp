@@ -770,18 +770,18 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     // Nonpositive deprecated FreqStep
     json zero_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.0}};
     CHECK_THROWS_WITH(config::DrivenSolverData(zero_step),
-                      Catch::Matchers::ContainsSubstring("\"FreqStep\" must be positive"));
+                      Catch::Matchers::ContainsSubstring("Invalid range"));
     json negative_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", -0.5}};
     CHECK_THROWS(config::DrivenSolverData(negative_step));
 
     // "MaxFreq" below "MinFreq" with a step would sample only "MinFreq".
     json reversed_step = {{"MinFreq", 2.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}};
     CHECK_THROWS_WITH(config::DrivenSolverData(reversed_step),
-                      ContainsSubstring("must not be less than \"MinFreq\""));
+                      ContainsSubstring("Invalid range"));
     json reversed_linear = {
         {"Samples", {{{"MinFreq", 2.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}}}}};
     CHECK_THROWS_WITH(config::DrivenSolverData(reversed_linear),
-                      ContainsSubstring("must not be less than \"MinFreq\""));
+                      ContainsSubstring("Invalid range"));
 
     // A step too small for the number of steps to fit in an int.
     json tiny_step = {{"MinFreq", 1.0}, {"MaxFreq", 10.0}, {"FreqStep", 1.0e-9}};

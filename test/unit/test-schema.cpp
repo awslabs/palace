@@ -1010,6 +1010,25 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(!ValidateConfig(driven, "Driven").empty());
   }
 
+  SECTION("Frequencies must be positive - Driven Samples")
+  {
+    // A driven solve at 0 GHz is singular, so no sample may be there.
+    for (const auto &[min_f, max_f] : {std::pair{0.0, 1.0}, std::pair{1.0, 0.0}})
+    {
+      json linear = {
+          {"Samples", {{{"MinFreq", min_f}, {"MaxFreq", max_f}, {"NSample", 3}}}}};
+      CHECK(!ValidateConfig(linear, "Driven").empty());
+    }
+    json point = {{"Samples", {{{"Freq", {0.0, 1.0}}}}}};
+    CHECK(!ValidateConfig(point, "Driven").empty());
+    json top_level = {{"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}};
+    CHECK(!ValidateConfig(top_level, "Driven").empty());
+    json positive = {
+        {"Samples",
+         {{{"MinFreq", 0.1}, {"MaxFreq", 1.0}, {"NSample", 3}}, {{"Freq", {2.0}}}}}};
+    CHECK(ValidateConfig(positive, "Driven").empty());
+  }
+
   SECTION("Deprecated FreqStep must be positive when it is read - Driven")
   {
     json zero_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.0}};

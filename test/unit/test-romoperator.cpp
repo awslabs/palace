@@ -155,6 +155,25 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   // TODO: Add more stringent tests of MRI, including estimating poles.
 }
 
+TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
+{
+  // Samples 2e-11 apart relative to z: delta = span / 1e6 is below the spacing of doubles
+  // near z, so the scan must not step by accumulating delta.
+  MinimalRationalInterpolation mri(2);
+  const double z0 = 100.0, z1 = 100.0 + 2.0e-9;
+  for (int i = 0; i < 2; i++)
+  {
+    std::vector<std::complex<double>> tmp = {double(i == 0), double(i == 1)};
+    ComplexVector u(tmp.size());
+    u.Set(tmp.data(), tmp.size(), false);
+    mri.AddSolutionSample(i == 0 ? z0 : z1, u, Mpi::World(), Orthogonalization::MGS);
+  }
+  const auto z_max = mri.FindMaxError(1);
+  REQUIRE(z_max.size() == 1);
+  CHECK(z_max[0] >= z0);
+  CHECK(z_max[0] <= z1);
+}
+
 // TODO: Do some more basic RomOperator Ctor Checks
 
 // Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
