@@ -750,8 +750,6 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::DRIVEN)
     {
-      MFEM_VERIFY(solver.device == Device::CPU,
-                  "Driven substructuring requires \"Solver.Device\": \"CPU\"!");
       // Floquet ports and periodic boundaries make the system non-symmetric.
       MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");

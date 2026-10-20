@@ -93,9 +93,11 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   }
   const int nt = fes.GetTrueVSize();
   std::vector<char> dbc(nt, 0);
-  for (int d : space_op.GetNDDbcTDofLists().back())
+  const auto &dbc_list = space_op.GetNDDbcTDofLists().back();
+  const int *dl = dbc_list.HostRead();
+  for (int q = 0; q < dbc_list.Size(); q++)
   {
-    dbc[d] = 1;
+    dbc[dl[q]] = 1;
   }
   MPI_Comm comm = fes.GetComm();
 
@@ -903,11 +905,12 @@ void DrivenSubstructure::AddReducedBasis(const std::vector<ComplexVector> &u)
   for (std::size_t j = r0; j < r; j++)
   {
     std::vector<double> mine;
+    const double *b = red_basis[j].HostRead();
     for (int i = 0; i < nt; i++)
     {
       if (is_gamma[i])
       {
-        mine.push_back(red_basis[j](i));
+        mine.push_back(b[i]);
       }
     }
     const bool root = Mpi::Root(comm);
@@ -1104,9 +1107,11 @@ void DrivenSubstructure::WriteRegionMesh(const std::string &path,
     ea.Append(a);
   }
   MarkInterfaceTrueDofs(fes, ra, ea, rm, em, im);
-  for (int d : space_op.GetNDDbcTDofLists().back())
+  const auto &dbc_list = space_op.GetNDDbcTDofLists().back();
+  const int *dl = dbc_list.HostRead();
+  for (int q = 0; q < dbc_list.Size(); q++)
   {
-    keep[d] = keep[d] || rm[d];
+    keep[dl[q]] = keep[dl[q]] || rm[dl[q]];
   }
   palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
 }

@@ -1217,7 +1217,7 @@ TEST_CASE("substructuring_magnetostatic_mixed_london",
 // Driven substructuring with exact per-frequency condensation: lumped ports across two
 // holes of a PEC film crossing the interface, one in the region (lossy dielectric) and one
 // in the environment. The references are regular simulations of the same configuration.
-TEST_CASE("substructuring_driven", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1232,7 +1232,7 @@ TEST_CASE("substructuring_driven", "[Serial][Parallel][Regression]")
 // it. Environment-port voltages come from the model; the region's energy is written, the
 // environment's (and the totals) are not. The references are a regular simulation of the
 // redesigned configuration, in the online run's columns.
-TEST_CASE("substructuring_driven_online", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_online", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1249,7 +1249,7 @@ TEST_CASE("substructuring_driven_online", "[Serial][Parallel][Regression]")
 // between the samples solves the redesigned region of substructuring_driven_online against
 // it. The references are a regular simulation of the redesigned configuration, in the
 // online run's columns.
-TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1265,7 +1265,7 @@ TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][Regression]")
 // substructuring_driven_adaptive reduced by Galerkin projection onto its fields at greedily
 // chosen frequencies, against the saved rational model. The references are a regular
 // simulation of the redesigned configuration, in the online run's columns.
-TEST_CASE("substructuring_driven_adaptive_online", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_adaptive_online", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1281,7 +1281,7 @@ TEST_CASE("substructuring_driven_adaptive_online", "[Serial][Parallel][Regressio
 // modal terms border the factored side), in the region; and in the environment, with an
 // online sweep of a redesigned region (permittivity 2.08 -> 2.3) against a saved model.
 // The references are regular simulations, in the substructured runs' columns.
-TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1292,7 +1292,7 @@ TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][Regression]")
                                   opts);
 }
 
-TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1306,7 +1306,7 @@ TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][Regression]")
 
 // Online runs on the mesh of the region written by the offline run (with the environment's
 // ports), against the references of the online runs on the full mesh.
-TEST_CASE("substructuring_driven_region", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1318,7 +1318,7 @@ TEST_CASE("substructuring_driven_region", "[Serial][Parallel][Regression]")
                                   "online_region", opts);
 }
 
-TEST_CASE("substructuring_driven_reduced_region", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_reduced_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1331,7 +1331,7 @@ TEST_CASE("substructuring_driven_reduced_region", "[Serial][Parallel][Regression
                                   "online_reduced_region", opts);
 }
 
-TEST_CASE("substructuring_driven_wave_region", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_wave_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
@@ -1348,7 +1348,7 @@ TEST_CASE("substructuring_driven_wave_region", "[Serial][Parallel][Regression]")
 // from the environment), redesigned: against a regular simulation of the redesign. The
 // sheet is not cracked: cracking it fails in the mesh preprocessing on 24 or more
 // processes, also without substructuring.
-TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][Regression]")
+TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;

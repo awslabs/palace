@@ -131,17 +131,16 @@ environment field does not affect them near the interface.
 
 ### Solvers
 
-Electrostatic and magnetostatic substructuring also runs with a GPU device
-(`config["Solver"]["Device"]` `"GPU"`), with the dense interface operator and the sparse direct
-factorizations on the CPU. The environment and the region are factored with a sparse direct solver
-(MUMPS, SuperLU_DIST or STRUMPACK, preferred in this order among those Palace is built with) when
-they have at most `config["Solver"]["Substructuring"]["DirectMaxSize"]` unknowns (2,000,000 by
-default), and otherwise solved by conjugate gradients preconditioned by geometric multigrid
-(electrostatics at order 2 and higher), BoomerAMG or AMS. Magnetostatic environments at order 2 and
-higher are always factored, and an environment with London sheets must be. With MUMPS, the Schur
-complement of an electrostatic environment comes from a single partial factorization. When running
-MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the equivalent for the BLAS in use) avoids
-oversubscribing cores.
+Substructuring also runs with a GPU device (`config["Solver"]["Device"]` `"GPU"`), with the dense
+interface operator and the sparse direct factorizations on the CPU. The environment and the region
+are factored with a sparse direct solver (MUMPS, SuperLU_DIST or STRUMPACK, preferred in this order
+among those Palace is built with) when they have at most
+`config["Solver"]["Substructuring"]["DirectMaxSize"]` unknowns (2,000,000 by default), and otherwise
+solved by conjugate gradients preconditioned by geometric multigrid (electrostatics at order 2 and
+higher), BoomerAMG or AMS. Magnetostatic environments at order 2 and higher are always factored, and
+an environment with London sheets must be. With MUMPS, the Schur complement of an electrostatic
+environment comes from a single partial factorization. When running MUMPS with MPI, setting
+`OPENBLAS_NUM_THREADS=1` (or the equivalent for the BLAS in use) avoids oversubscribing cores.
 
 ## Magnetostatics
 
@@ -221,13 +220,12 @@ voltage would then depend on both sides.
 
 !!! note
 
-    Driven substructuring needs MUMPS, which factors the environment and the region at any size, and
-    a CPU device. Floquet ports and periodic boundaries (which make the system non-symmetric),
-    inactive wave ports, restarts, `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the
-    region in online sweeps are not supported yet, nor, from a model, surface flux, interface
-    dielectric, far-field and probe postprocessing. The model holds one dense
-    ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry of its lower
-    triangle).
+    Driven substructuring needs MUMPS, which factors the environment and the region at any size.
+    Floquet ports and periodic boundaries (which make the system non-symmetric), inactive wave
+    ports, restarts, `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in
+    online sweeps are not supported yet, nor, from a model, surface flux, interface dielectric,
+    far-field and probe postprocessing. The model holds one dense ``|\Gamma| \times |\Gamma|``
+    matrix per frequency or sample (16 bytes per entry of its lower triangle).
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

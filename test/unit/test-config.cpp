@@ -289,10 +289,11 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     adaptive["AdaptiveCircuitSynthesis"] = true;
     CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
                       Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+#if defined(MFEM_USE_MUMPS)
     json gpu = make_config(uniform, json::object());
     gpu["Solver"]["Device"] = "GPU";
-    CHECK_THROWS_WITH(IoData(gpu, false),
-                      Catch::Matchers::ContainsSubstring("\"Solver.Device\": \"CPU\""));
+    CHECK_NOTHROW(IoData(gpu, false));
+#endif
 #if defined(MFEM_USE_MUMPS)
     const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
     CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
