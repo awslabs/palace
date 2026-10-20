@@ -1013,6 +1013,48 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
   }
 }
 
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetFarfieldDispersiveDampingMatrix(std::size_t k,
+                                                  Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddDispersiveDampingBdrCoefficients(k, 1.0, fb);
+  int empty = fb.IsExactlyZero();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+  M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return M_op;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetFarfieldDispersiveCurlCurlMatrix(std::size_t k,
+                                                   Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddDispersiveCurlCurlBdrCoefficients(k, 1.0, df);
+  int empty = df.IsExactlyZero();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, &df, nullptr, nullptr, skip_zeros);
+  auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+  M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return M_op;
+}
+
 template <OperatorType OperType>
 std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
     int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)
@@ -1617,7 +1659,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
                                                   bool include_wave_ports)
 {
   // Contribution for second-order farfield boundaries and finite conductivity boundaries.
-  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
+  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 
@@ -1645,7 +1687,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // real ω the operators' complex overloads reduce to their double overloads, except the
   // wave-port term, which additionally carries the line attenuation -Im(k_n)·M on the
   // real slot (the real-ω overload intentionally stamps only Re(k_n)).
-  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
+  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);

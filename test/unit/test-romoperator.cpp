@@ -60,6 +60,7 @@ class RomOperatorTest : public RomOperator
 {
 public:
   using RomOperator::AddAuxBlockDirections;
+  using RomOperator::AddFarfieldFrequencyDependentPermittivitySynthesis;
   using RomOperator::AddFrequencyDependentPermittivitySynthesis;
   using RomOperator::ApplyComplexPolynomialFitCorrections;
   using RomOperator::ApplyPolynomialFitCorrections;
@@ -90,6 +91,10 @@ public:
   auto &GetFrequencyDependentPermittivityMassR(std::size_t m) const
   {
     return Avol_m_r.at(m);
+  }
+  auto &GetFarfieldDispersiveMatrixR(std::size_t k, bool curl_curl) const
+  {
+    return curl_curl ? Aff2_k_r.at(k) : Aff_k_r.at(k);
   }
   auto GetSweepBand() const { return std::make_pair(sweep_omega_min, sweep_omega_max); }
   void ReserveBasis(std::size_t n) { V.reserve(n); }
@@ -190,12 +195,22 @@ TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
 // TODO: Do some more basic RomOperator Ctor Checks
 TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]")
 {
-  // With the boundary, the first-frequency self-check sees only the boundary term (the
-  // volume scalar cancels there), so a missing factored volume term would go undetected
-  // and only the comparison at omega = 2 catches it. Without it, the volume term is the
-  // only factored contributor.
-  const bool with_boundary = GENERATE(true, false);
-  CAPTURE(with_boundary);
+  // With a conductivity boundary, the first-frequency self-check sees only the boundary
+  // term (the volume scalar cancels there), so a missing factored volume term would go
+  // undetected and only the comparison at omega = 2 catches it. Without it, the volume
+  // term is the only factored contributor. An absorbing boundary next to the material
+  // depends on ε(iω), which is ε∞ at omega = 1, through its first- and second-order terms.
+  enum class Boundary
+  {
+    None,
+    Conductivity,
+    Absorbing1,
+    Absorbing2
+  };
+  const auto boundary = GENERATE(Boundary::None, Boundary::Conductivity,
+                                 Boundary::Absorbing1, Boundary::Absorbing2);
+  CAPTURE(static_cast<int>(boundary));
+  const bool with_boundary = boundary == Boundary::Conductivity;
   json config;
   config["Problem"] = {{"Type", "Driven"}, {"Output", "test_output"}};
   config["Model"] = {{"Mesh", "test.msh"}};
@@ -209,6 +224,11 @@ TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]
   if (with_boundary)
   {
     config["Boundaries"]["Conductivity"] = {{{"Attributes", {1}}, {"Conductivity", 5.8e7}}};
+  }
+  if (boundary == Boundary::Absorbing1 || boundary == Boundary::Absorbing2)
+  {
+    config["Boundaries"]["Absorbing"] = {
+        {"Attributes", {1}}, {"Order", boundary == Boundary::Absorbing1 ? 1 : 2}};
   }
   config["Solver"] = {
       {"Order", 1},
@@ -229,6 +249,8 @@ TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]
   RomOperatorTest prom_op(iodata, space_op, 1);
   CHECK(prom_op.HasOtherA2());
   CHECK(space_op.GetSurfaceConductivityOp().Size() == (with_boundary ? 1 : 0));
+  CHECK(space_op.GetFarfieldOp().NumDispersiveMaterials() ==
+        (boundary == Boundary::Absorbing1 || boundary == Boundary::Absorbing2 ? 1 : 0));
   auto A2_cancelled =
       space_op.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO, false);
   REQUIRE(A2_cancelled);
@@ -406,6 +428,100 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
         std::ranges::count_if(norm.aux_labels, [](const std::string &l)
                               { return l.starts_with("permittivity_0"); });
     CHECK(n_permittivity_aux == n_aux);
+  }
+}
+
+// Circuit synthesis must realize the absorbing boundary next to a frequency-dependent
+// material: after eliminating the aux states, the fit of each of its terms reproduces
+// f(ω)·VᵀMV over the band, with f = ω·r(ω) for the damping and (0.5/ω)/r(ω) for the
+// curl-curl matrix, r = √(ε(iω)/ε∞).
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator synthesis realizes the dispersive absorbing boundary",
+                 "[romoperator][Serial]")
+{
+  const json terms = {
+      {{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.01}},
+      {{"Type", "Lorentz"},
+       {"DeltaPermittivity", 0.5},
+       {"ResonanceFrequency", 20.0},
+       {"DampingFrequency", 2.0}}};
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"L0", 1.0e-6},
+      {"Lc", 7.0},
+      {"Refinement", json::object({})},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       {{{"Attributes", {1}},
+         {"Permittivity", {{"HighFrequency", 2.0}, {"Terms", terms}}}}}}};
+  setup_json["Boundaries"] = {{"LumpedPort",
+                               {{{"Index", 1},
+                                 {"R", 50.0},
+                                 {"Excitation", 1},
+                                 {"Attributes", {100}},
+                                 {"Direction", "+X"}}}},
+                              {"Absorbing", {{"Attributes", {101}}, {"Order", 2}}}};
+  setup_json["Solver"] = {{"Order", 2},
+                          {"Device", "CPU"},
+                          {"Driven",
+                           {{"AdaptiveTol", 1.0e-6},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &farfield_op = space_op.GetFarfieldOp();
+  REQUIRE(farfield_op.NumDispersiveMaterials() == 1);
+
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  prom_op.AddLumpedPortModesForSynthesis();
+  ComplexVector v(space_op.GlobalTrueVSize());
+  v.UseDevice(true);
+  v = 0.0;
+  linalg::SetRandom(Mpi::World(), v.Real());
+  prom_op.UpdatePROM(v, "random");
+  const long n = prom_op.GetReducedDimension();
+  REQUIRE(n == 2);
+  const auto [w_min, w_max] = prom_op.GetSweepBand();
+  REQUIRE(w_max > w_min);
+
+  for (const bool curl_curl : {false, true})
+  {
+    CAPTURE(curl_curl);
+    const Eigen::MatrixXcd &M_r = prom_op.GetFarfieldDispersiveMatrixR(0, curl_curl);
+    REQUIRE(M_r.rows() == n);
+    REQUIRE(M_r.cwiseAbs().maxCoeff() > 0.0);
+    Eigen::MatrixXcd Kc = Eigen::MatrixXcd::Zero(n, n), Cc = Kc, Mc = Kc;
+    std::vector<RomOperatorTest::WavePortAuxBlock> blocks;
+    prom_op.AddFarfieldFrequencyDependentPermittivitySynthesis(
+        "farfield", M_r, 0, curl_curl, Kc, Cc, Mc, blocks);
+    std::vector<std::string> aux_labels;
+    auto aug = RomOperatorTest::BuildAugmentedPencil(Kc, Cc, Mc, blocks, aux_labels);
+    const long n_aux = aug.Kr.rows() - n;
+    double max_err = 0.0, max_ref = 0.0;
+    for (double t : {0.0, 0.3, 0.55, 1.0})
+    {
+      const double w = w_min + t * (w_max - w_min);
+      const Eigen::MatrixXcd A =
+          aug.Kr + std::complex<double>(0.0, w) * aug.Cr - w * w * aug.Mr;
+      Eigen::MatrixXcd schur = A.topLeftCorner(n, n);
+      if (n_aux > 0)
+      {
+        schur -= A.topRightCorner(n, n_aux) * A.bottomRightCorner(n_aux, n_aux)
+                                                  .fullPivLu()
+                                                  .solve(A.bottomLeftCorner(n_aux, n));
+      }
+      const auto r = farfield_op.GetDispersiveScale(0, w);
+      const Eigen::MatrixXcd want = (curl_curl ? 0.5 / (w * r) : w * r) * M_r;
+      max_err = std::max(max_err, (schur - want).cwiseAbs().maxCoeff());
+      max_ref = std::max(max_ref, want.cwiseAbs().maxCoeff());
+    }
+    CHECK(max_err <= 1.0e-5 * max_ref);
   }
 }
 

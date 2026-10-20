@@ -18,7 +18,6 @@
 #include "fem/bilinearform.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "test-helpers.hpp"
@@ -1164,38 +1163,103 @@ TEST_CASE("MaterialOperator dispersive wave-number bound", "[materialoperator][S
 TEST_CASE("Absorbing boundaries next to dispersive materials",
           "[materialoperator][Serial][Parallel]")
 {
-  // Two elements along x: a dispersive one at x < 1 and vacuum at x > 1. The absorbing
-  // boundary condition uses the neighboring material's high-frequency properties, so it is
-  // rejected on the face x = 0 (attribute 5) and accepted on x = 2 (attribute 3).
-  auto serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
-  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  // Two elements along x: a lossless Lorentz medium at x < 1 and vacuum at x > 1, with
+  // absorbing faces at x = 0 (attribute 5, next to the medium) and x = 2 (attribute 3).
+  // At each frequency the medium is the constant ε(ω), whose absorbing boundary condition
+  // uses √(ε(ω)/μ) and c(ω), so the two give the same system K + iωC − ω²M + A2(ω).
+  auto MakeMesh = []
   {
-    mfem::Vector center;
-    serial_mesh->GetElementCenter(i, center);
-    serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
-  }
-  serial_mesh->SetAttributes();
-  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
-  Mesh palace_mesh(std::move(par_mesh));
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
 
+  const double eps_inf = 2.0, w0 = 3.0, delta = 0.7, omega = 1.3;
   config::MaterialData dispersive, vacuum;
   dispersive.attributes = {1};
-  dispersive.permittivity_pole_terms.push_back({-1.0, 1.0});
+  dispersive.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  dispersive.permittivity_pole_terms.push_back(
+      {{0.0, w0}, {0.0, -0.5 * delta * w0}});  // Δε ω₀²/(s² + ω₀²), undamped
   vacuum.attributes = {2};
-  config::PeriodicBoundaryData periodic;
-  MaterialOperator mat_op({dispersive, vacuum}, periodic, ProblemType::DRIVEN, palace_mesh);
+  config::MaterialData constant = dispersive;
+  constant.permittivity_pole_terms.clear();
+  const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
+  constant.epsilon_r.s = {eps, eps, eps};
 
-  CHECK(mat_op.HasFrequencyDependentPermittivityOnBoundary(mfem::Array<int>({5})));
-  CHECK_FALSE(mat_op.HasFrequencyDependentPermittivityOnBoundary(mfem::Array<int>({3})));
-  config::FarfieldBoundaryData farfield;
-  farfield.attributes = {5};
-  CHECK_THROWS_WITH(
-      FarfieldBoundaryOperator(farfield, ProblemType::DRIVEN, mat_op, palace_mesh.Get()),
-      Catch::Matchers::ContainsSubstring("Absorbing boundaries cannot neighbor"));
-  farfield.attributes = {3};
-  CHECK_NOTHROW(
-      FarfieldBoundaryOperator(farfield, ProblemType::DRIVEN, mat_op, palace_mesh.Get()));
+  for (int order : {1, 2})
+  {
+    CAPTURE(order);
+    config::BoundaryData boundaries;
+    boundaries.farfield.attributes = {3, 5};
+    boundaries.farfield.order = order;
+    auto Apply =
+        [&](const config::MaterialData &material, const ComplexVector &x, ComplexVector &y)
+    {
+      config::DomainData domains;
+      domains.materials = {material, vacuum};
+      auto mesh = MakeMesh();
+      SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+      const bool dispersive_op = material.HasFrequencyDependentPermittivity();
+      CHECK(space_op.GetFarfieldOp().NumDispersiveMaterials() == (dispersive_op ? 1 : 0));
+      if (dispersive_op)
+      {
+        CHECK(space_op.GetMaterialOp()
+                  .EvaluateFrequencyDependentPermittivity(0, {0.0, omega})
+                  .real() == Approx(eps));
+      }
+      auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+      ComplexVector t(x.Size());
+      t.UseDevice(true);
+      y = 0.0;
+      for (auto [op, a] : {std::pair{K.get(), std::complex<double>(1.0, 0.0)},
+                           std::pair{C.get(), std::complex<double>(0.0, omega)},
+                           std::pair{M.get(), std::complex<double>(-omega * omega, 0.0)},
+                           std::pair{A2.get(), std::complex<double>(1.0, 0.0)}})
+      {
+        if (op)
+        {
+          op->Mult(x, t);
+          y.Add(a, t);
+        }
+      }
+    };
+    std::unique_ptr<ComplexVector> x;
+    {
+      config::DomainData domains;
+      domains.materials = {constant, vacuum};
+      auto mesh = MakeMesh();
+      SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+      x = std::make_unique<ComplexVector>(space_op.GetNDSpace().GetTrueVSize());
+      x->UseDevice(true);
+      linalg::SetRandom(Mpi::World(), *x);
+    }
+    ComplexVector y_dispersive(x->Size()), y_constant(x->Size());
+    y_dispersive.UseDevice(true);
+    y_constant.UseDevice(true);
+    Apply(dispersive, *x, y_dispersive);
+    Apply(constant, *x, y_constant);
+    const double norm = linalg::Norml2(Mpi::World(), y_constant);
+    y_dispersive -= y_constant;
+    CHECK(linalg::Norml2(Mpi::World(), y_dispersive) <= 1.0e-12 * norm);
+  }
 }
 
 TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")
