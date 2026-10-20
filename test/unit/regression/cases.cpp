@@ -1565,6 +1565,20 @@ TEST_CASE("microstrip_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
                                   "wave_adaptive", opts);
 }
 
+// The port mode of microstrip_wave as a BoundaryMode solve on the end plane, at 10 GHz,
+// against the constant permittivity ε(ω) with its loss tangent.
+TEST_CASE("microstrip_boundarymode", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_boundarymode.json",
+                                  "boundarymode", opts);
+}
+
 TEST_CASE("cpw_wave_eigen", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
