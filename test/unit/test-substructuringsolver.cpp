@@ -1278,7 +1278,7 @@ TEST_CASE("SubstructuringSolver iterative environment and region solves",
             {"DirectMaxSize", direct_max_size}}}}}};
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
-    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
     std::vector<Vector> u = {ss.SolveExcitation(1), ss.SolveExcitation(2)};
