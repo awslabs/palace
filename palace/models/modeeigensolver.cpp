@@ -762,6 +762,21 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
     eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),
                                   mat_op.GetInvLondonDepth(), 1.0);
   }
+  // Frequency-dependent permittivity beyond ε∞: -ω² Re χ = Re g, shifted like the ε∞ mass.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const double g =
+          mat_op
+              .EvaluateFrequencyDependentPermittivityA2(i, std::complex<double>(0.0, omega))
+              .real();
+      eps_shifted_pc.AddMaterialProperty(
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i)),
+          shifted ? std::abs(g) : g);
+    }
+  }
 
   // Boundary coefficients for preconditioner (real part only, matching SpaceOperator).
   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
@@ -841,6 +856,20 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),
                                   mat_op.GetInvLondonDepthScalar(), -1.0);
+  }
+  // Frequency-dependent permittivity beyond ε∞: ω² Re χ = -Re g.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      poseps_h1_func.AddMaterialProperty(
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i)),
+          -mat_op
+               .EvaluateFrequencyDependentPermittivityA2(i,
+                                                         std::complex<double>(0.0, omega))
+               .real());
+    }
   }
 
   // Boundary coefficients (real part only).

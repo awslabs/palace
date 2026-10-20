@@ -1459,7 +1459,7 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
   }
   SECTION("Unsupported problem types are rejected")
   {
-    for (const auto *type : {"Transient", "BoundaryMode"})
+    for (const auto *type : {"Transient"})
     {
       auto config = MakeConfig();
       config["Problem"]["Type"] = type;
@@ -1468,7 +1468,7 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
   }
   SECTION("Static problem types are accepted")
   {
-    for (const auto *type : {"Electrostatic", "Magnetostatic"})
+    for (const auto *type : {"Electrostatic", "Magnetostatic", "BoundaryMode"})
     {
       auto config = MakeConfig();
       config["Problem"]["Type"] = type;

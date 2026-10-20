@@ -333,10 +333,9 @@ void IoData::CheckConfiguration()
   {
     // Static problems use the zero-frequency limit (MaterialOperator). Transient problems
     // would need the time-domain response of a model defined in frequency.
-    MFEM_VERIFY(problem.type != ProblemType::TRANSIENT &&
-                    problem.type != ProblemType::BOUNDARYMODE,
+    MFEM_VERIFY(problem.type != ProblemType::TRANSIENT,
                 "Frequency-dependent material Permittivity is not supported for Transient "
-                "or BoundaryMode simulations!");
+                "simulations!");
     MFEM_VERIFY(boundaries.floquetport.empty(),
                 "Frequency-dependent material Permittivity does not support FloquetPort "
                 "boundary conditions because Floquet ports use the high-frequency material "
