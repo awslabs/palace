@@ -1237,6 +1237,33 @@ TEST_CASE("cylinder_driven_wave_tm_dispersive", "[Serial][Parallel][GPU][Regress
                                   "driven_wave_tm_dispersive", opts);
 }
 
+// The Lorentz-filled guide of cylinder_driven_wave_tm_dispersive ending in a second-order
+// absorbing boundary, which uses ε(ω) of the medium next to it and reflects -14 to -19 dB
+// of TE11 (Mode 1). The second-order term needs a mode with a tangential curl on the end:
+// TM01 has none. The reference S-parameters are from the constant permittivity ε(ω) solved
+// at each frequency; the adaptive case checks the reduced model's factored terms.
+TEST_CASE("cylinder_driven_wave_absorbing", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing.json",
+                                  "driven_wave_absorbing", opts);
+}
+
+TEST_CASE("cylinder_driven_wave_absorbing_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing_adaptive.json",
+                                  "driven_wave_absorbing_adaptive", opts);
+}
+
 // Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
 // 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
 // TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent

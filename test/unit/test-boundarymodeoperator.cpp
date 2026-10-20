@@ -863,6 +863,56 @@ TEST_CASE("ModeOperatorModel dispersive permittivity matches its value at the fr
   }
 }
 
+TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Absorbing edges at x = 0 and x = W neighbor the substrate and vacuum. A lossless
+  // Lorentz substrate at real ω is the constant material ε(ω), whose absorbing condition
+  // uses √(ε(ω)/μ), so the two assemble the same mode operator.
+  const double eps_inf = 4.0, w0 = 3.0, delta = 0.7;
+  const double omega = 2.0;
+  const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
+  auto make = [&](bool dispersive)
+  {
+    return [=](IoData &iodata)
+    {
+      const double rate = electromagnetics::c0_ / iodata.model.L0;  // Rates in rad/s
+      iodata.problem.type = ProblemType::DRIVEN;
+      iodata.boundaries.farfield.attributes = {2, 4};
+      iodata.boundaries.farfield.order = 1;
+      auto &substrate = iodata.domains.materials[0];
+      if (dispersive)
+      {
+        substrate.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+        substrate.permittivity_pole_terms.push_back(
+            {{0.0, w0 * rate}, {0.0, -0.5 * delta * w0 * rate}});
+      }
+      else
+      {
+        substrate.epsilon_r.s = {eps, eps, eps};
+      }
+    };
+  };
+  const RectangleModeModel dispersive(make(true)), constant(make(false));
+  REQUIRE_THAT(dispersive.GetMaterialOp()
+                   .EvaluateFrequencyDependentPermittivity(0, {0.0, omega})
+                   .real(),
+               WithinRel(eps, 1.0e-12));
+  const double sigma = -2.0e-1;
+  const auto A = dispersive.GetModel().Assemble(omega, sigma);
+  const auto B = constant.GetModel().Assemble(omega, sigma);
+  ComplexVector x(A->Width()), y(A->Height()), z(A->Height());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  z.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  A->Mult(x, y);
+  B->Mult(x, z);
+  const double norm = linalg::Norml2(Mpi::World(), z);
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+}
+
 TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
           "[boundarymodeoperator][Serial][Parallel]")
 {

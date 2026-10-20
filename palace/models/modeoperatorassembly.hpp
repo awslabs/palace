@@ -36,7 +36,8 @@ enum class CoefficientType
   SHIFT,
   SURFACE_CONDUCTIVITY,
   RATIONAL_IMPEDANCE,
-  FREQUENCY_DEPENDENT_PERMITTIVITY
+  FREQUENCY_DEPENDENT_PERMITTIVITY,
+  FARFIELD_FREQUENCY_DEPENDENT_PERMITTIVITY
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -63,6 +64,7 @@ class ModeOperatorModel
 {
 private:
   const MaterialOperator &mat_op;
+  FarfieldBoundaryOperator &farfield_op;
   SurfaceConductivityOperator &surf_sigma_op;
   SurfaceRationalImpedanceOperator &surf_rz_op;
   std::vector<OperatorComponent> components;

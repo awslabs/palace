@@ -785,6 +785,11 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surf_z_op.AddMassBdrCoefficients(shifted ? std::abs(omega * omega) : (-omega * omega),
                                    fbr);
   farfield_op.AddDampingBdrCoefficients(omega, fbr);
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    farfield_op.AddDispersiveDampingBdrCoefficients(
+        k, omega * std::abs(farfield_op.GetDispersiveScale(k, omega)), fbr);
+  }
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
 

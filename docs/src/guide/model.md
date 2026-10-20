@@ -118,10 +118,10 @@ ordinary `Conductivity` remains additive. The high-frequency value uses the ordi
 permittivity mass matrix. Exact zero poles use the ordinary conductivity coefficient, and
 all nonlinear terms on a material share one unit vector-mass operator.
 
-Transient, electrostatic, magnetostatic, and boundary-mode problems, Floquet ports, and a
-nonzero `Periodic.FloquetWaveVector` are not supported with this material model, nor are
-Absorbing boundaries next to it, which use the high-frequency properties of the neighboring
-material. Numeric wave ports solve their port mode with ``\epsilon(i\omega)`` at each
+Transient problems are not supported with this material model. Electrostatic problems use
+the static permittivity ``\epsilon(0)``, so they reject a `Drude` term, and magnetostatic
+problems do not use the permittivity. Numeric wave ports, boundary-mode problems, Floquet
+ports, and Absorbing boundaries next to the material use ``\epsilon(i\omega)`` at each
 frequency. The eigenmode divergence-free projection is disabled because
 longitudinal plasma modes can be physical. Eigenmodes of a region partially filled with a
 pole material accumulate at the material resonance, so choose the eigenmode `Target` away

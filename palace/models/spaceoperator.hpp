@@ -339,6 +339,17 @@ public:
   std::unique_ptr<OperType>
   GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
 
+  // The ω-independent first-order damping mass and second-order curl-curl matrix of the
+  // absorbing boundaries next to frequency-dependent material k of the farfield operator,
+  // with the high-frequency permittivity, on the IMAGINARY slot. The full A2 contributions
+  // at ω are iω·r_k(ω) and i·(0.5/ω)/r_k(ω) times them. Null if they contribute no DoFs on
+  // any rank (or, for the curl-curl matrix, for a first-order boundary condition).
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveDampingMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetFarfieldDispersiveCurlCurlMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
+  const auto &GetFarfieldOp() const { return farfield_op; }
+
   // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
   // idx, with unit coefficient (including crack scaling), stored on the real slot. The
   // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient

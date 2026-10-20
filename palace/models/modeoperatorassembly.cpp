@@ -108,7 +108,8 @@ ModeOperatorModel::ModeOperatorModel(
     SurfaceRationalImpedanceOperator &surf_rz_op, const mfem::HypreParMatrix &Bttr,
     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
     const mfem::HypreParMatrix *Btnr, const mfem::Array<int> &dbc_tdof_list)
-  : mat_op(mat_op), surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op)
+  : mat_op(mat_op), farfield_op(farfield_op), surf_sigma_op(surf_sigma_op),
+    surf_rz_op(surf_rz_op)
 {
   auto assemble_nd = [&](BilinearForm &form)
   {
@@ -246,7 +247,7 @@ ModeOperatorModel::ModeOperatorModel(
       // boundary attribute maps to one of these per neighboring domain attribute.
       const auto &inv_z = mat_op.GetInvImpedance();
       const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
-      for (auto ceed_attr : mat_op.GetCeedBdrAttributes(farfield_op.GetAttrList()))
+      for (auto ceed_attr : farfield_op.GetCeedAttrListOther())
       {
         const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
         MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
@@ -338,6 +339,24 @@ ModeOperatorModel::ModeOperatorModel(
                   assemble_nd(att), nullptr, assemble_h1(ann), nullptr);
   }
 
+  // Absorbing boundaries next to a frequency-dependent material: the damping iω·r(ω) times
+  // the high-frequency damping coefficient, on the imaginary slot like the linear ω term.
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    MaterialPropertyCoefficient damp_t(max_bdr_attr), damp_n(max_bdr_attr);
+    farfield_op.AddDispersiveDampingBdrCoefficients(k, 1.0, damp_t);
+    farfield_op.AddDispersiveScalarDampingBdrCoefficients(k, -1.0, damp_n);
+    BilinearForm atti(nd_fespace), anni(h1_fespace);
+    if (!damp_t.empty())
+    {
+      atti.AddBoundaryIntegrator<VectorFEMassIntegrator>(damp_t);
+      anni.AddBoundaryIntegrator<MassIntegrator>(damp_n);
+    }
+    add_component(CoefficientType::FARFIELD_FREQUENCY_DEPENDENT_PERMITTIVITY,
+                  static_cast<int>(k), nullptr, assemble_nd(atti), nullptr,
+                  assemble_h1(anni));
+  }
+
   auto shift = std::make_unique<mfem::HypreParMatrix>(Bttr);
   *shift *= -1.0;
   add_component(CoefficientType::SHIFT, -1, std::move(shift), nullptr, nullptr, nullptr);
@@ -401,6 +420,9 @@ ModeOperatorModel::EvaluateCoefficient(const OperatorComponent &component,
       return mat_op.EvaluateFrequencyDependentPermittivityA2(
           static_cast<std::size_t>(component.index),
           std::complex<double>(0.0, 1.0) * omega);
+    case CoefficientType::FARFIELD_FREQUENCY_DEPENDENT_PERMITTIVITY:
+      return omega * farfield_op.GetDispersiveScale(
+                         static_cast<std::size_t>(component.index), omega);
   }
   MFEM_ABORT("Unknown mode-operator coefficient type!");
   return 0.0;

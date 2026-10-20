@@ -248,6 +248,11 @@ protected:
   // susceptibility (EvaluateFrequencyDependentPermittivityA2). Closed form online.
   std::vector<std::unique_ptr<ComplexOperator>> Avol_m_;
   std::vector<Eigen::MatrixXcd> Avol_m_r;
+  // Absorbing boundaries next to each frequency-dependent material k of the farfield
+  // operator: first-order damping mass and second-order curl-curl matrix (imaginary slot),
+  // with online scalars ω·r_k(ω) and (0.5/ω)/r_k(ω).
+  std::vector<std::unique_ptr<ComplexOperator>> Aff_k_, Aff2_k_;
+  std::vector<Eigen::MatrixXcd> Aff_k_r, Aff2_k_r;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
@@ -473,6 +478,15 @@ protected:
   // Djordjevic-Sarkar term is fit by poly+AAA (see the definition).
   void AddFrequencyDependentPermittivitySynthesis(
       const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t material_idx,
+      Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+      std::vector<WavePortAuxBlock> &aux) const;
+
+  // Synthesis of the absorbing boundary next to frequency-dependent material k of the
+  // farfield operator, with `Mp_r` its projected damping mass (or, if `curl_curl`, its
+  // curl-curl matrix) on the imaginary slot: the scalar ω·r_k(ω) (or (0.5/ω)/r_k(ω))
+  // involves √ε(iω), so it is fit by poly+AAA like surface conductivity.
+  void AddFarfieldFrequencyDependentPermittivitySynthesis(
+      const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t k, bool curl_curl,
       Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
       std::vector<WavePortAuxBlock> &aux) const;
 

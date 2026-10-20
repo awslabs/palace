@@ -169,9 +169,21 @@ public:
   // which a dispersive material exceeds below its resonances. Not collective.
   double GetFrequencyDependentMaxMuEpsilon(double omega) const;
 
-  // Whether a frequency-dependent material neighbors any of the given mesh boundary
-  // attributes on any process.
-  bool HasFrequencyDependentPermittivityOnBoundary(const mfem::Array<int> &bdr_attrs) const;
+  // Split the libCEED boundary attributes of the given mesh boundary attributes by the
+  // frequency-dependent material, with a nonlinear term, of their neighboring domain.
+  // Returns those next to no such material, and the index and attributes of each material
+  // that neighbors the boundaries on any process (the attributes may be empty on this one).
+  struct FrequencyDependentBdrSplit
+  {
+    mfem::Array<int> other;
+    std::vector<std::pair<std::size_t, mfem::Array<int>>> materials;
+  };
+  FrequencyDependentBdrSplit SplitCeedBdrAttributesByFrequencyDependentPermittivity(
+      const mfem::Array<int> &bdr_attrs) const;
+  double GetFrequencyDependentPermittivityHighFrequency(std::size_t material_idx) const
+  {
+    return frequency_dependent_permittivity_eps_inf.at(material_idx);
+  }
 
   bool HasLossTangent() const { return has_losstan_attr; }
   bool HasConductivity() const { return has_conductivity_attr; }

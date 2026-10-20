@@ -635,10 +635,13 @@ double MaterialOperator::GetFrequencyDependentMaxMuEpsilon(double omega) const
   return mu_eps_max;
 }
 
-bool MaterialOperator::HasFrequencyDependentPermittivityOnBoundary(
+MaterialOperator::FrequencyDependentBdrSplit
+MaterialOperator::SplitCeedBdrAttributesByFrequencyDependentPermittivity(
     const mfem::Array<int> &bdr_attrs) const
 {
-  bool found = false;
+  const std::size_t n = frequency_dependent_permittivity_attributes.size();
+  std::vector<mfem::Array<int>> by_material(n);
+  FrequencyDependentBdrSplit split;
   for (auto bdr_attr : bdr_attrs)
   {
     auto it = mesh.GetCeedBdrAttributes().find(bdr_attr);
@@ -648,14 +651,24 @@ bool MaterialOperator::HasFrequencyDependentPermittivityOnBoundary(
     }
     for (const auto &[nbr_attr, ceed_attr] : it->second)
     {
-      for (const auto &attrs : frequency_dependent_permittivity_attributes)
-      {
-        found = found || std::find(attrs.begin(), attrs.end(), nbr_attr) != attrs.end();
-      }
+      const int m = GetFrequencyDependentPermittivityMaterial(nbr_attr);
+      (m < 0 ? split.other : by_material[m]).Append(ceed_attr);
     }
   }
-  Mpi::GlobalOr(1, &found, mesh.GetComm());
-  return found;
+  std::unique_ptr<bool[]> present(new bool[std::max<std::size_t>(n, 1)]);
+  for (std::size_t m = 0; m < n; m++)
+  {
+    present[m] = by_material[m].Size() > 0;
+  }
+  Mpi::GlobalOr(static_cast<int>(n), present.get(), mesh.GetComm());
+  for (std::size_t m = 0; m < n; m++)
+  {
+    if (present[m])
+    {
+      split.materials.emplace_back(m, std::move(by_material[m]));
+    }
+  }
+  return split;
 }
 
 void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
