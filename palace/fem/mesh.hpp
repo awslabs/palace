@@ -4,7 +4,9 @@
 #ifndef PALACE_FEM_MESH_HPP
 #define PALACE_FEM_MESH_HPP
 
+#include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
@@ -29,7 +31,10 @@ struct CeedGeomFactorData
   std::vector<int> indices;
 
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
-  // space_dim x dim, stored column-major by component.
+  // space_dim x dim, stored column-major by component. For 3D domain elements, this is
+  // followed by the physical coordinates x of the quadrature points for the geometry
+  // factor data restricted to elements of given attributes (see
+  // Mesh::GetCeedGeomFactorData).
   CeedVector geom_data;
 
   // Element restriction for the geometry factor quadrature data.
@@ -67,6 +72,15 @@ private:
   //   - Geometry factor quadrature point data (w |J| and adj(J)^T / |J|) for domain and
   //     boundary elements.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
+
+  // Geometry factor data of the domain elements with given (global) domain attributes,
+  // with the physical coordinates of the quadrature points for 3D elements. Built on demand
+  // for each Ceed context.
+  mutable std::map<
+      std::vector<int>,
+      std::unordered_map<Ceed,
+                         std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>>>>
+      geom_data_attr;
 
 public:
   template <typename... T>
@@ -160,6 +174,14 @@ public:
 
   const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
+
+  // Geometry factor data of the domain elements with the given (global, sorted) domain
+  // attributes only, for integrators restricted to these elements (see
+  // BilinearForm::AddDomainIntegrator). For 3D elements, it also stores the physical
+  // coordinates of the quadrature points, for QFunctions with spatially varying
+  // coefficients (such as the PML material tensors).
+  const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
+  GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const;
 
   void ResetCeedObjects();
 

@@ -31,6 +31,10 @@ protected:
   // List of domain and boundary integrators making up the bilinear form.
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs, boundary_integs;
 
+  // For each domain integrator, the (global, sorted) domain attributes of the elements to
+  // which its assembly is restricted (all elements if empty).
+  std::vector<std::vector<int>> domain_integ_attr;
+
   std::unique_ptr<ceed::Operator>
   PartialAssemble(const FiniteElementSpace &trial_fespace,
                   const FiniteElementSpace &test_fespace) const;
@@ -54,6 +58,21 @@ public:
   void AddDomainIntegrator(U &&...args)
   {
     domain_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
+    domain_integ_attr.emplace_back();
+  }
+
+  // Add a domain integrator assembled only on the elements with the given (global) domain
+  // attributes, whose geometry factor data includes the physical coordinates of the
+  // quadrature points for 3D elements (see Mesh::GetCeedGeomFactorData).
+  template <typename T, typename... U>
+  void AddDomainIntegratorOnAttributes(std::vector<int> attr_list, U &&...args)
+  {
+    MFEM_VERIFY(!attr_list.empty(),
+                "Domain integrator restricted to an empty list of attributes!");
+    std::ranges::sort(attr_list);
+    attr_list.erase(std::ranges::unique(attr_list).begin(), attr_list.end());
+    domain_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
+    domain_integ_attr.push_back(std::move(attr_list));
   }
 
   template <typename T, typename... U>

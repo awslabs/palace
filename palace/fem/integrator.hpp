@@ -119,6 +119,109 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
+// Integrators for the Cartesian PML terms. The PML material tensors μ̃⁻¹ and ε̃ are
+// evaluated at each quadrature point from the physical coordinate (cached in the geometry
+// data) and a packed QFunction context (layout in fem/qfunctions/coeff/pml_qf.h) which also
+// holds the complex prefactor c, the output part (real, imaginary, or magnitude), and the
+// frequency of the stretch. Attributes outside of the PML regions get no contribution.
+// These are used alongside the standard integrators, whose material coefficients exclude
+// the PML attributes (see MaterialOperator::GetBulkAttributeToMaterial). Only 3D elements
+// are supported.
+class PMLIntegratorBase : public BilinearFormIntegrator
+{
+protected:
+  const void *ctx;
+  std::size_t ctx_size;
+
+public:
+  PMLIntegratorBase(const void *ctx, std::size_t ctx_size)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size)
+  {
+  }
+};
+
+// a(u, v) = (c μ̃⁻¹ curl u, curl v) for H(curl) elements.
+class CurlCurlPMLIntegrator : public PMLIntegratorBase
+{
+public:
+  using PMLIntegratorBase::PMLIntegratorBase;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// a(u, v) = (c ε̃ u, v) for H(curl) elements.
+class VectorFEMassPMLIntegrator : public PMLIntegratorBase
+{
+public:
+  using PMLIntegratorBase::PMLIntegratorBase;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// a(u, v) = (c_μ μ̃⁻¹ curl u, curl v) + (c_ε ε̃ u, v) for H(curl) elements.
+class CurlCurlMassPMLIntegrator : public PMLIntegratorBase
+{
+public:
+  using PMLIntegratorBase::PMLIntegratorBase;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// a(u, v) = (c ε̃ ∇u, ∇v) for H1 elements: the auxiliary space (gradient subspace)
+// projection of the H(curl) PML mass term, used by the multigrid auxiliary space smoothers.
+class DiffusionPMLIntegrator : public PMLIntegratorBase
+{
+public:
+  using PMLIntegratorBase::PMLIntegratorBase;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// a(u, v) = (c [k ×]ᵀ μ̃⁻¹ [k ×] u, v) for H(curl) elements, where [k ×] is the matrix
+// representation of the cross product with the Floquet wave vector.
+class FloquetMassPMLIntegrator : public PMLIntegratorBase
+{
+public:
+  using PMLIntegratorBase::PMLIntegratorBase;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// a(u, v) = (c [k ×]ᵀ μ̃⁻¹ [k ×] ∇u, ∇v) for H1 elements: the auxiliary space projection of
+// the Floquet PML mass term.
+class FloquetDiffusionPMLIntegrator : public PMLIntegratorBase
+{
+public:
+  using PMLIntegratorBase::PMLIntegratorBase;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// a(u, v) = (c [k ×]ᵀ μ̃⁻¹ curl u, v) - (c μ̃⁻¹ [k ×] u, curl v) for H(curl) elements,
+// mirroring the pair of MixedVectorCurl/MixedVectorWeakCurl integrators used for the
+// Floquet terms outside of the PML.
+class FloquetCrossPMLIntegrator : public PMLIntegratorBase
+{
+public:
+  using PMLIntegratorBase::PMLIntegratorBase;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
 // Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.
 class DivDivIntegrator : public BilinearFormIntegrator
 {
