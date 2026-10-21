@@ -120,9 +120,6 @@ representation are accurate to near machine precision. This supports interpretin
 nonzero curved-mesh error as a consequence of the isoparametric mapping. The affine check
 also uses anisotropic permittivity to exercise the material tensor.
 
-A separate single-resolution solve retains coverage of the default homogeneous-Dirichlet
-path without duplicating the full convergence sweep.
-
 ### Automated acceptance criteria
 
 The MMS tests run in both serial and distributed-memory configurations. For every
