@@ -109,7 +109,10 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
       0);
   hypre_CSRMatrix *hA_diag = hypre_ParCSRMatrixDiag(hA);
   hypre_ParCSRMatrixDiag(hA) = *const_cast<hypre::HypreCSRMatrix *>(sA);
-  hypre_ParCSRMatrixInitialize(hA);
+  // Initializing hA re-initializes its diagonal block (sA) and sets its memory location, so
+  // pass sA's own location instead of hypre's global default.
+  hypre_ParCSRMatrixInitialize_v2(
+      hA, hypre_CSRMatrixMemoryLocation(hypre_ParCSRMatrixDiag(hA)));
 
   const mfem::HypreParMatrix *P = trial_fespace.Get().Dof_TrueDof_Matrix();
   if (!use_R)

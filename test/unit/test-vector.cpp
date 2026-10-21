@@ -7,6 +7,7 @@
 
 #include <complex>
 
+#include "linalg/hypre.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
@@ -344,5 +345,38 @@ TEST_CASE("Sqrt function", "[Vector][Serial]")
     CHECK_THAT(vec(1), WithinRel(4.0));  // sqrt(4 * 4) = 4
     CHECK_THAT(vec(2), WithinRel(6.0));  // sqrt(4 * 9) = 6
   }
+}
+
+TEST_CASE("LocalDot and LocalSum - Host and Device Vectors", "[vector][Serial][GPU]")
+{
+  // LocalDot and LocalSum wrap the input in static hypre vectors. Check that hypre is told
+  // where each input's data actually is: host-only vectors (UseDevice() is false) must work
+  // in GPU runs too, before and after device vectors pass through the same objects.
+  Vector x(4), y(4);  // Host-only
+  for (int i = 0; i < 4; i++)
+  {
+    x(i) = i + 1.0;  // [1, 2, 3, 4]
+    y(i) = 2.0;
+  }
+  Vector dx(x), dy(y);
+  dx.UseDevice(true);
+  dy.UseDevice(true);
+
+  CHECK_THAT(linalg::LocalDot(x, y), WithinRel(20.0));
+  CHECK_THAT(linalg::LocalSum(x), WithinRel(10.0));
+  CHECK_THAT(linalg::LocalDot(dx, dy), WithinRel(20.0));
+  CHECK_THAT(linalg::LocalSum(dx), WithinRel(10.0));
+  CHECK_THAT(linalg::LocalDot(x, y), WithinRel(20.0));
+  CHECK_THAT(linalg::LocalSum(x), WithinRel(10.0));
+
+  // Some GPU setups tolerate a wrong location, so also check the wrapper's location
+  // directly, including when one wrapper is reused for vectors in different memory spaces.
+  hypre::HypreVector X(x);
+  CHECK(hypre_VectorMemoryLocation(static_cast<hypre_Vector *>(X)) == HYPRE_MEMORY_HOST);
+  X.Update(dx);
+  CHECK(hypre_VectorMemoryLocation(static_cast<hypre_Vector *>(X)) ==
+        mfem::GetHypreMemoryLocation());
+  X.Update(x);
+  CHECK(hypre_VectorMemoryLocation(static_cast<hypre_Vector *>(X)) == HYPRE_MEMORY_HOST);
 }
 }  // namespace palace

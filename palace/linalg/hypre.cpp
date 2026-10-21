@@ -20,26 +20,35 @@ HypreVector::~HypreVector()
 
 void HypreVector::Update(const Vector &x)
 {
+  // x.Read() returns device memory only if x uses the device, so tell hypre where the data
+  // is instead of relying on hypre's global memory location (device for GPU runs). The
+  // location is reset on every update since the same object can wrap different vectors.
   const HYPRE_Int N = x.Size();
+  const bool use_dev = x.UseDevice();
+  const HYPRE_MemoryLocation loc =
+      use_dev ? mfem::GetHypreMemoryLocation() : HYPRE_MEMORY_HOST;
   if (!vec)
   {
     vec = hypre_SeqVectorCreate(N);
     hypre_SeqVectorSetDataOwner(vec, 0);
-    hypre_VectorData(vec) = const_cast<double *>(x.Read());
-    hypre_SeqVectorInitialize(vec);
+    hypre_VectorData(vec) = const_cast<double *>(x.Read(use_dev));
+    hypre_SeqVectorInitialize_v2(vec, loc);
   }
   else
   {
     hypre_SeqVectorSetSize(vec, N);
-    hypre_VectorData(vec) = const_cast<double *>(x.Read());
+    hypre_VectorData(vec) = const_cast<double *>(x.Read(use_dev));
+    hypre_VectorMemoryLocation(vec) = loc;
   }
 }
 
 HypreCSRMatrix::HypreCSRMatrix(int h, int w, int nnz)
   : palace::Operator(h, w), hypre_own_I(true)
 {
+  // Callers fill the arrays with mfem::forall, which runs on the device when MFEM's device
+  // is enabled, i.e. where mfem::GetHypreMemoryLocation() points.
   mat = hypre_CSRMatrixCreate(h, w, nnz);
-  hypre_CSRMatrixInitialize(mat);
+  hypre_CSRMatrixInitialize_v2(mat, 0, mfem::GetHypreMemoryLocation());
 }
 
 HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat), hypre_own_I(true)
@@ -70,7 +79,9 @@ HypreCSRMatrix::HypreCSRMatrix(const mfem::SparseMatrix &m)
     mfem::forall(nnz, [=] MFEM_HOST_DEVICE(int i) { DJ[i] = J[i]; });
   }
 #endif
-  hypre_CSRMatrixInitialize(mat);
+  // The Read*() calls above return device memory whenever MFEM's device is enabled, which
+  // is where mfem::GetHypreMemoryLocation() points.
+  hypre_CSRMatrixInitialize_v2(mat, 0, mfem::GetHypreMemoryLocation());
 }
 
 HypreCSRMatrix::~HypreCSRMatrix()
