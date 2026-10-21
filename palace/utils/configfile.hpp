@@ -183,8 +183,12 @@ public:
   bool clean_unused_elements = true;
 
   // Split, or "crack", boundary elements lying on internal boundaries to decouple the
-  // elements on either side.
-  bool crack_bdr_elements = true;
+  // elements on either side. If unset, interior boundaries with boundary conditions which
+  // apply to each side separately (PMC and absorbing) are cracked, as well as impedance,
+  // rational impedance, and conductivity boundaries with "Crack" enabled. If true, all
+  // interior boundaries with boundary conditions except lumped ports are cracked (legacy
+  // behavior, deprecated). If false, no boundaries are cracked.
+  std::optional<bool> crack_bdr_elements = std::nullopt;
 
   // When required, refine elements neighboring a split or crack in order to enable the
   // decoupling.
@@ -394,6 +398,14 @@ public:
   // Optional flag for an external boundary surface, relevant for the thickness correction.
   bool external = false;
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the skin depth), with
+  // the surface impedance of the conductor on each face. If false, the boundary is a thin
+  // sheet with a single tangential electric field on it and the admittance of both faces
+  // (a film thinner than the skin depth).
+  bool crack = false;
+
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
 
@@ -412,6 +424,14 @@ public:
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
+
   ImpedanceData() = default;
   ImpedanceData(const json &boundary);
 };
@@ -427,6 +447,14 @@ public:
 
   // List of boundary attributes for this rational impedance boundary condition.
   std::vector<int> attributes = {};
+
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
 
   RationalImpedanceData() = default;
   RationalImpedanceData(const json &boundary);
@@ -816,6 +844,13 @@ public:
   // List of all boundary attributes affected by mesh cracking.
   std::unordered_set<int> cracked_attributes = {};
 
+  // Cracked boundary attributes whose surface impedance is split between the two faces of
+  // the crack (twice the impedance on each face). This is only the case with the deprecated
+  // config["Model"]["CrackInternalBoundaryElements"] = true, to keep the results of
+  // previous versions: otherwise, each face of a cracked boundary has the given surface
+  // impedance.
+  std::unordered_set<int> split_impedance_attributes = {};
+
   // Boundary objects.
   PecBoundaryData pec = {};
   PmcBoundaryData pmc = {};
@@ -833,6 +868,18 @@ public:
   PeriodicBoundaryData periodic = {};
   std::map<int, FluxLoopData> fluxloop = {};
   BoundaryPostData postpro = {};
+
+  // Return the boundary attributes of boundary conditions which model sheets carrying a
+  // surface current or charge (conductors, impedance and superconductor sheets, flux loop
+  // films, lumped ports, and surface current sources), across which the fields are
+  // discontinuous when interior. For these, the error estimator allows discontinuous
+  // recovered fluxes, and interface dielectric energies sum the contributions of both faces
+  // (when cracked, the faces are exterior boundaries anyway).
+  std::vector<int> GetSheetAttributes() const;
+
+  // Return the boundary attributes for which the mesh is cracked when interior, given the
+  // value of config::ModelData::crack_bdr_elements.
+  std::vector<int> GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const;
 
   BoundaryData() = default;
   BoundaryData(const json &boundaries);

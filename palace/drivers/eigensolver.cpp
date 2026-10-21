@@ -425,14 +425,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
         space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
         space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
+        iodata.boundaries.GetSheetAttributes());
   }
   else
   {
     estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
         space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
         iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
+        iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
   }
   auto AddEstimate =
       [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)

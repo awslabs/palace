@@ -4,9 +4,11 @@
 #ifndef PALACE_FEM_FESPACE_HPP
 #define PALACE_FEM_FESPACE_HPP
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/brokenspace.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
@@ -21,8 +23,9 @@ namespace palace
 class FiniteElementSpace
 {
 private:
-  // Underlying MFEM object.
-  mfem::ParFiniteElementSpace fespace;
+  // Underlying MFEM object, owned unless this is a broken view of another space.
+  std::unique_ptr<mfem::ParFiniteElementSpace> owned_fespace;
+  mfem::ParFiniteElementSpace &fespace;
 
   // Reference to the underlying mesh object (not owned).
   Mesh &mesh;
@@ -37,6 +40,22 @@ private:
   // Members for discrete interpolators from an auxiliary space to a primal space.
   mutable const FiniteElementSpace *aux_fespace;
   mutable std::unique_ptr<Operator> G;
+
+  // Data for a space which is broken (discontinuous) across interior boundaries, see
+  // fem/brokenspace.hpp: element DOF overrides for the element restriction (for local
+  // element e, entries [override_offsets[e], override_offsets[e + 1]) give native local
+  // DOF indices and their L-vector indices in the copy block), sizes, and the broken
+  // prolongation matrix.
+  struct BrokenData
+  {
+    std::vector<int> override_offsets, override_local, override_ldof;
+    int vsize = 0, tsize = 0;
+    HYPRE_BigInt global_vsize = 0, global_tsize = 0;
+    fem::BrokenProlongationMatrix P;
+  };
+  std::unique_ptr<BrokenData> broken;
+
+  void InitBroken(const CrackSides &sides);
 
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
@@ -66,13 +85,29 @@ private:
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh), aux_fespace(nullptr)
+    : owned_fespace(std::make_unique<mfem::ParFiniteElementSpace>(
+          &mesh.Get(), std::forward<T>(args)...)),
+      fespace(*owned_fespace), mesh(mesh), aux_fespace(nullptr)
   {
     ResetCeedObjects();
     tx.UseDevice(true);
     lx.UseDevice(true);
     ly.UseDevice(true);
   }
+
+  // Construct a view of the given space which is broken (discontinuous) across interior
+  // boundaries, given the interior boundary sides of each local element (see
+  // fem/brokenspace.hpp). The L-vector of the view is the L-vector of the given space
+  // extended with a block of copied L-DOFs, one for each version of the true DOFs of its
+  // row read by the elements on the sides of split entities other than the first, and the
+  // true DOF vector is extended with the copies of the true DOFs of split entities (one per
+  // side other than the first). The view shares the underlying MFEM space with the given
+  // space, which must outlive the view and cannot be updated while the view exists. Only
+  // element (domain) restrictions and the prolongation (a HypreParMatrix, with the global
+  // offsets of the L-DOFs and true DOFs) are available for a broken space, which cannot be
+  // used with MFEM assembly or for MFEM grid functions. Collective.
+  FiniteElementSpace(FiniteElementSpace &fespace, const CrackSides &sides);
+
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
 
   const auto &Get() const { return fespace; }
@@ -91,16 +126,43 @@ public:
   auto &GetParMesh() { return mesh.Get(); }
 
   auto GetVDim() const { return Get().GetVDim(); }
-  auto GetVSize() const { return Get().GetVSize(); }
-  auto GlobalVSize() const { return Get().GlobalVSize(); }
-  auto GetTrueVSize() const { return Get().GetTrueVSize(); }
-  auto GlobalTrueVSize() const { return Get().GlobalTrueVSize(); }
+  auto GetVSize() const { return broken ? broken->vsize : Get().GetVSize(); }
+  auto GlobalVSize() const { return broken ? broken->global_vsize : Get().GlobalVSize(); }
+  auto GetTrueVSize() const { return broken ? broken->tsize : Get().GetTrueVSize(); }
+  auto GlobalTrueVSize() const
+  {
+    return broken ? broken->global_tsize : Get().GlobalTrueVSize();
+  }
   auto Dimension() const { return mesh.Get().Dimension(); }
   auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
   auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
 
-  const auto *GetProlongationMatrix() const { return Get().GetProlongationMatrix(); }
-  const auto *GetRestrictionMatrix() const { return Get().GetRestrictionMatrix(); }
+  const Operator *GetProlongationMatrix() const
+  {
+    return broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+  }
+
+  // The prolongation as a HypreParMatrix, and the global offsets of the L-DOFs and of the
+  // true DOFs, as for mfem::ParFiniteElementSpace (for the parallel assembly of operators).
+  const mfem::HypreParMatrix *Dof_TrueDof_Matrix() const
+  {
+    return broken ? broken->P.P.get() : Get().Dof_TrueDof_Matrix();
+  }
+  HYPRE_BigInt *GetDofOffsets() const
+  {
+    return broken ? broken->P.row_offsets.GetData() : Get().GetDofOffsets();
+  }
+  HYPRE_BigInt *GetTrueDofOffsets() const
+  {
+    return broken ? broken->P.col_offsets.GetData() : Get().GetTrueDofOffsets();
+  }
+  const mfem::SparseMatrix *GetRestrictionMatrix() const
+  {
+    MFEM_VERIFY(!broken, "Restriction matrix is not available for a broken space!");
+    return Get().GetRestrictionMatrix();
+  }
+
+  bool IsBroken() const { return broken != nullptr; }
 
   // Return the discrete gradient, curl, or divergence matrix interpolating from the
   // auxiliary to the primal space, constructing it on the fly as necessary.
@@ -138,7 +200,11 @@ public:
   // space.
   void ResetCeedObjects();
 
-  void Update() { ResetCeedObjects(); }
+  void Update()
+  {
+    MFEM_VERIFY(!broken, "Broken finite element spaces cannot be updated!");
+    ResetCeedObjects();
+  }
 
   static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                                   mfem::Geometry::Type geom);

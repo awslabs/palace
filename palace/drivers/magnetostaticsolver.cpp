@@ -184,7 +184,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       (curlcurl_op.GetMesh().Dimension() < 3) ? curlcurl_op.GetH1Spaces()
                                               : curlcurl_op.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
+      iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
   ErrorIndicator indicator;
   solve_converged_ = true;
   // Total London kinetic penalty energy S(A_t − a_h) summed over flux loops this solve. A

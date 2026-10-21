@@ -31,6 +31,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Error estimation for adaptive mesh refinement now uses broken finite element spaces, allowing
+    discontinuous fields across interior boundaries without cracking the mesh. Mesh cracking
+    is now a per-boundary physical modeling choice (see Interface Changes).
+    [PR 994](https://github.com/awslabs/palace/pull/994).
 
 #### Interface Changes
 
@@ -45,6 +49,54 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+  - Added the `"Crack"` option to `"Impedance"`, `"RationalImpedance"`, and `"Conductivity"`
+    boundaries, which selects the physical model of an interior sheet: a thin film coupling
+    the fields on its two sides (`false`, the mesh is not modified) or a conductor much
+    thicker than its penetration depth with two independent faces, each with the given
+    surface impedance as on an exterior boundary (`true`, the mesh is cracked along the
+    boundary). The default is `false`.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
+  - The mesh is now only cracked by default along interior boundaries with boundary
+    conditions which apply to each side separately (PMC or zero charge, and absorbing
+    boundaries), and along impedance, rational impedance, and conductivity boundaries with
+    `"Crack": true`. Interior PEC, ground, wave port PEC, impedance, rational impedance,
+    conductivity, and surface current boundaries are no longer cracked by default. For a
+    conductor much thicker than its skin depth with different currents on its two faces,
+    this lowers the conductor loss compared to the cracked mesh: use `"Crack": true` to keep
+    the previous results. Cracked impedance and rational impedance boundaries no longer
+    split the given surface impedance between their two faces: use `"Crack": true` with
+    twice the impedance (twice `"Rs"` and `"Ls"`, half `"Cs"`) to keep the previous results.
+    Specifying `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true`
+    restores the previous behavior of cracking all interior boundaries with boundary
+    conditions except for lumped ports, with split impedances, and `false` disables cracking
+    entirely, which is an error for boundaries with `"Crack": true`. SchemaVer 3-0-0.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Results change for interior boundaries which are no longer cracked by default. Cracking
+    required a local bisection of the elements next to the boundary, which is no longer
+    done: on the same mesh, cracked and uncracked PEC sheets give the same results, but the
+    coarser mesh changes results within the discretization error, for example by about 3.4%
+    for the metal-air and metal-substrate participation ratios of the `cpw` regression
+    cases, and by up to 2.8% for their external quality factors. Cracking an interior
+    surface current excitation decoupled the fields on the two sides of the source sheet:
+    the inductance of the `microstrip` regression case, for example, decreases from 7.43 pH
+    to 5.64 pH with PEC conductors (below the parallel plate estimate of 6.28 pH, which
+    neglects the fringing fields), and by 12% with superconducting conductors. Interior
+    conductivity boundaries which are not cracked, also with
+    `config["Model"]["CrackInternalBoundaryElements"]` set to `false`, now model the
+    conductor surfaces on both faces of the sheet, with an admittance `2/Z` instead of
+    `1/Z`.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Interior boundaries which are to be cracked (with `"Crack": true`, or with boundary
+    conditions which apply to each side separately) are an error where the mesh cannot be
+    cracked along them: on a mesh with hexahedra, prisms, or pyramids refined by
+    `config["Model"]["Refinement"]["Boxes"]` or `["Spheres"]`, which makes it nonconformal,
+    and on a nonconformal input mesh, for example from a previous adaptive simulation,
+    which is not already cracked along them. The mesh was previously left uncracked.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Surface flux postprocessing with `"TwoSided": false` on interior boundaries which are no
+    longer cracked gives the average of the fluxes on the two sides, instead of the sum of
+    the fluxes of the two faces of the cracked mesh.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
 
 #### Bug Fixes
 
@@ -136,6 +188,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `GRID` points with a nonzero coordinate system (`CP`, or a `GRDSET` default) now abort,
     since coordinate systems are not applied.
     [PR 951](https://github.com/awslabs/palace/pull/951).
+  - Fixed interface dielectric energies on uncracked interior metal sheets (with
+    `config["Model"]["CrackInternalBoundaryElements"]` disabled), which used the energy of
+    the average of the fields of both sides for type `"Default"`, and a single face for
+    types `"MA"` and `"MS"` on sheets with the same material on both sides, such as air
+    bridges. They now give the same results as on a cracked mesh.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
 
 #### Performance Improvements
 
