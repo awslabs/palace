@@ -1010,6 +1010,71 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(!ValidateConfig(driven, "Driven").empty());
   }
 
+  SECTION("Frequencies must be positive - Driven Samples")
+  {
+    // A driven solve at 0 GHz is singular, so no sample may be there.
+    for (const auto &[min_f, max_f] : {std::pair{0.0, 1.0}, std::pair{1.0, 0.0}})
+    {
+      json linear = {
+          {"Samples", {{{"MinFreq", min_f}, {"MaxFreq", max_f}, {"NSample", 3}}}}};
+      CHECK(!ValidateConfig(linear, "Driven").empty());
+    }
+    json point = {{"Samples", {{{"Freq", {0.0, 1.0}}}}}};
+    CHECK(!ValidateConfig(point, "Driven").empty());
+    json top_level = {{"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}};
+    CHECK(!ValidateConfig(top_level, "Driven").empty());
+    json positive = {
+        {"Samples",
+         {{{"MinFreq", 0.1}, {"MaxFreq", 1.0}, {"NSample", 3}}, {{"Freq", {2.0}}}}}};
+    CHECK(ValidateConfig(positive, "Driven").empty());
+  }
+
+  SECTION("Deprecated FreqStep must be positive when it is read - Driven")
+  {
+    json zero_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.0}};
+    CHECK(!ValidateConfig(zero_step, "Driven").empty());
+    json negative_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", -0.5}};
+    CHECK(!ValidateConfig(negative_step, "Driven").empty());
+    json positive_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}};
+    CHECK(ValidateConfig(positive_step, "Driven").empty());
+    // Without "MinFreq" and "MaxFreq" the parser ignores "FreqStep".
+    json stray_step = {{"FreqStep", 0.0},
+                       {"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"NSample", 5}}}}};
+    CHECK(ValidateConfig(stray_step, "Driven").empty());
+  }
+
+  SECTION("AdaptiveCircuitSynthesis requires positive AdaptiveTol for Driven problems")
+  {
+    auto Config = [](const std::string &type, const json &driven)
+    {
+      json config = {{"Problem", {{"Type", type}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver", {{"Driven", driven}}}};
+      if (type == "Eigenmode")
+      {
+        config["Solver"]["Eigenmode"] = {{"Target", 1.0}};
+      }
+      return config;
+    };
+    json base = {{"Samples", {{{"Freq", {1.0, 2.0}}}}}};
+    // Synthesis without AdaptiveTol, or with AdaptiveTol: 0, is invalid.
+    json missing_tol = base;
+    missing_tol["AdaptiveCircuitSynthesis"] = true;
+    CHECK(!ValidateConfig(Config("Driven", missing_tol)).empty());
+    json zero_tol = missing_tol;
+    zero_tol["AdaptiveTol"] = 0.0;
+    CHECK(!ValidateConfig(Config("Driven", zero_tol)).empty());
+    // Positive AdaptiveTol or no synthesis are valid.
+    json ok = missing_tol;
+    ok["AdaptiveTol"] = 1e-3;
+    CHECK(ValidateConfig(Config("Driven", ok)).empty());
+    CHECK(ValidateConfig(Config("Driven", base)).empty());
+    // An unused "Driven" block of another problem type is not checked.
+    CHECK(ValidateConfig(Config("Eigenmode", missing_tol)).empty());
+  }
+
   SECTION("Required field - Model without Mesh")
   {
     CHECK(!ValidateConfig(json::object(), "Model").empty());

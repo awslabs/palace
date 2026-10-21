@@ -2618,7 +2618,28 @@
           "default": "Energy",
           "x-palace-advanced": true
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "MinFreq",
+              "MaxFreq",
+              "FreqStep"
+            ]
+          },
+          "then": {
+            "properties": {
+              "MinFreq": {
+                "exclusiveMinimum": 0.0
+              },
+              "FreqStep": {
+                "exclusiveMinimum": 0.0
+              }
+            }
+          }
+        }
+      ]
     },
     "SamplesPoint": {
       "type": "object",
@@ -2637,7 +2658,8 @@
           "type": "array",
           "description": "Explicit frequencies to sample, GHz.",
           "items": {
-            "type": "number"
+            "type": "number",
+            "exclusiveMinimum": 0.0
           }
         },
         "SaveStep": {
@@ -2669,12 +2691,12 @@
         "MinFreq": {
           "type": "number",
           "description": "Lower bound, GHz.",
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0
         },
         "MaxFreq": {
           "type": "number",
           "description": "Upper bound, GHz.",
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0
         },
         "FreqStep": {
           "type": "number",
@@ -2683,7 +2705,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples. Mutually exclusive with `\"FreqStep\"`.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`). Mutually exclusive with `\"FreqStep\"`.",
           "minimum": 0
         },
         "SaveStep": {
@@ -2726,7 +2748,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`).",
           "minimum": 1
         },
         "SaveStep": {
@@ -3149,7 +3171,31 @@
           "Solver": {
             "required": [
               "Driven"
-            ]
+            ],
+            "properties": {
+              "Driven": {
+                "if": {
+                  "properties": {
+                    "AdaptiveCircuitSynthesis": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "AdaptiveCircuitSynthesis"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "AdaptiveTol": {
+                      "exclusiveMinimum": 0.0
+                    }
+                  },
+                  "required": [
+                    "AdaptiveTol"
+                  ]
+                }
+              }
+            }
           }
         }
       }
