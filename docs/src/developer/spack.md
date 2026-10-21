@@ -191,6 +191,21 @@ spack -e . develop --path=~/repos/palace palace@develop
     The environment scope keeps the repository registration out of your global
     Spack configuration.
 
+The script discovers the concrete Homebrew versions and adds them to your copy
+of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
+alone and upgrades outdated ones. GNU Make and GNU sed remain Spack-built
+because Homebrew installs them as `gmake` and `gsed`, while Spack expects `make`
+and `sed`.
+
+Concretize and install the environment, then load *Palace*:
+
+```sh
+spack -e . concretize -f
+spack -e . install
+spack env activate .
+spack load palace
+```
+
 !!! note "Building the Enzyme-backed tests"
 
     The optional `+enzyme` variant requires upstream LLVM instead of the
@@ -208,21 +223,6 @@ spack -e . develop --path=~/repos/palace palace@develop
     spack -e . concretize -f --test root
     spack -e . install --test root
     ```
-
-The script discovers the concrete Homebrew versions and adds them to your copy
-of `spack.yaml`. It is safe to re-run: `brew install` leaves current packages
-alone and upgrades outdated ones. GNU Make and GNU sed remain Spack-built
-because Homebrew installs them as `gmake` and `gsed`, while Spack expects `make`
-and `sed`.
-
-Concretize and install the environment, then load *Palace*:
-
-```sh
-spack -e . concretize -f
-spack -e . install
-spack env activate .
-spack load palace
-```
 
 ## Developing Palace's Package Recipe
 
