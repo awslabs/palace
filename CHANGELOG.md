@@ -216,6 +216,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     crossing the port (with `"CrackInternalBoundaryElements": false`, or a nonconformal
     input mesh) could miss its boundary condition on the port in parallel.
     [PR 1056](https://github.com/awslabs/palace/pull/1056).
+  - Fixed driven-sweep restarts (`"Restart"` > 1) with `"FarField"` postprocessing, which
+    always aborted while reloading the CSV tables because the far-field table was never
+    read back. It now reloads and validates like the other tables, matching its
+    one-row-per-direction layout.
+    [PR 1075](https://github.com/awslabs/palace/pull/1075).
 
 #### Performance Improvements
 
