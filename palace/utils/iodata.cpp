@@ -5,15 +5,19 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <numbers>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <stack>
 #include <string>
 #include <string_view>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
@@ -21,6 +25,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
+#include "utils/permittivitymodel.hpp"
 
 namespace palace
 {
@@ -288,6 +293,87 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 {
 }
 
+void IoData::WarnPermittivityModelDefects() const
+{
+  // Typed permittivity terms are passive by construction. A PoleResidue term may not be,
+  // which is allowed (a fit may only be meant for the requested frequencies), but warned.
+  std::optional<std::pair<double, double>> band;  // GHz
+  switch (problem.type)
+  {
+    case ProblemType::DRIVEN:
+      if (!solver.driven.sample_f.empty())
+      {
+        const auto [lo, hi] = std::minmax_element(solver.driven.sample_f.begin(),
+                                                  solver.driven.sample_f.end());
+        band = {*lo, *hi};
+      }
+      break;
+    case ProblemType::EIGENMODE:
+      band = {solver.eigenmode.target, solver.eigenmode.target_upper};
+      break;
+    case ProblemType::BOUNDARYMODE:
+      band = {solver.boundary_mode.freq, solver.boundary_mode.freq};
+      break;
+    case ProblemType::ELECTROSTATIC:
+    case ProblemType::MAGNETOSTATIC:
+      band = {0.0, 0.0};
+      break;
+    default:
+      break;
+  }
+  constexpr double angular_to_ghz = 1.0 / (2.0 * std::numbers::pi * 1.0e9);
+  auto describe = [&](const std::vector<permittivity::FrequencyInterval> &intervals)
+  {
+    std::string str;
+    bool overlap = false;
+    for (const auto &interval : intervals)
+    {
+      const double lo = interval.lower * angular_to_ghz,
+                   hi = interval.upper * angular_to_ghz;
+      str += str.empty() ? "" : ", ";
+      str += (lo == 0.0 && std::isinf(hi)) ? "at every frequency"
+             : (lo == 0.0)                 ? fmt::format("below {:.6g} GHz", hi)
+             : std::isinf(hi)              ? fmt::format("above {:.6g} GHz", lo)
+                                           : fmt::format("{:.6g} to {:.6g} GHz", lo, hi);
+      overlap = overlap || (band && lo <= band->second && hi >= band->first);
+    }
+    if (band)
+    {
+      str += overlap ? fmt::format(", overlapping the requested {:.6g} to {:.6g} GHz",
+                                   band->first, band->second)
+                     : fmt::format(", outside the requested {:.6g} to {:.6g} GHz",
+                                   band->first, band->second);
+    }
+    return str;
+  };
+  for (std::size_t i = 0; i < domains.materials.size(); i++)
+  {
+    const auto &material = domains.materials[i];
+    if (permittivity::IsPassiveByConstruction(material.permittivity_terms))
+    {
+      continue;
+    }
+    const auto defects =
+        permittivity::FindDefects(material.epsilon_r.s[0], material.permittivity_terms);
+    if (!defects.gain.empty())
+    {
+      Mpi::Warning("The frequency-dependent Permittivity of material {:d} (attributes {}) "
+                   "has gain, a negative dissipated power, {}!\nIts PoleResidue terms are "
+                   "not physical there, and results at those frequencies are not "
+                   "either.\n",
+                   i + 1, material.attributes, describe(defects.gain));
+    }
+    if (!defects.negative_energy.empty())
+    {
+      Mpi::Warning("The frequency-dependent Permittivity of material {:d} (attributes {}) "
+                   "has a negative stored electric energy {}!\nIts PoleResidue terms are "
+                   "not physical there, and energy results at those frequencies are not "
+                   "either.\n",
+                   i + 1, material.attributes, describe(defects.negative_energy));
+    }
+  }
+}
+
 void IoData::CheckConfiguration()
 {
   // Mixed current/flux inductance extraction has one complete-matrix contract: every
@@ -336,6 +422,7 @@ void IoData::CheckConfiguration()
     MFEM_VERIFY(problem.type != ProblemType::TRANSIENT,
                 "Frequency-dependent material Permittivity is not supported for Transient "
                 "simulations!");
+    WarnPermittivityModelDefects();
   }
 
   // Check that the provided domain and boundary objects are all supported by the requested

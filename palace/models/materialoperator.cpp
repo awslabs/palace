@@ -13,6 +13,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/permittivitymodel.hpp"
 
 namespace palace
 {
@@ -175,45 +176,27 @@ void MaterialOperator::SetUpMaterialProperties(
       frequency_dependent_permittivity_mu_max[i] =
           std::max(frequency_dependent_permittivity_mu_max[i], std::abs(mu));
     }
-    for (const auto &term : data.permittivity_pole_terms)
+    permittivity::CheckTerms(data.epsilon_r.s[0], data.permittivity_terms);
+    for (const auto &term : permittivity::PoleTerms(data.permittivity_terms))
     {
-      MFEM_VERIFY(std::isfinite(term.pole.real()) && std::isfinite(term.pole.imag()) &&
-                      std::isfinite(term.residue.real()) &&
-                      std::isfinite(term.residue.imag()) && term.pole.real() <= 0.0 &&
-                      term.residue != std::complex<double>(0.0, 0.0),
-                  "Invalid material permittivity pole-residue term!");
-      if (term.pole.imag() == 0.0)
+      if (term.pole == std::complex<double>{0.0, 0.0})
       {
-        MFEM_VERIFY(term.residue.imag() == 0.0,
-                    "A real material permittivity pole requires a real residue!");
-        if (term.pole == std::complex<double>{0.0, 0.0})
-        {
-          // r s² / s = r s exactly, so a zero pole is ordinary conductivity in the
-          // nondimensional Maxwell system and needs no nonlinear operator state.
-          permittivity_pole_conductivity[i] += term.residue.real();
-        }
-        else
-        {
-          permittivity_pole_terms[i].push_back({term.pole, term.residue});
-        }
+        // r s² / s = r s exactly, so a zero pole is ordinary conductivity in the
+        // nondimensional Maxwell system and needs no nonlinear operator state.
+        permittivity_pole_conductivity[i] += term.residue.real();
       }
       else
       {
-        MFEM_VERIFY(term.pole.imag() > 0.0,
-                    "Complex material permittivity poles must be in the upper half-plane!");
         permittivity_pole_terms[i].push_back({term.pole, term.residue});
-        permittivity_pole_terms[i].push_back(
-            {std::conj(term.pole), std::conj(term.residue)});
+        if (term.pole.imag() > 0.0)
+        {
+          permittivity_pole_terms[i].push_back(
+              {std::conj(term.pole), std::conj(term.residue)});
+        }
       }
     }
-    for (const auto &term : data.djordjevic_sarkar_terms)
-    {
-      MFEM_VERIFY(std::isfinite(term.strength) && std::isfinite(term.omega_lower) &&
-                      std::isfinite(term.omega_upper) && term.strength != 0.0 &&
-                      term.omega_lower > 0.0 && term.omega_upper > term.omega_lower,
-                  "Invalid DjordjevicSarkar material permittivity term!");
-      djordjevic_sarkar_terms[i].push_back(term);
-    }
+    djordjevic_sarkar_terms[i] =
+        permittivity::DjordjevicSarkarTerms(data.permittivity_terms);
   }
 
   // Set up material properties of the different domain regions, represented with element-

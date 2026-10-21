@@ -1013,7 +1013,7 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
 
     const std::vector<json> valid_terms = {
         {{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}},
-        {{"Type", "Debye"}, {"DeltaPermittivity", -1.5}, {"RelaxationTime", 0.02}},
+        {{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}},
         {{"Type", "Lorentz"},
          {"DeltaPermittivity", 0.8},
          {"ResonanceFrequency", 6.0},
@@ -1047,6 +1047,23 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
          {"Terms", {{{"Type", "PoleResidue"}, {"Pole", {-1.0}}, {"Residue", 2.0}}}}});
     CheckInvalid({{"HighFrequency", 2.0},
                   {"Terms", {{{"Type", "Debye"}, {"RelaxationTime", 0.02}}}}});
+
+    // A typed term with a nonpositive strength, or a nonpositive high-frequency value, is
+    // not passive (it has gain or a negative stored energy at every frequency).
+    for (const double value : {0.0, -0.5})
+    {
+      CAPTURE(value);
+      CheckInvalid({{"HighFrequency", value}, {"Terms", {valid_terms[0]}}});
+      for (const auto &[index, key] :
+           {std::pair{1, "DeltaPermittivity"}, std::pair{2, "DeltaPermittivity"},
+            std::pair{4, "Strength"}})
+      {
+        CAPTURE(index, key);
+        json term = valid_terms[index];
+        term[key] = value;
+        CheckInvalid({{"HighFrequency", 2.08}, {"Terms", {term}}});
+      }
+    }
   }
 
   SECTION("Excitation integer minimum - LumpedPort")

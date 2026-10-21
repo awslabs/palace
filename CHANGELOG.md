@@ -34,7 +34,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added scalar frequency-dependent material `Permittivity` objects with additive Drude,
     Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms, in all problem types
     but transient, including adaptive frequency sweeps, circuit synthesis, and numeric wave,
-    Floquet, and absorbing boundaries. Existing scalar and
+    Floquet, and absorbing boundaries. The named terms must be passive; a PoleResidue
+    model is warned where it has gain or a negative stored energy. Existing scalar and
     three-component `Permittivity` inputs remain supported. SchemaVer 2-3-0
     [PR 877](https://github.com/awslabs/palace/pull/877).
 

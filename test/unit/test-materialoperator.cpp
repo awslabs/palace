@@ -26,6 +26,7 @@
 #include "utils/configfile.hpp"
 #include "utils/constants.hpp"
 #include "utils/geodata.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -327,7 +328,8 @@ TEST_CASE("MaterialOperator requires materials for retained mesh domains",
 
   SECTION("Pole support uses global material indices")
   {
-    material2.permittivity_pole_terms.push_back({{-2.0, 5.0}, {1.2, -0.4}});
+    material2.permittivity_terms.push_back(
+        config::PermittivityPoleData{{-2.0, 5.0}, {1.2, -0.4}});
     MaterialOperator mat_op({material1, material2}, periodic, ProblemType::DRIVEN,
                             palace_mesh);
     CHECK(mat_op.HasFrequencyDependentPermittivity());
@@ -383,7 +385,8 @@ TEST_CASE("MaterialOperator scalar permittivity pole identities",
   // O(1e16) terms whose cancellation cannot reproduce this result in binary64.
   config::MaterialData distant;
   distant.attributes = {1};
-  distant.permittivity_pole_terms.push_back({{-1.0e8, 0.0}, {1.0e8, 0.0}});
+  distant.permittivity_terms.push_back(
+      config::PermittivityPoleData{{-1.0e8, 0.0}, {1.0e8, 0.0}});
   MaterialOperator distant_op({distant}, periodic, ProblemType::DRIVEN, palace_mesh);
   const std::complex<double> distant_expected = -1.0e8 / std::complex<double>(1.0e8, 1.0);
   CHECK(std::abs(distant_op.EvaluateFrequencyDependentPermittivityA2(0, {0.0, 1.0}) -
@@ -410,9 +413,9 @@ TEST_CASE("MaterialOperator named permittivity model evaluation",
   Mesh palace_mesh(std::move(par_mesh));
   config::PeriodicBoundaryData periodic;
 
-  constexpr double delta_debye = -0.3, tau_ns = 0.04;
+  constexpr double delta_debye = 0.3, tau_ns = 0.04;
   constexpr double delta_lorentz_under = 0.8, f0_under = 6.0, fg_under = 0.2;
-  constexpr double delta_lorentz_over = -0.2, f0_over = 1.0, fg_over = 3.0;
+  constexpr double delta_lorentz_over = 0.2, f0_over = 1.0, fg_over = 3.0;
   constexpr std::complex<double> pole{-2.0e12, 5.0e12};
   constexpr std::complex<double> residue{1.2e12, -0.4e12};
   constexpr double strength = 0.0575258, f_lower = 9.07157e-5, f_upper = 159.154956;
@@ -545,15 +548,17 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
       {
         // This contribution is O(1) near s = i, while the obsolete long-division terms
         // are O(1e16). Exercise the complete operator action, not only scalar evaluation.
-        dispersive_material.permittivity_pole_terms = {{{-1.0e8, 0.0}, {1.0e8, 0.0}}};
+        dispersive_material.permittivity_terms = {
+            config::PermittivityPoleData{{-1.0e8, 0.0}, {1.0e8, 0.0}}};
       }
       else
       {
         // The complete nonzero-pole contribution cancels at s = i but not at s = 2i.
         // This guards structural nonlinear detection against target-frequency sampling.
-        dispersive_material.permittivity_pole_terms = {{{-1.0, 0.0}, {4.0, 0.0}},
-                                                       {{-2.0, 0.0}, {-20.0, 0.0}},
-                                                       {{-3.0, 0.0}, {20.0, 0.0}}};
+        dispersive_material.permittivity_terms = {
+            config::PermittivityPoleData{{-1.0, 0.0}, {4.0, 0.0}},
+            config::PermittivityPoleData{{-2.0, 0.0}, {-20.0, 0.0}},
+            config::PermittivityPoleData{{-3.0, 0.0}, {20.0, 0.0}}};
       }
       config::DomainData dispersive_domains;
       dispersive_domains.materials = {dispersive_material};
@@ -636,7 +641,8 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
         CheckAction(*K, 0.0, K0.get());  // No pole-derived stiffness contribution.
         CheckAction(*M, 1.0);            // epsilon_inf remains in ordinary M.
         std::complex<double> g = 0.0;
-        for (const auto &term : dispersive_material.permittivity_pole_terms)
+        for (const auto &term :
+             permittivity::PoleTerms(dispersive_material.permittivity_terms))
         {
           g += term.residue * s * s / (s - term.pole);
         }
@@ -712,8 +718,9 @@ TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
   config::MaterialData canonical_material;
   canonical_material.attributes = {1};
   canonical_material.epsilon_r = config::SymmetricMatrixData<3>(2.08);
-  canonical_material.permittivity_pole_terms = {{{0.0, 0.0}, {wp * wp / gamma, 0.0}},
-                                                {{-gamma, 0.0}, {-wp * wp / gamma, 0.0}}};
+  canonical_material.permittivity_terms = {
+      config::PermittivityPoleData{{0.0, 0.0}, {wp * wp / gamma, 0.0}},
+      config::PermittivityPoleData{{-gamma, 0.0}, {-wp * wp / gamma, 0.0}}};
 
   config::DomainData named_domains, canonical_domains;
   named_domains.materials = {named_material};
@@ -784,12 +791,13 @@ TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
   pole_material.attributes = {1};
   pole_material.epsilon_r = config::SymmetricMatrixData<3>(2.0);
   pole_material.sigma = config::SymmetricMatrixData<3>(1.0);
-  pole_material.permittivity_pole_terms.push_back({{0.0, 0.0}, {3.0, 0.0}});
+  pole_material.permittivity_terms.push_back(
+      config::PermittivityPoleData{{0.0, 0.0}, {3.0, 0.0}});
   config::DomainData pole_domains;
   pole_domains.materials = {pole_material};
 
   auto conductivity_material = pole_material;
-  conductivity_material.permittivity_pole_terms.clear();
+  conductivity_material.permittivity_terms.clear();
   conductivity_material.sigma = config::SymmetricMatrixData<3>(4.0);
   config::DomainData conductivity_domains;
   conductivity_domains.materials = {conductivity_material};
@@ -847,7 +855,8 @@ TEST_CASE("SpaceOperator does not evaluate dispersive materials without mesh sup
   config::MaterialData material, absent_material;
   material.attributes = {1};
   absent_material.attributes = {2};
-  absent_material.permittivity_pole_terms.push_back({{0.0, 1.0}, {0.0, -0.5}});
+  absent_material.permittivity_terms.push_back(
+      config::PermittivityPoleData{{0.0, 1.0}, {0.0, -0.5}});
   config::DomainData domains;
   domains.materials = {material, absent_material};
   config::BoundaryData boundaries;
@@ -912,12 +921,13 @@ TEST_CASE("SpaceOperator dispersive mass action across partitioned material supp
   config::MaterialData material2;
   material2.attributes = {2};
   material2.epsilon_r = config::SymmetricMatrixData<3>(1.0);
-  material2.permittivity_pole_terms.push_back({{-2.0, 0.0}, {3.0, 0.0}});
+  material2.permittivity_terms.push_back(
+      config::PermittivityPoleData{{-2.0, 0.0}, {3.0, 0.0}});
   config::DomainData dispersive_domains;
   dispersive_domains.materials = {material1, material2};
 
   auto reference_material2 = material2;
-  reference_material2.permittivity_pole_terms.clear();
+  reference_material2.permittivity_terms.clear();
   config::DomainData reference_domains;
   reference_domains.materials = {material1, reference_material2};
   auto doubled_material2 = reference_material2;
@@ -1081,13 +1091,15 @@ TEST_CASE("MaterialOperator static limit of dispersive materials",
   config::MaterialData material;
   material.attributes = {1};
   material.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
-  material.permittivity_pole_terms.push_back({-1.0 / tau, 1.5 / tau});  // Debye, Δε = 1.5
+  material.permittivity_terms.push_back(
+      config::PermittivityPoleData{-1.0 / tau, 1.5 / tau});  // Debye, Δε = 1.5
   {
     // Lorentz with Δε = 0.7, as r/(s - p) + conj with p the upper root of s² + γs + ω₀²
     const std::complex<double> p(-0.5 * gamma, std::sqrt(w0 * w0 - 0.25 * gamma * gamma));
-    material.permittivity_pole_terms.push_back({p, 0.7 * w0 * w0 / (p - std::conj(p))});
+    material.permittivity_terms.push_back(
+        config::PermittivityPoleData{p, 0.7 * w0 * w0 / (p - std::conj(p))});
   }
-  material.djordjevic_sarkar_terms.push_back({0.1, 1.0e-3, 1.0e3});
+  material.permittivity_terms.push_back(config::DjordjevicSarkarData{0.1, 1.0e-3, 1.0e3});
   const double eps0 = eps_inf + 1.5 + 0.7 + 0.1 * std::log(1.0e6);
   CHECK(material.StaticPermittivity() == Approx(eps0));
 
@@ -1101,7 +1113,8 @@ TEST_CASE("MaterialOperator static limit of dispersive materials",
 
   config::MaterialData drude;
   drude.attributes = {1};
-  drude.permittivity_pole_terms = {{0.0, 1.0}, {-0.1, -1.0}};
+  drude.permittivity_terms = {config::PermittivityPoleData{0.0, 1.0},
+                              config::PermittivityPoleData{-0.1, -1.0}};
   CHECK_THROWS_WITH(
       MaterialOperator({drude}, periodic, ProblemType::ELECTROSTATIC, palace_mesh),
       Catch::Matchers::ContainsSubstring("finite static material permittivity"));
@@ -1121,7 +1134,8 @@ TEST_CASE("MaterialOperator dispersive wave-number bound", "[materialoperator][S
   material.attributes = {1};
   material.mu_r.s = {2.0, 2.0, 2.0};
   material.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
-  material.permittivity_pole_terms.push_back({-1.0 / tau, delta / tau});
+  material.permittivity_terms.push_back(
+      config::PermittivityPoleData{-1.0 / tau, delta / tau});
   config::PeriodicBoundaryData periodic;
   MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
 
@@ -1173,11 +1187,11 @@ TEST_CASE("Absorbing boundaries next to dispersive materials",
   config::MaterialData dispersive, vacuum;
   dispersive.attributes = {1};
   dispersive.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
-  dispersive.permittivity_pole_terms.push_back(
-      {{0.0, w0}, {0.0, -0.5 * delta * w0}});  // Δε ω₀²/(s² + ω₀²), undamped
+  dispersive.permittivity_terms.push_back(
+      config::LorentzData{delta, w0, 0.0});  // Δε ω₀²/(s² + ω₀²), undamped
   vacuum.attributes = {2};
   config::MaterialData constant = dispersive;
-  constant.permittivity_pole_terms.clear();
+  constant.permittivity_terms.clear();
   const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
   constant.epsilon_r.s = {eps, eps, eps};
 

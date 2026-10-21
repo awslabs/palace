@@ -94,23 +94,33 @@ and `DampingFrequency` give ``\gamma = 2\pi f``, so a damping specified as an in
 
   - `Drude`: positive `PlasmaFrequency` and `CollisionFrequency`, both in GHz, with
     ``\chi(s) = \omega_p^2/(s(s+\gamma))``.
-  - `Debye`: signed, nonzero `DeltaPermittivity` and positive `RelaxationTime` ``\tau`` in
-    ns, with ``\chi(s) = \Delta\epsilon/(1+s\tau)``.
-  - `Lorentz`: signed, nonzero `DeltaPermittivity`, positive `ResonanceFrequency`, and
-    nonnegative `DampingFrequency`, both frequencies in GHz, with
+  - `Debye`: positive `DeltaPermittivity` and `RelaxationTime` ``\tau`` in ns, with
+    ``\chi(s) = \Delta\epsilon/(1+s\tau)``.
+  - `Lorentz`: positive `DeltaPermittivity` and `ResonanceFrequency`, and nonnegative
+    `DampingFrequency`, both frequencies in GHz, with
     ``\chi(s) = \Delta\epsilon\,\omega_0^2/(s^2+\gamma s+\omega_0^2)``. The critically
     damped case ``\gamma = 2\omega_0``, to within a relative ``10^{-6}``, is not supported.
-  - `PoleResidue`: the explicit escape hatch ``r/(s-p)`` with `Pole` and `Residue` in SI
-    angular rates (rad/s). Values are real or `[real, imag]`; upper-half-plane poles include
-    their conjugates automatically.
-  - `DjordjevicSarkar`: signed, nonzero `Strength` and positive `LowerFrequency` and
+  - `PoleResidue`: a general term ``r/(s-p)`` with `Pole` and `Residue` in SI angular rates
+    (rad/s). Values are real or `[real, imag]`; upper-half-plane poles include their
+    conjugates automatically.
+  - `DjordjevicSarkar`: positive `Strength`, `LowerFrequency`, and
     `UpperFrequency` bounds in GHz, with the upper bound larger than the lower. This native
     term is ``\mathrm{Strength}\,\log((s+\omega_\mathrm{hi})/(s+\omega_\mathrm{lo}))``, so a
     static increment ``\Delta\epsilon`` corresponds to
     ``\mathrm{Strength} = \Delta\epsilon/\log(\omega_\mathrm{hi}/\omega_\mathrm{lo})``.
 
-Passivity is not checked: a negative `DeltaPermittivity` or `Strength`, or an arbitrary
-`PoleResidue` term, can describe a material with gain.
+Each term is the polarization of a model driven by the field: Debye is a relaxation,
+`DjordjevicSarkar` a continuum of them, and Lorentz and Drude are oscillators. Their
+parameters must be positive, so that each term stores a nonnegative energy and dissipates a
+nonnegative power at every frequency, and `HighFrequency` must be positive. A
+`PoleResidue` term may describe gain or a negative stored energy, for instance a fit that is
+only accurate over the frequencies of interest. It is allowed, with a warning that gives the
+frequencies where the complete model has gain or a negative stored energy, and whether they
+overlap the requested frequencies. The stored energy of a `PoleResidue` term is that of a
+relaxation for a real pole, and of an oscillator ``\ddot{x} + a_1\dot{x} + a_0 x = E``
+with polarization ``b_0 x + b_1 \dot{x}`` for a conjugate pair. When ``b_1 \neq 0``, the
+model does not determine the stored energy of a passive term uniquely, and *Palace* uses the
+midpoint of the admissible range.
 
 The object form requires scalar permittivity and cannot be combined with `LossTan`;
 ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
