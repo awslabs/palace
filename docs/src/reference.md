@@ -636,8 +636,8 @@ conductivity of the metal. Another model, which takes into account finite thickn
 is given by
 
 ```math
-Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}+\cos{\nu}}
-    + i\frac{\sinh{\nu}-\sin{\nu}}{\cosh{\nu}+\cos{\nu}}\right)
+Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}-\cos{\nu}}
+    + i\frac{\sinh{\nu}-\sin{\nu}}{\cosh{\nu}-\cos{\nu}}\right)
 ```
 
 where ``\nu = h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
