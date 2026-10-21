@@ -232,6 +232,27 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
         pmesh.GetNodes() ? pmesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
     const int line_order = 2 * (field_order + mesh_order);
 
+    // A path which misses the mesh would give zero, so reject it as for wave port voltage
+    // paths, and warn if only part of it lies on the mesh.
+    auto MakeLineIntegrator =
+        [&](const std::vector<mfem::Vector> &path, bool closed, const char *name, int idx)
+    {
+      auto integrator =
+          std::make_shared<fem::LineIntegrator>(pmesh, path, closed, line_order);
+      const double rel_uncovered =
+          integrator->GetUncoveredLength() / integrator->GetPathLength();
+      MFEM_VERIFY(rel_uncovered < 1.0 - 1.0e-12, name << " of postprocessing index " << idx
+                                                      << " does not intersect the mesh!");
+      if (rel_uncovered > 1.0e-9)
+      {
+        Mpi::Warning(pmesh.GetComm(),
+                     "{:.3e}% of the {} of postprocessing index {:d} lies outside the "
+                     "mesh and does not contribute!\n",
+                     100.0 * rel_uncovered, name, idx);
+      }
+      return integrator;
+    };
+
     // Impedance postprocessing setup (all configured entries).
     for (const auto &[idx, imp] : boundaries.postpro.impedance)
     {
@@ -249,16 +270,16 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       {
         cfg.has_voltage_coordinates = true;
         cfg.voltage_path = ParsePath(imp.voltage_path);
-        cfg.voltage_integrator = std::make_shared<fem::LineIntegrator>(
-            pmesh, cfg.voltage_path, false, line_order);
+        cfg.voltage_integrator =
+            MakeLineIntegrator(cfg.voltage_path, false, "Impedance \"VoltagePath\"", idx);
       }
       if (!imp.current_path.empty())
       {
         cfg.has_current_path = true;
         cfg.has_current = true;
         cfg.current_path = ParsePath(imp.current_path);
-        cfg.current_integrator = std::make_shared<fem::LineIntegrator>(
-            pmesh, cfg.current_path, true, line_order);
+        cfg.current_integrator =
+            MakeLineIntegrator(cfg.current_path, true, "Impedance \"CurrentPath\"", idx);
       }
     }
 
@@ -274,8 +295,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       {
         cfg.has_coordinates = true;
         cfg.voltage_path = ParsePath(vol.voltage_path);
-        cfg.voltage_integrator = std::make_shared<fem::LineIntegrator>(
-            pmesh, cfg.voltage_path, false, line_order);
+        cfg.voltage_integrator =
+            MakeLineIntegrator(cfg.voltage_path, false, "Voltage \"VoltagePath\"", idx);
       }
     }
   }
