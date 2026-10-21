@@ -1208,18 +1208,24 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
         mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
                                      map_type);
         FiniteElementSpace l2_fespace(mesh, &l2_fec);
-        BilinearForm a_test(l2_fespace, h1_fespace);
-        mfem::MixedBilinearForm a_ref(&l2_fespace.Get(), &h1_fespace.Get());
-        if (add && coeff_type == CoeffType::Const)
+        for (const bool l2_trial : {true, false})
         {
-          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+          INFO("L2 trial: " << l2_trial);
+          auto &trial_fespace = l2_trial ? l2_fespace : h1_fespace;
+          auto &test_fespace = l2_trial ? h1_fespace : l2_fespace;
+          BilinearForm a_test(trial_fespace, test_fespace);
+          mfem::MixedBilinearForm a_ref(&trial_fespace.Get(), &test_fespace.Get());
+          if (add && coeff_type == CoeffType::Const)
+          {
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+          }
+          else if (add)
+          {
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref,
+                                                                 Q, Q_ref);
+          }
+          TestCeedOperator(a_test, a_ref);
         }
-        else if (add)
-        {
-          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref, Q,
-                                                               Q_ref);
-        }
-        TestCeedOperator(a_test, a_ref);
       }
     }
   }

@@ -48,10 +48,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
-  - Fixed the magnetic field energy and the error estimates of 2D simulations, which used
-    the out-of-plane magnetic flux density scaled by the element Jacobian determinant, so
-    that the magnetic energy was wrong by orders of magnitude. The mass integrator now
-    supports L2 spaces with the integral map type.
+  - Fixed the 2D magnetic field energy (`E_mag`, `p_mag`) of driven, eigenmode, and
+    transient simulations and of boundary modes (the out-of-plane part), and the 2D error
+    estimates of all problem types but electrostatics, which also drive adaptive mesh
+    refinement. Both used the out-of-plane magnetic flux density scaled by the element
+    Jacobian determinant, which could put `E_mag` off by orders of magnitude.
     [PR 1069](https://github.com/awslabs/palace/pull/1069).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
