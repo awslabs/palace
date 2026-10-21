@@ -509,11 +509,15 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   else if (!mesh::ReconstructCrackSides(*mesh, marker, crack_sides))
   {
     // The sides of a nonconforming mesh refined in this simulation are inherited through
-    // the refinements, so this is for example a mesh from a previous adaptive simulation.
+    // the refinements, so this is a nonconforming input mesh whose refinement hierarchy
+    // cannot be derefined (Palace itself only refines isotropically, and MFEM does not
+    // refine meshes with pyramids and nodes).
     Mpi::Warning(mesh->GetComm(),
-                 "Interior boundaries cannot be identified on this nonconforming mesh, "
-                 "error estimation will assume continuous fluxes across interior "
-                 "boundaries!\n");
+                 "The sides of the interior boundaries cannot be identified on this "
+                 "nonconforming mesh, which has pyramids, anisotropic refinements, or a "
+                 "nonconforming coarsest mesh: error estimation will assume continuous "
+                 "fluxes across interior boundaries for the whole simulation, which "
+                 "overestimates the error next to them!\n");
     crack_sides.Reset(mesh->GetNE());
   }
   crack_attr_list = std::move(key);
