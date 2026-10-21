@@ -118,16 +118,24 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
   const auto map_type = smooth_fespace.GetFEColl().GetMapType(dim);
   const bool scalar_flux =
       (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL);
+  // The flux error is measured in the coeff⁻¹-weighted norm, ‖coeff^{-1/2} (G − coeff F)‖,
+  // so the recovery G is the projection which minimizes it, (ψ, coeff⁻¹ G) = (ψ, F). The
+  // unweighted projection (ψ, G) = (ψ, coeff F) is not, and at a material interface it
+  // carries flux from the high-coeff side into the neighboring low-coeff elements, where
+  // the weighting then amplifies the apparent error.
+  MaterialPropertyCoefficient inv_coeff(
+      coeff.GetAttributeToMaterial(),
+      linalg::MatrixPow(coeff.GetMaterialProperties(), -1.0));
   {
     constexpr bool skip_zeros = false;
     BilinearForm m(smooth_fespace);
     if (scalar_flux)
     {
-      m.AddDomainIntegrator<MassIntegrator>();
+      m.AddDomainIntegrator<MassIntegrator>(inv_coeff);
     }
     else
     {
-      m.AddDomainIntegrator<VectorFEMassIntegrator>();
+      m.AddDomainIntegrator<VectorFEMassIntegrator>(inv_coeff);
     }
     if (!use_mg)
     {
@@ -151,11 +159,11 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
     BilinearForm flux(rhs_fespace, smooth_fespace);
     if (scalar_flux)
     {
-      flux.AddDomainIntegrator<MassIntegrator>(coeff);
+      flux.AddDomainIntegrator<MassIntegrator>();
     }
     else
     {
-      flux.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+      flux.AddDomainIntegrator<VectorFEMassIntegrator>();
     }
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
