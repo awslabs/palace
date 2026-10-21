@@ -1335,7 +1335,7 @@
         },
         "Mode": {
           "type": "integer",
-          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked in order of decreasing wave number, or of distance to `\"Target\"` when given.",
+          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked by distance to the eigenvalue solver target: `\"Target\"` when given, otherwise just above the bulk propagation constants of the port materials (decreasing wave number for the modes below it).",
           "exclusiveMinimum": 0,
           "default": 1
         },
@@ -1347,7 +1347,7 @@
         },
         "Target": {
           "type": "number",
-          "description": "Target effective index ``n_\\text{eff} = k_n / k_0`` for the boundary mode eigenvalue solver: the port modes are ranked by their distance to it, as for [`/Solver/BoundaryMode/Target`](@ref config-solver-boundarymode-target). If omitted, the modes are ranked in order of decreasing wave number below the bulk propagation constants of the port materials. Superconducting lines, whose kinetic inductance makes the modes slower than bulk waves, require it.",
+          "description": "Target effective index ``n_\\text{eff} = k_n / k_0`` for the boundary mode eigenvalue solver: the port modes are ranked by their distance to it, as for [`/Solver/BoundaryMode/Target`](@ref config-solver-boundarymode-target). If omitted, the target lies just above the bulk propagation constants of the port materials. Use it to select a mode far from that default, for example the slow-wave mode of a superconducting line on a cross-section with several modes.",
           "exclusiveMinimum": 0.0
         },
         "SolverType": {

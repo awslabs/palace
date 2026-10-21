@@ -493,16 +493,17 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
 // relation p tanh(p h) = -(q/eps) coth(q d) with a free back face (tanh(q d) for a PEC back
 // face), where p^2 = k0^2 (n^2 - 1), q^2 = 1/lambda^2 + p^2, and eps = 1 - 1/(k0 lambda)^2.
 // The wide gap keeps n_eff below the default spectral shift of the port mode solve. The
-// thin gap makes the mode slower than bulk waves (n_eff = 1.29 and 1.18), so that it is
-// only found with a Target.
+// thin gap makes the mode slower than bulk waves (n_eff = 1.29 and 1.18), above the default
+// shift, so it must be found with and without a Target.
 TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
   constexpr double lambda = 0.1, w = 1.0, d = 0.1, l = 2.0, freq_ghz = 500.0;
-  for (int c = 0; c < 4; c++)
+  for (int c = 0; c < 6; c++)
   {
-    // Wide gap without a Target and thin gap with one, with a free or PEC back face.
-    const double h = (c < 2) ? 5.0 : 0.2, target = (c < 2) ? 0.0 : 1.25;
+    // Wide gap and thin gap without a Target, and thin gap with one, with a free or PEC
+    // back face.
+    const double h = (c < 2) ? 5.0 : 0.2, target = (c < 4) ? 0.0 : 1.25;
     const bool pec_back = (c % 2 == 1);
     json ports = json::array({{{"Index", 1}, {"Attributes", {4}}, {"Excitation", true}},
                               {{"Index", 2}, {"Attributes", {5}}}});
@@ -618,7 +619,7 @@ TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]"
     for (const auto &[idx, data] : wp_op)
     {
       const double n_eff = data.kn0.real() / omega;
-      CAPTURE(h, pec_back, idx, n_exact, n_eff, data.kn0.imag() / omega);
+      CAPTURE(h, target, pec_back, idx, n_exact, n_eff, data.kn0.imag() / omega);
       CHECK(std::abs(data.kn0.imag()) < 1.0e-6 * std::abs(data.kn0.real()));
       CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-7));
     }
