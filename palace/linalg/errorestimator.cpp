@@ -420,6 +420,10 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
   // Construct the libCEED operator used for integrating the element-wise error. The
   // discontinuous flux is μ⁻¹ B ≃ μ⁻¹ ∇ × E.
   const auto &mesh = rt_fespace.GetMesh();
+  MFEM_VERIFY(mesh.Dimension() == 3 ||
+                  rt_fespace.GetFEColl().GetMapType(mesh.Dimension()) ==
+                      mfem::FiniteElement::INTEGRAL,
+              "CurlFluxErrorEstimator in 2D requires an L2 space with INTEGRAL map type!");
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];

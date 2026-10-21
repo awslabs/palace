@@ -190,7 +190,7 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
 // In 2D, B = ∇ × E is a scalar in an L2 space with INTEGRAL map type (B = 1 / det(J) ̂B).
 // Its smooth H1 reconstruction is exact for a uniform B, so the estimate vanishes,
 // including on a graded mesh where det(J) varies between elements.
-TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel]")
+TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel][GPU]")
 {
   const auto comm = MPI_COMM_WORLD;
   const auto elem_type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
@@ -240,6 +240,12 @@ TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel]")
   ErrorIndicator indicator;
   estimator.AddErrorIndicator(b, 1.0, indicator);
   CHECK(indicator.Max(comm) < 1.0e-10);
+
+  // The error QFunction requires the INTEGRAL map type.
+  mfem::L2_FECollection l2_value_fec(order - 1, 2);
+  FiniteElementSpace l2_value_fespace(mesh, &l2_value_fec);
+  CHECK_THROWS(CurlFluxErrorEstimator<Vector>(mat_op, l2_value_fespace, h1_fespaces,
+                                              1.0e-14, 1000, 0, false));
 }
 
 }  // namespace palace

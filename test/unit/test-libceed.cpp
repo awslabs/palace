@@ -413,10 +413,10 @@ void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOpera
 // integrator applied without cached quadrature data, which shares the coefficient and
 // geometry code paths but none of the layout logic.
 template <typename T>
-void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
-                            T AddIntegrators)
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &trial_fespace,
+                            const FiniteElementSpace &test_fespace, T AddIntegrators)
 {
-  BilinearForm a_test(fespace), a_ref(fespace);
+  BilinearForm a_test(trial_fespace, test_fespace), a_ref(trial_fespace, test_fespace);
   AddIntegrators(a_test);
   AddIntegrators(a_ref);
   a_test.AssembleQuadratureData();
@@ -434,6 +434,13 @@ void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
   REQUIRE(norm_ref > 0.0);
 
   TestCeedOperatorMult(*op_test, *op_ref, false);
+}
+
+template <typename T>
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
+                            T AddIntegrators)
+{
+  TestCeedQuadratureData(comm, fespace, fespace, AddIntegrators);
 }
 
 template <typename T1, typename T2, typename T3>
@@ -1736,7 +1743,10 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
 
   mfem::ND_FECollection nd_fec(order, dim);
   mfem::H1_FECollection h1_fec(order, dim);
-  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec),
+      l2_fespace(mesh, &l2_fec);
 
   SECTION("Domain Curl-Curl + Mass")
   {
@@ -1774,6 +1784,18 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
   {
     TestCeedQuadratureData(comm, h1_fespace, [&](BilinearForm &a)
                            { a.AddDomainIntegrator<DiffusionIntegrator>(MQ); });
+  }
+  // L2 spaces with INTEGRAL map type: the 2D curl space and the flux projection of its
+  // error estimator.
+  SECTION("L2 Mass")
+  {
+    TestCeedQuadratureData(comm, l2_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<MassIntegrator>(Q); });
+  }
+  SECTION("Mixed L2-H1 Mass")
+  {
+    TestCeedQuadratureData(comm, l2_fespace, h1_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<MassIntegrator>(Q); });
   }
 }
 
