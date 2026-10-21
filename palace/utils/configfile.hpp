@@ -1257,8 +1257,8 @@ public:
   SolverData(const json &solver);
 };
 
-// Calculate the number of steps from [start, end) in increments of delta. Will only include
-// end if it is a multiple of delta beyond start.
+// Calculate the number of steps from [start, end) in increments of delta > 0, for end >=
+// start. Will only include end if it is a multiple of delta beyond start.
 int GetNumSteps(double start, double end, double delta);
 
 // Parse a string as a direction vector, returning the direction and coordinate system.

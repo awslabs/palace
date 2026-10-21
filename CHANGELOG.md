@@ -153,6 +153,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `GRID` points with a nonzero coordinate system (`CP`, or a `GRDSET` default) now abort,
     since coordinate systems are not applied.
     [PR 951](https://github.com/awslabs/palace/pull/951).
+  - Fixed driven frequency sampling edge cases: `"NSample": 1` now samples `"MinFreq"`
+    instead of producing a NaN frequency, and a `"FreqStep"` sweep with `"MaxFreq"` below
+    `"MinFreq"`, a nonpositive step, or too many steps for an `int` now aborts instead of
+    sampling only `"MinFreq"`, crashing, or sweeping below `"MinFreq"`. `validate-config`
+    now also rejects circuit synthesis without a positive `"AdaptiveTol"`, as *Palace*
+    already did, and the schema rejects 0 GHz samples, where the driven solve is singular.
+    SchemaVer 2-2-1
+    [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed adaptive frequency sweeps hanging when all samples were nearly the same
+    frequency, and circuit synthesis with a single distinct sample, which now aborts at
+    startup instead of failing in the sweep.
+    [PR 952](https://github.com/awslabs/palace/pull/952).
 
 #### Performance Improvements
 
@@ -171,6 +183,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - CSV output tables are now appended row by row instead of rewritten at every measurement,
     so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
     [PR 942](https://github.com/awslabs/palace/pull/942).
+
+#### Documentation
+
+  - Documented in the developer notes that schema validation tightenings which only
+    reject configurations that never produced valid solver output are bug fixes
+    (ADDITION), not breaking (MODEL) changes.
+    [PR 952](https://github.com/awslabs/palace/pull/952).
 
 #### Build system
 
