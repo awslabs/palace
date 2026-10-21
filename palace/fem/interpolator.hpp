@@ -10,17 +10,6 @@
 #include <mfem.hpp>
 #include "utils/configfile.hpp"
 
-namespace mfem
-{
-
-// Forward declaration so the GSLIB point-locator interpolation helpers below can be
-// declared unconditionally (matching the other functions in this header, which gate only
-// their definitions on MFEM_USE_GSLIB). The type is fully defined by <mfem.hpp> when GSLIB
-// is enabled; without it, only this declaration exists and the functions abort at runtime.
-class FindPointsGSLIB;
-
-}  // namespace mfem
-
 namespace palace
 {
 
@@ -66,11 +55,6 @@ void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V);
 // ordering. The output vector values are always arranged byVDIM.
 void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
                          mfem::Vector &V,
-                         mfem::Ordering::Type ordering = mfem::Ordering::byNODES);
-
-// As above, but using a pre-Setup point locator (op.Setup already called on U's mesh).
-void InterpolateFunction(mfem::FindPointsGSLIB &op, const mfem::Vector &xyz,
-                         const mfem::GridFunction &U, mfem::Vector &V,
                          mfem::Ordering::Type ordering = mfem::Ordering::byNODES);
 
 }  // namespace fem
