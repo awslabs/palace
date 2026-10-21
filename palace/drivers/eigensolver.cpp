@@ -25,6 +25,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -513,6 +514,37 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       eigen->GetEigenvector(i, E);
       E.Get(eigenvectors[i].data(), E.Size(), false);
+    }
+  }
+
+  // The target window is checked with the configuration; a mode may converge outside it.
+  for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+  {
+    const auto &material = iodata.domains.materials[m];
+    if (permittivity::IsPassiveByConstruction(material.permittivity_terms))
+    {
+      continue;
+    }
+    const auto defects =
+        permittivity::FindDefects(material.epsilon_r.s[0], material.permittivity_terms);
+    for (int i = 0; i < num_report; i++)
+    {
+      const double omega = eigenvalues[i].imag();
+      const bool gain = permittivity::Contains(defects.gain, omega),
+                 negative_energy = permittivity::Contains(defects.negative_energy, omega);
+      if (gain || negative_energy)
+      {
+        Mpi::Warning(
+            "Eigenmode {:d} at {:.6g} GHz lies where the frequency-dependent "
+            "Permittivity of material {:d} has {}!\nIts PoleResidue terms are not "
+            "physical there, and neither is this mode.\n",
+            i + 1,
+            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                (2.0 * std::numbers::pi),
+            m + 1,
+            gain ? (negative_energy ? "gain and a negative stored electric energy" : "gain")
+                 : "a negative stored electric energy");
+      }
     }
   }
 

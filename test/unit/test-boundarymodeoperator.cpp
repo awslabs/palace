@@ -822,10 +822,12 @@ TEST_CASE("ModeOperatorModel dispersive permittivity matches its value at the fr
     iodata.problem.type = ProblemType::DRIVEN;
     auto &substrate = iodata.domains.materials[0];
     substrate.epsilon_r.s = {4.0, 4.0, 4.0};
-    substrate.permittivity_pole_terms.push_back({{-1.0 * rate, 0.0}, {1.5 * rate, 0.0}});
-    substrate.permittivity_pole_terms.push_back(
-        {{-0.1 * rate, 2.5 * rate}, {0.3 * rate, -0.2 * rate}});
-    substrate.djordjevic_sarkar_terms.push_back({0.2, 0.01 * rate, 100.0 * rate});
+    substrate.permittivity_terms.push_back(
+        config::PermittivityPoleData{{-1.0 * rate, 0.0}, {1.5 * rate, 0.0}});
+    substrate.permittivity_terms.push_back(
+        config::PermittivityPoleData{{-0.1 * rate, 2.5 * rate}, {0.3 * rate, -0.2 * rate}});
+    substrate.permittivity_terms.push_back(
+        config::DjordjevicSarkarData{0.2, 0.01 * rate, 100.0 * rate});
   };
   const RectangleModeModel dispersive(make_dispersive);
   REQUIRE(dispersive.GetMaterialOp().HasFrequencyDependentPermittivityA2(0));
@@ -884,8 +886,7 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
       if (dispersive)
       {
         substrate.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
-        substrate.permittivity_pole_terms.push_back(
-            {{0.0, w0 * rate}, {0.0, -0.5 * delta * w0 * rate}});
+        substrate.permittivity_terms.push_back(config::LorentzData{delta, w0 * rate, 0.0});
       }
       else
       {

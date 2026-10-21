@@ -45,6 +45,10 @@ public:
   // Exposed for testing; not intended for general use.
   void CheckConfiguration();
 
+  // Warn about frequencies where a material's PoleResidue permittivity terms have gain or a
+  // negative stored electric energy.
+  void WarnPermittivityModelDefects() const;
+
   explicit IoData(const Units &units);
 
   // Construct from a pre-parsed and validated JSON config object.

@@ -193,8 +193,10 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
     config::MaterialData data;
     data.sigma = config::SymmetricMatrixData<3>(1e6);
     data.lambda_L = 0.1;
-    data.permittivity_pole_terms.push_back({{2.0e12, -5.0e12}, {1.2e12, 0.4e12}});
-    data.djordjevic_sarkar_terms.push_back({0.1, 3.0e9, 4.0e12});
+    data.permittivity_terms = {
+        config::PermittivityPoleData{{2.0e12, -5.0e12}, {1.2e12, 0.4e12}},
+        config::DjordjevicSarkarData{0.1, 3.0e9, 4.0e12}, config::DrudeData{2.0e12, 3.0e9},
+        config::DebyeData{1.5, 2.0e-11}, config::LorentzData{0.8, 4.0e10, 5.0e8}};
 
     config::Nondimensionalize(units, data);
 
@@ -202,13 +204,25 @@ TEST_CASE("Nondimensionalize free functions", "[nondimensionalize][Serial]")
           Approx(1e6 / units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>()));
     CHECK(data.lambda_L == Approx(0.1 / units.GetMeshLengthRelativeScale()));
     const double tc_seconds = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
-    CHECK(data.permittivity_pole_terms[0].pole.real() == Approx(2.0e12 * tc_seconds));
-    CHECK(data.permittivity_pole_terms[0].pole.imag() == Approx(-5.0e12 * tc_seconds));
-    CHECK(data.permittivity_pole_terms[0].residue.real() == Approx(1.2e12 * tc_seconds));
-    CHECK(data.permittivity_pole_terms[0].residue.imag() == Approx(0.4e12 * tc_seconds));
-    CHECK(data.djordjevic_sarkar_terms[0].strength == Approx(0.1));
-    CHECK(data.djordjevic_sarkar_terms[0].omega_lower == Approx(3.0e9 * tc_seconds));
-    CHECK(data.djordjevic_sarkar_terms[0].omega_upper == Approx(4.0e12 * tc_seconds));
+    const auto &pole = std::get<config::PermittivityPoleData>(data.permittivity_terms[0]);
+    CHECK(pole.pole.real() == Approx(2.0e12 * tc_seconds));
+    CHECK(pole.pole.imag() == Approx(-5.0e12 * tc_seconds));
+    CHECK(pole.residue.real() == Approx(1.2e12 * tc_seconds));
+    CHECK(pole.residue.imag() == Approx(0.4e12 * tc_seconds));
+    const auto &ds = std::get<config::DjordjevicSarkarData>(data.permittivity_terms[1]);
+    CHECK(ds.strength == Approx(0.1));
+    CHECK(ds.omega_lower == Approx(3.0e9 * tc_seconds));
+    CHECK(ds.omega_upper == Approx(4.0e12 * tc_seconds));
+    const auto &drude = std::get<config::DrudeData>(data.permittivity_terms[2]);
+    CHECK(drude.omega_p == Approx(2.0e12 * tc_seconds));
+    CHECK(drude.gamma == Approx(3.0e9 * tc_seconds));
+    const auto &debye = std::get<config::DebyeData>(data.permittivity_terms[3]);
+    CHECK(debye.delta == Approx(1.5));
+    CHECK(debye.tau == Approx(2.0e-11 / tc_seconds));
+    const auto &lorentz = std::get<config::LorentzData>(data.permittivity_terms[4]);
+    CHECK(lorentz.delta == Approx(0.8));
+    CHECK(lorentz.omega_0 == Approx(4.0e10 * tc_seconds));
+    CHECK(lorentz.gamma == Approx(5.0e8 * tc_seconds));
 
     // Golden value: sigma_scale = 1/(Z0 * Lc_m) = 1/(376.730313412 * 2e-3) ~ 1.32721
     // sigma_nondim = 1e6 / 1.32721 ~ 7.53461e5

@@ -643,7 +643,8 @@
       "properties": {
         "HighFrequency": {
           "type": "number",
-          "description": "Scalar high-frequency relative permittivity ε∞."
+          "exclusiveMinimum": 0.0,
+          "description": "Scalar high-frequency relative permittivity ε∞, positive for a positive field energy."
         },
         "Terms": {
           "type": "array",
@@ -709,10 +710,8 @@
         },
         "DeltaPermittivity": {
           "type": "number",
-          "not": {
-            "const": 0.0
-          },
-          "description": "Signed, nonzero relative-permittivity increment."
+          "exclusiveMinimum": 0.0,
+          "description": "Relative-permittivity increment, positive for a passive material: a negative increment has gain at every frequency."
         },
         "RelaxationTime": {
           "type": "number",
@@ -736,10 +735,8 @@
         },
         "DeltaPermittivity": {
           "type": "number",
-          "not": {
-            "const": 0.0
-          },
-          "description": "Signed, nonzero relative-permittivity increment."
+          "exclusiveMinimum": 0.0,
+          "description": "Relative-permittivity increment, positive for a passive material: a negative increment has gain at every frequency."
         },
         "ResonanceFrequency": {
           "type": "number",
@@ -771,7 +768,7 @@
         },
         "Residue": {
           "$ref": "#/$defs/ComplexNumber",
-          "description": "Scalar residue angular rate in rad/s. Real poles require real residues."
+          "description": "Scalar residue angular rate in rad/s. Real poles require real residues. Passivity is not guaranteed: frequencies where the model has gain or a negative stored energy are warned."
         }
       }
     },
@@ -790,10 +787,8 @@
         },
         "Strength": {
           "type": "number",
-          "not": {
-            "const": 0.0
-          },
-          "description": "Signed, nonzero dimensionless logarithmic strength."
+          "exclusiveMinimum": 0.0,
+          "description": "Dimensionless logarithmic strength, positive for a passive material: a negative strength has gain at every frequency."
         },
         "LowerFrequency": {
           "type": "number",
