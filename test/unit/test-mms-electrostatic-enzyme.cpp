@@ -17,6 +17,42 @@ namespace palace::testing::mms::electrostatic
 namespace
 {
 
+void CheckPointwiseAgreement(const MmsCase &enzyme, const MmsCase &analytic,
+                             const std::vector<std::array<double, 3>> &points,
+                             bool check_neumann = false)
+{
+  REQUIRE(enzyme.epsilon_r == analytic.epsilon_r);
+  if (check_neumann)
+  {
+    REQUIRE(enzyme.neumann_flux);
+    REQUIRE(analytic.neumann_flux);
+  }
+
+  for (const auto &point : points)
+  {
+    mfem::Vector x(3);
+    for (int i = 0; i < 3; i++)
+    {
+      x[i] = point[i];
+    }
+    mfem::Vector enzyme_electric(3);
+    mfem::Vector analytic_electric(3);
+    enzyme.electric_field(x, enzyme_electric);
+    analytic.electric_field(x, analytic_electric);
+
+    CHECK_THAT(enzyme.potential(x), WithinAbs(analytic.potential(x), 1.0e-14));
+    for (int i = 0; i < 3; i++)
+    {
+      CHECK_THAT(enzyme_electric[i], WithinAbs(analytic_electric[i], 5.0e-13));
+    }
+    CHECK_THAT(enzyme.charge_density(x), WithinAbs(analytic.charge_density(x), 5.0e-12));
+    if (check_neumann)
+    {
+      CHECK_THAT(enzyme.neumann_flux(x), WithinAbs(analytic.neumann_flux(x), 5.0e-13));
+    }
+  }
+}
+
 // These potentials are the only problem-specific mathematical expressions in the Enzyme
 // backend. Electric field, charge density, and Neumann flux are generated from them.
 double SinPotential(const MmsCoordinates &x)

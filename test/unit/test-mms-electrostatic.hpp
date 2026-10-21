@@ -43,9 +43,6 @@ const MmsCase &CurvedCylinderCase();
 
 }  // namespace analytic
 
-void CheckPointwiseAgreement(const MmsCase &enzyme, const MmsCase &analytic,
-                             const std::vector<std::array<double, 3>> &points,
-                             bool check_neumann = false);
 void CheckSmallErrors(const MmsCase &homogeneous, const MmsCase &nonhomogeneous);
 void CheckPolynomialExactness(const MmsCase &polynomial);
 void CheckNeumannBoundary(const MmsCase &polynomial);
