@@ -766,13 +766,15 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
                                                  bool imag_slot)
 {
   // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
-  // coefficient. By default stored on the REAL slot of the resulting ComplexParOperator so
-  // that downstream BuildParSumOperator can scale it by an arbitrary complex coefficient
-  // (the real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true
-  // it is placed on the IMAGINARY slot, matching the wave-port boundary-mass convention
-  // (the i in i·f(ω)·M baked in) so circuit synthesis can fold it in uniformly. Returns
-  // null if the farfield ABC order < 2 or it contributes no DoFs on any rank (the check is
-  // collective, so the null contract is rank-uniform).
+  // scale; the negative sign of β is included in M_ff by
+  // AddExtraSystemBoundaryCurlCurlBdrCoefficients, so the scalings below are positive. By
+  // default stored on the REAL slot of the resulting ComplexParOperator so that downstream
+  // BuildParSumOperator can scale it by an arbitrary complex coefficient (the real-ω path
+  // uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true it is placed on
+  // the IMAGINARY slot, matching the wave-port boundary-mass convention (the i in i·f(ω)·M
+  // baked in) so circuit synthesis can fold it in uniformly. Returns null if the farfield
+  // ABC order < 2 or it contributes no DoFs on any rank (the check is collective, so the
+  // null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
   farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);

@@ -136,6 +136,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the sign of the second-order absorbing boundary condition term (`"Absorbing"` with
     `"Order": 2`): it now matches β = μ⁻¹c₀/(2iω) in the documentation. Before, the extra term
     made the boundary reflect more than the first-order condition at oblique incidence.
+    [PR 1070](https://github.com/awslabs/palace/pull/1070).
   - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.

@@ -96,7 +96,9 @@ void FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients(
   // ignores the divergence term ∇⋅Eₜ, as COMSOL does as well. The ω-dependence enters
   // only through the scalar `coeff` (= 0.5/ω for the imaginary slot in the real-ω
   // stamping), so the material coefficient is pulled out here and reused by both the
-  // real-ω and complex-ω overloads.
+  // real-ω and complex-ω overloads. This is the only place the sign of β is applied:
+  // callers pass a positive scale (0.5/ω, or 1 for the matrix M_ff), so every consumer
+  // of the term, including M_ff, carries the sign.
   if (farfield_attr.Size() && order > 1)
   {
     mfem::DenseTensor muinvc0 =
@@ -120,9 +122,9 @@ void FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients(
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi)
 {
-  // Real-ω second-order ABC: the term is -i·(0.5/ω)·(curl-curl) (the sign is applied in
-  // AddExtraSystemBoundaryCurlCurlBdrCoefficients). At real ω the scalar
-  // 0.5/ω is real, so the whole contribution is imaginary and lands on dfbi.
+  // Real-ω second-order ABC: the term is -i·(0.5/ω)·(curl-curl), with the sign applied in
+  // AddExtraSystemBoundaryCurlCurlBdrCoefficients. At real ω the scalar 0.5/ω is real, so
+  // the whole contribution is imaginary and lands on dfbi.
   AddExtraSystemBoundaryCurlCurlBdrCoefficients(0.5 / omega, dfbi);
 }
 
@@ -131,11 +133,10 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     MaterialPropertyCoefficient &dfbi)
 {
   // Complex-ω second-order ABC for the eigenmode nonlinear solve. The contribution is
-  // -i·(0.5/ω)·(curl-curl) (sign applied in AddExtraSystemBoundaryCurlCurlBdrCoefficients);
-  // with ω complex, s = 0.5/ω is complex and i·s splits as
-  // i·(s.real() + i·s.imag()) = -s.imag() + i·s.real(), so the real part -s.imag() goes
-  // on dfbr and the imaginary part s.real() on dfbi. For real ω (s.imag() == 0) this
-  // reduces to the double overload (whole term on dfbi).
+  // -i·(0.5/ω)·(curl-curl), as in the real-ω overload; with ω complex, s = 0.5/ω is complex
+  // and i·s splits as i·(s.real() + i·s.imag()) = -s.imag() + i·s.real(), so the real part
+  // -s.imag() goes on dfbr and the imaginary part s.real() on dfbi. For real ω (s.imag() ==
+  // 0) this reduces to the double overload (whole term on dfbi).
   const std::complex<double> s = 0.5 / omega;
   AddExtraSystemBoundaryCurlCurlBdrCoefficients(s.real(), dfbi);
   if (s.imag() != 0.0)

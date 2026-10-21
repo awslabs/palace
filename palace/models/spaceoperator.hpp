@@ -279,14 +279,16 @@ public:
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
-  // (absorbing) BC, with unit coefficient. By default stored on the real slot (so a caller
-  // scales it by an arbitrary complex coefficient): the full A2 contribution at frequency ω
-  // is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff` (complex-λ analytic
-  // continuation). Used by the NLEPS HYBRID frozen-ABC seed strategy. Set `imag_slot=true`
-  // to instead place M_ff on the imaginary slot, matching the wave-port boundary-mass
-  // convention (i·f(ω)·M with the i baked in) so it can be folded into circuit synthesis
-  // uniformly with wave ports. Returns null if the farfield BC order < 2 or contributes no
-  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
+  // (absorbing) BC, with unit scale; M_ff includes the negative sign of β (applied in
+  // FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients). By default
+  // stored on the real slot (so a caller scales it by an arbitrary complex coefficient):
+  // the full A2 contribution at frequency ω is `i·(0.5/ω)·M_ff` (real-ω stamping) or
+  // `-0.5/λ·M_ff` (complex-λ analytic continuation). Used by the NLEPS HYBRID frozen-ABC
+  // seed strategy. Set `imag_slot=true` to instead place M_ff on the imaginary slot,
+  // matching the wave-port boundary-mass convention (i·f(ω)·M with the i baked in) so it
+  // can be folded into circuit synthesis uniformly with wave ports. Returns null if the
+  // farfield BC order < 2 or contributes no DoFs on any rank (the check is collective, so
+  // the null contract is rank-uniform).
   template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,

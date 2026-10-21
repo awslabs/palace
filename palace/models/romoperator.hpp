@@ -226,7 +226,9 @@ protected:
   // Aᵣ(ω); project M_proj once, fit/inject the scalar f(ω)). Stored with the boundary mass
   // in the IMAGINARY slot (matching Mwp_p) so the synthesis path treats them uniformly.
   //   - Second-order farfield ABC: f(ω) = 0.5/ω, a single exact pole at ω=0 (residue 0.5),
-  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix.
+  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix, which
+  //     includes the negative sign of β (see
+  //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
   //   - Surface conductivity, one entry per attribute group g: f(ω) = ω/Z_g(ω) (the i is
   //     the implicit slot factor; surf_sigma_op.EvaluateScalar returns i·ω/Z, so the scalar
   //     used here is EvaluateScalar/i, generally complex), fit by poly+AAA.
