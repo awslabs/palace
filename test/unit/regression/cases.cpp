@@ -1801,6 +1801,23 @@ TEST_CASE("cavity2d_eigenmode_slp", "[Serial][Parallel][Regression]")
   palace::test::RunRegressionCase("cavity2d", "eigenmode_slp.json", "eigenmode_slp", opts);
 }
 
+// The cavity filled with a damped Lorentz medium. Each mode solves ω²ε(ω) = ω_b²ε_b for a
+// mode ω_b of the cavity at constant ε_b, which the reference matches to 10 digits. The
+// error indicators depend on the basis of the degenerate pair and are not compared.
+TEST_CASE("cavity2d_eigenmode_lorentz", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cavity2d", "eigenmode_lorentz.json", "eigenmode_lorentz",
+                                  opts);
+}
+
 // Coarse 2D driven tolerances (partition- and platform-sensitive).
 TEST_CASE("cavity2d_driven", "[Serial][Parallel][GPU][Regression]")
 {

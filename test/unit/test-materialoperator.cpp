@@ -12,6 +12,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -504,33 +505,6 @@ TEST_CASE("Djordjevic-Sarkar real-axis and analytic evaluation",
       (s_off_axis * s_off_axis);
   CHECK(std::abs(evaluated_off_axis - expected_off_axis) <
         1.0e-14 * std::max(1.0, std::abs(expected_off_axis)));
-}
-
-// Dispersive materials are supported only in 3D; a 2D driven problem must be rejected
-// rather than silently taking the untested 2D curl-space path.
-TEST_CASE("SpaceOperator rejects dispersive materials in 2D", "[materialoperator][Serial]")
-{
-  auto serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian2D(1, 1, mfem::Element::TRIANGLE));
-  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
-
-  config::SolverData solver;
-  solver.order = 1;
-  solver.linear.mg_max_levels = 1;
-  config::BoundaryData boundaries;
-  Units units(1.0, 1.0);
-  config::MaterialData material;
-  material.attributes = {1};
-  material.epsilon_r = config::SymmetricMatrixData<3>(1.0);
-  material.permittivity_pole_terms = {{{-1.0, 0.0}, {4.0, 0.0}}};
-  config::DomainData domains;
-  domains.materials = {material};
-
-  CHECK_THROWS_WITH(
-      SpaceOperator(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh),
-      Catch::Matchers::ContainsSubstring("only supported for 3D simulations"));
 }
 
 TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Serial]")
@@ -1164,13 +1138,19 @@ TEST_CASE("Absorbing boundaries next to dispersive materials",
           "[materialoperator][Serial][Parallel]")
 {
   // Two elements along x: a lossless Lorentz medium at x < 1 and vacuum at x > 1, with
-  // absorbing faces at x = 0 (attribute 5, next to the medium) and x = 2 (attribute 3).
-  // At each frequency the medium is the constant ε(ω), whose absorbing boundary condition
-  // uses √(ε(ω)/μ) and c(ω), so the two give the same system K + iωC − ω²M + A2(ω).
-  auto MakeMesh = []
+  // absorbing faces at x = 0 (attribute 5 in 3D, 4 in 2D, next to the medium) and x = 2
+  // (attribute 3 in 3D, 2 in 2D). At each frequency the medium is the constant ε(ω), whose
+  // absorbing boundary condition uses √(ε(ω)/μ) and c(ω), so the two give the same system
+  // K + iωC − ω²M + A2(ω), in 3D and in 2D.
+  const int dim = GENERATE(3, 2);
+  CAPTURE(dim);
+  auto MakeMesh = [dim]
   {
     auto serial_mesh = std::make_unique<mfem::Mesh>(
-        mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+        (dim == 3)
+            ? mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0)
+            : mfem::Mesh::MakeCartesian2D(2, 1, mfem::Element::QUADRILATERAL, false, 2.0,
+                                          1.0));
     for (int i = 0; i < serial_mesh->GetNE(); i++)
     {
       mfem::Vector center;
@@ -1201,11 +1181,13 @@ TEST_CASE("Absorbing boundaries next to dispersive materials",
   const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
   constant.epsilon_r.s = {eps, eps, eps};
 
-  for (int order : {1, 2})
+  // The second-order boundary curl-curl integrator does not support 2D meshes.
+  for (int order : (dim == 3) ? std::vector<int>{1, 2} : std::vector<int>{1})
   {
     CAPTURE(order);
     config::BoundaryData boundaries;
-    boundaries.farfield.attributes = {3, 5};
+    boundaries.farfield.attributes =
+        (dim == 3) ? std::vector<int>{3, 5} : std::vector<int>{2, 4};
     boundaries.farfield.order = order;
     auto Apply =
         [&](const config::MaterialData &material, const ComplexVector &x, ComplexVector &y)

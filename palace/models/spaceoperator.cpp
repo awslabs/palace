@@ -68,11 +68,6 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
-  // The 2D driven and eigenmode paths use a different curl space and error estimator and
-  // have no coverage with dispersive materials, so they are rejected rather than assumed.
-  MFEM_VERIFY(!mat_op.HasFrequencyDependentPermittivity() || mesh.back()->Dimension() == 3,
-              "Frequency-dependent material Permittivity is only supported for 3D "
-              "simulations!");
   SetUpFrequencyDependentPermittivityMassOperators();
 
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.

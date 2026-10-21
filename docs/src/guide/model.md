@@ -74,8 +74,7 @@ wishing to model both superconducting and normal currents.
 
 ### Frequency-dependent permittivity
 
-For three-dimensional driven frequency-domain and eigenmode simulations, scalar additive
-permittivity models use the object form
+Scalar additive permittivity models use the object form
 
 ```json
 "Permittivity": {
