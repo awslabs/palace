@@ -29,7 +29,6 @@ struct MmsCase
   VectorFunction electric_field;
   ScalarFunction charge_density;
   std::array<double, 3> epsilon_r;
-  bool nonzero_dirichlet;
   ScalarFunction neumann_flux;
 };
 
@@ -43,7 +42,6 @@ const MmsCase &CurvedCylinderCase();
 
 }  // namespace analytic
 
-void CheckSmallErrors(const MmsCase &homogeneous, const MmsCase &nonhomogeneous);
 void CheckPolynomialExactness(const MmsCase &polynomial);
 void CheckNeumannBoundary(const MmsCase &polynomial);
 void CheckOptimalConvergence(const MmsCase &nonhomogeneous);

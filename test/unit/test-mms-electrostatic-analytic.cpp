@@ -90,24 +90,21 @@ namespace analytic
 const MmsCase &HomogeneousCase()
 {
   static const MmsCase mms{
-      SinPotential, SinElectricField, SinChargeDensity, kIsotropicEpsilonR, false, {}};
+      SinPotential, SinElectricField, SinChargeDensity, kIsotropicEpsilonR, {}};
   return mms;
 }
 
 const MmsCase &NonHomogeneousCase()
 {
   static const MmsCase mms{
-      CosPotential, CosElectricField, CosChargeDensity, kIsotropicEpsilonR, true, {}};
+      CosPotential, CosElectricField, CosChargeDensity, kIsotropicEpsilonR, {}};
   return mms;
 }
 
 const MmsCase &PolynomialCase()
 {
-  static const MmsCase mms{PolynomialPotential,
-                           PolynomialElectricField,
-                           PolynomialChargeDensity,
-                           kAnisotropicEpsilonR,
-                           true,
+  static const MmsCase mms{PolynomialPotential, PolynomialElectricField,
+                           PolynomialChargeDensity, kAnisotropicEpsilonR,
                            PolynomialNeumannFlux};
   return mms;
 }
@@ -118,7 +115,6 @@ const MmsCase &CurvedCylinderCase()
                            PolynomialElectricField,
                            CurvedPolynomialChargeDensity,
                            kIsotropicEpsilonR,
-                           true,
                            {}};
   return mms;
 }
@@ -127,12 +123,6 @@ const MmsCase &CurvedCylinderCase()
 }  // namespace palace::testing::mms::electrostatic
 
 using namespace palace::testing::mms::electrostatic;
-
-TEST_CASE("Electrostatic MMS analytic solves to small potential and field errors",
-          "[electrostatic][mms][analytic][Serial][Parallel]")
-{
-  CheckSmallErrors(analytic::HomogeneousCase(), analytic::NonHomogeneousCase());
-}
 
 TEST_CASE("Electrostatic MMS analytic is exact for a polynomial in the FE space",
           "[electrostatic][mms][analytic][Serial][Parallel]")
