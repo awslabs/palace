@@ -1667,12 +1667,12 @@ TEST_CASE("cavity2d_transient", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cavity2d", "cavity2d_transient.json", "transient", opts);
 }
 
-// cpw2d boundary-mode cases: reltol=1e-2 because impedance depends on
-// voltage path integration (cross-platform reproducibility).
+// cpw2d boundary-mode cases: the coordinate-path line integrals are exact for the discrete
+// field, so Z_PV only varies with the eigensolver (below 1e-4 across process counts).
 TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-2;
+  opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;  // abstol from the preceding cavity2d block
   opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
                            "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
@@ -1685,7 +1685,7 @@ TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
 TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-2;
+  opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;
   opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
                            "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
