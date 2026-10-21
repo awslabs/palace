@@ -136,6 +136,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `GRID` points with a nonzero coordinate system (`CP`, or a `GRDSET` default) now abort,
     since coordinate systems are not applied.
     [PR 951](https://github.com/awslabs/palace/pull/951).
+  - Fixed SLP and TOAR (`PEPLinear: false`) eigenmode solves aborting on a GPU.
+    [PR 1068](https://github.com/awslabs/palace/pull/1068).
 
 #### Performance Improvements
 

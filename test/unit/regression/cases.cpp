@@ -1073,6 +1073,33 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The SLEPc NEP (SLP) shell receives device arrays on a GPU. SLP with and without damping
+// covers both of its SetOperators overloads.
+TEST_CASE("cylinder_cavity_conductivity_slp", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_conductivity_slp.json",
+                                  "cavity_conductivity_slp", opts);
+}
+
+TEST_CASE("cylinder_cavity_impedance_conductivity_slp",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_impedance_conductivity_slp.json",
+                                  "cavity_impedance_conductivity_slp", opts);
+}
+
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
