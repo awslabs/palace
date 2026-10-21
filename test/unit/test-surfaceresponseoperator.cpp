@@ -10682,3 +10682,327 @@ TEST_CASE("SurfaceResponseOperatorMirrorFormedEdgeWeights",
                       Catch::Matchers::ContainsSubstring("RealPortions are empty"));
   }
 }
+
+namespace palace
+{
+
+// Decision 899 (OI-CTX-ARC-ADAPT): a run whose INPUT mesh is the saved adapted mesh of an
+// AMR run (SaveAdaptMesh, the MFEM nonconforming format) identifies on the ROOT level of
+// that mesh — the producing run's initial mesh — so it reproduces the producing run's
+// identification (the features, keys, matched lengths and patches the producer carried
+// through its own AMR) and, on the same final mesh with the same patches, its final-cycle
+// corrected energies to solver roundoff. Two fixtures: (a) two rounded islands with linear
+// fillets (bend arcs) whose corners form one SpatialEdgeCluster matched by a version-2
+// Signature model, 2 nonconforming AMR cycles; (b) the cracked 3D CPW (two PEC sheets, the
+// isolated-edge patches per segment cell, no EdgeFrameNormal: the process side comes from
+// the two crack copies), 3 cycles. On main the follow-on identifies on the leaf perimeter:
+// (a) a split perimeter (more segments / vertices), (b) more patches (the segment cells)
+// and UndeterminedProcessSide exclusions where the crack copies were refined differently.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator saved adapted mesh reproduces the producing run",
+                 "[surfaceresponseoperator][3d][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+
+  // The producer (AMR with SaveAdaptMesh) and the follow-on on its saved mesh, then the
+  // comparison of the identification, the patch table and the corrected energies.
+  auto ProduceAndFollow = [&](json config, const std::string &stem, long long initial_ne,
+                              const std::string &placed_model)
+  {
+    const fs::path producer_dir = temp.temp_dir / (stem + "-producer");
+    const fs::path follow_on_dir = temp.temp_dir / (stem + "-follow-on");
+    const fs::path saved_mesh_path =
+        producer_dir /
+        (fs::path(config["Model"]["Mesh"].get<std::string>()).stem().string() + ".mesh");
+    config["Problem"]["Output"] = producer_dir.string();
+    test::RunElectrostatic(config);
+    Mpi::Barrier(comm);
+    REQUIRE(fs::is_regular_file(saved_mesh_path));
+    json follow_on = config;
+    follow_on["Model"]["Mesh"] = saved_mesh_path.string();
+    follow_on["Model"]["Refinement"] = {{"MaxIts", 0}};
+    follow_on["Problem"]["Output"] = follow_on_dir.string();
+    test::RunElectrostatic(follow_on);
+    Mpi::Barrier(comm);
+    if (!Mpi::Root(comm))
+    {
+      return;
+    }
+    {
+      std::ifstream saved(saved_mesh_path);
+      std::string header;
+      std::getline(saved, header);
+      CHECK(header == "MFEM NC mesh v1.0");
+    }
+    const json producer_meta = ReadJson(producer_dir / "palace.json");
+    const json follow_on_meta = ReadJson(follow_on_dir / "palace.json");
+    // The producer refined the mesh and the follow-on solved on that mesh.
+    CHECK(producer_meta["Problem"]["MeshElements"] ==
+          follow_on_meta["Problem"]["MeshElements"]);
+    CHECK(producer_meta["Problem"]["MeshElements"].get<long long int>() > initial_ne);
+
+    // The identification: the same perimeter (segments, vertices, chains, components), the
+    // same models with the same patch counts, the same uncovered length.
+    const auto &producer_response = producer_meta["SurfaceResponse"];
+    const auto &follow_on_response = follow_on_meta["SurfaceResponse"];
+    for (const char *key : {"MetalSegments", "MetalVertices", "PhysicalChains",
+                            "MetalComponents", "PhysicalComponents"})
+    {
+      CHECK(producer_response["Geometry"][key] == follow_on_response["Geometry"][key]);
+    }
+    REQUIRE(producer_response["ModelCatalog"].size() ==
+            follow_on_response["ModelCatalog"].size());
+    bool model_placed = false;
+    for (std::size_t m = 0; m < producer_response["ModelCatalog"].size(); m++)
+    {
+      const auto &producer_model = producer_response["ModelCatalog"][m];
+      const auto &follow_on_model = follow_on_response["ModelCatalog"][m];
+      CHECK(producer_model["Name"] == follow_on_model["Name"]);
+      CHECK(producer_model["PatchCount"] == follow_on_model["PatchCount"]);
+      if (producer_model["Name"] == placed_model)
+      {
+        model_placed = producer_model["PatchCount"].get<int>() >= 1 &&
+                       follow_on_model["PatchCount"].get<int>() >= 1;
+      }
+    }
+    CHECK(model_placed);
+    CHECK(producer_response["Diagnostics"]["Uncovered"]["Length"] ==
+          follow_on_response["Diagnostics"]["Uncovered"]["Length"]);
+
+    // The patch table: the same rows (model, origin, axes, weight) to roundoff.
+    const auto producer_rows = ReadPatchRows(producer_dir / "surface-response-patches.csv");
+    const auto follow_on_rows =
+        ReadPatchRows(follow_on_dir / "surface-response-patches.csv");
+    REQUIRE(producer_rows.size() == follow_on_rows.size());
+    REQUIRE(!producer_rows.empty());
+    for (std::size_t r = 0; r < producer_rows.size(); r++)
+    {
+      REQUIRE(producer_rows[r].size() == follow_on_rows[r].size());
+      REQUIRE(producer_rows[r].size() == 14);
+      CHECK(std::stoi(producer_rows[r][0]) == std::stoi(follow_on_rows[r][0]));
+      for (std::size_t c = 1; c < producer_rows[r].size(); c++)
+      {
+        CHECK_THAT(std::stod(follow_on_rows[r][c]),
+                   WithinAbs(std::stod(producer_rows[r][c]), 1.0e-12));
+      }
+    }
+
+    // The corrected energies of the producer's last cycle (its final postprocessing files)
+    // and of the follow-on on the same mesh with the same patches: 1e-8 relative at the
+    // same solver tolerance.
+    auto CompareTable = [&](const std::string &name)
+    {
+      Table producer_table = test::LoadCsv(producer_dir / name);
+      Table follow_on_table = test::LoadCsv(follow_on_dir / name);
+      REQUIRE(producer_table.n_cols() == follow_on_table.n_cols());
+      REQUIRE(producer_table.n_cols() > 0);
+      for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+      {
+        const Column &producer_column = producer_table[c];
+        const Column &follow_on_column = follow_on_table[c];
+        REQUIRE(producer_column.data.size() == follow_on_column.data.size());
+        for (std::size_t i = 0; i < producer_column.data.size(); i++)
+        {
+          const double scale = std::max(std::abs(producer_column.data[i]), 1.0e-300);
+          CHECK_THAT(follow_on_column.data[i],
+                     WithinAbs(producer_column.data[i], 1.0e-8 * scale));
+        }
+      }
+    };
+    CompareTable("surface-Q-corrected.csv");
+    CompareTable("terminal-C-corrected.csv");
+    CompareTable("surface-response-model-energy.csv");
+  };
+
+  // (a) The rounded islands: the initial mesh (written for the driver), the cluster's
+  // Signature on it, the library (the spatial cluster library's isolated edge and convex
+  // corner, the rounded library's fillet corner, the cluster as a Signature model).
+  {
+    const fs::path mesh_path = temp.temp_dir / "adaptid-islands.mesh";
+    const fs::path library_path = temp.temp_dir / "fabrication-process-adaptid-3d.json";
+    json config = HighOrderSpatialConfig();
+    auto spatial_mesh = MakeIslandMesh(true, false, false, true);
+    if (Mpi::Root(comm))
+    {
+      mfem::Mesh serial = MakeSerialIslandMesh(true, false, false, true);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    Mpi::Barrier(comm);
+    const auto requirements_path =
+        temp.temp_dir / "surface-response-requirements-adaptid.json";
+    {
+      IoData iodata(config, false);
+      iodata.boundaries.cracked_attributes.insert(9);
+      iodata.boundaries.cracked_attributes.insert(10);
+      WriteSurfaceResponseRequirements(iodata, *spatial_mesh, requirements_path.string());
+    }
+    const json requirements = ReadJson(requirements_path);
+    const auto cluster_feature = std::find_if(
+        requirements["Identification"]["Features"].begin(),
+        requirements["Identification"]["Features"].end(),
+        [](const auto &feature) { return feature["Type"] == "SpatialEdgeCluster"; });
+    REQUIRE(cluster_feature != requirements["Identification"]["Features"].end());
+    if (Mpi::Root(comm))
+    {
+      json library = ReadJson(spatial_cluster_library_3d_path);
+      const json rounded = ReadJson(rounded_library_3d_path);
+      library["Name"] = "unit-test-process-adaptid-3d";
+      library["Models"].push_back(rounded["Models"][1]);
+      auto &signature_model = library["Models"][2];
+      signature_model["Name"] = "adaptid-signature-cluster";
+      signature_model["Signature"] = (*cluster_feature)["Signature"];
+      signature_model.erase("Edges");
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(comm);
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
+    config["Model"]["Refinement"] = {{"MaxIts", 2},           {"Tol", 1.0e-12},
+                                     {"UpdateFraction", 0.5}, {"Nonconformal", true},
+                                     {"SaveAdaptMesh", true}, {"MaxNCLevels", 8}};
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["Library"] = library_path.string();
+    correction.erase("PatchConstruction");  // Features (the default)
+    correction["UnmatchedPolicy"] = "Warn";
+    config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+    ProduceAndFollow(config, "adaptid-islands", spatial_mesh->GetGlobalNE(),
+                     "adaptid-signature-cluster");
+  }
+
+  // (b) The cracked 3D CPW (test mesh cpw3d-surface-nc.msh: PEC trace 1 / ground 2, the SA
+  // sheet 3, substrate 1 / vacuum 2; no EdgeFrameNormal: the process side comes from the
+  // two crack copies): the producer is a plain electrostatic AMR run (3 cycles, the metal
+  // perimeter refined on one crack side or the other) and the identification is compared
+  // at the requirements level (the dry run writes the manifest and the patch table without
+  // reading response matrices) on the initial mesh and on the saved mesh.
+  {
+    const fs::path mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+    const fs::path producer_dir = temp.temp_dir / "adaptid-cpw-producer";
+    const fs::path saved_mesh_path = producer_dir / "cpw3d-surface-nc.mesh";
+    json dielectric = {{"Thickness", 2.0e-3},
+                       {"AutomaticEdges", true},
+                       {"EdgeDistances", {2.0}},
+                       {"LocalizeEdgeEnergy", false}};
+    json sa = dielectric, ms = dielectric, ma = dielectric;
+    sa.update({{"Index", 1},
+               {"Attributes", {3}},
+               {"Type", "SA"},
+               {"Permittivity", 4.0},
+               {"LossTan", 2.0e-3}});
+    ms.update({{"Index", 2},
+               {"Attributes", {1, 2}},
+               {"Type", "MS"},
+               {"Permittivity", 11.47},
+               {"LossTan", 3.0e-4}});
+    ma.update({{"Index", 3},
+               {"Attributes", {1, 2}},
+               {"Type", "MA"},
+               {"Permittivity", 10.0},
+               {"LossTan", 3.0e-2}});
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
+        {"Model",
+         {{"Mesh", mesh_path.string()},
+          {"L0", 1.0e-6},
+          {"Refinement",
+           {{"MaxIts", 3},
+            {"Tol", 1.0e-12},
+            {"UpdateFraction", 0.7},
+            {"Nonconformal", true},
+            {"SaveAdaptMesh", true},
+            {"MaxNCLevels", 8}}}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 11.47}},
+            {{"Attributes", {2}}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {2, 4}}}},
+          {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+          {"Postprocessing", {{"Dielectric", {sa, ms, ma}}}}}},
+        {"Solver", {{"Order", 1}, {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 500}}}}}};
+    test::RunElectrostatic(config);
+    Mpi::Barrier(comm);
+    REQUIRE(fs::is_regular_file(saved_mesh_path));
+
+    json identify = config;
+    identify["Model"]["Refinement"] = {{"MaxIts", 0}};
+    identify["Solver"]["Electrostatic"] = {{"ResponseCorrection",
+                                            {{"Library", library_3d_path.string()},
+                                             {"TargetInterfaces", {1, 2, 3}},
+                                             {"UnmatchedPolicy", "Warn"},
+                                             {"TraceCoupling", "Collocated"}}}};
+    auto Identify = [&](const fs::path &mesh_file, const std::string &stem)
+    {
+      json run = identify;
+      run["Model"]["Mesh"] = mesh_file.string();
+      const fs::path out_dir = temp.temp_dir / stem;
+      run["Problem"]["Output"] = out_dir.string();
+      if (Mpi::Root(comm))
+      {
+        fs::create_directories(out_dir);
+      }
+      Mpi::Barrier(comm);
+      IoData iodata(run, false);
+      auto mesh = mesh::ReadMesh(iodata, comm);
+      const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+      WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+      Mpi::Barrier(comm);
+      return std::make_pair(requirements_path, out_dir / "surface-response-patches.csv");
+    };
+    const auto [initial_requirements, initial_patches] =
+        Identify(mesh_path, "adaptid-cpw-initial");
+    const auto [adapted_requirements, adapted_patches] =
+        Identify(saved_mesh_path, "adaptid-cpw-adapted");
+    if (!Mpi::Root(comm))
+    {
+      return;
+    }
+    const json initial = ReadJson(initial_requirements);
+    const json adapted = ReadJson(adapted_requirements);
+    const auto &initial_identification = initial["Identification"];
+    const auto &adapted_identification = adapted["Identification"];
+    CHECK(adapted_identification["GeometryDigest"] ==
+          initial_identification["GeometryDigest"]);
+    REQUIRE(adapted_identification["Features"].size() ==
+            initial_identification["Features"].size());
+    REQUIRE(initial_identification["Features"].size() >= 4);
+    for (std::size_t f = 0; f < initial_identification["Features"].size(); f++)
+    {
+      const auto &a = initial_identification["Features"][f];
+      const auto &b = adapted_identification["Features"][f];
+      CHECK(a["Type"] == b["Type"]);
+      CHECK(a["Hash"] == b["Hash"]);
+      CHECK(a["Match"]["Status"] == b["Match"]["Status"]);
+      CHECK_THAT(b["Length"].get<double>(), WithinRel(a["Length"].get<double>(), 1.0e-9));
+    }
+    CHECK(adapted_identification["Exclusions"] == initial_identification["Exclusions"]);
+    const auto initial_rows = ReadPatchRows(initial_patches);
+    const auto adapted_rows = ReadPatchRows(adapted_patches);
+    REQUIRE(initial_rows.size() == adapted_rows.size());
+    REQUIRE(!initial_rows.empty());
+    for (std::size_t r = 0; r < initial_rows.size(); r++)
+    {
+      REQUIRE(initial_rows[r].size() == adapted_rows[r].size());
+      CHECK(initial_rows[r][0] == adapted_rows[r][0]);
+      for (std::size_t c = 1; c < initial_rows[r].size(); c++)
+      {
+        CHECK_THAT(std::stod(adapted_rows[r][c]),
+                   WithinAbs(std::stod(initial_rows[r][c]), 1.0e-12));
+      }
+    }
+  }
+#endif
+}
+
+}  // namespace palace
