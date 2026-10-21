@@ -154,6 +154,12 @@ charge:
     example, the uncracked sheet shares the current equally between its two faces,
     which halves the conductor loss. Use `"Crack": true` for such conductors.
 
+The mesh can only be cracked where it is conformal. Interior boundaries which are to be
+cracked are an error on a mesh with hexahedra, prisms, or pyramids with
+[refinement regions](model.md#Mesh-refinement), which make it nonconformal, and on a
+nonconformal input mesh which is not already cracked along them, as it is when it comes from
+a previous adaptive simulation with the same boundary conditions.
+
 The fields on the two sides of an uncracked sheet are generally discontinuous: the normal
 component of the electric flux density jumps by the surface charge and the tangential
 magnetic field by the surface current. The error estimate for

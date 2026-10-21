@@ -522,18 +522,19 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   }
   const int nv = mesh.GetNV(), nv_cut = nv + 9;  // 3 x 3 vertices on the sheet
 
-  auto NumVertices = [&](const json &boundaries, const json &model)
+  auto LoadMesh = [&](const json &boundaries, const json &model, const fs::path &path)
   {
     json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
-                   {"Model", {{"Mesh", mesh_path.string()}}},
+                   {"Model", {{"Mesh", path.string()}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
                    {"Boundaries", boundaries},
                    {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
     config["Model"].update(model);
     IoData iodata(config, false);
-    auto smesh = mesh::Load(iodata, Mpi::World());
-    return smesh->GetNV();
+    return mesh::Load(iodata, Mpi::World());
   };
+  auto NumVertices = [&](const json &boundaries, const json &model)
+  { return LoadMesh(boundaries, model, mesh_path)->GetNV(); };
   const json none = json::object();
   const json legacy = {{"CrackInternalBoundaryElements", true}};
   const json off = {{"CrackInternalBoundaryElements", false}};
@@ -622,6 +623,48 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   CHECK_NOTHROW(NumVertices(
       {{"PMC", {{"Attributes", {7}}}}},
       {{"CrackInternalBoundaryElements", false}, {"Refinement", box["Refinement"]}}));
+
+  // A nonconformal input mesh, for example from a previous adaptive simulation, cannot be
+  // cracked: it must already be cracked along the boundaries which are to be cracked.
+  // Refine the element below the sheet next to the origin, such that it has hanging faces.
+  auto WriteNonconformal = [](mfem::Mesh &&m, const fs::path &path)
+  {
+    m.EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < m.GetNE(); e++)
+    {
+      m.GetElementCenter(e, c);
+      if (c(0) < 0.5 && c(1) < 0.5 && c(2) < 0.5)
+      {
+        marked.Append(e);
+      }
+    }
+    REQUIRE(marked.Size() == 1);
+    m.GeneralRefinement(marked, 1, 0);
+    std::ofstream fo(path);
+    fo.precision(17);
+    m.Print(fo);
+    return m.GetNV();
+  };
+  const auto nc_path = fs::temp_directory_path() / "palace-test-interior-sheet-nc.mesh";
+  const auto nc_cut_path =
+      fs::temp_directory_path() / "palace-test-interior-sheet-nc-cracked.mesh";
+  WriteNonconformal(mfem::Mesh(mesh), nc_path);
+  const int nv_nc_cut = WriteNonconformal(
+      std::move(*LoadMesh(Impedance(true), none, mesh_path)), nc_cut_path);
+  CHECK_THROWS(LoadMesh(Impedance(true), none, nc_path));
+  CHECK_THROWS(LoadMesh(Conductivity(true), none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, legacy, nc_path));
+  CHECK_NOTHROW(LoadMesh(Impedance(false), none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, off, nc_path));
+  CHECK(LoadMesh(Impedance(true), none, nc_cut_path)->GetNV() == nv_nc_cut);
+  CHECK(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_cut_path)->GetNV() ==
+        nv_nc_cut);
+  fs::remove(nc_path);
+  fs::remove(nc_cut_path);
   fs::remove(mesh_path);
 }
 
