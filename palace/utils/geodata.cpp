@@ -239,13 +239,15 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   // Box / sphere region refinement on the serial mesh, before partitioning. Done here
   // (rather than in parallel RefineMesh) so the user-facing 3D box / sphere geometry
   // stays in sync with the mesh the problem actually solves on — BoundaryMode's
-  // Preprocess may extract a 2D submesh from this refined 3D mesh. Region refinement makes
-  // a mesh with hexahedra, prisms, or pyramids nonconformal, which cannot be cracked along
-  // interior boundaries: this is an error when interior boundaries are to be cracked, since
-  // the cracking is part of the model.
+  // Preprocess may extract a 2D submesh from this refined 3D mesh. A nonconformal mesh
+  // cannot be cracked along interior boundaries: a nonconformal input mesh, for example
+  // from a previous adaptive simulation, must already be cracked along the interior
+  // boundaries which are to be cracked, and region refinement makes a mesh with
+  // hexahedra, prisms, or pyramids nonconformal. Both are an error when interior boundaries
+  // are to be cracked, since the cracking is part of the model.
   const bool conforming = smesh->Conforming();
   std::set<int> interior_crack_attrs;
-  if (conforming && iodata.model.crack_bdr_elements.value_or(true))
+  if (iodata.model.crack_bdr_elements.value_or(true))
   {
     const auto crack_attrs =
         iodata.boundaries.GetMeshCrackAttributes(iodata.model.crack_bdr_elements);
@@ -262,6 +264,17 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
       }
     }
   }
+  MFEM_VERIFY(interior_crack_attrs.empty() || conforming,
+              "The nonconformal mesh "
+                  << iodata.model.mesh
+                  << " is not cracked along the interior boundaries with "
+                     "attributes "
+                  << fmt::format("{}", fmt::join(interior_crack_attrs, ", "))
+                  << " (with \"Crack\": true, or with boundary conditions "
+                     "applying to each side separately), and cannot be "
+                     "cracked! Use a mesh which is cracked along them, for "
+                     "example from a previous adaptive simulation with the "
+                     "same boundary conditions.");
   RegionRefine(refinement, *smesh);
   MFEM_VERIFY(
       interior_crack_attrs.empty() || smesh->Conforming(),
@@ -270,7 +283,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
       "attributes "
           << fmt::format("{}", fmt::join(interior_crack_attrs, ", "))
           << " (with \"Crack\": true, or with boundary conditions applying to "
-             "either side separately)! Remove the refinement regions, or use a "
+             "each side separately)! Remove the refinement regions, or use a "
              "simplex mesh.");
 
   // Exterior-boundary check and optional material-interface / crack boundary element

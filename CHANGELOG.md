@@ -86,6 +86,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     conductor surfaces on both faces of the sheet, with an admittance `2/Z` instead of
     `1/Z`.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Interior boundaries which are to be cracked (with `"Crack": true`, or with boundary
+    conditions which apply to each side separately) are an error where the mesh cannot be
+    cracked along them: on a mesh with hexahedra, prisms, or pyramids refined by
+    `config["Model"]["Refinement"]["Boxes"]` or `["Spheres"]`, which makes it nonconformal,
+    and on a nonconformal input mesh, for example from a previous adaptive simulation,
+    which is not already cracked along them. The mesh was previously left uncracked.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
   - Surface flux postprocessing with `"TwoSided": false` on interior boundaries which are no
     longer cracked gives the average of the fluxes on the two sides, instead of the sum of
     the fluxes of the two faces of the cracked mesh.
