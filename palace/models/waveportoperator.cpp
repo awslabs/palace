@@ -808,22 +808,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // propagation constants of materials present on this port. For anisotropic media the
   // electric and magnetic polarizations can sample different material axes, so max(mu_r *
   // epsilon_r) is not a safe bound; use max(mu_r) * max(epsilon_r) instead. The bound does
-  // not hold for the slow-wave modes of superconducting lines (kinetic inductance).
-  if (data.target > 0.0)
-  {
-    n_target_sq = data.target * data.target;
-  }
-  else
-  {
-    n_target_sq = port_mat_op->GetMaxMuEpsilon() * 1.1;
-    if (port_mat_op->HasLondonDepth())
-    {
-      Mpi::Warning("Wave port with attributes {} borders a superconducting domain, whose "
-                   "slow-wave modes can lie above the default eigenvalue target; set "
-                   "\"Target\" to an estimate of the mode effective index!\n",
-                   fmt::join(data.attributes, ", "));
-    }
-  }
+  // not hold for the slow-wave modes of superconducting lines (kinetic inductance), so the
+  // modes are sought on both sides of the shift (LARGEST_MAGNITUDE).
+  n_target_sq = (data.target > 0.0) ? data.target * data.target
+                                    : port_mat_op->GetMaxMuEpsilon() * 1.1;
 
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();
@@ -845,9 +833,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     mode_solver = std::make_unique<ModeEigenSolver>(
         *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
         *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
-        data.max_size, data.eig_tol,
-        (data.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
-                            : EigenvalueSolver::WhichType::LARGEST_REAL,
+        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
         port_linear, data.eigen_solver, data.verbose, port_comm);
   }
 
