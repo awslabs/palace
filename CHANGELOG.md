@@ -38,8 +38,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     boundaries and anisotropic permittivity. The manufactured source terms are derived
     either analytically or, optionally, via
     [Enzyme-AD](https://github.com/EnzymeAD/Enzyme), an LLVM-level automatic
-    differentiation tool, enabled with a new `PALACE_WITH_ENZYME=ON` build option (used
-    only to build the unit tests).
+    differentiation tool, enabled with a new `PALACE_WITH_ENZYME=ON` build option or the
+    `+enzyme` Spack variant (used only to build the unit tests).
     [PR 901](https://github.com/awslabs/palace/pull/901).
 
 #### Interface Changes
