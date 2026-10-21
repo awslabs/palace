@@ -953,6 +953,49 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
   };
 }
 
+// Reference-free check of the absorbing boundary reflection in the waveguide_absorbing
+// case: a rectangular PEC waveguide (width a) driven in TE10 by a wave port and terminated
+// by an absorbing boundary. On a flat boundary the TE10 field E_y = sin(kx x) e^{-i β z}
+// is an eigenfunction of the boundary operator, which imposes n × ∇ × E = i k_eff E_t
+// instead of the exact i β E_t, so |S11| = |β - k_eff| / (β + k_eff), with k_eff = k for
+// first order and k - kx²/(2k) for second order (curl-curl coefficient 1/(2ik)). The
+// opposite sign of the second-order term (k + kx²/(2k)) reflects more than first order.
+palace::test::CustomCheck TestAbsorbingReflection(int order, double atol_lin)
+{
+  return [order, atol_lin](palace::Table &actual, palace::Table &,
+                           const std::filesystem::path &)
+  {
+    constexpr double c0 = 299792458.0;
+    constexpr double a = 20.0e-3;  // Guide width (m), see mesh/mesh.jl
+    const double kx = std::numbers::pi / a;
+    const palace::Column *freq = nullptr, *s11 = nullptr;
+    for (auto &c : actual)
+    {
+      if (c.header_text.find("f (GHz)") != std::string::npos)
+      {
+        freq = &c;
+      }
+      else if (c.header_text.find("|S[1][1]| (dB)") != std::string::npos)
+      {
+        s11 = &c;
+      }
+    }
+    REQUIRE(freq);
+    REQUIRE(s11);
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const double k = 2.0 * std::numbers::pi * freq->data[r] * 1.0e9 / c0;
+      const double beta = std::sqrt(k * k - kx * kx);
+      const double k_eff = (order == 1) ? k : k - kx * kx / (2.0 * k);
+      const double r_exact = std::abs(beta - k_eff) / (beta + k_eff);
+      const double s11_lin = std::pow(10.0, s11->data[r] / 20.0);
+      INFO("f = " << freq->data[r] << " GHz: |S11| = " << s11_lin << ", closed form "
+                  << r_exact);
+      CHECK_THAT(s11_lin, Catch::Matchers::WithinAbs(r_exact, atol_lin));
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -1334,6 +1377,33 @@ TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
   opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_adaptive.json",
                                   "driven_wave_tm_adaptive", opts);
+}
+
+// Rectangular waveguide terminated by a first- or second-order absorbing boundary;
+// |S11| is checked against its closed form (TestAbsorbingReflection), the other outputs
+// against the reference.
+TEST_CASE("waveguide_absorbing_order1", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestAbsorbingReflection(1, 1.0e-3);
+  palace::test::RunRegressionCase("waveguide_absorbing", "waveguide_absorbing_order1.json",
+                                  "order1", opts);
+}
+
+TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestAbsorbingReflection(2, 1.0e-3);
+  palace::test::RunRegressionCase("waveguide_absorbing", "waveguide_absorbing_order2.json",
+                                  "order2", opts);
 }
 
 // Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port
