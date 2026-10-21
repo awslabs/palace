@@ -257,6 +257,14 @@ When the target is zero, it is computed automatically from the material properti
 eigenvalue solver uses a shift-and-invert spectral transformation to find modes near the
 target.
 
+Spatially-varying relative material properties can be supplied as scalar fields on the
+solve mesh vertices under
+[`config["Solver"]["BoundaryMode"]["MaterialFields"]`](../config/reference.md#config-solver-boundarymode-materialfields),
+read from a Gmsh (`.msh` `$NodeData`) or VTK/VTU point-data file via the `File` and `Name`
+keys. A field replaces the corresponding `Domains.Materials` property over the whole
+cross-section; the mesh vertices must coincide with the field file points. Scalar
+(isotropic) fields are supported.
+
 The computed propagation constants ``k_n`` and effective indices
 ``n_\text{eff} = k_n / k_0`` (where ``k_0 = \omega / c_0`` is the free-space wavenumber)
 are written to an ASCII file named `mode-kn.csv`, in the directory specified by

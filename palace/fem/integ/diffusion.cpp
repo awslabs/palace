@@ -17,7 +17,7 @@ void DiffusionIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                                    CeedElemRestriction test_restr, CeedBasis trial_basis,
                                    CeedBasis test_basis, CeedVector geom_data,
                                    CeedElemRestriction geom_data_restr,
-                                   CeedOperator *op) const
+                                   const CeedMaterialFieldData *field_data, CeedOperator *op) const
 {
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
@@ -31,12 +31,23 @@ void DiffusionIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   MFEM_VERIFY(
       trial_num_comp == test_num_comp && trial_num_comp == 1,
       "DiffusionIntegrator requires test and trial spaces with a single component!");
+  MFEM_VERIFY(!field_data || (space_dim == 2 && dim == 2),
+              "Spatially-varying material coefficients are only supported for 2D "
+              "diffusion!");
   switch (10 * space_dim + dim)
   {
     case 22:
-      info.apply_qf = assemble_q_data ? f_build_hcurl_22 : f_apply_hcurl_22;
-      info.apply_qf_path = PalaceQFunctionRelativePath(
-          assemble_q_data ? f_build_hcurl_22_loc : f_apply_hcurl_22_loc);
+      if (field_data)
+      {
+        info.apply_qf = f_apply_hcurl_field_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurl_field_22_loc);
+      }
+      else
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurl_22 : f_apply_hcurl_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurl_22_loc : f_apply_hcurl_22_loc);
+      }
       break;
     case 33:
       info.apply_qf = assemble_q_data ? f_build_hcurl_33 : f_apply_hcurl_33;
@@ -69,7 +80,7 @@ void DiffusionIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   auto ctx = PopulateCoefficientContext(space_dim, Q, transpose);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
-                       geom_data_restr, op);
+                       geom_data_restr, field_data, op);
 }
 
 }  // namespace palace

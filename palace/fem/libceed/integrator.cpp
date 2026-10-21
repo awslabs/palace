@@ -6,6 +6,7 @@
 #include <string>
 #include <ceed/backend.h>
 #include <mfem.hpp>
+#include "fem/materialfield.hpp"
 #include "utils/diagnostic.hpp"
 
 PalacePragmaDiagnosticPush
@@ -425,8 +426,12 @@ void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t 
                           Ceed ceed, CeedElemRestriction trial_restr,
                           CeedElemRestriction test_restr, CeedBasis trial_basis,
                           CeedBasis test_basis, CeedVector geom_data,
-                          CeedElemRestriction geom_data_restr, CeedOperator *op)
+                          CeedElemRestriction geom_data_restr,
+                          const CeedMaterialFieldData *field_data, CeedOperator *op)
 {
+  MFEM_VERIFY(!(field_data && info.assemble_q_data),
+              "Material field coefficients cannot be combined with quadrature data "
+              "assembly!");
   // If we are going to be assembling the quadrature data, construct the storage vector for
   // it (to be owned by the operator).
   CeedVector q_data = nullptr;
@@ -467,6 +472,11 @@ void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t 
   if (!info.assemble_q_data)
   {
     AddQFunctionActiveInputs(info.trial_ops, ceed, trial_basis, apply_qf);
+    if (field_data)
+    {
+      PalaceCeedCall(ceed,
+                     CeedQFunctionAddInput(apply_qf, "coeff_data", 1, CEED_EVAL_NONE));
+    }
     AddQFunctionActiveOutputs(info.test_ops, ceed, test_basis, apply_qf);
   }
   else
@@ -491,6 +501,11 @@ void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t 
   if (!info.assemble_q_data)
   {
     AddOperatorActiveInputFields(info.trial_ops, ceed, trial_restr, trial_basis, *op);
+    if (field_data)
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "coeff_data", field_data->data_restr,
+                                                CEED_BASIS_NONE, field_data->data));
+    }
     AddOperatorActiveOutputFields(info.test_ops, ceed, test_restr, test_basis, *op);
   }
   else

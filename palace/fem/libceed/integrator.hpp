@@ -8,6 +8,11 @@
 #include <vector>
 #include "fem/libceed/ceed.hpp"
 
+namespace palace
+{
+struct CeedMaterialFieldData;
+}
+
 namespace palace::ceed
 {
 
@@ -58,12 +63,14 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedElemRestriction geom_data_restr);
 
 // Construct libCEED operator using the given quadrature data, element restriction, and
-// basis objects.
+// basis objects. When `field_data` is non-null, a spatially-varying material coefficient
+// sampled at the quadrature points is attached as an extra inactive input.
 void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t ctx_size,
                           Ceed ceed, CeedElemRestriction trial_restr,
                           CeedElemRestriction test_restr, CeedBasis trial_basis,
                           CeedBasis test_basis, CeedVector geom_data,
-                          CeedElemRestriction geom_data_restr, CeedOperator *op);
+                          CeedElemRestriction geom_data_restr,
+                          const CeedMaterialFieldData *field_data, CeedOperator *op);
 
 // Construct libCEED operators for interpolation operations and their transpose between
 // the two spaces. Note that contributions for shared degrees of freedom are added, so the

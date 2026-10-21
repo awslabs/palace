@@ -19,6 +19,7 @@
 #include "drivers/boundarymodesolver.hpp"
 
 #include "fem/fespace.hpp"
+#include "fem/materialfield.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
@@ -207,7 +208,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 // the BoundaryMode driver, which uses p-multigrid preconditioning when mg_max_levels > 1.
 std::vector<std::complex<double>>
 SolveRectangularModesMultigrid(int mg_max_levels,
-                               const std::function<void(IoData &)> &configure_bcs)
+                               const std::function<void(IoData &)> &configure_bcs,
+                               bool use_fields = false)
 {
   constexpr double width = 1000.0, height = 500.0, freq_ghz = 100.0, eig_tol = 1.0e-8;
   constexpr int order = 2, num_modes = 1;
@@ -239,8 +241,32 @@ SolveRectangularModesMultigrid(int mg_max_levels,
       std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
   iodata.CheckConfiguration();
 
+  // Optional constant material fields matching the config material (epsilon_r = 4,
+  // mu_r = 1), used to exercise the GridFunction coefficient path end to end.
+  std::unique_ptr<mfem::L2_FECollection> l2_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpace> l2_fes;
+  std::unique_ptr<mfem::ParGridFunction> eps_gf, mu_gf;
+  std::unique_ptr<MaterialField> eps_field, muinv_field;
+  if (use_fields)
+  {
+    l2_fec = std::make_unique<mfem::L2_FECollection>(0, mesh.back()->Dimension());
+    l2_fes = std::make_unique<mfem::ParFiniteElementSpace>(&mesh.back()->Get(),
+                                                           l2_fec.get());
+    eps_gf = std::make_unique<mfem::ParGridFunction>(l2_fes.get());
+    mu_gf = std::make_unique<mfem::ParGridFunction>(l2_fes.get());
+    mfem::Array<int> dofs;
+    for (int e = 0; e < mesh.back()->GetNE(); e++)
+    {
+      l2_fes->GetElementDofs(e, dofs);
+      (*eps_gf)(dofs[0]) = 4.0;
+      (*mu_gf)(dofs[0]) = 1.0;
+    }
+    eps_field = std::make_unique<MaterialField>(*eps_gf);
+    muinv_field = std::make_unique<MaterialField>(*mu_gf);
+  }
+
   MaterialOperator mat_op(iodata, *mesh.back());
-  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op, eps_field.get(), muinv_field.get());
   REQUIRE(mode_op.GetNDSpaceHierarchy().GetNumLevels() ==
           static_cast<std::size_t>(mg_max_levels));
 
@@ -267,6 +293,79 @@ SolveRectangularModesMultigrid(int mg_max_levels,
     kn.push_back(mode_solver.GetPropagationConstant(i));
   }
   return kn;
+}
+
+// Fundamental TE mode of a planar parabolic-index slab waveguide,
+//   eps_r(x) = eps_c - ((x - W)/x0)^2,   x in [0, 2W], y in [0, H],
+// with PEC walls. The permittivity is supplied as a GridFunction field, exactly
+// representable in an order-2 H1 space. The analytic dispersion of the full vector TE
+// problem is kn^2 = omega^2 eps_c - (2m+1) omega / x0 (Hermite-Gaussian modes); the mode is
+// uniform in y with E normal to the y-walls, so PEC there is satisfied exactly, and the
+// Gaussian tail makes the PEC truncation error exponentially small for W >> sqrt(x0/omega).
+std::complex<double> SolveParabolicSlabMode(int nx, int ny, int order, double W, double H,
+                                            double x0, double eps_c, double omega,
+                                            int mg_max_levels = 1)
+{
+  const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
+  MPI_Comm comm = Mpi::World();
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {eps_c, eps_c, eps_c};
+  iodata.boundaries.pec.attributes = {1, 2, 3, 4};
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.boundary_mode.tol = 1.0e-11;
+  iodata.solver.linear.tol = 1.0e-12;
+  iodata.solver.linear.max_it = 200;
+  iodata.solver.linear.mg_max_levels = mg_max_levels;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian2D(
+      nx, ny, mfem::Element::QUADRILATERAL, false, 2.0 * W, H));
+  iodata.NondimensionalizeInputs(serial_mesh);
+  iodata.solver.boundary_mode.freq =
+      iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega / (2.0 * M_PI));
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  iodata.CheckConfiguration();
+
+  // Permittivity field on an order-2 H1 space (the parabola is exactly representable).
+  mfem::H1_FECollection eps_fec(2, mesh.back()->Dimension());
+  mfem::ParFiniteElementSpace eps_fes(&mesh.back()->Get(), &eps_fec);
+  mfem::ParGridFunction eps_gf(&eps_fes);
+  mfem::FunctionCoefficient eps_coeff(
+      [W, x0, eps_c](const mfem::Vector &x)
+      {
+        const double t = (x(0) - W) / x0;
+        return eps_c - t * t;
+      });
+  eps_gf.ProjectCoefficient(eps_coeff);
+  MaterialField eps_field(eps_gf);
+
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op, &eps_field, nullptr);
+
+  const int nd_size = mode_op.GetNDTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(mode_op.GetNDDbcTDofLists().back());
+  for (auto tdof : mode_op.GetH1DbcTDofLists().back())
+  {
+    dbc_tdof_list.Append(nd_size + tdof);
+  }
+
+  constexpr int num_modes = 1, num_vec = 16;
+  ModeEigenSolver mode_solver(mode_op, dbc_tdof_list, num_modes, num_vec,
+                              iodata.solver.boundary_mode.tol,
+                              EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
+                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0);
+  auto result = mode_solver.Solve(omega, -kn_exact * kn_exact);
+  REQUIRE(result.num_converged >= 1);
+  return mode_solver.GetPropagationConstant(0);
 }
 
 // Components of the 2D mode eigenproblem matrix for a W × H rectangle (MakeCartesian2D
@@ -785,6 +884,62 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator]
           imp.Ls = 1.0e-8;
         });
   }
+}
+
+TEST_CASE("BoundaryModeOperator constant material field equivalence",
+          "[boundarymodeoperator][Serial]")
+{
+  // A constant GridFunction material field matching the config material must reproduce the
+  // default material assembly through the full BoundaryModeOperator path.
+  const auto direct = SolveRectangularModesMultigrid(1, [](IoData &) {});
+  const auto fields = SolveRectangularModesMultigrid(1, [](IoData &) {}, true);
+  REQUIRE(direct.size() >= 1);
+  REQUIRE(fields.size() >= 1);
+  CHECK_THAT(fields[0].real(), WithinRel(direct[0].real(), 1.0e-8));
+  CHECK_THAT(fields[0].imag(), WithinAbs(direct[0].imag(), 1.0e-10));
+}
+
+TEST_CASE("BoundaryModeOperator parabolic-index slab convergence",
+          "[boundarymodeoperator][Serial]")
+{
+  // eps_r(x) = eps_c - ((x - W)/x0)^2 with eps_c = 4, x0 = 1, omega = 1; the analytic
+  // fundamental TE propagation constant is kn = sqrt(omega^2 eps_c - omega/x0) = sqrt(3).
+  constexpr double W = 6.0, H = 1.0, x0 = 1.0, eps_c = 4.0, omega = 1.0;
+  const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
+
+  double prev_err = std::numeric_limits<double>::infinity();
+  for (int nx : {16, 32, 64})
+  {
+    const auto kn = SolveParabolicSlabMode(nx, 1, 2, W, H, x0, eps_c, omega);
+    REQUIRE(std::abs(kn.imag()) < 1.0e-6 * kn_exact);
+    const double err = std::abs(kn.real() - kn_exact);
+    CAPTURE(nx, kn.real(), kn_exact, err);
+    // Order-2 ND elements give an O(h^4) eigenvalue error; require at least a factor of 8
+    // per uniform refinement.
+    if (std::isfinite(prev_err))
+    {
+      CHECK(err < prev_err / 8.0);
+    }
+    prev_err = err;
+  }
+  CHECK(prev_err < 5.0e-6);
+}
+
+TEST_CASE("BoundaryModeOperator parabolic-index slab p-multigrid with fields",
+          "[boundarymodeoperator][Serial]")
+{
+  // The p-multigrid preconditioner uses constant material coefficients (the field is
+  // applied only to the exact operator), so verify it still converges to the same mode with
+  // a spatially-varying permittivity.
+  constexpr double W = 6.0, H = 1.0, x0 = 1.0, eps_c = 4.0, omega = 1.0;
+  const double kn_exact = std::sqrt(omega * omega * eps_c - omega / x0);
+  const auto direct = SolveParabolicSlabMode(16, 1, 2, W, H, x0, eps_c, omega, 1);
+  const auto multigrid = SolveParabolicSlabMode(16, 1, 2, W, H, x0, eps_c, omega, 2);
+  CAPTURE(direct, multigrid, kn_exact);
+  REQUIRE(std::abs(multigrid.imag()) < 1.0e-6 * kn_exact);
+  CHECK_THAT(multigrid.real(), WithinRel(direct.real(), 1.0e-6));
+  CHECK_THAT(multigrid.imag(), WithinAbs(direct.imag(), 1.0e-8));
+  CHECK_THAT(direct.real(), WithinRel(kn_exact, 1.0e-2));
 }
 
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
