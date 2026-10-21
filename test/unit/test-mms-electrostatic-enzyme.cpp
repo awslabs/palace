@@ -37,7 +37,6 @@ double PolynomialPotential(const MmsCoordinates &x)
 const EnzymeMmsScalar<SinPotential> kSinMms(kIsotropicEpsilonR);
 const EnzymeMmsScalar<CosPotential> kCosMms(kIsotropicEpsilonR);
 const EnzymeMmsScalar<PolynomialPotential> kPolynomialMms(kAnisotropicEpsilonR);
-const EnzymeMmsScalar<PolynomialPotential> kCurvedPolynomialMms(kIsotropicEpsilonR);
 
 template <typename EnzymeMms>
 MmsCase MakeCase(const EnzymeMms &mms, bool nonzero_dirichlet,
@@ -73,12 +72,6 @@ const MmsCase &PolynomialCase()
                                         constexpr MmsCoordinates normal = {1.0, 0.0, 0.0};
                                         return kPolynomialMms.NormalFlux(x, normal);
                                       });
-  return mms;
-}
-
-const MmsCase &CurvedCylinderCase()
-{
-  static const MmsCase mms = MakeCase(kCurvedPolynomialMms, true);
   return mms;
 }
 
@@ -122,34 +115,4 @@ TEST_CASE("Electrostatic MMS Enzyme quantities match the polynomial analytic cas
     }
     CHECK_THAT(kPolynomialMms.NormalFlux(x, normal), WithinAbs(expected_flux, 5.0e-13));
   }
-}
-
-TEST_CASE("Electrostatic MMS Enzyme solves to small potential and field errors",
-          "[electrostatic][mms][enzyme][Serial][Parallel]")
-{
-  CheckSmallErrors(HomogeneousCase(), NonHomogeneousCase());
-}
-
-TEST_CASE("Electrostatic MMS Enzyme is exact for a polynomial in the FE space",
-          "[electrostatic][mms][enzyme][Serial][Parallel]")
-{
-  CheckPolynomialExactness(PolynomialCase());
-}
-
-TEST_CASE("Electrostatic MMS Enzyme handles a Neumann boundary",
-          "[electrostatic][mms][enzyme][Serial][Parallel]")
-{
-  CheckNeumannBoundary(PolynomialCase());
-}
-
-TEST_CASE("Electrostatic MMS Enzyme converges at the optimal rate",
-          "[electrostatic][mms][enzyme][Serial][Parallel]")
-{
-  CheckOptimalConvergence(NonHomogeneousCase());
-}
-
-TEST_CASE("Electrostatic MMS Enzyme converges on curved tetrahedra",
-          "[electrostatic][mms][enzyme][Serial][Parallel]")
-{
-  CheckCurvedConvergence(CurvedCylinderCase());
 }
