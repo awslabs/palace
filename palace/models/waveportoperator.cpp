@@ -1085,6 +1085,7 @@ void WavePortData::Initialize(double omega)
   // 1 / (-k_n² - σ).
   kn0 = std::sqrt(-sigma - 1.0 / lambda);
   omega0 = omega;
+  WarnEvanescent(kn0, omega);
 
   // Separate the computed field out into eₜ and eₙ and transform back to the physical
   // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
@@ -1291,7 +1292,24 @@ const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<dou
   mode_cache.e = std::move(e_tmp);
   mode_cache.omega = omega;
   mode_cache.valid = true;
+  WarnEvanescent(mode_cache.kn, omega);
   return mode_cache;
+}
+
+void WavePortData::WarnEvanescent(std::complex<double> kn, std::complex<double> omega)
+{
+  // The port is below cutoff, or "Mode" or "Target" selects a mode other than the intended
+  // one. kₙ is the same on all ranks.
+  if (warned_evanescent || std::real(kn * kn) >= 0.0)
+  {
+    return;
+  }
+  warned_evanescent = true;
+  const std::complex<double> n_eff = kn / omega;
+  Mpi::Warning("Wave port with attributes {} selected an evanescent mode (n_eff = "
+               "{:.3e}{:+.3e}i): the port is below cutoff, or \"Mode\" or \"Target\" does "
+               "not select the intended mode!\n",
+               fmt::join(attr_list, ", "), n_eff.real(), n_eff.imag());
 }
 
 std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)

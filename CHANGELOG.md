@@ -53,7 +53,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     target of the port mode solve, which only sought modes below it. The port modes are
     now sought on both sides of the target. Added `Boundaries.WavePort[].Target`, the
     effective index near which the port modes are sought, to select a mode far from the
-    default target. SchemaVer 2-3-0 [PR 1067](https://github.com/awslabs/palace/pull/1067).
+    default target. Wave ports warn when the selected mode is evanescent. SchemaVer 2-3-0
+    [PR 1067](https://github.com/awslabs/palace/pull/1067).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

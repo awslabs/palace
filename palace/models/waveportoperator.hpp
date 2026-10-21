@@ -145,6 +145,10 @@ private:
   // Solve the cross-section modal EVP at complex ω once and cache (kₙ, eigenvector).
   const ModeSolveCache &EvalModeSolve(std::complex<double> omega);
 
+  // Warn once if the selected mode is evanescent (Re kₙ² < 0).
+  bool warned_evanescent = false;
+  void WarnEvanescent(std::complex<double> kn, std::complex<double> omega);
+
   // Communicator for processes which have elements for this port.
   MPI_Comm port_comm = MPI_COMM_NULL;
   int port_root = 0;
