@@ -106,7 +106,9 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
 
 // Construct a single-level view of the finest space of the hierarchy, which is broken
 // (discontinuous) across the interior boundaries formed by the given boundary attributes.
-// Returns nullptr when the mesh has no such interior boundaries.
+// Returns nullptr when the mesh has no such interior boundaries. Without the coarser
+// levels, the projection on a broken space uses Jacobi preconditioning also when multigrid
+// is requested, rather than assembling the high-order mass matrix for AMG.
 std::unique_ptr<FiniteElementSpaceHierarchy>
 BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
                          const std::vector<int> &crack_attr_list)
@@ -315,7 +317,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetPermittivityReal()),
               broken_rt_fespaces ? *broken_rt_fespaces : rt_fespaces, nd_fespace, tol,
-              max_it, print, use_mg),
+              max_it, print, use_mg && !broken_rt_fespaces),
     integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
     E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
 {
@@ -440,7 +442,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetCurlCurlInvPermeability()),
               broken_nd_fespaces ? *broken_nd_fespaces : nd_fespaces, rt_fespace, tol,
-              max_it, print, use_mg),
+              max_it, print, use_mg && !broken_nd_fespaces),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
 {

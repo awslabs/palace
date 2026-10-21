@@ -3147,7 +3147,7 @@
         },
         "EstimatorMG": {
           "type": "boolean",
-          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi.",
+          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi. The flux recovery on meshes with uncracked interior boundaries with boundary conditions, which is discontinuous across them, always uses Jacobi.",
           "default": false
         },
         "GSOrthogonalization": {
