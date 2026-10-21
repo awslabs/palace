@@ -61,7 +61,8 @@ public:
     return *this;
   }
 
-  // Scale all entries by s.
+  // Scale all entries by s, including any cached face-neighbor data, so the cache stays
+  // consistent with the field until the next ExchangeFaceNbrData.
   GridFunction &operator*=(double s);
 
   // Transform for space update (for example on mesh change).
