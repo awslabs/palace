@@ -12,7 +12,8 @@ build passes no authorization data of its own.
 
 Two entry points, one decision function:
 
-- default: emit ``authorized=`` / ``selector=`` to ``$GITHUB_OUTPUT``.
+- default: emit ``authorized=`` / ``selector=`` to ``$GITHUB_OUTPUT``, and
+  exit non-zero if a release tag is rejected.
 - ``--reverify EXPECTED``: recompute the decision immediately before the writes
   (TOCTOU guard) and fail unless it still authorizes the same selector.
 
@@ -310,6 +311,12 @@ def main(argv: list[str] | None = None) -> int:
         with open(out_path, "a", encoding="utf-8") as fh:
             fh.write(f"authorized={authorized}\n")
             fh.write(f"selector={decision.selector}\n")
+    # A rejected push to main is routine (main moved on, and the newer build
+    # publishes), but a rejected release tag is a release that never publishes:
+    # fail the job instead of finishing green.
+    if not decision.authorized and facts.event == "push" and RELEASE_TAG_RE.match(facts.head_branch):
+        print(f"::error::Release {facts.head_branch} not published: {decision.reason}", file=sys.stderr)
+        return 1
     return 0
 
 
