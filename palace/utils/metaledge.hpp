@@ -198,6 +198,23 @@ struct MetalEdgeGeometry
   // boundary attribute numbering.
   int metal_components = 0;
 
+  // Root-level perimeter (decision 899, OI-CTX-ARC-ADAPT): the refinement-generated
+  // perimeter vertices of a nonconforming mesh (NCMesh nodes with parents: the midpoints
+  // the refinement created) merged out of the perimeter graph, each with the segment it
+  // lies on (MetalSurfaceExtraction::root_level_perimeter). The segments are then the root
+  // mesh's perimeter edges and a mesh edge of the leaf mesh is resolved to the segment
+  // CONTAINING it (BuildMetalEdgeProcessNormals / BuildMetalEdgeGapDirections). Empty on a
+  // conforming mesh and on a nonconforming mesh at depth 0.
+  struct RefinementPoint
+  {
+    std::array<double, 3> coordinate{};
+    std::size_t segment = 0;
+  };
+  std::vector<RefinementPoint> refinement_points;
+  // Refinement-generated perimeter vertices kept as vertices (a non-collinear midpoint: a
+  // curved edge), counted for the stage line.
+  int refinement_vertices_kept = 0;
+
   bool Empty() const { return segments.empty(); }
 };
 
@@ -222,6 +239,15 @@ struct MetalSurfaceExtraction
   // Exactly one of the two must be set.
   double joint_noise_sagitta = 0.0;
   std::optional<double> corner_turn_tolerance_degrees;
+
+  // Identify on the ROOT-LEVEL perimeter of a nonconforming mesh (decision 899): the
+  // refinement-generated perimeter vertices are merged out (MetalEdgeGeometry::
+  // refinement_points), so the segments, vertices and their numbering are those of the
+  // mesh's root level = the initial mesh of the run that refined it. Set by the
+  // identification path (a saved adapted mesh then reproduces the producing run's
+  // identification); the post-processing edge tools keep the leaf perimeter. Without
+  // refinement-generated vertices the extraction is unchanged.
+  bool root_level_perimeter = false;
 };
 
 // The extraction options with the geometric joint noise rule at matching radius R (mesh

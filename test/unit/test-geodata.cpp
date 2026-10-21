@@ -1783,6 +1783,171 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
   }
 }
 
+// Root-level perimeter (decision 899, OI-CTX-ARC-ADAPT): on a nonconforming mesh the
+// identification's extraction merges the refinement-generated perimeter vertices out, so
+// the segments, vertices and numbering are the root level's (the initial mesh of the run
+// that refined it), and the frame builders resolve a leaf mesh edge to the root segment
+// containing it: both crack copies of a sheet score the one root segment whatever their
+// depth. On the unrefined mesh the option changes nothing (no refinement-generated vertex).
+TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
+  IoData iodata(config_path.c_str(), false);
+  iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+  iodata.model.refinement.max_it = 1;
+  auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+  REQUIRE(mesh->Nonconforming());
+
+  MetalSurfaceExtraction leaf = JointNoiseExtractionFor(iodata.boundaries);
+  MetalSurfaceExtraction root = leaf;
+  root.root_level_perimeter = true;
+
+  // Depth 0: the census is empty and the root-level extraction is the leaf extraction.
+  const auto coarse = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, leaf);
+  const auto coarse_root = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, root);
+  REQUIRE(coarse.physical_chains == 4);
+  CHECK(coarse_root.refinement_points.empty());
+  CHECK(coarse_root.refinement_vertices_kept == 0);
+  REQUIRE(coarse_root.segments.size() == coarse.segments.size());
+  REQUIRE(coarse_root.vertices.size() == coarse.vertices.size());
+  for (std::size_t i = 0; i < coarse.segments.size(); i++)
+  {
+    CHECK(coarse_root.segments[i].vertices == coarse.segments[i].vertices);
+    CHECK(coarse_root.segments[i].type == coarse.segments[i].type);
+  }
+
+  // Refine the elements on ONE side of the two PEC sheets (the boundary elements' adjacent
+  // elements): the crack copies of the sheets are then at different depths and the leaf
+  // perimeter is split at the refinement midpoints.
+  std::set<int> adjacent_elements;
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    const int attribute = mesh->GetBdrAttribute(be);
+    if (attribute != 1 && attribute != 2)
+    {
+      continue;
+    }
+    int element, info;
+    mesh->GetBdrElementAdjacentElement(be, element, info);
+    if (mesh->GetAttribute(element) == 2)  // the vacuum side only
+    {
+      adjacent_elements.insert(element);
+    }
+  }
+  int marked_count = static_cast<int>(adjacent_elements.size());
+  Mpi::GlobalSum(1, &marked_count, Mpi::World());
+  REQUIRE(marked_count > 0);  // a rank may hold no vacuum-side element at the sheets
+  mfem::Array<int> marked_elements(static_cast<int>(adjacent_elements.size()));
+  std::copy(adjacent_elements.begin(), adjacent_elements.end(), marked_elements.begin());
+  mesh->GeneralRefinement(marked_elements);
+
+  const auto refined = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, leaf);
+  REQUIRE(refined.segments.size() > coarse.segments.size());
+  const auto refined_root = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, root);
+  CHECK_FALSE(refined_root.refinement_points.empty());
+  CHECK(refined_root.refinement_vertices_kept == 0);
+  CHECK(refined_root.physical_chains == coarse.physical_chains);
+  CHECK(refined_root.metal_components == coarse.metal_components);
+
+  // The root-level segments ARE the unrefined mesh's: count, numbering, endpoints, types,
+  // attributes and interfaces.
+  REQUIRE(refined_root.segments.size() == coarse.segments.size());
+  REQUIRE(refined_root.vertices.size() == coarse.vertices.size());
+  for (std::size_t i = 0; i < coarse.segments.size(); i++)
+  {
+    const auto &a = coarse.segments[i];
+    const auto &b = refined_root.segments[i];
+    CHECK(a.vertices == b.vertices);
+    CHECK(a.type == b.type);
+    CHECK(a.metal_attributes == b.metal_attributes);
+    CHECK(a.sa_interfaces == b.sa_interfaces);
+    CHECK(a.ms_interfaces == b.ms_interfaces);
+    CHECK(a.ma_interfaces == b.ma_interfaces);
+    CHECK(a.metal_component == b.metal_component);
+    CHECK(a.physical_chain == b.physical_chain);
+  }
+  for (std::size_t v = 0; v < coarse.vertices.size(); v++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(refined_root.vertices[v].coordinate[d],
+                 WithinAbs(coarse.vertices[v].coordinate[d], 1.0e-12));
+    }
+    CHECK(refined_root.vertices[v].segments == coarse.vertices[v].segments);
+    CHECK(refined_root.vertices[v].type == coarse.vertices[v].type);
+    CHECK(refined_root.vertices[v].physical_type == coarse.vertices[v].physical_type);
+  }
+  // Every refinement point lies strictly inside its segment.
+  for (const auto &point : refined_root.refinement_points)
+  {
+    REQUIRE(point.segment < refined_root.segments.size());
+    const auto &segment = refined_root.segments[point.segment];
+    const auto &p0 = refined_root.vertices[segment.vertices[0]].coordinate;
+    const auto &p1 = refined_root.vertices[segment.vertices[1]].coordinate;
+    double length_squared = 0.0, projection = 0.0, distance_squared = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length_squared += (p1[d] - p0[d]) * (p1[d] - p0[d]);
+      projection += (point.coordinate[d] - p0[d]) * (p1[d] - p0[d]);
+    }
+    const double t = projection / length_squared;
+    CHECK(t > 1.0e-9);
+    CHECK(t < 1.0 - 1.0e-9);
+    for (int d = 0; d < 3; d++)
+    {
+      const double delta = point.coordinate[d] - p0[d] - t * (p1[d] - p0[d]);
+      distance_squared += delta * delta;
+    }
+    CHECK(distance_squared < 1.0e-20);
+  }
+
+  // The frame builders on the refined mesh with the root geometry: every physical segment
+  // sees both crack copies (no ambiguous process side) and reads the unrefined mesh's
+  // process normal and gap direction; the leaf geometry on the same mesh leaves the
+  // coarse copies' segments one-sided (the OI-CTX-ARC-ADAPT mechanism (A)).
+  auto PhysicalSegments = [](const MetalEdgeGeometry &geometry)
+  {
+    std::vector<std::size_t> indices;
+    for (std::size_t i = 0; i < geometry.segments.size(); i++)
+    {
+      if (geometry.segments[i].type == MetalEdgeSegmentType::PHYSICAL)
+      {
+        indices.push_back(i);
+      }
+    }
+    return indices;
+  };
+  auto Score = [](int attribute) { return attribute == 1 ? 1.0 : 2.0; };
+  auto coarse_mesh = mesh::ReadMesh(iodata, Mpi::World());
+  const auto coarse_physical = PhysicalSegments(coarse);
+  std::vector<bool> coarse_ambiguous, root_ambiguous, leaf_ambiguous;
+  const auto coarse_normals = BuildMetalEdgeProcessNormals(
+      *coarse_mesh, coarse, coarse_physical, Score, std::nullopt, &coarse_ambiguous);
+  const auto coarse_gaps =
+      BuildMetalEdgeGapDirections(*coarse_mesh, coarse, coarse_physical, coarse_normals);
+  const auto root_normals = BuildMetalEdgeProcessNormals(
+      *mesh, refined_root, coarse_physical, Score, std::nullopt, &root_ambiguous);
+  const auto root_gaps =
+      BuildMetalEdgeGapDirections(*mesh, refined_root, coarse_physical, root_normals);
+  REQUIRE(root_normals.size() == coarse_normals.size());
+  CHECK(std::count(coarse_ambiguous.begin(), coarse_ambiguous.end(), true) == 0);
+  CHECK(std::count(root_ambiguous.begin(), root_ambiguous.end(), true) == 0);
+  for (std::size_t i = 0; i < coarse_normals.size(); i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(root_normals[i][d], WithinAbs(coarse_normals[i][d], 1.0e-12));
+      CHECK_THAT(root_gaps[i][d], WithinAbs(coarse_gaps[i][d], 1.0e-12));
+    }
+  }
+  const auto leaf_physical = PhysicalSegments(refined);
+  BuildMetalEdgeProcessNormals(*mesh, refined, leaf_physical, Score, std::nullopt,
+                               &leaf_ambiguous);
+  CHECK(std::count(leaf_ambiguous.begin(), leaf_ambiguous.end(), true) > 0);
+}
+
 TEST_CASE("Automatic metal edge extraction on 3D transmon",
           "[geodata][metaledge][Serial][Parallel]")
 {

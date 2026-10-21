@@ -10805,6 +10805,16 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       Table follow_on_table = test::LoadCsv(follow_on_dir / name);
       REQUIRE(producer_table.n_cols() == follow_on_table.n_cols());
       REQUIRE(producer_table.n_cols() > 0);
+      // 1e-8 relative; an entry at roundoff of the table's scale (a zero energy, a closure
+      // residual) is read against that scale.
+      double table_scale = 0.0;
+      for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+      {
+        for (const double value : producer_table[c].data)
+        {
+          table_scale = std::max(table_scale, std::abs(value));
+        }
+      }
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         const Column &producer_column = producer_table[c];
@@ -10812,7 +10822,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         REQUIRE(producer_column.data.size() == follow_on_column.data.size());
         for (std::size_t i = 0; i < producer_column.data.size(); i++)
         {
-          const double scale = std::max(std::abs(producer_column.data[i]), 1.0e-300);
+          const double scale =
+              std::max({std::abs(producer_column.data[i]), 1.0e-6 * table_scale, 1.0e-30});
           CHECK_THAT(follow_on_column.data[i],
                      WithinAbs(producer_column.data[i], 1.0e-8 * scale));
         }
@@ -10875,7 +10886,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     correction["Library"] = library_path.string();
     correction.erase("PatchConstruction");  // Features (the default)
     correction["UnmatchedPolicy"] = "Warn";
-    config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+    // The same solver tolerances in both runs, tight enough for the 1e-8 energy bar under
+    // a different partition of the same mesh (the producer's rebalanced one, the
+    // follow-on's fresh one).
+    correction["SolveTol"] = 1.0e-13;
+    config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 400}};
     ProduceAndFollow(config, "adaptid-islands", spatial_mesh->GetGlobalNE(),
                      "adaptid-signature-cluster");
   }
@@ -10991,14 +11006,35 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto adapted_rows = ReadPatchRows(adapted_patches);
     REQUIRE(initial_rows.size() == adapted_rows.size());
     REQUIRE(!initial_rows.empty());
+    // The dry-run table carries text columns (Topology, Model) beside the numbers.
+    auto Number = [](const std::string &field) -> std::optional<double>
+    {
+      std::size_t consumed = 0;
+      try
+      {
+        const double value = std::stod(field, &consumed);
+        return consumed == field.size() ? std::optional<double>(value) : std::nullopt;
+      }
+      catch (const std::exception &)
+      {
+        return std::nullopt;
+      }
+    };
     for (std::size_t r = 0; r < initial_rows.size(); r++)
     {
       REQUIRE(initial_rows[r].size() == adapted_rows[r].size());
-      CHECK(initial_rows[r][0] == adapted_rows[r][0]);
-      for (std::size_t c = 1; c < initial_rows[r].size(); c++)
+      for (std::size_t c = 0; c < initial_rows[r].size(); c++)
       {
-        CHECK_THAT(std::stod(adapted_rows[r][c]),
-                   WithinAbs(std::stod(initial_rows[r][c]), 1.0e-12));
+        const auto initial_value = Number(initial_rows[r][c]);
+        const auto adapted_value = Number(adapted_rows[r][c]);
+        if (initial_value && adapted_value)
+        {
+          CHECK_THAT(*adapted_value, WithinAbs(*initial_value, 1.0e-12));
+        }
+        else
+        {
+          CHECK(initial_rows[r][c] == adapted_rows[r][c]);
+        }
       }
     }
   }

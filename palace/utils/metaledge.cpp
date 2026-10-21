@@ -13,6 +13,8 @@
 #include <numeric>
 #include <queue>
 #include <set>
+#include <sstream>
+#include <streambuf>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -199,6 +201,13 @@ void PackGeometry(const MetalEdgeGeometry &g, GeometryBuffers &b)
   b.ints.push_back(g.physical_components);
   b.ints.push_back(g.physical_chains);
   b.ints.push_back(g.metal_components);
+  b.ints.push_back(g.refinement_vertices_kept);
+  b.ints.push_back(static_cast<long long int>(g.refinement_points.size()));
+  for (const auto &point : g.refinement_points)
+  {
+    b.reals.insert(b.reals.end(), point.coordinate.begin(), point.coordinate.end());
+    b.ints.push_back(static_cast<long long int>(point.segment));
+  }
   b.ints.push_back(static_cast<long long int>(g.vertices.size()));
   for (const auto &v : g.vertices)
   {
@@ -255,6 +264,14 @@ void UnpackGeometry(const GeometryBuffers &b, MetalEdgeGeometry &g)
   g.physical_components = static_cast<int>(b.ints[ip++]);
   g.physical_chains = static_cast<int>(b.ints[ip++]);
   g.metal_components = static_cast<int>(b.ints[ip++]);
+  g.refinement_vertices_kept = static_cast<int>(b.ints[ip++]);
+  g.refinement_points.resize(static_cast<std::size_t>(b.ints[ip++]));
+  for (auto &point : g.refinement_points)
+  {
+    std::copy_n(b.reals.data() + rp, 3, point.coordinate.begin());
+    rp += 3;
+    point.segment = static_cast<std::size_t>(b.ints[ip++]);
+  }
   g.vertices.resize(static_cast<std::size_t>(b.ints[ip++]));
   for (auto &v : g.vertices)
   {
@@ -307,6 +324,149 @@ void UnpackGeometry(const GeometryBuffers &b, MetalEdgeGeometry &g)
   }
   MFEM_VERIFY(ip == b.ints.size() && rp == b.reals.size(),
               "Broadcast metal perimeter buffers were not consumed exactly!");
+}
+
+// The refinement-generated vertices of a nonconforming mesh (decision 899): the NCMesh
+// nodes with parents (Node::p1 != p2, the midpoints created by refinement; a top-level node
+// has none). The node table and its parent fields are protected members of mfem::NCMesh and
+// no public accessor enumerates them, so the census reads the "vertex_parents" section that
+// the public NCMesh::Print writes from the same table ("id p1 p2[ scale]" per line, the
+// v1.0 and v1.1 forms) through a filtering stream buffer that stores nothing else, and maps
+// the node ids to leaf vertices with the public GetNodeVertex (ghost vertices, index >=
+// GetNV(), are not local vertices). Fails closed: a section whose entry count does not
+// match its header aborts.
+class VertexParentsFilter : public std::streambuf
+{
+public:
+  const std::vector<long long int> &NodeIds() const { return node_ids; }
+
+  // The last line (no trailing newline) and the section's completeness.
+  void Finish()
+  {
+    if (!line.empty())
+    {
+      Line();
+      line.clear();
+    }
+    MFEM_VERIFY(expected < 0 || static_cast<long long int>(node_ids.size()) == expected,
+                "The nonconforming mesh's vertex_parents section lists "
+                    << expected << " refinement vertices but " << node_ids.size()
+                    << " were read (root-level perimeter census, decision 899)!");
+  }
+
+protected:
+  int overflow(int c) override
+  {
+    if (c != traits_type::eof())
+    {
+      Put(static_cast<char>(c));
+    }
+    return c;
+  }
+  std::streamsize xsputn(const char *s, std::streamsize n) override
+  {
+    for (std::streamsize i = 0; i < n; i++)
+    {
+      Put(s[i]);
+    }
+    return n;
+  }
+
+private:
+  enum class State
+  {
+    SEARCH,
+    COUNT,
+    ENTRIES,
+    DONE
+  };
+  State state = State::SEARCH;
+  std::string line;
+  long long int expected = -1;
+  std::vector<long long int> node_ids;
+
+  void Put(char c)
+  {
+    if (c == '\n')
+    {
+      Line();
+      line.clear();
+    }
+    else if (state != State::DONE)
+    {
+      line.push_back(c);
+    }
+  }
+  static bool Blank(const std::string &text)
+  {
+    return text.empty() || text[0] == '#' ||
+           text.find_first_not_of(" \t\r") == std::string::npos;
+  }
+  void Line()
+  {
+    switch (state)
+    {
+      case State::SEARCH:
+        if (line == "vertex_parents")
+        {
+          state = State::COUNT;
+        }
+        break;
+      case State::COUNT:
+        if (!Blank(line))
+        {
+          std::istringstream in(line);
+          MFEM_VERIFY(in >> expected && expected >= 0,
+                      "Unreadable vertex_parents count \""
+                          << line << "\" (root-level perimeter census, decision 899)!");
+          state = expected == 0 ? State::DONE : State::ENTRIES;
+        }
+        break;
+      case State::ENTRIES:
+        if (!Blank(line))
+        {
+          std::istringstream in(line);
+          long long int id, p1, p2;
+          MFEM_VERIFY(in >> id >> p1 >> p2 && id >= 0 && p1 >= 0 && p2 >= 0,
+                      "Unreadable vertex_parents entry \""
+                          << line << "\" (root-level perimeter census, decision 899)!");
+          node_ids.push_back(id);
+          if (static_cast<long long int>(node_ids.size()) == expected)
+          {
+            state = State::DONE;
+          }
+        }
+        break;
+      case State::DONE:
+        break;
+    }
+  }
+};
+
+std::vector<bool> RefinementGeneratedVertices(const mfem::ParMesh &mesh)
+{
+  std::vector<bool> flags(static_cast<std::size_t>(mesh.GetNV()), false);
+  if (!mesh.Nonconforming() || !mesh.ncmesh)
+  {
+    return flags;
+  }
+  VertexParentsFilter filter;
+  {
+    std::ostream os(&filter);
+    mesh.ncmesh->Print(os);
+    os.flush();
+  }
+  filter.Finish();
+  auto *ncmesh = const_cast<mfem::NCMesh *>(mesh.ncmesh);
+  for (const long long int id : filter.NodeIds())
+  {
+    const int vertex = ncmesh->GetNodeVertex(static_cast<int>(id));
+    if (vertex >= 0 && vertex < mesh.GetNV())
+    {
+      flags[static_cast<std::size_t>(vertex)] = true;
+    }
+  }
+  return flags;
 }
 
 }  // namespace
@@ -445,6 +605,12 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     material_attribute.ExchangeFaceNbrData();
 
     mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
+    // Root-level perimeter (decision 899): the refinement-generated vertices of this rank
+    // travel with the faces as one flag per loop point (every flag false, and no census,
+    // without the option).
+    const std::vector<bool> refinement_vertex = surface.root_level_perimeter
+                                                    ? RefinementGeneratedVertices(mesh)
+                                                    : std::vector<bool>{};
     mfem::Array<int> vertices, edges, orientations;
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
@@ -531,6 +697,26 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       {
         local_face_data.insert(local_face_data.end(), point.begin(), point.end());
       }
+      // The flags: a loop point is a refinement-generated vertex when it is one of this
+      // face's flagged mesh vertices (the loop holds the exact vertex coordinates at the
+      // vertices; a high-order edge's interior sample points are no vertices).
+      std::vector<Point> flagged_vertices;
+      if (!refinement_vertex.empty())
+      {
+        for (int i = 0; i < vertices.Size(); i++)
+        {
+          if (refinement_vertex[static_cast<std::size_t>(vertices[i])])
+          {
+            flagged_vertices.push_back(mesh::GetVertexCoordinates(mesh, vertices[i]));
+          }
+        }
+      }
+      for (const auto &point : loop)
+      {
+        const bool flagged = std::find(flagged_vertices.begin(), flagged_vertices.end(),
+                                       point) != flagged_vertices.end();
+        local_face_data.push_back(flagged ? 1.0 : 0.0);
+      }
       local_face_count++;
     }
   }
@@ -573,6 +759,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     int attribute;
     std::array<int, 2> sides;
     std::vector<Point> loop;
+    std::vector<bool> refinement_generated;  // per loop point (decision 899)
   };
   std::vector<GatheredFace> gathered;
   std::vector<int> gathered_rank;  // source rank of every gathered face (root only)
@@ -597,6 +784,12 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
         std::copy_n(face_data.data() + offset + 3 * i, 3, face.loop[i].begin());
       }
       offset += 3 * n;
+      face.refinement_generated.resize(n);
+      for (std::size_t i = 0; i < n; i++)
+      {
+        face.refinement_generated[i] = face_data[offset + i] != 0.0;
+      }
+      offset += n;
       gathered.push_back(std::move(face));
       gathered_rank.push_back(static_cast<int>(rank));
     }
@@ -925,6 +1118,9 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       bool on_bounding_box = false;
     };
     std::vector<GlobalFace> faces;
+    // Root-level perimeter (decision 899): canonical points that are refinement-generated
+    // vertices on any copy.
+    std::vector<bool> refinement_point;
     std::map<std::vector<std::size_t>, std::size_t> face_by_vertices;
     {
       // Register every point (first pass, in the gathered order), then renumber the
@@ -979,11 +1175,19 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       // sides): the face numbering, the metal components and the face incidence order of
       // every segment follow the point numbering.
       std::vector<std::vector<std::size_t>> face_keys(gathered.size());
+      refinement_point.assign(canonical_points.size(), false);
       for (std::size_t g = 0; g < gathered.size(); g++)
       {
         for (auto &p : gathered_loops[g])
         {
           p = new_index[p];
+        }
+        for (std::size_t i = 0; i < gathered_loops[g].size(); i++)
+        {
+          if (gathered[g].refinement_generated[i])
+          {
+            refinement_point[gathered_loops[g][i]] = true;
+          }
         }
         face_keys[g] = gathered_loops[g];
         std::sort(face_keys[g].begin(), face_keys[g].end());
@@ -1542,6 +1746,200 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
               std::to_string(result.vertices.size()) + " vertices, " +
               std::to_string(result.metal_components) + " metal components");
 
+    // (6b) Root-level perimeter (decision 899, OI-CTX-ARC-ADAPT): a refinement-generated
+    // vertex of the perimeter lies inside a root perimeter edge, so it has exactly two
+    // perimeter segments, collinear, with the attributes of that root edge (the children
+    // inherit them); the two are merged into the root edge and the vertex is dropped (and
+    // recorded as a refinement point of the merged segment for the frame builders). A
+    // non-collinear midpoint (a curved edge) is kept and counted; any other shape (a
+    // valence other than two, differing attributes) is not a refinement vertex of a root
+    // perimeter edge and the census is inconsistent: fail closed. Afterwards the segments
+    // are re-sorted by their canonical point pair and the vertices renumbered by first
+    // appearance, the decision-82 numbering of the root mesh (the root points sort
+    // identically with the refinement points removed).
+    if (surface.root_level_perimeter &&
+        std::any_of(refinement_point.begin(), refinement_point.end(),
+                    [](bool flag) { return flag; }))
+    {
+      constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
+      std::vector<std::size_t> vertex_point(result.vertices.size(), npos);
+      for (const auto &[point, vertex] : vertex_by_point)
+      {
+        vertex_point[vertex] = point;
+      }
+      std::vector<bool> segment_removed(result.segments.size(), false);
+      std::vector<std::size_t> segment_alias(result.segments.size(), npos);
+      std::vector<std::pair<std::size_t, std::size_t>> merged_points;  // point, segment
+      int kept = 0;
+      const double quantized_collinear_merge = QuantizeCosine(1.0 - direction_quantum);
+      auto Describe = [&](std::size_t vertex)
+      {
+        const auto &c = result.vertices[vertex].coordinate;
+        return "(" + std::to_string(c[0]) + ", " + std::to_string(c[1]) + ", " +
+               std::to_string(c[2]) + ")";
+      };
+      auto SameConditions = [](const std::vector<MetalBoundaryCondition> &a,
+                               const std::vector<MetalBoundaryCondition> &b)
+      {
+        return a.size() == b.size() &&
+               std::equal(
+                   a.begin(), a.end(), b.begin(),
+                   [](const MetalBoundaryCondition &x, const MetalBoundaryCondition &y)
+                   { return x.type == y.type && x.index == y.index; });
+      };
+      auto SameRootEdge = [&](const MetalEdgeSegment &a, const MetalEdgeSegment &b)
+      {
+        return a.type == b.type && a.metal_attributes == b.metal_attributes &&
+               SameConditions(a.conditions, b.conditions) &&
+               a.sa_interfaces == b.sa_interfaces && a.ms_interfaces == b.ms_interfaces &&
+               a.ma_interfaces == b.ma_interfaces &&
+               a.truncation_attributes == b.truncation_attributes &&
+               a.port_attributes == b.port_attributes &&
+               a.side_attributes == b.side_attributes &&
+               a.metal_component == b.metal_component &&
+               a.on_bounding_box == b.on_bounding_box;
+      };
+      for (std::size_t v = 0; v < result.vertices.size(); v++)
+      {
+        if (!refinement_point[vertex_point[v]])
+        {
+          continue;
+        }
+        std::vector<std::size_t> live;
+        for (const std::size_t s : result.vertices[v].segments)
+        {
+          if (!segment_removed[s])
+          {
+            live.push_back(s);
+          }
+        }
+        MFEM_VERIFY(live.size() == 2,
+                    "Root-level perimeter (decision 899): the refinement-generated vertex "
+                        << Describe(v) << " has " << live.size()
+                        << " perimeter segments instead of two (an inconsistent "
+                           "refinement census; fail closed)!");
+        const auto &a = result.segments[live[0]];
+        const auto &b = result.segments[live[1]];
+        const std::size_t far_a = a.vertices[0] == v ? a.vertices[1] : a.vertices[0];
+        const std::size_t far_b = b.vertices[0] == v ? b.vertices[1] : b.vertices[0];
+        std::array<double, 3> in{}, out{};
+        double in_norm = 0.0, out_norm = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          in[d] = result.vertices[v].coordinate[d] - result.vertices[far_a].coordinate[d];
+          out[d] = result.vertices[far_b].coordinate[d] - result.vertices[v].coordinate[d];
+          in_norm += in[d] * in[d];
+          out_norm += out[d] * out[d];
+        }
+        MFEM_VERIFY(in_norm > 0.0 && out_norm > 0.0 && far_a != far_b,
+                    "Root-level perimeter (decision 899): degenerate segments at the "
+                    "refinement-generated vertex "
+                        << Describe(v) << "!");
+        double dot = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          dot += in[d] * out[d];
+        }
+        dot /= std::sqrt(in_norm * out_norm);
+        if (QuantizeCosine(dot) < quantized_collinear_merge)
+        {
+          kept++;  // a curved edge's midpoint: a vertex of the root-level perimeter too
+          continue;
+        }
+        MFEM_VERIFY(
+            SameRootEdge(a, b),
+            "Root-level perimeter (decision 899): the two perimeter segments at the "
+            "refinement-generated vertex "
+                << Describe(v)
+                << " differ in type or attributes (an inconsistent refinement "
+                   "census; fail closed)!");
+        MetalEdgeSegment merged = a;
+        // The root edge's orientation: the smaller canonical point first, as step (6).
+        merged.vertices = vertex_point[far_a] < vertex_point[far_b]
+                              ? std::array<std::size_t, 2>{far_a, far_b}
+                              : std::array<std::size_t, 2>{far_b, far_a};
+        merged.face_count = a.face_count + b.face_count;
+        merged.face_normals.insert(merged.face_normals.end(), b.face_normals.begin(),
+                                   b.face_normals.end());
+        std::sort(merged.face_normals.begin(), merged.face_normals.end());
+        merged.face_normals.erase(
+            std::unique(merged.face_normals.begin(), merged.face_normals.end()),
+            merged.face_normals.end());
+        const std::size_t index = result.segments.size();
+        segment_removed[live[0]] = segment_removed[live[1]] = true;
+        segment_alias[live[0]] = segment_alias[live[1]] = index;
+        result.segments.push_back(std::move(merged));
+        segment_removed.push_back(false);
+        segment_alias.push_back(npos);
+        result.vertices[far_a].segments.push_back(index);
+        result.vertices[far_b].segments.push_back(index);
+        result.vertices[v].segments.clear();
+        merged_points.emplace_back(vertex_point[v], index);
+      }
+      auto Resolve = [&](std::size_t s)
+      {
+        while (segment_alias[s] != npos)
+        {
+          s = segment_alias[s];
+        }
+        return s;
+      };
+      std::vector<std::size_t> live_segments;
+      for (std::size_t s = 0; s < result.segments.size(); s++)
+      {
+        if (!segment_removed[s])
+        {
+          live_segments.push_back(s);
+        }
+      }
+      auto SegmentKeyOf = [&](std::size_t s)
+      {
+        const auto &vs = result.segments[s].vertices;
+        return std::make_pair(std::min(vertex_point[vs[0]], vertex_point[vs[1]]),
+                              std::max(vertex_point[vs[0]], vertex_point[vs[1]]));
+      };
+      std::sort(live_segments.begin(), live_segments.end(),
+                [&](std::size_t x, std::size_t y)
+                { return SegmentKeyOf(x) < SegmentKeyOf(y); });
+      std::vector<std::size_t> new_vertex(result.vertices.size(), npos);
+      std::vector<std::size_t> new_segment(result.segments.size(), npos);
+      std::vector<MetalEdgeVertex> vertices;
+      std::vector<MetalEdgeSegment> segments;
+      segments.reserve(live_segments.size());
+      for (const std::size_t s : live_segments)
+      {
+        MetalEdgeSegment segment = std::move(result.segments[s]);
+        for (auto &vertex : segment.vertices)
+        {
+          if (new_vertex[vertex] == npos)
+          {
+            new_vertex[vertex] = vertices.size();
+            vertices.push_back(
+                {result.vertices[vertex].coordinate, {}, MetalEdgeVertexType::REGULAR});
+          }
+          vertex = new_vertex[vertex];
+        }
+        new_segment[s] = segments.size();
+        vertices[segment.vertices[0]].segments.push_back(segments.size());
+        vertices[segment.vertices[1]].segments.push_back(segments.size());
+        segments.push_back(std::move(segment));
+      }
+      for (const auto &[point, segment] : merged_points)
+      {
+        const std::size_t live_index = new_segment[Resolve(segment)];
+        MFEM_VERIFY(live_index != npos, "Root-level perimeter (decision 899): a merged "
+                                        "refinement point lost its segment!");
+        result.refinement_points.push_back({canonical_points[point], live_index});
+      }
+      result.vertices = std::move(vertices);
+      result.segments = std::move(segments);
+      result.refinement_vertices_kept = kept;
+      StageLine("root-level perimeter: " + std::to_string(merged_points.size()) +
+                " refinement-generated vertices merged out (" + std::to_string(kept) +
+                " kept: non-collinear), " + std::to_string(result.segments.size()) +
+                " segments, " + std::to_string(result.vertices.size()) + " vertices");
+    }
+
     // (7) Retained faces: the rank-local facets (with their global component) and the
     // global deduplicated faces. A rank retains every distinct geometric face it owns once,
     // with the canonical (global) vertex coordinates, so that the crack copies and
@@ -1990,6 +2388,63 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
                                segment.metal_attributes.end());
   }
 
+  // Root-level perimeter (decision 899): a leaf mesh edge lying INSIDE a selected segment
+  // (a sub-edge between the segment's refinement points / endpoints) resolves to that
+  // segment; both crack copies of a sheet then contribute to the one root segment whatever
+  // their depth. Without refinement points the lookup is the exact segment key.
+  std::map<PointKey, std::size_t> refinement_point_segment;
+  std::vector<std::array<PointKey, 2>> selected_endpoint_keys(segment_indices.size());
+  {
+    std::map<std::size_t, std::size_t> local_of_geometry;
+    for (std::size_t i = 0; i < segment_indices.size(); i++)
+    {
+      local_of_geometry.emplace(segment_indices[i], i);
+      const auto &segment = geometry.segments[segment_indices[i]];
+      selected_endpoint_keys[i] = {
+          GetPointKey(geometry.vertices[segment.vertices[0]].coordinate),
+          GetPointKey(geometry.vertices[segment.vertices[1]].coordinate)};
+    }
+    for (const auto &point : geometry.refinement_points)
+    {
+      const auto local = local_of_geometry.find(point.segment);
+      if (local != local_of_geometry.end())
+      {
+        refinement_point_segment.emplace(GetPointKey(point.coordinate), local->second);
+      }
+    }
+  }
+  auto OnSelected = [&](std::size_t local, const PointKey &key)
+  {
+    if (selected_endpoint_keys[local][0] == key || selected_endpoint_keys[local][1] == key)
+    {
+      return true;
+    }
+    const auto it = refinement_point_segment.find(key);
+    return it != refinement_point_segment.end() && it->second == local;
+  };
+  auto FindSelected = [&](const Point &p0, const Point &p1) -> std::optional<std::size_t>
+  {
+    const auto exact = selected_segments.find(GetSegmentKey(p0, p1));
+    if (exact != selected_segments.end())
+    {
+      return exact->second;
+    }
+    if (refinement_point_segment.empty())
+    {
+      return std::nullopt;
+    }
+    const PointKey k0 = GetPointKey(p0), k1 = GetPointKey(p1);
+    for (const auto &[kp, kq] : {std::make_pair(k0, k1), std::make_pair(k1, k0)})
+    {
+      const auto it = refinement_point_segment.find(kp);
+      if (it != refinement_point_segment.end() && OnSelected(it->second, kq))
+      {
+        return it->second;
+      }
+    }
+    return std::nullopt;
+  };
+
   struct Candidate
   {
     std::size_t segment;
@@ -2027,21 +2482,20 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
     {
       for (const auto &edge_segment : edge_segment_cache.Get(edge))
       {
-        const auto selected =
-            selected_segments.find(GetSegmentKey(edge_segment.p0, edge_segment.p1));
-        if (selected == selected_segments.end())
+        const auto selected = FindSelected(edge_segment.p0, edge_segment.p1);
+        if (!selected)
         {
           continue;
         }
-        const auto &segment = geometry.segments[segment_indices[selected->second]];
+        const auto &segment = geometry.segments[segment_indices[*selected]];
         if (std::find(segment.metal_attributes.begin(), segment.metal_attributes.end(),
                       attribute) == segment.metal_attributes.end())
         {
           continue;
         }
 
-        candidates.push_back({selected->second, material_score(FET.Elem1->Attribute),
-                              normal_into_element_1});
+        candidates.push_back(
+            {*selected, material_score(FET.Elem1->Attribute), normal_into_element_1});
         if (FET.Elem2)
         {
           auto normal_into_element_2 = normal_into_element_1;
@@ -2049,8 +2503,8 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
           {
             value *= -1.0;
           }
-          candidates.push_back({selected->second, material_score(FET.Elem2->Attribute),
-                                normal_into_element_2});
+          candidates.push_back(
+              {*selected, material_score(FET.Elem2->Attribute), normal_into_element_2});
         }
       }
     }
@@ -2252,6 +2706,63 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
                                segment.metal_attributes.end());
   }
 
+  // Root-level perimeter (decision 899): a leaf mesh edge lying INSIDE a selected segment
+  // (a sub-edge between the segment's refinement points / endpoints) resolves to that
+  // segment; both crack copies of a sheet then contribute to the one root segment whatever
+  // their depth. Without refinement points the lookup is the exact segment key.
+  std::map<PointKey, std::size_t> refinement_point_segment;
+  std::vector<std::array<PointKey, 2>> selected_endpoint_keys(segment_indices.size());
+  {
+    std::map<std::size_t, std::size_t> local_of_geometry;
+    for (std::size_t i = 0; i < segment_indices.size(); i++)
+    {
+      local_of_geometry.emplace(segment_indices[i], i);
+      const auto &segment = geometry.segments[segment_indices[i]];
+      selected_endpoint_keys[i] = {
+          GetPointKey(geometry.vertices[segment.vertices[0]].coordinate),
+          GetPointKey(geometry.vertices[segment.vertices[1]].coordinate)};
+    }
+    for (const auto &point : geometry.refinement_points)
+    {
+      const auto local = local_of_geometry.find(point.segment);
+      if (local != local_of_geometry.end())
+      {
+        refinement_point_segment.emplace(GetPointKey(point.coordinate), local->second);
+      }
+    }
+  }
+  auto OnSelected = [&](std::size_t local, const PointKey &key)
+  {
+    if (selected_endpoint_keys[local][0] == key || selected_endpoint_keys[local][1] == key)
+    {
+      return true;
+    }
+    const auto it = refinement_point_segment.find(key);
+    return it != refinement_point_segment.end() && it->second == local;
+  };
+  auto FindSelected = [&](const Point &p0, const Point &p1) -> std::optional<std::size_t>
+  {
+    const auto exact = selected_segments.find(GetSegmentKey(p0, p1));
+    if (exact != selected_segments.end())
+    {
+      return exact->second;
+    }
+    if (refinement_point_segment.empty())
+    {
+      return std::nullopt;
+    }
+    const PointKey k0 = GetPointKey(p0), k1 = GetPointKey(p1);
+    for (const auto &[kp, kq] : {std::make_pair(k0, k1), std::make_pair(k1, k0)})
+    {
+      const auto it = refinement_point_segment.find(kp);
+      if (it != refinement_point_segment.end() && OnSelected(it->second, kq))
+      {
+        return it->second;
+      }
+    }
+    return std::nullopt;
+  };
+
   std::vector<SegmentVectorContribution> inward_contributions;
   mesh::MeshEdgeSegmentCache edge_segment_cache(mesh);
   auto &mutable_mesh = const_cast<mfem::ParMesh &>(mesh);
@@ -2274,12 +2785,12 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
       {
         const Point &p0 = edge_segment.p0;
         const Point &p1 = edge_segment.p1;
-        const auto selected = selected_segments.find(GetSegmentKey(p0, p1));
-        if (selected == selected_segments.end())
+        const auto selected = FindSelected(p0, p1);
+        if (!selected)
         {
           continue;
         }
-        const std::size_t local_index = selected->second;
+        const std::size_t local_index = *selected;
         const auto &segment = geometry.segments[segment_indices[local_index]];
         if (std::find(segment.metal_attributes.begin(), segment.metal_attributes.end(),
                       attribute) == segment.metal_attributes.end())

@@ -2929,8 +2929,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       if (auto metal_grading = trace_basis->find("MetalKnotGrading");
           metal_grading != trace_basis->end())
       {
-        // The metal-graded refinement (the concave-MS remedy, decisions 590 / 629); absent =
-        // the recorded equal-fraction metal knots, so every record written before it (the
+        // The metal-graded refinement (the concave-MS remedy, decisions 590 / 629); absent
+        // = the recorded equal-fraction metal knots, so every record written before it (the
         // published refined-rule models) reads unchanged. A 220-knot coupon whose record
         // lacks the key fails the load-time file check (its knots are not at the
         // equal-fraction positions): fail closed.
@@ -11320,6 +11320,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   [](const auto &model) { return model.plan_view_boundary.has_value(); });
   // The identification needs every metal face for the decision-73(3) cross-layer zones.
   surface.retain_global_faces = true;
+  // Root-level perimeter (decision 899, OI-CTX-ARC-ADAPT): on a nonconforming mesh the
+  // identification sees the root level's perimeter (the initial mesh of the run that
+  // refined it), so a saved adapted mesh reproduces the producing run's identification;
+  // without refinement-generated vertices nothing changes.
+  surface.root_level_perimeter = true;
   // Wall time of the geometry steps before the identification (a chip-scale mesh spends
   // minutes here; the identification prints its own stage lines).
   const auto geometry_started = std::chrono::steady_clock::now();
@@ -11333,6 +11338,38 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   MFEM_VERIFY(!geometry.Empty(),
               "Fabrication-process response matching found no metal perimeter!");
+  if (!geometry.refinement_points.empty())
+  {
+    Mpi::Print("  Identification root-level perimeter: {:d} refinement vertices merged out"
+               "{}\n",
+               geometry.refinement_points.size(),
+               geometry.refinement_vertices_kept > 0
+                   ? fmt::format(" ({:d} non-collinear midpoints kept)",
+                                 geometry.refinement_vertices_kept)
+                   : std::string());
+    if (iodata.model.refinement.uniform_ref_levels > 0 ||
+        iodata.model.refinement.ser_uniform_ref_levels > 0 ||
+        std::any_of(iodata.boundaries.postpro.dielectric.begin(),
+                    iodata.boundaries.postpro.dielectric.end(), [](const auto &entry)
+                    { return entry.second.edge_refinement.has_value(); }))
+    {
+      Mpi::Warning(
+          mesh.GetComm(),
+          "The identification runs on the ROOT level of a nonconforming mesh refined at "
+          "load (UniformLevels / SerialUniformLevels / EdgeRefinement): its features and "
+          "keys are those of the root perimeter, its patch cells coarser than a run that "
+          "identified after the load-time refinement (decision 899)!\n");
+    }
+    if (geometry.refinement_vertices_kept > 0)
+    {
+      Mpi::Warning(mesh.GetComm(),
+                   "{:d} refinement-generated perimeter vertices are not collinear with "
+                   "their neighbours (curved edges) and stay vertices of the root-level "
+                   "perimeter: the identification may differ from the producing run's "
+                   "(decision 899)!\n",
+                   geometry.refinement_vertices_kept);
+    }
+  }
   GeometryStageLine("extracted: " + std::to_string(geometry.segments.size()) +
                     " segments, " + std::to_string(geometry.global_faces.size()) +
                     " global faces");
