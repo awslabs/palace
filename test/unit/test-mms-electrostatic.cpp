@@ -151,8 +151,7 @@ MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_me
   mfem::FunctionCoefficient v_exact(mms.potential);
   mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, mms.electric_field);
   mfem::FunctionCoefficient rho_coef(mms.charge_density);
-  const Vector V = SolveManufactured(iodata, laplace_op, rho_coef,
-                                     mms.nonzero_dirichlet ? &v_exact : nullptr);
+  const Vector V = SolveManufactured(iodata, laplace_op, rho_coef, &v_exact);
   return ComputeMmsErrors(laplace_op, V, v_exact, e_exact);
 }
 
@@ -209,18 +208,6 @@ constexpr double kRateTol = 0.3;
 constexpr double kCurvedRateTol = 0.35;
 
 }  // namespace
-
-void CheckSmallErrors(const MmsCase &homogeneous, const MmsCase &nonhomogeneous)
-{
-  const auto homogeneous_error = SolveCartesianMmsError(homogeneous, /*n=*/16, /*order=*/2);
-  CHECK(homogeneous_error.potential < 1.0e-3);
-  CHECK(homogeneous_error.electric < 2.0e-2);
-
-  const auto nonhomogeneous_error =
-      SolveCartesianMmsError(nonhomogeneous, /*n=*/16, /*order=*/2);
-  CHECK(nonhomogeneous_error.potential < 1.0e-3);
-  CHECK(nonhomogeneous_error.electric < 2.0e-2);
-}
 
 void CheckPolynomialExactness(const MmsCase &polynomial)
 {
