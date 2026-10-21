@@ -882,6 +882,20 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                                           const LegacyContractAlias &alias,
                                           const IdentifiedFeature &feature);
 
+// The role-insensitive Box + Context digest (decision 899 B2, OI-ROLEKEY): SHA-256 of
+// {Box, Context} with the Conductor label removed from every Chain: false piece (a piece
+// not connected to the claims inside the box, whose label depends on the conductor roles
+// outside it: a claw shorted to ground reads the claims' label where the cut-short claw's
+// ground reads a new one). Empty without a Box. The matching pass resolves an otherwise
+// unmatched SpatialEdgeCluster through a claims-only legacy model's alias whose stored
+// Context has the feature's role-insensitive digest and whose model key is the feature's
+// claims-only key (ResolveRoleInsensitiveLegacyContractAlias); the exact alias path is
+// untouched and tried first.
+std::string RoleInsensitiveContextDigest(const nlohmann::json &signature);
+nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
+    const std::string &model_name, const nlohmann::json &model_signature,
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature);
+
 // Distance from a point to a straight segment a-b.
 double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
                        const std::array<double, 3> &b);

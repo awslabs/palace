@@ -1676,6 +1676,9 @@ struct AutomaticResponseStatistics
   long long int pair_checks_safety = 0;
   long long int pair_checks_patch_construction = 0;
   long long int spatial_events = 0;
+  // Decision 899 B2: SpatialEdgeCluster features resolved through the role-insensitive
+  // legacy alias lookup.
+  long long int role_swap_alias_matches = 0;
 
   long long int mask_gather_calls = 0;
   long long int mask_faces_scanned_local = 0;
@@ -1746,7 +1749,9 @@ nlohmann::json BuildAutomaticStatistics(MPI_Comm comm,
               {"PatchConstruction", Replicated(statistics.pair_checks_patch_construction,
                                                "PatchConstructionPairChecks")},
               {"Total", Replicated(global_pair_checks, "TotalPairChecks")}}},
-            {"SpatialEvents", Replicated(statistics.spatial_events, "SpatialEvents")}}},
+            {"SpatialEvents", Replicated(statistics.spatial_events, "SpatialEvents")},
+            {"RoleSwapAliasMatches",
+             Replicated(statistics.role_swap_alias_matches, "RoleSwapAliasMatches")}}},
           {"Masks",
            {{"GatherCalls", Replicated(statistics.mask_gather_calls, "MaskGatherCalls")},
             {"FacesScanned", Distribution(statistics.mask_faces_scanned_local)},
@@ -7677,16 +7682,69 @@ public:
     std::string model;
     nlohmann::json model_signature;
     LegacyContractAlias alias;
+    // The legacy model is claims-only (decision 899 B2): its Signature carries no Box /
+    // Context and its plan-view boundary no conductor beyond the claims', so its twins hold
+    // no foreign metal and its matrices no state of a foreign conductor.
+    bool claims_only = false;
   };
   void AddAlias(const std::string &model, const nlohmann::json &model_signature,
-                const LegacyContractAlias &alias)
+                const LegacyContractAlias &alias, bool claims_only)
   {
-    aliases.emplace(alias.key, AliasEntry{model, model_signature, alias});
+    aliases.emplace(alias.key, AliasEntry{model, model_signature, alias, claims_only});
   }
   const AliasEntry *FindAlias(const std::string &hash) const
   {
     const auto it = aliases.find(hash);
     return it == aliases.end() ? nullptr : &it->second;
+  }
+  // The role-insensitive alias lookup (decision 899 B2, OI-ROLEKEY): tried only after the
+  // exact key, the near-match and the exact alias failed, for a SpatialEdgeCluster whose
+  // claims-only key is a claims-only legacy model's key and whose Box + Context equal the
+  // alias's once every Chain: false piece loses its Conductor label (the label of a piece
+  // not connected to the claims inside the box depends on the conductor roles outside it:
+  // a claw shorted to ground reads label 1 where the cut-short claw's ground reads 2). The
+  // model's stored response has no state for those pieces, so the same matrices serve both
+  // roles. An alias whose stored Context does not re-hash to its ContextDigest is skipped
+  // with a warning (never resolved through this path). At most one alias can qualify (the
+  // claims key names one legacy model).
+  const AliasEntry *FindRoleInsensitiveAlias(const IdentifiedFeature &feature,
+                                             const std::string &claims_hash) const
+  {
+    if (claims_hash.empty() || !feature.signature.is_object() ||
+        !feature.signature.contains("Box"))
+    {
+      return nullptr;
+    }
+    const std::string feature_digest = RoleInsensitiveContextDigest(feature.signature);
+    for (const auto &[key, entry] : aliases)
+    {
+      if (!entry.claims_only)
+      {
+        continue;
+      }
+      const auto [model_key, model_hash] =
+          SignatureKeyAndHash(entry.model_signature, feature.type);
+      (void)model_key;
+      if (model_hash != claims_hash)
+      {
+        continue;
+      }
+      if (!entry.alias.context.is_object() ||
+          SpatialSupportContextDigest(entry.alias.context) != entry.alias.context_digest)
+      {
+        Mpi::Warning(
+            "Legacy-contract alias {} of model \"{}\": the stored Context does not "
+            "re-hash to its ContextDigest; the role-insensitive lookup (decision "
+            "899 B2) skips it!\n",
+            key.substr(0, 12), entry.model);
+        continue;
+      }
+      if (RoleInsensitiveContextDigest(entry.alias.context) == feature_digest)
+      {
+        return &entry;
+      }
+    }
+    return nullptr;
   }
 
 private:
@@ -7751,6 +7809,83 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                "and the model (mismatch aborts)"}};
 }
 
+std::string RoleInsensitiveContextDigest(const nlohmann::json &signature)
+{
+  if (!signature.is_object() || !signature.contains("Box"))
+  {
+    return {};
+  }
+  nlohmann::json context = signature.value("Context", nlohmann::json::array());
+  for (auto &piece : context)
+  {
+    if (piece.is_object() && !piece.value("Chain", false))
+    {
+      piece.erase("Conductor");
+    }
+  }
+  const nlohmann::json digest = {{"Box", signature.at("Box")}, {"Context", context}};
+  return Sha256Hex(digest.dump());
+}
+
+nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
+    const std::string &model_name, const nlohmann::json &model_signature,
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature)
+{
+  const std::string digest = SpatialSupportContextDigest(feature.signature);
+  const std::string role_insensitive = RoleInsensitiveContextDigest(feature.signature);
+  MFEM_VERIFY(!role_insensitive.empty() &&
+                  role_insensitive == RoleInsensitiveContextDigest(alias.context),
+              "Role-insensitive legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the role-insensitive context digests differ (fail closed)!");
+  const std::string claims_hash =
+      feature.spatial_support.is_object()
+          ? feature.spatial_support.value("ClaimsKey", std::string{})
+          : std::string{};
+  const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
+  (void)model_key;
+  MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
+              "Role-insensitive legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the feature's claims-only key " << claims_hash
+                  << " is not the legacy model's key " << model_hash << " (fail closed)!");
+  // The relabelled pieces: the Chain: false entries whose Conductor differs.
+  nlohmann::json relabelled = nlohmann::json::array();
+  const auto &feature_context = feature.signature.value("Context", nlohmann::json::array());
+  const auto &alias_context = alias.context.value("Context", nlohmann::json::array());
+  for (std::size_t i = 0; i < feature_context.size() && i < alias_context.size(); i++)
+  {
+    if (!feature_context[i].value("Chain", false) &&
+        feature_context[i].value("Conductor", 0) != alias_context[i].value("Conductor", 0))
+    {
+      relabelled.push_back({{"Piece", i},
+                            {"FeatureConductor", feature_context[i].value("Conductor", 0)},
+                            {"AliasConductor", alias_context[i].value("Conductor", 0)}});
+    }
+  }
+  return nlohmann::json{
+      {"Model", model_name},
+      {"Key", alias.key},
+      {"ContextDigest", alias.context_digest},
+      {"ClaimsKey", claims_hash},
+      {"Reason", alias.reason},
+      {"Context",
+       {{"Box", feature.signature.value("Box", nlohmann::json(nullptr))},
+        {"Context", feature_context}}},
+      {"RoleSwap",
+       {{"FeatureKey", feature.hash},
+        {"FeatureContextDigest", digest},
+        {"RoleInsensitiveContextDigest", role_insensitive},
+        {"RelabelledPieces", relabelled}}},
+      {"Rule", "decision 899 B2 (OI-ROLEKEY): a claims-only legacy model's alias resolved "
+               "for a key whose Box + Context equal the alias's once the Chain: false "
+               "pieces lose their Conductor label (the roles of the conductors outside the "
+               "box); the stored response has no state for those pieces, so the same "
+               "matrices serve both roles; tried only after the exact key, the near-match "
+               "and the exact alias; no key renamed; the claims-only key is verified "
+               "against the model (mismatch aborts)"}};
+}
+
 namespace
 {
 
@@ -7788,9 +7923,32 @@ LibrarySignatureKeys(const ProcessLibrary &library,
       index.Add(*model.identification_signature,
                 model.identification_signature->at("Type").get<std::string>(), model.name,
                 rank);
-      for (const auto &alias : model.legacy_contract_aliases)
+      if (!model.legacy_contract_aliases.empty())
       {
-        index.AddAlias(model.name, *model.identification_signature, alias);
+        // Claims-only (decision 899 B2): no Box / Context in the Signature and no plan-view
+        // conductor beyond the claims' (the twins hold the claims' metal only).
+        const auto &signature = *model.identification_signature;
+        bool claims_only = !signature.contains("Box") && !signature.contains("Context");
+        if (claims_only && model.plan_view_boundary)
+        {
+          std::set<int> claim_conductors;
+          for (const auto &portion : signature.value("Portions", nlohmann::json::array()))
+          {
+            claim_conductors.insert(portion.value("Conductor", 0));
+          }
+          const auto boundary = nlohmann::json::parse(*model.plan_view_boundary);
+          for (const auto &conductor : boundary)
+          {
+            if (!claim_conductors.count(conductor.value("Conductor", 0)))
+            {
+              claims_only = false;
+            }
+          }
+        }
+        for (const auto &alias : model.legacy_contract_aliases)
+        {
+          index.AddAlias(model.name, *model.identification_signature, alias, claims_only);
+        }
       }
       continue;
     }
@@ -8255,6 +8413,32 @@ IdentificationResult RunGeometryIdentification(
           "legacy contract (USER decision 283): key " + feature.hash.substr(0, 12) +
           " resolved through the alias of \"" + alias->model + "\" (context digest " +
           alias->alias.context_digest.substr(0, 12) + " verified)";
+    }
+    else if (const auto *role_alias = library_keys.FindRoleInsensitiveAlias(
+                 feature, feature.spatial_support.is_object()
+                              ? feature.spatial_support.value("ClaimsKey", std::string{})
+                              : std::string{}))
+    {
+      // Role-insensitive legacy alias (decision 899 B2, OI-ROLEKEY): recorded, placed in
+      // the claims-only frame exactly as the exact alias.
+      feature.legacy_contract = ResolveRoleInsensitiveLegacyContractAlias(
+          role_alias->model, role_alias->model_signature, role_alias->alias, feature);
+      feature.origin = feature.claims_origin;
+      feature.axes = feature.claims_axes;
+      feature.chirality = feature.claims_chirality;
+      feature.legacy_contract["PlacementFrame"] =
+          "the claims-only canonical frame (Features[].ClaimsFrame), the legacy model's";
+      feature.matched_model = role_alias->model;
+      feature.match_deviation = 0.0;
+      feature.match_note = "role-insensitive legacy contract (decision 899 B2): key " +
+                           feature.hash.substr(0, 12) + " resolved through the alias " +
+                           role_alias->alias.key.substr(0, 12) + " of \"" +
+                           role_alias->model + "\" (the Chain: false pieces relabelled)";
+      Mpi::Print(
+          "  Identification role-insensitive legacy alias (decision 899 B2): cluster "
+          "key {} -> model \"{}\" through alias {}\n",
+          feature.hash.substr(0, 12), role_alias->model,
+          role_alias->alias.key.substr(0, 12));
     }
     else if (StraightTopologyOfCurvedFeature(feature.type) && !feature.portions.empty())
     {
@@ -12342,6 +12526,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       maxwell ? nullptr : &request, &mirror_band);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
+  if (statistics)
+  {
+    statistics->role_swap_alias_matches =
+        std::count_if(identification.features.begin(), identification.features.end(),
+                      [](const auto &feature)
+                      {
+                        return feature.legacy_contract.is_object() &&
+                               feature.legacy_contract.contains("RoleSwap");
+                      });
+  }
   // The mirror band in the operator record and the geometry cache (DESIGN 3.1).
   result.mirror_planes.clear();
   for (const auto &plane : mirror_band.planes)

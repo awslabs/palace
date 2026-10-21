@@ -11042,3 +11042,54 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 }
 
 }  // namespace palace
+
+namespace palace
+{
+
+// Decision 899 B2 (OI-ROLEKEY): the role-insensitive Box + Context digest drops the
+// Conductor label of the Chain: false pieces only. Two contexts that differ in a Chain:
+// false label (the claw shorted to ground vs the cut-short claw whose ground is a new
+// conductor) share the digest; a Chain: true label, the geometry or the Box still separate
+// them; the stored SpatialSupportContextDigest of the role-1 context is unchanged (no key
+// renamed).
+TEST_CASE("Role-insensitive context digest ignores the Chain:false conductor labels",
+          "[surfaceresponseoperator][signature][adaptid][Serial]")
+{
+  const json role_1 = {{"Type", "SpatialEdgeCluster"},
+                       {"Box", {-2.6878, -5.339595, 5.364831, 6.061562}},
+                       {"Context",
+                        {{{"Chain", false},
+                          {"Conductor", 1},
+                          {"Gap", {-1.0, 0.0}},
+                          {"Interfaces", {"MA", "MS", "SA"}},
+                          {"Law", "{\"Type\":\"PEC\"}"},
+                          {"P", {3.522726, -5.339595, 3.522726, -2.796911}}},
+                         {{"Chain", true},
+                          {"Conductor", 1},
+                          {"Gap", {-1.0, 0.0}},
+                          {"Interfaces", {"MA", "MS", "SA"}},
+                          {"Law", "{\"Type\":\"PEC\"}"},
+                          {"P", {-0.6878, -5.339595, -0.6878, -2.339595}}}}}};
+  json role_2 = role_1;
+  role_2["Context"][0]["Conductor"] = 2;  // the foreign piece on its own conductor
+  json chain_relabelled = role_1;
+  chain_relabelled["Context"][1]["Conductor"] = 2;  // a chain piece: part of the claims
+  json moved = role_1;
+  moved["Context"][0]["P"][1] = -5.0;
+  json other_box = role_1;
+  other_box["Box"][0] = -2.5;
+
+  const std::string digest_1 = RoleInsensitiveContextDigest(role_1);
+  REQUIRE(digest_1.size() == 64);
+  CHECK(RoleInsensitiveContextDigest(role_2) == digest_1);
+  CHECK(RoleInsensitiveContextDigest(chain_relabelled) != digest_1);
+  CHECK(RoleInsensitiveContextDigest(moved) != digest_1);
+  CHECK(RoleInsensitiveContextDigest(other_box) != digest_1);
+  CHECK(SpatialSupportContextDigest(role_1) != SpatialSupportContextDigest(role_2));
+  CHECK(SpatialSupportContextDigest(role_1) != digest_1);
+  json no_box = role_1;
+  no_box.erase("Box");
+  CHECK(RoleInsensitiveContextDigest(no_box).empty());
+}
+
+}  // namespace palace
