@@ -234,8 +234,6 @@ endif()
 include(ExternalGitTags)
 if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
-elseif(PALACE_WITH_ENZYME AND "${ENZYME_DIR}" STREQUAL "")
-  include(ExternalEnzyme)
 endif()
 
 # Add the main Palace project
