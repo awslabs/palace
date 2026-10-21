@@ -1422,6 +1422,34 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_lumped_uniform.json", "lumped_uniform", opts);
 }
 
+// The cpw_lumped_uniform model with a copper trace instead of a PEC one, at two
+// frequencies: an interior conductivity sheet modeled as a single sheet with the admittance
+// of both faces ("Crack": false), or as two independent faces ("Crack": true), which carry
+// different currents and so give a higher conductor loss.
+TEST_CASE("cpw_lumped_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conductivity.json",
+                                  "lumped_conductivity", opts);
+}
+
+TEST_CASE("cpw_lumped_conductivity_crack", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conductivity_crack.json",
+                                  "lumped_conductivity_crack", opts);
+}
+
 TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
