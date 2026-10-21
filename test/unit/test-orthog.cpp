@@ -189,7 +189,10 @@ TEST_CASE("OrthogonalizeColumn - Real Empty", "[orthog][Serial][Parallel][GPU]")
   double H[1];  // Not used when m = 0
   linalg::OrthogonalizeColumn(orthog_type, Mpi::World(), V, w, H, 0);
 
-  // Vector should remain unchanged
+  // Vector should remain unchanged. RangeEquals reads the host arrays directly, so copy
+  // the device data back to the host first.
+  w.HostRead();
+  w_orig.HostRead();
   CHECK_THAT(w, RangeEquals(w_orig));
 }
 
