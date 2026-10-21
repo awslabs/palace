@@ -14,8 +14,12 @@ merely contain a commit vs. head it, empty pull lists, missing refs).
 
 from __future__ import annotations
 
+import io
+import os
 import unittest
+from unittest import mock
 
+import authorize
 from authorize import Decision, Facts, decide, slugify
 
 SHA = "c45e4ab4f2356589ba40f4fde2403f5854282826"
@@ -116,6 +120,32 @@ class ReleaseTag(unittest.TestCase):
     def test_feature_branch_push_rejected(self):
         d = decide(facts(head_branch="some-feature", head_sha=SHA), FakeApi())
         self.assertFalse(d.authorized)
+
+
+class MainExitStatus(unittest.TestCase):
+    """main() exit status, which is what turns the authorize job red."""
+
+    def _main(self, head_branch, api):
+        # Empty GITHUB_OUTPUT, and stderr captured, so that running these under
+        # Actions neither sets step outputs nor raises an error annotation.
+        env = dict(OWNER_REPO=REPO, SOURCE_EVENT="push", HEAD_SHA=SHA, HEAD_BRANCH=head_branch,
+                   HEAD_REPO=REPO, BASE_REPO=REPO, GITHUB_OUTPUT="")
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(authorize, "GitHubApi", lambda repo: api), \
+                mock.patch("sys.stdout", new_callable=io.StringIO), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            return authorize.main([]), err.getvalue()
+
+    def test_rejected_release_tag_fails(self):
+        # Tag at the built sha, but the sha is not on main.
+        status, err = self._main("v0.18.0", FakeApi(refs={("tags", "v0.18.0"): SHA}))
+        self.assertEqual(status, 1)
+        self.assertIn("::error::Release v0.18.0 not published", err)
+
+    def test_stale_main_stays_green(self):
+        status, err = self._main("main", FakeApi(refs={("heads", "main"): OTHER_SHA}))
+        self.assertEqual(status, 0)
+        self.assertEqual(err, "")
 
 
 class Dispatch(unittest.TestCase):
