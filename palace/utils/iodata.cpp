@@ -335,6 +335,13 @@ void IoData::CheckConfiguration()
                     solver.driven.adaptive_tol > 0.0,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "adaptive frequency sweep (AdaptiveTol > 0.0)!\n");
+    // DrivenSolver reverts an adaptive sweep with too few samples to a uniform sweep, but
+    // circuit synthesis has no such fallback: PROM initialization and the error indicator
+    // need two distinct samples (sample_f is deduplicated when parsed).
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    solver.driven.sample_f.size() >= 2,
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "at least two distinct frequency samples!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "

@@ -203,13 +203,13 @@ tooling can identify the schema without custom extensions.
 SchemaVer uses the format `MODEL-REVISION-ADDITION`:
 
   - MODEL: a breaking change to the schema's model — e.g. removing or renaming a field,
-    tightening validation so a previously-valid config is rejected, or changing the
+    tightening validation so a previously-working config is rejected, or changing the
     meaning or the default of a value.
   - REVISION: a backward-compatible change that extends the model — e.g. a new optional
     field, a new allowed enum value, or relaxing a constraint so previously-invalid
     configs are now accepted.
-  - ADDITION: a change that does not affect which configurations are accepted — e.g.
-    updating a `description`, `title`, or other annotation.
+  - ADDITION: a change that does not affect which configurations are accepted and working
+    — e.g. updating a `description`, `title`, or other annotation.
 
 #### Relationship to the *Palace* version
 
@@ -251,12 +251,16 @@ schema version bump in that same PR. This means the repository will accumulate m
 
  1. Determine the bump size. Classify your schema change using the table above:
 
-      + MODEL: removing/renaming a field, tightening validation, changing defaults or
-        semantics (breaking).
+      + MODEL: removing/renaming a field, tightening validation so a previously-working
+        config is rejected, changing defaults or semantics (breaking).
       + REVISION: new optional field, new enum value, relaxing a constraint
         (backward-compatible extension).
       + ADDITION: updating a `description`, `title`, or other annotation (no effect on
-        accepted configurations).
+        accepted configurations). Tightening validation is also an ADDITION, not a MODEL
+        bump, when the newly rejected configurations never produced valid solver output:
+        ones the parser already rejected, or ones that only ran through a silent error
+        (turning a silent error into a loud one is a bug fix, and the accepted set of
+        *working* configurations is unchanged).
 
  2. Bump the `"$id"` version in `scripts/schema/config-schema.json`.
     For example, going from `1-0-0` to `1-1-0`:
