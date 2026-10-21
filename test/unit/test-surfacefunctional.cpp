@@ -1238,7 +1238,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   const double interface_energy = RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
   DomainPostOperator domain_post(iodata.domains.postpro, mat_op, fem_op.GetNDSpace(),
                                  fem_op.GetCurlSpace());
-  const double domain_energy = domain_post.GetElectricFieldEnergy(E);
+  const double domain_energy = domain_post.GetElectricFieldEnergy(E, 0.0);
   const double participation = interface_energy / domain_energy;
 
   const auto &cache = post_op.Cache();

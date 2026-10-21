@@ -43,6 +43,9 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.domain_H_field_energy_all =
       units.Dimensionalize<Units::ValueType::ENERGY>(
           nondim_measurement_cache.domain_H_field_energy_all);
+  measurement_cache.domain_E_field_energy_material =
+      units.Dimensionalize<Units::ValueType::ENERGY>(
+          nondim_measurement_cache.domain_E_field_energy_material);
   for (const auto &e : nondim_measurement_cache.domain_E_field_energy_i)
   {
     measurement_cache.domain_E_field_energy_i.emplace_back(Measurement::DomainData{
@@ -187,6 +190,9 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.domain_H_field_energy_all =
       units.Nondimensionalize<Units::ValueType::ENERGY>(
           dim_measurement_cache.domain_H_field_energy_all);
+  measurement_cache.domain_E_field_energy_material =
+      units.Nondimensionalize<Units::ValueType::ENERGY>(
+          dim_measurement_cache.domain_E_field_energy_material);
   for (const auto &e : dim_measurement_cache.domain_E_field_energy_i)
   {
     measurement_cache.domain_E_field_energy_i.emplace_back(Measurement::DomainData{

@@ -64,6 +64,8 @@ private:
   std::vector<std::vector<int>> frequency_dependent_permittivity_attributes;
   std::vector<std::vector<PermittivityPoleTerm>> permittivity_pole_terms;
   std::vector<std::vector<config::DjordjevicSarkarData>> djordjevic_sarkar_terms;
+  // The terms as configured, for the stored energy of their models.
+  std::vector<std::vector<config::PermittivityTermData>> permittivity_terms;
   std::vector<bool> frequency_dependent_permittivity_support;
   // Largest relative permeability and the high-frequency permittivity of each
   // frequency-dependent material, for GetFrequencyDependentMaxMuEpsilon.
@@ -228,6 +230,16 @@ public:
   // The relative permittivity ε∞ + χ(s) of a frequency-dependent material, at s ≠ 0.
   std::complex<double> EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
                                                               std::complex<double> s) const;
+  // The time-averaged stored electric energy of the polarization of a frequency-dependent
+  // material at real ω > 0, as a susceptibility (permittivity::StoredEnergySusceptibility):
+  // the stored energy is that of a constant permittivity ε∞ plus this value. It includes
+  // exact zero poles, which store none.
+  double GetFrequencyDependentStoredEnergySusceptibility(std::size_t material_idx,
+                                                         double omega) const;
+  // Re χ(iω) of the nonlinear terms of a frequency-dependent material, the field energy at
+  // its permittivity ε(iω) less that at ε∞ (a zero pole contributes none).
+  double GetFrequencyDependentSusceptibilityReal(std::size_t material_idx,
+                                                 double omega) const;
   // The frequency-dependent material with a nonlinear term on the given domain attribute,
   // or -1 if there is none.
   int GetFrequencyDependentPermittivityMaterial(int attr) const;
