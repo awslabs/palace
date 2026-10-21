@@ -296,6 +296,12 @@ protected:
   bool reduced_postprocessing_checked = false;
   Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
+  // Projections of the unit mass forms of the frequency-dependent materials, weighted at
+  // each frequency by their stored-energy susceptibility.
+  using ReducedFrequencyDependentForms =
+      std::vector<std::pair<std::size_t, Eigen::MatrixXd>>;
+  ReducedFrequencyDependentForms reduced_energy_E_fd;
+  std::map<int, ReducedFrequencyDependentForms> reduced_domain_energy_E_fd;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -495,7 +501,8 @@ public:
   // simulation with PROM. There samples are taken and we need the total domain energy for
   // the error indicator, but no other measurement / printing should be done.
 
-  double MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b)
+  double MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b,
+                                      double omega)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Access grid functions for field solutions. Note that these are NOT const functions. The

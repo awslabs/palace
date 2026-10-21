@@ -138,9 +138,17 @@ from material resonances; the eigensolver warns when it cannot resolve the reque
 In adaptive circuit synthesis, pole terms are realized exactly, while `DjordjevicSarkar`
 terms are fit over the frequency sweep.
 
-Frequency-aware postprocessing is not yet available. Domain electric energy, EPR, and
-quality factor; permittivity-based error indicators; electric `SurfaceFlux`; automatic
-electric boundary charge ``Q_s``; the displacement field ``\mathbf{D}``; electric energy
-density probes; and the Stratton–Chu far field all use ``\epsilon_\infty``, not
-``\epsilon(s)``. Do not
-use these outputs as physical validation of a frequency-dependent material.
+The domain electric energy of a frequency-dependent material is the stored energy of its
+model at the solution frequency, the real part for an eigenmode: that of the field and of
+the polarization, including the kinetic energy of an oscillator. It exceeds the magnetic
+energy of a resonant mode, so the energy participation ratios and coupling rates of a mode
+are normalized by the mean of the electric energy and of the field energy at the material's
+permittivity ``\epsilon(\omega)``, plus the lumped capacitor energy. The latter field
+energy equals the magnetic energy of a lossless mode, so this is the total stored energy,
+and it reduces to the usual ``E_\text{elec} + E_\text{cap}`` for constant materials.
+Permittivity-based
+error indicators; electric `SurfaceFlux`; automatic electric boundary charge ``Q_s``; the
+displacement field ``\mathbf{D}``; electric energy density probes; interface dielectric
+participation; and the Stratton–Chu far field use ``\epsilon_\infty``, not
+``\epsilon(s)``. Do not use these outputs as physical validation of a frequency-dependent
+material.

@@ -310,7 +310,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
-    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
+    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B, omega);
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
 

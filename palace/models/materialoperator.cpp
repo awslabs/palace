@@ -142,6 +142,7 @@ void MaterialOperator::SetUpMaterialProperties(
   frequency_dependent_permittivity_attributes.resize(materials.size());
   permittivity_pole_terms.resize(materials.size());
   djordjevic_sarkar_terms.resize(materials.size());
+  permittivity_terms.resize(materials.size());
   frequency_dependent_permittivity_support.assign(materials.size(), false);
   frequency_dependent_permittivity_mu_max.assign(materials.size(), 0.0);
   frequency_dependent_permittivity_eps_inf.assign(materials.size(), 0.0);
@@ -177,6 +178,7 @@ void MaterialOperator::SetUpMaterialProperties(
           std::max(frequency_dependent_permittivity_mu_max[i], std::abs(mu));
     }
     permittivity::CheckTerms(data.epsilon_r.s[0], data.permittivity_terms);
+    permittivity_terms[i] = data.permittivity_terms;
     for (const auto &term : permittivity::PoleTerms(data.permittivity_terms))
     {
       if (term.pole == std::complex<double>{0.0, 0.0})
@@ -584,6 +586,22 @@ MaterialOperator::EvaluateFrequencyDependentPermittivity(std::size_t material_id
   MFEM_VERIFY(s != 0.0, "Frequency-dependent permittivity evaluation requires s != 0!");
   return frequency_dependent_permittivity_eps_inf.at(material_idx) +
          EvaluateFrequencyDependentPermittivityA2(material_idx, s) / (s * s);
+}
+
+double
+MaterialOperator::GetFrequencyDependentStoredEnergySusceptibility(std::size_t material_idx,
+                                                                  double omega) const
+{
+  return permittivity::StoredEnergySusceptibility(permittivity_terms.at(material_idx),
+                                                  omega);
+}
+
+double MaterialOperator::GetFrequencyDependentSusceptibilityReal(std::size_t material_idx,
+                                                                 double omega) const
+{
+  return permittivity::Susceptibility(permittivity_terms.at(material_idx),
+                                      std::complex<double>(0.0, omega))
+      .real();
 }
 
 int MaterialOperator::GetFrequencyDependentPermittivityMaterial(int attr) const
