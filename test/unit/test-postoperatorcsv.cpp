@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cmath>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
@@ -446,6 +447,37 @@ public:
       }
     }
   }
+
+  void restart2_write_reloaded_row()
+  {
+    // The restart writes the second excitation's next row, whose frequency the reloaded
+    // index holds as printed: a recomputed frequency matches it to its precision, and
+    // another frequency does not. On a copy of the tables, which the writes update.
+    const auto dir = fs::temp_directory_path() / "palace-postoperatorcsv-restart";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove_all(dir);
+      fs::copy(fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_c14",
+               dir);
+    }
+    Mpi::Barrier(Mpi::World());
+    iodata.problem.output = dir;
+    iodata.solver.driven.restart = 6 + 4 + 1;  // Restart is 1 Indexed.
+    PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+    if (Mpi::Root(Mpi::World()))
+    {
+      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+      REQUIRE(post_op_csv.port_V->table["idx"].data.at(4) == 26.0);
+      post_op_csv.row_idx_v = std::nextafter(26.0, 0.0);
+      CHECK_NOTHROW(post_op_csv.PrintPortVI(space_op.GetLumpedPortOp(), iodata.units));
+      post_op_csv.row_i++;
+      post_op_csv.row_idx_v = 31.0;
+      CHECK_THROWS_WITH(
+          post_op_csv.PrintPortVI(space_op.GetLumpedPortOp(), iodata.units),
+          Catch::Matchers::ContainsSubstring("Writing data table at incorrect index"));
+      fs::remove_all(dir);
+    }
+  }
 };
 
 TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][Serial]")
@@ -513,6 +545,11 @@ TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
   SECTION("Driven solver, two excitations: load with restart in ex 2")
   {
     fixture.restart2_restart_in_middle_ex2();
+  }
+
+  SECTION("Driven solver, two excitations: write a reloaded row on restart")
+  {
+    fixture.restart2_write_reloaded_row();
   }
 }
 
