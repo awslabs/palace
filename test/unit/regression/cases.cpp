@@ -13,6 +13,7 @@
 #include <complex>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -21,14 +22,33 @@
 
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace
 {
+
+// The final uniform solve may release its KSP before postprocessing. Its counters
+// must still include every excitation and frequency, including the final solve.
+void CheckUniformSolverTotals(std::string_view case_dir, std::string_view label,
+                              int expected_solves)
+{
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    const auto metadata = palace::test::GetRegressionRunDir() / case_dir / label /
+                          "postpro" / label / "palace.json";
+    std::ifstream stream(metadata);
+    REQUIRE(stream.is_open());
+    const auto result = nlohmann::json::parse(stream);
+    CHECK(result.at("LinearSolver").at("TotalSolves").get<int>() == expected_solves);
+    CHECK(result.at("LinearSolver").at("TotalIts").get<int>() > 0);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared custom-check factories. Each returns a callable matching
@@ -2229,6 +2249,7 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(2, opts);
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
                                   opts);
+  CheckUniformSolverTotals("coaxial", "lumped_wave", 6);
 }
 
 // Uniform coaxial line of finite-conductivity conductors between two wave ports, whose port
@@ -2379,6 +2400,7 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["probe-E.csv"] = CompareComplexValues(opts.rtol, opts.atol);
   opts.custom_checks["probe-B.csv"] = CompareComplexValues(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_uniform.json", "lumped_uniform", opts);
+  CheckUniformSolverTotals("cpw", "lumped_uniform", 14);  // 7 frequencies, 2 excitations
 }
 
 // The cpw_lumped_uniform model with a copper trace instead of a PEC one, at two

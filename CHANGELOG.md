@@ -52,6 +52,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Release linear solve state after the final uniform driven solve, before final
+    postprocessing and error estimation, while preserving cumulative solver metadata.
+
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
