@@ -277,7 +277,12 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
       {
         auto *T = mesh.GetBdrElementTransformation(be);
         T->SetIntPoint(&mfem::Geometries.GetCenter(T->GetGeometryType()));
-        h_max = std::max(h_max, T->Jacobian().CalcSingularvalue(0));
+        // The boundary Jacobian is not square and CalcSingularvalue only checks that in
+        // debug builds, so take the largest singular value from J^T J instead.
+        const auto &J = T->Jacobian();
+        mfem::DenseMatrix JtJ(J.Width());
+        mfem::MultAtB(J, J, JtJ);
+        h_max = std::max(h_max, std::sqrt(JtJ.CalcSingularvalue(0)));
       }
     }
     Mpi::GlobalMax(1, &h_max, nd_fespace.GetComm());
