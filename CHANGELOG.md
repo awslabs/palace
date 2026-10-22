@@ -122,6 +122,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tables (rounded to their printed precision) were compared exactly with the recomputed
     ones.
     [PR 1088](https://github.com/awslabs/palace/pull/1088).
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 #### Build system
 
