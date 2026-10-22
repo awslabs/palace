@@ -48,6 +48,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
+  - Fixed driven-sweep restarts with more than one excitation aborting with
+    `Writing data table at incorrect index`, because the frequencies reloaded from the CSV
+    tables (rounded to their printed precision) were compared exactly with the recomputed
+    ones.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
 
 #### Build system
 
