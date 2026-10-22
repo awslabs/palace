@@ -317,13 +317,18 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(saved, false));
     saved["Boundaries"]["Postprocessing"] = {
         {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {4}}, {"Type", "Electric"}}}}};
-    CHECK_THROWS_WITH(IoData(saved, false),
-                      Catch::Matchers::ContainsSubstring("does not compute surface flux"));
+    CHECK_NOTHROW(IoData(saved, false));
     saved["Solver"]["Substructuring"].erase("Mode");
     CHECK_NOTHROW(IoData(saved, false));
     saved["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-6;
-    CHECK_THROWS_WITH(IoData(saved, false),
-                      Catch::Matchers::ContainsSubstring("does not compute surface flux"));
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {{"Dielectric",
+                                              {{{"Index", 1},
+                                                {"Attributes", {4}},
+                                                {"Thickness", 1.0e-3},
+                                                {"Permittivity", 10.0}}}}};
+    CHECK_THROWS_WITH(IoData(saved, false), Catch::Matchers::ContainsSubstring(
+                                                "does not compute interface dielectric"));
 #endif
 #if defined(MFEM_USE_MUMPS)
     json fields = uniform;

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <limits>
 #include <set>
+#include "fem/coefficient.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/outputdir.hpp"
@@ -401,6 +402,58 @@ std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMa
   diag.Finalize();
   mfem::HypreParMatrix I(A.GetComm(), A.GetGlobalNumRows(), A.GetRowStarts(), &diag);
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::ParAdd(&B, &I));
+}
+
+bool BoundaryInRegion(const mfem::ParMesh &mesh, const std::vector<int> &bdr_attributes,
+                      const std::vector<int> &region_attributes)
+{
+  auto &pmesh = const_cast<mfem::ParMesh &>(mesh);
+  pmesh.ExchangeFaceNbrData();
+  auto in_region = [&](const mfem::ElementTransformation *T)
+  {
+    return !T ||
+           std::ranges::find(region_attributes, T->Attribute) != region_attributes.end();
+  };
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  int n[2] = {0, 0};  // boundary elements, those bordering elements outside the region
+  for (int be = 0; be < pmesh.GetNBE(); be++)
+  {
+    if (std::ranges::find(bdr_attributes, pmesh.GetBdrAttribute(be)) ==
+        bdr_attributes.end())
+    {
+      continue;
+    }
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(be, pmesh, FET, T1,
+                                                                     T2);
+    n[0]++;
+    n[1] += !in_region(FET.Elem1) || !in_region(FET.Elem2);
+  }
+  Mpi::GlobalSum(2, n, mesh.GetComm());
+  return n[0] > 0 && n[1] == 0;
+}
+
+bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,
+                   const std::vector<int> &region_attributes)
+{
+  auto &pmesh = const_cast<mfem::ParMesh &>(mesh);
+  mfem::DenseMatrix point(pmesh.SpaceDimension(), 1);
+  for (int d = 0; d < pmesh.SpaceDimension(); d++)
+  {
+    point(d, 0) = x[d];
+  }
+  mfem::Array<int> elem;
+  mfem::Array<mfem::IntegrationPoint> ip;
+  pmesh.FindPoints(point, elem, ip, false);
+  int found[2] = {0, 0};  // anywhere, in the region
+  if (elem[0] >= 0)
+  {
+    found[0] = 1;
+    found[1] = std::ranges::find(region_attributes, pmesh.GetAttribute(elem[0])) !=
+               region_attributes.end();
+  }
+  Mpi::GlobalSum(2, found, mesh.GetComm());
+  return found[0] > 0 && found[1] == found[0];
 }
 
 std::string RegionMeshPath(const std::string &model_path)

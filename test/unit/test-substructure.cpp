@@ -247,4 +247,28 @@ TEST_CASE("Eliminated rows without a stored diagonal become identity rows",
   }
 }
 
+TEST_CASE("Boundaries and points of the region", "[substructure][Serial][Parallel]")
+{
+  // Unit cube with the region at x < 1/2: the boundary at x = 0 (attribute 5) borders the
+  // region only, the one at x = 1 (3) the environment only, and y = 0 (2) both.
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector c;
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+  }
+  serial.SetAttributes();
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  const std::vector<int> region = {1};
+  CHECK(BoundaryInRegion(mesh, {5}, region));
+  CHECK_FALSE(BoundaryInRegion(mesh, {3}, region));
+  CHECK_FALSE(BoundaryInRegion(mesh, {2}, region));
+  CHECK_FALSE(BoundaryInRegion(mesh, {5, 3}, region));
+  CHECK_FALSE(BoundaryInRegion(mesh, {7}, region));  // no such boundary
+  CHECK(PointInRegion(mesh, {0.2, 0.4, 0.6}, region));
+  CHECK_FALSE(PointInRegion(mesh, {0.8, 0.4, 0.6}, region));
+  CHECK_FALSE(PointInRegion(mesh, {2.0, 0.4, 0.6}, region));
+}
+
 }  // namespace palace

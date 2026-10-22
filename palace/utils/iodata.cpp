@@ -772,11 +772,10 @@ void IoData::CheckConfiguration()
       // the region and on Γ only.
       MFEM_VERIFY(
           (sub.mode != SubstructuringMode::ONLINE && solver.driven.adaptive_tol <= 0.0) ||
-              (boundaries.postpro.flux.empty() && boundaries.postpro.dielectric.empty() &&
-               boundaries.postpro.farfield.attributes.empty() &&
-               domains.postpro.probe.empty()),
-          "Online or adaptive driven substructuring does not compute surface flux, "
-          "interface dielectric, far-field or probe postprocessing yet!");
+              (boundaries.postpro.dielectric.empty() &&
+               boundaries.postpro.farfield.attributes.empty()),
+          "Online or adaptive driven substructuring does not compute interface dielectric "
+          "or far-field postprocessing yet!");
       MFEM_VERIFY(solver.driven.restart == 1,
                   "Driven substructuring does not restart a sweep yet!");
 #if !defined(MFEM_USE_MUMPS)

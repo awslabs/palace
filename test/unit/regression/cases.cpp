@@ -1244,6 +1244,20 @@ TEST_CASE("substructuring_driven_online", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The online sweep of substructuring_driven_online with surface fluxes: the two the region
+// holds are written, and those in or crossing into the environment are skipped.
+TEST_CASE("substructuring_driven_online_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_flux.json",
+                                  "online_flux", opts);
+}
+
 // Adaptive driven substructuring: an offline adaptive sweep samples the environment
 // greedily for a rational model of its condensed data, and an online sweep at frequencies
 // between the samples solves the redesigned region of substructuring_driven_online against
@@ -1305,7 +1319,8 @@ TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][GPU][Regressi
 }
 
 // Online runs on the mesh of the region written by the offline run (with the environment's
-// ports), against the references of the online runs on the full mesh.
+// ports), against the references of the online runs on the full mesh. Surface fluxes are
+// skipped there, since the mesh lacks the environment's part of a surface.
 TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

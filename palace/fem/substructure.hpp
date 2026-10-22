@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_SUBSTRUCTURE_HPP
 #define PALACE_FEM_SUBSTRUCTURE_HPP
 
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
@@ -113,6 +114,16 @@ std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
 // stores no diagonal entry in a row without element contributions.
 std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMatrix &A,
                                                           const mfem::Array<int> &dofs);
+
+// Whether the mesh has boundary elements with the attributes, all bordering elements of the
+// region only, so that a field known in the region determines quantities on them.
+// Collective.
+bool BoundaryInRegion(const mfem::ParMesh &mesh, const std::vector<int> &bdr_attributes,
+                      const std::vector<int> &region_attributes);
+
+// Whether a point (mesh coordinates) lies in an element of the region. Collective.
+bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,
+                   const std::vector<int> &region_attributes);
 
 // The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
 std::string RegionMeshPath(const std::string &model_path);

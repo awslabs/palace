@@ -194,6 +194,10 @@ interface are unchanged. The online field is known in the region and on the inte
   - domain energies are written for the `"Domains"/"Postprocessing"/"Energy"` entries inside
     the region, without the total energies and participation ratios (and the power of the
     environment's ports, and the voltage of its wave ports, are not available);
+  - surface fluxes (`"Boundaries"/"Postprocessing"/"SurfaceFlux"`) on boundaries that border only
+    region elements, and probes in the region, are those of a regular simulation; the others are
+    skipped, as are all surface fluxes on the mesh of the region, which lacks the environment's part
+    of a surface;
   - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
 
 The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also
@@ -223,9 +227,9 @@ voltage would then depend on both sides.
     Driven substructuring needs MUMPS, which factors the environment and the region at any size.
     Floquet ports and periodic boundaries (which make the system non-symmetric), inactive wave
     ports, restarts, `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in
-    online sweeps are not supported yet, nor, from a model, surface flux, interface dielectric,
-    far-field and probe postprocessing. The model holds one dense ``|\Gamma| \times |\Gamma|``
-    matrix per frequency or sample (16 bytes per entry of its lower triangle).
+    online sweeps are not supported yet, nor, from a model, interface dielectric and far-field
+    postprocessing. The model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or
+    sample (16 bytes per entry of its lower triangle).
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

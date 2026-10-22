@@ -328,9 +328,10 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   }
 
   // From a model, the field is known in the region (and on Γ) only: energies of region
-  // domains, without totals or participation ratios, and the environment's port voltages
-  // from the model (without their power).
+  // domains, without totals or participation ratios, surface fluxes and probes the region
+  // holds, and the environment's port voltages from the model (without their power).
   config::DomainData domains = iodata.domains;
+  config::BoundaryData boundaries = iodata.boundaries;
   if (from_model)
   {
     domains.postpro.partial = true;
@@ -354,19 +355,53 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
         ++it;
       }
     }
+    // The mesh of the region lacks the environment's part of a surface.
+    const auto &mesh = space_op.GetMesh().Get();
+    std::vector<int> skipped_flux, skipped_probe;
+    for (auto it = boundaries.postpro.flux.begin(); it != boundaries.postpro.flux.end();)
+    {
+      if (ds->RegionOnly() ||
+          !BoundaryInRegion(mesh, it->second.attributes, sub.region_attributes))
+      {
+        skipped_flux.push_back(it->first);
+        it = boundaries.postpro.flux.erase(it);
+      }
+      else
+      {
+        ++it;
+      }
+    }
+    for (auto it = domains.postpro.probe.begin(); it != domains.postpro.probe.end();)
+    {
+      if (!PointInRegion(mesh, it->second.center, sub.region_attributes))
+      {
+        skipped_probe.push_back(it->first);
+        it = domains.postpro.probe.erase(it);
+      }
+      else
+      {
+        ++it;
+      }
+    }
+    auto none = [](const std::vector<int> &idx, const char *what)
+    {
+      return idx.empty() ? std::string()
+                         : fmt::format(", no {} ({})", what, fmt::join(idx, ", "));
+    };
     Mpi::Warning("{} driven substructuring writes no total energies or participation "
-                 "ratios{}{}!\n",
+                 "ratios{}{}{}{}!\n",
                  online ? "Online" : "Adaptive",
-                 skipped.empty() ? std::string()
-                                 : fmt::format(", no energies of the domain postprocessing "
-                                               "outside the region ({})",
-                                               fmt::join(skipped, ", ")),
+                 none(skipped, "energies of the domain postprocessing outside the region"),
+                 none(skipped_flux, ds->RegionOnly()
+                                        ? "surface fluxes on the mesh of the region"
+                                        : "surface fluxes outside the region"),
+                 none(skipped_probe, "probes outside the region"),
                  env_ports.empty() ? std::string()
                                    : ", and no power (or wave port voltage) of the "
                                      "environment's ports");
   }
   PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
-                                            iodata.boundaries, iodata.units, space_op);
+                                            boundaries, iodata.units, space_op);
   if (from_model && post_op.WillWriteFields())
   {
     Mpi::Warning("{} driven substructuring writes the fields in the region and on the "
