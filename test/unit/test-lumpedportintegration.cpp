@@ -1108,11 +1108,11 @@ ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &outp
 TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
                  "[lumped_port][Serial][Parallel]")
 {
-  // The κ of a resistive port is its dissipated power over the electric energy, κ = P / E.
-  // The power P = 1/2 ∫ |E_t|² / R_s dS is the port term of the damping matrix C, so κ
-  // must include the field components which do not change the port voltage. The sum of
-  // κ over the active ports is Eᴴ C E / Eᴴ M E, which is 2 Im{ω} for an eigenpair when
-  // the ports are the only loss. All quantities are nondimensional, and ε_r = 2.
+  // The |κ| of a resistive port is its dissipated power over the electric energy,
+  // |κ| = P / E. The power P = 1/2 ∫ |E_t|² / R_s dS is the port term of the damping matrix
+  // C, so κ must include the field components which do not change the port voltage. The
+  // sum of |κ| over the active ports is Eᴴ C E / Eᴴ M E, which is 2 Im{ω} for an eigenpair
+  // when the ports are the only loss. All quantities are nondimensional, and ε_r = 2.
   constexpr double eps = 2.0;
   SECTION("2D port")
   {
