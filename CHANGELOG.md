@@ -148,9 +148,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     frequency, and circuit synthesis with a single distinct sample, which now aborts at
     startup instead of failing in the sweep.
     [PR 952](https://github.com/awslabs/palace/pull/952).
-  - Fixed 2D magnetic field energies and error-indicator normalization.
+  - Fixed incorrect Jacobian weighting in 2D magnetic field energy (`E_mag`), which made it
+    shrink under mesh refinement and misnormalized error indicators.
     [PR 1086](https://github.com/awslabs/palace/pull/1086).
-  - Fixed eigenmode lumped-port coupling rates and quality factors for nonuniform fields.
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
     [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 #### Performance Improvements
