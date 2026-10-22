@@ -160,7 +160,6 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
     MFEM_VERIFY(dbc_tdof_list.Size() == 0,
                 "Essential BC elimination is only available for square ParOperator!");
   }
-
   return *RAP;
 }
 
@@ -986,5 +985,35 @@ template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[3], const ComplexOperator *(&&)[3], bool);
 template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[4], const ComplexOperator *(&&)[4], bool);
+
+namespace linalg
+{
+
+std::unique_ptr<mfem::HypreParMatrix>
+BlockDiagonalParMatrix(MPI_Comm comm, HYPRE_BigInt global_rows, HYPRE_BigInt global_cols,
+                       HYPRE_BigInt *row_starts, HYPRE_BigInt *col_starts,
+                       std::unique_ptr<mfem::SparseMatrix> &&diag)
+{
+  diag->Finalize();
+  auto *offd = new mfem::SparseMatrix(diag->Height(), 0, 0);
+  offd->Finalize();
+  return std::make_unique<mfem::HypreParMatrix>(comm, global_rows, global_cols, row_starts,
+                                                col_starts, diag.release(), offd, nullptr,
+                                                true);
+}
+
+std::unique_ptr<mfem::HypreParMatrix> RAP(const mfem::HypreParMatrix &A,
+                                          const mfem::HypreParMatrix &P)
+{
+  hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(const_cast<mfem::HypreParMatrix &>(A),
+                                              const_cast<mfem::HypreParMatrix &>(P));
+  auto PtAP = std::make_unique<mfem::HypreParMatrix>(
+      hypre_ParCSRTMatMatKT(const_cast<mfem::HypreParMatrix &>(P), AP, 1), true);
+  hypre_ParCSRMatrixDestroy(AP);
+  hypre_ParCSRMatrixSetNumNonzeros(*PtAP);
+  return PtAP;
+}
+
+}  // namespace linalg
 
 }  // namespace palace

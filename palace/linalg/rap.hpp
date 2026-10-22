@@ -272,6 +272,25 @@ std::unique_ptr<std::conditional_t<std::is_base_of_v<ComplexOperator, OperType>,
 BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
                     bool set_essential = true);
 
+namespace linalg
+{
+
+// Construct a HypreParMatrix with only a diagonal block, which it takes ownership of, and
+// the given global sizes and partitions of rows and columns (in the format of
+// mfem::ParFiniteElementSpace::GetDofOffsets, referenced by the matrix).
+std::unique_ptr<mfem::HypreParMatrix>
+BlockDiagonalParMatrix(MPI_Comm comm, HYPRE_BigInt global_rows, HYPRE_BigInt global_cols,
+                       HYPRE_BigInt *row_starts, HYPRE_BigInt *col_starts,
+                       std::unique_ptr<mfem::SparseMatrix> &&diag);
+
+// Pᵀ A P, computed as Pᵀ (A P), which unlike hypre_ParCSRMatrixRAPKT supports processes
+// with more columns of P than rows of A and no off-diagonal columns of A P (as for the
+// true DOFs of broken spaces).
+std::unique_ptr<mfem::HypreParMatrix> RAP(const mfem::HypreParMatrix &A,
+                                          const mfem::HypreParMatrix &P);
+
+}  // namespace linalg
+
 }  // namespace palace
 
 #endif  // PALACE_LINALG_RAP_HPP
