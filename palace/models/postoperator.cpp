@@ -1734,17 +1734,18 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
 
       // Resistive Lumped Ports:
       // Compute participation ratio of external ports (given as any port boundary with
-      // nonzero resistance). Currently no reactance of the ports is supported. The κ of
-      // the port follows from the power P_mj dissipated in the resistive sheet:
-      //                          κ_mj = P_mj / E_m,
+      // nonzero resistance). Currently no reactance of the ports is supported. The
+      // magnitude of the κ of the port is the decay rate due to the power P_mj dissipated
+      // in the resistive sheet, and its sign is the sign of Re{I_mj}:
+      //                   κ_mj = sign(Re{I_mj}) P_mj / E_m,
       // from which the mode coupling quality factor is computed as:
-      //                              Q_mj = ω_m / κ_mj.
+      //                         Q_mj = Re{ω_m} / |κ_mj|.
       // P_mj = 1/2 ∫ |E_t|² / R_s dS is the boundary term of the damping matrix, so for
-      // active ports ∑_j κ_mj = 2 Im{ω_m} when the ports are the only loss. The voltage
-      // estimate 1/2 R_j |I_mj|² = |V_mj|² / (2 R_j) is smaller when the port field does
-      // not match the uniform or coaxial port mode, and zero when the mode voltage
-      // cancels. Inactive ports are not in the damping matrix and report the loss which
-      // the port termination would add. The sign of κ_mj is the sign of Re{I_mj}.
+      // active ports with R_j > 0, ∑_j |κ_mj| = 2 Im{ω_m} when the ports are the only
+      // loss. The voltage estimate 1/2 R_j |I_mj|² = |V_mj|² / (2 R_j) is smaller when the
+      // port field does not match the uniform or coaxial port mode, and zero when the mode
+      // voltage cancels. Inactive ports are not in the damping matrix and report the loss
+      // which the port termination would add.
       if (std::abs(data.R) > 0.0)
       {
         std::complex<double> I_mj = vi.I_RLC[0];
