@@ -148,6 +148,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     frequency, and circuit synthesis with a single distinct sample, which now aborts at
     startup instead of failing in the sweep.
     [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed the magnetic field energy of 2D simulations (`E_mag` in `domain-E.csv`, for the
+    whole domain and for each energy region). The energy weighted the field by the square of
+    the element Jacobian, so it was much too small and decreased under mesh refinement. The 2D
+    error indicators are normalized by the total field energy, so they change too.
+    [Issue 1078](https://github.com/awslabs/palace/issues/1078).
 
 #### Performance Improvements
 
