@@ -30,7 +30,7 @@ private:
   hypre_Vector *vec;
 
 public:
-  HypreVector(hypre_Vector *vec = nullptr);
+  constexpr HypreVector(hypre_Vector *vec = nullptr) : vec(vec) {}
   HypreVector(const Vector &x);
   ~HypreVector();
 

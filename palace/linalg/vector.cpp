@@ -664,7 +664,7 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
 
 double LocalDot(const Vector &x, const Vector &y)
 {
-  static hypre::HypreVector X, Y;
+  static constinit hypre::HypreVector X, Y;
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
   X.Update(x);
   Y.Update(y);
@@ -688,7 +688,7 @@ std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 // more efficient on GPUs. TODO: Verify this
 double LocalSum(const Vector &x)
 {
-  static hypre::HypreVector X;
+  static constinit hypre::HypreVector X;
   X.Update(x);
   return hypre_SeqVectorSumElts(X);
 }

@@ -6,8 +6,6 @@
 namespace palace::hypre
 {
 
-HypreVector::HypreVector(hypre_Vector *vec) : vec(vec) {}
-
 HypreVector::HypreVector(const Vector &x) : vec(nullptr)
 {
   Update(x);
@@ -91,7 +89,7 @@ void HypreCSRMatrix::AssembleDiagonal(Vector &diag) const
 namespace
 {
 
-static HypreVector X, Y;
+static constinit HypreVector X, Y;
 
 }  // namespace
 
