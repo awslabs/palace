@@ -398,8 +398,11 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
                           "the fine sampling grid nr_sample={}.",
                           N, nr_sample));
   const auto delta = (end - start) / nr_sample;
-  for (double z_sample = start; z_sample <= end; z_sample += delta)
+  for (std::size_t i = 0; i <= nr_sample; i++)
   {
+    // Index the points rather than accumulate delta, which can be below the spacing of
+    // doubles near z, so the loop always ends.
+    const double z_sample = start + i * delta;
     const double Q_sample = std::abs((q.array() / (z_map.array() - z_sample)).sum());
 
     bool partial_full = (queue.size() < N);

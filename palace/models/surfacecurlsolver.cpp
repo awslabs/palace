@@ -197,6 +197,7 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
     t.UseDevice(false);
     psi.GetTrueDofs(t);
     psi.SetFromTrueDofs(t);
+    psi.HostRead();  // the prolongation may leave the conformed values on the device
   }
 
   mfem::Array<int> ev, edofs, vd0, vd1;
