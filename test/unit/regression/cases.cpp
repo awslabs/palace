@@ -1019,6 +1019,63 @@ TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// Two-sided (two-port) London film at d > λ, on a solution space broken across the film.
+// Locks the sheet terms of the two sides and their consistent use in the stiffness, flux
+// RHS, and inductance postprocessing.
+TEST_CASE("circular_hole_london_two_sided", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole_two_sided.json",
+                                  "two_sided", opts);
+}
+
+// Two-sided film under nonconformal AMR. Locks the broken space on hanging and shared DOFs
+// (film faces refined on one side only). Omits [GPU] like the other adaptive cases.
+TEST_CASE("circular_hole_london_two_sided_nc_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_two_sided_nc_amr.json", "two_sided_nc_amr",
+                                  opts);
+}
+
+// Two-sided film meeting the PEC walls on three edges. Locks the elimination of the sheet
+// terms at the essential DOFs of both sides (without it CG nearly stalls and L is off by
+// 1e-3).
+TEST_CASE("two_sided_london_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("two_sided_london", "two_sided_pec.json", "pec", opts);
+}
+
+// Two-sided square washer with quadrilateral faces, on a mesh mirror-symmetric about the
+// film, where L equals the common-mode sheet ½μ₀λ·coth(d/2λ).
+TEST_CASE("two_sided_london_hex", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("two_sided_london", "two_sided_hex.json", "hex", opts);
+}
+
 // Two London holes on a shared film, each an independent flux loop. Locks the London-London
 // off-diagonal cross-energy correction: a bare AᵀM_mag A mutual corrupts the inverted
 // selves.
