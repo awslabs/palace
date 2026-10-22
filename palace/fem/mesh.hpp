@@ -5,6 +5,7 @@
 #define PALACE_FEM_MESH_HPP
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -71,18 +72,24 @@ private:
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
 
   // Interior boundary sides of the local elements used to construct finite element spaces
-  // which are broken across interior boundaries (see fem/brokenspace.hpp), for the sorted
-  // list of boundary attributes forming the interior boundaries. The sides are valid for
-  // the mesh object and sequence number they were computed for. On a nonconforming mesh
-  // they are carried through refinement and rebalancing, since they cannot be discovered in
-  // the presence of hanging entities.
-  mutable std::vector<int> crack_attr_list;
-  mutable CrackSides crack_sides;
-  mutable const mfem::ParMesh *crack_mesh = nullptr;
-  mutable long crack_sequence = -1;
+  // which are broken across interior boundaries (see fem/brokenspace.hpp), cached for each
+  // sorted list of boundary attributes forming the interior boundaries in use (those of the
+  // error estimator, and those across which a solution space is broken). The sides are
+  // valid for the mesh object and sequence number they were computed for. On a
+  // nonconforming mesh they are carried through refinement and rebalancing, since they
+  // cannot be discovered in the presence of hanging entities: the grid function carries
+  // the sides of the lists in crack_gf_keys through a rebalance.
+  struct CrackSidesEntry
+  {
+    CrackSides sides;
+    const mfem::ParMesh *mesh = nullptr;
+    long sequence = -1;
+  };
+  mutable std::map<std::vector<int>, CrackSidesEntry> crack_sides;
   std::unique_ptr<mfem::L2_FECollection> crack_fec;
   std::unique_ptr<mfem::ParFiniteElementSpace> crack_fespace;
   std::unique_ptr<mfem::ParGridFunction> crack_gf;
+  std::vector<std::vector<int>> crack_gf_keys;
 
 public:
   template <typename... T>
@@ -165,13 +172,15 @@ public:
 
   // Return the interior boundary sides of the local elements for the interior boundaries
   // formed by the given boundary attributes (see fem/brokenspace.hpp), computed on first
-  // use. Collective.
+  // use for each list of attributes. The reference stays valid for the lifetime of the
+  // mesh object, and its sides are updated in place by RefineCrackSides. Collective.
   const CrackSides &GetCrackSides(const std::vector<int> &attr_list) const;
 
   // Update the interior boundary sides after a refinement of the mesh, before any other
   // modification such as rebalancing: on a nonconforming mesh they are inherited from the
   // parent elements and followed through a subsequent rebalance (completed in Update()),
-  // otherwise they are recomputed when needed. Collective.
+  // otherwise they are recomputed when needed. Applies to the sides of every list of
+  // interior boundaries in use. Collective.
   void RefineCrackSides();
 
   auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }

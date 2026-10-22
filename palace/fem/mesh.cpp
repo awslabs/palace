@@ -363,32 +363,38 @@ void Mesh::Update()
   // Complete the transfer of interior boundary sides through a rebalance.
   if (crack_gf)
   {
-    if (crack_mesh == mesh.get() && mesh->GetSequence() == crack_sequence + 1 &&
-        mesh->GetLastOperation() == mfem::Mesh::REBALANCE)
+    crack_fespace->Update();
+    crack_gf->Update();
+    const int ne = mesh->GetNE();
+    const auto *h_gf = crack_gf->HostRead();
+    for (std::size_t k = 0; k < crack_gf_keys.size(); k++)
     {
-      crack_fespace->Update();
-      crack_gf->Update();
-      const int ne = mesh->GetNE();
-      const auto *h_gf = crack_gf->HostRead();
-      crack_sides.Reset(ne);
+      auto &entry = crack_sides[crack_gf_keys[k]];
+      if (entry.mesh != mesh.get() || entry.sequence + 1 != mesh->GetSequence() ||
+          mesh->GetLastOperation() != mfem::Mesh::REBALANCE)
+      {
+        continue;
+      }
+      const auto *h = h_gf + 8 * k * ne;
+      auto &sides = entry.sides;
+      sides.Reset(ne);
       for (int e = 0; e < ne; e++)
       {
-        crack_sides.split[e] = static_cast<std::uint32_t>(std::llround(h_gf[e]));
+        sides.split[e] = static_cast<std::uint32_t>(std::llround(h[e]));
         for (int w = 0; w < 4; w++)
         {
-          crack_sides.version[e][w] =
-              static_cast<std::uint32_t>(std::llround(h_gf[(1 + w) * ne + e]));
+          sides.version[e][w] = static_cast<std::uint32_t>(std::llround(h[(1 + w) * ne + e]));
         }
-        crack_sides.carrier[e] =
-            static_cast<std::uint64_t>(std::llround(h_gf[5 * ne + e])) |
-            (static_cast<std::uint64_t>(std::llround(h_gf[6 * ne + e])) << 32);
-        crack_sides.side[e] = std::llround(h_gf[7 * ne + e]);
+        sides.carrier[e] = static_cast<std::uint64_t>(std::llround(h[5 * ne + e])) |
+                           (static_cast<std::uint64_t>(std::llround(h[6 * ne + e])) << 32);
+        sides.side[e] = std::llround(h[7 * ne + e]);
       }
-      crack_sequence = mesh->GetSequence();
+      entry.sequence = mesh->GetSequence();
     }
     crack_gf.reset();
     crack_fespace.reset();
     crack_fec.reset();
+    crack_gf_keys.clear();
   }
 }
 
@@ -397,10 +403,10 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   std::vector<int> key(attr_list);
   std::sort(key.begin(), key.end());
   key.erase(std::unique(key.begin(), key.end()), key.end());
-  if (key == crack_attr_list && crack_mesh == mesh.get() &&
-      crack_sequence == mesh->GetSequence())
+  auto &entry = crack_sides[key];
+  if (entry.mesh == mesh.get() && entry.sequence == mesh->GetSequence())
   {
-    return crack_sides;
+    return entry.sides;
   }
   const int bdr_attr_max = mesh->bdr_attributes.Size() ? mesh->bdr_attributes.Max() : 0;
   mfem::Array<int> marker(bdr_attr_max);
@@ -414,9 +420,9 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   }
   if (!mesh::HasHangingEntities(*mesh))
   {
-    crack_sides = mesh::ComputeCrackSides(*mesh, marker);
+    entry.sides = mesh::ComputeCrackSides(*mesh, marker);
   }
-  else if (!mesh::ReconstructCrackSides(*mesh, marker, crack_sides))
+  else if (!mesh::ReconstructCrackSides(*mesh, marker, entry.sides))
   {
     // The sides of a nonconforming mesh refined in this simulation are inherited through
     // the refinements, so this is a nonconforming input mesh whose refinement hierarchy
@@ -428,46 +434,64 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
                  "nonconforming coarsest mesh: error estimation will assume continuous "
                  "fluxes across interior boundaries for the whole simulation, which "
                  "overestimates the error next to them!\n");
-    crack_sides.Reset(mesh->GetNE());
+    entry.sides.Reset(mesh->GetNE());
   }
-  crack_attr_list = std::move(key);
-  crack_mesh = mesh.get();
-  crack_sequence = mesh->GetSequence();
-  return crack_sides;
+  entry.mesh = mesh.get();
+  entry.sequence = mesh->GetSequence();
+  return entry.sides;
 }
 
 void Mesh::RefineCrackSides()
 {
   // Only a single refinement since the sides were computed can be followed.
-  if (crack_mesh != mesh.get() || mesh->GetSequence() != crack_sequence + 1 ||
-      mesh->GetLastOperation() != mfem::Mesh::REFINE || !mesh->Nonconforming())
+  const bool refined =
+      mesh->GetLastOperation() == mfem::Mesh::REFINE && mesh->Nonconforming();
+  std::vector<CrackSidesEntry *> entries;
+  crack_gf_keys.clear();
+  for (auto &[key, entry] : crack_sides)
   {
-    crack_mesh = nullptr;
+    if (!refined || entry.mesh != mesh.get() || mesh->GetSequence() != entry.sequence + 1)
+    {
+      entry.mesh = nullptr;
+      continue;
+    }
+    entry.sides =
+        mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), entry.sides);
+    entry.sequence = mesh->GetSequence();
+    entries.push_back(&entry);
+    crack_gf_keys.push_back(key);
+  }
+  if (entries.empty())
+  {
     return;
   }
-  crack_sides =
-      mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), crack_sides);
-  crack_sequence = mesh->GetSequence();
 
   // Prepare the transfer of the sides through a possible rebalance, which keeps the mesh
   // object for a nonconforming mesh: the split entities, the versions and carriers (32-bit
-  // words) and the side label of each element, all exactly represented as doubles.
+  // words) and the side label of each element, all exactly represented as doubles, for
+  // each list of interior boundaries in use.
+  const int nc = 8 * static_cast<int>(entries.size());
   crack_fec = std::make_unique<mfem::L2_FECollection>(0, mesh->Dimension());
   crack_fespace =
-      std::make_unique<mfem::ParFiniteElementSpace>(mesh.get(), crack_fec.get(), 8);
+      std::make_unique<mfem::ParFiniteElementSpace>(mesh.get(), crack_fec.get(), nc);
   crack_gf = std::make_unique<mfem::ParGridFunction>(crack_fespace.get());
   const int ne = mesh->GetNE();
   auto *h_gf = crack_gf->HostWrite();
-  for (int e = 0; e < ne; e++)
+  for (std::size_t k = 0; k < entries.size(); k++)
   {
-    h_gf[e] = static_cast<double>(crack_sides.split[e]);
-    for (int w = 0; w < 4; w++)
+    const auto &sides = entries[k]->sides;
+    auto *h = h_gf + 8 * k * ne;
+    for (int e = 0; e < ne; e++)
     {
-      h_gf[(1 + w) * ne + e] = static_cast<double>(crack_sides.version[e][w]);
+      h[e] = static_cast<double>(sides.split[e]);
+      for (int w = 0; w < 4; w++)
+      {
+        h[(1 + w) * ne + e] = static_cast<double>(sides.version[e][w]);
+      }
+      h[5 * ne + e] = static_cast<double>(sides.carrier[e] & 0xFFFFFFFFu);
+      h[6 * ne + e] = static_cast<double>(sides.carrier[e] >> 32);
+      h[7 * ne + e] = static_cast<double>(sides.side[e]);
     }
-    h_gf[5 * ne + e] = static_cast<double>(crack_sides.carrier[e] & 0xFFFFFFFFu);
-    h_gf[6 * ne + e] = static_cast<double>(crack_sides.carrier[e] >> 32);
-    h_gf[7 * ne + e] = static_cast<double>(crack_sides.side[e]);
   }
 }
 
