@@ -126,21 +126,21 @@ ceed::CeedQFunctionInfo GetProbeQFunction(const mfem::ParFiniteElementSpace &fes
 
 }  // namespace
 
-std::atomic<long long> BoundaryPhysicalTraceCache::trace_groups{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::operator_applies{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::cache_hits{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::evaluated_points{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::evaluated_bytes{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::leaf_points{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::union_points{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::duplicate_points{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::local_union_groups{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::local_union_operators{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::ghost_union_groups{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::requests_before{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::requests_after{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::union_routes{0};
-std::atomic<long long> BoundaryPhysicalTraceCache::routing_operators{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::trace_groups{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::operator_applies{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::cache_hits{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::evaluated_points{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::evaluated_bytes{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::leaf_points{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::union_points{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::duplicate_points{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::local_union_groups{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::local_union_operators{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::ghost_union_groups{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::requests_before{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::requests_after{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::union_routes{0};
+constinit std::atomic<long long> BoundaryPhysicalTraceCache::routing_operators{0};
 
 BoundaryPhysicalTraceCache::BoundaryPhysicalTraceCache(
     const Mesh &mesh_, const mfem::Array<int> &bdr_attr_marker,

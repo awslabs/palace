@@ -221,8 +221,8 @@ MakeCanonicalTracePointKey(mfem::Geometry::Type vol_geom, mfem::Geometry::Type f
 
 }  // namespace
 
-std::atomic<long long> FaceSamplingPlan::builds{0};
-std::atomic<long long> FaceSamplingPlan::reuses{0};
+constinit std::atomic<long long> FaceSamplingPlan::builds{0};
+constinit std::atomic<long long> FaceSamplingPlan::reuses{0};
 
 FaceSamplingPlan::FaceSamplingPlan(const Mesh &mesh_,
                                    const mfem::Array<int> &bdr_attr_marker, int lod_)

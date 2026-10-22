@@ -92,14 +92,15 @@ struct BoundaryDerivedFieldBundle::Impl
   std::deque<Vector> fixed_inputs;
 };
 
-std::atomic<long long> BoundaryDerivedFieldBundle::bundle_count{0};
-std::atomic<long long> BoundaryDerivedFieldBundle::field_count{0};
-std::atomic<long long> BoundaryDerivedFieldBundle::qfunction_applies{0};
-std::atomic<long long> BoundaryDerivedFieldBundle::phase_count{0};
-std::atomic<long long> BoundaryDerivedFieldBundle::avoided_phase_operator_applies{0};
-std::atomic<long long> BoundaryDerivedFieldBundle::avoided_independent_applies{0};
-std::atomic<long long> BoundaryDerivedFieldBundle::packed_bytes{0};
-std::atomic<long long> BoundaryDerivedFieldBundle::cache_hits{0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::bundle_count{0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::field_count{0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::qfunction_applies{0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::phase_count{0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::avoided_phase_operator_applies{
+    0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::avoided_independent_applies{0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::packed_bytes{0};
+constinit std::atomic<long long> BoundaryDerivedFieldBundle::cache_hits{0};
 
 BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
     const Mesh &mesh_, const mfem::Array<int> &bdr_attr_marker,

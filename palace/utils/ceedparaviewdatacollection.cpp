@@ -18,11 +18,11 @@
 namespace palace
 {
 
-std::atomic<long long> CeedParaViewDataCollection::individual_evaluator_calls{0};
-std::atomic<long long> CeedParaViewDataCollection::provider_calls{0};
-std::atomic<long long> CeedParaViewDataCollection::batch_view_fields{0};
-std::atomic<long long> CeedParaViewDataCollection::avoided_slice_copies{0};
-std::atomic<long long> CeedParaViewDataCollection::avoided_slice_copy_bytes{0};
+constinit std::atomic<long long> CeedParaViewDataCollection::individual_evaluator_calls{0};
+constinit std::atomic<long long> CeedParaViewDataCollection::provider_calls{0};
+constinit std::atomic<long long> CeedParaViewDataCollection::batch_view_fields{0};
+constinit std::atomic<long long> CeedParaViewDataCollection::avoided_slice_copies{0};
+constinit std::atomic<long long> CeedParaViewDataCollection::avoided_slice_copy_bytes{0};
 
 namespace
 {
