@@ -668,6 +668,97 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   fs::remove(mesh_path);
 }
 
+// MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
+// three vertices on the crack front (at a corner of the crack) merges with its twin and the
+// crack closes there, unless the front vertices are numbered last.
+TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
+{
+  // Hexahedral mesh with an interior boundary (attribute 7) made of the four quadrilaterals
+  // of z = 0.5 around the center of the domain: each has three vertices on the crack front
+  // and one (the center) in its interior.
+  auto base = mfem::Mesh::MakeCartesian3D(4, 4, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      const double *x = base.GetVertex(v);
+      on_sheet = on_sheet && std::abs(x[2] - 0.5) < 1.0e-12 && x[0] > 0.25 - 1.0e-12 &&
+                 x[0] < 0.75 + 1.0e-12 && x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-crack-quad-corners.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+
+  // Crack the mesh along the interior boundary. Only the center vertex is duplicated.
+  json config = {
+      {"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Impedance", {{{"Attributes", {7}}, {"Ls", 1.0e-12}, {"Crack", true}}}}}},
+      {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  IoData iodata(config, false);
+  auto cracked = mesh::Load(iodata, Mpi::World());
+  REQUIRE(cracked);
+  CHECK(cracked->GetNV() == mesh.GetNV() + 1);
+
+  // Every boundary element of the crack must border a single element, on its own side.
+  // Without the renumbering, the quadrilateral whose center vertex has the largest number of
+  // its four merges with its twin, and its 2 boundary elements lie on the same face.
+  int n_crack = 0, n_merged = 0;
+  for (int be = 0; be < cracked->GetNBE(); be++)
+  {
+    if (cracked->GetBdrAttribute(be) != 7)
+    {
+      continue;
+    }
+    int e1, e2;
+    cracked->GetFaceElements(cracked->GetBdrElementFaceIndex(be), &e1, &e2);
+    n_crack++;
+    n_merged += (e2 >= 0);
+  }
+  CHECK(n_crack == 8);
+  CHECK(n_merged == 0);
+  fs::remove(mesh_path);
+}
+
 TEST_CASE("Default IOData", "[iodata][Serial]")
 {
   config::MaterialData material;
