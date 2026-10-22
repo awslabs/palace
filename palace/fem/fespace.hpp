@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_FESPACE_HPP
 #define PALACE_FEM_FESPACE_HPP
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -42,20 +43,36 @@ private:
   mutable std::unique_ptr<Operator> G;
 
   // Data for a space which is broken (discontinuous) across interior boundaries, see
-  // fem/brokenspace.hpp: element DOF overrides for the element restriction (for local
-  // element e, entries [override_offsets[e], override_offsets[e + 1]) give native local
-  // DOF indices and their L-vector indices in the copy block), sizes, and the broken
-  // prolongation matrix.
+  // fem/brokenspace.hpp: the space it is a view of and the sides it was broken with,
+  // element DOF overrides for the element restriction (for local element e, entries
+  // [override_offsets[e], override_offsets[e + 1]) give native local DOF indices and their
+  // L-vector indices in the copy block), sizes, and the broken prolongation matrix. For the
+  // interpolators between broken spaces: the side label of (the elements reading) each
+  // local true DOF, the original ones then the copies, and the version of each owned true
+  // DOF of the underlying space read by the elements with each side label, as sorted
+  // (global true DOF, side label, version) triplets.
   struct BrokenData
   {
+    const FiniteElementSpace *unbroken = nullptr;
+    const CrackSides *sides = nullptr;
     std::vector<int> override_offsets, override_local, override_ldof;
     int vsize = 0, tsize = 0;
     HYPRE_BigInt global_vsize = 0, global_tsize = 0;
     fem::BrokenProlongationMatrix P;
+    std::vector<std::int64_t> version_label;
+    std::vector<std::array<std::int64_t, 3>> resolved;
+    std::vector<HYPRE_BigInt> col_starts;
   };
   std::unique_ptr<BrokenData> broken;
 
   void InitBroken(const CrackSides &sides);
+
+  // For the given (global true DOF of the underlying space, side label) pairs, return the
+  // global true DOF of this broken space read by the elements with that side label (the
+  // version of the DOF on their side), or -1 when no element with that label reads the
+  // DOF. Collective.
+  std::vector<HYPRE_BigInt>
+  GetVersionedTrueDofs(const std::vector<std::array<std::int64_t, 2>> &keys) const;
 
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
@@ -105,7 +122,9 @@ public:
   // space, which must outlive the view and cannot be updated while the view exists. Only
   // element (domain) restrictions and the prolongation (a HypreParMatrix, with the global
   // offsets of the L-DOFs and true DOFs) are available for a broken space, which cannot be
-  // used with MFEM assembly or for MFEM grid functions. Collective.
+  // used with MFEM assembly or for MFEM grid functions. The discrete interpolators between
+  // two spaces broken with the same sides are assembled matrices (see
+  // BuildBrokenInterpolator). Collective.
   FiniteElementSpace(FiniteElementSpace &fespace, const CrackSides &sides);
 
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
@@ -163,6 +182,56 @@ public:
   }
 
   bool IsBroken() const { return broken != nullptr; }
+
+  // The space a broken space is a view of (this space when it is not broken).
+  const FiniteElementSpace &GetUnbroken() const
+  {
+    return broken ? *broken->unbroken : *this;
+  }
+
+  // Signed element DOFs into the L-vector (see mfem::FiniteElementSpace::GetElementDofs),
+  // which for a broken space read the copies of the side of the element.
+  void GetElementDofs(int e, mfem::Array<int> &dofs,
+                      mfem::DofTransformation &dof_trans) const;
+
+  // Number of versions of the local true DOF t of the underlying space (1 for an unbroken
+  // space), and the local true DOF of its version v (t for v = 0).
+  int GetNumVersions(int t) const { return broken ? broken->P.num_versions[t] : 1; }
+  int GetVersionTrueDof(int t, int v) const
+  {
+    return broken ? broken->P.GetVersionTrueDof(t, v) : t;
+  }
+
+  // The given true DOFs of the underlying space in all their versions.
+  void GetVersionTrueDofs(const mfem::Array<int> &tdof_list, mfem::Array<int> &out) const;
+
+  // Map from the true DOFs of a broken space to those of the underlying space, local to
+  // each process: FIRST takes version 0 (the original DOFs, exact away from the interior
+  // boundaries), ALL sums all versions (its transpose copies a field of the underlying
+  // space to every version), and SIDES sums the traces of the two sides of a two-sided
+  // interior boundary (all versions, and twice the original for true DOFs which are not
+  // split, which both sides read).
+  enum class VersionMap
+  {
+    FIRST,
+    ALL,
+    SIDES
+  };
+  std::unique_ptr<mfem::HypreParMatrix> BuildVersionMap(VersionMap type) const;
+
+  // Build the interpolator between two spaces broken with the same sides from the assembled
+  // interpolator G between the underlying spaces (on their true DOFs): for every entry
+  // G(t, s) and every version v of the range DOF t, G_b((t, v), (s, w)) = G(t, s), where w
+  // is the version of s read by the elements reading version v of t (the elements around an
+  // entity on one side of the interior boundaries are connected through faces containing
+  // the entity, so they all read the same version of each DOF of its closure, which are the
+  // only DOFs an interpolated DOF depends on). This is exact also for the copies read only
+  // through the constraints of hanging entities, whose values are those of a trace in the
+  // master's trace space. Collective.
+  static std::unique_ptr<mfem::HypreParMatrix>
+  BuildBrokenInterpolator(const mfem::HypreParMatrix &G,
+                          const FiniteElementSpace &trial_fespace,
+                          const FiniteElementSpace &test_fespace);
 
   // Return the discrete gradient, curl, or divergence matrix interpolating from the
   // auxiliary to the primal space, constructing it on the fly as necessary.

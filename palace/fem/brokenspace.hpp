@@ -149,6 +149,13 @@ struct BrokenProlongationMatrix
   mfem::Array<HYPRE_BigInt> row_offsets, col_offsets;
   std::vector<HYPRE_BigInt> col_map;
   std::unique_ptr<mfem::HypreParMatrix> P;
+
+  // Number of versions of each local true DOF of the underlying space, and the local
+  // column of its first copy (or -1 without copies).
+  std::vector<int> num_versions, copy_col;
+
+  // Local column of version v of the local true DOF t (t itself for v = 0).
+  int GetVersionTrueDof(int t, int v) const { return (v == 0) ? t : copy_col[t] + v - 1; }
 };
 
 // Build the prolongation of a broken space from the prolongation P of the underlying space
