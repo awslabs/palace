@@ -35,6 +35,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     discontinuous fields across interior boundaries without cracking the mesh. Mesh cracking
     is now a per-boundary physical modeling choice (see Interface Changes).
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Added `Boundaries.Superconductor[].TwoSided`, which models a London film as two coupled
+    coincident faces (the exact two-port response of a slab of thickness `d`), capturing
+    screening on both faces when `d` is comparable to `lambda`. With the same field on both
+    faces, the film reduces to `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. The
+    magnetostatic solution space is broken across the film, so the mesh is not cracked.
+    Requires a 3D mesh and an interior film. SchemaVer 3-0-1.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
 
 #### Interface Changes
 
