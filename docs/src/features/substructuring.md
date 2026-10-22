@@ -225,11 +225,11 @@ voltage would then depend on both sides.
 !!! note
 
     Driven substructuring needs MUMPS, which factors the environment and the region at any size.
-    Floquet ports and periodic boundaries (which make the system non-symmetric), inactive wave
-    ports, restarts, `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in
-    online sweeps are not supported yet, nor, from a model, interface dielectric and far-field
-    postprocessing. The model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or
-    sample (16 bytes per entry of its lower triangle).
+    Floquet ports and periodic boundaries (which make the system non-symmetric), restarts,
+    `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
+    supported yet, nor, from a model, interface dielectric and far-field postprocessing. The model
+    holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry
+    of its lower triangle).
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

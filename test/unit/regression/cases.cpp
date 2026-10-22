@@ -1318,6 +1318,24 @@ TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][GPU][Regressi
                                   "online", opts);
 }
 
+// An inactive wave port (without its modal terms, observed through its mode) in the
+// environment, with the active one in the region: the online sweep of a redesigned region
+// (permittivity 2.08 -> 2.3) against a saved model. The references are a regular
+// simulation, in the online run's columns.
+TEST_CASE("substructuring_driven_wave_inactive_online",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_wave_inactive_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_wave",
+                                  "driven_wave_inactive_online.json", "online_inactive",
+                                  opts);
+}
+
 // Online runs on the mesh of the region written by the offline run (with the environment's
 // ports), against the references of the online runs on the full mesh. Surface fluxes are
 // skipped there, since the mesh lacks the environment's part of a surface.

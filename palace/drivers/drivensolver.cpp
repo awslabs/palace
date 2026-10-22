@@ -128,7 +128,8 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
 // overlap is l^T E): -conj(s), with s the port's n×H mode vector.
 ComplexVector WaveOverlapFunctional(SpaceOperator &space_op, int idx, double omega)
 {
-  auto s = space_op.GetWavePortModeVector(idx, omega);
+  auto s = space_op.GetWavePortOp().GetModeVector(idx, omega, space_op.GetNDSpace(),
+                                                  space_op.GetNDDbcTDofLists().back());
   ComplexVector l(s->Size());
   l.Real() = s->Real();
   l.Real() *= -1.0;

@@ -183,12 +183,10 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                  gamma_disp.data(), HYPRE_MPI_BIG_INT, comm);
 
   // Wave ports: each inside the region or the environment, away from Γ, so that its modal
-  // terms border one side's system.
+  // terms (if active) border one side's system and its overlap is a functional of that
+  // side's field.
   for (const auto &[idx, data] : space_op.GetWavePortOp())
   {
-    MFEM_VERIFY(data.active, "Driven substructuring does not support inactive wave ports "
-                             "(wave port "
-                                 << idx << ")!");
     const auto &list = data.GetAttrList();
     auto mark = BoundaryTrueDofs(std::vector<int>(list.begin(), list.end()));
     double n[3] = {0.0, 0.0, 0.0};  // environment interior, interface, region interior
