@@ -159,9 +159,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     degenerate pair: starting each mode solve from the previous frequency's mode could miss
     one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
     [PR 877](https://github.com/awslabs/palace/pull/877).
-  - Fixed 2D magnetic field energies and error-indicator normalization.
+  - Fixed incorrect Jacobian weighting in 2D magnetic field energy (`E_mag`), which made it
+    shrink under mesh refinement and misnormalized error indicators.
     [PR 1086](https://github.com/awslabs/palace/pull/1086).
-  - Fixed eigenmode lumped-port coupling rates and quality factors for nonuniform fields.
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
     [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 #### Performance Improvements
