@@ -151,6 +151,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Release linear solve state after the final uniform driven solve, before final
+    postprocessing and error estimation, while preserving cumulative solver metadata.
+
   - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
     PROM trained on the offline modes. Also reusing reduced operators and wave-port state
     across excitations, evaluating the wave-port modal correction and excitation of the

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <complex>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -20,13 +21,32 @@
 
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/communication.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace
 {
+
+// The final uniform solve may release its KSP before postprocessing. Its counters
+// must still include every excitation and frequency, including the final solve.
+void CheckUniformSolverTotals(std::string_view case_dir, std::string_view label,
+                              int expected_solves)
+{
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    const auto metadata = palace::test::GetRegressionRunDir() / case_dir / label /
+                          "postpro" / label / "palace.json";
+    std::ifstream stream(metadata);
+    REQUIRE(stream.is_open());
+    const auto result = nlohmann::json::parse(stream);
+    CHECK(result.at("LinearSolver").at("TotalSolves").get<int>() == expected_solves);
+    CHECK(result.at("LinearSolver").at("TotalIts").get<int>() > 0);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared custom-check factories. Each returns a callable matching
@@ -1327,6 +1347,7 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
                                   opts);
+  CheckUniformSolverTotals("coaxial", "lumped_wave", 6);
 }
 
 // Mixed lumped + wave port circuit synthesis. Validates that the exported coupling maps
@@ -1394,6 +1415,7 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_uniform.json", "lumped_uniform", opts);
+  CheckUniformSolverTotals("cpw", "lumped_uniform", 14);  // 7 frequencies, 2 excitations
 }
 
 TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
