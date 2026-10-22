@@ -43,14 +43,16 @@ void ConfigureMemory(const std::string &device_str, int device_id)
   // MFEM built with Umpire defaults to the Umpire host allocator (HOST_UMPIRE), which is
   // slow (mfem/mfem#5122), and to its own device pool, while hypre creates a second device
   // pool. Select plain host memory and, on GPUs, one device pool shared with hypre (see
-  // hypre::Initialize). The debug device needs MFEM's debug memory types, so leave it
-  // alone.
+  // hypre::Initialize). MFEM always uses its debug memory types for the debug device, so
+  // there is nothing to configure for it.
   if (device_str.find("debug") != std::string::npos)
   {
     return;
   }
+  // MFEM also accepts "gpu" (and "ceed-gpu", "raja-gpu", ...) as aliases for CUDA or HIP.
   if (device_str.find("cuda") != std::string::npos ||
-      device_str.find("hip") != std::string::npos)
+      device_str.find("hip") != std::string::npos ||
+      device_str.find("gpu") != std::string::npos)
   {
     // Build the pool explicitly on this rank's GPU ("DEVICE::<id>"; Umpire aliases plain
     // "DEVICE" to "DEVICE::0"). MFEM and hypre both reuse an existing allocator with the

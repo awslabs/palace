@@ -52,7 +52,7 @@ This will show something along the lines of
 
 ```
 Device configuration: cuda,cpu
-Memory configuration: host-umpire,cuda-umpire
+Memory configuration: host-std,cuda-umpire
 Use GPU-aware MPI:    no
 libCEED backend: /gpu/cuda/magma
 Filters: "Vector Sum - Complex" [GPU] [Serial]
