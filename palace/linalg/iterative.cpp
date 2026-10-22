@@ -31,27 +31,25 @@ inline void CheckDot(std::complex<T> dot, const char *msg)
               msg << dot << "!");
 }
 
+// std::pow is not constexpr, and repeated multiplication by the radix is exact.
 template <typename T>
-inline constexpr T SafeMin()
+consteval T RadixPow(int e)
 {
-  // Originally part of <T>LAPACK.
-  // <T>LAPACK is free software: you can redistribute it and/or modify it under
-  // the terms of the BSD 3-Clause license.
-  //
-  // Copyright (c) 2021-2023, University of Colorado Denver. All rights reserved.
-  // Copyright (c) 2017-2021, University of Tennessee. All rights reserved.
-  //
-  // Original author: Weslley S Pereira, University of Colorado Denver, USA
-  constexpr int fradix = std::numeric_limits<T>::radix;
-  constexpr int expm = std::numeric_limits<T>::min_exponent;
-  constexpr int expM = std::numeric_limits<T>::max_exponent;
-  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  // all compilers.
-  return std::max(std::pow(fradix, T(expm - 1)), std::pow(fradix, T(1 - expM)));
+  constexpr T radix = std::numeric_limits<T>::radix;
+  T r = 1;
+  for (; e > 0; e--)
+  {
+    r *= radix;
+  }
+  for (; e < 0; e++)
+  {
+    r /= radix;
+  }
+  return r;
 }
 
 template <typename T>
-inline constexpr T SafeMax()
+consteval T SafeMin()
 {
   // Originally part of <T>LAPACK.
   // <T>LAPACK is free software: you can redistribute it and/or modify it under
@@ -61,12 +59,25 @@ inline constexpr T SafeMax()
   // Copyright (c) 2017-2021, University of Tennessee. All rights reserved.
   //
   // Original author: Weslley S Pereira, University of Colorado Denver, USA
-  constexpr int fradix = std::numeric_limits<T>::radix;
   constexpr int expm = std::numeric_limits<T>::min_exponent;
   constexpr int expM = std::numeric_limits<T>::max_exponent;
-  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  // all compilers.
-  return std::min(std::pow(fradix, T(1 - expm)), std::pow(fradix, T(expM - 1)));
+  return std::max(RadixPow<T>(expm - 1), RadixPow<T>(1 - expM));
+}
+
+template <typename T>
+consteval T SafeMax()
+{
+  // Originally part of <T>LAPACK.
+  // <T>LAPACK is free software: you can redistribute it and/or modify it under
+  // the terms of the BSD 3-Clause license.
+  //
+  // Copyright (c) 2021-2023, University of Colorado Denver. All rights reserved.
+  // Copyright (c) 2017-2021, University of Tennessee. All rights reserved.
+  //
+  // Original author: Weslley S Pereira, University of Colorado Denver, USA
+  constexpr int expm = std::numeric_limits<T>::min_exponent;
+  constexpr int expM = std::numeric_limits<T>::max_exponent;
+  return std::min(RadixPow<T>(1 - expm), RadixPow<T>(expM - 1));
 }
 
 template <typename T>
