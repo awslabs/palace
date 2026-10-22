@@ -159,21 +159,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     degenerate pair: starting each mode solve from the previous frequency's mode could miss
     one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
     [PR 877](https://github.com/awslabs/palace/pull/877).
-  - Fixed the magnetic field energy of 2D simulations (`E_mag` in `domain-E.csv`, for the
-    whole domain and for each energy region). The energy weighted the field by the square of
-    the element Jacobian, so it was much too small and decreased under mesh refinement. The 2D
-    error indicators are normalized by the total field energy, so they change too.
-    [Issue 1078](https://github.com/awslabs/palace/issues/1078).
-  - Fixed the coupling rates and quality factors of resistive lumped ports in eigenmode
-    simulations (`port-Q.csv`). They used the port voltage, so they missed the loss of the
-    field components that do not change the voltage, and reported almost no loss for a
-    mode with a cancelling port voltage. They now use the power dissipated in the resistive
-    port boundary. The magnitude of each coupling rate is the decay rate due to its port, and
-    its sign is still the sign of the real part of the port current. For the active ports with
-    positive resistance, the sum of the coupling rate magnitudes is the eigenvalue decay rate
-    when the ports are the only loss. Results change when the port field is not uniform (or
-    coaxial) across the port.
-    [Issue 1077](https://github.com/awslabs/palace/issues/1077).
+  - Fixed 2D magnetic field energies and error-indicator normalization.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
+  - Fixed eigenmode lumped-port coupling rates and quality factors for nonuniform fields.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 #### Performance Improvements
 
