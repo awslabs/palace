@@ -166,6 +166,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - CSV output tables are now appended row by row instead of rewritten at every measurement,
     so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
     [PR 942](https://github.com/awslabs/palace/pull/942).
+  - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
+    reduction per operator application instead of four per rank-one term, and only touch
+    the port degrees of freedom instead of full-length vectors.
 
 #### Documentation
 

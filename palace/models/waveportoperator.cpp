@@ -18,6 +18,7 @@
 #include "linalg/gmg.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/iterative.hpp"
+#include "linalg/lowrank.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
@@ -55,23 +56,17 @@ namespace
 class WavePortModalCorrection : public ComplexOperator
 {
 private:
-  struct Term
-  {
-    std::unique_ptr<ComplexVector> s;
-    std::complex<double> g;
-  };
-  std::vector<Term> terms;
-  MPI_Comm comm;
+  LowRankComplexUpdate<false> update;
 
 public:
-  WavePortModalCorrection(MPI_Comm comm, int n) : ComplexOperator(n), comm(comm) {}
-
-  bool Empty() const { return terms.empty(); }
-
-  void AddTerm(std::unique_ptr<ComplexVector> s, std::complex<double> g)
+  // The term vectors are copied, so they need not outlive the operator.
+  WavePortModalCorrection(MPI_Comm comm, int n, const std::vector<const ComplexVector *> &s,
+                          const std::vector<std::complex<double>> &g)
+    : ComplexOperator(n), update(comm, s, g)
   {
-    terms.push_back({std::move(s), g});
   }
+
+  bool Empty() const { return update.NumTerms() == 0; }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override
   {
@@ -82,21 +77,8 @@ public:
   void AddMult(const ComplexVector &x, ComplexVector &y,
                const std::complex<double> a) const override
   {
-    for (const auto &t : terms)
-    {
-      // Unconjugated (complex-symmetric) contraction dot = sᵀx = Σ s_j x_j
-      // = (s_r·x_r − s_i·x_i) + i(s_r·x_i + s_i·x_r).
-      double dot_r = linalg::Dot(comm, t.s->Real(), x.Real()) -
-                     linalg::Dot(comm, t.s->Imag(), x.Imag());
-      double dot_i = linalg::Dot(comm, t.s->Real(), x.Imag()) +
-                     linalg::Dot(comm, t.s->Imag(), x.Real());
-      std::complex<double> c = a * t.g * std::complex<double>(dot_r, dot_i);
-      // y += c·s = (c_r + i c_i)(s_r + i s_i).
-      y.Real().Add(c.real(), t.s->Real());
-      y.Real().Add(-c.imag(), t.s->Imag());
-      y.Imag().Add(c.imag(), t.s->Real());
-      y.Imag().Add(c.real(), t.s->Imag());
-    }
+    // Unconjugated (complex-symmetric) contraction y += a Σ_k g_k s_k (s_kᵀx).
+    update.AddMult(x, y, a);
   }
 };
 
@@ -2178,13 +2160,15 @@ BuildModalCorrectionOperator(std::vector<WavePortOperator::ModalCorrectionTerm> 
   {
     return nullptr;
   }
-  auto op = std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
-                                                      nd_fespace.GetTrueVSize());
-  for (auto &term : terms)
+  std::vector<const ComplexVector *> s;
+  std::vector<std::complex<double>> g;
+  for (const auto &term : terms)
   {
-    op->AddTerm(std::move(term.s), term.g);
+    s.push_back(term.s.get());
+    g.push_back(term.g);
   }
-  return op;
+  return std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
+                                                   nd_fespace.GetTrueVSize(), s, g);
 }
 
 }  // namespace
