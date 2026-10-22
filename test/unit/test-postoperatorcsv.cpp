@@ -446,6 +446,55 @@ public:
       }
     }
   }
+
+  void restart2_substructuring_by_row()
+  {
+    // Driven substructuring measures both excitations at a frequency before the next one:
+    // interrupted after 2 x 2 + 1 results, at the third frequency of the second excitation.
+    iodata.problem.output =
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_r2e1";
+    REQUIRE(fs::exists(fs::path(iodata.problem.output) / "port-V.csv"));
+    iodata.solver.substructuring.emplace();
+    iodata.solver.driven.restart = 2 * 2 + 1 + 1;  // Restart is 1 Indexed.
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK(post_op_csv.row_i == 2);
+        CHECK(post_op_csv.ex_idx_i == 1);
+        CHECK(post_op_csv.m_ex_idx == 2);
+        CHECK(post_op_csv.reload_table);
+
+        REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+        REQUIRE(post_op_csv.port_V.has_value());
+        REQUIRE(post_op_csv.port_V->table.n_cols() == 15);
+        CHECK(post_op_csv.port_V->table[0].n_rows() == 3);
+        for (std::size_t i = 1; i < post_op_csv.port_V->table.n_cols(); i++)
+        {
+          const auto &col = post_op_csv.port_V->table[i];
+          CHECK(col.column_group_idx == ((i < 8) ? 1 : 2));
+          CHECK(col.n_rows() == ((i < 8) ? 3 : 2));
+        }
+      }
+    }
+    // Counted excitation by excitation, or to another position, the results do not match
+    // the tables.
+    auto rejected = [&]()
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_THROWS_WITH(post_op_csv.InitializePortVI(space_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
+    };
+    iodata.solver.substructuring.reset();
+    rejected();
+    iodata.solver.substructuring.emplace();
+    iodata.solver.driven.restart = 2 * 2 + 1;
+    rejected();
+  }
 };
 
 TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][Serial]")
@@ -458,6 +507,12 @@ TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][S
   CHECK(_impl::table_expected_filling(0, 1, 5, 3) == vs{5, 5, 0, 0});
   CHECK(_impl::table_expected_filling(3, 1, 5, 3) == vs{5, 5, 3, 0});
   CHECK(_impl::table_expected_filling(2, 2, 5, 3) == vs{5, 5, 5, 2});
+
+  // Driven substructuring measures every excitation at a row before the next row.
+  CHECK(_impl::table_expected_filling_by_row(0, 0, 1) == vs{0, 0});
+  CHECK(_impl::table_expected_filling_by_row(3, 0, 3) == vs{3, 3, 3, 3});
+  CHECK(_impl::table_expected_filling_by_row(3, 1, 3) == vs{4, 4, 3, 3});
+  CHECK(_impl::table_expected_filling_by_row(2, 2, 3) == vs{3, 3, 3, 2});
 }
 
 // Could also use METHOD_AS_TEST_CASE with fixture. This reuses fixture class, *without*
@@ -513,6 +568,11 @@ TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
   SECTION("Driven solver, two excitations: load with restart in ex 2")
   {
     fixture.restart2_restart_in_middle_ex2();
+  }
+
+  SECTION("Driven substructuring, two excitations: load with restart by frequency")
+  {
+    fixture.restart2_substructuring_by_row();
   }
 }
 

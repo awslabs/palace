@@ -327,6 +327,25 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   {
     env_ports = EnvironmentPorts(iodata, *ds, port_dofs);
   }
+  // The tolerance of an excitation's source fingerprint: the modes of the environment's
+  // wave ports, and so their sources, are reproducible to their eigensolver tolerance over
+  // the spectral gap only.
+  auto source_tol = [&](int ex)
+  {
+    double tol = 1.0e-10;
+    for (int p : port_excitations.excitations.at(ex).wave_port)
+    {
+      if (std::ranges::find(env_ports, -p) != env_ports.end())
+      {
+        tol = std::max(tol, 100.0 * iodata.boundaries.waveport.at(p).eig_tol);
+      }
+    }
+    return tol;
+  };
+  // A restart continues the sweep in its order, all excitations at a frequency before the
+  // next one: "Restart" - 1 results are written.
+  const std::size_t restart = iodata.solver.driven.restart - 1, first_freq = restart / n,
+                    first_ex = restart % n;
 
   // From a model, the field is known in the region (and on Γ) only: energies of region
   // domains, without totals or participation ratios, surface fluxes and probes the region
@@ -454,7 +473,32 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
       port_l.push_back((p > 0) ? VoltageFunctional(space_op, p, port_dofs.at(p))
                                : ComplexVector());
     }
-    if (save && root)
+    if (save && first_freq > 0)
+    {
+      // A restarted sweep continues the saved model, from its records before the restart.
+      DrivenSubstructureModel saved;
+      saved.ReadHeader(model_path, comm);
+      double tol = 1.0e-10;
+      for (int ex : model.excitations)
+      {
+        tol = std::max(tol, source_tol(ex));
+      }
+      int nrec = root ? saved.NumRecords(model_path) : 0;
+      Mpi::Broadcast(1, &nrec, 0, comm);
+      MFEM_VERIFY(model.SameHeader(saved, tol) && nrec >= static_cast<int>(first_freq),
+                  "The substructuring model \""
+                      << model_path
+                      << "\" does not continue this sweep: a restarted offline sweep needs "
+                         "the model it saved before the restart (in the same "
+                         "configuration, on as many processes)!");
+      if (root)
+      {
+        model.TruncateRecords(model_path, static_cast<int>(first_freq));
+      }
+      Mpi::Print(" Continuing the substructuring model from its first {:d} records\n",
+                 first_freq);
+    }
+    else if (save && root)
     {
       model.WriteHeader(model_path);
     }
@@ -550,21 +594,12 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
         record.push_back(j);
       }
     }
-    // The model columns of the excitations with environment sources (-1: none). The modes
-    // of the environment's wave ports, and so their sources, are reproducible to their
-    // eigensolver tolerance over the spectral gap only.
+    // The model columns of the excitations with environment sources (-1: none).
     for (int k = 0; k < n; k++)
     {
       space_op.GetExcitationVector(ex_idx[k], model.omega[0], rhs[k]);
       const auto fp = ds->SourceFingerprint(rhs[k]);
-      double tol = 1.0e-10;
-      for (int p : port_excitations.excitations.at(ex_idx[k]).wave_port)
-      {
-        if (std::ranges::find(env_ports, -p) != env_ports.end())
-        {
-          tol = std::max(tol, 100.0 * iodata.boundaries.waveport.at(p).eig_tol);
-        }
-      }
+      const double tol = source_tol(ex_idx[k]);
       int col = -1;
       for (std::size_t e = 0; e < model.excitations.size(); e++)
       {
@@ -1225,7 +1260,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   ComplexVector B(Curl.Height());
   B.UseDevice(true);
   auto t0 = Timer::Now();
-  for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
+  for (std::size_t omega_i = first_freq; omega_i < omega_sample.size(); omega_i++)
   {
     const double omega = omega_sample[omega_i];
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
@@ -1261,7 +1296,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
         V = port_values(rec, ds->InterfaceSolution());
       }
     }
-    for (int k = 0; k < n; k++)
+    for (int k = (omega_i == first_freq) ? static_cast<int>(first_ex) : 0; k < n; k++)
     {
       BlockTimer bt(Timer::POSTPRO);
       // B = -1/(iω) ∇ x E on the true dofs.

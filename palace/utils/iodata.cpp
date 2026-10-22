@@ -776,8 +776,6 @@ void IoData::CheckConfiguration()
                boundaries.postpro.farfield.attributes.empty()),
           "Online or adaptive driven substructuring does not compute interface dielectric "
           "or far-field postprocessing yet!");
-      MFEM_VERIFY(solver.driven.restart == 1,
-                  "Driven substructuring does not restart a sweep yet!");
 #if !defined(MFEM_USE_MUMPS)
       MFEM_ABORT("Driven substructuring requires MUMPS!");
 #endif

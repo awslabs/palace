@@ -2652,6 +2652,69 @@ TEST_CASE("Saved driven excitations match across partitions", "[substructure][Se
   CHECK_FALSE(Model::SameEnvironment(env, env2));
 }
 
+TEST_CASE("A saved driven model continues from its complete records",
+          "[substructure][Serial]")
+{
+  // A model of two interface unknowns, an excitation and a port at three frequencies,
+  // interrupted while writing its third record, then cut to its first record by a restart
+  // at the second frequency.
+  using Model = DrivenSubstructureModel;
+  Model m;
+  m.nG = 2;
+  m.sig_w = 1;
+  m.signatures = {0.25, 0.75};
+  m.env_fp = {100.0, 20.0, 3.0, 0.0, -2.0, 1.0e-3};
+  m.excitations = {1};
+  m.exc_fp = {1.0, 0.0, 0.5, 0.0, 0.25, 0.0, -0.125};
+  m.ports = {1};
+  m.omega = {1.0, 2.0, 3.0};
+  m.capacity = 3;
+  m.length_scale = 1.0e-6;
+  auto record = [](double s)
+  {
+    Model::Record r;
+    r.S = {s, 2.0 * s, 2.0 * s, 3.0 * s};
+    r.g = {s, -s};
+    r.h = {std::complex<double>(0.0, s), s};
+    r.c = {s};
+    return r;
+  };
+  const auto path =
+      (std::filesystem::temp_directory_path() / "palace-driven-model-restart.bin").string();
+  m.WriteHeader(path);
+  m.AppendRecord(path, record(1.0));
+  m.AppendRecord(path, record(2.0));
+  {
+    std::ofstream f(path, std::ios::binary | std::ios::app);
+    const double part[3] = {1.0, 2.0, 3.0};
+    f.write(reinterpret_cast<const char *>(part), sizeof(part));
+  }
+  CHECK(m.NumRecords(path) == 2);
+  Model saved;
+  saved.ReadHeader(path, Mpi::World());
+  CHECK(m.SameHeader(saved, 1.0e-10));
+  m.TruncateRecords(path, 1);
+  CHECK(m.NumRecords(path) == 1);
+  CHECK(m.ReadFlatRecord(path, 0) == m.Flatten(record(1.0)));
+  m.AppendRecord(path, record(4.0));
+  CHECK(m.NumRecords(path) == 2);
+  CHECK(m.ReadFlatRecord(path, 1) == m.Flatten(record(4.0)));
+
+  // The model of another sweep does not continue: other frequencies, interface or sources
+  // (beyond their tolerance).
+  auto other = m;
+  other.omega[2] = 3.5;
+  CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  other = m;
+  other.signatures[1] = 0.5;
+  CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  other = m;
+  other.exc_fp[6] *= 1.0 + 1.0e-6;
+  CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  CHECK(other.SameHeader(saved, 1.0e-4));
+  std::filesystem::remove(path);
+}
+
 #if defined(MFEM_USE_MUMPS)
 TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
           "[substructure][Serial][Parallel]")

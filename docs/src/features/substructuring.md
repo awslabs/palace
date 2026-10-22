@@ -205,6 +205,11 @@ holds the environment elements at the environment's ports, whose excitations and
 them. On large designs, reading and partitioning the full mesh take most of an online sweep's
 time.
 
+A restarted sweep ([`"Restart": x`](../config/reference.md#config-solver-driven-restart)) continues
+in the order of its solves, all excitations at a frequency before the next one, after its first
+``x - 1`` results. An offline sweep continues the model it was saving, so it runs in the same
+configuration on as many processes.
+
 An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain) (nonzero
 `"AdaptiveTol"`) instead condenses the environment at frequencies chosen greedily, as the
 adaptive fast frequency sweep chooses its samples, for a rational model of the condensed data: a
@@ -225,7 +230,7 @@ voltage would then depend on both sides.
 !!! note
 
     Driven substructuring needs MUMPS, which factors the environment and the region at any size.
-    Floquet ports and periodic boundaries (which make the system non-symmetric), restarts,
+    Floquet ports and periodic boundaries (which make the system non-symmetric),
     `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
     supported yet, nor, from a model, interface dielectric and far-field postprocessing. The model
     holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry

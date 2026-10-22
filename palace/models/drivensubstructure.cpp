@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <utility>
@@ -1603,6 +1604,33 @@ int DrivenSubstructureModel::NumRecords(const std::string &path) const
   const auto size = static_cast<std::size_t>(f.tellg());
   return (size < HeaderBytes()) ? 0
                                 : static_cast<int>((size - HeaderBytes()) / RecordBytes());
+}
+
+void DrivenSubstructureModel::TruncateRecords(const std::string &path, int n) const
+{
+  std::filesystem::resize_file(path, HeaderBytes() + RecordBytes() * n);
+}
+
+bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
+                                         double source_tol) const
+{
+  if (saved.version != version || saved.nG != nG || saved.sig_w != sig_w ||
+      saved.signatures != signatures || saved.excitations != excitations ||
+      saved.exc_fp.size() != exc_fp.size() || saved.ports != ports ||
+      saved.omega != omega || saved.weights != weights || saved.capacity != capacity ||
+      saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp))
+  {
+    return false;
+  }
+  for (std::size_t e = 0; e < excitations.size(); e++)
+  {
+    if (!SameSource(exc_fp.data() + kSourceFp * e, saved.exc_fp.data() + kSourceFp * e,
+                    source_tol))
+    {
+      return false;
+    }
+  }
+  return true;
 }
 
 std::vector<std::complex<double>>

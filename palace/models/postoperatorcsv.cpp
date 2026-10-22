@@ -401,6 +401,19 @@ std::vector<std::size_t> _impl::table_expected_filling(std::size_t m_idx_row,
   return filling_pattern;
 }
 
+std::vector<std::size_t> _impl::table_expected_filling_by_row(std::size_t m_idx_row,
+                                                              std::size_t ex_idx_i,
+                                                              std::size_t nr_col_blocks)
+{
+  std::vector<std::size_t> filling_pattern(nr_col_blocks + 1, m_idx_row);
+  filling_pattern.at(0) = m_idx_row + ((ex_idx_i > 0) ? 1 : 0);  // index column
+  for (std::size_t i = 1; i < ex_idx_i + 1; i++)
+  {
+    filling_pattern.at(i) = m_idx_row + 1;
+  }
+  return filling_pattern;
+}
+
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_base,
                                                         Table &&t_ref)
@@ -473,8 +486,10 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
   t_csv_base.table.RebuildNameIndex();
 
   // Match expected column group pattern.
-  auto expected_ex_idx_nrows = _impl::table_expected_filling(
-      row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
+  auto expected_ex_idx_nrows =
+      row_major ? _impl::table_expected_filling_by_row(row_i, ex_idx_i, ex_idx_v_all.size())
+                : _impl::table_expected_filling(
+                      row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
 
   // Copy over other options from reference table, since we don't recover them on load.
   t_csv_base.table.col_options = t_ref.col_options;
@@ -1902,8 +1917,12 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
     defer_table_writes = (solver.driven.adaptive_tol > 0.0);
     last_deferred_flush = std::chrono::steady_clock::now();
 
-    row_i = std::size_t(solver.driven.restart - 1) % nr_expected_measurement_rows;
-    ex_idx_i = std::size_t(solver.driven.restart - 1) / nr_expected_measurement_rows;
+    // A restart follows the order of the measurements, the excitations at each frequency
+    // for substructuring (whose frequency loop is the outer one).
+    row_major = solver.substructuring.has_value();
+    const std::size_t done = solver.driven.restart - 1, nr_ex = ex_idx_v_all.size();
+    row_i = row_major ? done / nr_ex : done % nr_expected_measurement_rows;
+    ex_idx_i = row_major ? done % nr_ex : done / nr_expected_measurement_rows;
     m_ex_idx = ex_idx_v_all.at(ex_idx_i);
   }
 

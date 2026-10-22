@@ -111,6 +111,12 @@ struct DrivenSubstructureModel
   std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
   // Number of complete records in the file.
   int NumRecords(const std::string &path) const;
+  // The file cut to the header and its first n records (for a restarted sweep).
+  void TruncateRecords(const std::string &path, int n) const;
+
+  // Whether a saved header is that of this model: the same interface (and so partition),
+  // environment, sources (to source_tol, see SameSource), ports and frequencies.
+  bool SameHeader(const DrivenSubstructureModel &saved, double source_tol) const;
 
   // Whether fingerprints agree, to a relative tolerance: the environment's (two counts,
   // then complex quadratic forms) entry by entry, a source's (a nonzero flag, then complex
