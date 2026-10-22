@@ -510,6 +510,25 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   return entry.sides;
 }
 
+void Mesh::InheritCrackSides(const std::vector<int> &attr_list,
+                             const Mesh &coarse_mesh) const
+{
+  // The parents of the coarse-to-fine transformations are checked against the number of
+  // coarse elements by mesh::InheritCrackSides.
+  MFEM_VERIFY(mesh->GetLastOperation() == mfem::Mesh::REFINE,
+              "Interior boundary sides can only be inherited from the mesh this mesh was "
+              "refined from!");
+  const auto &coarse_sides = coarse_mesh.GetCrackSides(attr_list);
+  std::vector<int> key(attr_list);
+  std::sort(key.begin(), key.end());
+  key.erase(std::unique(key.begin(), key.end()), key.end());
+  auto &entry = crack_sides[key];
+  entry.sides =
+      mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), coarse_sides);
+  entry.mesh = mesh.get();
+  entry.sequence = mesh->GetSequence();
+}
+
 void Mesh::RebuildCeedAttributes()
 {
   // Rebuild CEED attribute maps from the mesh's own elements (not the parent). This is

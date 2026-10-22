@@ -203,6 +203,15 @@ public:
   // mesh object, and its sides are updated in place. Collective.
   const CrackSides &GetCrackSides(const std::vector<int> &attr_list) const;
 
+  // Set the interior boundary sides for the given attributes from those of the coarse mesh
+  // this mesh was refined from (its last operation, with the coarse-to-fine transformations
+  // of mfem::Mesh::GetRefinementTransforms), instead of computing them: the side labels of
+  // the two meshes then agree (those of the coarse elements), which the interpolators
+  // between spaces broken on the two meshes (the h-prolongation of a multigrid hierarchy)
+  // need to find the version of a DOF read by the elements with a given label on both
+  // meshes. Collective.
+  void InheritCrackSides(const std::vector<int> &attr_list, const Mesh &coarse_mesh) const;
+
   auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }
   auto MaxCeedBdrAttribute() const
   {

@@ -1265,6 +1265,44 @@ TEST_CASE("Broken space interpolators", "[brokenspace][Serial][Parallel]")
     pcx -= cpx;
     CHECK(MaxAbs(pcx) <= 1.0e-12 * MaxAbs(cpx));
   }
+
+  // Two mesh levels: the fine mesh is a uniform refinement of the mesh, with the sides
+  // inherited from it, and the h-prolongations of broken hierarchies are assembled from
+  // MFEM's transfer operators. The curl of the h-prolongation of a broken field is the
+  // h-prolongation of its curl.
+  if (!nonconforming)
+  {
+    Mesh fine_mesh(std::make_unique<mfem::ParMesh>(mesh.Get()));
+    fine_mesh.Get().UniformRefinement();
+    fine_mesh.InheritCrackSides(attr_list, mesh);
+    const auto &fine_sides = fine_mesh.GetCrackSides(attr_list);
+    FiniteElementSpace nd_fine(fine_mesh, &nd_fec), rt_fine(fine_mesh, &rt_fec);
+    FiniteElementSpaceHierarchy nd_h, rt_h, nd_h_u;
+    nd_h.AddLevel(std::make_unique<FiniteElementSpace>(nd_fespace, sides));
+    nd_h.AddLevel(std::make_unique<FiniteElementSpace>(nd_fine, fine_sides));
+    rt_h.AddLevel(std::make_unique<FiniteElementSpace>(rt_fespace, sides));
+    rt_h.AddLevel(std::make_unique<FiniteElementSpace>(rt_fine, fine_sides));
+    nd_h_u.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+    nd_h_u.AddLevel(std::make_unique<FiniteElementSpace>(fine_mesh, &nd_fec));
+    CHECK(nd_h.GetFESpaceAtLevel(1).GlobalTrueVSize() > nd_fine.GlobalTrueVSize());
+    const Operator &Ph_nd = nd_h.GetProlongationAtLevel(0);
+    const Operator &Ph_rt = rt_h.GetProlongationAtLevel(0);
+    CHECK(dynamic_cast<const mfem::HypreParMatrix *>(&Ph_nd));
+    CheckCopies(nd_h.GetFESpaceAtLevel(0), nd_h.GetFESpaceAtLevel(1),
+                nd_h_u.GetProlongationAtLevel(0), Ph_nd);
+    const Operator &C_fine =
+        rt_h.GetFESpaceAtLevel(1).GetDiscreteInterpolator(nd_h.GetFESpaceAtLevel(1));
+    const Operator &C_c =
+        rt_h.GetFESpaceAtLevel(0).GetDiscreteInterpolator(nd_h.GetFESpaceAtLevel(0));
+    Vector x = Random(Ph_nd.Width()), px(Ph_nd.Height()), cpx(C_fine.Height()),
+           cx(C_c.Height()), pcx(Ph_rt.Height());
+    Ph_nd.Mult(x, px);
+    C_fine.Mult(px, cpx);
+    C_c.Mult(x, cx);
+    Ph_rt.Mult(cx, pcx);
+    pcx -= cpx;
+    CHECK(MaxAbs(pcx) <= 1.0e-12 * MaxAbs(cpx));
+  }
 }
 
 TEST_CASE("Broken space error estimators",
