@@ -115,8 +115,9 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
           else if constexpr (solver_t == ProblemType::MAGNETOSTATIC)
           {
+            // The space of the solution: broken across two-sided superconductor films.
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace());
+                                      fem_op_.GetSolutionNDSpace());
           }
           else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
@@ -1609,13 +1610,18 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
 
   if (HasBGridFunction<solver_t>())
   {
+    // A broken magnetostatic solution has no grid function, but its L-vector.
     auto &field = A ? *A : *B;
-    auto energy = dom_post_op.GetMagneticFieldEnergy(field);
+    const bool use_l = (a_l.Size() > 0);
+    auto energy = use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
+                        : dom_post_op.GetMagneticFieldEnergy(field);
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      auto energy_i = dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
+      auto energy_i =
+          use_l ? dom_post_op.GetDomainMagneticFieldEnergy(idx, a_l, field.GetComm())
+                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
       auto participation_ratio = std::abs(energy) > 0.0 ? energy_i / energy : 0.0;
       measurement_cache.domain_H_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, participation_ratio});
@@ -2425,8 +2431,22 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
   requires(solver_t == ProblemType::MAGNETOSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  SetAGridFunction(a);
-  SetBGridFunction(b);
+  if (fem_op->IsBroken())
+  {
+    // The output fields are those of the original DOFs (one side of each two-sided film),
+    // the energies are those of the broken solution.
+    Vector a0, b0;
+    fem_op->GetFirstVersion(fem_op->GetSolutionNDSpace(), a, a0);
+    fem_op->GetFirstVersion(fem_op->GetSolutionCurlSpace(), b, b0);
+    SetAGridFunction(a0);
+    SetBGridFunction(b0);
+    GetSolutionLVector(a, a_l);
+  }
+  else
+  {
+    SetAGridFunction(a);
+    SetBGridFunction(b);
+  }
 
   measurement_cache = {};
   MeasureAllImpl();

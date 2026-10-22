@@ -307,4 +307,32 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
   return 0.5 * dot;
 }
 
+double DomainPostOperator::GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm comm) const
+{
+  if (!M_mag)
+  {
+    return 0.0;
+  }
+  M_mag->Mult(a_l, H);
+  double dot = linalg::LocalDot(a_l, H);
+  Mpi::GlobalSum(1, &dot, comm);
+  return 0.5 * dot;
+}
+
+double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx, const Vector &a_l,
+                                                        MPI_Comm comm) const
+{
+  auto it = M_i.find(idx);
+  MFEM_VERIFY(it != M_i.end(),
+              "Invalid domain index when postprocessing domain magnetic field energy!");
+  if (!it->second.second)
+  {
+    return 0.0;
+  }
+  it->second.second->Mult(a_l, H);
+  double dot = linalg::LocalDot(a_l, H);
+  Mpi::GlobalSum(1, &dot, comm);
+  return 0.5 * dot;
+}
+
 }  // namespace palace

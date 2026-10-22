@@ -3,6 +3,7 @@
 
 #include "curlcurloperator.hpp"
 
+#include <algorithm>
 #include <set>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
@@ -90,6 +91,7 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
 
   // Finalize setup.
   CheckBoundaryProperties();
+  SetUpBrokenSpaces();
 
   // Print essential BC information.
   if (dbc_attr.Size())
@@ -266,8 +268,18 @@ void CurlCurlOperator::SetUpLondonFluxConstraints()
     f.UseDevice(true);
     f = 0.0;
     curl_fespace.GetProlongationMatrix()->AddMultTranspose(lf, f);
+    if (IsBroken())
+    {
+      // The hole faces are not on the films, so f only reads the original DOFs.
+      Vector fb(GetSolutionCurlSpace().GetTrueVSize());
+      fb.UseDevice(true);
+      GetSolutionCurlSpace()
+          .BuildVersionMap(FiniteElementSpace::VersionMap::FIRST)
+          ->MultTranspose(f, fb);
+      f = std::move(fb);
+    }
 
-    Vector c(GetNDSpace().GetTrueVSize());
+    Vector c(GetSolutionNDSpace().GetTrueVSize());
     c.UseDevice(true);
     c = 0.0;
     curl.MultTranspose(f, c);
@@ -341,22 +353,22 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
-  BilinearForm k(GetNDSpace());
+  BilinearForm k(GetSolutionNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
   // Add the thin-film superconductor kinetic sheet term (1/L_ksq) A_t · v_t as a tangential
-  // surface mass on the ND space.
+  // surface mass on the ND space (on a broken space, see AddBrokenSheetMatrix).
   MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
   sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
-  if (!fbr.empty())
+  if (!fbr.empty() && !IsBroken())
   {
     k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
   }
   // k.AssembleQuadratureData();
-  auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
-  auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
-  for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)
+  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
+  for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
-    const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
+    const auto &nd_fespace_l = GetSolutionNDSpaces().GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
@@ -374,6 +386,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     }
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    AddBrokenSheetMatrix(l, *K_l);
     K->AddOperator(std::move(K_l));
   }
 
@@ -391,24 +404,25 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
-  BilinearForm k(GetNDSpace());
+  BilinearForm k(GetSolutionNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
   MaterialPropertyCoefficient mass_func(mat_op.GetAttributeToMaterial(),
                                         mat_op.GetInvPermeability(), london_pc_shift_);
   k.AddDomainIntegrator<VectorFEMassIntegrator>(mass_func);
   MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
   sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
-  if (!fbr.empty())
+  if (!fbr.empty() && !IsBroken())
   {
     k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
   }
-  auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
-  auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
-  for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)
+  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
+  for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
-    const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
+    const auto &nd_fespace_l = GetSolutionNDSpaces().GetFESpaceAtLevel(l);
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
     K_l->SetEssentialTrueDofs(pc_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    AddBrokenSheetMatrix(l, *K_l);
     K->AddOperator(std::move(K_l));
   }
 
@@ -504,17 +518,17 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
-  BilinearForm k(GetNDSpace());
+  BilinearForm k(GetSolutionNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
   // Include the thin-film superconductor kinetic sheet term so shorted-port assemblies
   // carry the same kinetic inductance as the base stiffness matrix.
   MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
   sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
-  if (!fbr.empty())
+  if (!fbr.empty() && !IsBroken())
   {
     k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
   }
-  auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
+  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
 
   // Add the new entry before binding essential DOFs, since SetEssentialTrueDofs keeps a
   // shallow reference to the tdof list and that list must stay put. Drop the older entry
@@ -525,17 +539,23 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   }
   auto &entry = screened_stiffness_cache.emplace_back();
   entry.key = std::move(key);
-  entry.dbc_tdof_lists.assign(GetNDSpaces().GetNumLevels(), mfem::Array<int>());
-  auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
-  for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)
+  entry.dbc_tdof_lists.assign(GetSolutionNDSpaces().GetNumLevels(), mfem::Array<int>());
+  auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
+  for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
-    const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
+    const auto &nd_fespace_l = GetSolutionNDSpaces().GetFESpaceAtLevel(l);
     nd_fespace_l.Get().GetEssentialTrueDofs(merged_marker, entry.dbc_tdof_lists[l]);
+    if (nd_fespace_l.IsBroken())
+    {
+      mfem::Array<int> tdof_list(entry.dbc_tdof_lists[l]);
+      nd_fespace_l.GetVersionTrueDofs(tdof_list, entry.dbc_tdof_lists[l]);
+    }
     // London flux films add no essential DOFs (the whole film is free, governed by the
     // sheet term; the hole fluxoid is an integral constraint), so the screened essential
     // set here is exactly the PEC + shorted-port set — no perimeter augmentation.
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
     K_l->SetEssentialTrueDofs(entry.dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    AddBrokenSheetMatrix(l, *K_l);
     K->AddOperator(std::move(K_l));
   }
   entry.K = std::move(K);
@@ -556,6 +576,12 @@ void CurlCurlOperator::ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_a
 
   mfem::Array<int> tdof_list;
   GetNDSpace().Get().GetEssentialTrueDofs(merged_marker, tdof_list);
+  if (IsBroken())
+  {
+    mfem::Array<int> versions;
+    GetSolutionNDSpace().GetVersionTrueDofs(tdof_list, versions);
+    tdof_list = std::move(versions);
+  }
   linalg::SetSubVector(v, tdof_list, 0.0);
 }
 
@@ -566,7 +592,7 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   // retrieve +J).
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   surf_j_op.AddExcitationBdrCoefficients(idx, fb);
-  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.SetSize(GetSolutionNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
   int empty = (fb.empty());
@@ -581,7 +607,22 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   rhs.UseDevice(false);
   rhs.Assemble();
   rhs.UseDevice(true);
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
+  if (IsBroken())
+  {
+    // The surface current excitations are not on the films, so they only read the
+    // original DOFs.
+    Vector RHS_u(GetNDSpace().GetTrueVSize());
+    RHS_u.UseDevice(true);
+    RHS_u = 0.0;
+    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS_u, -1.0);
+    GetSolutionNDSpace()
+        .BuildVersionMap(FiniteElementSpace::VersionMap::FIRST)
+        ->MultTranspose(RHS_u, RHS);
+  }
+  else
+  {
+    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
+  }
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
@@ -589,6 +630,13 @@ void CurlCurlOperator::EnsureSheetMass()
 {
   if (M_sheet_)
   {
+    return;
+  }
+  if (IsBroken())
+  {
+    // All sheet terms, without elimination: a_h is nonzero on film edges at the PEC.
+    M_sheet_ = std::make_unique<mfem::HypreParMatrix>(
+        GetBrokenSheetMatrix(GetSolutionNDSpaces().GetNumLevels() - 1));
     return;
   }
   MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
@@ -614,7 +662,7 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
                                                PostOperator<T> &post_op,
                                                Vector *boundary_values)
 {
-  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.SetSize(GetSolutionNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
 
@@ -632,6 +680,20 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   else
   {
     flux_solution = SolveSurfaceCurlProblem(idx, post_op);
+  }
+  if (IsBroken())
+  {
+    // a_h is a field of the film surface, the same on both sides of two-sided films.
+    Vector a_h(GetSolutionNDSpace().GetTrueVSize());
+    a_h.UseDevice(true);
+    GetSolutionNDSpace()
+        .BuildVersionMap(FiniteElementSpace::VersionMap::ALL)
+        ->MultTranspose(flux_solution, a_h);
+    flux_solution = std::move(a_h);
+    if (boundary_values)
+    {
+      *boundary_values = flux_solution;
+    }
   }
 
   // Early exit if the generator is zero.
@@ -693,6 +755,108 @@ void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T
 
   surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
                                        result);
+}
+
+void CurlCurlOperator::SetUpBrokenSpaces()
+{
+  two_sided_attr = sc_sheet_op.GetTwoSidedAttributes();
+  if (two_sided_attr.empty())
+  {
+    return;
+  }
+  // The solution spaces are broken on the levels of the finest mesh only: the
+  // prolongation from a coarser mesh would need the sides on both meshes.
+  auto &mesh = nd_fespaces.GetFinestFESpace().GetMesh();
+  const auto &sides = mesh.GetCrackSides(two_sided_attr);
+  const std::size_t n_nd = nd_fespaces.GetNumLevels(), n_h1 = h1_fespaces.GetNumLevels();
+  std::size_t l0 = n_nd;
+  while (l0 > 0 && &nd_fespaces.GetFESpaceAtLevel(l0 - 1).GetMesh() == &mesh &&
+         &h1_fespaces.GetFESpaceAtLevel(l0 - 1 + n_h1 - n_nd).GetMesh() == &mesh)
+  {
+    l0--;
+  }
+  MFEM_VERIFY(n_h1 == n_nd && l0 < n_nd,
+              "Unexpected multigrid hierarchy for two-sided superconductor films!");
+  if (l0 > 0)
+  {
+    Mpi::Warning("Two-sided superconductor films: the multigrid hierarchy uses only the "
+                 "{:d} levels of the finest mesh (of {:d})!\n",
+                 n_nd - l0, n_nd);
+  }
+  std::vector<mfem::Array<int>> broken_dbc_tdof_lists;
+  for (std::size_t l = l0; l < n_nd; l++)
+  {
+    nd_broken_fespaces.AddLevel(
+        std::make_unique<FiniteElementSpace>(nd_fespaces.GetFESpaceAtLevel(l), sides));
+    h1_broken_fespaces.AddLevel(
+        std::make_unique<FiniteElementSpace>(h1_fespaces.GetFESpaceAtLevel(l), sides));
+    nd_broken_fespaces.GetFinestFESpace().GetVersionTrueDofs(
+        dbc_tdof_lists[l], broken_dbc_tdof_lists.emplace_back());
+  }
+  rt_broken_fespace = std::make_unique<FiniteElementSpace>(rt_fespace, sides);
+  dbc_tdof_lists = std::move(broken_dbc_tdof_lists);
+  broken_sheet_mats.resize(nd_broken_fespaces.GetNumLevels());
+}
+
+const mfem::HypreParMatrix &CurlCurlOperator::GetBrokenSheetMatrix(std::size_t l) const
+{
+  MFEM_VERIFY(IsBroken() && l < broken_sheet_mats.size(),
+              "Sheet matrices are only assembled on broken spaces!");
+  if (broken_sheet_mats[l])
+  {
+    return *broken_sheet_mats[l];
+  }
+  const auto &broken_l = nd_broken_fespaces.GetFESpaceAtLevel(l);
+  const auto &nd_l = nd_fespaces.GetFESpaceAtLevel(l + nd_fespaces.GetNumLevels() -
+                                                   nd_broken_fespaces.GetNumLevels());
+  const auto &sides = broken_l.GetMesh().GetCrackSides(two_sided_attr);
+  auto C = sc_sheet_op.AssembleTwoSidedMatrix(nd_l, broken_l, sides);
+
+  // One-sided sheets, which only read the original DOFs (exact unless they meet a
+  // two-sided film).
+  MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+  sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
+  int any = !fbr.empty();
+  Mpi::GlobalMax(1, &any, GetComm());
+  if (any)
+  {
+    BilinearForm m(nd_l);
+    if (!fbr.empty())  // A process may have no boundary elements of these sheets.
+    {
+      m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
+    }
+    auto M = ParOperator(m.FullAssemble(false), nd_l).StealParallelAssemble();
+    auto Z = broken_l.BuildVersionMap(FiniteElementSpace::VersionMap::FIRST);
+    auto ZtMZ = linalg::RAP(*M, *Z);
+    C.reset(mfem::ParAdd(C.get(), ZtMZ.get()));
+  }
+  broken_sheet_mats[l] = std::move(C);
+  return *broken_sheet_mats[l];
+}
+
+void CurlCurlOperator::AddBrokenSheetMatrix(std::size_t l, ParOperator &K_l) const
+{
+  if (IsBroken())
+  {
+    K_l.AddParallelMatrix(GetBrokenSheetMatrix(l));
+  }
+}
+
+void CurlCurlOperator::GetFirstVersion(const FiniteElementSpace &broken_fespace,
+                                       const Vector &x, Vector &y) const
+{
+  if (!broken_fespace.IsBroken())
+  {
+    y = x;
+    return;
+  }
+  // Version 0 of the true DOFs of each process are its first true DOFs.
+  const int n = broken_fespace.Get().GetTrueVSize();
+  y.SetSize(n);
+  y.UseDevice(true);
+  const auto *h_x = x.HostRead();
+  auto *h_y = y.HostWrite();
+  std::copy(h_x, h_x + n, h_y);
 }
 
 // Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>
