@@ -206,7 +206,7 @@ private:
   inline static ReducedData reduced_time;
   inline static ReducedData reduced_rank_mem;
   inline static ReducedData reduced_node_mem;
-  inline static int num_nodes = 0;
+  inline static constinit int num_nodes = 0;
 
   // Print a summary table with three columns. The row_fn callback produces the three
   // column values for a given timer index.

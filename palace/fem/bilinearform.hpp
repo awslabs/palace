@@ -37,7 +37,7 @@ protected:
 
 public:
   // Order above which to use partial assembly vs. full.
-  inline static int pa_order_threshold = 1;
+  inline static constinit int pa_order_threshold = 1;
 
 public:
   BilinearForm(const FiniteElementSpace &trial_fespace,

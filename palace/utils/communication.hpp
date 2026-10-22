@@ -412,9 +412,9 @@ public:
 
   // Default level of threading used in MPI_Init_thread unless provided to Init.
 #if defined(MFEM_USE_OPENMP)
-  inline static int default_thread_required = MPI_THREAD_FUNNELED;
+  inline static constinit int default_thread_required = MPI_THREAD_FUNNELED;
 #else
-  inline static int default_thread_required = MPI_THREAD_SINGLE;
+  inline static constinit int default_thread_required = MPI_THREAD_SINGLE;
 #endif
 
 private:

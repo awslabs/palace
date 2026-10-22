@@ -24,10 +24,10 @@ namespace fem
 // order 2 * p_trial + order(|J|) + q_extra.
 struct DefaultIntegrationOrder
 {
-  inline static int p_trial = -1;  // Must be initialized before use
-  inline static bool q_order_jac = true;
-  inline static int q_order_extra_pk = 0;
-  inline static int q_order_extra_qk = 0;
+  inline static constinit int p_trial = -1;  // Must be initialized before use
+  inline static constinit bool q_order_jac = true;
+  inline static constinit int q_order_extra_pk = 0;
+  inline static constinit int q_order_extra_qk = 0;
   static int Get(const mfem::IsoparametricTransformation &T);
   static int Get(const mfem::ElementTransformation &T);
   static int Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom);
