@@ -58,7 +58,7 @@ GetRegisteredUnionIr(mfem::Geometry::Type geometry,
   // do. Every union point has the fixed weight 1, so leaf quadrature weights cannot
   // alter this identity.
   static std::map<std::vector<long long>, std::unique_ptr<mfem::IntegrationRule>> registry;
-  static std::mutex registry_mutex;
+  static constinit std::mutex registry_mutex;
   auto key = MakeUnionRuleKey(geometry, points);
   std::lock_guard<std::mutex> lock(registry_mutex);
   auto it = registry.find(key);

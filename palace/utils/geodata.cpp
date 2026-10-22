@@ -3385,8 +3385,8 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       std::erase_if(coarse_crack_edge_to_be,
                     [](const auto &kv) { return kv.second.size() == 1; });
       // Static reporting variables so can persist across retries.
-      static int new_ne_ref = 0;
-      static int new_ref_its = 0;
+      static constinit int new_ne_ref = 0;
+      static constinit int new_ref_its = 0;
       if (!coarse_crack_edge_to_be.empty())
       {
         // Locally refine the mesh using conformal refinement. If necessary, convert the

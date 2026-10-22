@@ -204,7 +204,7 @@ GetRegisteredMappedIr(const FaceConfigKey &key,
   FaceConfigKey registry_key = key;
   AppendPointRuleSignature(registry_key, pts);
   static std::map<FaceConfigKey, std::unique_ptr<mfem::IntegrationRule>> registry;
-  static std::mutex registry_mutex;
+  static constinit std::mutex registry_mutex;
   std::lock_guard<std::mutex> lock(registry_mutex);
   auto it = registry.find(registry_key);
   if (it == registry.end())

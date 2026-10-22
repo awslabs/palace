@@ -138,7 +138,7 @@ const mfem::IntegrationRule *GetRegisteredIr(const PointConfigKey &key,
                                              const std::vector<mfem::IntegrationPoint> &pts)
 {
   static std::map<PointConfigKey, std::unique_ptr<mfem::IntegrationRule>> registry;
-  static std::mutex registry_mutex;
+  static constinit std::mutex registry_mutex;
   std::lock_guard<std::mutex> lock(registry_mutex);
   auto it = registry.find(key);
   if (it == registry.end())
