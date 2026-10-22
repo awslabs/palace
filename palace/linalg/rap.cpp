@@ -11,6 +11,19 @@
 namespace palace
 {
 
+namespace
+{
+
+// A += B for an assembled square operator, keeping the diagonal entry first in each row.
+void AddToAssembled(std::unique_ptr<mfem::HypreParMatrix> &A, const mfem::HypreParMatrix &B)
+{
+  A.reset(mfem::ParAdd(A.get(), &B));
+  hypre_ParCSRMatrixSetNumNonzeros(*A);
+  hypre_CSRMatrixReorder(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*A));
+}
+
+}  // namespace
+
 ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
                          const FiniteElementSpace &trial_fespace,
                          const FiniteElementSpace &test_fespace, bool test_restrict)
@@ -43,9 +56,24 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
               "only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
   MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
                                "for rectangular ParOperator!");
+  MFEM_VERIFY(!B,
+              "Set essential true dofs before adding a parallel matrix to ParOperator!");
   tdof_list.Read();
   dbc_tdof_list.MakeRef(tdof_list);
   diag_policy = policy;
+}
+
+void ParOperator::AddParallelMatrix(const mfem::HypreParMatrix &B_)
+{
+  MFEM_VERIFY(!B && height == width && B_.Height() == height && B_.Width() == width,
+              "Invalid parallel matrix for square ParOperator!");
+  // The diagonal policy at the essential true dofs is kept by RAP, so B contributes zero.
+  B = std::make_unique<mfem::HypreParMatrix>(B_);
+  B->EliminateBC(dbc_tdof_list, DiagonalPolicy::DIAG_ZERO);
+  if (RAP)
+  {
+    AddToAssembled(RAP, *B);
+  }
 }
 
 Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
@@ -58,6 +86,7 @@ Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
 void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
 {
   MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
+  MFEM_VERIFY(!B, "ParOperator::EliminateRHS does not support an added parallel matrix!");
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
   {
@@ -160,6 +189,11 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
     MFEM_VERIFY(dbc_tdof_list.Size() == 0,
                 "Essential BC elimination is only available for square ParOperator!");
   }
+  if (B)
+  {
+    AddToAssembled(RAP, *B);
+  }
+
   return *RAP;
 }
 
@@ -202,6 +236,13 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
       linalg::SetSubVector(diag, dbc_tdof_list, 0.0);
     }
   }
+  if (B)
+  {
+    // Search each row for its diagonal entry: B need not store one, let alone first.
+    B->HypreRead();
+    hypre_CSRMatrixExtractDiagonal(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*B),
+                                   diag.ReadWrite(), 10);
+  }
 }
 
 void ParOperator::Mult(const Vector &x, Vector &y) const
@@ -243,6 +284,10 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
   }
+  if (B)
+  {
+    B->Mult(1.0, x, 1.0, y);
+  }
 }
 
 void ParOperator::MultTranspose(const Vector &x, Vector &y) const
@@ -283,6 +328,10 @@ void ParOperator::MultTranspose(const Vector &x, Vector &y) const
     {
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
+  }
+  if (B)
+  {
+    B->MultTranspose(1.0, x, 1.0, y);
   }
 }
 
@@ -327,6 +376,10 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
     }
   }
   y.Add(a, ty);
+  if (B)
+  {
+    B->Mult(a, x, 1.0, y);
+  }
 }
 
 void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
@@ -370,6 +423,10 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
     }
   }
   y.Add(a, tx);
+  if (B)
+  {
+    B->MultTranspose(a, x, 1.0, y);
+  }
 }
 
 void ParOperator::RestrictionMatrixMult(const Vector &ly, Vector &ty) const
