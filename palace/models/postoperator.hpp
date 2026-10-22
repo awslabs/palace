@@ -286,6 +286,10 @@ protected:
   // Helper classes that actually do some measurements that will be saved to csv files.
 
   DomainPostOperator dom_post_op;    // Energy in bulk
+
+  // L-vector of a magnetostatic solution on a broken space (empty otherwise), for the
+  // domain energies.
+  Vector a_l;
   SurfacePostOperator surf_post_op;  // Dielectric Interface Energy, Flux, and FarField
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
@@ -545,6 +549,17 @@ public:
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
+
+  // The L-vector of a magnetostatic solution, on the space of the domain energy operators
+  // (broken across two-sided superconductor films, if any).
+  void GetSolutionLVector(const Vector &a, Vector &a_l_out) const
+    requires(solver_t == ProblemType::MAGNETOSTATIC)
+  {
+    const auto &nd_fespace = fem_op->GetSolutionNDSpace();
+    a_l_out.SetSize(nd_fespace.GetVSize());
+    a_l_out.UseDevice(true);
+    nd_fespace.GetProlongationMatrix()->Mult(a, a_l_out);
+  }
 
   // Expose MPI communicator from fem_op for electrostatic & magnetostatic matrix processing
   // (see above).

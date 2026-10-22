@@ -538,6 +538,16 @@ void IoData::CheckConfiguration()
         "conditions!\n");
   }
 
+  // A two-sided superconductor film is modeled on a solution space broken across its faces,
+  // which must stay interior faces: the deprecated global option would crack the mesh along
+  // the film.
+  MFEM_VERIFY(
+      !model.crack_bdr_elements.value_or(false) ||
+          std::none_of(boundaries.superconductor.begin(), boundaries.superconductor.end(),
+                       [](const auto &data) { return data.two_sided; }),
+      "Superconductor boundary \"TwoSided\" cannot be used with "
+      "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
