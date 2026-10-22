@@ -218,9 +218,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     simulations (`port-Q.csv`). They used the port voltage, so they missed the loss of the
     field components that do not change the voltage, and reported almost no loss for a
     mode with a cancelling port voltage. They now use the power dissipated in the resistive
-    port boundary. For the active ports, the sum of the coupling rates is the eigenvalue
-    decay rate when the ports are the only loss. Results change when the port field is not
-    uniform (or coaxial) across the port.
+    port boundary. The magnitude of each coupling rate is the decay rate due to its port, and
+    its sign is still the sign of the real part of the port current. For the active ports with
+    positive resistance, the sum of the coupling rate magnitudes is the eigenvalue decay rate
+    when the ports are the only loss. Results change when the port field is not uniform (or
+    coaxial) across the port.
     [Issue 1077](https://github.com/awslabs/palace/issues/1077).
 
 #### Performance Improvements

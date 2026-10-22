@@ -140,10 +140,10 @@ public:
   // Time-averaged power dissipated in the resistive sheet of the port,
   //                           P = 1/2 ∫ |E_t|² / R_s dS,
   // for the field E on nd_fespace. This is the port contribution to the boundary quadratic
-  // of the damping matrix. The modal voltage gives |V|² / (2R) ≤ P, with equality only when
-  // E_t on each element matches the voltage mode of the port: field components orthogonal
-  // to that mode do not change V, but they dissipate power. The boundary operator is
-  // assembled on the first call.
+  // of the damping matrix. For R > 0, the modal voltage gives |V|² / (2R) ≤ P, with
+  // equality only when E_t on each element matches the voltage mode of the port: field
+  // components orthogonal to that mode do not change V, but they dissipate power. The
+  // boundary operator is assembled on the first call.
   double GetResistorPower(const FiniteElementSpace &nd_fespace,
                           const GridFunction &E) const;
 };

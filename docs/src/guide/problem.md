@@ -30,9 +30,10 @@ The EPR framework can be used to characterize the dissipative elements in the mo
 In particular, lumped ports with nonzero resistance in the model will trigger coupling rate
 and quality factor calculations based on input-output (I-O) line coupling loss: By
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
-computed as ``Q_{ml} = \omega_m/\kappa_{ml}``, where the coupling rate ``\kappa_{ml}`` is the
-power dissipated in the resistive boundary of port ``l`` divided by the electric energy of
-mode ``m``. The output file `port-Q.csv` will be created
+computed as ``Q_{ml} = \mathrm{Re}\{\omega_m\}/|\kappa_{ml}|``. The magnitude of the coupling
+rate ``\kappa_{ml}`` is the power dissipated in the resistive boundary of port ``l`` divided
+by the electric energy of mode ``m``, and its sign is the sign of the real part of the port
+current. The output file `port-Q.csv` will be created
 in the output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and
