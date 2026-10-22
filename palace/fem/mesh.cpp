@@ -383,7 +383,8 @@ void Mesh::Update()
         sides.split[e] = static_cast<std::uint32_t>(std::llround(h[e]));
         for (int w = 0; w < 4; w++)
         {
-          sides.version[e][w] = static_cast<std::uint32_t>(std::llround(h[(1 + w) * ne + e]));
+          sides.version[e][w] =
+              static_cast<std::uint32_t>(std::llround(h[(1 + w) * ne + e]));
         }
         sides.carrier[e] = static_cast<std::uint64_t>(std::llround(h[5 * ne + e])) |
                            (static_cast<std::uint64_t>(std::llround(h[6 * ne + e])) << 32);
@@ -439,6 +440,25 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   entry.mesh = mesh.get();
   entry.sequence = mesh->GetSequence();
   return entry.sides;
+}
+
+void Mesh::InheritCrackSides(const std::vector<int> &attr_list,
+                             const Mesh &coarse_mesh) const
+{
+  // The parents of the coarse-to-fine transformations are checked against the number of
+  // coarse elements by mesh::InheritCrackSides.
+  MFEM_VERIFY(mesh->GetLastOperation() == mfem::Mesh::REFINE,
+              "Interior boundary sides can only be inherited from the mesh this mesh was "
+              "refined from!");
+  const auto &coarse_sides = coarse_mesh.GetCrackSides(attr_list);
+  std::vector<int> key(attr_list);
+  std::sort(key.begin(), key.end());
+  key.erase(std::unique(key.begin(), key.end()), key.end());
+  auto &entry = crack_sides[key];
+  entry.sides =
+      mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), coarse_sides);
+  entry.mesh = mesh.get();
+  entry.sequence = mesh->GetSequence();
 }
 
 void Mesh::RefineCrackSides()

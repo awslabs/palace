@@ -732,28 +732,24 @@ void CurlCurlOperator::SetUpBrokenSpaces()
   {
     return;
   }
-  // The solution spaces are broken on the levels of the finest mesh only: the
-  // prolongation from a coarser mesh would need the sides on both meshes.
-  auto &mesh = nd_fespaces.GetFinestFESpace().GetMesh();
-  const auto &sides = mesh.GetCrackSides(two_sided_attr);
-  const std::size_t n_nd = nd_fespaces.GetNumLevels(), n_h1 = h1_fespaces.GetNumLevels();
-  std::size_t l0 = n_nd;
-  while (l0 > 0 && &nd_fespaces.GetFESpaceAtLevel(l0 - 1).GetMesh() == &mesh &&
-         &h1_fespaces.GetFESpaceAtLevel(l0 - 1 + n_h1 - n_nd).GetMesh() == &mesh)
-  {
-    l0--;
-  }
-  MFEM_VERIFY(n_h1 == n_nd && l0 < n_nd,
+  const std::size_t n = nd_fespaces.GetNumLevels();
+  MFEM_VERIFY(h1_fespaces.GetNumLevels() == n,
               "Unexpected multigrid hierarchy for two-sided superconductor films!");
-  if (l0 > 0)
-  {
-    Mpi::Warning("Two-sided superconductor films: the multigrid hierarchy uses only the "
-                 "{:d} levels of the finest mesh (of {:d})!\n",
-                 n_nd - l0, n_nd);
-  }
   std::vector<mfem::Array<int>> broken_dbc_tdof_lists;
-  for (std::size_t l = l0; l < n_nd; l++)
+  for (std::size_t l = 0; l < n; l++)
   {
+    // The sides are computed on the coarsest mesh and inherited by each refinement of the
+    // hierarchy, so that the side labels agree between the levels (see
+    // Mesh::InheritCrackSides, needed by the h-prolongations).
+    auto &mesh = nd_fespaces.GetFESpaceAtLevel(l).GetMesh();
+    MFEM_VERIFY(&h1_fespaces.GetFESpaceAtLevel(l).GetMesh() == &mesh,
+                "Unexpected multigrid hierarchy for two-sided superconductor films!");
+    if (l > 0 && &nd_fespaces.GetFESpaceAtLevel(l - 1).GetMesh() != &mesh)
+    {
+      mesh.InheritCrackSides(two_sided_attr,
+                             nd_fespaces.GetFESpaceAtLevel(l - 1).GetMesh());
+    }
+    const auto &sides = mesh.GetCrackSides(two_sided_attr);
     nd_broken_fespaces.AddLevel(
         std::make_unique<FiniteElementSpace>(nd_fespaces.GetFESpaceAtLevel(l), sides));
     h1_broken_fespaces.AddLevel(
@@ -761,9 +757,10 @@ void CurlCurlOperator::SetUpBrokenSpaces()
     nd_broken_fespaces.GetFinestFESpace().GetVersionTrueDofs(
         dbc_tdof_lists[l], broken_dbc_tdof_lists.emplace_back());
   }
-  rt_broken_fespace = std::make_unique<FiniteElementSpace>(rt_fespace, sides);
+  rt_broken_fespace = std::make_unique<FiniteElementSpace>(
+      rt_fespace, nd_fespaces.GetFinestFESpace().GetMesh().GetCrackSides(two_sided_attr));
   dbc_tdof_lists = std::move(broken_dbc_tdof_lists);
-  broken_sheet_mats.resize(nd_broken_fespaces.GetNumLevels());
+  broken_sheet_mats.resize(n);
 }
 
 const mfem::HypreParMatrix &CurlCurlOperator::GetBrokenSheetMatrix(std::size_t l) const
@@ -775,8 +772,7 @@ const mfem::HypreParMatrix &CurlCurlOperator::GetBrokenSheetMatrix(std::size_t l
     return *broken_sheet_mats[l];
   }
   const auto &broken_l = nd_broken_fespaces.GetFESpaceAtLevel(l);
-  const auto &nd_l = nd_fespaces.GetFESpaceAtLevel(l + nd_fespaces.GetNumLevels() -
-                                                   nd_broken_fespaces.GetNumLevels());
+  const auto &nd_l = nd_fespaces.GetFESpaceAtLevel(l);
   const auto &sides = broken_l.GetMesh().GetCrackSides(two_sided_attr);
   auto C = sc_sheet_op.AssembleTwoSidedMatrix(nd_l, broken_l, sides);
 

@@ -227,7 +227,9 @@ public:
   // the entity, so they all read the same version of each DOF of its closure, which are the
   // only DOFs an interpolated DOF depends on). This is exact also for the copies read only
   // through the constraints of hanging entities, whose values are those of a trace in the
-  // master's trace space. Collective.
+  // master's trace space. On two meshes (the h-prolongation of a hierarchy), the side
+  // labels of the fine mesh must be those of the coarse mesh (Mesh::InheritCrackSides).
+  // Collective.
   static std::unique_ptr<mfem::HypreParMatrix>
   BuildBrokenInterpolator(const mfem::HypreParMatrix &G,
                           const FiniteElementSpace &trial_fespace,

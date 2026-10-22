@@ -749,7 +749,8 @@ FiniteElementSpace::BuildBrokenInterpolator(const mfem::HypreParMatrix &G,
                                             const FiniteElementSpace &test_fespace)
 {
   MFEM_VERIFY(trial_fespace.broken && test_fespace.broken &&
-                  trial_fespace.broken->sides == test_fespace.broken->sides,
+                  (&trial_fespace.GetMesh() != &test_fespace.GetMesh() ||
+                   trial_fespace.broken->sides == test_fespace.broken->sides),
               "Interpolators between broken spaces require both spaces to be broken with "
               "the same interior boundary sides!");
   const auto &test = *test_fespace.broken;
@@ -967,6 +968,89 @@ const Operator &FiniteElementSpace::BuildDiscreteInterpolator() const
   return *G;
 }
 
+namespace
+{
+
+// Transfer from the true DOFs of a space on a coarse mesh to those of the same space on the
+// mesh refined from it (its last operation), as the assembled matrix R_f T P_c. The L-level
+// refinement matrix T is assembled element by element from the local interpolation of each
+// fine element from its parent (the coarse-to-fine point matrices of the mesh), with the
+// DOF transformations of both elements, as mfem::TransferOperator applies it. MFEM's
+// assembled refinement matrix (FiniteElementSpace::GetTransferOperator with
+// Operator::MFEM_SPARSEMAT, RefinementMatrix_main) is not used: for ND spaces of order 2 on
+// tetrahedra it does not commute with the discrete gradient, while the matrix-free operator
+// does.
+std::unique_ptr<mfem::HypreParMatrix>
+BuildTrueTransferMatrix(const FiniteElementSpace &coarse, const FiniteElementSpace &fine)
+{
+  const mfem::ParFiniteElementSpace &cfes = coarse.Get(), &ffes = fine.Get();
+  MFEM_VERIFY(!coarse.IsBroken() && !fine.IsBroken() && ffes.GetVDim() == 1 &&
+                  !ffes.IsVariableOrder() && ffes.FEColl() == cfes.FEColl(),
+              "Unsupported spaces for the assembled transfer between meshes!");
+  auto &fmesh = const_cast<mfem::ParMesh &>(fine.GetParMesh());
+  const auto &cmesh = coarse.GetParMesh();
+  MFEM_VERIFY(
+      fmesh.GetLastOperation() == mfem::Mesh::REFINE,
+      "The fine mesh of an assembled transfer must have been refined from the coarse "
+      "mesh!");
+  const mfem::CoarseFineTransformations &cf = fmesh.GetRefinementTransforms();
+  MFEM_VERIFY(cf.embeddings.Size() == fmesh.GetNE(),
+              "Invalid coarse-to-fine transformations for the assembled transfer!");
+  auto T = std::make_unique<mfem::SparseMatrix>(ffes.GetVSize(), cfes.GetVSize());
+  mfem::Array<int> fdofs, cdofs;
+  mfem::DofTransformation fdt, cdt;
+  mfem::IsoparametricTransformation isotr;
+  mfem::DenseMatrix lP, M;
+  mfem::Vector v, w;
+  for (int k = 0; k < fmesh.GetNE(); k++)
+  {
+    const auto &emb = cf.embeddings[k];
+    const auto geom = fmesh.GetElementGeometry(k);
+    MFEM_VERIFY(emb.parent >= 0 && emb.parent < cmesh.GetNE() &&
+                    cmesh.GetElementGeometry(emb.parent) == geom,
+                "Unsupported refinement for the assembled transfer between meshes!");
+    const mfem::FiniteElement &fe = *ffes.GetFE(k);
+    isotr.SetIdentityTransformation(geom);
+    isotr.SetPointMat(cf.point_matrices[geom](emb.matrix));
+    fe.GetLocalInterpolation(isotr, lP);
+    ffes.GetElementDofs(k, fdofs, fdt);
+    cfes.GetElementDofs(emb.parent, cdofs, cdt);
+    const int n = fe.GetDof();
+    M.SetSize(n);
+    v.SetSize(n);
+    w.SetSize(n);
+    for (int j = 0; j < n; j++)
+    {
+      v = 0.0;
+      v(j) = 1.0;
+      if (!cdt.IsIdentity())
+      {
+        cdt.InvTransformPrimal(v);
+      }
+      lP.Mult(v, w);
+      if (!fdt.IsIdentity())
+      {
+        fdt.TransformPrimal(w);
+      }
+      M.SetCol(j, w);
+    }
+    T->SetSubMatrix(fdofs, cdofs, M);
+  }
+  auto T_par = linalg::BlockDiagonalParMatrix(fine.GetComm(), ffes.GlobalVSize(),
+                                              cfes.GlobalVSize(), ffes.GetDofOffsets(),
+                                              cfes.GetDofOffsets(), std::move(T));
+  mfem::HypreParMatrix R(fine.GetComm(), ffes.GlobalTrueVSize(), ffes.GlobalVSize(),
+                         ffes.GetTrueDofOffsets(), ffes.GetDofOffsets(),
+                         const_cast<mfem::SparseMatrix *>(ffes.GetRestrictionMatrix()));
+  hypre_ParCSRMatrix *TP = hypre_ParCSRMatMat(*T_par, *cfes.Dof_TrueDof_Matrix());
+  auto RTP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(R, TP), true);
+  hypre_ParCSRMatrixDestroy(TP);
+  hypre_ParCSRMatrixSetNumNonzeros(*RTP);
+  return RTP;
+}
+
+}  // namespace
+
 const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_t l) const
 {
   // P is always partially assembled.
@@ -975,9 +1059,23 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
               "space in the hierarchy!");
   if (&fespaces[l]->GetMesh() != &fespaces[l + 1]->GetMesh())
   {
-    P[l] = std::make_unique<ParOperator>(
-        std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]),
-        *fespaces[l], *fespaces[l + 1], true);
+    if (fespaces[l]->IsBroken() || fespaces[l + 1]->IsBroken())
+    {
+      // h-prolongation between broken spaces, assembled from the transfer between the
+      // underlying spaces on their true DOFs. The sides of the fine mesh must be inherited
+      // from the coarse mesh (see Mesh::InheritCrackSides) for the side labels of the two
+      // spaces to agree.
+      P[l] = FiniteElementSpace::BuildBrokenInterpolator(
+          *BuildTrueTransferMatrix(fespaces[l]->GetUnbroken(),
+                                   fespaces[l + 1]->GetUnbroken()),
+          *fespaces[l], *fespaces[l + 1]);
+    }
+    else
+    {
+      P[l] = std::make_unique<ParOperator>(
+          std::make_unique<mfem::TransferOperator>(*fespaces[l], *fespaces[l + 1]),
+          *fespaces[l], *fespaces[l + 1], true);
+    }
   }
   else if (fespaces[l]->IsBroken() || fespaces[l + 1]->IsBroken())
   {
