@@ -153,6 +153,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the element Jacobian, so it was much too small and decreased under mesh refinement. The 2D
     error indicators are normalized by the total field energy, so they change too.
     [Issue 1078](https://github.com/awslabs/palace/issues/1078).
+  - Fixed the coupling rates and quality factors of resistive lumped ports in eigenmode
+    simulations (`port-Q.csv`). They used the port voltage, so they missed the loss of the
+    field components that do not change the voltage, and reported almost no loss for a
+    mode with a cancelling port voltage. They now use the power dissipated in the resistive
+    port boundary. For the active ports, the sum of the coupling rates is the eigenvalue
+    decay rate when the ports are the only loss. Results change when the port field is not
+    uniform (or coaxial) across the port.
+    [Issue 1077](https://github.com/awslabs/palace/issues/1077).
 
 #### Performance Improvements
 
