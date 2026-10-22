@@ -20,11 +20,11 @@
 using namespace palace;
 
 // Global test options configurable from command line.
-int benchmark_ref_levels = 0;
-int benchmark_order = 4;
-bool benchmark_assemble_q_data = false;
-bool benchmark_no_fa = false;
-bool benchmark_no_mfem_pa = false;
+constinit int benchmark_ref_levels = 0;
+constinit int benchmark_order = 4;
+constinit bool benchmark_assemble_q_data = false;
+constinit bool benchmark_no_fa = false;
+constinit bool benchmark_no_mfem_pa = false;
 
 int main(int argc, char *argv[])
 {
