@@ -303,6 +303,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     wrong. MUMPS now compresses the factorizations of boundary mode and wave port mode
     solves only with `"STRUMPACKCompressionType": "BLR"`. SchemaVer 4-2-2
     [PR 1178](https://github.com/awslabs/palace/pull/1178).
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 #### Documentation
 
