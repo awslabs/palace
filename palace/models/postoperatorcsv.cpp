@@ -373,8 +373,8 @@ void CheckAppendIndex(Column &idx_col, double idx_value, std::size_t m_idx_row)
     // The index of a table reloaded for a restart holds the printed values, rounded to the
     // column's precision.
     auto current_idx = idx_col.data.at(m_idx_row);
-    const double tol = std::pow(10.0, -static_cast<double>(idx_col.float_precision.value_or(
-                                          ColumnOptions().float_precision)));
+    const auto prec = idx_col.float_precision.value_or(ColumnOptions().float_precision);
+    const double tol = std::pow(10.0, -static_cast<double>(prec));
     MFEM_VERIFY(std::abs(idx_value - current_idx) <=
                     tol * std::max(std::abs(idx_value), std::abs(current_idx)),
                 fmt::format("Writing data table at incorrect index. Data has index {} "

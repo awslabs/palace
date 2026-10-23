@@ -450,9 +450,9 @@ public:
 
   void restart2_write_reloaded_row()
   {
-    // The restart writes the second excitation's next row, whose frequency the reloaded
-    // index holds as printed: a recomputed frequency matches it to its precision, and
-    // another frequency does not. On a copy of the tables, which the writes update.
+    // The restart writes rows of the reloaded tables, whose frequencies are the printed
+    // ones: a recomputed frequency matches to the printed precision, another does not. The
+    // writes go to a copy of the tables.
     const auto dir = fs::temp_directory_path() / "palace-postoperatorcsv-restart";
     if (Mpi::Root(Mpi::World()))
     {
@@ -460,7 +460,6 @@ public:
       fs::copy(fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_c14",
                dir);
     }
-    Mpi::Barrier(Mpi::World());
     iodata.problem.output = dir;
     iodata.solver.driven.restart = 6 + 4 + 1;  // Restart is 1 Indexed.
     PostOperatorCSVManualTest post_op_csv{iodata, space_op};
