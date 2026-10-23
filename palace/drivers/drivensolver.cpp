@@ -98,7 +98,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
-  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                &space_op.GetH1Spaces());
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
@@ -154,7 +155,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                                         K.get(), C.get(), M.get(), A2.get());
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      ksp.SetOperators(*A, *P);
+      ksp->SetOperators(*A, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
@@ -172,10 +173,24 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
 
       Mpi::Print("\n");
-      ksp.Mult(RHS, E);
+      ksp->Mult(RHS, E);
 
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
+      if (omega_i + 1 == omega_sample.size() &&
+          excitation_counter == port_excitations.Size())
+      {
+        // No more solves: release linear solve state before output and error
+        // estimation allocate additional workspace. Preserve cumulative solver totals.
+        SaveMetadata(*ksp);
+        ksp.reset();
+        P.reset();
+        A.reset();
+        A2.reset();
+        K.reset();
+        C.reset();
+        M.reset();
+      }
       Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
                  linalg::Norml2(space_op.GetComm(), E),
                  linalg::Norml2(space_op.GetComm(), RHS));
@@ -208,7 +223,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
     // Final postprocessing & printing.
     BlockTimer bt0(Timer::POSTPRO);
-    SaveMetadata(ksp);
+    if (ksp)
+    {
+      SaveMetadata(*ksp);
+    }
   }
   post_op.MeasureFinalize(indicator);
   return indicator;
