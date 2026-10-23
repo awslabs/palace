@@ -66,7 +66,12 @@ private:
   std::vector<std::vector<config::DjordjevicSarkarData>> djordjevic_sarkar_terms;
   // The terms as configured, for the stored energy of their models.
   std::vector<std::vector<config::PermittivityTermData>> permittivity_terms;
-  std::vector<bool> frequency_dependent_permittivity_support;
+  // Global support of the nonlinear terms (A2) of each material, and of its configured
+  // model (any frequency-dependent material, including one with only exact zero poles).
+  std::vector<bool> frequency_dependent_permittivity_support,
+      frequency_dependent_permittivity_model_support;
+  // Global material index (position in Domains.Materials) of each rank-local material.
+  mfem::Array<int> local_mat_to_material;
   // Largest relative permeability and the high-frequency permittivity of each
   // frequency-dependent material, for GetFrequencyDependentMaxMuEpsilon.
   std::vector<double> frequency_dependent_permittivity_mu_max,
@@ -172,7 +177,7 @@ public:
   double GetFrequencyDependentMaxMuEpsilon(double omega) const;
 
   // Split the libCEED boundary attributes of the given mesh boundary attributes by the
-  // frequency-dependent material, with a nonlinear term, of their neighboring domain.
+  // frequency-dependent material (any configured model) of their neighboring domain.
   // Returns those next to no such material, and the index and attributes of each material
   // that neighbors the boundaries on any process (the attributes may be empty on this one).
   struct FrequencyDependentBdrSplit
@@ -202,9 +207,18 @@ public:
     return !permittivity_pole_terms.at(material_idx).empty() ||
            !djordjevic_sarkar_terms.at(material_idx).empty();
   }
+  // Whether the nonlinear terms (A2) of the material have mesh support on any process. This
+  // is the predicate of the operators that hold A2, not of the complete permittivity.
   bool HasFrequencyDependentPermittivitySupport(std::size_t material_idx) const
   {
     return frequency_dependent_permittivity_support.at(material_idx);
+  }
+  // Whether the material has a configured frequency-dependent model with mesh support on
+  // any process, including a model with only exact zero poles (no A2). This is the
+  // predicate of every consumer of the complete permittivity ε(s) or the stored energy.
+  bool HasFrequencyDependentPermittivityModel(std::size_t material_idx) const
+  {
+    return frequency_dependent_permittivity_model_support.at(material_idx);
   }
   const std::vector<int> &
   GetFrequencyDependentPermittivityAttributes(std::size_t material_idx) const
@@ -227,9 +241,72 @@ public:
   }
   std::complex<double> EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
                                                               std::complex<double> s) const;
-  // The relative permittivity ε∞ + χ(s) of a frequency-dependent material, at s ≠ 0.
+  // The complete relative permittivity ε∞ + χ(s) of a frequency-dependent material, at
+  // s ≠ 0, from its configured terms, including exact zero poles. Errors at a singularity.
   std::complex<double> EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
                                                               std::complex<double> s) const;
+  // ε∞ + StoredEnergySusceptibility at real ω > 0: the constant permittivity with the same
+  // time-averaged stored electric energy as the model, possibly ≤ 0 for a general
+  // PoleResidue model. Errors at a singularity.
+  double GetFrequencyDependentStoredEnergyPermittivity(std::size_t material_idx,
+                                                       double omega) const;
+
+  // Material tensors at the real angular frequency ω > 0, in the layout of
+  // GetPermittivityReal() (indexed by the rank-local material, for
+  // MaterialPropertyCoefficient). Constant materials keep their entries, Re{ε}, Im{ε} =
+  // −Re{ε} tan δ, and Re{ε} for the stored energy; a frequency-dependent material has
+  // Re ε(iω), Im ε(iω), or GetFrequencyDependentStoredEnergyPermittivity. These are values,
+  // not state: the getters above always return the high-frequency permittivity ε∞.
+  mfem::DenseTensor EvaluatePermittivityReal(double omega) const;
+  mfem::DenseTensor EvaluatePermittivityImag(double omega) const;
+  mfem::DenseTensor EvaluateStoredEnergyPermittivity(double omega) const;
+
+  // The light speed (μ ε)^(-1/2) at the real angular frequency ω > 0, in the layout of
+  // GetLightSpeed(), with Re ε(iω) for the given frequency-dependent materials (global
+  // indices, the same on every process): the wave speed of a lossless medium with this
+  // permittivity. Errors unless Re ε(iω) > 0 for each, on every process. Other
+  // frequency-dependent materials keep ε∞ and are not evaluated.
+  mfem::DenseTensor EvaluateLightSpeed(double omega,
+                                       const std::vector<std::size_t> &materials) const;
+
+  // Whether the domain attribute is vacuum for interface postprocessing: a light speed of
+  // one and no frequency-dependent permittivity, independent of the frequency (a
+  // frequency-dependent material with ε∞ = 1 is not vacuum).
+  bool IsVacuum(int attr) const;
+
+  // A copy of the material tensor data (in the layout of GetPermittivityReal()), with
+  // f(m, M) applied to the entry M of each rank-local material with the configured
+  // frequency-dependent model m.
+  template <typename F>
+  mfem::DenseTensor MapFrequencyDependentMaterials(const mfem::DenseTensor &data,
+                                                   F &&f) const
+  {
+    mfem::DenseTensor out(data);
+    for (int k = 0; k < out.SizeK(); k++)
+    {
+      const int m = GetLocalFrequencyDependentPermittivityModelMaterial(k);
+      if (m >= 0)
+      {
+        f(static_cast<std::size_t>(m), out(k));
+      }
+    }
+    return out;
+  }
+
+  // The frequency-dependent material with a configured model on the given domain attribute
+  // (unlike GetFrequencyDependentPermittivityMaterial, also one with only zero poles), or
+  // -1 if there is none. The same for a rank-local material index.
+  int GetFrequencyDependentPermittivityModelMaterial(int attr) const;
+  int GetLocalFrequencyDependentPermittivityModelMaterial(int local_mat) const;
+
+  // The rank-local material index of a domain attribute, for the evaluated tensors above.
+  int GetLocalMaterial(int attr) const { return AttrToMat(attr); }
+  // The entry of a material tensor (in the layout of GetPermittivityReal()) on a domain
+  // attribute.
+  auto GetMaterialEntry(const mfem::DenseTensor &data, int attr) const
+  {
+    return Wrap(data, attr);
+  }
   // The time-averaged stored electric energy of the polarization of a frequency-dependent
   // material at real ω > 0, as a susceptibility (permittivity::StoredEnergySusceptibility):
   // the stored energy is that of a constant permittivity ε∞ plus this value. It includes

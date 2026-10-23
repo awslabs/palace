@@ -223,22 +223,29 @@ void MaterialOperator::SetUpMaterialProperties(
   }
   // A nonlinear material support must be represented identically on all ranks, even where
   // its local operator is empty.
-  std::unique_ptr<bool[]> model_support(new bool[materials.size()]);
-  for (std::size_t i = 0; i < materials.size(); i++)
+  // The same holds for the configured model of any frequency-dependent material, including
+  // one with only exact zero poles, which has no nonlinear term.
+  const std::size_t nm = materials.size();
+  std::unique_ptr<bool[]> model_support(new bool[2 * nm]);
+  for (std::size_t i = 0; i < nm; i++)
   {
     model_support[i] = mat_marker[i] && (!permittivity_pole_terms[i].empty() ||
                                          !djordjevic_sarkar_terms[i].empty());
+    model_support[nm + i] = mat_marker[i] && !permittivity_terms[i].empty();
   }
-  Mpi::GlobalOr(static_cast<int>(materials.size()), model_support.get(), mesh.GetComm());
-  for (std::size_t i = 0; i < materials.size(); i++)
+  Mpi::GlobalOr(static_cast<int>(2 * nm), model_support.get(), mesh.GetComm());
+  frequency_dependent_permittivity_model_support.assign(nm, false);
+  for (std::size_t i = 0; i < nm; i++)
   {
     frequency_dependent_permittivity_support[i] = model_support[i];
+    frequency_dependent_permittivity_model_support[i] = model_support[nm + i];
   }
 
   attr_mat.SetSize(loc_attr.size());
   attr_mat = -1;
 
   attr_is_isotropic.SetSize(nmats);
+  local_mat_to_material.SetSize(nmats);
 
   const int sdim = mesh.SpaceDimension();
   mat_muinv.SetSize(sdim, sdim, nmats);
@@ -275,6 +282,7 @@ void MaterialOperator::SetUpMaterialProperties(
     {
       continue;
     }
+    local_mat_to_material[count] = static_cast<int>(i);
     // Electrostatics uses the static permittivity of a frequency-dependent material.
     config::MaterialData data = materials[i];
     if (problem_type == ProblemType::ELECTROSTATIC &&
@@ -583,9 +591,128 @@ std::complex<double>
 MaterialOperator::EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
                                                          std::complex<double> s) const
 {
+  // The configured terms, not A2(s) / s²: A2 omits the exact zero poles folded into the
+  // conductivity, which are part of the permittivity of the model (Drude).
   MFEM_VERIFY(s != 0.0, "Frequency-dependent permittivity evaluation requires s != 0!");
-  return frequency_dependent_permittivity_eps_inf.at(material_idx) +
-         EvaluateFrequencyDependentPermittivityA2(material_idx, s) / (s * s);
+  const std::complex<double> eps =
+      frequency_dependent_permittivity_eps_inf.at(material_idx) +
+      permittivity::Susceptibility(permittivity_terms.at(material_idx), s);
+  MFEM_VERIFY(std::isfinite(eps.real()) && std::isfinite(eps.imag()),
+              "Frequency-dependent permittivity of material "
+                  << material_idx << " is singular at s = " << s << "!");
+  return eps;
+}
+
+namespace
+{
+
+void SetIsotropic(double value, mfem::DenseMatrix &M)
+{
+  M = 0.0;
+  for (int d = 0; d < M.Height(); d++)
+  {
+    M(d, d) = value;
+  }
+}
+
+}  // namespace
+
+int MaterialOperator::GetFrequencyDependentPermittivityModelMaterial(int attr) const
+{
+  for (std::size_t i = 0; i < frequency_dependent_permittivity_attributes.size(); i++)
+  {
+    const auto &attrs = frequency_dependent_permittivity_attributes[i];
+    if (frequency_dependent_permittivity_model_support[i] &&
+        std::find(attrs.begin(), attrs.end(), attr) != attrs.end())
+    {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+int MaterialOperator::GetLocalFrequencyDependentPermittivityModelMaterial(
+    int local_mat) const
+{
+  MFEM_ASSERT(local_mat >= 0 && local_mat < local_mat_to_material.Size(),
+              "Invalid local material index " << local_mat << "!");
+  const int m = local_mat_to_material[local_mat];
+  return frequency_dependent_permittivity_model_support[m] ? m : -1;
+}
+
+mfem::DenseTensor MaterialOperator::EvaluatePermittivityReal(double omega) const
+{
+  return MapFrequencyDependentMaterials(
+      mat_epsilon,
+      [this, omega](std::size_t m, mfem::DenseMatrix &eps)
+      {
+        SetIsotropic(EvaluateFrequencyDependentPermittivity(m, {0.0, omega}).real(), eps);
+      });
+}
+
+mfem::DenseTensor MaterialOperator::EvaluatePermittivityImag(double omega) const
+{
+  return MapFrequencyDependentMaterials(
+      mat_epsilon_imag,
+      [this, omega](std::size_t m, mfem::DenseMatrix &eps)
+      {
+        SetIsotropic(EvaluateFrequencyDependentPermittivity(m, {0.0, omega}).imag(), eps);
+      });
+}
+
+mfem::DenseTensor MaterialOperator::EvaluateStoredEnergyPermittivity(double omega) const
+{
+  return MapFrequencyDependentMaterials(
+      mat_epsilon, [this, omega](std::size_t m, mfem::DenseMatrix &eps)
+      { SetIsotropic(GetFrequencyDependentStoredEnergyPermittivity(m, omega), eps); });
+}
+
+mfem::DenseTensor
+MaterialOperator::EvaluateLightSpeed(double omega,
+                                     const std::vector<std::size_t> &materials) const
+{
+  // Check every listed material on every process, not only where it is local, so that an
+  // unsupported medium is reported consistently.
+  std::vector<double> scale(frequency_dependent_permittivity_eps_inf.size(), 1.0);
+  std::vector<bool> listed(scale.size(), false);
+  for (auto m : materials)
+  {
+    const double eps = EvaluateFrequencyDependentPermittivity(m, {0.0, omega}).real();
+    MFEM_VERIFY(eps > 0.0, "The wave speed of frequency-dependent material "
+                               << m << " requires Re ε(iω) > 0, but Re ε = " << eps
+                               << " at ω = " << omega << "!");
+    scale[m] = std::sqrt(frequency_dependent_permittivity_eps_inf[m] / eps);
+    listed[m] = true;
+  }
+  return MapFrequencyDependentMaterials(mat_c0,
+                                        [&](std::size_t m, mfem::DenseMatrix &c0)
+                                        {
+                                          if (listed[m])
+                                          {
+                                            c0 *= scale[m];
+                                          }
+                                        });
+}
+
+bool MaterialOperator::IsVacuum(int attr) const
+{
+  constexpr double threshold = 1.0 - 1.0e-6;
+  return GetLightSpeedMax(attr) >= threshold &&
+         GetLocalFrequencyDependentPermittivityModelMaterial(AttrToMat(attr)) < 0;
+}
+
+double
+MaterialOperator::GetFrequencyDependentStoredEnergyPermittivity(std::size_t material_idx,
+                                                                double omega) const
+{
+  MFEM_VERIFY(omega > 0.0, "The stored energy of a frequency-dependent material requires "
+                           "a positive frequency!");
+  const double w = frequency_dependent_permittivity_eps_inf.at(material_idx) +
+                   GetFrequencyDependentStoredEnergySusceptibility(material_idx, omega);
+  MFEM_VERIFY(std::isfinite(w), "Stored-energy permittivity of material "
+                                    << material_idx << " is singular at ω = " << omega
+                                    << "!");
+  return w;
 }
 
 double
@@ -652,7 +779,9 @@ MaterialOperator::SplitCeedBdrAttributesByFrequencyDependentPermittivity(
     }
     for (const auto &[nbr_attr, ceed_attr] : it->second)
     {
-      const int m = GetFrequencyDependentPermittivityMaterial(nbr_attr);
+      // Any configured model, including one with only zero poles (no nonlinear term):
+      // the boundary condition depends on the complete permittivity.
+      const int m = GetFrequencyDependentPermittivityModelMaterial(nbr_attr);
       (m < 0 ? split.other : by_material[m]).Append(ceed_attr);
     }
   }
