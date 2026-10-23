@@ -242,7 +242,7 @@ void DomainPostOperator::SetUpFrequencyDependentForms(const config::DomainPostDa
     FrequencyDependentForms forms;
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
-      if (!mat_op.HasFrequencyDependentPermittivitySupport(m))
+      if (!mat_op.HasFrequencyDependentPermittivityModel(m))
       {
         continue;
       }
