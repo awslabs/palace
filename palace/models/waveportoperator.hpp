@@ -112,7 +112,9 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
   mfem::Array<int> port_dbc_tdof_list;
-  double mu_eps_max;
+
+  // Squared effective index of the eigenvalue shift, σ = -(n ω)².
+  double n_target_sq;
 
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.
@@ -142,6 +144,10 @@ private:
 
   // Solve the cross-section modal EVP at complex ω once and cache (kₙ, eigenvector).
   const ModeSolveCache &EvalModeSolve(std::complex<double> omega);
+
+  // Warn once if the selected mode is evanescent (Re kₙ² < 0).
+  bool warned_evanescent = false;
+  void WarnEvanescent(std::complex<double> kn, std::complex<double> omega);
 
   // Communicator for processes which have elements for this port.
   MPI_Comm port_comm = MPI_COMM_NULL;

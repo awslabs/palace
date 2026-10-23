@@ -48,6 +48,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
+    kinetic inductance makes the line modes slower than bulk waves, above the eigenvalue
+    target of the port mode solve, which only sought modes below it. The port modes are
+    now sought on both sides of the target. Added `Boundaries.WavePort[].Target`, the
+    effective index near which the port modes are sought, to select a mode far from the
+    default target. Wave ports warn when the selected mode is evanescent. SchemaVer 2-3-0
+    [PR 1067](https://github.com/awslabs/palace/pull/1067).
   - Fixed the 2D magnetic field energy (`E_mag`, `p_mag`) of driven, eigenmode, and
     transient simulations and of boundary modes (the out-of-plane part), and the 2D error
     estimates of all problem types but electrostatics, which also drive adaptive mesh
