@@ -69,7 +69,8 @@ and is available for eigenmode or frequency or time domain driven simulation typ
 second-order absorbing boundary condition is only available for frequency domain
 simulations; its boundary curl operator requires a 3D mesh. Next to a frequency-dependent
 material, the wave impedance and both orders' coefficients use
-``\epsilon_\mathrm{wave}(s)=\epsilon(s)+\sigma_\mathrm{user}/s`` at the current frequency.
+``\epsilon_{r,\mathrm{wave}}(s)=\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)``
+at the current frequency, where ``\epsilon_0`` is the vacuum permittivity.
 The additive user `Conductivity` must be isotropic on such a boundary; the analytic
 impedance does not model a tensor conductivity. Constant-material boundaries retain their
 existing lossless-material approximation.
@@ -214,7 +215,7 @@ for implementation details.
     The port boundary must be planar and on the true boundary of the computational domain.
     The medium adjacent to the port must be homogeneous and isotropic. For a
     frequency-dependent material, the port uses the complete complex wave response
-    ``\epsilon(s)+\sigma_\mathrm{user}/s`` and real-power normalization, including lossy
+    ``\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)`` and real-power normalization, including lossy
     diffraction orders. Its additive user `Conductivity` must also be isotropic. Constant
     materials retain the existing lossless-port approximation: their `LossTan` and
     `Conductivity` are not used in the port coefficients.
