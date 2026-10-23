@@ -110,6 +110,15 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
 }  // namespace
 
 template <typename VecType>
+FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
+                                      const FiniteElementSpaceHierarchy &smooth_fespaces,
+                                      const FiniteElementSpace &rhs_fespace, double tol,
+                                      int max_it, int print, bool use_mg)
+  : FluxProjector(coeff, smooth_fespaces, rhs_fespace, tol, max_it, print, use_mg, {})
+{
+}
+
+template <typename VecType>
 FluxProjector<VecType>::FluxProjector(
     const MaterialPropertyCoefficient &coeff,
     const FiniteElementSpaceHierarchy &smooth_fespaces,

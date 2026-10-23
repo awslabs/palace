@@ -58,10 +58,16 @@ private:
   mutable VecType rhs;
 
 public:
+  // The constant flux F₀ only, and with the weighted terms Fₖ. Not a default argument: the
+  // coefficient type is incomplete here.
   FluxProjector(const MaterialPropertyCoefficient &coeff,
                 const FiniteElementSpaceHierarchy &smooth_fespaces,
                 const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
-                bool use_mg, const std::vector<MaterialPropertyCoefficient> &coeff_k = {});
+                bool use_mg);
+  FluxProjector(const MaterialPropertyCoefficient &coeff,
+                const FiniteElementSpaceHierarchy &smooth_fespaces,
+                const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
+                bool use_mg, const std::vector<MaterialPropertyCoefficient> &coeff_k);
 
   // y = M⁻¹ F₀ x.
   void Mult(const VecType &x, VecType &y) const;
