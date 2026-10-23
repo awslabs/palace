@@ -48,6 +48,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the London flux-loop excitations on nonconforming meshes with a GPU device, where
+    the cut generator was built from the unconformed potential left in host memory, which
+    changed the inductances after adaptive refinement.
+    [PR 1079](https://github.com/awslabs/palace/pull/1079).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

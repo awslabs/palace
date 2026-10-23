@@ -1021,9 +1021,8 @@ TEST_CASE("microstrip_superconductor", "[Serial][Parallel][GPU][Regression]")
 // London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
 // a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
 // curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
-// after one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
-// awslabs/palace#375).
-TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
+// after one refinement).
+TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
