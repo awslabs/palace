@@ -3,7 +3,7 @@
 
 #include "surfaceconductivityoperator.hpp"
 
-#include <set>
+#include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -37,42 +37,10 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
     const mfem::ParMesh &mesh)
 {
   // Check that conductivity boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> bdr_attr_marker;
+  MeshBoundaryAttributes mesh_attrs(mesh);
   if (!conductivity.empty())
   {
-    mfem::Array<int> conductivity_marker(bdr_attr_max);
-    bdr_attr_marker.SetSize(bdr_attr_max);
-    bdr_attr_marker = 0;
-    conductivity_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
-    {
-      bdr_attr_marker[attr - 1] = 1;
-    }
-    std::set<int> bdr_warn_list;
-    for (const auto &data : conductivity)
-    {
-      for (auto attr : data.attributes)
-      {
-        MFEM_VERIFY(!conductivity_marker[attr - 1],
-                    "Multiple definitions of conductivity boundary properties for boundary "
-                    "attribute "
-                        << attr << "!");
-        conductivity_marker[attr - 1] = 1;
-        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-        {
-          bdr_warn_list.insert(attr);
-        }
-      }
-    }
-    if (!bdr_warn_list.empty())
-    {
-      Mpi::Print("\n");
-      Mpi::Warning(
-          "Unknown conductivity boundary attributes!\nSolver will just ignore them!");
-      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-      Mpi::Print("\n");
-    }
+    CheckBoundaryAttributes(mesh_attrs, conductivity, "conductivity");
   }
 
   // Finite conductivity boundaries are defined using the user provided surface conductivity
@@ -97,7 +65,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
     bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
     for (auto attr : data.attributes)
     {
-      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+      if (!mesh_attrs.Contains(attr))
       {
         continue;  // Can just ignore if wrong
       }
