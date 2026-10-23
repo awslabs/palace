@@ -269,7 +269,8 @@ void CurlCurlOperator::SetUpLondonFluxConstraints()
     curl_fespace.GetProlongationMatrix()->AddMultTranspose(lf, f);
     if (IsBroken())
     {
-      // The hole faces are not on the films, so f only reads the original DOFs.
+      // The DOFs of the curl space are face DOFs, and the hole faces are not film faces, so
+      // the hole flux functional only reads DOFs with a single version.
       Vector fb(GetSolutionCurlSpace().GetTrueVSize());
       fb.UseDevice(true);
       GetSolutionCurlSpace()
@@ -512,12 +513,7 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
     const auto &nd_fespace_l = GetSolutionNDSpaces().GetFESpaceAtLevel(l);
-    nd_fespace_l.Get().GetEssentialTrueDofs(merged_marker, entry.dbc_tdof_lists[l]);
-    if (nd_fespace_l.IsBroken())
-    {
-      mfem::Array<int> tdof_list(entry.dbc_tdof_lists[l]);
-      nd_fespace_l.GetVersionTrueDofs(tdof_list, entry.dbc_tdof_lists[l]);
-    }
+    nd_fespace_l.GetEssentialTrueDofs(merged_marker, entry.dbc_tdof_lists[l]);
     // London flux films add no essential DOFs (the whole film is free, governed by the
     // sheet term; the hole fluxoid is an integral constraint), so the screened essential
     // set here is exactly the PEC + shorted-port set — no perimeter augmentation.
@@ -543,13 +539,7 @@ void CurlCurlOperator::ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_a
   auto merged_marker = mesh::BdrAttrToMarker(pmesh, merged_attr, true);
 
   mfem::Array<int> tdof_list;
-  GetNDSpace().Get().GetEssentialTrueDofs(merged_marker, tdof_list);
-  if (IsBroken())
-  {
-    mfem::Array<int> versions;
-    GetSolutionNDSpace().GetVersionTrueDofs(tdof_list, versions);
-    tdof_list = std::move(versions);
-  }
+  GetSolutionNDSpace().GetEssentialTrueDofs(merged_marker, tdof_list);
   linalg::SetSubVector(v, tdof_list, 0.0);
 }
 
@@ -569,26 +559,42 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   {
     return;
   }
-  mfem::LinearForm rhs(&GetNDSpace().Get());
-  rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-  rhs.UseFastAssembly(false);
-  rhs.UseDevice(false);
-  rhs.Assemble();
-  rhs.UseDevice(true);
   if (IsBroken())
   {
-    // The surface current excitations are not on the films, so they only read the
-    // original DOFs.
-    Vector RHS_u(GetNDSpace().GetTrueVSize());
-    RHS_u.UseDevice(true);
-    RHS_u = 0.0;
-    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS_u, -1.0);
-    GetSolutionNDSpace()
-        .BuildVersionMap(FiniteElementSpace::VersionMap::FIRST)
-        ->MultTranspose(RHS_u, RHS);
+    // On the broken space, each boundary element is assembled into the L-DOFs read by its
+    // adjacent element (a source standing on one side of a two-sided film drives that
+    // side), as mfem::LinearForm::Assemble does for the boundary integrator.
+    const auto &nd_fespace = GetSolutionNDSpace();
+    auto &pmesh = const_cast<mfem::ParMesh &>(GetMesh().Get());
+    VectorFEBoundaryLFIntegrator integ(fb);
+    Vector rhs(nd_fespace.GetVSize()), elvect;
+    rhs.UseDevice(false);
+    rhs = 0.0;
+    mfem::Array<int> dofs;
+    mfem::DofTransformation dof_trans;
+    for (int be = 0; be < pmesh.GetNBE(); be++)
+    {
+      const mfem::FiniteElement &fe = *nd_fespace.Get().GetBE(be);
+      mfem::ElementTransformation &T = *pmesh.GetBdrElementTransformation(be);
+      integ.AssembleRHSElementVect(fe, T, elvect);
+      nd_fespace.GetBdrElementDofs(be, dofs, dof_trans);
+      if (!dof_trans.IsIdentity())
+      {
+        dof_trans.TransformDual(elvect);
+      }
+      rhs.AddElementVector(dofs, elvect);
+    }
+    rhs.UseDevice(true);
+    nd_fespace.GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   }
   else
   {
+    mfem::LinearForm rhs(&GetNDSpace().Get());
+    rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+    rhs.UseFastAssembly(false);
+    rhs.UseDevice(false);
+    rhs.Assemble();
+    rhs.UseDevice(true);
     GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   }
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
@@ -754,8 +760,10 @@ void CurlCurlOperator::SetUpBrokenSpaces()
         std::make_unique<FiniteElementSpace>(nd_fespaces.GetFESpaceAtLevel(l), sides));
     h1_broken_fespaces.AddLevel(
         std::make_unique<FiniteElementSpace>(h1_fespaces.GetFESpaceAtLevel(l), sides));
-    nd_broken_fespaces.GetFinestFESpace().GetVersionTrueDofs(
-        dbc_tdof_lists[l], broken_dbc_tdof_lists.emplace_back());
+    const int bdr_attr_max =
+        mesh.Get().bdr_attributes.Size() ? mesh.Get().bdr_attributes.Max() : 0;
+    nd_broken_fespaces.GetFinestFESpace().GetEssentialTrueDofs(
+        mesh::AttrToMarker(bdr_attr_max, dbc_attr), broken_dbc_tdof_lists.emplace_back());
   }
   rt_broken_fespace = std::make_unique<FiniteElementSpace>(
       rt_fespace, nd_fespaces.GetFinestFESpace().GetMesh().GetCrackSides(two_sided_attr));
@@ -774,27 +782,7 @@ const mfem::HypreParMatrix &CurlCurlOperator::GetBrokenSheetMatrix(std::size_t l
   const auto &broken_l = nd_broken_fespaces.GetFESpaceAtLevel(l);
   const auto &nd_l = nd_fespaces.GetFESpaceAtLevel(l);
   const auto &sides = broken_l.GetMesh().GetCrackSides(two_sided_attr);
-  auto C = sc_sheet_op.AssembleTwoSidedMatrix(nd_l, broken_l, sides);
-
-  // One-sided sheets, which only read the original DOFs (exact unless they meet a
-  // two-sided film).
-  MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-  sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fbr);
-  int any = !fbr.empty();
-  Mpi::GlobalMax(1, &any, GetComm());
-  if (any)
-  {
-    BilinearForm m(nd_l);
-    if (!fbr.empty())  // A process may have no boundary elements of these sheets.
-    {
-      m.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
-    }
-    auto M = ParOperator(m.FullAssemble(false), nd_l).StealParallelAssemble();
-    auto Z = broken_l.BuildVersionMap(FiniteElementSpace::VersionMap::FIRST);
-    auto ZtMZ = linalg::RAP(*M, *Z);
-    C.reset(mfem::ParAdd(C.get(), ZtMZ.get()));
-  }
-  broken_sheet_mats[l] = std::move(C);
+  broken_sheet_mats[l] = sc_sheet_op.AssembleBrokenSheetMatrix(nd_l, broken_l, sides);
   return *broken_sheet_mats[l];
 }
 

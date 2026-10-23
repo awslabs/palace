@@ -35,7 +35,7 @@ class Units;
 // and the two versions of the DOFs of each film face are the fields of its two sides. Each
 // side carries the diagonal self-term λ·tanh(d/λ) (stiffness coth(d/λ)/(μ₀λ)) and the
 // sides are coupled by the cross term −1/(μ₀λ·sinh(d/λ)), capturing two-sided screening
-// for d ≳ λ (see AssembleTwoSidedMatrix).
+// for d ≳ λ (see AssembleBrokenSheetMatrix).
 //
 class SuperconductorSheetOperator
 {
@@ -89,23 +89,27 @@ public:
   std::vector<int> GetTwoSidedAttributes() const;
 
   // Add the tangential surface mass contribution (1/L_ksq) A_t · v_t to the system matrix,
-  // for all sheets but the two-sided ones (see AssembleTwoSidedMatrix).
+  // for all sheets but the two-sided ones (on a broken space, see
+  // AssembleBrokenSheetMatrix instead).
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb) const;
 
-  // Assemble the terms of the two-sided sheets as a matrix on the true DOFs of the broken
-  // space broken_nd_fespace, a view of nd_fespace broken across GetTwoSidedAttributes()
-  // with the given sides. On each film face with the fields u⁺, u⁻ of its two sides, the
+  // Assemble the terms of all sheets as a matrix on the true DOFs of the broken space
+  // broken_nd_fespace, a view of nd_fespace broken across GetTwoSidedAttributes() with the
+  // given sides. On each two-sided film face with the fields u⁺, u⁻ of its two sides, the
   // bilinear form a (u⁺·v⁺ + u⁻·v⁻) − b (u⁺·v⁻ + u⁻·v⁺), with a = coth(d/λ)/λ and b =
   // 1/(λ·sinh(d/λ)), is assembled as
   //          (a + b) (u⁺·v⁺ + u⁻·v⁻) − b (u⁺ + u⁻)·(v⁺ + v⁻).
   // The first term is integrated by each element over its own film faces, with its own
   // DOFs. The second one only depends on u⁺ + u⁻, the field of nd_fespace whose true DOFs
   // sum the versions read by the two sides, so it is the film boundary mass of nd_fespace
-  // between these sums. Neither term needs to identify the two sides of a face.
+  // between these sums. Neither term needs to identify the two sides of a face. The
+  // one-sided sheets (1/L_ksq) u·v are integrated by the element adjacent to each of their
+  // boundary elements with its own DOFs, so that a sheet standing on one side of a
+  // two-sided film reads the versions of that side.
   std::unique_ptr<mfem::HypreParMatrix>
-  AssembleTwoSidedMatrix(const FiniteElementSpace &nd_fespace,
-                         const FiniteElementSpace &broken_nd_fespace,
-                         const CrackSides &sides) const;
+  AssembleBrokenSheetMatrix(const FiniteElementSpace &nd_fespace,
+                            const FiniteElementSpace &broken_nd_fespace,
+                            const CrackSides &sides) const;
 };
 
 }  // namespace palace

@@ -1039,6 +1039,141 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
   }
 }
 
+TEST_CASE("Broken space boundary DOFs", "[brokenspace][Serial][Parallel]")
+{
+  // A boundary standing on one side of the interior boundary (the sheet y = 0.5 for
+  // x > x_crack, attribute 9, which meets the interior boundary along an edge) reads and
+  // makes essential the versions of that side only: each of its DOFs in the underlying
+  // space is essential in exactly one version of the broken space.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  constexpr int sheet_attr = 9;
+  auto base = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[1] - 0.5) < 1.0e-12 &&
+                 base.GetVertex(v)[0] > x_crack - 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(!sheet_faces.empty());
+  mfem::Mesh smesh(3, base.GetNV(), base.GetNE(),
+                   base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    smesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    smesh.AddElement(base.GetElement(e)->Duplicate(&smesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    smesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&smesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&smesh);
+    el->SetAttribute(sheet_attr);
+    smesh.AddBdrElement(el);
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const auto &sides = mesh.GetCrackSides({crack_attr});
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  FiniteElementSpace nd_broken(nd_fespace, sides);
+  mfem::Array<int> marker(mesh.Get().bdr_attributes.Max());
+  marker = 0;
+  marker[sheet_attr - 1] = 1;
+
+  // The boundary element DOFs are those read by the adjacent element.
+  mfem::Array<int> bdofs, edofs;
+  mfem::DofTransformation dof_trans;
+  int num_bdr = 0;
+  for (int be = 0; be < mesh.Get().GetNBE(); be++)
+  {
+    if (mesh.Get().GetBdrAttribute(be) != sheet_attr)
+    {
+      continue;
+    }
+    int e, info;
+    mesh.Get().GetBdrElementAdjacentElement(be, e, info);
+    nd_broken.GetBdrElementDofs(be, bdofs, dof_trans);
+    nd_broken.GetElementDofs(e, edofs, dof_trans);
+    for (auto d : bdofs)
+    {
+      const int l = (d >= 0) ? d : -1 - d;
+      bool found = false;
+      for (auto ed : edofs)
+      {
+        found = found || ((ed >= 0) ? ed : -1 - ed) == l;
+      }
+      CHECK(found);
+    }
+    num_bdr++;
+  }
+  Mpi::GlobalSum(1, &num_bdr, comm);
+  CHECK(num_bdr == static_cast<int>(sheet_faces.size()));
+
+  // One version per essential DOF of the underlying space, and only the versions of the
+  // sheet side: the elements on the other side read no essential L-DOF (the sheet's DOFs on
+  // the interior boundary are split, since the interior boundary spans the domain there).
+  mfem::Array<int> ess_u, ess_b;
+  nd_fespace.GetEssentialTrueDofs(marker, ess_u);
+  nd_broken.GetEssentialTrueDofs(marker, ess_b);
+  int sizes[2] = {ess_u.Size(), ess_b.Size()};
+  Mpi::GlobalSum(2, sizes, comm);
+  CHECK(sizes[0] == sizes[1]);
+  int num_split = 0;
+  for (auto t : ess_u)
+  {
+    num_split += (nd_broken.GetNumVersions(t) > 1);
+  }
+  Mpi::GlobalSum(1, &num_split, comm);
+  CHECK(num_split > 0);
+  Vector ess_t(nd_broken.GetTrueVSize()), ess_l(nd_broken.GetVSize());
+  ess_t.UseDevice(false);
+  ess_l.UseDevice(false);
+  ess_t = 0.0;
+  for (auto t : ess_b)
+  {
+    ess_t(t) = 1.0;
+  }
+  nd_broken.GetProlongationMatrix()->Mult(ess_t, ess_l);
+  int num_wrong = 0;
+  for (int e = 0; e < mesh.Get().GetNE(); e++)
+  {
+    mfem::Vector c;
+    mesh.Get().GetElementCenter(e, c);
+    if (c(0) > x_crack)
+    {
+      continue;
+    }
+    nd_broken.GetElementDofs(e, edofs, dof_trans);
+    for (auto d : edofs)
+    {
+      num_wrong += (ess_l((d >= 0) ? d : -1 - d) != 0.0);
+    }
+  }
+  Mpi::GlobalSum(1, &num_wrong, comm);
+  CHECK(num_wrong == 0);
+}
+
 TEST_CASE("Broken space interpolators", "[brokenspace][Serial][Parallel]")
 {
   // The discrete gradient, curl, and p-prolongation between spaces broken with the same
