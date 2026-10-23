@@ -161,6 +161,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     frequency, and circuit synthesis with a single distinct sample, which now aborts at
     startup instead of failing in the sweep.
     [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed driven-sweep restarts (`"Restart"` > 1) with `"FarField"` postprocessing, which
+    always aborted while reloading the CSV tables because the far-field table was never
+    read back. It now reloads and validates like the other tables, matching its
+    one-row-per-direction layout.
+    [PR 1075](https://github.com/awslabs/palace/pull/1075).
 
 #### Performance Improvements
 
