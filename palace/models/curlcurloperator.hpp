@@ -95,9 +95,11 @@ private:
   // RT spaces broken across the films (see fem/brokenspace.hpp), on every level of the
   // hierarchy: the two versions of the DOFs of a film face are the fields of its two
   // sides. The unbroken spaces remain for postprocessing and error estimation, and
-  // dbc_tdof_lists holds the essential true DOFs of the broken levels, in all versions.
-  // The sheet terms on each broken level (one-sided sheets lifted from the unbroken space,
-  // and the two-sided ones) are assembled matrices, built on first use.
+  // dbc_tdof_lists holds the essential true DOFs of the broken levels (the versions read
+  // by the elements adjacent to the essential boundaries, so that a PEC standing on one
+  // side of a film leaves the other side free). The sheet terms on each broken level (the
+  // one-sided sheets in the versions of their side, and the two-sided ones) are assembled
+  // matrices, built on first use.
   std::vector<int> two_sided_attr;
   FiniteElementSpaceHierarchy nd_broken_fespaces, h1_broken_fespaces;
   std::unique_ptr<FiniteElementSpace> rt_broken_fespace;

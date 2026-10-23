@@ -63,7 +63,7 @@ void SuperconductorSheetOperator::SetUpBoundaryProperties(
   {
     // Two-sided sheet: the diagonal self-term inductance of each side is λ·tanh(d/λ), so
     // 1/Ls = coth(d/λ)/λ, and the cross term is assembled with it in
-    // AssembleTwoSidedMatrix. Otherwise the single-sheet L_ksq applies.
+    // AssembleBrokenSheetMatrix. Otherwise the single-sheet L_ksq applies.
     const double Ls =
         data.two_sided
             ? data.lambda_L * std::tanh(data.thickness / data.lambda_L)
@@ -347,7 +347,8 @@ void AddElementFaceMass(const mfem::ParMesh &mesh, int e, int i, double coeff,
 
 }  // namespace
 
-std::unique_ptr<mfem::HypreParMatrix> SuperconductorSheetOperator::AssembleTwoSidedMatrix(
+std::unique_ptr<mfem::HypreParMatrix>
+SuperconductorSheetOperator::AssembleBrokenSheetMatrix(
     const FiniteElementSpace &nd_fespace, const FiniteElementSpace &broken_nd_fespace,
     const CrackSides &sides) const
 {
@@ -391,7 +392,7 @@ std::unique_ptr<mfem::HypreParMatrix> SuperconductorSheetOperator::AssembleTwoSi
   }
 
   // Each side: (a + b) ∫ u·v over the film faces of each element, on the L-vector of the
-  // broken space, lifted with its prolongation.
+  // broken space, lifted with its prolongation, together with the one-sided sheets.
   std::unique_ptr<mfem::HypreParMatrix> C;
   {
     const auto face_attr = GetFaceAttributes(mesh, attrs);
@@ -443,6 +444,42 @@ std::unique_ptr<mfem::HypreParMatrix> SuperconductorSheetOperator::AssembleTwoSi
     Mpi::GlobalSum(1, &num_unknown, comm);
     MFEM_VERIFY(num_unknown == 0, num_unknown << " split face(s) of a broken space with no "
                                                  "two-sided superconductor attribute!");
+
+    // One-sided sheets: each boundary element is integrated by its adjacent element with
+    // the DOFs of its side, so that a sheet standing on one side of a two-sided film reads
+    // the versions of that side (both sides read a sheet away from the films).
+    std::map<int, double> one_sided;
+    for (const auto &bdr : boundaries)
+    {
+      if (!bdr.two_sided)
+      {
+        for (auto attr : bdr.attr_list)
+        {
+          one_sided[attr] = 1.0 / (bdr.Ls * bdr.attr_scaling.at(attr));
+        }
+      }
+    }
+    for (int be = 0; be < mesh.GetNBE() && !one_sided.empty(); be++)
+    {
+      auto it = one_sided.find(mesh.GetBdrAttribute(be));
+      if (it == one_sided.end())
+      {
+        continue;
+      }
+      int e, info;
+      mesh.GetBdrElementAdjacentElement(be, e, info);
+      const mfem::FiniteElement &fe = *nd_fespace.Get().GetFE(e);
+      elmat.SetSize(fe.GetDof());
+      elmat = 0.0;
+      mesh.GetElementTransformation(e, &T);
+      AddElementFaceMass(mesh, e, info / 64, it->second, fe, T, elmat);
+      broken_nd_fespace.GetElementDofs(e, dofs, dof_trans);
+      if (!dof_trans.IsIdentity())
+      {
+        dof_trans.TransformDual(elmat);
+      }
+      C_l->AddSubMatrix(dofs, dofs, elmat, 0);
+    }
     auto C_h = linalg::BlockDiagonalParMatrix(
         comm, broken_nd_fespace.GlobalVSize(), broken_nd_fespace.GlobalVSize(),
         broken_nd_fespace.GetDofOffsets(), broken_nd_fespace.GetDofOffsets(),

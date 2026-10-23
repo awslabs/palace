@@ -196,6 +196,20 @@ public:
   void GetElementDofs(int e, mfem::Array<int> &dofs,
                       mfem::DofTransformation &dof_trans) const;
 
+  // Signed boundary element DOFs into the L-vector (see
+  // mfem::FiniteElementSpace::GetBdrElementDofs), which for a broken space are those read
+  // by the element adjacent to the boundary element: a boundary standing on one side of an
+  // interior boundary reads the versions of that side.
+  void GetBdrElementDofs(int be, mfem::Array<int> &dofs,
+                         mfem::DofTransformation &dof_trans) const;
+
+  // Essential true DOFs of the boundary elements with the marked attributes (see
+  // mfem::FiniteElementSpace::GetEssentialTrueDofs). On a broken space, a boundary element
+  // makes essential the versions read by the element adjacent to it, so a boundary standing
+  // on one side of an interior boundary leaves the other side free. Collective.
+  void GetEssentialTrueDofs(const mfem::Array<int> &bdr_marker,
+                            mfem::Array<int> &ess_tdof_list) const;
+
   // Number of versions of the local true DOF t of the underlying space (1 for an unbroken
   // space), and the local true DOF of its version v (t for v = 0).
   int GetNumVersions(int t) const { return broken ? broken->P.num_versions[t] : 1; }
@@ -203,9 +217,6 @@ public:
   {
     return broken ? broken->P.GetVersionTrueDof(t, v) : t;
   }
-
-  // The given true DOFs of the underlying space in all their versions.
-  void GetVersionTrueDofs(const mfem::Array<int> &tdof_list, mfem::Array<int> &out) const;
 
   // Map from the true DOFs of a broken space to those of the underlying space, local to
   // each process: FIRST takes version 0 (the original DOFs, exact away from the interior

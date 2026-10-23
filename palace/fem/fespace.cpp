@@ -655,16 +655,74 @@ void FiniteElementSpace::GetElementDofs(int e, mfem::Array<int> &dofs,
   }
 }
 
-void FiniteElementSpace::GetVersionTrueDofs(const mfem::Array<int> &tdof_list,
-                                            mfem::Array<int> &out) const
+void FiniteElementSpace::GetBdrElementDofs(int be, mfem::Array<int> &dofs,
+                                           mfem::DofTransformation &dof_trans) const
 {
-  out.SetSize(0);
-  out.Reserve(tdof_list.Size());
-  for (auto t : tdof_list)
+  Get().GetBdrElementDofs(be, dofs, dof_trans);
+  if (!broken)
   {
-    for (int v = 0; v < GetNumVersions(t); v++)
+    return;
+  }
+  // The DOFs of the boundary element are among those of the adjacent element, which the
+  // broken space reads in the versions of its side.
+  int e, info;
+  GetParMesh().GetBdrElementAdjacentElement(be, e, info);
+  mfem::Array<int> edofs, bdofs;
+  mfem::DofTransformation edof_trans;
+  Get().GetElementDofs(e, edofs, edof_trans);
+  GetElementDofs(e, bdofs, edof_trans);
+  for (auto &d : dofs)
+  {
+    const int l = (d >= 0) ? d : -1 - d;
+    int j = 0;
+    while (j < edofs.Size() && ((edofs[j] >= 0) ? edofs[j] : -1 - edofs[j]) != l)
     {
-      out.Append(GetVersionTrueDof(t, v));
+      j++;
+    }
+    MFEM_ASSERT(j < edofs.Size(),
+                "Boundary element DOF not found in its adjacent element!");
+    const int lb = (bdofs[j] >= 0) ? bdofs[j] : -1 - bdofs[j];
+    d = (d >= 0) ? lb : -1 - lb;
+  }
+}
+
+void FiniteElementSpace::GetEssentialTrueDofs(const mfem::Array<int> &bdr_marker,
+                                              mfem::Array<int> &ess_tdof_list) const
+{
+  if (!broken)
+  {
+    Get().GetEssentialTrueDofs(bdr_marker, ess_tdof_list);
+    return;
+  }
+  // Mark the L-DOFs of the boundary elements in the versions of their adjacent elements. A
+  // true DOF is essential when a marked L-DOF reads it, on any process (|P|ᵀ sums the marks
+  // of every process, where the unbroken space synchronizes them across processes).
+  const auto &mesh = GetParMesh();
+  Vector marker(broken->vsize), tmarker(broken->tsize);
+  marker.UseDevice(false);
+  tmarker.UseDevice(false);
+  marker = 0.0;
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dof_trans;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    if (!bdr_marker[mesh.GetBdrAttribute(be) - 1])
+    {
+      continue;
+    }
+    GetBdrElementDofs(be, dofs, dof_trans);
+    for (auto d : dofs)
+    {
+      marker((d >= 0) ? d : -1 - d) = 1.0;
+    }
+  }
+  broken->P.P->AbsMultTranspose(1.0, marker, 0.0, tmarker);
+  ess_tdof_list.SetSize(0);
+  for (int t = 0; t < broken->tsize; t++)
+  {
+    if (tmarker(t) > 0.0)
+    {
+      ess_tdof_list.Append(t);
     }
   }
 }
