@@ -257,6 +257,59 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
   };
 }
 
+// Reference-free check of error-indicators.csv, for a case whose indicator has no unique
+// reference value. Each row of Norm, Minimum, Maximum, and Mean is finite and satisfies
+// 0 <= Minimum <= Mean <= Maximum <= Norm <= upper: the indicator of an element is at most
+// the root sum of squares of all of them, also after the RMS over solves. With nonzero, the
+// Norm is also positive.
+palace::test::CustomCheck TestErrorIndicatorBounds(double upper, bool nonzero)
+{
+  return [upper, nonzero](palace::Table &actual, palace::Table &,
+                          const std::filesystem::path &)
+  {
+    auto column = [&](const std::string &hdr) -> const palace::Column *
+    {
+      for (auto &c : actual)
+      {
+        if (c.header_text == hdr)
+        {
+          return &c;
+        }
+      }
+      return nullptr;
+    };
+    const auto *norm = column("Norm"), *min = column("Minimum"), *max = column("Maximum"),
+               *mean = column("Mean");
+    REQUIRE(norm);
+    REQUIRE(min);
+    REQUIRE(max);
+    REQUIRE(mean);
+    REQUIRE(actual.n_rows() > 0);
+    constexpr double slack = 1.0e-12;  // Mean and Maximum are equal for a uniform indicator
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const double n = norm->data[r], lo = min->data[r], hi = max->data[r],
+                   m = mean->data[r];
+      INFO("row " << r + 1 << ": Norm = " << n << ", Minimum = " << lo
+                  << ", Maximum = " << hi << ", Mean = " << m << ", upper = " << upper);
+      CHECK(
+          (std::isfinite(n) && std::isfinite(lo) && std::isfinite(hi) && std::isfinite(m)));
+      CHECK(lo >= 0.0);
+      CHECK(lo <= m * (1.0 + slack));
+      CHECK(m <= hi * (1.0 + slack));
+      CHECK(hi <= n * (1.0 + slack));
+      CHECK(n <= upper);
+      CHECK(hi <= upper);
+      CHECK(m <= upper);
+      CHECK(lo <= upper);
+      if (nonzero)
+      {
+        CHECK(n > 0.0);
+      }
+    }
+  };
+}
+
 // S-parameter check for a driven wave-port run on a lossless structure. Two guards:
 //   (1) Reference-free power conservation: for each excitation j, Sum_i |S_ij|^2 == 1
 //       within rtol. Insensitive to MPI partitioning; catches the wave-port n x H fix
@@ -1329,21 +1382,33 @@ TEST_CASE("cylinder_driven_wave_tm_dispersive", "[Serial][Parallel][GPU][Regress
 // of TE11 (Mode 1). The second-order term needs a mode with a tangential curl on the end:
 // TM01 has none. The reference S-parameters are from the constant permittivity ε(ω) solved
 // at each frequency; the adaptive case checks the reduced model's factored terms.
+// As in cylinder_driven_wave, the per-element error indicator extrema and mean are not
+// compared. TE11 is a degenerate pair, and the mode solve at 3.4 and 3.8 GHz, started from
+// the mode at the previous frequency, returns a polarization that depends on the number of
+// processes (E_x at a probe at 3.4 GHz: 135.6 V/m on 2, -0.19 V/m on 8). S, the energies,
+// and the indicator Norm are invariant to it and are compared.
 TEST_CASE("cylinder_driven_wave_absorbing", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing.json",
                                   "driven_wave_absorbing", opts);
 }
 
+// The error indicator is the RMS over the greedy samples, which depend on the TE11
+// polarization and so on the number of processes: it has no unique reference value. The
+// medium is homogeneous, the recovered fluxes are L2 projections of εE and B/μ, and the
+// lossless Lorentz medium has W >= ε > 0. The squared indicators then sum to at most
+// (|ε|²/W ||E||² + ||B||²/μ) / (2 E_t) <= 1 for each sample, with the stored energy E_t.
 TEST_CASE("cylinder_driven_wave_absorbing_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-16;
+  opts.custom_checks["error-indicators.csv"] = TestErrorIndicatorBounds(1.0, true);
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing_adaptive.json",
                                   "driven_wave_absorbing_adaptive", opts);
@@ -1923,16 +1988,17 @@ TEST_CASE("cavity2d_electrostatic", "[Serial][Parallel][GPU][Regression]")
                                   "electrostatic", opts);
 }
 
+// The surface current gives a uniform B (the inductance is μ₀/2 to 1e-10), which the
+// discrete spaces represent exactly: the true error is zero. The indicator then follows the
+// relative residual at which CG stops, below its tolerance of 1e-8 (4e-10 to 1.6e-9 on 2-8
+// processes, 3e-12 to 1.3e-11 at a tolerance of 1e-10), and is bounded by that tolerance
+// rather than compared. The reference-cell 2D curl recovery gave 4.8e-6.
 TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
-  // Without volume currents, the 2D magnetic flux density is uniform, so the error
-  // estimate is set by the linear solver tolerance: bound it rather than compare it.
-  opts.custom_checks["error-indicators.csv"] =
-      [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
-  { CHECK(actual[0].data[0] < 1.0e-7); };
+  opts.custom_checks["error-indicators.csv"] = TestErrorIndicatorBounds(1.0e-8, false);
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_magnetostatic.json",
                                   "magnetostatic", opts);
