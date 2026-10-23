@@ -54,6 +54,28 @@ double CosChargeDensity(const mfem::Vector &x)
   return 6.0 * M_PI * M_PI * CosPotential(x);
 }
 
+// Smooth trigonometric potential with a wavelength resolved by the curved cylinder mesh.
+constexpr double kCurvedWavenumber = 0.5;
+
+double CurvedCosPotential(const mfem::Vector &x)
+{
+  const double k = kCurvedWavenumber;
+  return std::cos(k * x[0]) * std::cos(k * x[1]) * std::cos(k * x[2]);
+}
+
+void CurvedCosElectricField(const mfem::Vector &x, mfem::Vector &electric)
+{
+  const double k = kCurvedWavenumber;
+  electric[0] = k * std::sin(k * x[0]) * std::cos(k * x[1]) * std::cos(k * x[2]);
+  electric[1] = k * std::cos(k * x[0]) * std::sin(k * x[1]) * std::cos(k * x[2]);
+  electric[2] = k * std::cos(k * x[0]) * std::cos(k * x[1]) * std::sin(k * x[2]);
+}
+
+double CurvedCosChargeDensity(const mfem::Vector &x)
+{
+  return 3.0 * kCurvedWavenumber * kCurvedWavenumber * CurvedCosPotential(x);
+}
+
 double PolynomialPotential(const mfem::Vector &x)
 {
   return x[0] * x[0] + 2.0 * x[1] * x[1] + 3.0 * x[2] * x[2];
@@ -114,6 +136,16 @@ const MmsCase &CurvedCylinderCase()
   static const MmsCase mms{PolynomialPotential,
                            PolynomialElectricField,
                            CurvedPolynomialChargeDensity,
+                           kIsotropicEpsilonR,
+                           {}};
+  return mms;
+}
+
+const MmsCase &CurvedCylinderTrigCase()
+{
+  static const MmsCase mms{CurvedCosPotential,
+                           CurvedCosElectricField,
+                           CurvedCosChargeDensity,
                            kIsotropicEpsilonR,
                            {}};
   return mms;

@@ -39,6 +39,7 @@ const MmsCase &HomogeneousCase();
 const MmsCase &NonHomogeneousCase();
 const MmsCase &PolynomialCase();
 const MmsCase &CurvedCylinderCase();
+const MmsCase &CurvedCylinderTrigCase();
 
 }  // namespace analytic
 
@@ -46,6 +47,7 @@ void CheckPolynomialExactness(const MmsCase &polynomial);
 void CheckNeumannBoundary(const MmsCase &polynomial);
 void CheckOptimalConvergence(const MmsCase &nonhomogeneous);
 void CheckCurvedConvergence(const MmsCase &curved);
+void CheckCurvedBackendAgreement(const MmsCase &candidate, const MmsCase &reference);
 
 }  // namespace palace::testing::mms::electrostatic
 

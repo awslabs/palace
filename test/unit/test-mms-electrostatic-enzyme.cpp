@@ -70,9 +70,16 @@ double PolynomialPotential(const MmsCoordinates &x)
   return x[0] * x[0] + 2.0 * x[1] * x[1] + 3.0 * x[2] * x[2];
 }
 
+double CurvedCosPotential(const MmsCoordinates &x)
+{
+  constexpr double k = 0.5;
+  return std::cos(k * x[0]) * std::cos(k * x[1]) * std::cos(k * x[2]);
+}
+
 const EnzymeMmsScalar<SinPotential> kSinMms(kIsotropicEpsilonR);
 const EnzymeMmsScalar<CosPotential> kCosMms(kIsotropicEpsilonR);
 const EnzymeMmsScalar<PolynomialPotential> kPolynomialMms(kAnisotropicEpsilonR);
+const EnzymeMmsScalar<CurvedCosPotential> kCurvedCosMms(kIsotropicEpsilonR);
 
 template <typename EnzymeMms>
 MmsCase MakeCase(const EnzymeMms &mms, ScalarFunction neumann_flux = {})
@@ -111,6 +118,12 @@ const MmsCase &PolynomialCase()
   return mms;
 }
 
+const MmsCase &CurvedCylinderTrigCase()
+{
+  static const MmsCase mms = MakeCase(kCurvedCosMms);
+  return mms;
+}
+
 }  // namespace
 }  // namespace palace::testing::mms::electrostatic
 
@@ -123,6 +136,8 @@ TEST_CASE("Electrostatic MMS Enzyme quantities match the trigonometric analytic 
       {0.17, 0.23, 0.31}, {0.38, 0.41, 0.62}, {0.73, 0.14, 0.87}};
   CheckPointwiseAgreement(HomogeneousCase(), analytic::HomogeneousCase(), points);
   CheckPointwiseAgreement(NonHomogeneousCase(), analytic::NonHomogeneousCase(), points);
+  CheckPointwiseAgreement(CurvedCylinderTrigCase(), analytic::CurvedCylinderTrigCase(),
+                          points);
 }
 
 TEST_CASE("Electrostatic MMS Enzyme quantities match the polynomial analytic case",
@@ -151,4 +166,13 @@ TEST_CASE("Electrostatic MMS Enzyme quantities match the polynomial analytic cas
     }
     CHECK_THAT(kPolynomialMms.NormalFlux(x, normal), WithinAbs(expected_flux, 5.0e-13));
   }
+}
+
+TEST_CASE("Electrostatic MMS Enzyme reproduces the analytic errors on curved tetrahedra",
+          "[electrostatic][mms][enzyme][Serial][Parallel]")
+{
+  // Run the full solve with Enzyme-generated and hand-derived data; errors must agree. A
+  // trigonometric potential keeps the Enzyme derivatives from being exact, unlike a
+  // low-degree polynomial.
+  CheckCurvedBackendAgreement(CurvedCylinderTrigCase(), analytic::CurvedCylinderTrigCase());
 }
