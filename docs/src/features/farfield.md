@@ -40,6 +40,12 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
 
      1. is an external boundary
      2. does not cross anisotropic materials
+     3. bounds a homogeneous exterior, approximated as lossless
+
+    For frequency-dependent exterior materials, the wave speed uses
+    ``\operatorname{Re}\epsilon(i\operatorname{Re}\omega)``, which must be positive
+    next to the integration surface. This retains the existing lossless-exterior
+    approximation; it does not model attenuation through an infinite lossy medium.
 
 ## Setup
 
@@ -115,7 +121,9 @@ space, so that
 r \mathbf{H}_p(\mathbf{r}_0) = \frac{\mathbf{r}_0 \times r \mathbf{E}_p(\mathbf{r}_0)}{Z_0}
 ```
 
-with ``Z_0`` impedance of free space.
+with ``Z_0`` the impedance of free space. For another homogeneous exterior, use its
+lossless-approximation impedance ``Z=\sqrt{\mu/\operatorname{Re}\epsilon}`` at the
+solution frequency instead.
 
 This type of output can be processed by several different packages and
 languages. For instance, see the [antenna example](../examples/antenna.md) for

@@ -67,7 +67,12 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations.
+simulations; its boundary curl operator requires a 3D mesh. Next to a frequency-dependent
+material, the wave impedance and both orders' coefficients use
+``\epsilon_\mathrm{wave}(s)=\epsilon(s)+\sigma_\mathrm{user}/s`` at the current frequency.
+The additive user `Conductivity` must be isotropic on such a boundary; the analytic
+impedance does not model a tensor conductivity. Constant-material boundaries retain their
+existing lossless-material approximation.
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
@@ -196,7 +201,12 @@ for implementation details.
     modes.
 
     The port boundary must be planar and on the true boundary of the computational domain.
-    The medium adjacent to the port must be homogeneous and isotropic.
+    The medium adjacent to the port must be homogeneous and isotropic. For a
+    frequency-dependent material, the port uses the complete complex wave response
+    ``\epsilon(s)+\sigma_\mathrm{user}/s`` and real-power normalization, including lossy
+    diffraction orders. Its additive user `Conductivity` must also be isotropic. Constant
+    materials retain the existing lossless-port approximation: their `LossTan` and
+    `Conductivity` are not used in the port coefficients.
 
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface. Lumped ports with reactive elements (`"L"` and/or `"C"`, or the surface-parameter

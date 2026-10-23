@@ -14,7 +14,9 @@ but not limited to computed values like eigenfrequencies, scattering parameters,
 element parameters. In addition, each simulation type will write a file called
 `domain-E.csv`, which includes information about the electric and magnetic field energies,
 as well as lumped element energies, for each step of the simulation (eigenmode, frequency,
-or time step, for examples).
+or time step, for examples). For a frequency-dependent dielectric, electric energy includes
+polarization storage according to the [material model](model.md#Energy-and-postprocessing),
+evaluated at the real part of the frequency for eigenmodes.
 
 Models containing lumped or wave port boundaries or surface current excitations will
 automatically postprocess quantities related to those boundaries. This is described in
@@ -163,13 +165,18 @@ interface. In addition, the constitutive parameters can be discontinuous between
 For example,
 
 ```math
-U_e = \frac{1}{2} \bm{E}^{*} \bm{\epsilon} \bm{E}, \qquad
+U_e = \frac{1}{2} \bm{E}^{*} \bm{W} \bm{E}, \qquad
 U_m = \frac{1}{2} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
 \bm{S} = \operatorname{Re}\!\left\{\bm{E} \times
 \left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}.
 ```
 
-A jump in ``\bm{\epsilon}`` or ``\bm{\mu}^{-1}`` can therefore produce a jump in an energy
+Here ``\bm{W}=\operatorname{Re}\bm{\epsilon}`` for constant materials, while a
+frequency-dependent model supplies its stored-energy weight, which includes polarization.
+Electric flux and charge still use the complete complex ``\bm{\epsilon}(i\omega)``,
+not ``\bm{W}``.
+
+A jump in ``\bm{W}`` or ``\bm{\mu}^{-1}`` can therefore produce a jump in an energy
 density or the Poynting vector, even where the conforming trace of a primary field is
 continuous. Similarly, at a material interface:
 

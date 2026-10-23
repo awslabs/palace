@@ -115,6 +115,7 @@ makedocs(
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md",
+            "examples/microstrip.md",
             "examples/cpw2d.md",
             "examples/dielectric_grating.md",
             "examples/circular_hole.md"
