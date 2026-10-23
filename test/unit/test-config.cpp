@@ -524,24 +524,121 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
           std::vector<int>{7});
   }
 
-  SECTION("FluxLoopExcitation must reference distinct, defined FluxLoops")
+  SECTION("FluxLoop excitation defaults to the loop index")
   {
-    auto make = [](const json &loops)
-    {
-      return json{{"FluxLoop",
-                   {{{"Index", 1},
-                     {"FilmAttributes", {8}},
-                     {"HoleAttributes", {9}},
-                     {"FluxAmounts", {1.0}},
-                     {"Direction", "+Z"}}}},
-                  {"FluxLoopExcitation",
-                   {{{"Index", 2},
-                     {"FluxLoops", loops},
-                     {"FluxAmounts", json::array_t(loops.size(), 1.0)}}}}};
-    };
-    CHECK(!config::Validate(config::BoundaryData(make({1}))).has_value());
-    CHECK(config::Validate(config::BoundaryData(make({3}))).has_value());
-    CHECK(config::Validate(config::BoundaryData(make({1, 1}))).has_value());
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.fluxloop.at(1).excitation == 1);
+    CHECK(boundary_data.fluxloop.at(3).excitation == 3);
+  }
+
+  SECTION("FluxLoop shared excitation groups the loops")
+  {
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {-0.5}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.fluxloop.at(1).excitation == 2);
+    CHECK(boundary_data.fluxloop.at(3).excitation == 2);
+  }
+
+  SECTION("FluxLoop bool excitation upgrades to the loop index")
+  {
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", false}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", true}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.fluxloop.at(1).excitation == 0);
+    CHECK(boundary_data.fluxloop.at(3).excitation == 3);
+  }
+
+  SECTION("FluxLoop mislabeled single excitation fails validation")
+  {
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+  }
+
+  SECTION("Grouped FluxLoop excitation must not collide with a SurfaceCurrent index")
+  {
+    json boundaries = {{"SurfaceCurrent",
+                        {{{"Attributes", {6}},
+                          {"Index", 2},
+                          {"Direction", "+X"},
+                          {"Aperture", {{"Attributes", {7}}, {"Direction", "+Z"}}}}}},
+                       {"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+    boundaries["SurfaceCurrent"][0]["Index"] = 4;
+    CHECK(!config::Validate(config::BoundaryData(boundaries)).has_value());
+  }
+
+  SECTION("Excited FluxLoop must have a nonzero FluxAmounts")
+  {
+    json loop = {{"Index", 1},
+                 {"FilmAttributes", {8}},
+                 {"HoleAttributes", {9}},
+                 {"FluxAmounts", {0.0}},
+                 {"Direction", "+Z"}};
+    CHECK_THROWS(config::FluxLoopData(loop));
+    loop["Excitation"] = 0;
+    CHECK(config::FluxLoopData(loop).excitation == 0);
   }
 
   SECTION("SurfaceCurrent Aperture is element-owned, sorted, and normalized")
@@ -620,55 +717,6 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_data.waveport.at(2).complex_coarse_solve.value());
     REQUIRE(boundary_data.waveport.at(3).complex_coarse_solve.has_value());
     CHECK_FALSE(boundary_data.waveport.at(3).complex_coarse_solve.value());
-  }
-}
-
-TEST_CASE("Config FluxLoopExcitation", "[config][Serial]")
-{
-  auto make = [](const json &excitation)
-  {
-    return json{{"FluxLoop",
-                 {{{"Index", 1},
-                   {"FilmAttributes", {8}},
-                   {"HoleAttributes", {9}},
-                   {"FluxAmounts", {1.0}},
-                   {"Direction", "+Z"}}}},
-                {"FluxLoopExcitation", {excitation}}};
-  };
-
-  SECTION("Index must not collide with another boundary's")
-  {
-    auto boundaries = make({{"Index", 1}, {"FluxLoops", {1}}, {"FluxAmounts", {1.0}}});
-    auto error = config::Validate(config::BoundaryData(boundaries));
-    REQUIRE(error.has_value());
-    CHECK_THAT(*error, Catch::Matchers::ContainsSubstring("Duplicate \"Index\": 1"));
-  }
-
-  SECTION("FluxLoops must be non-empty")
-  {
-    CHECK_THROWS(config::BoundaryData(make(
-        {{"Index", 2}, {"FluxLoops", json::array()}, {"FluxAmounts", json::array()}})));
-  }
-
-  SECTION("FluxLoops and FluxAmounts must have the same length")
-  {
-    CHECK_THROWS(config::BoundaryData(
-        make({{"Index", 2}, {"FluxLoops", {1}}, {"FluxAmounts", {1.0, 2.0}}})));
-  }
-
-  SECTION("SaveField defaults to true")
-  {
-    config::BoundaryData boundaries(
-        make({{"Index", 2}, {"FluxLoops", {1}}, {"FluxAmounts", {0.0}}}));
-    CHECK(boundaries.fluxloopexcitation.at(2).save_field);
-    CHECK(!config::Validate(boundaries).has_value());
-  }
-
-  SECTION("FluxLoopMatrixSweep parses and defaults to true")
-  {
-    CHECK(config::MagnetostaticSolverData(json::object()).flux_loop_matrix_sweep);
-    CHECK(!config::MagnetostaticSolverData(json{{"FluxLoopMatrixSweep", false}})
-               .flux_loop_matrix_sweep);
   }
 }
 
@@ -1829,20 +1877,18 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(trans_gaps.empty());
   }
 
-  SECTION("Round-trip: Magnetostatic and FluxLoopExcitation defaults are reproducible")
+  SECTION("Round-trip: Magnetostatic and FluxLoop defaulted fields are reproducible")
   {
     json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
                    {"Boundaries",
                     {{"FluxLoop",
-                      {{{"Index", 1},
+                      {{{"Index", 3},
                         {"FilmAttributes", {8}},
                         {"HoleAttributes", {9}},
                         {"FluxAmounts", {1.0}},
-                        {"Direction", "+Z"}}}},
-                     {"FluxLoopExcitation",
-                      {{{"Index", 2}, {"FluxLoops", {1}}, {"FluxAmounts", {0.5}}}}}}},
+                        {"Direction", "+Z"}}}}}},
                    {"Solver", json::object()}};
 
     IoData iodata1(config, false);
@@ -1852,21 +1898,22 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
+    // The default excitation is the loop index, written out as such.
+    CHECK(config["Boundaries"]["FluxLoop"][0]["Excitation"] == 3);
     IoData iodata2(config, false);
-    CHECK(iodata2.solver.magnetostatic.flux_loop_matrix_sweep ==
-          iodata1.solver.magnetostatic.flux_loop_matrix_sweep);
-    CHECK(iodata2.boundaries.fluxloopexcitation.at(2).save_field ==
-          iodata1.boundaries.fluxloopexcitation.at(2).save_field);
+    CHECK(iodata2.boundaries.fluxloop.at(3).excitation ==
+          iodata1.boundaries.fluxloop.at(3).excitation);
+    CHECK(iodata2.boundaries.fluxloop.at(3).pec_lperp ==
+          iodata1.boundaries.fluxloop.at(3).pec_lperp);
 
     auto ms_gaps = SchemaCoverageGaps("/properties/Solver/properties/Magnetostatic",
                                       config["Solver"]["Magnetostatic"], /*skip=*/{});
     INFO("Solver.Magnetostatic missing keys: " << json(ms_gaps).dump());
     CHECK(ms_gaps.empty());
-    auto exc_gaps =
-        SchemaCoverageGaps("/properties/Boundaries/properties/FluxLoopExcitation/items",
-                           config["Boundaries"]["FluxLoopExcitation"][0], /*skip=*/{});
-    INFO("Boundaries.FluxLoopExcitation[] missing keys: " << json(exc_gaps).dump());
-    CHECK(exc_gaps.empty());
+    auto loop_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/FluxLoop/items",
+                                        config["Boundaries"]["FluxLoop"][0], /*skip=*/{});
+    INFO("Boundaries.FluxLoop[] missing keys: " << json(loop_gaps).dump());
+    CHECK(loop_gaps.empty());
   }
 
   SECTION("Round-trip: BoundaryMode defaulted fields are reproducible")
