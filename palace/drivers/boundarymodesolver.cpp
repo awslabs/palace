@@ -345,7 +345,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bz.Real() *= 1.0 / omega;
       bz.Imag() = curl_etr;
       bz.Imag() *= -1.0 / omega;
-      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(et, bz, total_domain_energy, omega, indicator);
     }
   }
   Mpi::Print("\n");

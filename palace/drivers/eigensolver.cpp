@@ -613,7 +613,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
     if (i < num_requested)
     {
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      // Frequency-dependent materials use Re{ω} of the eigenvalue, as in postprocessing.
+      estimator.AddErrorIndicator(E, B, total_domain_energy, omega.real(), indicator);
     }
   }
   post_op.MeasureFinalize(indicator);

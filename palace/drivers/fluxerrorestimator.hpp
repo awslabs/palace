@@ -58,6 +58,22 @@ public:
       estimator_3d->AddErrorIndicator(E, B, Et, indicator);
     }
   }
+
+  // The same at the real angular frequency ω of the fields, required with a
+  // frequency-dependent material.
+  void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
+                         ErrorIndicator &indicator) const
+    requires std::is_same_v<VecType, ComplexVector>
+  {
+    if (estimator_2d)
+    {
+      estimator_2d->AddErrorIndicator(E, B, Et, omega, indicator);
+    }
+    else
+    {
+      estimator_3d->AddErrorIndicator(E, B, Et, omega, indicator);
+    }
+  }
 };
 
 }  // namespace palace
