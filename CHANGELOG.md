@@ -48,6 +48,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the flux recovery in the error estimators to use the projection which minimizes the
+    error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
+    field). The unweighted projection overestimated the error in the low-permittivity
+    elements next to a dielectric interface, by up to an order of magnitude next to a
+    sapphire substrate, and AMR spent refinement there. The error indicator decreases for
+    models with material interfaces, and their AMR meshes change.
+    [PR 1072](https://github.com/awslabs/palace/pull/1072).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

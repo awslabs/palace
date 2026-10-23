@@ -836,8 +836,10 @@ density. On element ``K``, we have
 ```
 
 where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operators which
-orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
-discretized by Nédélec and Raviart-Thomas elements, respectively.
+project their argument onto ``H(\text{curl})`` and ``H(\text{div})``, discretized by Nédélec
+and Raviart-Thomas elements, respectively. Each projection is orthogonal in the weighted
+``L^2`` inner product of the norm it is measured in (``\mu_r`` for ``\bm{R}_{ND}``,
+``\varepsilon_r^{-1}`` for ``\bm{R}_{RT}``), so the recovered field minimizes the estimate.
 
 ## Far-field extraction
 
