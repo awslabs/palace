@@ -18,6 +18,7 @@
 #include "fem/integrator.hpp"
 #include "fixtures.hpp"
 #include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
@@ -40,6 +41,22 @@ public:
     SetBGridFunction(b);
     MeasureLumpedPorts();
     return measurement_cache.lumped_port_vi.at(idx);
+  }
+};
+
+class EigenPostOperatorTest : public PostOperator<ProblemType::EIGENMODE>
+{
+public:
+  using PostOperator<ProblemType::EIGENMODE>::PostOperator;
+
+  Measurement MeasureForTest(const ComplexVector &e, const ComplexVector &b, double omega)
+  {
+    measurement_cache = {};
+    measurement_cache.freq = omega;
+    SetEGridFunction(e);
+    SetBGridFunction(b);
+    MeasureAllImpl();
+    return measurement_cache;
   }
 };
 
@@ -72,6 +89,8 @@ auto RandomMeasurement(int ndomain = 5)
   {
     E.participation_ratio = E.energy / cache.domain_E_field_energy_all;
   }
+
+  cache.domain_E_field_energy_material = 1 + randd(100);
 
   cache.freq = std::complex(1 + randd(99), randd(100));
   cache.eigenmode_Q = 5e6 * (randd(99) + 1);
@@ -202,6 +221,10 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
              Catch::Matchers::WithinRel(non_dim_cache.domain_H_field_energy_all));
   CHECK_THAT(cache.domain_H_field_energy_all,
              !Catch::Matchers::WithinRel(dim_cache.domain_H_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_material,
+             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_material));
+  CHECK_THAT(cache.domain_E_field_energy_material,
+             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_material));
 
   for (std::size_t i = 0; i < cache.domain_E_field_energy_i.size(); i++)
   {
@@ -443,6 +466,88 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     CHECK_THAT(dm.impedance.at(idx).Z_VI,
                Catch::Matchers::WithinRel(z.has_vi_impedance ? z.Z_VI * z_scale : z.Z_VI));
   }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normalization",
+                 "[postoperator][Serial][Parallel]")
+{
+  // Exercise the real measurement consumers, not only the normalization helper. The
+  // electric field is uniform, so its volume energies and the port voltage are analytic;
+  // B = 0 deliberately ensures that normalization uses only the electric-side forms.
+  const bool dispersive = GENERATE(false, true);
+  CAPTURE(dispersive);
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = ProblemType::EIGENMODE;
+  iodata.problem.output = temp_dir.string();
+  iodata.solver.order = 1;
+  iodata.solver.linear.mg_max_levels = 1;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r = config::SymmetricMatrixData<3>(2.0);
+  if (dispersive)
+  {
+    material.permittivity_terms = {config::LorentzData{1.0, 3.0, 0.0}};
+  }
+  iodata.domains.materials = {material};
+  json boundaries;
+  boundaries["LumpedPort"] = {{{"Index", 1},
+                               {"Attributes", {1}},
+                               {"Direction", "+X"},
+                               {"R", 3.0},
+                               {"L", 2.0},
+                               {"C", 0.4}}};
+  boundaries["Postprocessing"]["Dielectric"] = {{{"Index", 1},
+                                                 {"Attributes", {5}},
+                                                 {"Thickness", 0.01},
+                                                 {"Permittivity", 1.0},
+                                                 {"LossTan", 0.02}}};
+  iodata.boundaries = config::BoundaryData(boundaries);
+  iodata.CheckConfiguration();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON));
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh)));
+  SpaceOperator space(iodata, meshes);
+  EigenPostOperatorTest post(iodata, space);
+
+  GridFunction E(space.GetNDSpace(), true);
+  mfem::Vector field({1.0, 0.0, 0.0});
+  mfem::VectorConstantCoefficient real_field(field);
+  E.Real().ProjectCoefficient(real_field);
+  field(0) = 0.5;
+  mfem::VectorConstantCoefficient imag_field(field);
+  E.Imag().ProjectCoefficient(imag_field);
+  ComplexVector e(space.GetNDSpace().GetTrueVSize()),
+      b(space.GetCurlSpace().GetTrueVSize());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  E.Real().GetTrueDofs(e.Real());
+  E.Imag().GetTrueDofs(e.Imag());
+  b = 0.0;
+  const auto measured = post.MeasureForTest(e, b, 1.0);
+
+  // At ω = 1, χ = 9/8 and w = 90/64 for this lossless Lorentz oscillator.
+  constexpr double norm_E2 = 1.25;
+  const double stored = 0.5 * norm_E2 * (2.0 + (dispersive ? 90.0 / 64.0 : 0.0));
+  const double at_material = 0.5 * norm_E2 * (2.0 + (dispersive ? 9.0 / 8.0 : 0.0));
+  const double capacitor = 0.5 * 0.4 * norm_E2;
+  const double total = 0.5 * (stored + at_material) + capacitor;
+  CHECK_THAT(measured.domain_E_field_energy_all, WithinRel(stored, 1.0e-12));
+  CHECK_THAT(measured.domain_E_field_energy_material, WithinRel(at_material, 1.0e-12));
+  CHECK_THAT(measured.TotalEnergyNormalization(), WithinRel(total, 1.0e-12));
+  const auto &port = measured.lumped_port_vi.at(1);
+  CHECK_THAT(std::norm(port.V), WithinRel(norm_E2, 1.0e-12));
+  CHECK_THAT(std::abs(port.mode_port_kappa),
+             WithinRel(0.5 * norm_E2 / 3.0 / total, 1.0e-12));
+  CHECK_THAT(std::abs(port.inductive_energy_participation),
+             WithinRel(0.5 * norm_E2 / 2.0 / total, 1.0e-12));
+  REQUIRE(measured.interface_eps_i.size() == 1);
+  const auto &interface = measured.interface_eps_i.front();
+  REQUIRE(interface.energy > 0.0);
+  CHECK_THAT(interface.energy_participation, WithinRel(interface.energy / total, 1.0e-12));
+  CHECK_THAT(interface.quality_factor,
+             WithinRel(total / (interface.energy * 0.02), 1.0e-12));
 }
 
 TEST_CASE_METHOD(test::SharedTempDir, "Field export",

@@ -1073,6 +1073,63 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The dispersive cavity cases check nonlinear eigenfrequencies and model stored energy.
+// Per-element estimator extrema remain excluded as in the nondispersive eigenmode cases.
+TEST_CASE("cylinder_cavity_drude", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_drude.json", "cavity_drude", opts);
+}
+
+// Lorentz medium tuned to the TM010 cavity mode. Each cavity mode splits into a polariton
+// branch on each side of the material pole; above a target below the pole the lowest modes
+// are the lower branches, including that of TM011 next to the pole, which a polynomial seed
+// or an unscaled Newton step misses. Both nonlinear eigensolvers must find it.
+TEST_CASE("cylinder_cavity_lorentz", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz.json", "cavity_lorentz",
+                                  opts);
+}
+
+TEST_CASE("cylinder_cavity_lorentz_slp", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz_slp.json",
+                                  "cavity_lorentz_slp", opts);
+}
+
+// Lorentz medium tuned just above the TM010 and TE111 modes, with a target well below. The
+// polynomial seeds sit between the lower branches and the pole, where Newton from the
+// second TE111 seed heads past the pole; starting each seed at its Rayleigh-functional
+// root on its own side of the pole finds the degenerate TE111 pair.
+TEST_CASE("cylinder_cavity_lorentz_detuned", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz_detuned.json",
+                                  "cavity_lorentz_detuned", opts);
+}
+
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1145,6 +1202,62 @@ TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]
   opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_cutoff.json",
                                   "driven_wave_tm_cutoff", opts);
+}
+
+// TM01 (Mode 3) swept across 3.5 GHz with TE21 propagating below it. Starting each port
+// mode solve from the previous frequency's mode converged one mode of the TE11 pair and
+// TE21, which then took the place of TM01 for the rest of the sweep. Either mode reflects
+// all the power, so |S11| is round-off around 0 dB and the phase is compared.
+TEST_CASE("cylinder_driven_wave_tm_sweep", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "(dB)"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_sweep.json",
+                                  "driven_wave_tm_sweep", opts);
+}
+
+// TM01 port of the guide filled with a lossless Lorentz medium, whose Re ε exceeds the
+// high-frequency value by 50%. The reference S-parameters are from the constant
+// permittivity ε(ω) solved at each frequency. TE21 propagates below TM01 above 3.02 GHz.
+// Both modes reflect all the power, so |S11| is round-off around 0 dB and the phase is
+// compared. Stored energy and frequency-aware error indicators use dispersive references.
+TEST_CASE("cylinder_driven_wave_tm_dispersive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"(dB)"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_dispersive.json",
+                                  "driven_wave_tm_dispersive", opts);
+}
+
+// The Lorentz-filled guide of cylinder_driven_wave_tm_dispersive ending in a second-order
+// absorbing boundary, which uses ε(ω) of the medium next to it and reflects -14 to -19 dB
+// of TE11 (Mode 1). The second-order term needs a mode with a tangential curl on the end:
+// TM01 has none. The reference S-parameters are from the constant permittivity ε(ω) solved
+// at each frequency; the adaptive case checks the reduced model's factored terms.
+TEST_CASE("cylinder_driven_wave_absorbing", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing.json",
+                                  "driven_wave_absorbing", opts);
+}
+
+TEST_CASE("cylinder_driven_wave_absorbing_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing_adaptive.json",
+                                  "driven_wave_absorbing_adaptive", opts);
 }
 
 // Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
@@ -1263,6 +1376,21 @@ TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave.json", "floquet_wave",
                                   opts);
+}
+
+// floquet_wave filled with a lossless Lorentz medium, at oblique incidence. The reference
+// wave-port S-parameters, including the coupling from the Floquet port, are from the
+// constant permittivity ε(ω) solved at each frequency. The Floquet S-parameters of the
+// orders that are not excited are round-off below -170 dB and are not compared.
+TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.excluded_files = {"port-floquet-S.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("floquet_wave", "floquet_wave_dispersive.json",
+                                  "floquet_wave_dispersive", opts);
 }
 
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
@@ -1445,6 +1573,47 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_lumped_eigen.json", "lumped_eigen", opts);
 }
 
+// The microstrip loop read as a line on a Djordjevic-Sarkar FR4 substrate (Re ε ≈ 4.3,
+// tan δ ≈ 0.02) between wave ports, in an air box whose absorbing faces neighbor only air:
+// the air beyond the ends has no material, so it is removed and the end planes become the
+// ports. The reference S-parameters are from the constant permittivity ε(ω), with its loss
+// tangent, solved at each frequency. Stored energy and frequency-aware error indicators
+// use dispersive references. The port modes see the box faces as WavePortPEC here, and as
+// absorbing in the adaptive case.
+TEST_CASE("microstrip_wave_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_wave_pec.json", "wave_pec",
+                                  opts);
+}
+
+TEST_CASE("microstrip_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_wave_adaptive.json",
+                                  "wave_adaptive", opts);
+}
+
+// The port mode of microstrip_wave as a BoundaryMode solve on the end plane, at 10 GHz,
+// against the constant permittivity ε(ω) with its loss tangent.
+TEST_CASE("microstrip_boundarymode", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_boundarymode.json",
+                                  "boundarymode", opts);
+}
+
 TEST_CASE("cpw_wave_eigen", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1623,6 +1792,23 @@ TEST_CASE("cavity2d_eigenmode_slp", "[Serial][Parallel][Regression]")
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "eigenmode_slp.json", "eigenmode_slp", opts);
+}
+
+// The cavity filled with a damped Lorentz medium. Each mode solves ω²ε(ω) = ω_b²ε_b for a
+// mode ω_b of the cavity at constant ε_b, which the reference matches to 10 digits. The
+// error indicators depend on the basis of the degenerate pair and are not compared.
+TEST_CASE("cavity2d_eigenmode_lorentz", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cavity2d", "eigenmode_lorentz.json", "eigenmode_lorentz",
+                                  opts);
 }
 
 // Coarse 2D driven tolerances (partition- and platform-sensitive).

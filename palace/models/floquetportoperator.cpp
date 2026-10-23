@@ -239,6 +239,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     {
       c_local = mat_op.GetLightSpeedMin(port_vol_attr);
       muinv_local = mat_op.GetInvPermeability(port_vol_attr)(0, 0);
+      port_material = mat_op.GetFrequencyDependentPermittivityModelMaterial(port_vol_attr);
     }
 
     // Broadcast from the rank that found a valid attribute.
@@ -248,9 +249,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
                 "Could not find volume element adjacent to Floquet port!");
     MPI_Bcast(&c_local, 1, MPI_DOUBLE, found_rank, comm);
     MPI_Bcast(&muinv_local, 1, MPI_DOUBLE, found_rank, comm);
+    MPI_Bcast(&port_material, 1, MPI_INT, found_rank, comm);
 
     MFEM_VERIFY(c_local > 0.0, "Invalid material speed of light at Floquet port!");
-    mu_eps_port = 1.0 / (c_local * c_local);
+    mu_eps_port = mu_eps_port_inf = 1.0 / (c_local * c_local);
     mu_r_port = 1.0 / muinv_local;
   }
 
@@ -621,6 +623,16 @@ void FloquetPortData::Initialize(double omega)
   }
   omega0 = omega;
 
+  // A frequency-dependent port medium uses its complete wave permittivity ε(iω) + σ/(iω),
+  // with its user conductivity, whose loss makes the propagation constants complex. A
+  // constant port medium keeps its real permittivity, without a loss tangent or
+  // conductivity.
+  mu_eps_port = (port_material < 0)
+                    ? std::complex<double>(mu_eps_port_inf, 0.0)
+                    : mu_r_port * mat_op.EvaluateFrequencyDependentWavePermittivity(
+                                      static_cast<std::size_t>(port_material),
+                                      std::complex<double>(0.0, omega));
+
   // Compute k_F at this frequency. When frequency scaling is active, the stored k_F is
   // k₀ = k_F/ω (frequency-independent), so k_F(ω) = ω × k₀. Without scaling, k_F is the
   // fixed Bloch vector and kF_scale = 1.
@@ -669,7 +681,12 @@ void FloquetPortData::Initialize(double omega)
     }
     if (order.m == 0 && order.n == 0)
     {
-      gamma0 = std::sqrt(std::max(order.gamma_sq, 0.0));
+      // The Robin reference keeps the complex outgoing root of an order which carries
+      // power, also with Re{γ²} ≤ 0 in a lossy medium (Re ε < 0). A lossless evanescent or
+      // cutoff order carries none and keeps a zero reference; ComputeIncidentNormalization
+      // rejects it as the incident mode.
+      gamma0 = (ModalPower(order, true) > 0.0) ? OutgoingPropagationConstant(order.gamma_sq)
+                                               : 0.0;
     }
   }
 }
@@ -679,9 +696,9 @@ int FloquetPortData::NumPropagatingOrders() const
   int count = 0;
   for (const auto &order : orders)
   {
-    if (order.gamma_sq > 0.0)
+    for (bool is_te : {true, false})
     {
-      count += static_cast<int>(order.v.size());
+      count += (ModalPower(order, is_te) > 0.0);
     }
   }
   return count;
@@ -713,20 +730,48 @@ std::complex<double> FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetOrd
 std::complex<double> FloquetPortData::ComputeDtNFullCoeff(const FloquetOrder &order,
                                                           bool is_te) const
 {
-  // Return the full DtN coefficient g_full (NOT the correction g_full - g_uniform).
-  if (order.gamma_sq > 0.0)
+  // Return the full DtN coefficient g_full = iλ/(μ|Γ|) (NOT the correction g_full -
+  // g_uniform). The outgoing root covers propagating (iγ), evanescent (|γ|), and lossy
+  // orders alike.
+  if (order.gamma_sq == 0.0)
   {
-    double gamma = std::sqrt(order.gamma_sq);
-    return is_te ? 1i * gamma / (mu_r_port * port_area)
-                 : 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
+    return 0.0;
   }
-  else if (order.gamma_sq < 0.0)
+  const auto gamma = OutgoingPropagationConstant(order.gamma_sq);
+  return 1i * DtNEigenvalue(is_te, gamma, omega0, mu_eps_port) / (mu_r_port * port_area);
+}
+
+double FloquetPortData::ModalPower(const FloquetOrder &order, bool is_te) const
+{
+  if (order.gamma_sq == 0.0)
   {
-    double gamma_abs = std::sqrt(-order.gamma_sq);
-    return is_te ? gamma_abs / (mu_r_port * port_area)
-                 : -omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
+    return 0.0;  // Cutoff
   }
-  return 0.0;
+  return DtNEigenvalue(is_te, OutgoingPropagationConstant(order.gamma_sq), omega0,
+                       mu_eps_port)
+      .real();
+}
+
+std::complex<double>
+FloquetPortData::OutgoingPropagationConstant(std::complex<double> gamma_sq)
+{
+  // The principal root, Re{γ} ≥ 0, keeps the outgoing direction of propagation for any
+  // medium: Im{γ} < 0 (decay) for a passive one, Im{γ} > 0 (growth) for a gain medium,
+  // which a general PoleResidue model may have. A lossless evanescent order (γ² < 0) lies
+  // on the branch cut: take the limit Im{γ²} → 0⁻, the decaying root −i|γ|. The port is
+  // only evaluated at real frequencies (driven problems).
+  if (gamma_sq.imag() == 0.0)
+  {
+    gamma_sq.imag(-0.0);
+  }
+  return std::sqrt(gamma_sq);
+}
+
+std::complex<double> FloquetPortData::DtNEigenvalue(bool is_te, std::complex<double> gamma,
+                                                    double omega,
+                                                    std::complex<double> mu_eps)
+{
+  return is_te ? gamma : omega * omega * mu_eps / gamma;
 }
 
 std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
@@ -761,11 +806,16 @@ FloquetPortData::ComputeIncidentNormalization(double omega) const
 {
   IncidentNormalization norm{};
   norm.gamma_00 = gamma0;
-  MFEM_VERIFY(norm.gamma_00 > 0.0, "Incident Floquet mode is evanescent or not found!");
-  norm.lambda_te_00 = norm.gamma_00;
-  norm.lambda_tm_00 = omega * omega * mu_eps_port / norm.gamma_00;
-  norm.lambda_eff = std::norm(inc_alpha_te) * norm.lambda_te_00 +
-                    std::norm(inc_alpha_tm) * norm.lambda_tm_00;
+  MFEM_VERIFY(norm.gamma_00.real() > 0.0,
+              "Incident Floquet mode is evanescent or not found!");
+  norm.lambda_te_00 = DtNEigenvalue(true, norm.gamma_00, omega, mu_eps_port);
+  norm.lambda_tm_00 = DtNEigenvalue(false, norm.gamma_00, omega, mu_eps_port);
+  // The unit power is the time-averaged real power through the port, Re{λ} per unit
+  // amplitude: the incident mode is normalized to carry 1 W also in a lossy port medium.
+  norm.lambda_eff = std::norm(inc_alpha_te) * norm.lambda_te_00.real() +
+                    std::norm(inc_alpha_tm) * norm.lambda_tm_00.real();
+  MFEM_VERIFY(norm.lambda_eff > 0.0,
+              "Incident Floquet mode carries no power into the port medium!");
   double p_unit = norm.lambda_eff * port_area / (2.0 * omega * mu_r_port);
   norm.c_inc = 1.0 / std::sqrt(p_unit);
   return norm;
@@ -781,7 +831,9 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
   // Step 1: Field amplitude c_mn = v_mn^T E / |Γ| (Fourier coefficient of total field).
   // Step 2: Power normalization: S_mn = √(γ_mn / γ_inc) × c_mn.
   //
-  // This ensures Σ |S_mn|² = 1 for energy conservation (lossless). The factor √(γ_mn/γ_inc)
+  // This ensures Σ |S_mn|² = 1 for energy conservation (lossless). In a lossy port medium
+  // the power factor uses the real power per amplitude, Re{λ}, at the port plane. The
+  // factor √(γ_mn/γ_inc)
   // accounts for different power-per-amplitude for different diffraction orders
   // (higher-angle orders carry less power per unit amplitude due to oblique propagation).
   //
@@ -789,9 +841,9 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
   // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
 
   auto norm = ComputeIncidentNormalization(omega0);
-  double lambda_te_00 = norm.lambda_te_00;
-  double lambda_tm_00 = norm.lambda_tm_00;
-  double lambda_eff = norm.lambda_eff;
+  const double lambda_te_00 = norm.lambda_te_00.real();
+  const double lambda_tm_00 = norm.lambda_tm_00.real();
+  const double lambda_eff = norm.lambda_eff;
   double c_inc = norm.c_inc;
 
   // Extract E in the true DOF space. Use GetTrueDofs (extracts owned DOF values)
@@ -810,14 +862,19 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
 
   for (const auto &order : orders)
   {
-    if (!HasFlag(order.use, FloquetModeUse::Output) || order.gamma_sq <= 0.0)
+    if (!HasFlag(order.use, FloquetModeUse::Output))
     {
-      continue;  // Only user-requested propagating orders carry S-parameters.
+      continue;  // Only user-requested orders carry S-parameters.
     }
-
-    double gamma_mn = std::sqrt(order.gamma_sq);
     for (bool is_te : {true, false})
     {
+      // Only modes which carry power have S-parameters: the propagating modes of a lossless
+      // medium, and in a lossy medium also those with Re{γ²} ≤ 0 but Re{λ} > 0.
+      const double lambda_mn = ModalPower(order, is_te);
+      if (lambda_mn <= 0.0)
+      {
+        continue;
+      }
       auto p = PolIndex(is_te);
       const auto &v = order.v[p];
       // Hermitian v^H E = (v_r·E_r + v_i·E_i) + i(v_r·E_i - v_i·E_r).
@@ -829,9 +886,9 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
       // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
       // unit-power normalization applied to the excitation.
       // Power normalization: S = √(λ_mn / λ_eff) × c, where λ is the DtN eigenvalue.
-      // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue.
-      double lambda_mn = is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
-      double power_factor = std::sqrt(lambda_mn / lambda_eff);
+      // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue. Both are
+      // real powers per amplitude, Re{λ}.
+      const double power_factor = std::sqrt(lambda_mn / lambda_eff);
 
       auto key = std::make_tuple(order.m, order.n, is_te);
       result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
@@ -875,14 +932,15 @@ bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) cons
   }
 
   auto norm = ComputeIncidentNormalization(omega);
-  double lambda_te = norm.lambda_te_00;
-  double lambda_tm = norm.lambda_tm_00;
+  const auto lambda_te = norm.lambda_te_00;
+  const auto lambda_tm = norm.lambda_tm_00;
   double c_inc = norm.c_inc;
 
   // f = Σ_p c_inc × 2i × α_p × λ_p / μ_r × conj(v_p)
   // conj(v) appears because the bilinear form uses v^T (not v^H), and the incident
   // field ê exp(+iB·r) projects to conj(v).
-  auto add_pol = [&](const ComplexVector *mode, std::complex<double> alpha, double lambda)
+  auto add_pol = [&](const ComplexVector *mode, std::complex<double> alpha,
+                     std::complex<double> lambda)
   {
     if (!mode || std::abs(alpha) < 1e-14)
     {
@@ -973,13 +1031,19 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
   Initialize(omega);
   for (const auto &[idx, port] : ports)
   {
-    // γ₀ = TE (0,0) mode propagation constant.
-    double gamma0 = port.GetGamma0();
+    // γ₀ = TE (0,0) mode propagation constant, complex in a lossy port medium:
+    // iγ₀ = −Im{γ₀} + i Re{γ₀}.
+    const auto gamma0 = port.GetGamma0();
     MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));
     fbi.AddCoefficient(muinv_func.GetAttributeToMaterial(),
-                       muinv_func.GetMaterialProperties(), gamma0);
+                       muinv_func.GetMaterialProperties(), gamma0.real());
+    if (gamma0.imag() != 0.0)
+    {
+      fbr.AddCoefficient(muinv_func.GetAttributeToMaterial(),
+                         muinv_func.GetMaterialProperties(), -gamma0.imag());
+    }
   }
 }
 

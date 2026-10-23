@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <complex>
 #include <iterator>
 #include <numbers>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -18,6 +22,7 @@
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
+#include "utils/permittivitymodel.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
@@ -1162,6 +1167,265 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
 }
 
+TEST_CASE("Config material permittivity models", "[config][Serial]")
+{
+  SECTION("Legacy scalar and vector inputs")
+  {
+    const config::MaterialData scalar({{"Attributes", {1}}, {"Permittivity", 2.5}});
+    CHECK(scalar.epsilon_r.s == std::array<double, 3>{2.5, 2.5, 2.5});
+    CHECK_FALSE(scalar.HasFrequencyDependentPermittivity());
+
+    const config::MaterialData vector(
+        {{"Attributes", {1}}, {"Permittivity", {2.0, 3.0, 4.0}}});
+    CHECK(vector.epsilon_r.s == std::array<double, 3>{2.0, 3.0, 4.0});
+    CHECK_FALSE(vector.HasFrequencyDependentPermittivity());
+  }
+
+  SECTION("Named terms keep their models and expand to canonical poles")
+  {
+    const json permittivity = {
+        {"HighFrequency", 2.08},
+        {"Terms",
+         {{{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}},
+          {{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}},
+          {{"Type", "Lorentz"},
+           {"DeltaPermittivity", 0.8},
+           {"ResonanceFrequency", 6.0},
+           {"DampingFrequency", 0.2}},
+          {{"Type", "PoleResidue"},
+           {"Pole", {-2.0e12, 5.0e12}},
+           {"Residue", {1.2e12, -0.4e12}}},
+          {{"Type", "DjordjevicSarkar"},
+           {"Strength", 0.0575258},
+           {"LowerFrequency", 9.07157e-5},
+           {"UpperFrequency", 159.154956}}}}};
+    const config::MaterialData data({{"Attributes", {1}}, {"Permittivity", permittivity}});
+    CHECK(data.epsilon_r.s == std::array<double, 3>{2.08, 2.08, 2.08});
+    REQUIRE(data.permittivity_terms.size() == 5);
+
+    constexpr double scale = 2.0 * std::numbers::pi * 1.0e9;
+    const double wp = scale, gamma = 0.1 * scale;
+    const auto &drude = std::get<config::DrudeData>(data.permittivity_terms[0]);
+    CHECK(drude.omega_p == Catch::Approx(wp));
+    CHECK(drude.gamma == Catch::Approx(gamma));
+    const auto &debye = std::get<config::DebyeData>(data.permittivity_terms[1]);
+    CHECK(debye.delta == 1.5);
+    CHECK(debye.tau == Catch::Approx(0.02e-9));
+    const double w0 = 6.0 * scale, damping = 0.2 * scale;
+    const auto &lorentz = std::get<config::LorentzData>(data.permittivity_terms[2]);
+    CHECK(lorentz.delta == 0.8);
+    CHECK(lorentz.omega_0 == Catch::Approx(w0));
+    CHECK(lorentz.gamma == Catch::Approx(damping));
+    const auto &pole = std::get<config::PermittivityPoleData>(data.permittivity_terms[3]);
+    CHECK(pole.pole == std::complex<double>{-2.0e12, 5.0e12});
+    CHECK(pole.residue == std::complex<double>{1.2e12, -0.4e12});
+    const auto &ds = std::get<config::DjordjevicSarkarData>(data.permittivity_terms[4]);
+    CHECK(ds.strength == Catch::Approx(0.0575258));
+    CHECK(ds.omega_lower == Catch::Approx(scale * 9.07157e-5));
+    CHECK(ds.omega_upper == Catch::Approx(scale * 159.154956));
+    CHECK_FALSE(permittivity::IsPassiveByConstruction(data.permittivity_terms));
+
+    const auto poles = permittivity::PoleTerms(data.permittivity_terms);
+    REQUIRE(poles.size() == 5);
+    CHECK(poles[0].pole == std::complex<double>{0.0, 0.0});
+    CHECK(poles[0].residue.real() == Catch::Approx(wp * wp / gamma));
+    CHECK(poles[1].pole.real() == Catch::Approx(-gamma));
+    CHECK(poles[1].residue.real() == Catch::Approx(-wp * wp / gamma));
+    CHECK(poles[2].pole.real() == Catch::Approx(-1.0 / 0.02e-9));
+    CHECK(poles[2].residue.real() == Catch::Approx(1.5 / 0.02e-9));
+    const double wd = std::sqrt(w0 * w0 - 0.25 * damping * damping);
+    CHECK(poles[3].pole.real() == Catch::Approx(-0.5 * damping));
+    CHECK(poles[3].pole.imag() == Catch::Approx(wd));
+    CHECK(poles[3].residue.real() == 0.0);
+    CHECK(poles[3].residue.imag() == Catch::Approx(-0.5 * 0.8 * w0 * w0 / wd));
+    CHECK(poles[4].pole == std::complex<double>{-2.0e12, 5.0e12});
+    CHECK(poles[4].residue == std::complex<double>{1.2e12, -0.4e12});
+    CHECK(permittivity::DjordjevicSarkarTerms(data.permittivity_terms).size() == 1);
+  }
+
+  SECTION("Overdamped Lorentz stays one oscillator with two real poles")
+  {
+    const config::MaterialData data({{"Attributes", {1}},
+                                     {"Permittivity",
+                                      {{"HighFrequency", 1.0},
+                                       {"Terms",
+                                        {{{"Type", "Lorentz"},
+                                          {"DeltaPermittivity", 0.5},
+                                          {"ResonanceFrequency", 1.0},
+                                          {"DampingFrequency", 3.0}}}}}}});
+    REQUIRE(data.permittivity_terms.size() == 1);
+    CHECK(std::holds_alternative<config::LorentzData>(data.permittivity_terms[0]));
+    CHECK(permittivity::IsPassiveByConstruction(data.permittivity_terms));
+    const auto poles = permittivity::PoleTerms(data.permittivity_terms);
+    REQUIRE(poles.size() == 2);
+    CHECK(poles[0].pole.imag() == 0.0);
+    CHECK(poles[1].pole.imag() == 0.0);
+    CHECK(poles[0].pole.real() < 0.0);
+    CHECK(poles[1].pole.real() < poles[0].pole.real());
+  }
+
+  SECTION("Invalid term parameters are rejected")
+  {
+    auto CheckInvalid = [](const json &term, const char *reason, double eps_inf = 1.0)
+    {
+      const json material = {
+          {"Attributes", {1}},
+          {"Permittivity", {{"HighFrequency", eps_inf}, {"Terms", {term}}}}};
+      CHECK_THROWS_WITH(config::MaterialData(material),
+                        Catch::Matchers::ContainsSubstring(reason));
+    };
+    CheckInvalid({{"Type", "Drude"}, {"PlasmaFrequency", 0.0}, {"CollisionFrequency", 0.1}},
+                 "must be positive");
+    CheckInvalid({{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 0.0}},
+                 "RelaxationTime must be positive");
+    CheckInvalid({{"Type", "Lorentz"},
+                  {"DeltaPermittivity", 1.0},
+                  {"ResonanceFrequency", 1.0},
+                  {"DampingFrequency", 2.0}},
+                 "critically damped");
+    CheckInvalid({{"Type", "Lorentz"},  // Within the near-critical tolerance
+                  {"DeltaPermittivity", 1.0},
+                  {"ResonanceFrequency", 1.0},
+                  {"DampingFrequency", 2.0 * (1.0 + 1.0e-8)}},
+                 "critically damped");
+    CheckInvalid({{"Type", "PoleResidue"}, {"Pole", {-1.0, -2.0}}, {"Residue", 1.0}},
+                 "upper half-plane");
+    CheckInvalid({{"Type", "DjordjevicSarkar"},
+                  {"Strength", 1.0},
+                  {"LowerFrequency", 2.0},
+                  {"UpperFrequency", 1.0}},
+                 "UpperFrequency > LowerFrequency");
+    CheckInvalid({{"Type", "Unknown"}}, "Unknown");
+
+    // Typed terms must be passive on their own.
+    for (const double value : {0.0, -0.5})
+    {
+      CAPTURE(value);
+      CheckInvalid(
+          {{"Type", "Debye"}, {"DeltaPermittivity", value}, {"RelaxationTime", 0.02}},
+          "gain at every frequency");
+      CheckInvalid({{"Type", "Lorentz"},
+                    {"DeltaPermittivity", value},
+                    {"ResonanceFrequency", 1.0},
+                    {"DampingFrequency", 0.1}},
+                   "gain");
+      CheckInvalid({{"Type", "DjordjevicSarkar"},
+                    {"Strength", value},
+                    {"LowerFrequency", 1.0},
+                    {"UpperFrequency", 2.0}},
+                   "gain at every frequency");
+      CheckInvalid(
+          {{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 0.02}},
+          "HighFrequency must be positive", value);
+    }
+
+    // Terms whose residues cancel at a common pole are a configuration error.
+    const json pole = {{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 1.0}};
+    json cancelling = pole;
+    cancelling["Residue"] = -1.0;
+    const json material = {
+        {"Attributes", {1}},
+        {"Permittivity", {{"HighFrequency", 1.0}, {"Terms", {pole, cancelling}}}}};
+    CHECK_THROWS_WITH(config::MaterialData(material),
+                      Catch::Matchers::ContainsSubstring("cancel exactly"));
+  }
+}
+
+TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Serial]")
+{
+  auto MakeConfig = []
+  {
+    return json{
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}},
+             {"Permittivity",
+              {{"HighFrequency", 2.0},
+               {"Terms",
+                {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 2.0}}}}}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Driven",
+           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 1.0}, {"FreqStep", 1.0}}}}}}}}};
+  };
+
+  // Match the message, so that a config rejected for an unrelated reason does not pass.
+  const std::string reason = "Frequency-dependent material Permittivity";
+  auto CheckRejected = [&reason](const json &config)
+  { CHECK_THROWS_WITH(IoData(config, false), Catch::Matchers::ContainsSubstring(reason)); };
+
+  SECTION("Ordinary driven solve is accepted")
+  {
+    CHECK_NOTHROW(IoData(MakeConfig(), false));
+  }
+  SECTION("Resolved config preserves the named object exactly")
+  {
+    auto config = MakeConfig();
+    config["Domains"]["Materials"][0]["Permittivity"] = {
+        {"HighFrequency", 2.08},
+        {"Terms",
+         {{{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}}}}};
+    const json supplied = config["Domains"]["Materials"][0]["Permittivity"];
+    const IoData iodata(config, false);
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Domains"]["Materials"][0]["Permittivity"] == supplied);
+  }
+  SECTION("Unsupported problem types are rejected")
+  {
+    for (const auto *type : {"Transient"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      CheckRejected(config);
+    }
+  }
+  SECTION("Static problem types are accepted")
+  {
+    for (const auto *type : {"Electrostatic", "Magnetostatic", "BoundaryMode"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      CHECK_NOTHROW(IoData(config, false));
+    }
+  }
+  SECTION("Adaptive circuit synthesis is accepted")
+  {
+    auto config = MakeConfig();
+    // Synthesis requires two distinct samples, independently of the material model.
+    config["Solver"]["Driven"]["Samples"][0]["MaxFreq"] = 2.0;
+    config["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-3;
+    config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = true;
+    json port;
+    port["Index"] = 1;
+    port["Attributes"] = {2};
+    port["R"] = 50.0;
+    port["Direction"] = "+X";
+    port["Excitation"] = true;
+    config["Boundaries"]["LumpedPort"] = json::array({port});
+    CHECK_NOTHROW(IoData(config, false));
+  }
+  SECTION("Numeric wave ports and absorbing boundaries are accepted")
+  {
+    // Absorbing boundaries are checked against the neighboring material on the mesh.
+    auto config = MakeConfig();
+    config["Boundaries"]["WavePort"] = {{{"Index", 1}, {"Attributes", {2}}}};
+    config["Boundaries"]["WavePortPEC"] = {{"Attributes", {3}}};
+    config["Boundaries"]["Absorbing"] = {{"Attributes", {4}}};
+    CHECK_NOTHROW(IoData(config, false));
+  }
+  SECTION("Floquet ports and nonzero periodic Floquet wave vectors are accepted")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"]["FloquetPort"] = {{{"Index", 1}, {"Attributes", {4}}}};
+    config["Boundaries"]["Periodic"] = {
+        {"FloquetWaveVector", {0.0, 0.1, 0.0}},
+        {"BoundaryPairs", {{{"DonorAttributes", {2}}, {"ReceiverAttributes", {3}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+  }
+}
+
 TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 {
   SECTION("Electrostatic resolves linear solver sentinels")
@@ -1199,6 +1463,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+    CHECK(config["Domains"]["Materials"][0]["Permittivity"] == 1.0);
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")

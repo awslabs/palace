@@ -56,8 +56,8 @@ from driven problems in the time domain.
 
 Material properties are handled by the
 [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
-object. *Palace* supports linear, frequency independent constitutive laws for material
-modeling.
+object. *Palace* supports linear material models and scalar frequency-dependent
+permittivity for supported frequency-domain simulations.
 
 Materials with scalar or symmetric matrix-valued material properties are supported. For most
 simulation types, each material in the model requires a specified relative permittivity and
@@ -71,3 +71,113 @@ Modeling of superconducting domains is performed using the current-field constit
 relations given by the London equations. The user can specify a London penetration depth to
 activate this model. It can also be used in conjunction with a material conductivity when
 wishing to model both superconducting and normal currents.
+
+### Frequency-dependent permittivity
+
+Scalar additive permittivity models use the object form
+
+```json
+"Permittivity": {
+  "HighFrequency": 2.08,
+  "Terms": [
+    {"Type": "Drude", "PlasmaFrequency": 1.0, "CollisionFrequency": 0.1}
+  ]
+}
+```
+
+`HighFrequency` is the scalar ``\epsilon_\infty`` and `Terms` is a nonempty additive array,
+so that ``\epsilon(s) = \epsilon_\infty + \sum_k \chi_k(s)`` with ``s = i\omega`` (*Palace*
+uses an ``e^{i\omega t}`` time dependence). Frequency inputs are ordinary frequencies ``f`` in
+GHz, converted to angular rates as ``\omega = 2\pi f``. In particular, `CollisionFrequency`
+and `DampingFrequency` give ``\gamma = 2\pi f``, so a damping specified as an inverse time
+``1/\tau`` corresponds to ``f = 1/(2\pi\tau)``. The available terms are:
+
+  - `Drude`: positive `PlasmaFrequency` and `CollisionFrequency`, both in GHz, with
+    ``\chi(s) = \omega_p^2/(s(s+\gamma))``.
+  - `Debye`: positive `DeltaPermittivity` and `RelaxationTime` ``\tau`` in ns, with
+    ``\chi(s) = \Delta\epsilon/(1+s\tau)``.
+  - `Lorentz`: positive `DeltaPermittivity` and `ResonanceFrequency`, and nonnegative
+    `DampingFrequency`, both frequencies in GHz, with
+    ``\chi(s) = \Delta\epsilon\,\omega_0^2/(s^2+\gamma s+\omega_0^2)``. The critically
+    damped case ``\gamma = 2\omega_0``, to within a relative ``10^{-6}``, is not supported.
+  - `PoleResidue`: a general term ``r/(s-p)`` with `Pole` and `Residue` in SI angular rates
+    (rad/s). Values are real or `[real, imag]`; upper-half-plane poles include their
+    conjugates automatically.
+  - `DjordjevicSarkar`: positive `Strength`, `LowerFrequency`, and
+    `UpperFrequency` bounds in GHz, with the upper bound larger than the lower. This native
+    term is ``\mathrm{Strength}\,\log((s+\omega_\mathrm{hi})/(s+\omega_\mathrm{lo}))``, so a
+    static increment ``\Delta\epsilon`` corresponds to
+    ``\mathrm{Strength} = \Delta\epsilon/\log(\omega_\mathrm{hi}/\omega_\mathrm{lo})``.
+
+Each term is the polarization of a model driven by the field: Debye is a relaxation,
+`DjordjevicSarkar` a continuum of them, and Lorentz and Drude are oscillators. With the
+parameter bounds above, these typed terms store nonnegative energy and dissipate
+nonnegative power at every frequency. A `PoleResidue` term may describe gain or negative
+stored energy, for instance a fit that is only accurate over the frequencies of interest.
+It is allowed, with warnings identifying detected frequency intervals where the complete
+model has gain or negative stored energy, and whether they overlap the requested band.
+This interval search is sampled, not an all-frequency passivity certificate.
+
+The stored energy of a `PoleResidue` term is that of a relaxation for a real pole, and of
+an oscillator ``\ddot{x} + a_1\dot{x} + a_0 x = E`` with polarization
+``b_0 x + b_1 \dot{x}`` for a conjugate pair. When ``b_1 \neq 0``, the constitutive
+response does not uniquely determine microscopic stored energy; *Palace* uses its canonical
+auxiliary-state midpoint convention.
+
+The object form requires scalar permittivity and cannot be combined with `LossTan`;
+ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
+permittivity mass matrix. Exact zero poles use the ordinary conductivity coefficient, and
+all nonlinear terms on a material share one unit vector-mass operator.
+
+Transient problems are not supported with this material model. Electrostatic problems use
+the static permittivity ``\epsilon(0)``, so they reject a `Drude` term, and magnetostatic
+problems do not use the permittivity. Numeric wave ports, boundary-mode problems, Floquet
+ports, and Absorbing boundaries next to the material use ``\epsilon(i\omega)`` at each
+frequency. The eigenmode divergence-free projection is disabled because
+longitudinal plasma modes can be physical. Eigenmodes of a region partially filled with a
+pole material accumulate at the material resonance, so choose the eigenmode `Target` away
+from material resonances; the eigensolver warns when it cannot resolve the requested modes.
+In adaptive circuit synthesis, pole terms are realized exactly, while `DjordjevicSarkar`
+terms are fit over the frequency sweep.
+
+### Energy and postprocessing
+
+The domain electric energy and the ``U_e`` visualization field include the stored energy of
+the field and polarization, including an oscillator's kinetic energy. Their material
+weight is the model's stored-energy weight ``W(\omega)``, not generally
+``\operatorname{Re}\epsilon(i\omega)``. Eigenmode postprocessing evaluates material
+properties at the real part of the mode frequency.
+
+Mode participation ratios and coupling rates use the electric-side normalization
+``U = (E_\mathrm{stored} + E_{\operatorname{Re}\epsilon})/2 + E_\mathrm{cap}``.
+Here ``E_{\operatorname{Re}\epsilon}`` is the field energy weighted by the real part of
+the permittivity; it equals the magnetic field energy for a lossless mode. This avoids the
+slower convergence of magnetic-field reconstruction and reduces to
+``E_\mathrm{elec} + E_\mathrm{cap}`` for constant materials. For lossy eigenmodes it is
+an approximation evaluated at the real frequency, not an exact complex-frequency energy
+identity.
+
+Electric `SurfaceFlux` and boundary charge ``Q_s`` use the complete complex
+``\epsilon(i\omega)``, including zero-pole polarization. Ordinary `Conductivity` remains
+free current and is not included in displacement. Metal-substrate interface participation
+uses ``|\epsilon(i\omega)|^2`` for a dispersive substrate's normal displacement; constant
+substrates retain the existing real-permittivity approximation. Point probes still sample
+``\mathbf{E}`` and ``\mathbf{B}``; there is no separate displacement or energy-density
+probe output.
+
+The Stratton–Chu far field retains its homogeneous, isotropic, lossless-exterior
+approximation. For a dispersive exterior its wave speed uses
+``\mu\operatorname{Re}\epsilon(i\operatorname{Re}\omega)`` and requires positive real
+permittivity next to the observation surfaces. This does not restrict unrelated interior
+materials. The wave number retains the mode's complex frequency.
+
+### Error indicators
+
+With frequency-dependent materials, the electric flux estimator recovers the complex
+physical displacement ``\mathbf{D}=\epsilon(i\omega)\mathbf{E}`` and weights its
+residual by the inverse stored-energy tensor ``W^{-1}(\omega)``. If a general model has
+nonpositive stored-energy weight at the requested frequency, the indicator alone falls
+back to ``\epsilon_\infty`` with a warning; signed reported energies are unchanged. A
+nonpositive total-energy normalizer similarly uses a positive recovered-flux norm with a
+warning. These fallbacks keep unusual fitted models usable, but do not validate their
+physics outside the fit's useful band.

@@ -369,6 +369,7 @@ public:
   }
 
   const auto &GetModel() const { return *model; }
+  const auto &GetMaterialOp() const { return *mat_op; }
   const auto &GetDbcTDofList() const { return dbc_tdof_list; }
 
   const mode_assembly::OperatorComponent &
@@ -806,6 +807,111 @@ TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
   CHECK_THAT(pair_t.imag(), WithinRel(expected, 1.0e-12));
   CHECK(pair_n.real() == 0.0);
   CHECK_THAT(pair_n.imag(), WithinRel(-expected, 1.0e-12));
+}
+
+TEST_CASE("ModeOperatorModel dispersive permittivity matches its value at the frequency",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // At any one frequency, a dispersive substrate is the constant material with ε = ε∞ +
+  // χ(iω), the imaginary part entering as a loss tangent, so the two assemble the same mode
+  // operator, at real and at complex ω. Rates are entered in rad/s and nondimensionalized
+  // by t_c = L₀/c₀: Debye, complex pole pair, and Djordjevic-Sarkar terms.
+  auto make_dispersive = [](IoData &iodata)
+  {
+    const double rate = electromagnetics::c0_ / iodata.model.L0;
+    iodata.problem.type = ProblemType::DRIVEN;
+    auto &substrate = iodata.domains.materials[0];
+    substrate.epsilon_r.s = {4.0, 4.0, 4.0};
+    substrate.permittivity_terms.push_back(
+        config::PermittivityPoleData{{-1.0 * rate, 0.0}, {1.5 * rate, 0.0}});
+    substrate.permittivity_terms.push_back(
+        config::PermittivityPoleData{{-0.1 * rate, 2.5 * rate}, {0.3 * rate, -0.2 * rate}});
+    substrate.permittivity_terms.push_back(
+        config::DjordjevicSarkarData{0.2, 0.01 * rate, 100.0 * rate});
+  };
+  const RectangleModeModel dispersive(make_dispersive);
+  REQUIRE(dispersive.GetMaterialOp().HasFrequencyDependentPermittivityA2(0));
+
+  for (const std::complex<double> omega :
+       {std::complex<double>(2.0, 0.0), std::complex<double>(2.0, 0.1)})
+  {
+    CAPTURE(omega);
+    const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;
+    const std::complex<double> chi =
+        dispersive.GetMaterialOp().EvaluateFrequencyDependentPermittivityA2(0, s) / (s * s);
+    const double eps = 4.0 + chi.real(), tandelta = -chi.imag() / eps;
+    const RectangleModeModel constant(
+        [eps, tandelta](IoData &iodata)
+        {
+          iodata.problem.type = ProblemType::DRIVEN;
+          auto &substrate = iodata.domains.materials[0];
+          substrate.epsilon_r.s = {eps, eps, eps};
+          substrate.tandelta.s = {tandelta, tandelta, tandelta};
+        });
+
+    const double sigma = -2.0e-1;
+    const auto A = dispersive.GetModel().Assemble(omega, sigma);
+    const auto B = constant.GetModel().Assemble(omega, sigma);
+    ComplexVector x(A->Width()), y(A->Height()), z(A->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    z.UseDevice(true);
+    linalg::SetRandom(Mpi::World(), x);
+    A->Mult(x, y);
+    B->Mult(x, z);
+    const double norm = linalg::Norml2(Mpi::World(), z);
+    z -= y;
+    CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+  }
+}
+
+TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Absorbing edges at x = 0 and x = W neighbor the substrate and vacuum. A lossless
+  // Lorentz substrate at real ω is the constant material ε(ω), whose absorbing condition
+  // uses √(ε(ω)/μ), so the two assemble the same mode operator.
+  const double eps_inf = 4.0, w0 = 3.0, delta = 0.7;
+  const double omega = 2.0;
+  const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
+  auto make = [&](bool dispersive)
+  {
+    return [=](IoData &iodata)
+    {
+      const double rate = electromagnetics::c0_ / iodata.model.L0;  // Rates in rad/s
+      iodata.problem.type = ProblemType::DRIVEN;
+      iodata.boundaries.farfield.attributes = {2, 4};
+      iodata.boundaries.farfield.order = 1;
+      auto &substrate = iodata.domains.materials[0];
+      if (dispersive)
+      {
+        substrate.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+        substrate.permittivity_terms.push_back(config::LorentzData{delta, w0 * rate, 0.0});
+      }
+      else
+      {
+        substrate.epsilon_r.s = {eps, eps, eps};
+      }
+    };
+  };
+  const RectangleModeModel dispersive(make(true)), constant(make(false));
+  REQUIRE_THAT(dispersive.GetMaterialOp()
+                   .EvaluateFrequencyDependentPermittivity(0, {0.0, omega})
+                   .real(),
+               WithinRel(eps, 1.0e-12));
+  const double sigma = -2.0e-1;
+  const auto A = dispersive.GetModel().Assemble(omega, sigma);
+  const auto B = constant.GetModel().Assemble(omega, sigma);
+  ComplexVector x(A->Width()), y(A->Height()), z(A->Height());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  z.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  A->Mult(x, y);
+  B->Mult(x, z);
+  const double norm = linalg::Norml2(Mpi::World(), z);
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
 }
 
 TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",

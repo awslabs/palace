@@ -186,6 +186,20 @@ struct Measurement
 
   double domain_E_field_energy_all = 0.0;
   double domain_H_field_energy_all = 0.0;
+  // The electric field energy at the permittivity ε(ω) of frequency-dependent materials,
+  // without their polarization energy, which equals the magnetic energy of a lossless mode.
+  // Equal to domain_E_field_energy_all without such materials.
+  double domain_E_field_energy_material = 0.0;
+
+  // The total stored energy a mode's participation ratios and coupling rates are normalized
+  // by, from electric-side quantities only (they converge faster than the magnetic ones):
+  // (E_elec + E_elec_material)/2 + E_cap, which is E_elec + E_cap for constant materials
+  // and the mean of the electric and magnetic energies for a lossless mode in general.
+  double TotalEnergyNormalization() const
+  {
+    return 0.5 * (domain_E_field_energy_all + domain_E_field_energy_material) +
+           lumped_port_capacitor_energy;
+  }
 
   std::vector<DomainData> domain_E_field_energy_i;
   std::vector<DomainData> domain_H_field_energy_i;

@@ -3,6 +3,7 @@
 
 #include "fem/boundary_derived_field_bundle.hpp"
 
+#include <array>
 #include <bit>
 #include <deque>
 #include <map>
@@ -78,6 +79,31 @@ int SideAttribute(const mfem::ParMesh &pmesh, const FaceSamplingPlan::Entry &ent
   }
   MFEM_VERIFY(entry.elem_b >= 0, "Boundary derived bundle is missing side-B element!");
   return entry.ghost_b ? entry.ghost_attr : pmesh.GetAttribute(entry.elem_b);
+}
+
+}  // namespace
+
+namespace
+{
+
+// Surface charge Re{ε} and Im{ε} and stored-energy permittivity tables at the real angular
+// frequency ω > 0, or the constant tables (ε∞ for a frequency-dependent material) at ω = 0.
+std::array<std::vector<CeedIntScalar>, 3> MaterialTables(const MaterialOperator &mat_op,
+                                                         double omega)
+{
+  const bool fd = (omega > 0.0) && mat_op.HasFrequencyDependentPermittivity();
+  MaterialPropertyCoefficient eps_r(mat_op.GetAttributeToMaterial(),
+                                    fd ? mat_op.EvaluatePermittivityReal(omega)
+                                       : mat_op.GetPermittivityReal());
+  MaterialPropertyCoefficient eps_i(mat_op.GetAttributeToMaterial(),
+                                    fd ? mat_op.EvaluatePermittivityImag(omega)
+                                       : mat_op.GetPermittivityImag());
+  MaterialPropertyCoefficient eps_w(mat_op.GetAttributeToMaterial(),
+                                    fd ? mat_op.EvaluateStoredEnergyPermittivity(omega)
+                                       : mat_op.GetPermittivityReal());
+  return {ceed::PopulateCoefficientContext(3, &eps_r),
+          ceed::PopulateCoefficientContext(3, &eps_i),
+          ceed::PopulateCoefficientContext(3, &eps_w)};
 }
 
 }  // namespace
@@ -171,17 +197,16 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
     }
   }
 
-  MaterialPropertyCoefficient epsilon(mat_op->GetAttributeToMaterial(),
-                                      mat_op->GetPermittivityReal());
+  // The permittivity tables of the surface charge, Re{ε} and Im{ε} (D = ε E with the
+  // complex permittivity of a lossy dielectric), and the separate stored-energy table of
+  // the electric energy density. They coincide in Re{ε} for constant materials; a
+  // frequency-dependent material is evaluated at the frequency of the fields
+  // (SetFrequency), with ε∞ until then.
   MaterialPropertyCoefficient invmu(mat_op->GetAttributeToMaterial(),
                                     mat_op->GetCurlCurlInvPermeability());
-  // Im{ε} enters only the surface charge of complex fields (D = ε E with the complex
-  // permittivity of a lossy dielectric); energies keep Re{ε}.
-  MaterialPropertyCoefficient epsilon_imag(mat_op->GetAttributeToMaterial(),
-                                           mat_op->GetPermittivityImag());
-  const auto epsilon_ctx = ceed::PopulateCoefficientContext(3, &epsilon);
   const auto invmu_ctx = ceed::PopulateCoefficientContext(3, &invmu);
-  const auto epsilon_imag_ctx = ceed::PopulateCoefficientContext(3, &epsilon_imag);
+  const auto tables = MaterialTables(*mat_op, 0.0);
+  material_frequency_dependent = mat_op->HasFrequencyDependentPermittivity();
 
   for (const auto &item : routes)
   {
@@ -298,7 +323,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
                     CEED_COPY_VALUES, out_offsets.data(), &out_restriction));
       scratch.restrictions.push_back(out_restriction);
 
-      std::vector<CeedIntScalar> ctx(10);
+      std::vector<CeedIntScalar> ctx(11);
       ctx[0].second = route.normal_sign;
       ctx[1].second = electric_scaling;  // Surface charge.
       ctx[2].second = magnetic_scaling;  // Surface current.
@@ -306,12 +331,17 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
       ctx[4].second = magnetic_scaling;  // Magnetic energy.
       ctx[5].second = magnetic_scaling;  // Poynting vector.
       ctx[6].second = route.average_scale;
-      ctx[7].first = 10;
-      ctx.insert(ctx.end(), epsilon_ctx.begin(), epsilon_ctx.end());
+      ctx[7].first = static_cast<CeedInt>(ctx.size());
+      ctx.insert(ctx.end(), tables[0].begin(), tables[0].end());
       ctx[8].first = static_cast<CeedInt>(ctx.size());
       ctx.insert(ctx.end(), invmu_ctx.begin(), invmu_ctx.end());
       ctx[9].first = static_cast<CeedInt>(ctx.size());
-      ctx.insert(ctx.end(), epsilon_imag_ctx.begin(), epsilon_imag_ctx.end());
+      ctx.insert(ctx.end(), tables[1].begin(), tables[1].end());
+      ctx[10].first = static_cast<CeedInt>(ctx.size());
+      ctx.insert(ctx.end(), tables[2].begin(), tables[2].end());
+      material_ctx_offsets = {static_cast<std::size_t>(ctx[7].first),
+                              static_cast<std::size_t>(ctx[9].first),
+                              static_cast<std::size_t>(ctx[10].first)};
 
       ceed::CeedQFunctionInfo info;
       info.apply_qf = batched_complex ? f_eval_bdr_derived_trace_complex_32
@@ -321,9 +351,11 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
               ? PalaceQFunctionRelativePath(f_eval_bdr_derived_trace_complex_32_loc)
               : PalaceQFunctionRelativePath(f_eval_bdr_derived_trace_32_loc);
       CeedOperator op;
+      CeedQFunctionContext op_ctx = nullptr;
       ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                       ceed, inputs, output_comp, out_restriction, &op);
-      groups.push_back({ceed, op, std::move(field_sources)});
+                                       ceed, inputs, output_comp, out_restriction, &op,
+                                       material_frequency_dependent ? &op_ctx : nullptr);
+      groups.push_back({ceed, op, std::move(field_sources), op_ctx});
       fem::CacheGroupOperatorFieldVectors(groups.back());
       // Physical trace vectors are intentionally unbound at setup. At apply time the
       // group takes and repoints the handles to the source identities for this save.
@@ -431,6 +463,27 @@ BoundaryDerivedFieldBundle::RegisteredSlice(PointFieldKind kind, bool imaginary_
 void BoundaryDerivedFieldBundle::Invalidate()
 {
   ++generation;
+  phases.clear();
+}
+
+void BoundaryDerivedFieldBundle::SetFrequency(double omega)
+{
+  if (!material_frequency_dependent || omega == material_omega)
+  {
+    return;
+  }
+  MFEM_VERIFY(omega > 0.0, "Boundary postprocessing of a frequency-dependent material "
+                           "requires a positive frequency!");
+  const auto tables = MaterialTables(*mat_op, omega);
+  for (auto *groups : {&impl->groups, &impl->complex_groups})
+  {
+    for (int t = 0; t < 3; t++)
+    {
+      fem::UpdateGroupOperatorContexts(*groups, material_ctx_offsets[t], tables[t]);
+    }
+  }
+  material_omega = omega;
+  // The physical traces stay valid; only the material-dependent packed results change.
   phases.clear();
 }
 
@@ -550,6 +603,9 @@ const BoundaryDerivedFieldBundle::CachedPhase &
 BoundaryDerivedFieldBundle::Get(const Vector &E_source, const Vector &B_source) const
 {
   trace_cache->VerifyCurrent();
+  MFEM_VERIFY(!material_frequency_dependent || material_omega > 0.0,
+              "Boundary postprocessing of a frequency-dependent material was evaluated "
+              "without a frequency (SetFrequency)!");
   const bool batched_complex = BatchesComplexPhases(E_source, B_source);
   // The registered real and imaginary source pairs are one cache identity because one
   // application consumes both. Arbitrary source vectors retain the previous pair key.

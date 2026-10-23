@@ -5,10 +5,12 @@
 #define PALACE_UTILS_CONFIG_FILE_HPP
 
 #include <array>
+#include <complex>
 #include <map>
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include "labels.hpp"
@@ -236,6 +238,56 @@ public:
   }
 };
 
+// Terms of a frequency-dependent relative permittivity ε(s) = ε∞ + Σₖ χₖ(s), s = iω.
+// Angular rates are in rad/s and times in s until inputs are nondimensionalized. The typed
+// terms are passive polarization models whose parameters are positive by construction;
+// PoleResidue is a general rational term, whose passivity is checked with a warning (see
+// utils/permittivitymodel.hpp).
+struct DrudeData
+{
+public:
+  // Free carriers: χ(s) = ω_p²/(s(s + γ)).
+  double omega_p = 0.0;
+  double gamma = 0.0;
+};
+
+struct DebyeData
+{
+public:
+  // Relaxation: χ(s) = Δε/(1 + sτ).
+  double delta = 0.0;
+  double tau = 0.0;
+};
+
+struct LorentzData
+{
+public:
+  // Bound oscillator: χ(s) = Δε ω₀²/(s² + γs + ω₀²).
+  double delta = 0.0;
+  double omega_0 = 0.0;
+  double gamma = 0.0;
+};
+
+struct PermittivityPoleData
+{
+public:
+  // General term r/(s - p), with its conjugate for an upper-half-plane pole.
+  std::complex<double> pole = 0.0;
+  std::complex<double> residue = 0.0;
+};
+
+struct DjordjevicSarkarData
+{
+public:
+  // Continuum of Debye relaxations: χ(s) = Strength log((s + ω_hi)/(s + ω_lo)).
+  double strength = 0.0;
+  double omega_lower = 0.0;
+  double omega_upper = 0.0;
+};
+
+using PermittivityTermData = std::variant<DrudeData, DebyeData, LorentzData,
+                                          PermittivityPoleData, DjordjevicSarkarData>;
+
 struct MaterialData
 {
 public:
@@ -253,6 +305,16 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
+
+  // Additive terms of a frequency-dependent relative permittivity, with ε∞ the scalar
+  // epsilon_r.
+  std::vector<PermittivityTermData> permittivity_terms = {};
+
+  bool HasFrequencyDependentPermittivity() const { return !permittivity_terms.empty(); }
+
+  // The scalar relative permittivity at zero frequency, ε∞ + χ(0), for a
+  // frequency-dependent permittivity. Infinite for a pole at zero (Drude).
+  double StaticPermittivity() const;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};

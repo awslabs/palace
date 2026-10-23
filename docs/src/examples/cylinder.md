@@ -168,6 +168,112 @@ for the ``\text{TE}_{011}`` mode is shown below.
 </p>
 ```
 
+### Dispersive cavity material
+
+The compact
+[`cavity_drude.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_drude.json)
+variant uses the hexahedral mesh with a damped Drude permittivity,
+
+```math
+\varepsilon_r(s) = \varepsilon_\infty +
+    \frac{\omega_p^2}{s(s+\gamma)}, \qquad s=i\omega.
+```
+
+Here ``\varepsilon_\infty=2.08``, ``\omega_p=2\pi\times 1\text{ GHz}``, and
+``\gamma=2\pi\times 0.1\text{ GHz}``. The
+[`Permittivity`](../config/reference.md#config-domains-materials-permittivity) object uses a
+`Drude` term whose `PlasmaFrequency` and `CollisionFrequency` are entered directly in GHz.
+
+For a cavity mode with geometric angular frequency ``\Omega_0``, the expected root
+satisfies ``(\Omega_0^2+\varepsilon_\infty s^2)(s+\gamma)+\omega_p^2s=0``. For the
+lowest mode this predicts ``f=2.9852+0.0026947i\text{ GHz}``; the computed result is
+``2.9866+0.0026921i\text{ GHz}``. The reported electric energy includes the kinetic
+energy of the Drude carriers, evaluated at the real part of the mode frequency.
+
+### Polaritons in a Lorentz-filled cavity
+
+The
+[`cavity_lorentz.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_lorentz.json)
+variant fills the cavity with a damped Lorentz oscillator, the classical model of a bound
+polarization resonance [[3]](#References),
+
+```math
+\varepsilon_r(s) = \varepsilon_\infty +
+    \frac{\Delta\varepsilon\,\omega_0^2}{s^2+\gamma s+\omega_0^2}, \qquad s=i\omega,
+```
+
+with ``\varepsilon_\infty=2.08``, ``\Delta\varepsilon=0.01``, and
+``\gamma=2\pi\times 0.02\text{ GHz}``. The resonance ``\omega_0`` is tuned to the
+``\text{TM}_{010}`` frequency ``\omega_c = 2\pi\times 2.903636\text{ GHz}`` of the cavity filled
+with ``\varepsilon_\infty`` alone, so that light and matter are degenerate.
+
+The medium is homogeneous, so every cavity mode keeps its field profile and only its
+frequency changes: a mode at ``\omega_c`` for ``\varepsilon_\infty`` requires
+``\omega^2\varepsilon_r(\omega) = \varepsilon_\infty\omega_c^2``, or
+
+```math
+(\varepsilon_\infty\omega_c^2+\varepsilon_\infty s^2)(s^2+\gamma s+\omega_0^2)
+    + \Delta\varepsilon\,\omega_0^2 s^2 = 0.
+```
+
+This quartic in ``s`` has two roots with positive frequency, so each cavity mode splits into
+a pair of mixed light-matter modes, the polaritons of Hopfield [[4]](#References). Panel (b)
+below shows the lossless case graphically, with ``\Delta\varepsilon`` exaggerated. ``\omega^2\varepsilon_r`` has a pole at
+``\omega_0`` and a zero at the longitudinal frequency
+``\omega_L = \omega_0\sqrt{1+\Delta\varepsilon/\varepsilon_\infty}``; in between,
+``\varepsilon_r<0`` and no transverse mode exists, so one root lies below the gap and one
+above. On resonance the roots are
+``\omega_\pm = \tfrac{1}{2}\omega_0(\sqrt{\kappa+4}\pm\sqrt{\kappa})`` with
+``\kappa=\Delta\varepsilon/\varepsilon_\infty``, so the splitting is exactly
+``\omega_0\sqrt{\Delta\varepsilon/\varepsilon_\infty}``. Since ``\Delta\varepsilon`` is
+proportional to the density ``N`` of oscillators, this is the ``\sqrt{N}`` scaling of the
+vacuum Rabi splitting, which linear dispersion theory reproduces for any number of
+oscillators [[5]](#References). Each polariton is half light and half matter on resonance,
+so each inherits half the damping of the oscillator, whose own decay rate is
+``\operatorname{Im}f = f_\gamma/2`` for ``\gamma = 2\pi f_\gamma``: each branch has
+``\operatorname{Im}f\approx f_\gamma/4 = 5\text{ MHz}``.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/cavity-4.svg" width="100%" />
+</p><br/>
+```
+
+The ``\text{TE}_{111}`` pair at ``2.922197\text{ GHz}`` is only 0.6% above
+``\text{TM}_{010}``, so it splits too. With `Target` at ``2.8\text{ GHz}``, the lowest four
+modes are the lower branches of ``\text{TM}_{010}``, the ``\text{TE}_{111}`` pair, and
+``\text{TM}_{011}``, all below the gap. The lower branches of all higher modes accumulate
+below ``\omega_0``, so `N` counts them too when `Target` is close below the resonance. The
+analytic values below use the uncoupled frequency ``f_c = \omega_c/2\pi`` both from the
+closed form [[1]](#References) and as computed on the same mesh with
+``\varepsilon_r=\varepsilon_\infty``. The first comparison includes the discretization error
+of the cavity; the second removes it, leaving only the error in the dispersion model:
+
+| Mode                | ``f_c``, exact (GHz) | ``f_c``, mesh (GHz) | *Palace* (GHz)         | Analytic, exact ``f_c`` | Analytic, mesh ``f_c`` |
+|:------------------- | --------------------:| -------------------:| ----------------------:| -----------------------:| ----------------------:|
+| ``\text{TM}_{010}`` | ``2.903636``         | ``2.905077``        | ``2.805548+0.004863i`` | ``2.804831+0.004827i``  | ``2.805548+0.004863i`` |
+| ``\text{TE}_{111}`` | ``2.922197``         | ``2.926602``        | ``2.815652+0.005396i`` | ``2.813677+0.005288i``  | ``2.815652+0.005396i`` |
+| ``\text{TM}_{011}`` | ``3.468175``         | ``3.469647``        | ``2.887844+0.009656i`` | ``2.887802+0.009654i``  | ``2.887844+0.009656i`` |
+
+The script
+[`cavity_polariton.jl`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_polariton.jl)
+reproduces this table, then sweeps ``f_0`` from ``2.55`` to ``3.3\text{ GHz}``. At each
+of 31 steps it solves once with `Target` below the lower ``\text{TM}_{010}`` branch and
+once above the gap, for three modes each. All 186 computed modes are
+``\text{TM}_{010}`` or ``\text{TE}_{111}`` branches and lie on the dispersion relation for
+the mesh's uncoupled frequencies to a relative ``2\times 10^{-9}``. The branches
+anticross around the uncoupled modes and approach the gap edges away from them, while the
+damping passes from the matter-like branch to the light-like one, crossing at
+``f_\gamma/4`` on resonance. The reported electric energy includes the polarization
+oscillator's potential and kinetic energy, evaluated at the real part of the mode
+frequency; it is not simply the energy at ``\operatorname{Re}\varepsilon_r``.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/cavity-5.png" width="80%" />
+</p><br/>
+```
+
 ### Mesh convergence
 
 The effect of mesh size can be investigated for the cylindrical cavity resonator using
@@ -263,4 +369,11 @@ mode ``\text{TE}_{1,1,2}`` has marginally lower frequency than the waveguide mod
 [1] D. M. Pozar, _Microwave Engineering_, Wiley, Hoboken, NJ, 2012.\
 [2] A. Buffa, P. Houston, I. Perugia, Discontinuous Galerkin computation of the Maxwell
 eigenvalues on simplicial meshes, _Journal of Computational and Applied Mathematics_ 204
-(2007) 317-333.
+(2007) 317-333.\
+[3] J. D. Jackson, _Classical Electrodynamics_, 3rd ed., Wiley, New York, NY, 1999,
+Section 7.5.\
+[4] J. J. Hopfield, Theory of the contribution of excitons to the complex dielectric
+constant of crystals, _Physical Review_ 112 (1958) 1555-1567.\
+[5] Y. Zhu, D. J. Gauthier, S. E. Morin, Q. Wu, H. J. Carmichael, T. W. Mossberg, Vacuum
+Rabi splitting as a feature of linear-dispersion theory: Analysis and experimental
+observations, _Physical Review Letters_ 64 (1990) 2499-2502.

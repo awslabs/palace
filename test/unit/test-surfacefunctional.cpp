@@ -1238,7 +1238,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   const double interface_energy = RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
   DomainPostOperator domain_post(iodata.domains.postpro, mat_op, fem_op.GetNDSpace(),
                                  fem_op.GetCurlSpace());
-  const double domain_energy = domain_post.GetElectricFieldEnergy(E);
+  const double domain_energy = domain_post.GetElectricFieldEnergy(E, 0.0);
   const double participation = interface_energy / domain_energy;
 
   const auto &cache = post_op.Cache();
@@ -2546,8 +2546,9 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     const auto *fe = nd_fespace.Get().GetBE(i);
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
-                                     integrals_r, integrals_i);
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, mat_op.GetLightSpeed(), omega_re,
+                                     omega_im, r_naughts, *T, *ir, integrals_r,
+                                     integrals_i);
   }
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_r.data()->data(), comm);
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_i.data()->data(), comm);
@@ -3419,6 +3420,333 @@ TEST_CASE("FaceNbrFieldExchange", "[surfacefunctional][Serial][Parallel][GPU]")
       }
     }
   }
+}
+
+TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
+          "[surfacefunctional][frequencydependent][Serial][Parallel][GPU]")
+{
+  // The surface charge and electric energy density of a frequency-dependent dielectric
+  // (damped Lorentz: lossy, and an oscillator whose stored energy W differs from Re ε) at
+  // each frequency equal those of the constant material with the same
+  // complex permittivity ε(iω) (Re{ε}, tan δ = −Im{ε}/Re{ε}) and of the constant material
+  // with the stored-energy permittivity W(ω), respectively: from the fused bundle, which
+  // keeps the charge and energy tables separate, and from the independent trace-backed
+  // evaluators. Frequencies change and return, with retained traces and packed results.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  constexpr int order = 1;
+  CAPTURE(elem_type);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  constexpr double eps_inf = 2.5, delta = 1.5, w0 = 1.0, gamma = 0.2;
+  auto chi = [=](double w)
+  {
+    const std::complex<double> s(0.0, w);
+    return delta * w0 * w0 / (s * s + gamma * s + w0 * w0);
+  };
+  // The kinetic energy of the oscillator adds to Re χ (permittivitymodel.hpp).
+  auto w_stored = [=](double w)
+  {
+    return delta * w0 * w0 * (w * w + w0 * w0) /
+           ((w0 * w0 - w * w) * (w0 * w0 - w * w) + gamma * gamma * w * w);
+  };
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  dielectric.mu_r.s = {1.4, 1.4, 1.4};
+  dielectric.permittivity_terms = {config::LorentzData{delta, w0, gamma}};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+  auto ConstantOp = [&](double eps_r, double tandelta)
+  {
+    auto constant = dielectric;
+    constant.permittivity_terms.clear();
+    constant.epsilon_r.s = {eps_r, eps_r, eps_r};
+    constant.tandelta.s = {tandelta, tandelta, tandelta};
+    return std::make_unique<MaterialOperator>(std::vector{vacuum, constant}, periodic,
+                                              ProblemType::DRIVEN, *mesh);
+  };
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        const double vals[3] = {std::sin(x(1)) + x(2), x(0),
+                                                                1.0 + x(1)};
+                                        v.SetSize(3);
+                                        for (int d = 0; d < 3; d++)
+                                        {
+                                          v(d) = vals[d];
+                                        }
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        const double vals[3] = {x(2) - 0.4, std::cos(x(0)),
+                                                                0.3 * x(1)};
+                                        v.SetSize(3);
+                                        for (int d = 0; d < 3; d++)
+                                        {
+                                          v(d) = vals[d];
+                                        }
+                                      });
+  mfem::VectorFunctionCoefficient fb(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       const double vals[3] = {x(1), 0.5, -x(0)};
+                                       v.SetSize(3);
+                                       for (int d = 0; d < 3; d++)
+                                       {
+                                         v(d) = vals[d];
+                                       }
+                                     });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fb);
+  B.Imag().ProjectCoefficient(fb);
+  for (auto *u : {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()})
+  {
+    u->ExchangeFaceNbrData();
+  }
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+  const int lod = order;
+  const double scaling = 1.3;
+  auto plan = std::make_shared<FaceSamplingPlan>(*mesh, marker, lod);
+
+  struct Outputs
+  {
+    std::shared_ptr<BoundaryPhysicalTraceCache> traces;
+    std::shared_ptr<BoundaryDerivedFieldBundle> bundle;
+    std::unique_ptr<PointFieldEvaluator> q_bundle, ue_bundle, q, q_imag, ue;
+  };
+  auto Make = [&](const MaterialOperator &op)
+  {
+    Outputs out;
+    out.traces = std::make_shared<BoundaryPhysicalTraceCache>(*mesh, marker, plan);
+    out.bundle = std::make_shared<BoundaryDerivedFieldBundle>(*mesh, marker, op, nd_fespace,
+                                                              rt_fespace, plan, out.traces,
+                                                              E, B, scaling, scaling);
+    REQUIRE(out.bundle->IsValid());
+    out.q_bundle = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker, nd_fespace, op, lod, scaling,
+        plan, out.traces, out.bundle);
+    out.ue_bundle = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::ENERGY_E, *mesh, marker, nd_fespace, op, lod, scaling,
+        plan, out.traces, out.bundle);
+    out.q = std::make_unique<PointFieldEvaluator>(PointFieldEvaluator::Kind::FLUX_Q, *mesh,
+                                                  marker, nd_fespace, op, lod, scaling,
+                                                  plan, out.traces);
+    out.q_imag = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker, nd_fespace, op, lod, scaling,
+        plan, out.traces, nullptr, true);
+    out.ue = std::make_unique<PointFieldEvaluator>(PointFieldEvaluator::Kind::ENERGY_E,
+                                                   *mesh, marker, nd_fespace, op, lod,
+                                                   scaling, plan, out.traces);
+    return out;
+  };
+  auto Compare = [](const Vector &actual, const Vector &expected)
+  {
+    REQUIRE(actual.Size() == expected.Size());
+    const double *a = actual.HostRead(), *e = expected.HostRead();
+    double max_e = 0.0;
+    for (int i = 0; i < actual.Size(); i++)
+    {
+      CAPTURE(i, a[i], e[i]);
+      CHECK(a[i] == Catch::Approx(e[i]).epsilon(1.0e-10).margin(1.0e-12));
+      max_e = std::max(max_e, std::abs(e[i]));
+    }
+    return max_e;
+  };
+  // Q_s_real and Q_s_imag from the independent evaluators, as written by PostOperator.
+  auto Charge = [&](Outputs &out, bool imaginary_phase, Vector &buffer)
+  {
+    Vector cross(out.q->BufferSize());
+    cross.UseDevice(true);
+    out.q->EvalBuffer(imaginary_phase ? E.Imag() : E.Real(), buffer);
+    out.q_imag->EvalBuffer(imaginary_phase ? E.Real() : E.Imag(), cross);
+    buffer.Add(imaginary_phase ? 1.0 : -1.0, cross);
+  };
+
+  auto fd = Make(mat_op);
+  for (double omega : {0.4, 3.0, 0.4})
+  {
+    CAPTURE(omega);
+    const std::complex<double> eps = eps_inf + chi(omega);
+    const double W = eps_inf + w_stored(omega);
+    REQUIRE(std::abs(W - eps.real()) > 0.1 * W);  // Distinguishes W from Re ε
+    auto charge_op = ConstantOp(eps.real(), -eps.imag() / eps.real());
+    auto energy_op = ConstantOp(W, 0.0);
+    auto charge = Make(*charge_op);
+    auto energy = Make(*energy_op);
+    // No invalidation: the fields keep their addresses and values, so the traces and the
+    // bundle's packed results stay cached, and SetFrequency alone must refresh the
+    // material-dependent results.
+    for (auto *out : {&fd, &charge, &energy})
+    {
+      for (auto *eval : {out->q_bundle.get(), out->ue_bundle.get(), out->q.get(),
+                         out->q_imag.get(), out->ue.get()})
+      {
+        eval->SetFrequency(omega);
+      }
+    }
+    const int n = fd.q_bundle->BufferSize();
+    Vector actual(n), expected(n);
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    for (bool imaginary_phase : {false, true})
+    {
+      const auto &e = imaginary_phase ? E.Imag() : E.Real();
+      charge.q_bundle->EvalBuffer(e, expected);
+      fd.q_bundle->EvalBuffer(e, actual);
+      CHECK(Compare(actual, expected) > 0.0);
+      Charge(fd, imaginary_phase, actual);
+      Compare(actual, expected);
+    }
+    energy.ue_bundle->EvalBuffer(E, expected);
+    fd.ue_bundle->EvalBuffer(E, actual);
+    CHECK(Compare(actual, expected) > 0.0);
+    fd.ue->EvalBuffer(E, actual);
+    Compare(actual, expected);
+    // The same frequency keeps the cached packed results of the bundle.
+    const auto applies = BoundaryDerivedFieldBundle::QFunctionApplyCount();
+    fd.ue_bundle->SetFrequency(omega);
+    fd.ue_bundle->EvalBuffer(E, actual);
+    CHECK(BoundaryDerivedFieldBundle::QFunctionApplyCount() == applies);
+  }
+}
+
+TEST_CASE("Far field of a frequency-dependent exterior medium",
+          "[surfacefunctional][frequencydependent][Serial][Parallel][GPU]")
+{
+  // The far field of a homogeneous, isotropic, lossless exterior uses its wave speed at
+  // Re ε(i Re ω): equal to that of the constant material Re ε at each frequency, with the
+  // complex ω in k, in the libCEED functional and the legacy integrand. A medium with
+  // Re ε ≤ 0 has no propagating far field and is an error.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  auto mesh = MakeInterfaceMesh(comm, mfem::Element::TETRAHEDRON);
+  auto &pmesh = mesh->Get();
+  constexpr double eps_inf = 2.0, wp = 3.0, gamma = 0.5;  // Drude
+  config::MaterialData medium;
+  medium.attributes = {1, 2};
+  medium.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  medium.permittivity_terms = {config::DrudeData{wp, gamma}};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({medium}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fe(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       const double vals[3] = {std::sin(x(1)), x(0) + 0.2,
+                                                               1.0 - x(2)};
+                                       v.SetSize(3);
+                                       for (int d = 0; d < 3; d++)
+                                       {
+                                         v(d) = vals[d];
+                                       }
+                                     });
+  mfem::VectorFunctionCoefficient fb(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       const double vals[3] = {x(1) - 0.3, 0.5,
+                                                               std::cos(x(0))};
+                                       v.SetSize(3);
+                                       for (int d = 0; d < 3; d++)
+                                       {
+                                         v(d) = vals[d];
+                                       }
+                                     });
+  E.Real().ProjectCoefficient(fe);
+  E.Imag().ProjectCoefficient(fb);
+  B.Real().ProjectCoefficient(fb);
+  B.Imag().ProjectCoefficient(fe);
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  marker[1 - 1] = 1;  // Exterior boundary (z = 0)
+  std::vector<std::array<double, 3>> r_naughts = {{0.0, 0.6, 0.8}, {0.6, 0.0, -0.8}};
+  SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
+  REQUIRE(farfield.IsValid());
+  for (std::complex<double> omega :
+       {std::complex<double>(4.0, 0.1), {6.0, 0.0}, {4.0, 0.1}})
+  {
+    CAPTURE(omega);
+    const double eps = (eps_inf + wp * wp /
+                                      (std::complex<double>(0.0, omega.real()) *
+                                       (std::complex<double>(0.0, omega.real()) + gamma)))
+                           .real();
+    REQUIRE(eps > 0.0);
+    auto constant = medium;
+    constant.permittivity_terms.clear();
+    constant.epsilon_r.s = {eps, eps, eps};
+    MaterialOperator constant_op({constant}, periodic, ProblemType::DRIVEN, *mesh);
+    SurfaceFunctional reference(*mesh, marker, nd_fespace, rt_fespace, constant_op,
+                                r_naughts);
+    const auto expected = reference.EvalFarField(E, B, omega);
+    const auto actual = farfield.EvalFarField(E, B, omega);
+    // The legacy integrand with the evaluated light speed of the exterior.
+    std::vector<std::array<double, 3>> legacy_r(r_naughts.size()),
+        legacy_i(r_naughts.size());
+    const auto c0 = mat_op.EvaluateLightSpeed(omega.real(), {0});
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      if (!marker[pmesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      auto *T = const_cast<mfem::ParMesh &>(pmesh).GetBdrElementTransformation(i);
+      const auto *ir = &mfem::IntRules.Get(nd_fespace.Get().GetBE(i)->GetGeomType(),
+                                           fem::DefaultIntegrationOrder::Get(*T));
+      AddStrattonChuIntegrandAtElement(E, B, mat_op, c0, omega.real(), omega.imag(),
+                                       r_naughts, *T, *ir, legacy_r, legacy_i);
+    }
+    Mpi::GlobalSum(3 * r_naughts.size(), legacy_r.data()->data(), comm);
+    Mpi::GlobalSum(3 * r_naughts.size(), legacy_i.data()->data(), comm);
+    for (std::size_t d = 0; d < r_naughts.size(); d++)
+    {
+      const auto &r = r_naughts[d];
+      const auto &Ir = legacy_r[d];
+      const auto &Ii = legacy_i[d];
+      const std::array<double, 3> cr = {r[1] * Ir[2] - r[2] * Ir[1],
+                                        r[2] * Ir[0] - r[0] * Ir[2],
+                                        r[0] * Ir[1] - r[1] * Ir[0]};
+      const std::array<double, 3> ci = {r[1] * Ii[2] - r[2] * Ii[1],
+                                        r[2] * Ii[0] - r[0] * Ii[2],
+                                        r[0] * Ii[1] - r[1] * Ii[0]};
+      for (int c = 0; c < 3; c++)
+      {
+        CAPTURE(d, c);
+        CHECK(actual[d][c].real() ==
+              Catch::Approx(expected[d][c].real()).epsilon(1.0e-12).margin(1.0e-14));
+        CHECK(actual[d][c].imag() ==
+              Catch::Approx(expected[d][c].imag()).epsilon(1.0e-12).margin(1.0e-14));
+        CHECK(cr[c] ==
+              Catch::Approx(expected[d][c].real()).epsilon(1.0e-10).margin(1.0e-14));
+        CHECK(ci[c] ==
+              Catch::Approx(expected[d][c].imag()).epsilon(1.0e-10).margin(1.0e-14));
+      }
+    }
+  }
+  CHECK_THROWS(farfield.EvalFarField(E, B, {1.0, 0.0}));  // Re ε(i) < 0
 }
 
 }  // namespace palace

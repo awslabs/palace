@@ -5,8 +5,16 @@
 
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "utils/diagnostic.hpp"
+
+PalacePragmaDiagnosticPush
+PalacePragmaDiagnosticDisableUnused
 
 #include "fem/qfunctions/h1_qf.h"
+#include "fem/qfunctions/l2_qf.h"
+#include "fem/qfunctions/l2h1_qf.h"
+
+PalacePragmaDiagnosticPop
 
 namespace palace
 {
@@ -28,22 +36,75 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   MFEM_VERIFY(
       trial_num_comp == test_num_comp,
       "MassIntegrator requires test and trial spaces with same number of components!");
+
+  // The H1 QFunctions weight the reference values by |J| (u = û). The L2 QFunctions weight
+  // them by 1 / |J| (u = û / |J| for both trial and test functions), which needs the
+  // quadrature weights as an input. An INTEGRAL trial space with a VALUE test space weights
+  // them by one (u = û / |J| against v = v̂ in the measure |J|), also from the weights.
+  const bool value_test = (test_map_type == mfem::FiniteElement::VALUE);
+  MFEM_VERIFY((trial_map_type == mfem::FiniteElement::VALUE ||
+               trial_map_type == mfem::FiniteElement::INTEGRAL) &&
+                  (value_test || test_map_type == mfem::FiniteElement::INTEGRAL),
+              "MassIntegrator requires trial and test spaces with VALUE or INTEGRAL map "
+              "types!");
+  MFEM_VERIFY(value_test || trial_map_type == mfem::FiniteElement::INTEGRAL,
+              "MassIntegrator does not support a VALUE trial space with an INTEGRAL test "
+              "space!");
+  const bool integral_map = !value_test;
+  const bool mixed_map = value_test && trial_map_type == mfem::FiniteElement::INTEGRAL;
+  MFEM_VERIFY(
+      !mixed_map || trial_num_comp == 1,
+      "MassIntegrator supports an INTEGRAL trial space with a VALUE test space only "
+      "for scalar spaces!");
   switch (trial_num_comp)
   {
     case 1:
-      info.apply_qf = assemble_q_data ? f_build_h1_1 : f_apply_h1_1;
-      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_1_loc
-                                                                       : f_apply_h1_1_loc);
+      if (mixed_map)
+      {
+        info.apply_qf = assemble_q_data ? f_build_l2h1_1 : f_apply_l2h1_1;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_l2h1_1_loc : f_apply_l2h1_1_loc);
+      }
+      else if (integral_map)
+      {
+        info.apply_qf = assemble_q_data ? f_build_l2_1 : f_apply_l2_1;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_l2_1_loc : f_apply_l2_1_loc);
+      }
+      else
+      {
+        info.apply_qf = assemble_q_data ? f_build_h1_1 : f_apply_h1_1;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_h1_1_loc : f_apply_h1_1_loc);
+      }
       break;
     case 2:
-      info.apply_qf = assemble_q_data ? f_build_h1_2 : f_apply_h1_2;
-      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_2_loc
-                                                                       : f_apply_h1_2_loc);
+      if (integral_map)
+      {
+        info.apply_qf = assemble_q_data ? f_build_l2_2 : f_apply_l2_2;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_l2_2_loc : f_apply_l2_2_loc);
+      }
+      else
+      {
+        info.apply_qf = assemble_q_data ? f_build_h1_2 : f_apply_h1_2;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_h1_2_loc : f_apply_h1_2_loc);
+      }
       break;
     case 3:
-      info.apply_qf = assemble_q_data ? f_build_h1_3 : f_apply_h1_3;
-      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_3_loc
-                                                                       : f_apply_h1_3_loc);
+      if (integral_map)
+      {
+        info.apply_qf = assemble_q_data ? f_build_l2_3 : f_apply_l2_3;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_l2_3_loc : f_apply_l2_3_loc);
+      }
+      else
+      {
+        info.apply_qf = assemble_q_data ? f_build_h1_3 : f_apply_h1_3;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_h1_3_loc : f_apply_h1_3_loc);
+      }
       break;
     default:
       MFEM_ABORT("Invalid value of num_comp = " << trial_num_comp
@@ -51,6 +112,10 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   }
   info.trial_ops = EvalMode::Interp;
   info.test_ops = EvalMode::Interp;
+  if (integral_map || mixed_map)
+  {
+    info.trial_ops |= EvalMode::Weight;
+  }
 
   // Set up the coefficient and assemble.
   auto ctx = PopulateCoefficientContext(trial_num_comp, Q, transpose);

@@ -31,6 +31,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added scalar frequency-dependent `Permittivity` objects with additive Drude, Debye,
+    Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Frequency-domain operators,
+    ports, postprocessing, energy/error estimates, adaptive sweeps, and circuit synthesis
+    use the material model at the solution frequency. Compatible static limits are supported;
+    transient problems are not. General PoleResidue models remain usable with gain and
+    negative-energy warnings. Existing constant-permittivity inputs are unchanged.
+    SchemaVer 2-3-0
+    [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
 
@@ -148,6 +156,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     frequency, and circuit synthesis with a single distinct sample, which now aborts at
     startup instead of failing in the sweep.
     [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed wave port frequency sweeps selecting the wrong port mode for `Mode` above a
+    degenerate pair: starting each mode solve from the previous frequency's mode could miss
+    one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed incorrect Jacobian weighting in 2D magnetic field energy (`E_mag`), which made it
+    shrink under mesh refinement and misnormalized error indicators.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
+  - Fixed 2D magnetic-flux error indicators changing with element geometry even for a
+    constant physical field, due to incorrect reference-to-physical field mapping.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 #### Performance Improvements
 

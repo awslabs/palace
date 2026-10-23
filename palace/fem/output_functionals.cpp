@@ -500,6 +500,20 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
   : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), nd_fespace(&nd_fespace),
     rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
+  // Frequency-dependent exterior media next to the marked boundaries on any process.
+  mfem::Array<int> attr_list;
+  for (int i = 0; i < bdr_attr_marker.Size(); i++)
+  {
+    if (bdr_attr_marker[i])
+    {
+      attr_list.Append(i + 1);
+    }
+  }
+  for (const auto &[m, attrs] :
+       mat_op.SplitCeedBdrAttributesByFrequencyDependentPermittivity(attr_list).materials)
+  {
+    farfield_models.push_back(m);
+  }
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -527,6 +541,22 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
     }
   }
   Assemble(mesh, bdr_attr_marker);
+}
+
+mfem::DenseTensor MetalSubstratePermittivity(const MaterialOperator &mat_op, double omega)
+{
+  return mat_op.MapFrequencyDependentMaterials(
+      mat_op.GetPermittivityReal(),
+      [&mat_op, omega](std::size_t m, mfem::DenseMatrix &M)
+      {
+        const double eps_abs =
+            std::abs(mat_op.EvaluateFrequencyDependentPermittivity(m, {0.0, omega}));
+        M = 0.0;
+        for (int d = 0; d < M.Height(); d++)
+        {
+          M(d, d) = eps_abs;
+        }
+      });
 }
 
 SurfaceFunctional::~SurfaceFunctional()
@@ -576,6 +606,101 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
   }
 }
 
+bool SurfaceFunctional::HasFrequencyDependentMaterialTable() const
+{
+  if (!mat_op || !mat_op->HasFrequencyDependentPermittivity())
+  {
+    return false;
+  }
+  switch (kind)
+  {
+    case KernelKind::INTERFACE_EPR:
+      return epr_type == InterfaceDielectric::MS;
+    case KernelKind::SURFACE_FLUX:
+      return flux_type == SurfaceFlux::ELECTRIC;
+    case KernelKind::BDR_FLUX_Q:
+    case KernelKind::BDR_ENERGY_E:
+    case KernelKind::FARFIELD:
+      return true;
+    default:
+      return false;
+  }
+}
+
+mfem::DenseTensor SurfaceFunctional::MaterialTable(double omega) const
+{
+  // The tables at ω = 0 are those of the constant materials, with ε∞ for a
+  // frequency-dependent one; only used before the first SetFrequency.
+  const bool fd = (omega > 0.0) && HasFrequencyDependentMaterialTable();
+  switch (kind)
+  {
+    case KernelKind::INTERFACE_EPR:
+      // |D_n|² = |ε|² |E_n|² for the scalar permittivity of a frequency-dependent
+      // substrate, applied to each phase of E; a constant substrate keeps its Re{ε}.
+      return fd ? MetalSubstratePermittivity(*mat_op, omega)
+                : mat_op->GetPermittivityReal();
+    case KernelKind::SURFACE_FLUX:
+    case KernelKind::BDR_FLUX_Q:
+      if (flux_imag_permittivity)
+      {
+        return fd ? mat_op->EvaluatePermittivityImag(omega) : mat_op->GetPermittivityImag();
+      }
+      return fd ? mat_op->EvaluatePermittivityReal(omega) : mat_op->GetPermittivityReal();
+    case KernelKind::BDR_ENERGY_E:
+      return fd ? mat_op->EvaluateStoredEnergyPermittivity(omega)
+                : mat_op->GetPermittivityReal();
+    case KernelKind::FARFIELD:
+      return fd ? mat_op->EvaluateLightSpeed(omega, farfield_models)
+                : mat_op->GetLightSpeed();
+    default:
+      MFEM_ABORT("Surface functional kind has no permittivity material table!");
+  }
+  return {};
+}
+
+void SurfaceFunctional::AppendMaterialTable(int dim,
+                                            std::vector<CeedIntScalar> &base_ctx) const
+{
+  MaterialPropertyCoefficient func(mat_op->GetAttributeToMaterial(),
+                                   MaterialTable(material_omega));
+  auto mat_ctx = ceed::PopulateCoefficientContext(dim, &func);
+  if (HasFrequencyDependentMaterialTable())
+  {
+    material_ctx_offset = static_cast<std::ptrdiff_t>(base_ctx.size());
+    material_ctx_dim = dim;
+  }
+  base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+}
+
+void SurfaceFunctional::SetFrequency(double omega) const
+{
+  // The frequency state is the same on every process, also where the functional has no
+  // local elements (and no retained contexts), so that evaluation checks and errors are
+  // collective.
+  if (!HasFrequencyDependentMaterialTable() || omega == material_omega)
+  {
+    return;
+  }
+  MFEM_VERIFY(omega > 0.0, "Frequency-dependent material postprocessing requires a "
+                           "positive frequency!");
+  // The table has the layout it was assembled with: only the material values change.
+  MaterialPropertyCoefficient func(mat_op->GetAttributeToMaterial(), MaterialTable(omega));
+  if (material_ctx_offset >= 0)
+  {
+    fem::UpdateGroupOperatorContexts(
+        groups, static_cast<std::size_t>(material_ctx_offset),
+        ceed::PopulateCoefficientContext(material_ctx_dim, &func));
+  }
+  material_omega = omega;
+}
+
+void SurfaceFunctional::CheckFrequency() const
+{
+  MFEM_VERIFY(!HasFrequencyDependentMaterialTable() || material_omega > 0.0,
+              "A surface functional of a frequency-dependent material was evaluated "
+              "without a frequency (SetFrequency)!");
+}
+
 std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_2d) const
 {
   std::vector<CeedIntScalar> base_ctx;
@@ -603,10 +728,7 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
         {
           base_ctx[0].first = 2;
           base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
-          MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
-                                                   mat_op->GetPermittivityReal());
-          auto mat_ctx = ceed::PopulateCoefficientContext(dim, &epsilon_func);
-          base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+          AppendMaterialTable(dim, base_ctx);
         }
         break;
       case InterfaceDielectric::SA:
@@ -627,12 +749,7 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
     }
     if (flux_type == SurfaceFlux::ELECTRIC)
     {
-      MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
-                                               flux_imag_permittivity
-                                                   ? mat_op->GetPermittivityImag()
-                                                   : mat_op->GetPermittivityReal());
-      auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
-      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+      AppendMaterialTable(3, base_ctx);
     }
     else if (flux_type == SurfaceFlux::POWER)
     {
@@ -648,14 +765,17 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
     base_ctx[0].second = 1.0;  // Normal sign, set per group
     base_ctx[1].second = viz_scaling;
     const bool magnetic = (kind == KernelKind::BDR_CURRENT_J);
-    MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
-                                           magnetic ? mat_op->GetCurlCurlInvPermeability()
-                                           : flux_imag_permittivity
-                                               ? mat_op->GetPermittivityImag()
-                                               : mat_op->GetPermittivityReal());
-    auto mat_ctx =
-        ceed::PopulateCoefficientContext(magnetic && is_2d ? 1 : dim, &coeff_func);
-    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    if (magnetic)
+    {
+      MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
+                                             mat_op->GetCurlCurlInvPermeability());
+      auto mat_ctx = ceed::PopulateCoefficientContext(is_2d ? 1 : dim, &coeff_func);
+      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    }
+    else
+    {
+      AppendMaterialTable(dim, base_ctx);
+    }
   }
   else if (kind == KernelKind::BDR_POYNTING)
   {
@@ -675,12 +795,17 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
     base_ctx[0].first = (kind == KernelKind::BDR_ENERGY_M) ? 1 : 0;
     base_ctx[1].second = viz_scaling;
     const bool magnetic = (kind == KernelKind::BDR_ENERGY_M);
-    MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
-                                           magnetic ? mat_op->GetCurlCurlInvPermeability()
-                                                    : mat_op->GetPermittivityReal());
-    auto mat_ctx =
-        ceed::PopulateCoefficientContext(magnetic && is_2d ? 1 : dim, &coeff_func);
-    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    if (magnetic)
+    {
+      MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
+                                             mat_op->GetCurlCurlInvPermeability());
+      auto mat_ctx = ceed::PopulateCoefficientContext(is_2d ? 1 : dim, &coeff_func);
+      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    }
+    else
+    {
+      AppendMaterialTable(dim, base_ctx);
+    }
   }
   else if (kind == KernelKind::MODE_OVERLAP)
   {
@@ -711,10 +836,7 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
         base_ctx[5 + 3 * d + c].second = farfield_dirs[d][c];
       }
     }
-    MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
-                                        mat_op->GetLightSpeed());
-    auto mat_ctx = ceed::PopulateCoefficientContext(3, &c0_func);
-    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    AppendMaterialTable(3, base_ctx);
   }
   else
   {
@@ -1184,7 +1306,6 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   }
   else
   {
-    constexpr double threshold = 1.0 - 1.0e-6;
     mfem::FaceElementTransformations FET;
     mfem::IsoparametricTransformation T1, T2;
     for (int i = 0; i < pmesh.GetNBE(); i++)
@@ -1248,8 +1369,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         const bool vacuum_side = (epr_type != InterfaceDielectric::MS);
         auto OnSide = [&](int elem_attr)
         {
-          const double ls = mat_op->GetLightSpeedMax(elem_attr);
-          return vacuum_side ? (ls >= threshold) : (ls < threshold);
+          const bool vacuum = mat_op->IsVacuum(elem_attr);
+          return vacuum_side ? vacuum : !vacuum;
         };
         const bool use_elem1 = OnSide(FET.Elem1->Attribute);
         const bool use_elem2 = has_elem2 && OnSide(FET.Elem2->Attribute);
@@ -2123,16 +2244,20 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     // Assemble the operator.
     CeedOperator op;
     CeedQFunctionContext op_ctx = nullptr;
+    // Retain the context for runtime updates of the far-field batches or of a
+    // frequency-dependent material table (SetFrequency).
+    const bool retain_ctx = (kind == KernelKind::FARFIELD) || material_ctx_offset >= 0;
     if (buffer_kind)
     {
       ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                       ceed, inputs, buffer_num_comp, out_restr, &op);
+                                       ceed, inputs, buffer_num_comp, out_restr, &op,
+                                       retain_ctx ? &op_ctx : nullptr);
     }
     else
     {
       ceed::AssembleCeedSurfaceFunctional(
           info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs, num_out,
-          out_restr, &op, (kind == KernelKind::FARFIELD) ? &op_ctx : nullptr);
+          out_restr, &op, retain_ctx ? &op_ctx : nullptr);
     }
     groups.push_back({ceed, op, std::move(field_sources), op_ctx});
     if (!mesh_node_fields.empty())
@@ -2152,6 +2277,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
 void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 4> &srcs) const
 {
+  CheckFrequency();
   if (face_nbr_exchange)
   {
     face_nbr_exchange->Exchange(srcs);
@@ -2166,6 +2292,8 @@ void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 4> &srcs) cons
 double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 4> &srcs) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
+  // Before any local early return: the check must fail on every process alike.
+  CheckFrequency();
   // A process holding the face neighbor exchange must still apply (the exchange is
   // collective: it may need to export its local field for a neighbor's ghost request
   // even with no local marked elements). ApplyAdd is a no-op on the empty group set.
@@ -2413,6 +2541,7 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
 void SurfaceFunctional::EvalBufferTrace(const std::array<const Vector *, 4> &traces,
                                         Vector &buffer, bool zero) const
 {
+  CheckFrequency();
   MFEM_VERIFY(valid && IsBufferKind(kind) && trace_cache,
               "EvalBufferTrace requires a traced boundary point evaluator!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBufferTrace!");
@@ -2427,6 +2556,7 @@ void SurfaceFunctional::EvalBufferTrace(const std::array<const Vector *, 4> &tra
 
 void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 {
+  CheckFrequency();
   MFEM_VERIFY(
       valid && IsBufferKind(kind) && kind != KernelKind::BDR_POYNTING,
       "EvalBuffer requires a valid single-field boundary visualization functional!");
@@ -2445,6 +2575,7 @@ void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 
 void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
 {
+  CheckFrequency();
   MFEM_VERIFY(
       valid && IsBufferKind(kind) && kind != KernelKind::BDR_POYNTING,
       "EvalBuffer requires a valid single-field boundary visualization functional!");
@@ -2472,6 +2603,7 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
 void SurfaceFunctional::EvalBuffer(const GridFunction &E, const GridFunction &B,
                                    Vector &buffer) const
 {
+  CheckFrequency();
   MFEM_VERIFY(valid && kind == KernelKind::BDR_POYNTING,
               "EvalBuffer requires a valid boundary Poynting visualization functional!");
   MFEM_VERIFY(E.HasImag() == B.HasImag(),
@@ -2514,6 +2646,8 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   const int N = static_cast<int>(farfield_dirs.size());
   MFEM_VERIFY(farfield_batch_size > 0 && local_out.Size() == 6 * farfield_batch_size,
               "Invalid far-field batch output layout!");
+  // The wave speed of a frequency-dependent exterior medium is that at Re{ω}.
+  SetFrequency(omega.real());
   std::vector<double> integrals(6 * N, 0.0);
   for (int first = 0; first < N; first += farfield_batch_size)
   {

@@ -69,7 +69,7 @@ DomainPointFieldEvaluator::DomainPointFieldEvaluator(
     const mfem::ParFiniteElementSpace *rt_fespace,
     const mfem::ParFiniteElementSpace &target_fespace, double scaling,
     bool build_gridfunction, bool build_buffer)
-  : kind(kind), nd_fespace(nd_fespace), rt_fespace(rt_fespace)
+  : kind(kind), nd_fespace(nd_fespace), rt_fespace(rt_fespace), mat_op(&mat_op)
 {
   const bool needs_nd = kind == Kind::FIELD_E || kind == Kind::FIELD_H1 ||
                         kind == Kind::ENERGY_E || kind == Kind::POYNTING ||
@@ -141,16 +141,22 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   {
     ctx.resize(1);
     ctx[0].second = scaling;
+    // The electric energy density of a frequency-dependent material is that of its model,
+    // with the stored-energy permittivity at the frequency of the fields (SetFrequency).
+    if (kind == Kind::ENERGY_E && mat_op.HasFrequencyDependentPermittivity())
+    {
+      material_ctx_offset = 1;
+    }
     const auto &coeff = (kind == Kind::ENERGY_E)
                             ? mat_op.GetPermittivityReal()
                             : ((scalar_magnetic_field || kind == Kind::MODE_SN)
                                    ? mat_op.GetCurlCurlInvPermeability()
                                    : mat_op.GetInvPermeability());
     MaterialPropertyCoefficient coeff_func(mat_op.GetAttributeToMaterial(), coeff);
-    auto mat_ctx = ceed::PopulateCoefficientContext(
+    material_ctx_dim =
         ((scalar_magnetic_field && kind != Kind::ENERGY_E) || kind == Kind::MODE_SN) ? 1
-                                                                                     : dim,
-        &coeff_func);
+                                                                                     : dim;
+    auto mat_ctx = ceed::PopulateCoefficientContext(material_ctx_dim, &coeff_func);
     ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
 
@@ -314,10 +320,12 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       scratch.restrs.push_back(out_restr);
 
       CeedOperator op;
+      CeedQFunctionContext op_ctx = nullptr;
       ceed::AssembleCeedPointEvaluator(info, ctx.empty() ? nullptr : ctx.data(),
                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
-                                       target_fespace.GetVDim(), out_restr, &op);
-      groups.push_back({ceed, op, std::move(field_sources)});
+                                       target_fespace.GetVDim(), out_restr, &op,
+                                       (material_ctx_offset >= 0) ? &op_ctx : nullptr);
+      groups.push_back({ceed, op, std::move(field_sources), op_ctx});
       groups.back().mesh_nodes = pmesh.GetNodes();
       groups.back().mesh_node_fields = {"grad_x"};
       fem::CacheGroupOperatorFieldVectors(groups.back());
@@ -419,10 +427,13 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       }
       scratch.restrs.push_back(buffer_out_restr);
       CeedOperator buffer_op;
+      CeedQFunctionContext buffer_ctx = nullptr;
       ceed::AssembleCeedPointEvaluator(
           info, ctx.empty() ? nullptr : ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-          ceed, buffer_inputs, buffer_num_comp, buffer_out_restr, &buffer_op);
-      buffer_groups.push_back({ceed, buffer_op, std::move(buffer_field_sources)});
+          ceed, buffer_inputs, buffer_num_comp, buffer_out_restr, &buffer_op,
+          (material_ctx_offset >= 0) ? &buffer_ctx : nullptr);
+      buffer_groups.push_back(
+          {ceed, buffer_op, std::move(buffer_field_sources), buffer_ctx});
       buffer_groups.back().mesh_nodes = pmesh.GetNodes();
       buffer_groups.back().mesh_node_fields = {"grad_x"};
       fem::CacheGroupOperatorFieldVectors(buffer_groups.back());
@@ -442,10 +453,34 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   }
 }
 
+void DomainPointFieldEvaluator::SetFrequency(double omega) const
+{
+  if (material_ctx_offset < 0 || omega == material_omega)
+  {
+    return;
+  }
+  MFEM_VERIFY(omega > 0.0, "The electric energy density of a frequency-dependent material "
+                           "requires a positive frequency!");
+  MaterialPropertyCoefficient func(mat_op->GetAttributeToMaterial(),
+                                   mat_op->EvaluateStoredEnergyPermittivity(omega));
+  const auto mat_ctx = ceed::PopulateCoefficientContext(material_ctx_dim, &func);
+  fem::UpdateGroupOperatorContexts(groups, material_ctx_offset, mat_ctx);
+  fem::UpdateGroupOperatorContexts(buffer_groups, material_ctx_offset, mat_ctx);
+  material_omega = omega;
+}
+
+void DomainPointFieldEvaluator::CheckFrequency() const
+{
+  MFEM_VERIFY(material_ctx_offset < 0 || material_omega > 0.0,
+              "The electric energy density of a frequency-dependent material was evaluated "
+              "without a frequency (SetFrequency)!");
+}
+
 void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
                                      Vector &out) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainPointFieldEvaluator!");
+  CheckFrequency();
   MFEM_VERIFY(
       (E || kind == Kind::FIELD_B || kind == Kind::ENERGY_M) &&
           (B || kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E),
@@ -481,6 +516,7 @@ void DomainPointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunc
 {
   MFEM_VERIFY(valid,
               "EvalBuffer called on an invalid (unassembled) DomainPointFieldEvaluator!");
+  CheckFrequency();
   MFEM_VERIFY(
       (E || kind == Kind::FIELD_B || kind == Kind::ENERGY_M) &&
           (B || kind == Kind::FIELD_E || kind == Kind::FIELD_H1 || kind == Kind::ENERGY_E),

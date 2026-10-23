@@ -25,6 +25,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -66,6 +67,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
+  // Known poles of A2(λ), which the nonlinear eigensolvers clear from their local models.
+  const auto a2_poles = space_op.GetMaterialOp().GetFrequencyDependentPermittivityPoles();
+  // A2 is non-null whenever a frequency-dependent material is present, even if its
+  // contribution cancels at the target, so it alone selects the nonlinear solver path.
   bool has_A2 = (A2 != nullptr);
 
   // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
@@ -256,6 +261,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
     eigen->SetExtraSystemMatrix(funcA2_full);
+    eigen->SetExtraSystemPoles(a2_poles);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -302,7 +308,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth())
+      !space_op.GetMaterialOp().HasLondonDepth() &&
+      !space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
@@ -451,6 +458,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
     qn->SetExtraSystemMatrix(funcA2_full);
+    qn->SetExtraSystemPoles(a2_poles);
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
@@ -506,6 +514,37 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       eigen->GetEigenvector(i, E);
       E.Get(eigenvectors[i].data(), E.Size(), false);
+    }
+  }
+
+  // The target window is checked with the configuration; a mode may converge outside it.
+  for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+  {
+    const auto &material = iodata.domains.materials[m];
+    if (permittivity::IsPassiveByConstruction(material.permittivity_terms))
+    {
+      continue;
+    }
+    const auto defects =
+        permittivity::FindDefects(material.epsilon_r.s[0], material.permittivity_terms);
+    for (int i = 0; i < num_report; i++)
+    {
+      const double omega = eigenvalues[i].imag();
+      const bool gain = permittivity::Contains(defects.gain, omega),
+                 negative_energy = permittivity::Contains(defects.negative_energy, omega);
+      if (gain || negative_energy)
+      {
+        Mpi::Warning(
+            "Eigenmode {:d} at {:.6g} GHz lies where the frequency-dependent "
+            "Permittivity of material {:d} has {}!\nIts PoleResidue terms are not "
+            "physical there, and neither is this mode.\n",
+            i + 1,
+            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                (2.0 * std::numbers::pi),
+            m + 1,
+            gain ? (negative_energy ? "gain and a negative stored electric energy" : "gain")
+                 : "a negative stored electric energy");
+      }
     }
   }
 
@@ -574,7 +613,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
     if (i < num_requested)
     {
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      // Frequency-dependent materials use Re{ω} of the eigenvalue, as in postprocessing.
+      estimator.AddErrorIndicator(E, B, total_domain_energy, omega.real(), indicator);
     }
   }
   post_op.MeasureFinalize(indicator);
