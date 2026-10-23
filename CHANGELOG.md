@@ -35,7 +35,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     coincident faces (the exact two-port response of a slab of thickness `d`), capturing
     screening on both faces when `d` is comparable to `lambda`. An isolated film reduces to
     `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. Supports nonconformal adaptive
-    mesh refinement, which keeps the two faces matched. SchemaVer 2-2-1.
+    mesh refinement, which keeps the two faces matched. SchemaVer 2-4-0.
     [PR 992](https://github.com/awslabs/palace/pull/992).
 
 #### Interface Changes
