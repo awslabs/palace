@@ -90,7 +90,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Writing data table at incorrect index`, because the frequencies reloaded from the CSV
     tables (rounded to their printed precision) were compared exactly with the recomputed
     ones.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1088](https://github.com/awslabs/palace/pull/1088).
   - Fixed the sign of the London penetration depth term for the out-of-plane field component
     in `"BoundaryMode"` simulations and wave ports.
     [PR 1025](https://github.com/awslabs/palace/pull/1025).
