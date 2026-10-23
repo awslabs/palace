@@ -48,6 +48,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the 2D magnetic field energy (`E_mag`, `p_mag`) of driven, eigenmode, and
+    transient simulations and of boundary modes (the out-of-plane part), and the 2D error
+    estimates of all problem types but electrostatics, which also drive adaptive mesh
+    refinement. Both used the out-of-plane magnetic flux density scaled by the element
+    Jacobian determinant, which could put `E_mag` off by orders of magnitude.
+    [PR 1069](https://github.com/awslabs/palace/pull/1069).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
