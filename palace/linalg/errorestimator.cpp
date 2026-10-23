@@ -662,9 +662,15 @@ void GradFluxErrorEstimator<VecType>::SetFrequency(double omega) const
           M(d, d) = 1.0 / W[m];
         }
       });
-  const auto ctx = FrequencyDependentContext(mat_op, mat_op.EvaluatePermittivityReal(omega),
-                                             mat_op.EvaluatePermittivityImag(omega), winv);
-  integ_ctx.Update(ctx.data(), ctx.size() * sizeof(CeedIntScalar));
+  // A process without elements (of a submesh) has no contexts, and no material table to
+  // build them from.
+  if (!integ_ctx.Empty())
+  {
+    const auto ctx =
+        FrequencyDependentContext(mat_op, mat_op.EvaluatePermittivityReal(omega),
+                                  mat_op.EvaluatePermittivityImag(omega), winv);
+    integ_ctx.Update(ctx.data(), ctx.size() * sizeof(CeedIntScalar));
+  }
   fd_omega = omega;
 }
 
