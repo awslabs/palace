@@ -634,7 +634,14 @@ int QuasiNewtonSolver::Solve()
     opP = (*funcP)(1.0 + 0.0i, eig, eig * eig,
                    eig / std::complex<double>(0.0, 1.0));  // ω = λ/i
     opInv->SetOperators(*opA, *opP);
-    opInv->SetAbsTol(1.0e-12);
+    // No absolute tolerance: the right-hand side of the Newton correction has the size of
+    // the eigenpair residual. With an absolute tolerance above its preconditioned norm, the
+    // solve returns a zero correction while the residual is still above the eigensolver
+    // tolerance, and the iteration stalls. The relative tolerance of the inexact Newton
+    // step follows the residual instead. With 1e-12 here, the lowest mode of
+    // cavity2d_eigenmode_lorentz, which is not degenerate, stalled at 4 and 8 ranks at a
+    // residual of 2-3e-9 above its tolerance of 1e-9, with GMRES taking 0 iterations.
+    opInv->SetAbsTol(0.0);
 
     // Linear solve with the extended operator of the deflated problem.
     auto deflated_solve = [&](const ComplexVector &b1, const Eigen::VectorXcd &b2,
