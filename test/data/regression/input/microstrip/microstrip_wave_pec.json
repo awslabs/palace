@@ -85,7 +85,8 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-9,
-      "MaxIts": 200
+      "MaxIts": 200,
+      "EstimatorTol": 1.0e-12  // The smallest indicator is 1e-5 of the largest
     }
   }
 }
