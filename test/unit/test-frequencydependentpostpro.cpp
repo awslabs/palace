@@ -678,6 +678,24 @@ TEST_CASE("Metal-substrate interface of a frequency-dependent substrate",
         0.5 * data.t / data.epsilon_r * eps_abs * eps_abs * std::norm(En);
     CHECK_THAT(surf_post_op.GetInterfaceElectricFieldEnergy(1, E, omega),
                WithinRel(expected, 1.0e-10));
+
+    // The MFEM coefficient of the legacy path, with the same substrate table (and the
+    // neighbor field values of interfaces on process boundaries).
+    E.Real().ExchangeFaceNbrData();
+    E.Imag().ExchangeFaceNbrData();
+    const auto epsilon_s = MetalSubstratePermittivity(mat_op, omega);
+    InterfaceDielectricCoefficient<InterfaceDielectric::MS> coeff(
+        E, mat_op, data.t, data.epsilon_r, &epsilon_s);
+    const auto &pmesh = mesh.Get();
+    auto marker = mesh::AttrToMarker(pmesh.bdr_attributes.Max(), data.attributes);
+    mfem::LinearForm lf(&h1_fespace.Get());
+    lf.AddBoundaryIntegrator(new BoundaryLFIntegrator(coeff), marker);
+    lf.UseFastAssembly(false);
+    lf.UseDevice(false);
+    lf.Assemble();
+    double legacy = linalg::LocalSum(lf);
+    Mpi::GlobalSum(1, &legacy, Mpi::World());
+    CHECK_THAT(legacy, WithinRel(expected, 1.0e-10));
   }
 }
 
@@ -721,9 +739,10 @@ TEST_CASE("Electric energy density of frequency-dependent materials",
     eval.Eval(&E, nullptr, val);
     legacy.SetStoredEnergyPermittivity(mat_op.EvaluateStoredEnergyPermittivity(omega));
     ref.ProjectCoefficient(legacy);
+    const double *v = val.HostRead();  // Eval writes on the device
     for (int i = 0; i < val.Size(); i++)
     {
-      CHECK_THAT(val(i), WithinRel(expected, 1.0e-10));
+      CHECK_THAT(v[i], WithinRel(expected, 1.0e-10));
       CHECK_THAT(ref(i), WithinRel(expected, 1.0e-10));
     }
   }
@@ -813,6 +832,38 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
   const std::complex<double> eps =
       eps_inf - 10.0 / (std::complex<double>(0.0, omega) + 1.0);
   Check(ind, std::norm(eps) / eps_inf);
+
+  // A frequency-dependent material (attribute 2) next to a constant lossy one (attribute 1)
+  // with the same complex ε at ω (Re ε, tan δ = −Im ε / Re ε): the medium is homogeneous
+  // in ε only if the constant material also projects its loss, and each element is
+  // weighted by its own W, the stored energy of the model or Re ε of the constant material.
+  const auto lorentz = Models()[1];
+  for (double w : {0.6, 2.5})
+  {
+    CAPTURE(w);
+    const std::complex<double> eps_w = eps_inf + lorentz.chi(w);
+    REQUIRE(eps_w.real() > 0.0);
+    config::MaterialData lossy;
+    lossy.attributes = {1};
+    lossy.epsilon_r.s = {eps_w.real(), eps_w.real(), eps_w.real()};
+    const double tandelta = -eps_w.imag() / eps_w.real();
+    lossy.tandelta.s = {tandelta, tandelta, tandelta};
+    MaterialOperator mixed_op({lossy, MakeMaterial({2}, lorentz.terms)}, periodic,
+                              ProblemType::DRIVEN, mesh);
+    GradFluxErrorEstimator<ComplexVector> mixed(mixed_op, nd_fespace, rt_fespaces, tol,
+                                                max_it, 0, false);
+    ErrorIndicator mixed_ind;
+    mixed.AddErrorIndicator(E, 1.0, w, mixed_ind);
+    const double W = eps_inf + lorentz.w(w);
+    const auto *h = mixed_ind.Local().HostRead();
+    const auto *h_ref = ref.Local().HostRead();
+    REQUIRE(mixed_ind.Local().Size() == mesh.GetNE());
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      const double weight = (mesh.Get().GetAttribute(e) == 1) ? eps_w.real() : W;
+      CHECK_THAT(h[e], WithinRel(std::sqrt(std::norm(eps_w) / weight) * h_ref[e], 1.0e-8));
+    }
+  }
 }
 
 }  // namespace
@@ -828,6 +879,86 @@ TEST_CASE("Gradient flux estimator of frequency-dependent materials",
   {
     CheckHomogeneousEstimator(2, mfem::Element::QUADRILATERAL);
   }
+}
+
+TEST_CASE("Gradient flux estimator of a layered medium with continuous normal D",
+          "[frequencydependent][errorestimator][Serial][Parallel][GPU]")
+{
+  // Two layers: a Drude medium (Re ε < 0 at ω) below a constant lossy dielectric, with the
+  // piecewise constant field E = (c, 0, 1/ε) (2D: (c, 1/ε)), whose tangential part is
+  // continuous. Its complete displacement D = ε E has a continuous normal component and is
+  // in the recovery space, so every indicator vanishes: the complex constitutive flux with
+  // the loss of both materials and its real-imaginary coupling. The same field with
+  // E_n = 1 on both sides (a jump in D_n) has nonzero indicators.
+  const int dim = GENERATE(3, 2);
+  CAPTURE(dim);
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto serial = std::make_unique<mfem::Mesh>(
+      (dim == 3) ? mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON)
+                 : mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL, true));
+  for (int i = 0; i < serial->GetNE(); i++)
+  {
+    mfem::Vector c;
+    serial->GetElementCenter(i, c);
+    serial->SetAttribute(i, (c(dim - 1) < 0.5) ? 1 : 2);
+  }
+  serial->SetAttributes();
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial));
+  const double omega = 1.0;
+  const std::complex<double> eps1 = eps_inf + DrudeChi(omega), eps2(3.0, -0.6);
+  REQUIRE(eps1.real() < 0.0);
+  config::MaterialData lossy;
+  lossy.attributes = {2};
+  lossy.epsilon_r.s = {3.0, 3.0, 3.0};
+  lossy.tandelta.s = {0.2, 0.2, 0.2};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({MakeMaterial({1}, Models()[0].terms), lossy}, periodic,
+                          ProblemType::DRIVEN, mesh);
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+  GradFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespace, rt_fespaces, 1.0e-14,
+                                                  1000, 0, false);
+
+  auto Estimate = [&](bool continuous)
+  {
+    // Real and imaginary parts of E on each layer.
+    std::array<mfem::Vector, 4> values;
+    for (int k = 0; k < 2; k++)
+    {
+      const std::complex<double> En = continuous ? 1.0 / ((k == 0) ? eps1 : eps2) : 1.0;
+      values[2 * k].SetSize(dim);
+      values[2 * k + 1].SetSize(dim);
+      values[2 * k] = 0.0;
+      values[2 * k + 1] = 0.0;
+      values[2 * k](0) = 0.3;
+      values[2 * k](dim - 1) = En.real();
+      values[2 * k + 1](dim - 1) = En.imag();
+    }
+    mfem::VectorConstantCoefficient r1(values[0]), i1(values[1]), r2(values[2]),
+        i2(values[3]);
+    mfem::Array<int> attrs({1, 2});
+    mfem::Array<mfem::VectorCoefficient *> fr({&r1, &r2}), fi({&i1, &i2});
+    mfem::PWVectorCoefficient cr(dim, attrs, fr), ci(dim, attrs, fi);
+    GridFunction E_gf(nd_fespace, true);
+    E_gf.Real().ProjectCoefficient(cr);
+    E_gf.Imag().ProjectCoefficient(ci);
+    ComplexVector E(nd_fespace.GetTrueVSize());
+    E_gf.Real().GetTrueDofs(E.Real());
+    E_gf.Imag().GetTrueDofs(E.Imag());
+    ErrorIndicator ind;
+    estimator.AddErrorIndicator(E, 1.0, omega, ind);
+    double max = ind.Local().Size() ? ind.Local().Normlinf() : 0.0;
+    Mpi::GlobalMax(1, &max, Mpi::World());
+    return max;
+  };
+  const double jump = Estimate(false);
+  REQUIRE(jump > 0.1);
+  CHECK(Estimate(true) < 1.0e-8 * jump);
 }
 
 TEST_CASE("Flux error estimator with a nonpositive energy normalization",
@@ -895,10 +1026,15 @@ struct Curl2D
   config::PeriodicBoundaryData periodic;
   MaterialOperator mat_op;
 
-  static Mesh Make(mfem::Element::Type type, bool distort)
+  static Mesh Make(mfem::Element::Type type, bool distort, bool curved)
   {
     auto serial = std::make_unique<mfem::Mesh>(
         mfem::Mesh::MakeCartesian2D(3, 3, type, false, 1.0, 0.7));
+    if (curved)
+    {
+      // Quadratic geometry: the transform below then bends the element edges.
+      serial->SetCurvature(2);
+    }
     // Unequal element sizes, and for quadrilaterals non-parallelograms (straight sides).
     serial->Transform(
         [distort](const mfem::Vector &x, mfem::Vector &y)
@@ -919,8 +1055,8 @@ struct Curl2D
     return Mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial));
   }
 
-  Curl2D(mfem::Element::Type type, bool distort, int order)
-    : mesh(Make(type, distort)),
+  Curl2D(mfem::Element::Type type, bool distort, int order, bool curved = false)
+    : mesh(Make(type, distort, curved)),
       l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL),
       h1_fec(order, 2), l2_fespace(mesh, &l2_fec),
       h1_fespaces(std::make_unique<FiniteElementSpace>(mesh, &h1_fec)),
@@ -953,6 +1089,26 @@ TEST_CASE("2D magnetic flux recovery uses the physical B of the INTEGRAL map",
     const bool distort = GENERATE(false, true);
     CAPTURE(type, distort);
     Curl2D c(type, distort, order);
+    GridFunction B(c.l2_fespace);
+    mfem::ConstantCoefficient one(1.0);
+    B.Real().ProjectCoefficient(one);
+    CurlFluxErrorEstimator<Vector> estimator(c.mat_op, c.l2_fespace, c.h1_fespaces, 1.0e-14,
+                                             1000, 0, false);
+    ErrorIndicator ind;
+    estimator.AddErrorIndicator(B.Real(), 0.5, ind);  // Scale 1
+    const auto *h = ind.Local().HostRead();
+    for (int i = 0; i < ind.Local().Size(); i++)
+    {
+      CHECK(h[i] < 1.0e-10);
+    }
+  }
+
+  SECTION("Constant B has zero indicator on curved cells")
+  {
+    // On quadratic triangles |J| is quadratic, so B̂ = |J| B for a constant B is exact in
+    // the second-order curl space, and so is its recovery, independent of quadrature.
+    Curl2D c(mfem::Element::TRIANGLE, true, 3, true);
+    REQUIRE(c.mesh.Get().GetNodes());
     GridFunction B(c.l2_fespace);
     mfem::ConstantCoefficient one(1.0);
     B.Real().ProjectCoefficient(one);
