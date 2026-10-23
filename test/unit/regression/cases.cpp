@@ -1073,9 +1073,8 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-// The automatically emitted domain-E and error-indicator files are retained as structural
-// regression artifacts. They do not validate physical stored energy for a dispersive
-// medium; the regression signal is the nonlinear eigenfrequency and Q output in eig.csv.
+// The dispersive cavity cases check nonlinear eigenfrequencies and model stored energy.
+// Per-element estimator extrema remain excluded as in the nondispersive eigenmode cases.
 TEST_CASE("cylinder_cavity_drude", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1224,14 +1223,13 @@ TEST_CASE("cylinder_driven_wave_tm_sweep", "[Serial][Parallel][GPU][Regression]"
 // high-frequency value by 50%. The reference S-parameters are from the constant
 // permittivity ε(ω) solved at each frequency. TE21 propagates below TM01 above 3.02 GHz.
 // Both modes reflect all the power, so |S11| is round-off around 0 dB and the phase is
-// compared; the energy and error indicators use ε∞ and are not compared.
+// compared. Stored energy and frequency-aware error indicators use dispersive references.
 TEST_CASE("cylinder_driven_wave_tm_dispersive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"(dB)"};
-  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_dispersive.json",
                                   "driven_wave_tm_dispersive", opts);
@@ -1247,7 +1245,6 @@ TEST_CASE("cylinder_driven_wave_absorbing", "[Serial][Parallel][GPU][Regression]
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-16;
-  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing.json",
                                   "driven_wave_absorbing", opts);
@@ -1258,7 +1255,6 @@ TEST_CASE("cylinder_driven_wave_absorbing_adaptive", "[Serial][Parallel][GPU][Re
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-16;
-  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing_adaptive.json",
                                   "driven_wave_absorbing_adaptive", opts);
@@ -1391,7 +1387,7 @@ TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-16;
-  opts.excluded_files = {"port-floquet-S.csv", "domain-E.csv", "error-indicators.csv"};
+  opts.excluded_files = {"port-floquet-S.csv"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave_dispersive.json",
                                   "floquet_wave_dispersive", opts);
@@ -1581,15 +1577,14 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
 // tan δ ≈ 0.02) between wave ports, in an air box whose absorbing faces neighbor only air:
 // the air beyond the ends has no material, so it is removed and the end planes become the
 // ports. The reference S-parameters are from the constant permittivity ε(ω), with its loss
-// tangent, solved at each frequency; the energy and error indicators use ε∞ and are not
-// compared. The port modes see the box faces as WavePortPEC here, and as absorbing in the
-// adaptive case.
+// tangent, solved at each frequency. Stored energy and frequency-aware error indicators
+// use dispersive references. The port modes see the box faces as WavePortPEC here, and as
+// absorbing in the adaptive case.
 TEST_CASE("microstrip_wave_pec", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("microstrip", "microstrip_wave_pec.json", "wave_pec",
                                   opts);
@@ -1600,7 +1595,6 @@ TEST_CASE("microstrip_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
   opts.skip_rowcount = true;
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("microstrip", "microstrip_wave_adaptive.json",
@@ -1615,7 +1609,6 @@ TEST_CASE("microstrip_boundarymode", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-16;
   opts.excluded_columns = eigen_excluded;
-  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("microstrip", "microstrip_boundarymode.json",
                                   "boundarymode", opts);
