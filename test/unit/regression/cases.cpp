@@ -1651,7 +1651,11 @@ TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum", "Minimum"};
+  // Without volume currents, the 2D magnetic flux density is uniform, so the error
+  // estimate is set by the linear solver tolerance: bound it rather than compare it.
+  opts.custom_checks["error-indicators.csv"] =
+      [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  { CHECK(actual[0].data[0] < 1.0e-7); };
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_magnetostatic.json",
                                   "magnetostatic", opts);
@@ -1679,6 +1683,8 @@ TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   opts.custom_checks["mode-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thin.json", "thin", opts);
 }
 
@@ -1691,6 +1697,8 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
                            "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_impedance.json", "thick_impedance",
                                   opts);
 }
@@ -1704,5 +1712,7 @@ TEST_CASE("cpw_wave_2dmode", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw", "cpw_wave_2dmode.json", "wave_2dmode", opts);
 }

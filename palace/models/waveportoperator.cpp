@@ -804,11 +804,14 @@ WavePortData::WavePortData(const config::WavePortData &data,
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0.UseDevice(true);
 
-  // Set the shift-and-invert target above the bulk propagation constants of materials
-  // present on this port. For anisotropic media the electric and magnetic polarizations
-  // can sample different material axes, so max(mu_r * epsilon_r) is not a safe bound;
-  // use max(mu_r) * max(epsilon_r) instead.
-  mu_eps_max = port_mat_op->GetMaxMuEpsilon() * 1.1;
+  // Set the shift-and-invert target at the given effective index, or above the bulk
+  // propagation constants of materials present on this port. For anisotropic media the
+  // electric and magnetic polarizations can sample different material axes, so max(mu_r *
+  // epsilon_r) is not a safe bound; use max(mu_r) * max(epsilon_r) instead. The bound does
+  // not hold for the slow-wave modes of superconducting lines (kinetic inductance), so the
+  // modes are sought on both sides of the shift (LARGEST_MAGNITUDE).
+  n_target_sq = (data.target > 0.0) ? data.target * data.target
+                                    : port_mat_op->GetMaxMuEpsilon() * 1.1;
 
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();
@@ -830,8 +833,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
     mode_solver = std::make_unique<ModeEigenSolver>(
         *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
         *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
-        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, port_linear,
-        data.eigen_solver, data.verbose, port_comm);
+        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
+        port_linear, data.eigen_solver, data.verbose, port_comm);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -1063,7 +1066,7 @@ void WavePortData::Initialize(double omega)
 
   // Solve the generalized eigenvalue problem for the desired wave port mode using the
   // ModeEigenSolver. Frequency-independent matrices were assembled in the constructor.
-  const double sigma = -omega * omega * mu_eps_max;
+  const double sigma = -omega * omega * n_target_sq;
   std::complex<double> lambda;
   {
     BlockTimer bt(Timer::WAVE_PORT_SOLVE);
@@ -1082,6 +1085,7 @@ void WavePortData::Initialize(double omega)
   // 1 / (-k_n² - σ).
   kn0 = std::sqrt(-sigma - 1.0 / lambda);
   omega0 = omega;
+  WarnEvanescent(kn0, omega);
 
   // Separate the computed field out into eₜ and eₙ and transform back to the physical
   // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
@@ -1265,7 +1269,7 @@ const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<dou
     return mode_cache;
   }
   const double omega_ref = omega.real();
-  const double sigma = -omega_ref * omega_ref * mu_eps_max;
+  const double sigma = -omega_ref * omega_ref * n_target_sq;
   const bool has_solver = (port_comm != MPI_COMM_NULL);
   std::complex<double> lambda;
   ComplexVector e_tmp;
@@ -1288,7 +1292,24 @@ const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<dou
   mode_cache.e = std::move(e_tmp);
   mode_cache.omega = omega;
   mode_cache.valid = true;
+  WarnEvanescent(mode_cache.kn, omega);
   return mode_cache;
+}
+
+void WavePortData::WarnEvanescent(std::complex<double> kn, std::complex<double> omega)
+{
+  // The port is below cutoff, or "Mode" or "Target" selects a mode other than the intended
+  // one. kₙ is the same on all ranks.
+  if (warned_evanescent || std::real(kn * kn) >= 0.0)
+  {
+    return;
+  }
+  warned_evanescent = true;
+  const std::complex<double> n_eff = kn / omega;
+  Mpi::Warning("Wave port with attributes {} selected an evanescent mode (n_eff = "
+               "{:.3e}{:+.3e}i): the port is below cutoff, or \"Mode\" or \"Target\" does "
+               "not select the intended mode!\n",
+               fmt::join(attr_list, ", "), n_eff.real(), n_eff.imag());
 }
 
 std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)

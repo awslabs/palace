@@ -48,6 +48,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
+    kinetic inductance makes the line modes slower than bulk waves, above the eigenvalue
+    target of the port mode solve, which only sought modes below it. The port modes are
+    now sought on both sides of the target. Added `Boundaries.WavePort[].Target`, the
+    effective index near which the port modes are sought, to select a mode far from the
+    default target. Wave ports warn when the selected mode is evanescent. SchemaVer 2-3-0
+    [PR 1067](https://github.com/awslabs/palace/pull/1067).
+  - Fixed the 2D magnetic field energy (`E_mag`, `p_mag`) of driven, eigenmode, and
+    transient simulations and of boundary modes (the out-of-plane part), and the 2D error
+    estimates of all problem types but electrostatics, which also drive adaptive mesh
+    refinement. Both used the out-of-plane magnetic flux density scaled by the element
+    Jacobian determinant, which could put `E_mag` off by orders of magnitude.
+    [PR 1069](https://github.com/awslabs/palace/pull/1069).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
@@ -151,6 +164,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Reduced matrix-free material and boundary operator work by omitting elements outside
+    shared nonzero-coefficient support unions, including compatible complex operator packing.
+    [PR 987](https://github.com/awslabs/palace/pull/987).
   - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
     PROM trained on the offline modes. Also reusing reduced operators and wave-port state
     across excitations, evaluating the wave-port modal correction and excitation of the
