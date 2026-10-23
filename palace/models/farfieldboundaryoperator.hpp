@@ -43,7 +43,9 @@ private:
   // libCEED boundary attributes of the absorbing boundaries next to no frequency-dependent
   // material, and those next to each frequency-dependent material (index and attributes).
   // The boundary condition uses the neighboring material's permittivity, so on the latter
-  // it depends on frequency through r(ω) = √(ε(iω)/ε∞).
+  // it depends on frequency through r(ω) = √(ε_w(iω)/ε∞), with the wave permittivity
+  // ε_w = ε + σ/s of the material
+  // (MaterialOperator::EvaluateFrequencyDependentWavePermittivity).
   mfem::Array<int> ceed_attr_other;
   std::vector<std::pair<std::size_t, mfem::Array<int>>> ceed_attr_dispersive;
 

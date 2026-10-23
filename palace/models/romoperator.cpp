@@ -636,7 +636,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   }
 
   // Absorbing boundaries next to frequency-dependent materials (imaginary slot). The online
-  // scalars are ω·r_k(ω) and (0.5/ω)/r_k(ω), with r_k = √(ε_k(iω)/ε∞,k), in closed form.
+  // scalars are ω·r_k(ω) and (0.5/ω)/r_k(ω), with r_k = √(ε_w,k(iω)/ε∞,k) (with the user
+  // conductivity), in closed form.
   {
     const auto &farfield_op = space_op.GetFarfieldOp();
     const auto n = farfield_op.NumDispersiveMaterials();

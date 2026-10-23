@@ -623,12 +623,13 @@ void FloquetPortData::Initialize(double omega)
   }
   omega0 = omega;
 
-  // A frequency-dependent port medium uses its complete permittivity ε(iω), whose loss
-  // makes the propagation constants complex. A constant port medium keeps its real
-  // permittivity, without a loss tangent.
+  // A frequency-dependent port medium uses its complete wave permittivity ε(iω) + σ/(iω),
+  // with its user conductivity, whose loss makes the propagation constants complex. A
+  // constant port medium keeps its real permittivity, without a loss tangent or
+  // conductivity.
   mu_eps_port = (port_material < 0)
                     ? std::complex<double>(mu_eps_port_inf, 0.0)
-                    : mu_r_port * mat_op.EvaluateFrequencyDependentPermittivity(
+                    : mu_r_port * mat_op.EvaluateFrequencyDependentWavePermittivity(
                                       static_cast<std::size_t>(port_material),
                                       std::complex<double>(0.0, omega));
 
@@ -680,9 +681,12 @@ void FloquetPortData::Initialize(double omega)
     }
     if (order.m == 0 && order.n == 0)
     {
-      // An evanescent incident order is rejected by ComputeIncidentNormalization.
-      gamma0 =
-          (order.gamma_sq.real() > 0.0) ? OutgoingPropagationConstant(order.gamma_sq) : 0.0;
+      // The Robin reference keeps the complex outgoing root of an order which carries
+      // power, also with Re{γ²} ≤ 0 in a lossy medium (Re ε < 0). A lossless evanescent or
+      // cutoff order carries none and keeps a zero reference; ComputeIncidentNormalization
+      // rejects it as the incident mode.
+      gamma0 = (ModalPower(order, true) > 0.0) ? OutgoingPropagationConstant(order.gamma_sq)
+                                               : 0.0;
     }
   }
 }
@@ -692,9 +696,9 @@ int FloquetPortData::NumPropagatingOrders() const
   int count = 0;
   for (const auto &order : orders)
   {
-    if (order.gamma_sq.real() > 0.0)
+    for (bool is_te : {true, false})
     {
-      count += static_cast<int>(order.v.size());
+      count += (ModalPower(order, is_te) > 0.0);
     }
   }
   return count;
@@ -735,6 +739,17 @@ std::complex<double> FloquetPortData::ComputeDtNFullCoeff(const FloquetOrder &or
   }
   const auto gamma = OutgoingPropagationConstant(order.gamma_sq);
   return 1i * DtNEigenvalue(is_te, gamma, omega0, mu_eps_port) / (mu_r_port * port_area);
+}
+
+double FloquetPortData::ModalPower(const FloquetOrder &order, bool is_te) const
+{
+  if (order.gamma_sq == 0.0)
+  {
+    return 0.0;  // Cutoff
+  }
+  return DtNEigenvalue(is_te, OutgoingPropagationConstant(order.gamma_sq), omega0,
+                       mu_eps_port)
+      .real();
 }
 
 std::complex<double>
@@ -847,14 +862,19 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
 
   for (const auto &order : orders)
   {
-    if (!HasFlag(order.use, FloquetModeUse::Output) || order.gamma_sq.real() <= 0.0)
+    if (!HasFlag(order.use, FloquetModeUse::Output))
     {
-      continue;  // Only user-requested propagating orders carry S-parameters.
+      continue;  // Only user-requested orders carry S-parameters.
     }
-
-    const auto gamma_mn = OutgoingPropagationConstant(order.gamma_sq);
     for (bool is_te : {true, false})
     {
+      // Only modes which carry power have S-parameters: the propagating modes of a lossless
+      // medium, and in a lossy medium also those with Re{γ²} ≤ 0 but Re{λ} > 0.
+      const double lambda_mn = ModalPower(order, is_te);
+      if (lambda_mn <= 0.0)
+      {
+        continue;
+      }
       auto p = PolIndex(is_te);
       const auto &v = order.v[p];
       // Hermitian v^H E = (v_r·E_r + v_i·E_i) + i(v_r·E_i - v_i·E_r).
@@ -868,8 +888,7 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
       // Power normalization: S = √(λ_mn / λ_eff) × c, where λ is the DtN eigenvalue.
       // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue. Both are
       // real powers per amplitude, Re{λ}.
-      const double lambda_mn = DtNEigenvalue(is_te, gamma_mn, omega0, mu_eps_port).real();
-      const double power_factor = std::sqrt(std::max(lambda_mn, 0.0) / lambda_eff);
+      const double power_factor = std::sqrt(lambda_mn / lambda_eff);
 
       auto key = std::make_tuple(order.m, order.n, is_te);
       result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);

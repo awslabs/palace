@@ -181,7 +181,8 @@ FarfieldBoundaryOperator::GetDispersiveScale(std::size_t k,
   // material (Im ε ≤ 0). A lossless ε < 0 (Drude below the plasma frequency) lies on the
   // branch cut: take the lossy limit Im ε → 0⁻, the decaying wave.
   const auto m = ceed_attr_dispersive.at(k).first;
-  auto eps = mat_op.EvaluateFrequencyDependentPermittivity(
+  // The wave permittivity, with the user conductivity of the material.
+  auto eps = mat_op.EvaluateFrequencyDependentWavePermittivity(
                  m, std::complex<double>(0.0, 1.0) * omega) /
              mat_op.GetFrequencyDependentPermittivityHighFrequency(m);
   if (eps.imag() == 0.0)

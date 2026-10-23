@@ -6,6 +6,7 @@
 // estimators. Expected values come from the model formulas, independent of the
 // implementation (internal units, ε₀ = 1).
 
+#include <array>
 #include <cmath>
 #include <complex>
 #include <fstream>
@@ -25,6 +26,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/output_functionals.hpp"
 #include "fem/point_field_evaluator.hpp"
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
@@ -34,11 +36,13 @@
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -255,48 +259,79 @@ TEST_CASE("Frequency-dependent material identity and exterior wave speed",
 TEST_CASE("Absorbing boundaries next to Drude and zero-pole materials",
           "[frequencydependent][Serial][Parallel]")
 {
-  // The absorbing boundary scale r(ω) = √(ε(iω)/ε∞) of the neighboring material uses the
-  // complete permittivity, including the zero pole folded into the conductivity: its
-  // imaginary part is the loss which A2(s)/s² alone omits (and whose omission reversed the
-  // sign of the boundary loss). A configured model with only a zero pole has no nonlinear
-  // term but still a frequency-dependent boundary. At complex ω, ε is continued
-  // analytically.
+  // The absorbing boundary scale r(ω) = √(ε_w(iω)/ε∞) of the neighboring material uses its
+  // wave permittivity ε_w = ε + σ/s: the complete permittivity, including the zero pole
+  // folded into the conductivity (whose omission dropped the loss and reversed the sign of
+  // the boundary loss), plus the user conductivity σ, once (not the conductivity matrix,
+  // which also holds the folded zero pole). A configured model with only a zero pole has no
+  // nonlinear term but still a frequency-dependent boundary. At complex ω, ε_w is continued
+  // analytically. The displacement and stored energy keep ε and W, without σ.
   auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
   config::PeriodicBoundaryData periodic;
   for (const auto &model : {Models()[0], Models()[3]})
   {
-    CAPTURE(model.name);
-    MaterialOperator mat_op({MakeMaterial({1, 2}, model.terms)}, periodic,
-                            ProblemType::DRIVEN, mesh);
-    config::FarfieldBoundaryData farfield;
-    farfield.attributes = {1, 2, 3, 4, 5, 6};
-    FarfieldBoundaryOperator farfield_op(farfield, ProblemType::DRIVEN, mat_op, mesh.Get());
-    REQUIRE(farfield_op.NumDispersiveMaterials() == 1);
-    for (std::complex<double> omega : {std::complex<double>(4.0, 0.0), {2.0, 0.3}})
+    for (double sigma : {0.0, 1.0})
     {
-      CAPTURE(omega);
-      const std::complex<double> s = 1i * omega;
-      std::complex<double> chi = 0.0;
-      if (std::string(model.name) == "Drude")
+      CAPTURE(model.name, sigma);
+      auto material = MakeMaterial({1, 2}, model.terms);
+      material.sigma.s = {sigma, sigma, sigma};
+      MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, mesh);
+      config::FarfieldBoundaryData farfield;
+      farfield.attributes = {1, 2, 3, 4, 5, 6};
+      FarfieldBoundaryOperator farfield_op(farfield, ProblemType::DRIVEN, mat_op,
+                                           mesh.Get());
+      REQUIRE(farfield_op.NumDispersiveMaterials() == 1);
+      for (std::complex<double> omega : {std::complex<double>(4.0, 0.0), {2.0, 0.3}})
       {
-        chi = 9.0 / (s * (s + 0.5));
-      }
-      else
-      {
-        chi = 2.0 / s;
-      }
-      const auto r = std::sqrt((eps_inf + chi) / eps_inf);
-      const auto value = farfield_op.GetDispersiveScale(0, omega);
-      CHECK_THAT(value.real(), WithinRel(r.real(), 1.0e-12));
-      CHECK_THAT(value.imag(), WithinRel(r.imag(), 1.0e-12));
-      // Passive at real ω: the boundary dissipates, Re{iω r} ≤ 0 is the loss sign of the
-      // first-order term i ω r (here r has Im r < 0).
-      if (omega.imag() == 0.0)
-      {
-        CHECK(value.imag() < 0.0);
+        CAPTURE(omega);
+        const std::complex<double> s = 1i * omega;
+        std::complex<double> chi = 0.0;
+        if (std::string(model.name) == "Drude")
+        {
+          chi = 9.0 / (s * (s + 0.5));
+        }
+        else
+        {
+          chi = 2.0 / s;
+        }
+        const auto r = std::sqrt((eps_inf + chi + sigma / s) / eps_inf);
+        const auto value = farfield_op.GetDispersiveScale(0, omega);
+        CHECK_THAT(value.real(), WithinRel(r.real(), 1.0e-12));
+        CHECK_THAT(value.imag(), WithinRel(r.imag(), 1.0e-12));
+        const auto eps = mat_op.EvaluateFrequencyDependentPermittivity(0, s);
+        CHECK(std::abs(eps - (eps_inf + chi)) < 1.0e-12 * std::abs(eps));
+        // Passive at real ω: the boundary dissipates, Re{iω r} ≤ 0 is the loss sign of the
+        // first-order term i ω r (here r has Im r < 0).
+        if (omega.imag() == 0.0)
+        {
+          CHECK(value.imag() < 0.0);
+        }
       }
     }
   }
+
+  // Debye ε∞ = 2, Δε = 2, τ = 1 with σ = 1 at ω = 1: the displacement and stored energy use
+  // ε = 3 − i and W = 3, the wave ε_w = 3 − 2i.
+  auto debye = MakeMaterial({1, 2}, {config::DebyeData{2.0, 1.0}});
+  debye.sigma.s = {1.0, 1.0, 1.0};
+  MaterialOperator debye_op({debye}, periodic, ProblemType::DRIVEN, mesh);
+  const std::complex<double> s = 1i;
+  CHECK(std::abs(debye_op.EvaluateFrequencyDependentPermittivity(0, s) -
+                 std::complex<double>(3.0, -1.0)) < 1.0e-14);
+  CHECK(std::abs(debye_op.EvaluateFrequencyDependentWavePermittivity(0, s) -
+                 std::complex<double>(3.0, -2.0)) < 1.0e-14);
+  CHECK_THAT(debye_op.GetFrequencyDependentStoredEnergyPermittivity(0, 1.0),
+             WithinRel(3.0, 1.0e-14));
+
+  // An anisotropic user conductivity has no scalar wave impedance: the boundaries which
+  // need it are an error, not a silent approximation; other consumers are unaffected.
+  auto anisotropic = debye;
+  anisotropic.sigma.s = {1.0, 2.0, 1.0};
+  MaterialOperator anisotropic_op({anisotropic}, periodic, ProblemType::DRIVEN, mesh);
+  CHECK(std::abs(anisotropic_op.EvaluateFrequencyDependentPermittivity(0, s) -
+                 std::complex<double>(3.0, -1.0)) < 1.0e-14);
+  CHECK_THROWS_WITH(anisotropic_op.EvaluateFrequencyDependentWavePermittivity(0, s),
+                    ContainsSubstring("scalar Conductivity"));
 }
 
 TEST_CASE("Floquet propagation constants in lossy and gain media", "[floquetport][Serial]")
@@ -325,17 +360,47 @@ TEST_CASE("Floquet propagation constants in lossy and gain media", "[floquetport
   CHECK(std::abs(tm - omega * omega * mu_eps / lossy) < 1.0e-14);
 }
 
+namespace
+{
+
+// Access to the factored-term self-check of the PROM online assembly.
+class FloquetRomOperator : public RomOperator
+{
+public:
+  using RomOperator::RomOperator;
+  bool SelfChecked() const { return other_A2_self_checked; }
+  bool FactoredOk() const { return other_A2_factored_ok; }
+};
+
+}  // namespace
+
 TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-dependent medium",
                  "[floquetport][frequencydependent][Serial][Parallel]")
 {
-  // A plane wave at normal incidence between two Floquet ports at z = 0 (excited) and
-  // z = L in a homogeneous medium, periodic in x and y. The ports use the complete ε(iω) of
-  // the medium in γ₀ = ω √(μ ε), in their Robin term, and in the excitation, so the
-  // transmission is S21 = e^{−iγ₀ L}, attenuated for the lossy Drude medium, and the driven
-  // port is matched, S11 = 0. A constant lossless medium keeps |S21| = 1.
+  // A plane wave at normal incidence through a short slab between two Floquet ports at
+  // z = 0 (excited) and z = L in a homogeneous medium, periodic in x and y. The ports use
+  // the complete ε(iω) of the medium in γ₀ = ω √(μ ε) (the outgoing root), in their Robin
+  // term, and in the excitation, so the driven port is matched, S11 = 0, and the
+  // transmission is S21 = e^{−iγ₀ L}. This holds for a lossless constant medium
+  // (|S21| = 1), a lossy Drude medium with Re ε > 0, and a Drude medium below its plasma
+  // frequency with Re ε < 0 and Re γ₀² < 0, whose (0,0) mode still carries power,
+  // Re γ₀ > 0. With a user conductivity σ the wave uses ε_w = ε + σ/(iω) (the volume
+  // includes σ, so the ports must too, once: Debye with ε = 3 − i and ε_w = 3 − 2i, and
+  // Drude below its plasma frequency, whose folded zero pole must not be counted again).
+  // The PROM, with the solution in its basis, reproduces it through its factored Floquet
+  // Robin term.
   using json = nlohmann::json;
-  const bool lossy = GENERATE(false, true);
-  CAPTURE(lossy);
+  enum class Medium
+  {
+    LOSSLESS,
+    LOSSY,
+    NEGATIVE,
+    DEBYE_SIGMA,
+    NEGATIVE_SIGMA
+  };
+  const auto medium = GENERATE(Medium::LOSSLESS, Medium::LOSSY, Medium::NEGATIVE,
+                               Medium::DEBYE_SIGMA, Medium::NEGATIVE_SIGMA);
+  CAPTURE(static_cast<int>(medium));
   MPI_Comm comm = Mpi::World();
   IoData iodata{Units(1.0e-3, 1.0e-3)};
   iodata.model.L0 = 1.0e-3;
@@ -343,20 +408,44 @@ TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-depend
   iodata.problem.type = ProblemType::DRIVEN;
   iodata.solver.order = 3;
   iodata.solver.driven.sample_f = {100.0};  // GHz
-  // Drude with fp = 100 GHz and fγ = 50 GHz: ε = 2 + 1 / (i (i + 1/2)) = 1.2 − 0.4i.
+  // Drude ε = 2 + (fp/f)² / (i (i + fγ/f)) at f = 100 GHz: fp = 100 GHz, fγ = 50 GHz gives
+  // 1.2 − 0.4i, and fp = 300 GHz gives −5.2 − 3.6i.
+  // Debye Δε = 2 with ωτ = 1 at 100 GHz gives ε = 3 − i. The user conductivity
+  // σ = ω ε₀ adds −i to the wave permittivity.
   json permittivity = 2.0;
-  if (lossy)
+  std::complex<double> eps = 2.0;
+  const bool with_sigma =
+      (medium == Medium::DEBYE_SIGMA || medium == Medium::NEGATIVE_SIGMA);
+  if (medium == Medium::DEBYE_SIGMA)
   {
+    permittivity = {
+        {"HighFrequency", 2.0},
+        {"Terms",
+         json::array({{{"Type", "Debye"},
+                       {"DeltaPermittivity", 2.0},
+                       {"RelaxationTime", 1.0e9 / (2.0 * std::numbers::pi * 1.0e11)}}})}};
+    eps = {3.0, -1.0};
+  }
+  else if (medium != Medium::LOSSLESS)
+  {
+    const double fp = (medium == Medium::LOSSY) ? 100.0 : 300.0;
     permittivity = {{"HighFrequency", 2.0},
                     {"Terms", json::array({{{"Type", "Drude"},
-                                            {"PlasmaFrequency", 100.0},
+                                            {"PlasmaFrequency", fp},
                                             {"CollisionFrequency", 50.0}}})}};
+    eps = (medium == Medium::LOSSY) ? std::complex<double>(1.2, -0.4)
+                                    : std::complex<double>(-5.2, -3.6);
   }
-  iodata.domains = config::DomainData(json{
-      {"Materials",
-       json::array({{{"Attributes", json::array({1})}, {"Permittivity", permittivity}}})}});
-  // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = L), 5 and 3 (x = 0, 1), 2 and
-  // 4 (y = 0, 1).
+  json material = {{"Attributes", json::array({1})}, {"Permittivity", permittivity}};
+  if (with_sigma)
+  {
+    material["Conductivity"] =
+        2.0 * std::numbers::pi * 1.0e11 * electromagnetics::epsilon0_;
+    eps -= 1i;
+  }
+  iodata.domains = config::DomainData(json{{"Materials", json::array({material})}});
+  // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = L), 5 and 3 (x faces), 2 and
+  // 4 (y faces).
   iodata.boundaries = config::BoundaryData(json{
       {"Periodic",
        {{"BoundaryPairs", json::array({{{"DonorAttributes", json::array({5})},
@@ -367,12 +456,12 @@ TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-depend
        json::array({{{"Index", 1}, {"Attributes", json::array({1})}, {"Excitation", 1}},
                     {{"Index", 2}, {"Attributes", json::array({6})}}})}});
   iodata.CheckConfiguration();
-  constexpr double L = 2.0;
+  constexpr double a = 0.5, L = 0.25;
   // The periodic mesh is made by the mesh loading path from the boundary pairs.
   iodata.model.mesh = (temp_dir / "floquet_box.mesh").string();
   if (Mpi::Root(comm))
   {
-    auto box = mfem::Mesh::MakeCartesian3D(3, 3, 8, mfem::Element::HEXAHEDRON, 1.0, 1.0, L);
+    auto box = mfem::Mesh::MakeCartesian3D(3, 3, 6, mfem::Element::HEXAHEDRON, a, a, L);
     std::ofstream ofs(iodata.model.mesh);
     box.Print(ofs);
   }
@@ -384,46 +473,77 @@ TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-depend
   SpaceOperator space_op(iodata, mesh);
 
   const double omega = iodata.solver.driven.sample_f.front();
-  const std::complex<double> eps = lossy ? std::complex<double>(1.2, -0.4) : 2.0;
   const std::complex<double> gamma = omega * std::sqrt(eps);
-  space_op.GetFloquetPortOp().Initialize(omega);
-  const auto gamma0 = space_op.GetFloquetPortOp().GetPort(1).GetGamma0();
-  CHECK_THAT(gamma0.real(), WithinRel(gamma.real(), 1.0e-12));
-  CHECK_THAT(gamma0.imag(), WithinAbs(gamma.imag(), 1.0e-12));
-
-  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
-                                    C.get(), M.get(), A2.get());
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
-                                                             -omega * omega + 0.0i, omega);
-  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
-  ksp.SetOperators(*A, *P);
-  ComplexVector RHS, E;
-  RHS.UseDevice(true);
-  E.UseDevice(true);
-  REQUIRE(space_op.GetExcitationVector(1, omega, RHS));
-  E.SetSize(RHS.Size());
-  E = 0.0;
-  ksp.Mult(RHS, E);
-  GridFunction E_gf(space_op.GetNDSpace(), true);
-  E_gf.Real().SetFromTrueDofs(E.Real());
-  E_gf.Imag().SetFromTrueDofs(E.Imag());
-
-  const auto key = std::make_tuple(0, 0, true);
-  const auto S11 =
-      space_op.GetFloquetPortOp().GetPort(1).GetAllSParameters(E_gf, true).at(key);
-  const auto S21 = space_op.GetFloquetPortOp().GetPort(2).GetAllSParameters(E_gf).at(key);
-  const std::complex<double> S21_expected = std::exp(-1i * gamma * L);
-  CAPTURE(S11, S21, S21_expected);
-  CHECK(std::abs(S11) < 1.0e-3);
-  CHECK(std::abs(S21 - S21_expected) < 1.0e-3);
-  if (lossy)
+  REQUIRE(gamma.real() > 0.0);
+  if (medium == Medium::NEGATIVE || medium == Medium::NEGATIVE_SIGMA)
   {
-    CHECK(std::abs(S21) < 0.5);
+    REQUIRE((gamma * gamma).real() < 0.0);
   }
+  auto &floquet_op = space_op.GetFloquetPortOp();
+  floquet_op.Initialize(omega);
+  const auto gamma0 = floquet_op.GetPort(1).GetGamma0();
+  CHECK_THAT(gamma0.real(), WithinRel(gamma.real(), 1.0e-10));
+  CHECK_THAT(gamma0.imag(), WithinAbs(gamma.imag(), 1.0e-10));
+
+  const std::complex<double> S21_expected = std::exp(-1i * gamma * L);
+  auto CheckS = [&](const ComplexVector &E, const char *path)
+  {
+    INFO(path);
+    GridFunction E_gf(space_op.GetNDSpace(), true);
+    E_gf.Real().SetFromTrueDofs(E.Real());
+    E_gf.Imag().SetFromTrueDofs(E.Imag());
+    const auto key = std::make_tuple(0, 0, true);
+    const auto S1 = floquet_op.GetPort(1).GetAllSParameters(E_gf, true);
+    const auto S2 = floquet_op.GetPort(2).GetAllSParameters(E_gf);
+    REQUIRE(S1.contains(key));
+    REQUIRE(S2.contains(key));
+    const auto S11 = S1.at(key), S21 = S2.at(key);
+    CAPTURE(S11, S21, S21_expected);
+    CHECK(std::abs(S11) < 1.0e-3);
+    CHECK(std::abs(S21 - S21_expected) < 1.0e-3);
+  };
+
+  // HDM: (K + iωC − ω²M + A2(ω)) E = RHS.
+  ComplexVector E;
+  {
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                      K.get(), C.get(), M.get(), A2.get());
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+    ksp.SetOperators(*A, *P);
+    ComplexVector RHS;
+    RHS.UseDevice(true);
+    E.UseDevice(true);
+    REQUIRE(space_op.GetExcitationVector(1, omega, RHS));
+    E.SetSize(RHS.Size());
+    E = 0.0;
+    ksp.Mult(RHS, E);
+  }
+  CheckS(E, "HDM");
+  if (medium != Medium::LOSSLESS)
+  {
+    CHECK(std::abs(S21_expected) < 0.95);
+  }
+
+  // PROM with the HDM solution in its basis.
+  FloquetRomOperator prom_op(iodata, space_op, 4);
+  prom_op.SetExcitationIndex(1);
+  ComplexVector E_hdm(E.Size()), E_rom(E.Size());
+  E_hdm = 0.0;
+  E_rom = 0.0;
+  E_hdm.UseDevice(true);
+  E_rom.UseDevice(true);
+  prom_op.SolveHDM(1, omega, E_hdm);
+  prom_op.UpdatePROM(E_hdm, "sample");
+  prom_op.SolvePROM(1, omega, E_rom);
+  CHECK(prom_op.SelfChecked());
+  CHECK(prom_op.FactoredOk());
+  CheckS(E_rom, "PROM");
 }
 
 TEST_CASE("Electric surface flux of frequency-dependent materials",
