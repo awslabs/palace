@@ -141,7 +141,6 @@ protected:
   int output_delta_post = 0;                          // printing rate (TRANSIENT)
   int output_n_post = 0;                              // max printing (OTHER SOLVERS)
   std::vector<std::size_t> output_save_indices = {};  // explicit saves
-  bool output_excitation_saves = false;  // FluxLoopExcitation fields, outside the count
 
   // Whether any output formats were specified.
   bool AnyOutputFormats() const
@@ -150,8 +149,7 @@ protected:
   }
   bool AnythingToSave() const
   {
-    return (output_delta_post > 0) || (output_n_post > 0) || !output_save_indices.empty() ||
-           output_excitation_saves;
+    return (output_delta_post > 0) || (output_n_post > 0) || !output_save_indices.empty();
   }
 
   // Whether any fields should be written at all.
@@ -477,9 +475,7 @@ public:
   double MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
     requires(solver_t == ProblemType::ELECTROSTATIC);
 
-  // Fields are written per the Save count unless save_fields overrides it (excitations).
-  double MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx,
-                            std::optional<bool> save_fields = std::nullopt)
+  double MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx)
     requires(solver_t == ProblemType::MAGNETOSTATIC);
 
   double MeasureAndPrintAll(int step, const Vector &e, const Vector &b, double time,

@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_SURFACE_FLUX_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_FLUX_OPERATOR_HPP
 
+#include <algorithm>
 #include <map>
 #include <vector>
 #include <mfem.hpp>
@@ -32,6 +33,8 @@ public:
   std::vector<double> flux_amounts;
   std::vector<int> film_attributes;
   std::vector<double> direction;
+  // Excitation this loop is driven in (0: held at zero fluxoid in every excitation).
+  int excitation;
 
 public:
   SurfaceFluxData(const config::FluxLoopData &data);
@@ -42,6 +45,11 @@ class SurfaceFluxOperator
 {
 private:
   std::map<int, SurfaceFluxData> sources;
+
+  // Excitation index -> the flux loops driven together in it, each at its own fluxoid.
+  // Each loop is its own excitation unless the configuration groups them, in which case
+  // the solve gives the superposed state of the group.
+  std::map<int, std::vector<int>> excitations;
 
   void SetUpBoundaryProperties(const IoData &iodata);
   void PrintBoundaryInfo(const IoData &iodata);
@@ -54,6 +62,16 @@ public:
   auto begin() const { return sources.begin(); }
   auto end() const { return sources.end(); }
   auto Size() const { return sources.size(); }
+
+  const auto &GetExcitations() const { return excitations; }
+
+  // Whether every excitation drives a single loop, so the solves span an inductance matrix
+  // (the excitation and loop indices then agree, see config::Validate).
+  bool HasSingleLoopExcitations() const
+  {
+    return std::ranges::all_of(excitations,
+                               [](const auto &x) { return x.second.size() == 1; });
+  }
 
   // Solve surface curl problem for given flux loop index
   palace::Vector SolveSurfaceCurlProblem(int idx, const Mesh &mesh,

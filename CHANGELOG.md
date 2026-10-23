@@ -37,10 +37,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. Supports nonconformal adaptive
     mesh refinement, which keeps the two faces matched. SchemaVer 2-2-1.
     [PR 992](https://github.com/awslabs/palace/pull/992).
-  - Added `Boundaries.FluxLoopExcitation`, a single-solve excitation that drives several
-    `FluxLoop` holes together with prescribed fluxoids and writes the superposed field and
-    stored energy to `terminal-fluxexc.csv`, separate from the inductance-matrix sweep
-    (toggle `Solver.Magnetostatic.FluxLoopMatrixSweep`). SchemaVer 2-2-3.
+  - Added `Boundaries.FluxLoop[].Excitation`, the port excitation convention for flux
+    loops: loops sharing a positive excitation index are driven together in one
+    magnetostatic solve, each at its own `FluxAmounts`, and `0` holds a loop at zero
+    fluxoid. With grouped excitations `terminal-Phi.csv` reports the stored energy and loop
+    fluxoids of each excitation instead of the inductance matrix, and the ParaView fields
+    are saved per excitation. The default, each loop its own excitation, is unchanged.
+    SchemaVer 2-3-0.
     [PR 979](https://github.com/awslabs/palace/pull/979).
 
 #### Interface Changes
@@ -59,6 +62,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the final ParaView save (mesh partition and error indicator) overwriting a saved
+    field when sources are written out of index order, for example a magnetostatic
+    `SurfaceCurrent` index above a `FluxLoop` index.
+    [PR 979](https://github.com/awslabs/palace/pull/979).
   - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
