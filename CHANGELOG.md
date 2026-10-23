@@ -26,8 +26,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the total inductance is read from the field energy.
     [PR 929](https://github.com/awslabs/palace/pull/929).
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
-    London magnetostatic solve SPD-solvable by AMS.
-    [PR 929](https://github.com/awslabs/palace/pull/929).
+    London magnetostatic solve SPD-solvable by AMS. Magnetostatic simulations with
+    `Superconductor` or `FluxLoop` boundaries also enable
+    `Solver.Linear.MGAuxiliarySmoother` by default. SchemaVer 2-4-1
+    [PR 929](https://github.com/awslabs/palace/pull/929),
+    [PR 1051](https://github.com/awslabs/palace/pull/1051).
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
@@ -71,14 +74,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
     [PR 992](https://github.com/awslabs/palace/pull/992).
-  - Fixed the `FluxLoop` inductance of `Superconductor` films under nonconformal adaptive
-    mesh refinement, which could move away from the converged value after a refinement: the
-    London drive is now made exactly curl-free on the film in the constrained space of the
-    current mesh, instead of carrying a spurious curl from the hanging edges. The London
-    magnetostatic preconditioner now also uses auxiliary-space multigrid smoothing by
-    default, cutting PCG iterations several-fold (e.g. 189 → 25 on `narrow_ring`).
-    SchemaVer 2-4-1
-    [PR 1051](https://github.com/awslabs/palace/pull/1051).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

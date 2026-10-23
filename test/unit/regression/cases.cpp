@@ -949,9 +949,9 @@ TEST_CASE("circular_hole_london_two_sided", "[Serial][Parallel][GPU][Regression]
                                   "two_sided", opts);
 }
 
-// Two-sided film under nonconformal AMR. Locks the coupling on hanging and shared DOFs and
-// the refinement that keeps the two faces coincident. Omits [GPU] like the other adaptive
-// cases.
+// Two-sided film under nonconformal AMR. Locks the coupling on hanging and shared DOFs, the
+// refinement that keeps the two faces coincident, and the generator projection (the cut
+// meets hanging film edges). Omits [GPU] like the other adaptive cases.
 TEST_CASE("circular_hole_london_two_sided_nc_amr", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1096,7 +1096,7 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-4;
+  opts.rtol = 1.0e-5;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
