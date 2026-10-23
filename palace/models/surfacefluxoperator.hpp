@@ -16,7 +16,6 @@ namespace palace
 class IoData;
 class Mesh;
 class FiniteElementSpace;
-class CohomologyGeneratorCache;
 template <ProblemType T>
 class PostOperator;
 
@@ -56,15 +55,13 @@ public:
   auto Size() const { return sources.size(); }
 
   // Solve surface curl problem for given flux loop index
-  palace::Vector SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
-                                         const FiniteElementSpace &nd_fespace,
-                                         PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                                         CohomologyGeneratorCache *cache = nullptr) const;
+  palace::Vector
+  SolveSurfaceCurlProblem(int idx, const Mesh &mesh, const FiniteElementSpace &nd_fespace,
+                          PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const;
   void SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
                                const FiniteElementSpace &nd_fespace,
                                PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                               palace::Vector &result,
-                               CohomologyGeneratorCache *cache = nullptr) const;
+                               palace::Vector &result) const;
 };
 
 }  // namespace palace

@@ -4,7 +4,6 @@
 #ifndef PALACE_MODELS_SUPERCONDUCTOR_SHEET_OPERATOR_HPP
 #define PALACE_MODELS_SUPERCONDUCTOR_SHEET_OPERATOR_HPP
 
-#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -99,12 +98,11 @@ public:
   BuildTwoPortCoupling(mfem::ParFiniteElementSpace &nd_fespace) const;
 
   // Refine the coarser face wherever nonconformal refinement has left the two faces of a
-  // two-sided film unmatched, until every face has a coincident twin again, calling refined
-  // after each refinement. Returns the number of elements added.
+  // two-sided film unmatched, until every face has a coincident twin again. Returns the
+  // number of elements added.
   static int
   MatchTwoSidedRefinement(const std::vector<config::SuperconductorData> &superconductor,
-                          mfem::ParMesh &mesh, int nc_limit,
-                          const std::function<void()> &refined = {});
+                          mfem::ParMesh &mesh, int nc_limit);
 };
 
 }  // namespace palace

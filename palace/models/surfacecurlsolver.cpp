@@ -44,7 +44,7 @@ namespace
 // overall sign are irrelevant to L: the downstream normalization rescales a_h so cᵀa_h = Φ.
 Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
                                    const mfem::ParFiniteElementSpace &ndp_fespace,
-                                   const Mesh &mesh, CohomologyGeneratorCache *, int)
+                                   const Mesh &mesh)
 {
   auto &pmesh = const_cast<mfem::ParMesh &>(mesh.Get());
   MPI_Comm comm = pmesh.GetComm();
@@ -326,77 +326,23 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
 
 }  // namespace
 
-CohomologyGeneratorCache::CohomologyGeneratorCache() = default;
-
-CohomologyGeneratorCache::~CohomologyGeneratorCache() = default;
-
-const mfem::ParGridFunction *CohomologyGeneratorCache::Find(int key,
-                                                            const mfem::ParMesh &mesh) const
-{
-  auto it = entries.find(key);
-  return (it != entries.end() && it->second.mesh == &mesh &&
-          it->second.sequence == mesh.GetSequence())
-             ? it->second.a.get()
-             : nullptr;
-}
-
-void CohomologyGeneratorCache::Store(int key, const mfem::ParGridFunction &a)
-{
-  auto &mesh = *a.ParFESpace()->GetParMesh();
-  const int sdim = mesh.SpaceDimension();
-  auto &entry = entries[key];
-  entry.a.reset();
-  entry.fespace.reset();
-  entry.mesh = &mesh;
-  entry.sequence = mesh.GetSequence();
-  entry.fec = std::make_unique<mfem::L2_FECollection>(1, mesh.Dimension());
-  entry.fespace =
-      std::make_unique<mfem::ParFiniteElementSpace>(&mesh, entry.fec.get(), sdim);
-  entry.a = std::make_unique<mfem::ParGridFunction>(entry.fespace.get());
-  mfem::VectorGridFunctionCoefficient a_coeff(&a);
-  entry.a->ProjectCoefficient(a_coeff);
-}
-
-void CohomologyGeneratorCache::Update(mfem::ParMesh &mesh)
-{
-  // MFEM transfers a space across exactly one mesh modification; conformal meshes rebuild
-  // the exact generator and do not need it.
-  std::erase_if(entries,
-                [&mesh](const auto &kv)
-                {
-                  const auto &entry = kv.second;
-                  return entry.mesh != &mesh || !mesh.Nonconforming() ||
-                         mesh.GetSequence() > entry.sequence + 1;
-                });
-  for (auto &[key, entry] : entries)
-  {
-    if (mesh.GetSequence() == entry.sequence + 1)
-    {
-      entry.fespace->Update();
-      entry.a->Update();
-      entry.sequence = mesh.GetSequence();
-    }
-  }
-}
-
 Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
                                const FiniteElementSpace &nd_fespace,
-                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                               CohomologyGeneratorCache *cache, int key)
+                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op)
 {
   Vector result;
-  SolveSurfaceCurlProblem(flux_data, mesh, nd_fespace, post_op, result, cache, key);
+  SolveSurfaceCurlProblem(flux_data, mesh, nd_fespace, post_op, result);
   return result;
 }
 
 void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
                              const FiniteElementSpace &nd_fespace,
                              PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                             Vector &result, CohomologyGeneratorCache *cache, int key)
+                             Vector &result)
 {
   // London drive: build a_h directly on the 3D ND space as a curl-free cohomology generator
   // via a topological cut cochain (gauge-invariant; see BuildCutCohomologyGenerator).
-  result = BuildCutCohomologyGenerator(flux_data, nd_fespace.Get(), mesh, cache, key);
+  result = BuildCutCohomologyGenerator(flux_data, nd_fespace.Get(), mesh);
   // Populate the post_op A buffer (used only as scratch downstream).
   auto &A_3d = post_op.GetAGridFunction().Real();
   A_3d.SetFromTrueDofs(result);
