@@ -57,7 +57,9 @@ struct FloquetOrder
   int m, n;            // Lattice indices (physical convention)
   FloquetModeUse use;  // Which subsystems use this order
   mfem::Vector B_mn;   // Transverse wavevector B_mn = m*b1 + n*b2
-  double gamma_sq;     // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
+  // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent), complex in a lossy
+  // port medium. The order propagates (above cutoff) when Re{gamma_mn^2} > 0.
+  std::complex<double> gamma_sq;
   std::array<mfem::Vector, 2> e_pol;    // Polarization unit vector; 0 = TE, 1 = TM.
   std::array<ComplexVector, 2> v;       // Fourier projections; 0 = TE, 1 = TM.
   std::array<ComplexVector, 3> v_comp;  // Cartesian component projections.
@@ -107,7 +109,9 @@ public:
 
   // Access the enumerated orders (for CSV column setup).
   const auto &GetOrders() const { return orders; }
-  double GetGamma0() const { return gamma0; }
+  // Propagation constant of the (0,0) TE mode, the Robin reference iγ₀/μ (complex in a
+  // lossy port medium).
+  std::complex<double> GetGamma0() const { return gamma0; }
 
   // Check if mode (m, n, is_te) is part of the incident excitation at this port.
   // For linear polarization (TE/TM), only one matches. For circular (RHC/LHC), both do.
@@ -140,6 +144,18 @@ public:
   // Static utility functions (public for testability).
   static void ComputeReciprocalLattice(const mfem::Vector &a1, const mfem::Vector &a2,
                                        mfem::Vector &b1, mfem::Vector &b2);
+  // The outgoing propagation constant γ = √(γ²) for e^{iωt − iγ n·r} at the port at a real
+  // frequency: the principal root (Re{γ} ≥ 0, outgoing), which is the positive root for a
+  // lossless propagating order, decays for a passive lossy medium, and grows for a gain
+  // medium; −i|γ| (decaying) for a lossless evanescent order, on the branch cut.
+  static std::complex<double> OutgoingPropagationConstant(std::complex<double> gamma_sq);
+
+  // DtN eigenvalue λ of a mode, TE: γ, TM: ω²με/γ, so that the mode's tangential
+  // magnetic field is (λ / (ωμ)) n × e and its time-averaged power through the port is
+  // |e|² Re{λ} |Γ| / (2ωμ) per unit amplitude.
+  static std::complex<double> DtNEigenvalue(bool is_te, std::complex<double> gamma,
+                                            double omega, std::complex<double> mu_eps);
+
   static int ComputeBZOffset(const mfem::Vector &kF_unwrapped,
                              const mfem::Vector &kF_wrapped, const mfem::Vector &b,
                              double b_sq);
@@ -185,9 +201,11 @@ private:
   double port_area;
 
   // Material properties at the port.
-  double mu_eps_port;      // mu_r * eps_r (for propagation constant), at omega0
+  // mu_r * eps_r (for propagation constant), at omega0: complex for a frequency-dependent
+  // port medium, μ_r ε(iω) with the complete permittivity of its model.
+  std::complex<double> mu_eps_port;
   double mu_eps_port_inf;  // mu_r * eps_r with the high-frequency permittivity
-  int port_material = -1;  // Frequency-dependent material of the port medium, or -1
+  int port_material = -1;  // Frequency-dependent material (model) of the port medium
   double mu_r_port;        // mu_r (for DtN coefficient and excitation)
 
 private:
@@ -199,7 +217,7 @@ private:
 
   // Frequency cache.
   double omega0 = 0.0;
-  double gamma0 = 0.0;
+  std::complex<double> gamma0 = 0.0;
 
   // BZ wrapping offset: when MaterialOperator wraps k_F by subtracting G = bz_m*b1+bz_n*b2,
   // the Fourier projection kernel must be shifted accordingly. Mode labels remain physical.
@@ -221,11 +239,12 @@ private:
   // polarization. Used by both AddExcitationVector and GetAllSParameters.
   struct IncidentNormalization
   {
-    double gamma_00;      // Propagation constant of the (0,0) mode
-    double lambda_te_00;  // TE DtN eigenvalue: γ
-    double lambda_tm_00;  // TM DtN eigenvalue: ω²με/γ
-    double lambda_eff;    // Weighted: |α_TE|²λ_TE + |α_TM|²λ_TM
-    double c_inc;         // Unit-power scale factor: 1/√(λ_eff |Γ| / (2ωμ))
+    std::complex<double> gamma_00;      // Propagation constant of the (0,0) mode
+    std::complex<double> lambda_te_00;  // TE DtN eigenvalue: γ
+    std::complex<double> lambda_tm_00;  // TM DtN eigenvalue: ω²με/γ
+    // Weighted real power per unit amplitude: |α_TE|² Re{λ_TE} + |α_TM|² Re{λ_TM}.
+    double lambda_eff;
+    double c_inc;  // Unit-power scale factor: 1/√(λ_eff |Γ| / (2ωμ))
   };
   IncidentNormalization ComputeIncidentNormalization(double omega) const;
 
