@@ -375,13 +375,23 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
         ++it;
       }
     }
-    // The mesh of the region lacks the environment's part of a surface.
+    // On the mesh of the region, which lacks the environment's part of a surface, the
+    // boundaries in the region are those of the model too.
+    auto contains = [](const std::vector<int> &v, int a)
+    { return std::ranges::find(v, a) != v.end(); };
     const auto &mesh = space_op.GetMesh().Get();
+    auto bdr_in_region = BoundaryAttributesInRegion(mesh, sub.region_attributes);
+    if (ds->RegionOnly())
+    {
+      std::erase_if(bdr_in_region,
+                    [&](int a) { return !contains(model.region_bdr_attributes, a); });
+    }
     std::vector<int> skipped_flux, skipped_probe;
     for (auto it = boundaries.postpro.flux.begin(); it != boundaries.postpro.flux.end();)
     {
-      if (ds->RegionOnly() ||
-          !BoundaryInRegion(mesh, it->second.attributes, sub.region_attributes))
+      const auto &attrs = it->second.attributes;
+      if (attrs.empty() ||
+          !std::ranges::all_of(attrs, [&](int a) { return contains(bdr_in_region, a); }))
       {
         skipped_flux.push_back(it->first);
         it = boundaries.postpro.flux.erase(it);
@@ -412,9 +422,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
                  "ratios{}{}{}{}!\n",
                  online ? "Online" : "Adaptive",
                  none(skipped, "energies of the domain postprocessing outside the region"),
-                 none(skipped_flux, ds->RegionOnly()
-                                        ? "surface fluxes on the mesh of the region"
-                                        : "surface fluxes outside the region"),
+                 none(skipped_flux, "surface fluxes outside the region"),
                  none(skipped_probe, "probes outside the region"),
                  env_ports.empty() ? std::string()
                                    : ", and no power (or wave port voltage) of the "
@@ -454,6 +462,8 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
       }
     }
     model.ports = env_ports;
+    model.region_bdr_attributes =
+        BoundaryAttributesInRegion(space_op.GetMesh().Get(), sub.region_attributes);
     model.length_scale = iodata.model.Lc;
     if (adaptive)
     {

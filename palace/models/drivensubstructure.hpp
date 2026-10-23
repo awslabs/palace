@@ -70,8 +70,9 @@ private:
 //
 // A model saved by an offline driven substructuring sweep, written and read on rank 0 (the
 // header broadcast): the header (the interface signatures, the fingerprints of the
-// environment and of its sources, the environment's ports, the frequencies, the reference
-// length of the nondimensionalization) and one record per frequency: S_E(ω), the
+// environment and of its sources, the environment's ports, the boundary attributes of the
+// region, the frequencies, the reference length of the nondimensionalization) and one
+// record per frequency: S_E(ω), the
 // condensation g of the environment's sources (per excitation with environment sources),
 // and the condensed functionals of the environment's ports, whose values are V_j = c_jk +
 // h_j^T u_Γ for excitation k. An exact model holds the frequencies of a uniform sweep, a
@@ -81,14 +82,15 @@ private:
 struct DrivenSubstructureModel
 {
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
-  int version = 3, nG = 0, sig_w = 0;
+  int version = 4, nG = 0, sig_w = 0;
   double length_scale = 0.0;  // model.Lc of the offline run (0: not saved, version < 3)
   std::vector<double> signatures;  // nG x sig_w
   std::vector<double> env_fp;      // environment fingerprint
   std::vector<int> excitations;    // excitations with environment sources
   std::vector<double> exc_fp;      // their source fingerprints (kSourceFp each)
-  std::vector<int> ports;     // environment lumped ports (index) and wave ports (-index)
-  std::vector<double> omega;  // frequencies of the records (nondimensional)
+  std::vector<int> ports;  // environment lumped ports (index) and wave ports (-index)
+  std::vector<int> region_bdr_attributes;     // see BoundaryAttributesInRegion (version 4)
+  std::vector<double> omega;                  // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
   int capacity = 0;  // records the header has room for (at least omega.size())
 
@@ -115,7 +117,8 @@ struct DrivenSubstructureModel
   void TruncateRecords(const std::string &path, int n) const;
 
   // Whether a saved header is that of this model: the same interface (and so partition),
-  // environment, sources (to source_tol, see SameSource), ports and frequencies.
+  // environment, sources (to source_tol, see SameSource), ports, boundaries and
+  // frequencies.
   bool SameHeader(const DrivenSubstructureModel &saved, double source_tol) const;
 
   // Whether fingerprints agree, to a relative tolerance: the environment's (two counts,

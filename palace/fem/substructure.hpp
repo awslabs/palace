@@ -115,11 +115,10 @@ std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
 std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMatrix &A,
                                                           const mfem::Array<int> &dofs);
 
-// Whether the mesh has boundary elements with the attributes, all bordering elements of the
-// region only, so that a field known in the region determines quantities on them.
-// Collective.
-bool BoundaryInRegion(const mfem::ParMesh &mesh, const std::vector<int> &bdr_attributes,
-                      const std::vector<int> &region_attributes);
+// The boundary attributes of the mesh whose elements all border elements of the region
+// only, so that a field known in the region determines quantities on them. Collective.
+std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
+                                            const std::vector<int> &region_attributes);
 
 // Whether a point (mesh coordinates) lies in an element of the region. Collective.
 bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,

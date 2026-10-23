@@ -195,9 +195,8 @@ interface are unchanged. The online field is known in the region and on the inte
     the region, without the total energies and participation ratios (and the power of the
     environment's ports, and the voltage of its wave ports, are not available);
   - surface fluxes (`"Boundaries"/"Postprocessing"/"SurfaceFlux"`) on boundaries that border only
-    region elements, and probes in the region, are those of a regular simulation; the others are
-    skipped, as are all surface fluxes on the mesh of the region, which lacks the environment's part
-    of a surface;
+    region elements (on the mesh of the region, as the model records), and probes in the region, are
+    those of a regular simulation; the others are skipped;
   - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
 
 The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also

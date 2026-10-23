@@ -1473,13 +1473,15 @@ std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record 
 std::size_t DrivenSubstructureModel::HeaderBytes() const
 {
   // Version 1: 8 ints and the frequencies; version 2: 10 ints, and room for capacity
-  // frequencies and weights; version 3: and the reference length after the ints.
-  const std::size_t common = sizeof(double) * signatures.size() +
-                             sizeof(double) * env_fp.size() +
-                             sizeof(int) * excitations.size() +
-                             sizeof(double) * exc_fp.size() + sizeof(int) * ports.size();
+  // frequencies and weights; version 3: and the reference length after the ints; version 4:
+  // 11 ints, and the region's boundary attributes after the ports.
+  const std::size_t common =
+      sizeof(double) * signatures.size() + sizeof(double) * env_fp.size() +
+      sizeof(int) * excitations.size() + sizeof(double) * exc_fp.size() +
+      sizeof(int) * ports.size() + sizeof(int) * region_bdr_attributes.size();
   return (version == 1) ? sizeof(int) * 8 + common + sizeof(double) * omega.size()
-                        : sizeof(int) * 10 + ((version > 2) ? sizeof(double) : 0) + common +
+                        : sizeof(int) * ((version > 3) ? 11 : 10) +
+                              ((version > 2) ? sizeof(double) : 0) + common +
                               (sizeof(double) + sizeof(std::complex<double>)) * capacity;
 }
 
@@ -1491,14 +1493,14 @@ std::size_t DrivenSubstructureModel::RecordBytes() const
 
 void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) const
 {
-  MFEM_VERIFY(version == 3 && capacity >= static_cast<int>(omega.size()) &&
+  MFEM_VERIFY(version == 4 && capacity >= static_cast<int>(omega.size()) &&
                   (weights.empty() || weights.size() == omega.size()),
               "Invalid substructuring model header!");
   std::fstream f(path, create ? (std::ios::binary | std::ios::out | std::ios::trunc)
                               : (std::ios::binary | std::ios::in | std::ios::out));
   MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
-  const int head[10] = {kDrivenModelMagic,
-                        3,
+  const int head[11] = {kDrivenModelMagic,
+                        4,
                         nG,
                         sig_w,
                         static_cast<int>(env_fp.size()),
@@ -1506,7 +1508,8 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                         static_cast<int>(ports.size()),
                         capacity,
                         static_cast<int>(omega.size()),
-                        weights.empty() ? 0 : 1};
+                        weights.empty() ? 0 : 1,
+                        static_cast<int>(region_bdr_attributes.size())};
   std::vector<double> om(omega);
   std::vector<std::complex<double>> wt(weights);
   om.resize(capacity, 0.0);
@@ -1522,8 +1525,11 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
           static_cast<std::streamsize>(sizeof(int) * excitations.size()));
   f.write(reinterpret_cast<const char *>(exc_fp.data()),
           static_cast<std::streamsize>(sizeof(double) * exc_fp.size()));
-  f.write(reinterpret_cast<const char *>(ports.data()),
-          static_cast<std::streamsize>(sizeof(int) * ports.size()));
+  for (const auto *v : {&ports, &region_bdr_attributes})
+  {
+    f.write(reinterpret_cast<const char *>(v->data()),
+            static_cast<std::streamsize>(sizeof(int) * v->size()));
+  }
   f.write(reinterpret_cast<const char *>(om.data()),
           static_cast<std::streamsize>(sizeof(double) * om.size()));
   f.write(reinterpret_cast<const char *>(wt.data()),
@@ -1542,7 +1548,7 @@ void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record
 
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
 {
-  int head[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  int head[11] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   length_scale = 0.0;
   std::ifstream f;
   if (Mpi::Root(comm))
@@ -1551,16 +1557,18 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
     if (f.good())
     {
       f.read(reinterpret_cast<char *>(head), sizeof(int) * 2);
-      f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * ((head[1] == 1) ? 6 : 8));
+      f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * ((head[1] == 1)  ? 6
+                                                                : (head[1] < 4) ? 8
+                                                                                : 9));
       if (head[1] > 2)
       {
         f.read(reinterpret_cast<char *>(&length_scale), sizeof(double));
       }
     }
   }
-  Mpi::Broadcast(10, head, 0, comm);
+  Mpi::Broadcast(11, head, 0, comm);
   Mpi::Broadcast(1, &length_scale, 0, comm);
-  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 3,
+  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] >= 1 && head[1] <= 4,
               "Cannot read the driven substructuring model \""
                   << path << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
   version = head[1];
@@ -1583,6 +1591,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   read(excitations, head[5]);
   read(exc_fp, kSourceFp * static_cast<std::size_t>(head[5]));
   read(ports, head[6]);
+  read(region_bdr_attributes, head[10]);
   capacity = head[7];
   read(omega, capacity);
   weights.clear();
@@ -1617,7 +1626,8 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
   if (saved.version != version || saved.nG != nG || saved.sig_w != sig_w ||
       saved.signatures != signatures || saved.excitations != excitations ||
       saved.exc_fp.size() != exc_fp.size() || saved.ports != ports ||
-      saved.omega != omega || saved.weights != weights || saved.capacity != capacity ||
+      saved.region_bdr_attributes != region_bdr_attributes || saved.omega != omega ||
+      saved.weights != weights || saved.capacity != capacity ||
       saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp))
   {
     return false;

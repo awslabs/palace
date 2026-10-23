@@ -9,7 +9,6 @@
 #include <filesystem>
 #include <limits>
 #include <set>
-#include "fem/coefficient.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/outputdir.hpp"
@@ -404,33 +403,39 @@ std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMa
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::ParAdd(&B, &I));
 }
 
-bool BoundaryInRegion(const mfem::ParMesh &mesh, const std::vector<int> &bdr_attributes,
-                      const std::vector<int> &region_attributes)
+std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
+                                            const std::vector<int> &region_attributes)
 {
   auto &pmesh = const_cast<mfem::ParMesh &>(mesh);
   pmesh.ExchangeFaceNbrData();
-  auto in_region = [&](const mfem::ElementTransformation *T)
+  auto in_region = [&](int a)
+  { return std::ranges::find(region_attributes, a) != region_attributes.end(); };
+  const int n = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::vector<int> count(2 * n, 0);  // per attribute: elements, those bordering others
+  for (int be = 0; be < mesh.GetNBE(); be++)
   {
-    return !T ||
-           std::ranges::find(region_attributes, T->Attribute) != region_attributes.end();
-  };
-  mfem::FaceElementTransformations FET;
-  mfem::IsoparametricTransformation T1, T2;
-  int n[2] = {0, 0};  // boundary elements, those bordering elements outside the region
-  for (int be = 0; be < pmesh.GetNBE(); be++)
-  {
-    if (std::ranges::find(bdr_attributes, pmesh.GetBdrAttribute(be)) ==
-        bdr_attributes.end())
-    {
-      continue;
-    }
-    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(be, pmesh, FET, T1,
-                                                                     T2);
-    n[0]++;
-    n[1] += !in_region(FET.Elem1) || !in_region(FET.Elem2);
+    int f, o, e1, e2, inf1, inf2;
+    mesh.GetBdrElementFace(be, &f, &o);
+    mesh.GetFaceElements(f, &e1, &e2);
+    mesh.GetFaceInfos(f, &inf1, &inf2);
+    // The second element of a face shared with another process is a face neighbor.
+    const int a2 = (e2 >= 0)     ? mesh.GetAttribute(e2)
+                   : (inf2 >= 0) ? pmesh.face_nbr_elements[-1 - e2]->GetAttribute()
+                                 : 0;
+    const int a = mesh.GetBdrAttribute(be) - 1;
+    count[2 * a]++;
+    count[2 * a + 1] += !in_region(mesh.GetAttribute(e1)) || (a2 > 0 && !in_region(a2));
   }
-  Mpi::GlobalSum(2, n, mesh.GetComm());
-  return n[0] > 0 && n[1] == 0;
+  Mpi::GlobalSum(2 * n, count.data(), mesh.GetComm());
+  std::vector<int> attrs;
+  for (int a = 0; a < n; a++)
+  {
+    if (count[2 * a] > 0 && count[2 * a + 1] == 0)
+    {
+      attrs.push_back(a + 1);
+    }
+  }
+  return attrs;
 }
 
 bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,

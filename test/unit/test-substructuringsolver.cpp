@@ -2667,6 +2667,7 @@ TEST_CASE("A saved driven model continues from its complete records",
   m.excitations = {1};
   m.exc_fp = {1.0, 0.0, 0.5, 0.0, 0.25, 0.0, -0.125};
   m.ports = {1};
+  m.region_bdr_attributes = {5, 7};
   m.omega = {1.0, 2.0, 3.0};
   m.capacity = 3;
   m.length_scale = 1.0e-6;
@@ -2692,6 +2693,7 @@ TEST_CASE("A saved driven model continues from its complete records",
   CHECK(m.NumRecords(path) == 2);
   Model saved;
   saved.ReadHeader(path, Mpi::World());
+  CHECK(saved.region_bdr_attributes == m.region_bdr_attributes);
   CHECK(m.SameHeader(saved, 1.0e-10));
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
@@ -2700,9 +2702,12 @@ TEST_CASE("A saved driven model continues from its complete records",
   CHECK(m.NumRecords(path) == 2);
   CHECK(m.ReadFlatRecord(path, 1) == m.Flatten(record(4.0)));
 
-  // The model of another sweep does not continue: other frequencies, interface or sources
-  // (beyond their tolerance).
+  // The model of another sweep does not continue: other frequencies, interface, boundaries
+  // or sources (beyond their tolerance).
   auto other = m;
+  other.region_bdr_attributes = {5};
+  CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  other = m;
   other.omega[2] = 3.5;
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
   other = m;

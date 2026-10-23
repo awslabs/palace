@@ -1441,8 +1441,7 @@ TEST_CASE("substructuring_driven_wave_inactive_online",
 }
 
 // Online runs on the mesh of the region written by the offline run (with the environment's
-// ports), against the references of the online runs on the full mesh. Surface fluxes are
-// skipped there, since the mesh lacks the environment's part of a surface.
+// ports), against the references of the online runs on the full mesh.
 TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1453,6 +1452,22 @@ TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
   opts.setup_config = "driven_offline.json";
   palace::test::RunRegressionCase("substructuring_driven", "driven_online_region.json",
                                   "online_region", opts);
+}
+
+// Absorbing walls crossing Γ, of which the mesh of the region holds the region's part only:
+// an online run on it skips their surface fluxes, as the model records (and writes those
+// in the region). The references are a regular simulation, in the online run's columns.
+TEST_CASE("substructuring_driven_absorbing_region", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_absorbing.json";
+  palace::test::RunRegressionCase("substructuring_driven",
+                                  "driven_online_absorbing_region.json",
+                                  "online_absorbing_region", opts);
 }
 
 TEST_CASE("substructuring_driven_reduced_region", "[Serial][Parallel][GPU][Regression]")
