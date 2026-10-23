@@ -99,6 +99,13 @@ public:
   const FaceSamplingPlan *SamplingPlan() const;
   const BoundaryPhysicalTraceCache *TraceCache() const { return trace_cache.get(); }
 
+  // Evaluate the material data of a frequency-dependent material at the real angular
+  // frequency ω > 0 of the fields (see SurfaceFunctional::SetFrequency and
+  // DomainPointFieldEvaluator::SetFrequency), including that of a shared fused bundle.
+  // Updates only when ω changes; required before evaluation of a material-dependent field
+  // when such a material exists, a no-op otherwise.
+  void SetFrequency(double omega) const;
+
   // Domain-only compatibility path for grid-function output.
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
 

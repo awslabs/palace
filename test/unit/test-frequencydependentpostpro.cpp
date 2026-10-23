@@ -426,4 +426,187 @@ TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-depend
   }
 }
 
+TEST_CASE("Electric surface flux of frequency-dependent materials",
+          "[frequencydependent][Serial][Parallel][GPU]")
+{
+  // A uniform complex field E = E_n n through the face of the box: Φ = ε(iω) E_n A with
+  // the complete permittivity, for the 3D libCEED and the 2D legacy paths, refreshed when
+  // the frequency changes and back.
+  const int dim = GENERATE(3, 2);
+  CAPTURE(dim);
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto mesh = MakeBoxMesh(
+      dim, 3, (dim == 3) ? mfem::Element::TETRAHEDRON : mfem::Element::TRIANGLE);
+  config::PeriodicBoundaryData periodic;
+  const auto model = Models()[0];  // Drude
+  MaterialOperator mat_op({MakeMaterial({1}, model.terms), MakeMaterial({2}, model.terms)},
+                          periodic, ProblemType::DRIVEN, mesh);
+  mfem::H1_FECollection h1_fec(order, dim);
+  mfem::ND_FECollection nd_fec(order, dim);
+  FiniteElementSpace h1_fespace(mesh, &h1_fec), nd_fespace(mesh, &nd_fec);
+  GridFunction E(nd_fespace, true);
+  const std::complex<double> En(1.0, 0.5);
+  {
+    mfem::Vector vr(dim), vi(dim);
+    vr = 0.0;
+    vi = 0.0;
+    vr(dim - 1) = En.real();
+    vi(dim - 1) = En.imag();
+    mfem::VectorConstantCoefficient cr(vr), ci(vi);
+    E.Real().ProjectCoefficient(cr);
+    E.Imag().ProjectCoefficient(ci);
+  }
+  // Top face: z = 0.8 (attribute 6) in 3D, y = 1.3 (attribute 3) in 2D.
+  config::BoundaryPostData postpro;
+  config::SurfaceFluxData flux;
+  flux.type = SurfaceFlux::ELECTRIC;
+  flux.center = {0.5, 0.65, 0.4};
+  flux.no_center = false;
+  flux.attributes = {(dim == 3) ? 6 : 3};
+  postpro.flux.emplace(1, flux);
+  SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace,
+                                   nd_fespace);
+  const double area = (dim == 3) ? 1.0 * 1.3 : 1.0;
+  CHECK_THROWS(surf_post_op.GetSurfaceFlux(1, &E, nullptr));  // Requires a frequency
+  for (double omega : {4.0, 1.1, 4.0})
+  {
+    CAPTURE(omega);
+    const std::complex<double> expected = (eps_inf + model.chi(omega)) * En * area;
+    const auto value = surf_post_op.GetSurfaceFlux(1, &E, nullptr, omega);
+    CHECK_THAT(value.real(), WithinRel(expected.real(), 1.0e-10));
+    CHECK_THAT(value.imag(), WithinRel(expected.imag(), 1.0e-10));
+  }
+}
+
+TEST_CASE("Metal-substrate interface of a frequency-dependent substrate",
+          "[frequencydependent][Serial][Parallel][GPU]")
+{
+  // The MS participation of a uniform normal field E = E_n n on the substrate side of the
+  // face is 1/2 t / ε_MS |D_n|² A with |D_n| = |ε(iω)| |E_n|: the complete displacement,
+  // not Re ε² of a lossy model. The substrate has ε∞ = 1, so it is identified as substrate
+  // by its configured model, not by its light speed. The other side is vacuum.
+  const int dim = GENERATE(3, 2);
+  CAPTURE(dim);
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto serial = std::make_unique<mfem::Mesh>(
+      (dim == 3) ? mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON)
+                 : mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL));
+  // Substrate below the interface (last coordinate < 1/2, attribute 1), vacuum above, and
+  // the interface boundary elements with a new attribute.
+  for (int i = 0; i < serial->GetNE(); i++)
+  {
+    mfem::Vector c;
+    serial->GetElementCenter(i, c);
+    serial->SetAttribute(i, (c(dim - 1) < 0.5) ? 1 : 2);
+  }
+  const int interface_attr = serial->bdr_attributes.Max() + 1;
+  for (int f = 0; f < serial->GetNumFaces(); f++)
+  {
+    int e1, e2;
+    serial->GetFaceElements(f, &e1, &e2);
+    if (e1 >= 0 && e2 >= 0 && serial->GetAttribute(e1) != serial->GetAttribute(e2))
+    {
+      auto *be = serial->GetFace(f)->Duplicate(serial.get());
+      be->SetAttribute(interface_attr);
+      serial->AddBdrElement(be);
+    }
+  }
+  serial->FinalizeTopology();
+  serial->Finalize();
+  serial->SetAttributes();
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial));
+  config::PeriodicBoundaryData periodic;
+  auto substrate = MakeMaterial({1}, Models()[0].terms);
+  substrate.epsilon_r.s = {1.0, 1.0, 1.0};
+  config::MaterialData vacuum;
+  vacuum.attributes = {2};
+  MaterialOperator mat_op({substrate, vacuum}, periodic, ProblemType::DRIVEN, mesh);
+  mfem::H1_FECollection h1_fec(order, dim);
+  mfem::ND_FECollection nd_fec(order, dim);
+  FiniteElementSpace h1_fespace(mesh, &h1_fec), nd_fespace(mesh, &nd_fec);
+  GridFunction E(nd_fespace, true);
+  const std::complex<double> En(0.8, -0.3);
+  {
+    mfem::Vector vr(dim), vi(dim);
+    vr = 0.0;
+    vi = 0.0;
+    vr(dim - 1) = En.real();
+    vi(dim - 1) = En.imag();
+    mfem::VectorConstantCoefficient cr(vr), ci(vi);
+    E.Real().ProjectCoefficient(cr);
+    E.Imag().ProjectCoefficient(ci);
+  }
+  config::BoundaryPostData postpro;
+  config::InterfaceDielectricData data;
+  data.type = InterfaceDielectric::MS;
+  data.t = 0.01;
+  data.epsilon_r = 5.0;
+  data.tandelta = 1.0e-3;
+  data.attributes = {interface_attr};
+  postpro.dielectric.emplace(1, data);
+  SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace,
+                                   nd_fespace);
+  for (double omega : {4.0, 1.1, 4.0})
+  {
+    CAPTURE(omega);
+    const double eps_abs = std::abs(1.0 + DrudeChi(omega));
+    const double expected =
+        0.5 * data.t / data.epsilon_r * eps_abs * eps_abs * std::norm(En);
+    CHECK_THAT(surf_post_op.GetInterfaceElectricFieldEnergy(1, E, omega),
+               WithinRel(expected, 1.0e-10));
+  }
+}
+
+TEST_CASE("Electric energy density of frequency-dependent materials",
+          "[frequencydependent][Serial][Parallel][GPU]")
+{
+  // U_e = 1/2 W(ω) |E|² for a uniform complex field, from the libCEED domain evaluator and
+  // the legacy coefficient, refreshed when the frequency changes and back.
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
+  config::PeriodicBoundaryData periodic;
+  const auto model = Models()[1];  // Lorentz
+  MaterialOperator mat_op({MakeMaterial({1}, model.terms), MakeMaterial({2}, model.terms)},
+                          periodic, ProblemType::DRIVEN, mesh);
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  GridFunction E(nd_fespace, true);
+  {
+    mfem::Vector vr({0.3, -0.2, 1.0}), vi({0.1, 0.4, -0.5});
+    mfem::VectorConstantCoefficient cr(vr), ci(vi);
+    E.Real().ProjectCoefficient(cr);
+    E.Imag().ProjectCoefficient(ci);
+  }
+  const double E2 = 0.09 + 0.04 + 1.0 + 0.01 + 0.16 + 0.25;
+  mfem::L2_FECollection viz_fec(order, 3);
+  mfem::ParFiniteElementSpace viz(&mesh.Get(), &viz_fec);
+  PointFieldEvaluator eval(PointFieldEvaluator::Kind::ENERGY_E, mesh, mat_op,
+                           E.ParFESpace(), nullptr, viz, 1.0);
+  REQUIRE(eval.IsValid());
+  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op);
+  mfem::ParGridFunction val(&viz), ref(&viz);
+  CHECK_THROWS(eval.Eval(&E, nullptr, val));  // Requires a frequency
+  // Below and above the resonance, where Re ε < 0 but W > 0.
+  for (double omega : {0.5, 1.3, 0.5})
+  {
+    CAPTURE(omega);
+    const double expected = 0.5 * (eps_inf + LorentzW(omega)) * E2;
+    eval.SetFrequency(omega);
+    eval.Eval(&E, nullptr, val);
+    legacy.SetStoredEnergyPermittivity(mat_op.EvaluateStoredEnergyPermittivity(omega));
+    ref.ProjectCoefficient(legacy);
+    for (int i = 0; i < val.Size(); i++)
+    {
+      CHECK_THAT(val(i), WithinRel(expected, 1.0e-10));
+      CHECK_THAT(ref(i), WithinRel(expected, 1.0e-10));
+    }
+  }
+}
+
 }  // namespace palace

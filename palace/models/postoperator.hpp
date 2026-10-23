@@ -244,6 +244,9 @@ protected:
   // operators remain cached for later writes in a frequency or mode sweep.
   void SetupFieldCoefficients();
   void EnsureFieldCoefficientsSetup();
+  // Evaluate the permittivity-dependent field outputs at the measured frequency (before
+  // writing fields).
+  void SetFieldFrequency();
 
   // Initialize Paraview, register all fields to write.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");

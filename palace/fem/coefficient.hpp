@@ -171,10 +171,11 @@ private:
   bool two_sided;
   const mfem::Vector &x0;
   const mfem::Vector *ref_dir;  // Optional reference direction for normal orientation
-  // ELECTRIC flux with Im{ε} instead of Re{ε}, for assembling the complex D = ε E of a
-  // lossy dielectric from real-valued evaluations (see
-  // SurfacePostOperator::GetSurfaceFlux).
-  bool imag_permittivity;
+  // ELECTRIC flux permittivity table (layout of MaterialOperator::GetPermittivityReal(),
+  // not owned), in place of Re{ε}: Im{ε} for assembling the complex D = ε E of a lossy
+  // dielectric from real-valued evaluations, or a table at the frequency of the fields
+  // (see SurfacePostOperator::GetSurfaceFlux). nullptr for Re{ε} of mat_op.
+  const mfem::DenseTensor *epsilon;
 
   void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
 
@@ -190,12 +191,12 @@ public:
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
                             const mfem::Vector &x0, double scaling = 1.0,
-                            bool imag_permittivity = false)
+                            const mfem::DenseTensor *epsilon = nullptr)
     : mfem::Coefficient(),
       BdrGridFunctionCoefficient(
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), ref_dir(nullptr),
-      imag_permittivity(imag_permittivity)
+      epsilon(epsilon)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -212,7 +213,7 @@ public:
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
       E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(reference_direction),
       ref_dir(mode == OrientationMode::DIRECTION_BASED ? &reference_direction : nullptr),
-      imag_permittivity(false)
+      epsilon(nullptr)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
@@ -297,9 +298,9 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>::GetLocalFlux(
   double W_data[3];
   mfem::Vector W(W_data, T.GetSpaceDim());
   E->GetVectorValue(T, T.GetIntPoint(), W);
-  if (imag_permittivity)
+  if (epsilon)
   {
-    mat_op.GetPermittivityImag(T.Attribute).Mult(W, V);
+    mat_op.GetMaterialEntry(*epsilon, T.Attribute).Mult(W, V);
   }
   else
   {
@@ -365,6 +366,10 @@ private:
   const GridFunction &E;
   const MaterialOperator &mat_op;
   const double t_i, epsilon_i;
+  // Substrate permittivity table for MS (layout of MaterialOperator::GetPermittivityReal(),
+  // not owned), in place of Re{ε}: |ε(iω)| for a frequency-dependent substrate at the
+  // frequency of the fields (see SurfaceFunctional::SetFrequency). nullptr for Re{ε}.
+  const mfem::DenseTensor *epsilon_s;
 
   void Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
                   mfem::Vector *normal)
@@ -382,14 +387,9 @@ private:
   int GetLocalVectorValue(const mfem::ParGridFunction &U, mfem::Vector &V,
                           bool vacuum_side) const
   {
-    constexpr double threshold = 1.0 - 1.0e-6;
-    const bool use_elem1 =
-        ((vacuum_side && mat_op.GetLightSpeedMax(FET.Elem1->Attribute) >= threshold) ||
-         (!vacuum_side && mat_op.GetLightSpeedMax(FET.Elem1->Attribute) < threshold));
+    const bool use_elem1 = (mat_op.IsVacuum(FET.Elem1->Attribute) == vacuum_side);
     const bool use_elem2 =
-        (FET.Elem2 &&
-         ((vacuum_side && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) >= threshold) ||
-          (!vacuum_side && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) < threshold)));
+        (FET.Elem2 && mat_op.IsVacuum(FET.Elem2->Attribute) == vacuum_side);
     if (use_elem1)
     {
       U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
@@ -416,9 +416,10 @@ private:
 
 public:
   InterfaceDielectricCoefficient(const GridFunction &E, const MaterialOperator &mat_op,
-                                 double t_i, double epsilon_i)
+                                 double t_i, double epsilon_i,
+                                 const mfem::DenseTensor *epsilon_s = nullptr)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E),
-      mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i)
+      mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i), epsilon_s(epsilon_s)
   {
   }
 
@@ -497,13 +498,15 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
   {
     return 0.0;
   }
-  mat_op.GetPermittivityReal(attr).Mult(V, W);
+  const auto eps = epsilon_s ? mat_op.GetMaterialEntry(*epsilon_s, attr)
+                             : mat_op.GetPermittivityReal(attr);
+  eps.Mult(V, W);
   double Vn = W * normal;
   double Vn2 = Vn * Vn;
   if (E.HasImag())
   {
     GetLocalVectorValue(E.Imag(), V, false);
-    mat_op.GetPermittivityReal(attr).Mult(V, W);
+    eps.Mult(V, W);
     Vn = W * normal;
     Vn2 += Vn * Vn;
   }
@@ -558,6 +561,9 @@ class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctio
 private:
   const GridFunction &U;
   const MaterialOperator &mat_op;
+  // ELECTRIC: permittivity table of the stored energy (layout of
+  // MaterialOperator::GetPermittivityReal()), Re{ε} until SetStoredEnergyPermittivity.
+  mfem::DenseTensor epsilon;
   double GetLocalEnergyDensity(mfem::ElementTransformation &T) const;
 
 public:
@@ -567,6 +573,21 @@ public:
       BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh(), scaling), U(U),
       mat_op(mat_op)
   {
+    if constexpr (Type == EnergyDensityType::ELECTRIC)
+    {
+      epsilon = mat_op.GetPermittivityReal();
+    }
+  }
+
+  // The electric energy density at the frequency of the fields uses the stored-energy
+  // permittivity of each material (MaterialOperator::EvaluateStoredEnergyPermittivity).
+  void SetStoredEnergyPermittivity(const mfem::DenseTensor &epsilon_w)
+    requires(Type == EnergyDensityType::ELECTRIC)
+  {
+    MFEM_VERIFY(epsilon_w.SizeI() == epsilon.SizeI() &&
+                    epsilon_w.SizeK() == epsilon.SizeK(),
+                "Invalid stored-energy permittivity table for the energy density!");
+    epsilon = epsilon_w;
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
@@ -601,15 +622,17 @@ inline double EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>::GetLocalEne
     mfem::ElementTransformation &T) const
 {
   // Only the real part of the permittivity contributes to the energy (imaginary part
-  // cancels out in the inner product due to symmetry).
+  // cancels out in the inner product due to symmetry). A frequency-dependent material
+  // uses the stored energy of its model, which includes that of the polarization.
   double V_data[3];
   mfem::Vector V(V_data, T.GetSpaceDim());
+  const auto eps = mat_op.GetMaterialEntry(epsilon, T.Attribute);
   U.Real().GetVectorValue(T, T.GetIntPoint(), V);
-  double dot = mat_op.GetPermittivityReal(T.Attribute).InnerProduct(V, V);
+  double dot = eps.InnerProduct(V, V);
   if (U.HasImag())
   {
     U.Imag().GetVectorValue(T, T.GetIntPoint(), V);
-    dot += mat_op.GetPermittivityReal(T.Attribute).InnerProduct(V, V);
+    dot += eps.InnerProduct(V, V);
   }
   return 0.5 * dot * scaling;
 }

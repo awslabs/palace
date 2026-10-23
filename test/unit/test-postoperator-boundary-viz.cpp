@@ -1034,10 +1034,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
                                                              true, unused_x0, eps_scaling);
   BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_re(&E.Imag(), nullptr, mat_op,
                                                              true, unused_x0, eps_scaling);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(
-      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(
-      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(&E.Real(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(&E.Imag(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
   mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
   mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
   BdrSurfaceCurrentVectorCoefficient J_real_legacy(B.Real(), mat_op, invmu_scaling);
@@ -1182,10 +1184,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
                                                              true, unused_x0, eps_scaling);
   BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_re(&E.Imag(), nullptr, mat_op,
                                                              true, unused_x0, eps_scaling);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(
-      &E.Real(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
-  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(
-      &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_real_im(&E.Real(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
+  BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> Q_imag_im(&E.Imag(), nullptr, mat_op,
+                                                             true, unused_x0, eps_scaling,
+                                                             &mat_op.GetPermittivityImag());
   mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
   mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
   // Q_s carries the factor eps_scaling relative to the E fields atol was sized for.

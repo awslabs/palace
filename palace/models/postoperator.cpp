@@ -607,7 +607,9 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::FLUX_Q, *E->ParFESpace(), scaling,
                             Q_bdr_eval);
-      if (HasComplexGridFunction<solver_t>() && fem_op->GetMaterialOp().HasLossTangent() &&
+      if (HasComplexGridFunction<solver_t>() &&
+          (fem_op->GetMaterialOp().HasLossTangent() ||
+           fem_op->GetMaterialOp().HasFrequencyDependentPermittivity()) &&
           !bdr_derived_bundle)
       {
         const auto &mesh = fem_op->GetMaterialOp().GetMesh();
@@ -694,6 +696,40 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     }
     // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} uses the in-plane B field and is
     // registered below through a domain point evaluator.
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::SetFieldFrequency()
+{
+  // The permittivity-dependent fields (U_e, Q_s) of a frequency-dependent material are
+  // evaluated at the real part of the measured frequency (of an eigenmode). The
+  // evaluators refresh their material data only when it changes; without such a
+  // material this does nothing.
+  const auto &mat_op = fem_op->GetMaterialOp();
+  if (!mat_op.HasFrequencyDependentPermittivity())
+  {
+    return;
+  }
+  const double omega = measurement_cache.freq.real();
+  if constexpr (HasEGridFunction<solver_t>())
+  {
+    if (U_e)
+    {
+      static_cast<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> &>(*U_e)
+          .SetStoredEnergyPermittivity(mat_op.EvaluateStoredEnergyPermittivity(omega));
+    }
+  }
+  for (const auto *eval : {&U_e_eval, &Ue_bdr_eval, &Q_bdr_eval, &Q_bdr_eval_imag})
+  {
+    if (*eval)
+    {
+      (*eval)->SetFrequency(omega);
+    }
+  }
+  if (bdr_derived_bundle)
+  {
+    bdr_derived_bundle->SetFrequency(omega);
   }
 }
 
@@ -1179,6 +1215,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
   EnsureParaviewDataCollection();
+  SetFieldFrequency();
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -1323,6 +1360,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
   EnsureFieldCoefficientsSetup();
+  SetFieldFrequency();
 
   // Create output directory if it doesn't exist (node-local filesystem aware).
   EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
@@ -2001,7 +2039,9 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   for (const auto &[idx, data] : surf_post_op.flux_surfs)
   {
     measurement_cache.surface_flux_i.emplace_back(Measurement::FluxData{
-        idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
+        idx,
+        surf_post_op.GetSurfaceFlux(idx, E.get(), B.get(), measurement_cache.freq.real()),
+        data.type});
   }
 }
 
@@ -2043,7 +2083,8 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     measurement_cache.interface_eps_i.reserve(surf_post_op.eps_surfs.size());
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
-      auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
+      auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(
+          idx, *E, measurement_cache.freq.real());
 
       auto energy_participation_p = energy / energy_total;
       auto loss_tangent_delta = surf_post_op.GetInterfaceLossTangent(idx);

@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_BOUNDARY_DERIVED_FIELD_BUNDLE_HPP
 #define PALACE_FEM_BOUNDARY_DERIVED_FIELD_BUNDLE_HPP
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -79,6 +80,14 @@ public:
   int RegisteredPackedSize() const;
   PackedSlice RegisteredSlice(PointFieldKind kind, bool imaginary_phase = false) const;
 
+  // Evaluate the permittivity of a frequency-dependent material at the real angular
+  // frequency ω > 0 of the fields: the complete ε(iω) in the surface charge and the
+  // stored-energy permittivity in the electric energy density. Updates the retained
+  // contexts and drops the cached packed results only when ω changes; the physical traces
+  // and geometry are retained. Required before evaluation when such a material exists, a
+  // no-op otherwise.
+  void SetFrequency(double omega);
+
   // Advance the save generation. The trace cache must be invalidated at the same save
   // boundary by its owner; keeping both explicit makes reuse of solver vector addresses
   // unambiguous.
@@ -126,6 +135,12 @@ private:
   std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache;
   bool valid = false;
   long generation = 0;
+  // Frequency-dependent material tables: whether any exists, their offsets (Re{ε}, Im{ε},
+  // stored energy) in the retained route contexts, and the current real angular frequency
+  // (0 before SetFrequency).
+  bool material_frequency_dependent = false;
+  std::array<std::size_t, 3> material_ctx_offsets = {0, 0, 0};
+  double material_omega = 0.0;
   // Kept opaque in the header to avoid exposing libCEED implementation details at every
   // PointFieldEvaluator include site.
   struct Impl;

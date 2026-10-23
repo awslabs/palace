@@ -53,6 +53,13 @@ struct SurfaceModeCoefficient
   std::array<double, 3> origin = {0.0, 0.0, 0.0};
 };
 
+// Substrate permittivity table of a metal-substrate interface (layout of
+// MaterialOperator::GetPermittivityReal()) at the real angular frequency ω > 0, for
+// |D_n|² = |ε|² |E_n|² applied to each phase of E: |ε(iω)| for a frequency-dependent
+// (scalar) material, where Re{ε}² would drop its loss, and Re{ε} for a constant material
+// (the established approximation, without its loss tangent).
+mfem::DenseTensor MetalSubstratePermittivity(const MaterialOperator &mat_op, double omega);
+
 //
 // Class to compute reducing output functionals (integrals of functions of solution
 // fields) over boundary element sets using libCEED, supporting full (non-trace)
@@ -154,6 +161,17 @@ private:
   int farfield_batch_size = 0;
   std::map<int, SurfaceModeCoefficient> mode_coeff_by_attr;
 
+  // Frequency-dependent material table: the offset and coefficient dimension of the
+  // permittivity (or light speed) table in the retained group contexts, or -1 if the
+  // table of this functional does not depend on frequency, and the real angular frequency
+  // of the current table (0 before SetFrequency: ε∞ for a frequency-dependent material).
+  // The far field evaluates the wave speed only for the frequency-dependent materials next
+  // to its boundaries (on any process).
+  mutable std::ptrdiff_t material_ctx_offset = -1;
+  mutable int material_ctx_dim = 0;
+  mutable double material_omega = 0.0;
+  std::vector<std::size_t> farfield_models;
+
   // Boundary visualization field kinds: lattice refinement level, output scaling,
   // total output buffer size, and per-boundary-element point-base offsets into the
   // component-major buffer.
@@ -215,6 +233,10 @@ private:
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   std::vector<CeedIntScalar> BuildBaseContext(int dim, bool is_2d) const;
+  bool HasFrequencyDependentMaterialTable() const;
+  mfem::DenseTensor MaterialTable(double omega) const;
+  void AppendMaterialTable(int dim, std::vector<CeedIntScalar> &base_ctx) const;
+  void CheckFrequency() const;
   void ConfigureGroupQFunction(bool is_2d, bool has_b, double side_scale,
                                double normal_scale, int bdr_attr,
                                const std::vector<CeedIntScalar> &base_ctx,
@@ -318,6 +340,15 @@ public:
   // possible; supported model-level paths should error rather than silently selecting a
   // different implementation.
   bool IsValid() const { return valid; }
+
+  // Evaluate the material data at the real angular frequency ω > 0 of the fields: the
+  // complete permittivity ε(iω) of a frequency-dependent material in the electric flux and
+  // surface charge, its stored-energy permittivity in the electric energy density, |ε(iω)|
+  // for a metal-substrate interface, and the wave speed at Re ε(iω) in the far field (set
+  // by EvalFarField). Only the retained context values change, without reassembly, and only
+  // when ω changes. Required before evaluation when such a material exists, a no-op
+  // otherwise.
+  void SetFrequency(double omega) const;
 
   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a
   // GridFunction on the field space). Collective on the mesh communicator. For

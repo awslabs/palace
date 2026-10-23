@@ -4,6 +4,7 @@
 #include <array>
 #include <complex>
 #include <memory>
+#include <numbers>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -194,11 +195,40 @@ TEST_CASE("Lossy parallel-plate capacitor conserves charge at the driven port",
   // behind R; V the total port voltage): i ω Q = I. This holds independently of how the
   // constitutive relation is written, so it discriminates between D = ε' E and the correct
   // D = ε' (1 - i tan δ) E for a lossy dielectric. The port admittance is additionally
-  // compared with the lossy capacitor i ω C (1 - i tan δ), C = ε_r ε₀ A / d.
+  // compared with the lossy capacitor i ω C (1 - i tan δ), C = ε_r ε₀ A / d. A
+  // frequency-dependent dielectric has D = ε(iω) E with its complete permittivity: a
+  // Drude model ε∞ + ωp² / (s (s + γ)) (fp = 1 GHz, fγ = 0.5 GHz, ε = 3.2 − 0.4i at
+  // 1 GHz) and a pure zero pole r / s (r = 2π · 0.5 GHz, ε = 4 − 0.5i), whose zero poles
+  // the solver folds into its conductivity, so their loss is a polarization current.
   using namespace std::complex_literals;
   using json = nlohmann::json;
-  const double tandelta = GENERATE(0.0, 0.3);
-  CAPTURE(tandelta);
+  const int kind = GENERATE(0, 1, 2, 3);
+  const double tandelta = (kind == 1) ? 0.3 : 0.0;
+  CAPTURE(kind);
+  json permittivity = 4.0;
+  std::complex<double> eps_r = 4.0 * (1.0 - 1i * tandelta);
+  if (kind == 2)
+  {
+    permittivity = {{"HighFrequency", 4.0},
+                    {"Terms", json::array({{{"Type", "Drude"},
+                                            {"PlasmaFrequency", 1.0},
+                                            {"CollisionFrequency", 0.5}}})}};
+    eps_r = {3.2, -0.4};
+  }
+  else if (kind == 3)
+  {
+    permittivity = {
+        {"HighFrequency", 4.0},
+        {"Terms", json::array({{{"Type", "PoleResidue"},
+                                {"Pole", {0.0, 0.0}},
+                                {"Residue", {2.0 * std::numbers::pi * 0.5e9, 0.0}}}})}};
+    eps_r = {4.0, -0.5};
+  }
+  json material = {{"Attributes", json::array({1})}, {"Permittivity", permittivity}};
+  if (kind < 2)
+  {
+    material["LossTan"] = tandelta;
+  }
   MPI_Comm comm = Mpi::World();
 
   // Mesh units are millimetres; L0 = Lc = 1 mm so the mesh is already in internal units.
@@ -208,10 +238,7 @@ TEST_CASE("Lossy parallel-plate capacitor conserves charge at the driven port",
   iodata.problem.type = ProblemType::DRIVEN;
   iodata.solver.order = 3;
   iodata.solver.driven.sample_f = {1.0};  // GHz, nondimensionalized below
-  iodata.domains = config::DomainData(
-      json{{"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                                    {"Permittivity", 4.0},
-                                                    {"LossTan", tandelta}})})}});
+  iodata.domains = config::DomainData(json{{"Materials", json::array({material})}});
   // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = sz), 5 (x = 0).
   iodata.boundaries = config::BoundaryData(json{
       {"PEC", json::object({{"Attributes", json::array({1, 6})}})},
@@ -270,7 +297,7 @@ TEST_CASE("Lossy parallel-plate capacitor conserves charge at the driven port",
   SurfacePostOperator surf_post_op(iodata.boundaries.postpro, ProblemType::DRIVEN,
                                    space_op.GetMaterialOp(), space_op.GetH1Space(),
                                    space_op.GetNDSpace());
-  const std::complex<double> Q = surf_post_op.GetSurfaceFlux(1, &E_gf, nullptr);
+  const std::complex<double> Q = surf_post_op.GetSurfaceFlux(1, &E_gf, nullptr, omega);
   const std::complex<double> ratio = 1i * omega * Q / I_net;
   CAPTURE(V, V_inc, I_net, Q, ratio);
   CHECK_THAT(ratio.real(), WithinRel(1.0, 1.0e-3));
@@ -279,7 +306,7 @@ TEST_CASE("Lossy parallel-plate capacitor conserves charge at the driven port",
   // Setup control: the port sees the lossy capacitor Y = i ω C (1 - i tan δ) with
   // C = ε_r A / d in internal units (ε₀ = 1, A = d² for the unit cube).
   const std::complex<double> Y = I_net / V;
-  const std::complex<double> Y_expected = 1i * omega * 4.0 * (1.0 - 1i * tandelta);
+  const std::complex<double> Y_expected = 1i * omega * eps_r;
   CAPTURE(Y, Y_expected);
   CHECK_THAT(std::abs(Y / Y_expected - 1.0), WithinAbs(0.0, 1.0e-2));
 }
