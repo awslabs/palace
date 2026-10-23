@@ -105,6 +105,10 @@ ExternalProject_Add(hypre
   PREFIX            ${CMAKE_BINARY_DIR}/extern/hypre-cmake
   SOURCE_SUBDIR     src
   UPDATE_COMMAND    ""
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre-gpu-matvec-sync.patch"
   CMAKE_ARGS        ${HYPRE_OPTIONS}
   TEST_COMMAND      ""
 )
