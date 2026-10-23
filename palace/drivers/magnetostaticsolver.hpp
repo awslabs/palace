@@ -8,7 +8,6 @@
 #include <vector>
 #include "drivers/basesolver.hpp"
 #include "linalg/vector.hpp"
-#include "models/surfacecurlsolver.hpp"
 #include "utils/configfile.hpp"
 
 namespace palace
@@ -27,14 +26,6 @@ class SurfaceFluxOperator;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  // London flux-loop generators, kept and prolonged across adaptive refinements.
-  mutable CohomologyGeneratorCache london_generators_;
-
-  void UpdateAfterMeshChange(mfem::ParMesh &mesh) const override
-  {
-    london_generators_.Update(mesh);
-  }
-
   void PostprocessTerminals(PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
                             const SurfaceCurrentOperator &surf_j_op,
                             const SurfaceFluxOperator &surf_flux_op,

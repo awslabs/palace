@@ -549,7 +549,7 @@ std::unique_ptr<mfem::HypreParMatrix> SuperconductorSheetOperator::BuildTwoPortC
 
 int SuperconductorSheetOperator::MatchTwoSidedRefinement(
     const std::vector<config::SuperconductorData> &superconductor, mfem::ParMesh &mesh,
-    int nc_limit, const std::function<void()> &refined)
+    int nc_limit)
 {
   std::unordered_set<int> attrs;
   for (const auto &data : superconductor)
@@ -709,10 +709,6 @@ int SuperconductorSheetOperator::MatchTwoSidedRefinement(
                                   << " face(s) whose twin is refined differently; the two "
                                      "faces of the film must refine alike!");
     mesh.GeneralRefinement(refine, -1, nc_limit);
-    if (refined)
-    {
-      refined();
-    }
   }
   return static_cast<int>(mesh.GetGlobalNE() - initial_elem_count);
 }

@@ -1075,9 +1075,9 @@ TEST_CASE("microstrip_superconductor", "[Serial][Parallel][GPU][Regression]")
                                   "superconductor", opts);
 }
 
-// London flux film under non-conformal AMR. Locks the cut generator kept from the
-// conforming mesh and prolonged through refinement, so L converges upward (15.1643 ->
-// 15.1644 pH after one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf.
+// London flux film under non-conformal AMR. Locks the curl-free projection of the cut
+// generator on the hanging-edge mesh, so L converges upward (15.1643 -> 15.1644 pH after
+// one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf.
 // cpw_wave_adaptive, awslabs/palace#375).
 TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 {
@@ -1091,8 +1091,8 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
                                   "nc_amr", opts);
 }
 
-// As above with two refinements, each followed by a forced rebalance, which moves the kept
-// generator across ranks.
+// As above with two refinements, each followed by a forced rebalance, so the film, the cut
+// and the hole are split differently across ranks at each solve.
 TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;

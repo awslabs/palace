@@ -23,7 +23,6 @@
 namespace palace
 {
 
-class CohomologyGeneratorCache;
 class IoData;
 class Mesh;
 class Units;
@@ -120,9 +119,6 @@ private:
 
   // Preconditioner-only gauge shift (config LondonPCShift); see GetPreconditionerMatrix.
   double london_pc_shift_;
-
-  // London cohomology generators kept across adaptive refinements (owned by the caller).
-  CohomologyGeneratorCache *generator_cache_ = nullptr;
 
   // Whether the shifted preconditioner carries auxiliary (gradient) operators for the
   // multigrid smoother, and their H1 essential DOFs.
@@ -274,12 +270,6 @@ public:
   double MeasureLondonHoleFlux(int idx, const Vector &A) const
   {
     return linalg::Dot(GetComm(), london_flux_constraint_.at(idx), A);
-  }
-
-  // Keep the London cohomology generators in the given cache across adaptive refinements.
-  void SetCohomologyGeneratorCache(CohomologyGeneratorCache *cache)
-  {
-    generator_cache_ = cache;
   }
 
   // Build the London cut cohomology generator a_h for the given flux loop.
