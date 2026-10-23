@@ -258,8 +258,10 @@ int main(int argc, char *argv[])
     BlockTimer bt(Timer::INIT);
     omp_threads = utils::ConfigureOmp();
     ngpu = utils::GetDeviceCount();
-    device.emplace(ConfigureDevice(iodata.solver.device),
-                   utils::GetDeviceId(world_comm, ngpu));
+    const std::string device_str = ConfigureDevice(iodata.solver.device);
+    const int device_id = utils::GetDeviceId(world_comm, ngpu);
+    utils::ConfigureMemory(device_str, device_id);
+    device.emplace(device_str, device_id);
     ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(PALACE_WITH_GPU_AWARE_MPI)
     device->SetGPUAwareMPI(true);

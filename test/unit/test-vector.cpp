@@ -126,6 +126,9 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   cv.Set(vals, 2, data_already_on_dev);
 
+  // Set writes on the device when it is enabled; copy back before indexing on the host.
+  cv.Real().HostRead();
+  cv.Imag().HostRead();
   CHECK_THAT(cv.Real()[0], WithinRel(1.0 * rank) || WithinAbs(0.0, 1e-14));
   CHECK_THAT(cv.Real()[1], WithinRel(2.0 * rank) || WithinAbs(0.0, 1e-14));
 
