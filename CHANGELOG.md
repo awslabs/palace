@@ -52,12 +52,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     are saved per excitation. The default, each loop its own excitation, is unchanged.
     SchemaVer 3-1-0.
     [PR 979](https://github.com/awslabs/palace/pull/979).
-  - Added scalar frequency-dependent material `Permittivity` objects with additive Drude,
-    Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms, in all problem types
-    but transient, including adaptive frequency sweeps, circuit synthesis, and numeric wave,
-    Floquet, and absorbing boundaries. The named terms must be passive; a PoleResidue
-    model is warned where it has gain or a negative stored energy. Existing scalar and
-    three-component `Permittivity` inputs remain supported. SchemaVer 2-3-0
+  - Added scalar frequency-dependent `Permittivity` objects with additive Drude, Debye,
+    Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Frequency-domain operators,
+    ports, postprocessing, energy/error estimates, adaptive sweeps, and circuit synthesis
+    use the material model at the solution frequency. Compatible static limits are supported;
+    transient problems are not. General PoleResidue models remain usable with gain and
+    negative-energy warnings. Existing constant-permittivity inputs are unchanged.
+    SchemaVer 2-3-0
     [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes

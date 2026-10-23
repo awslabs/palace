@@ -25,6 +25,7 @@ installed test data is self-contained and does not depend on source-tree example
   - [Eigenmodes of a Cylinder](cylinder.md)
   - [Signal Propagation in a Coaxial Cable](coaxial.md)
   - [Crosstalk Between Coplanar Waveguides](cpw.md)
+  - [Dispersive Microstrip](microstrip.md)
   - [2D Coplanar Waveguide Mode Analysis](cpw2d.md)
   - [Floquet Ports for a Dielectric Grating](dielectric_grating.md)
   - [Flux Trapping Analysis](circular_hole.md)

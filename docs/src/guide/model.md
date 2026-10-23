@@ -110,17 +110,19 @@ and `DampingFrequency` give ``\gamma = 2\pi f``, so a damping specified as an in
     ``\mathrm{Strength} = \Delta\epsilon/\log(\omega_\mathrm{hi}/\omega_\mathrm{lo})``.
 
 Each term is the polarization of a model driven by the field: Debye is a relaxation,
-`DjordjevicSarkar` a continuum of them, and Lorentz and Drude are oscillators. Their
-parameters must be positive, so that each term stores a nonnegative energy and dissipates a
-nonnegative power at every frequency, and `HighFrequency` must be positive. A
-`PoleResidue` term may describe gain or a negative stored energy, for instance a fit that is
-only accurate over the frequencies of interest. It is allowed, with a warning that gives the
-frequencies where the complete model has gain or a negative stored energy, and whether they
-overlap the requested frequencies. The stored energy of a `PoleResidue` term is that of a
-relaxation for a real pole, and of an oscillator ``\ddot{x} + a_1\dot{x} + a_0 x = E``
-with polarization ``b_0 x + b_1 \dot{x}`` for a conjugate pair. When ``b_1 \neq 0``, the
-model does not determine the stored energy of a passive term uniquely, and *Palace* uses the
-midpoint of the admissible range.
+`DjordjevicSarkar` a continuum of them, and Lorentz and Drude are oscillators. With the
+parameter bounds above, these typed terms store nonnegative energy and dissipate
+nonnegative power at every frequency. A `PoleResidue` term may describe gain or negative
+stored energy, for instance a fit that is only accurate over the frequencies of interest.
+It is allowed, with warnings identifying detected frequency intervals where the complete
+model has gain or negative stored energy, and whether they overlap the requested band.
+This interval search is sampled, not an all-frequency passivity certificate.
+
+The stored energy of a `PoleResidue` term is that of a relaxation for a real pole, and of
+an oscillator ``\ddot{x} + a_1\dot{x} + a_0 x = E`` with polarization
+``b_0 x + b_1 \dot{x}`` for a conjugate pair. When ``b_1 \neq 0``, the constitutive
+response does not uniquely determine microscopic stored energy; *Palace* uses its canonical
+auxiliary-state midpoint convention.
 
 The object form requires scalar permittivity and cannot be combined with `LossTan`;
 ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
@@ -138,17 +140,44 @@ from material resonances; the eigensolver warns when it cannot resolve the reque
 In adaptive circuit synthesis, pole terms are realized exactly, while `DjordjevicSarkar`
 terms are fit over the frequency sweep.
 
-The domain electric energy of a frequency-dependent material is the stored energy of its
-model at the solution frequency, the real part for an eigenmode: that of the field and of
-the polarization, including the kinetic energy of an oscillator. It exceeds the magnetic
-energy of a resonant mode, so the energy participation ratios and coupling rates of a mode
-are normalized by the mean of the electric energy and of the field energy at the material's
-permittivity ``\epsilon(\omega)``, plus the lumped capacitor energy. The latter field
-energy equals the magnetic energy of a lossless mode, so this is the total stored energy,
-and it reduces to the usual ``E_\text{elec} + E_\text{cap}`` for constant materials.
-Permittivity-based
-error indicators; electric `SurfaceFlux`; automatic electric boundary charge ``Q_s``; the
-displacement field ``\mathbf{D}``; electric energy density probes; interface dielectric
-participation; and the Stratton–Chu far field use ``\epsilon_\infty``, not
-``\epsilon(s)``. Do not use these outputs as physical validation of a frequency-dependent
-material.
+### Energy and postprocessing
+
+The domain electric energy and the ``U_e`` visualization field include the stored energy of
+the field and polarization, including an oscillator's kinetic energy. Their material
+weight is the model's stored-energy weight ``W(\omega)``, not generally
+``\operatorname{Re}\epsilon(i\omega)``. Eigenmode postprocessing evaluates material
+properties at the real part of the mode frequency.
+
+Mode participation ratios and coupling rates use the electric-side normalization
+``U = (E_\mathrm{stored} + E_{\operatorname{Re}\epsilon})/2 + E_\mathrm{cap}``.
+Here ``E_{\operatorname{Re}\epsilon}`` is the field energy weighted by the real part of
+the permittivity; it equals the magnetic field energy for a lossless mode. This avoids the
+slower convergence of magnetic-field reconstruction and reduces to
+``E_\mathrm{elec} + E_\mathrm{cap}`` for constant materials. For lossy eigenmodes it is
+an approximation evaluated at the real frequency, not an exact complex-frequency energy
+identity.
+
+Electric `SurfaceFlux` and boundary charge ``Q_s`` use the complete complex
+``\epsilon(i\omega)``, including zero-pole polarization. Ordinary `Conductivity` remains
+free current and is not included in displacement. Metal-substrate interface participation
+uses ``|\epsilon(i\omega)|^2`` for a dispersive substrate's normal displacement; constant
+substrates retain the existing real-permittivity approximation. Point probes still sample
+``\mathbf{E}`` and ``\mathbf{B}``; there is no separate displacement or energy-density
+probe output.
+
+The Stratton–Chu far field retains its homogeneous, isotropic, lossless-exterior
+approximation. For a dispersive exterior its wave speed uses
+``\mu\operatorname{Re}\epsilon(i\operatorname{Re}\omega)`` and requires positive real
+permittivity next to the observation surfaces. This does not restrict unrelated interior
+materials. The wave number retains the mode's complex frequency.
+
+### Error indicators
+
+With frequency-dependent materials, the electric flux estimator recovers the complex
+physical displacement ``\mathbf{D}=\epsilon(i\omega)\mathbf{E}`` and weights its
+residual by the inverse stored-energy tensor ``W^{-1}(\omega)``. If a general model has
+nonpositive stored-energy weight at the requested frequency, the indicator alone falls
+back to ``\epsilon_\infty`` with a warning; signed reported energies are unchanged. A
+nonpositive total-energy normalizer similarly uses a positive recovered-flux norm with a
+warning. These fallbacks keep unusual fitted models usable, but do not validate their
+physics outside the fit's useful band.

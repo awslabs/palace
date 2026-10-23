@@ -187,9 +187,8 @@ Here ``\varepsilon_\infty=2.08``, ``\omega_p=2\pi\times 1\text{ GHz}``, and
 For a cavity mode with geometric angular frequency ``\Omega_0``, the expected root
 satisfies ``(\Omega_0^2+\varepsilon_\infty s^2)(s+\gamma)+\omega_p^2s=0``. For the
 lowest mode this predicts ``f=2.9852+0.0026947i\text{ GHz}``; the computed result is
-``2.9866+0.0026921i\text{ GHz}``. The domain energy postprocessing is not physically
-meaningful for this model, because it uses ``\varepsilon_\infty`` rather than the
-frequency-dependent permittivity.
+``2.9866+0.0026921i\text{ GHz}``. The reported electric energy includes the kinetic
+energy of the Drude carriers, evaluated at the real part of the mode frequency.
 
 ### Polaritons in a Lorentz-filled cavity
 
@@ -265,8 +264,9 @@ once above the gap, for three modes each. All 186 computed modes are
 the mesh's uncoupled frequencies to a relative ``2\times 10^{-9}``. The branches
 anticross around the uncoupled modes and approach the gap edges away from them, while the
 damping passes from the matter-like branch to the light-like one, crossing at
-``f_\gamma/4`` on resonance. As for the Drude variant, the domain energy postprocessing
-uses ``\varepsilon_\infty`` and is not physically meaningful here.
+``f_\gamma/4`` on resonance. The reported electric energy includes the polarization
+oscillator's potential and kinetic energy, evaluated at the real part of the mode
+frequency; it is not simply the energy at ``\operatorname{Re}\varepsilon_r``.
 
 ```@raw html
 <br/><p align="center">
