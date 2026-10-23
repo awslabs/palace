@@ -2763,8 +2763,9 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
     }
     return -1;
   };
-  static const int tet_edge_vert[6][2] = {{0, 1}, {1, 2}, {2, 0}, {0, 3}, {1, 3}, {2, 3}};
-  static const int tri_edge_vert[3][2] = {{0, 1}, {1, 2}, {2, 0}};
+  static constexpr int tet_edge_vert[6][2] = {{0, 1}, {1, 2}, {2, 0},
+                                              {0, 3}, {1, 3}, {2, 3}};
+  static constexpr int tri_edge_vert[3][2] = {{0, 1}, {1, 2}, {2, 0}};
 
   // Count split elements / boundary elements to size the new mesh.
   int n_split_elem = 0, n_split_bdr = 0;
@@ -2879,7 +2880,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
     const auto *child_FE = new_mesh->GetNodes()->FESpace()->GetTypicalFE();
 
     // Reference-space vertex locations of a tetrahedron.
-    static const double ref_vert[4][3] = {
+    static constexpr double ref_vert[4][3] = {
         {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
 
     mfem::Array<int> orig_dofs, child_dofs;
