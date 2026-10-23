@@ -1393,6 +1393,8 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
   SECTION("Adaptive circuit synthesis is accepted")
   {
     auto config = MakeConfig();
+    // Synthesis requires two distinct samples, independently of the material model.
+    config["Solver"]["Driven"]["Samples"][0]["MaxFreq"] = 2.0;
     config["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-3;
     config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = true;
     json port;
