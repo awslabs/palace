@@ -299,4 +299,131 @@ TEST_CASE("Absorbing boundaries next to Drude and zero-pole materials",
   }
 }
 
+TEST_CASE("Floquet propagation constants in lossy and gain media", "[floquetport][Serial]")
+{
+  using F = FloquetPortData;
+  // Lossless propagating and evanescent orders keep their established roots.
+  CHECK(F::OutgoingPropagationConstant({4.0, 0.0}) == std::complex<double>(2.0, 0.0));
+  const auto evanescent = F::OutgoingPropagationConstant({-4.0, 0.0});
+  CHECK(evanescent.real() == 0.0);
+  CHECK(evanescent.imag() == -2.0);
+  // A passive lossy medium decays in the outgoing direction.
+  const auto lossy = F::OutgoingPropagationConstant({4.0, -1.0});
+  CHECK(lossy.real() > 0.0);
+  CHECK(lossy.imag() < 0.0);
+  CHECK(std::abs(lossy * lossy - std::complex<double>(4.0, -1.0)) < 1.0e-14);
+  // A gain medium keeps the outgoing direction (Re γ > 0) and grows.
+  const auto gain = F::OutgoingPropagationConstant({4.0, 1.0});
+  CHECK(gain.real() > 0.0);
+  CHECK(gain.imag() > 0.0);
+  CHECK(std::abs(gain * gain - std::complex<double>(4.0, 1.0)) < 1.0e-14);
+  // DtN eigenvalues: TE γ, TM ω²με/γ, and their real parts are the power per amplitude.
+  const double omega = 2.0;
+  const std::complex<double> mu_eps(1.5, -0.2);
+  CHECK(F::DtNEigenvalue(true, lossy, omega, mu_eps) == lossy);
+  const auto tm = F::DtNEigenvalue(false, lossy, omega, mu_eps);
+  CHECK(std::abs(tm - omega * omega * mu_eps / lossy) < 1.0e-14);
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-dependent medium",
+                 "[floquetport][frequencydependent][Serial][Parallel]")
+{
+  // A plane wave at normal incidence between two Floquet ports at z = 0 (excited) and
+  // z = L in a homogeneous medium, periodic in x and y. The ports use the complete ε(iω) of
+  // the medium in γ₀ = ω √(μ ε), in their Robin term, and in the excitation, so the
+  // transmission is S21 = e^{−iγ₀ L}, attenuated for the lossy Drude medium, and the driven
+  // port is matched, S11 = 0. A constant lossless medium keeps |S21| = 1.
+  using json = nlohmann::json;
+  const bool lossy = GENERATE(false, true);
+  CAPTURE(lossy);
+  MPI_Comm comm = Mpi::World();
+  IoData iodata{Units(1.0e-3, 1.0e-3)};
+  iodata.model.L0 = 1.0e-3;
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::DRIVEN;
+  iodata.solver.order = 3;
+  iodata.solver.driven.sample_f = {100.0};  // GHz
+  // Drude with fp = 100 GHz and fγ = 50 GHz: ε = 2 + 1 / (i (i + 1/2)) = 1.2 − 0.4i.
+  json permittivity = 2.0;
+  if (lossy)
+  {
+    permittivity = {{"HighFrequency", 2.0},
+                    {"Terms", json::array({{{"Type", "Drude"},
+                                            {"PlasmaFrequency", 100.0},
+                                            {"CollisionFrequency", 50.0}}})}};
+  }
+  iodata.domains = config::DomainData(json{
+      {"Materials",
+       json::array({{{"Attributes", json::array({1})}, {"Permittivity", permittivity}}})}});
+  // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = L), 5 and 3 (x = 0, 1), 2 and
+  // 4 (y = 0, 1).
+  iodata.boundaries = config::BoundaryData(json{
+      {"Periodic",
+       {{"BoundaryPairs", json::array({{{"DonorAttributes", json::array({5})},
+                                        {"ReceiverAttributes", json::array({3})}},
+                                       {{"DonorAttributes", json::array({2})},
+                                        {"ReceiverAttributes", json::array({4})}}})}}},
+      {"FloquetPort",
+       json::array({{{"Index", 1}, {"Attributes", json::array({1})}, {"Excitation", 1}},
+                    {{"Index", 2}, {"Attributes", json::array({6})}}})}});
+  iodata.CheckConfiguration();
+  constexpr double L = 2.0;
+  // The periodic mesh is made by the mesh loading path from the boundary pairs.
+  iodata.model.mesh = (temp_dir / "floquet_box.mesh").string();
+  if (Mpi::Root(comm))
+  {
+    auto box = mfem::Mesh::MakeCartesian3D(3, 3, 8, mfem::Element::HEXAHEDRON, 1.0, 1.0, L);
+    std::ofstream ofs(iodata.model.mesh);
+    box.Print(ofs);
+  }
+  Mpi::Barrier(comm);
+  auto smesh = mesh::Load(iodata, comm);
+  iodata.NondimensionalizeInputs(smesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), comm)));
+  SpaceOperator space_op(iodata, mesh);
+
+  const double omega = iodata.solver.driven.sample_f.front();
+  const std::complex<double> eps = lossy ? std::complex<double>(1.2, -0.4) : 2.0;
+  const std::complex<double> gamma = omega * std::sqrt(eps);
+  space_op.GetFloquetPortOp().Initialize(omega);
+  const auto gamma0 = space_op.GetFloquetPortOp().GetPort(1).GetGamma0();
+  CHECK_THAT(gamma0.real(), WithinRel(gamma.real(), 1.0e-12));
+  CHECK_THAT(gamma0.imag(), WithinAbs(gamma.imag(), 1.0e-12));
+
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+  auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                    C.get(), M.get(), A2.get());
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                             -omega * omega + 0.0i, omega);
+  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ksp.SetOperators(*A, *P);
+  ComplexVector RHS, E;
+  RHS.UseDevice(true);
+  E.UseDevice(true);
+  REQUIRE(space_op.GetExcitationVector(1, omega, RHS));
+  E.SetSize(RHS.Size());
+  E = 0.0;
+  ksp.Mult(RHS, E);
+  GridFunction E_gf(space_op.GetNDSpace(), true);
+  E_gf.Real().SetFromTrueDofs(E.Real());
+  E_gf.Imag().SetFromTrueDofs(E.Imag());
+
+  const auto key = std::make_tuple(0, 0, true);
+  const auto S11 =
+      space_op.GetFloquetPortOp().GetPort(1).GetAllSParameters(E_gf, true).at(key);
+  const auto S21 = space_op.GetFloquetPortOp().GetPort(2).GetAllSParameters(E_gf).at(key);
+  const std::complex<double> S21_expected = std::exp(-1i * gamma * L);
+  CAPTURE(S11, S21, S21_expected);
+  CHECK(std::abs(S11) < 1.0e-3);
+  CHECK(std::abs(S21 - S21_expected) < 1.0e-3);
+  if (lossy)
+  {
+    CHECK(std::abs(S21) < 0.5);
+  }
+}
+
 }  // namespace palace

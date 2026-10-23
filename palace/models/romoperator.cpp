@@ -1413,14 +1413,14 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       }
       // Factored Floquet port Robin BC: A2_floquet,p(ω) = i·γ₀,p(ω)·M_floquet_p.
       // M_floquet_p_r carries the µ⁻¹ boundary mass on the imaginary slot (the i), so
-      // the scalar multiplier is γ₀ (real, refreshed by the Initialize(omega) at the top
-      // of SolvePROM).
+      // the scalar multiplier is γ₀ (refreshed by the Initialize(omega) at the top of
+      // SolvePROM; complex in a lossy frequency-dependent port medium).
       for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
       {
         if (Mp_r.rows() == static_cast<long>(V.size()))
         {
-          const double gamma0 = space_op.GetFloquetPortOp().GetPort(port_idx).GetGamma0();
-          Ar += std::complex<double>(gamma0, 0.0) * Mp_r;
+          const auto gamma0 = space_op.GetFloquetPortOp().GetPort(port_idx).GetGamma0();
+          Ar += gamma0 * Mp_r;
         }
       }
       // Factored frequency-dependent permittivity, per material: A2_vol,m(ω) = g_m(iω)·B_m
