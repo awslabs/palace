@@ -917,16 +917,24 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   SetExcitationIndex(excitation_idx);
 
   // Compute HDM solution at the given frequency. The sparse A2 is stored as a member for
-  // PROM projection. The full frequency-dependent operator (A2 + low-rank Floquet DtN) is
-  // built locally for the HDM system matrix.
+  // PROM projection, as are K, C and M. The HDM system operator applies the
+  // preconditioner's finest level when it is the sparse part of the system (see
+  // SpaceOperator::GetSystemOperator), or else the fixed operators and the full
+  // frequency-dependent operator (A2 + wave-port modal correction + Floquet DtN). A refers
+  // to P, and to A2_full when assembled, so both must outlive it.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
-  auto A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2_full.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
+  std::unique_ptr<ComplexOperator> A2_full;
+  auto A = space_op.GetSystemOperator(omega, *P);
+  if (!A)
+  {
+    A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                 std::complex<double>(-omega * omega, 0.0), K.get(),
+                                 C.get(), M.get(), A2_full.get());
+  }
   ksp->SetOperators(*A, *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
