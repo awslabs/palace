@@ -67,9 +67,9 @@ public:
 
 // Integrator for a(u, v) = (Q u, v) for scalar or vector spaces with VALUE map type, such
 // as H1 and (H1)ᵈ (u = û), or with INTEGRAL map type, such as the L2 space of the 2D curl
-// (u = û / |J|). A VALUE test space with an INTEGRAL trial space uses the reference trial
-// value û, without the 1 / |J| factor: the 2D curl flux error estimator projects the
-// reference curl this way.
+// (u = û / |J|). A scalar INTEGRAL trial space with a VALUE test space uses the physical
+// trial value û / |J|, as in the projection of the 2D curl onto H1 for the curl flux error
+// estimator. A VALUE trial space with an INTEGRAL test space is not supported.
 class MassIntegrator : public BilinearFormIntegrator
 {
 protected:

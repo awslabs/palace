@@ -12,6 +12,7 @@ PalacePragmaDiagnosticDisableUnused
 
 #include "fem/qfunctions/h1_qf.h"
 #include "fem/qfunctions/l2_qf.h"
+#include "fem/qfunctions/l2h1_qf.h"
 
 PalacePragmaDiagnosticPop
 
@@ -38,7 +39,8 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
 
   // The H1 QFunctions weight the reference values by |J| (u = û). The L2 QFunctions weight
   // them by 1 / |J| (u = û / |J| for both trial and test functions), which needs the
-  // quadrature weights as an input.
+  // quadrature weights as an input. An INTEGRAL trial space with a VALUE test space weights
+  // them by one (u = û / |J| against v = v̂ in the measure |J|), also from the weights.
   const bool value_test = (test_map_type == mfem::FiniteElement::VALUE);
   MFEM_VERIFY((trial_map_type == mfem::FiniteElement::VALUE ||
                trial_map_type == mfem::FiniteElement::INTEGRAL) &&
@@ -49,10 +51,21 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
               "MassIntegrator does not support a VALUE trial space with an INTEGRAL test "
               "space!");
   const bool integral_map = !value_test;
+  const bool mixed_map = value_test && trial_map_type == mfem::FiniteElement::INTEGRAL;
+  MFEM_VERIFY(
+      !mixed_map || trial_num_comp == 1,
+      "MassIntegrator supports an INTEGRAL trial space with a VALUE test space only "
+      "for scalar spaces!");
   switch (trial_num_comp)
   {
     case 1:
-      if (integral_map)
+      if (mixed_map)
+      {
+        info.apply_qf = assemble_q_data ? f_build_l2h1_1 : f_apply_l2h1_1;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_l2h1_1_loc : f_apply_l2h1_1_loc);
+      }
+      else if (integral_map)
       {
         info.apply_qf = assemble_q_data ? f_build_l2_1 : f_apply_l2_1;
         info.apply_qf_path = PalaceQFunctionRelativePath(
@@ -99,7 +112,7 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   }
   info.trial_ops = EvalMode::Interp;
   info.test_ops = EvalMode::Interp;
-  if (integral_map)
+  if (integral_map || mixed_map)
   {
     info.trial_ops |= EvalMode::Weight;
   }

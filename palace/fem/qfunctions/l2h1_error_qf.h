@@ -4,24 +4,30 @@
 #ifndef PALACE_LIBCEED_L2H1_ERROR_QF_H
 #define PALACE_LIBCEED_L2H1_ERROR_QF_H
 
+#include "22/utils_22_qf.h"
 #include "coeff/coeff_1_qf.h"
 
 // Scalar error estimator qfunction for 2D curl flux estimation.
 // Computes ||c1 * u1 - c2 * u2||^2 where u1 and u2 are scalar fields
 // (L2 and H1 respectively) and c1, c2 are scalar coefficients.
-// Used for the B-field error in 2D where B = curl E is a scalar.
+// Used for the B-field error in 2D where B = curl E is a scalar. The L2 space has the
+// INTEGRAL map type: its reference value is B̂ = |J| B, so the physical B = B̂ / |J|. The
+// geometry data stores J⁻ᵀ (named adjJt), whose determinant is 1 / |J|.
 CEED_QFUNCTION(f_apply_l2h1_error)(void *__restrict__ ctx, CeedInt Q,
                                    const CeedScalar *const *in, CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u1 = in[1], *u2 = in[2];
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u1 = in[1],
+                   *u2 = in[2];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff1, coeff2;
+    CeedScalar coeff1, coeff2, adjJt_loc[4];
     CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i], &coeff1);
     CoeffUnpack1(CoeffPairSecond<1>((const CeedIntScalar *)ctx), (CeedInt)attr[i], &coeff2);
-    const CeedScalar diff = coeff1 * u1[i] - coeff2 * u2[i];
+    MatUnpack22(adjJt + i, Q, adjJt_loc);
+    const CeedScalar inv_detJ = adjJt_loc[0] * adjJt_loc[3] - adjJt_loc[1] * adjJt_loc[2];
+    const CeedScalar diff = coeff1 * u1[i] * inv_detJ - coeff2 * u2[i];
     v[i] = wdetJ[i] * diff * diff;
   }
   return 0;

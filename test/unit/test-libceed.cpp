@@ -819,6 +819,39 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       }
       TestCeedOperator(a_test, a_ref);
     }
+    SECTION("Mixed L2-H1 Mass Integrator")
+    {
+      // An INTEGRAL trial space (u = û / |J|) against a VALUE test space, as in the
+      // projection of the 2D curl onto H1 for the curl flux error estimator: the physical
+      // trial value, with partially assembled and cached quadrature data.
+      const bool q_data = GENERATE(false, true);
+      CAPTURE(q_data);
+      mfem::H1_FECollection h1_fec(order, dim);
+      FiniteElementSpace h1_fespace(mesh, &h1_fec);
+      BilinearForm a_test(l2_fespace, h1_fespace);
+      mfem::MixedBilinearForm a_ref(&l2_fespace.Get(), &h1_fespace.Get());
+      if (!bdr_integ)  // No boundary elements for L2 spaces
+      {
+        switch (coeff_type)
+        {
+          case CoeffType::Const:
+            AddIntegrators<MassIntegrator, mfem::MixedScalarMassIntegrator>(bdr_integ,
+                                                                            a_test, a_ref);
+            break;
+          case CoeffType::Scalar:
+            AddIntegrators<MassIntegrator, mfem::MixedScalarMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            break;
+        }
+      }
+      if (q_data)
+      {
+        a_test.AssembleQuadratureData();
+      }
+      TestCeedOperator(a_test, a_ref);
+    }
     SECTION("Vector L2 Mass Integrator")
     {
       BilinearForm a_test(l2d_fespace);
