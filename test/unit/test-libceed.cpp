@@ -413,10 +413,10 @@ void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOpera
 // integrator applied without cached quadrature data, which shares the coefficient and
 // geometry code paths but none of the layout logic.
 template <typename T>
-void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
-                            T AddIntegrators)
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &trial_fespace,
+                            const FiniteElementSpace &test_fespace, T AddIntegrators)
 {
-  BilinearForm a_test(fespace), a_ref(fespace);
+  BilinearForm a_test(trial_fespace, test_fespace), a_ref(trial_fespace, test_fespace);
   AddIntegrators(a_test);
   AddIntegrators(a_ref);
   a_test.AssembleQuadratureData();
@@ -434,6 +434,13 @@ void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
   REQUIRE(norm_ref > 0.0);
 
   TestCeedOperatorMult(*op_test, *op_ref, false);
+}
+
+template <typename T>
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
+                            T AddIntegrators)
+{
+  TestCeedQuadratureData(comm, fespace, fespace, AddIntegrators);
 }
 
 template <typename T1, typename T2, typename T3>
@@ -1158,6 +1165,71 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
   }
 
+  // Tests on L2 spaces of order p - 1, with VALUE (u = ̂u) and INTEGRAL (u = 1 / det(J) ̂u)
+  // map types, at MFEM's integration order for them. Boundary integrators do not apply.
+  SECTION("L2 Integrators")
+  {
+    mfem::H1_FECollection h1_fec(order, dim);
+    FiniteElementSpace h1_fespace(mesh, &h1_fec);
+    const bool add = !bdr_integ && coeff_type != CoeffType::Matrix;
+    SECTION("L2 Mass Integrator")
+    {
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = -2;
+      mesh.ResetCeedObjects();
+      for (const int map_type : {mfem::FiniteElement::VALUE, mfem::FiniteElement::INTEGRAL})
+      {
+        INFO("Map type: " << map_type);
+        mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                                     map_type);
+        FiniteElementSpace l2_fespace(mesh, &l2_fec);
+        BilinearForm a_test(l2_fespace);
+        mfem::BilinearForm a_ref(&l2_fespace.Get());
+        if (add && coeff_type == CoeffType::Const)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+        }
+        else if (add)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                               Q_ref);
+        }
+        TestCeedOperator(a_test, a_ref);
+      }
+    }
+    SECTION("Mixed L2-H1 Mass Integrator")
+    {
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -1;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = -1;
+      mesh.ResetCeedObjects();
+      for (const int map_type : {mfem::FiniteElement::VALUE, mfem::FiniteElement::INTEGRAL})
+      {
+        INFO("Map type: " << map_type);
+        mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                                     map_type);
+        FiniteElementSpace l2_fespace(mesh, &l2_fec);
+        for (const bool l2_trial : {true, false})
+        {
+          INFO("L2 trial: " << l2_trial);
+          auto &trial_fespace = l2_trial ? l2_fespace : h1_fespace;
+          auto &test_fespace = l2_trial ? h1_fespace : l2_fespace;
+          BilinearForm a_test(trial_fespace, test_fespace);
+          mfem::MixedBilinearForm a_ref(&trial_fespace.Get(), &test_fespace.Get());
+          if (add && coeff_type == CoeffType::Const)
+          {
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+          }
+          else if (add)
+          {
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref,
+                                                                 Q, Q_ref);
+          }
+          TestCeedOperator(a_test, a_ref);
+        }
+      }
+    }
+  }
+
   // Tests on mixed H1-(H1)ᵈ spaces.
   SECTION("Mixed H1-Vector H1 Integrators")
   {
@@ -1677,7 +1749,10 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
 
   mfem::ND_FECollection nd_fec(order, dim);
   mfem::H1_FECollection h1_fec(order, dim);
-  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec),
+      l2_fespace(mesh, &l2_fec);
 
   SECTION("Domain Curl-Curl + Mass")
   {
@@ -1715,6 +1790,18 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
   {
     TestCeedQuadratureData(comm, h1_fespace, [&](BilinearForm &a)
                            { a.AddDomainIntegrator<DiffusionIntegrator>(MQ); });
+  }
+  // L2 spaces with INTEGRAL map type: the 2D curl space and the flux projection of its
+  // error estimator.
+  SECTION("L2 Mass")
+  {
+    TestCeedQuadratureData(comm, l2_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<MassIntegrator>(Q); });
+  }
+  SECTION("Mixed L2-H1 Mass")
+  {
+    TestCeedQuadratureData(comm, l2_fespace, h1_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<MassIntegrator>(Q); });
   }
 }
 
