@@ -206,6 +206,7 @@ void ReportMmsData(const std::string &dataset, const std::string &solution,
 
 constexpr double kRateTol = 0.3;
 constexpr double kCurvedRateTol = 0.35;
+constexpr double kBackendAgreementTol = 1.0e-10;
 
 }  // namespace
 
@@ -342,6 +343,33 @@ void CheckCurvedConvergence(const MmsCase &curved)
     CAPTURE(electric_rate);
     CHECK_THAT(electric_rate, WithinAbs(static_cast<double>(order), kCurvedRateTol));
   }
+}
+
+void CheckCurvedBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
+{
+  // Compare a backend's errors against a reference's on the same problem. Unlike a
+  // pointwise comparison, this exercises the callbacks at quadrature points on the curved
+  // map and in the Dirichlet projection. The curved map keeps the errors well above
+  // round-off, so their relative difference is meaningful.
+  REQUIRE(candidate.epsilon_r == reference.epsilon_r);
+  constexpr int order = 2, refinement = 1;
+  constexpr double linear_tol = 1.0e-13;
+  const auto candidate_error =
+      SolveMmsError(candidate, LoadCurvedCylinderMesh(refinement), order, linear_tol);
+  const auto reference_error =
+      SolveMmsError(reference, LoadCurvedCylinderMesh(refinement), order, linear_tol);
+  REQUIRE(candidate_error.primary_dofs == reference_error.primary_dofs);
+
+  const double potential_disagreement =
+      std::abs(candidate_error.potential - reference_error.potential) /
+      reference_error.potential;
+  const double electric_disagreement =
+      std::abs(candidate_error.electric - reference_error.electric) /
+      reference_error.electric;
+  CAPTURE(candidate_error.potential, reference_error.potential, potential_disagreement,
+          candidate_error.electric, reference_error.electric, electric_disagreement);
+  CHECK(potential_disagreement < kBackendAgreementTol);
+  CHECK(electric_disagreement < kBackendAgreementTol);
 }
 
 }  // namespace palace::testing::mms::electrostatic
