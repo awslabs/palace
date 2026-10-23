@@ -3431,7 +3431,7 @@ TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
   // complex permittivity ε(iω) (Re{ε}, tan δ = −Im{ε}/Re{ε}) and of the constant material
   // with the stored-energy permittivity W(ω), respectively: from the fused bundle, which
   // keeps the charge and energy tables separate, and from the independent trace-backed
-  // evaluators. Frequencies change and return, with retained traces.
+  // evaluators. Frequencies change and return, with retained traces and packed results.
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
   constexpr int order = 1;
@@ -3589,10 +3589,11 @@ TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
     auto energy_op = ConstantOp(W, 0.0);
     auto charge = Make(*charge_op);
     auto energy = Make(*energy_op);
+    // No invalidation: the fields keep their addresses and values, so the traces and the
+    // bundle's packed results stay cached, and SetFrequency alone must refresh the
+    // material-dependent results.
     for (auto *out : {&fd, &charge, &energy})
     {
-      out->traces->Invalidate();
-      out->bundle->Invalidate();
       for (auto *eval : {out->q_bundle.get(), out->ue_bundle.get(), out->q.get(),
                          out->q_imag.get(), out->ue.get()})
       {
@@ -3617,6 +3618,11 @@ TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
     CHECK(Compare(actual, expected) > 0.0);
     fd.ue->EvalBuffer(E, actual);
     Compare(actual, expected);
+    // The same frequency keeps the cached packed results of the bundle.
+    const auto applies = BoundaryDerivedFieldBundle::QFunctionApplyCount();
+    fd.ue_bundle->SetFrequency(omega);
+    fd.ue_bundle->EvalBuffer(E, actual);
+    CHECK(BoundaryDerivedFieldBundle::QFunctionApplyCount() == applies);
   }
 }
 
