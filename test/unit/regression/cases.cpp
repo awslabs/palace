@@ -1225,7 +1225,7 @@ TEST_CASE("substructuring_driven", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("substructuring_driven", "driven.json", "lumped", opts);
@@ -1240,7 +1240,7 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
   using palace::DrivenSubstructureModel;
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline.json";
@@ -1340,7 +1340,7 @@ TEST_CASE("substructuring_driven_online", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline.json";
@@ -1354,7 +1354,7 @@ TEST_CASE("substructuring_driven_online_flux", "[Serial][Parallel][GPU][Regressi
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline.json";
@@ -1371,7 +1371,7 @@ TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][GPU][Regression]
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline_adaptive.json";
@@ -1387,7 +1387,7 @@ TEST_CASE("substructuring_driven_adaptive_online", "[Serial][Parallel][GPU][Regr
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline_adaptive.json";
@@ -1403,7 +1403,7 @@ TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave.json", "wave",
@@ -1414,7 +1414,7 @@ TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][GPU][Regressi
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_wave_offline.json";
@@ -1431,7 +1431,7 @@ TEST_CASE("substructuring_driven_wave_inactive_online",
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_wave_inactive_offline.json";
@@ -1446,7 +1446,7 @@ TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline.json";
@@ -1461,7 +1461,7 @@ TEST_CASE("substructuring_driven_absorbing_region", "[Serial][Parallel][GPU][Reg
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline_absorbing.json";
@@ -1474,7 +1474,7 @@ TEST_CASE("substructuring_driven_reduced_region", "[Serial][Parallel][GPU][Regre
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline_adaptive.json";
@@ -1487,7 +1487,7 @@ TEST_CASE("substructuring_driven_wave_region", "[Serial][Parallel][GPU][Regressi
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_wave_offline.json";
@@ -1504,7 +1504,7 @@ TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][GPU][Regressio
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline.json";
