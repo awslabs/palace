@@ -146,6 +146,8 @@ void MaterialOperator::SetUpMaterialProperties(
   frequency_dependent_permittivity_support.assign(materials.size(), false);
   frequency_dependent_permittivity_mu_max.assign(materials.size(), 0.0);
   frequency_dependent_permittivity_eps_inf.assign(materials.size(), 0.0);
+  frequency_dependent_permittivity_sigma.assign(materials.size(), 0.0);
+  frequency_dependent_permittivity_sigma_isotropic.assign(materials.size(), true);
   std::vector<double> permittivity_pole_conductivity(materials.size(), 0.0);
   has_frequency_dependent_permittivity = false;
   for (std::size_t i = 0; i < materials.size(); i++)
@@ -172,6 +174,11 @@ void MaterialOperator::SetUpMaterialProperties(
                 "Frequency-dependent material Permittivity is incompatible with LossTan!");
     frequency_dependent_permittivity_attributes[i] = data.attributes;
     frequency_dependent_permittivity_eps_inf[i] = data.epsilon_r.s[0];
+    // The user conductivity (without the zero poles folded into mat_sigma below), for the
+    // wave permittivity of the boundaries.
+    frequency_dependent_permittivity_sigma_isotropic[i] =
+        internal::mat::IsIsotropic(data.sigma);
+    frequency_dependent_permittivity_sigma[i] = data.sigma.s[0];
     for (auto mu : data.mu_r.s)
     {
       frequency_dependent_permittivity_mu_max[i] =
@@ -699,6 +706,21 @@ bool MaterialOperator::IsVacuum(int attr) const
   constexpr double threshold = 1.0 - 1.0e-6;
   return GetLightSpeedMax(attr) >= threshold &&
          GetLocalFrequencyDependentPermittivityModelMaterial(AttrToMat(attr)) < 0;
+}
+
+std::complex<double>
+MaterialOperator::EvaluateFrequencyDependentWavePermittivity(std::size_t material_idx,
+                                                             std::complex<double> s) const
+{
+  // ε(s) already contains the zero poles folded into the conductivity; only the user
+  // conductivity, a free current, is added here.
+  MFEM_VERIFY(frequency_dependent_permittivity_sigma_isotropic.at(material_idx),
+              "The wave impedance of frequency-dependent material "
+                  << material_idx
+                  << " at an absorbing boundary or Floquet port requires a scalar "
+                     "Conductivity!");
+  return EvaluateFrequencyDependentPermittivity(material_idx, s) +
+         frequency_dependent_permittivity_sigma[material_idx] / s;
 }
 
 double

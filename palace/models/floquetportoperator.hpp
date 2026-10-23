@@ -58,7 +58,7 @@ struct FloquetOrder
   FloquetModeUse use;  // Which subsystems use this order
   mfem::Vector B_mn;   // Transverse wavevector B_mn = m*b1 + n*b2
   // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent), complex in a lossy
-  // port medium. The order propagates (above cutoff) when Re{gamma_mn^2} > 0.
+  // port medium. A mode carries power when FloquetPortData::ModalPower > 0.
   std::complex<double> gamma_sq;
   std::array<mfem::Vector, 2> e_pol;    // Polarization unit vector; 0 = TE, 1 = TM.
   std::array<ComplexVector, 2> v;       // Fourier projections; 0 = TE, 1 = TM.
@@ -178,7 +178,8 @@ public:
   std::map<std::tuple<int, int, bool>, std::complex<double>>
   GetAllSParameters(const GridFunction &E, bool subtract_incident = false) const;
 
-  // Get the number of propagating orders at current frequency.
+  // Get the number of propagating modes (orders and polarizations) which carry power at the
+  // current frequency.
   int NumPropagatingOrders() const;
 
   // Add excitation vector contribution directly to the RHS.
@@ -202,7 +203,7 @@ private:
 
   // Material properties at the port.
   // mu_r * eps_r (for propagation constant), at omega0: complex for a frequency-dependent
-  // port medium, μ_r ε(iω) with the complete permittivity of its model.
+  // port medium, μ_r ε_w(iω) with the wave permittivity of its model and conductivity.
   std::complex<double> mu_eps_port;
   double mu_eps_port_inf;  // mu_r * eps_r with the high-frequency permittivity
   int port_material = -1;  // Frequency-dependent material (model) of the port medium
@@ -247,6 +248,11 @@ private:
     double c_inc;  // Unit-power scale factor: 1/√(λ_eff |Γ| / (2ωμ))
   };
   IncidentNormalization ComputeIncidentNormalization(double omega) const;
+
+  // The real power per unit amplitude of a mode at the current frequency, Re{λ} (up to the
+  // factor |Γ| / (2ωμ)): positive for a mode which carries power, also in a lossy medium
+  // where Re{γ²} ≤ 0, and zero for a lossless evanescent mode and at cutoff.
+  double ModalPower(const FloquetOrder &order, bool is_te) const;
 
   // Compute the full DtN coefficient g_full (NOT the correction g_full - g_uniform).
   // Used internally by ComputeDtNCorrectionCoeff.

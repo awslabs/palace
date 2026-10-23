@@ -76,6 +76,9 @@ private:
   // frequency-dependent material, for GetFrequencyDependentMaxMuEpsilon.
   std::vector<double> frequency_dependent_permittivity_mu_max,
       frequency_dependent_permittivity_eps_inf;
+  // The user conductivity of each frequency-dependent material, if it is isotropic.
+  std::vector<double> frequency_dependent_permittivity_sigma;
+  std::vector<bool> frequency_dependent_permittivity_sigma_isotropic;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
@@ -245,6 +248,14 @@ public:
   // s ≠ 0, from its configured terms, including exact zero poles. Errors at a singularity.
   std::complex<double> EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
                                                               std::complex<double> s) const;
+  // The wave permittivity ε(s) + σ/s of a frequency-dependent material, with its user
+  // Conductivity σ (a free current, not part of D or the stored energy), for the
+  // propagation constant and impedance of an absorbing boundary or Floquet port. Unlike the
+  // conductivity matrix, σ excludes the zero poles, which ε(s) already contains. Errors for
+  // an anisotropic σ.
+  std::complex<double>
+  EvaluateFrequencyDependentWavePermittivity(std::size_t material_idx,
+                                             std::complex<double> s) const;
   // ε∞ + StoredEnergySusceptibility at real ω > 0: the constant permittivity with the same
   // time-averaged stored electric energy as the model, possibly ≤ 0 for a general
   // PoleResidue model. Errors at a singularity.
