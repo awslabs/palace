@@ -612,6 +612,157 @@ TEST_CASE("Electric energy density of frequency-dependent materials",
 namespace
 {
 
+// The gradient flux estimator in a homogeneous frequency-dependent medium (two materials
+// with the same model, one on a single element) against the same estimator in vacuum:
+// the projection commutes with the constant ε(iω), so D_h − D = ε (E − P E) and
+// η² = |ε|² / W η²_vacuum on every element, with the cross-coupled complex ε (not Re ε²)
+// and the positive stored-energy weight W.
+void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
+{
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto mesh = MakeBoxMesh(dim, 2, type);
+  config::PeriodicBoundaryData periodic;
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  constexpr double tol = 1.0e-14;
+  constexpr int max_it = 1000;
+
+  ComplexVector E(nd_fespace.GetTrueVSize());
+  E.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), E);
+
+  config::MaterialData vacuum;
+  vacuum.attributes = {1, 2};
+  MaterialOperator vacuum_op({vacuum}, periodic, ProblemType::DRIVEN, mesh);
+  GradFluxErrorEstimator<ComplexVector> vacuum_est(vacuum_op, nd_fespace, rt_fespaces, tol,
+                                                   max_it, 0, false);
+  ErrorIndicator ref;
+  vacuum_est.AddErrorIndicator(E, 1.0, ref);
+
+  auto Check = [&](const ErrorIndicator &ind, double ratio)
+  {
+    const auto *h = ind.Local().HostRead();
+    const auto *h_ref = ref.Local().HostRead();
+    REQUIRE(ind.Local().Size() == ref.Local().Size());
+    for (int i = 0; i < ind.Local().Size(); i++)
+    {
+      CHECK_THAT(h[i], WithinRel(std::sqrt(ratio) * h_ref[i], 1.0e-8));
+    }
+  };
+  for (const auto &model : Models())
+  {
+    CAPTURE(model.name);
+    MaterialOperator mat_op(
+        {MakeMaterial({1}, model.terms), MakeMaterial({2}, model.terms)}, periodic,
+        ProblemType::DRIVEN, mesh);
+    GradFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespace, rt_fespaces, tol,
+                                                    max_it, 0, false);
+    // The frequency is required, and each change refreshes the retained contexts and
+    // projection weights.
+    {
+      ErrorIndicator ind;
+      CHECK_THROWS(estimator.AddErrorIndicator(E, 1.0, ind));
+    }
+    for (double omega : {0.6, 2.5, 0.6})
+    {
+      CAPTURE(omega);
+      const double eps_abs2 = std::norm(eps_inf + model.chi(omega));
+      const double W = eps_inf + model.w(omega);
+      ErrorIndicator ind;
+      estimator.AddErrorIndicator(E, 1.0, omega, ind);
+      Check(ind, eps_abs2 / W);
+    }
+  }
+
+  // A general PoleResidue model with W(ω) ≤ 0 keeps a positive indicator with ε∞ in place
+  // of W (and warns). A relaxation with a negative residue has W = ε∞ + a b / (ω² + a²).
+  MaterialOperator general_op(
+      {MakeMaterial({1, 2}, {config::PermittivityPoleData{-1.0, -10.0}})}, periodic,
+      ProblemType::DRIVEN, mesh);
+  GradFluxErrorEstimator<ComplexVector> general(general_op, nd_fespace, rt_fespaces, tol,
+                                                max_it, 0, false);
+  const double omega = 0.5;
+  REQUIRE(general_op.GetFrequencyDependentStoredEnergyPermittivity(0, omega) < 0.0);
+  ErrorIndicator ind;
+  general.AddErrorIndicator(E, 1.0, omega, ind);
+  const std::complex<double> eps =
+      eps_inf - 10.0 / (std::complex<double>(0.0, omega) + 1.0);
+  Check(ind, std::norm(eps) / eps_inf);
+}
+
+}  // namespace
+
+TEST_CASE("Gradient flux estimator of frequency-dependent materials",
+          "[frequencydependent][errorestimator][Serial][Parallel][GPU]")
+{
+  SECTION("3D")
+  {
+    CheckHomogeneousEstimator(3, mfem::Element::TETRAHEDRON);
+  }
+  SECTION("2D")
+  {
+    CheckHomogeneousEstimator(2, mfem::Element::QUADRILATERAL);
+  }
+}
+
+TEST_CASE("Flux error estimator with a nonpositive energy normalization",
+          "[frequencydependent][errorestimator][Serial][Parallel][GPU]")
+{
+  // A general model can make the total stored energy nonpositive. The indicator then uses
+  // the energy norm of the recovered fluxes, 1/2 Σ (D*ᴴ W⁻¹ D* + H*ᴴ μ H*), not 1, NaN, or
+  // a rejection: it equals the indicator normalized by that energy passed explicitly.
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto mesh = MakeBoxMesh(3, 2, mfem::Element::TETRAHEDRON);
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op(
+      {MakeMaterial({1}, Models()[0].terms), MakeMaterial({2}, Models()[2].terms)},
+      periodic, ProblemType::DRIVEN, mesh);
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespaces, rt_fespaces,
+                                                           1.0e-14, 1000, 0, false);
+  ComplexVector E(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
+      B(rt_fespaces.GetFinestFESpace().GetTrueVSize());
+  E.UseDevice(true);
+  B.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), E);
+  linalg::SetRandom(Mpi::World(), B);
+  const double omega = 1.7;
+  ErrorIndicator fallback, unit;
+  estimator.AddErrorIndicator(E, B, -1.0, omega, fallback);
+  estimator.AddErrorIndicator(E, B, 0.5, omega, unit);  // Scale 1: η² unnormalized
+  const auto *h = fallback.Local().HostRead();
+  const auto *h_unit = unit.Local().HostRead();
+  // η_fallback² = η² · 0.5 / E_r, so Σ η_fallback² / Σ η² = 0.5 / E_r is constant, and
+  // positive and finite.
+  double ratio = -1.0;
+  for (int i = 0; i < fallback.Local().Size(); i++)
+  {
+    REQUIRE(std::isfinite(h[i]));
+    REQUIRE(h[i] > 0.0);
+    const double r = (h[i] * h[i]) / (h_unit[i] * h_unit[i]);
+    if (ratio < 0.0)
+    {
+      ratio = r;
+    }
+    CHECK_THAT(r, WithinRel(ratio, 1.0e-10));
+  }
+}
+
+namespace
+{
+
 // The 2D magnetic recovery test setup: the curl space
 // with the INTEGRAL map (B = B̂ / |J|) and its H1 recovery space.
 struct Curl2D
