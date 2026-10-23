@@ -192,8 +192,6 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
     output_n_post = solver.magnetostatic.n_post;
-    output_excitation_saves = std::ranges::any_of(
-        boundaries.fluxloopexcitation, [](const auto &kv) { return kv.second.save_field; });
   }
   else if (solver_t == ProblemType::TRANSIENT)
   {
@@ -2418,8 +2416,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v,
 }
 template <ProblemType solver_t>
 double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
-                                                  const Vector &b, int idx,
-                                                  std::optional<bool> save_fields)
+                                                  const Vector &b, int idx)
   requires(solver_t == ProblemType::MAGNETOSTATIC)
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -2431,15 +2428,13 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a,
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
-  if (save_fields ? (enable_paraview_output && *save_fields)
-                  : ShouldWriteParaviewFields(step))
+  if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     WriteParaviewFields(step, idx);
     Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
   }
-  if (save_fields ? (enable_gridfunction_output && *save_fields)
-                  : ShouldWriteGridFunctionFields(step))
+  if (ShouldWriteGridFunctionFields(step))
   {
     Mpi::Print("\n");
     WriteMFEMGridFunctions(step, idx);

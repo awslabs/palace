@@ -812,27 +812,14 @@ public:
   // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet).
   double pec_lperp = 1.0e-4;
 
+  // Excitation index, as for ports: loops sharing a positive index are driven together
+  // (each at its own flux_amounts) in one magnetostatic solve, 0 holds the loop at zero
+  // fluxoid in every excitation. Defaults to the loop index, so each loop is its own
+  // excitation and the inductance matrix is extracted.
+  int excitation = 0;
+
   FluxLoopData() = default;
   FluxLoopData(const json &fluxloop);
-};
-
-// A simultaneous single-solve excitation that drives several existing FluxLoop holes at
-// once with prescribed absolute fluxoids, superposing their fields. Runs separately from
-// the per-loop inductance-matrix sweep.
-struct FluxLoopExcitationData
-{
-public:
-  // Indices of existing FluxLoop entries driven together in this state.
-  std::vector<int> flux_loops = {};
-
-  // Absolute fluxoid to impose on flux_loops[k] (same length as flux_loops).
-  std::vector<double> flux_amounts = {};
-
-  // Whether to save this excitation's ParaView field (independent of the Save count).
-  bool save_field = true;
-
-  FluxLoopExcitationData() = default;
-  FluxLoopExcitationData(const json &excitation);
 };
 
 struct BoundaryData
@@ -860,7 +847,6 @@ public:
   std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
   std::map<int, FluxLoopData> fluxloop = {};
-  std::map<int, FluxLoopExcitationData> fluxloopexcitation = {};
   BoundaryPostData postpro = {};
 
   BoundaryData() = default;
@@ -1000,12 +986,6 @@ public:
 
   // Boundary condition applied to inactive surface current ports during sweeps.
   InactivePortMode inactive_port_mode = InactivePortMode::DEFAULT;
-
-  // Whether to run the per-loop flux-loop inductance-matrix sweep. When false the flux
-  // loops are not swept individually (no terminal-M.csv from flux loops); only any
-  // configured FluxLoopExcitation states are solved. Current sources are still swept, but
-  // their inductances are then screened by the flux loops.
-  bool flux_loop_matrix_sweep = true;
 
   MagnetostaticSolverData() = default;
   MagnetostaticSolverData(const json &magnetostatic);
