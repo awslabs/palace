@@ -791,6 +791,60 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
   }
 
+  // Tests on L2 spaces with INTEGRAL map type (u = û / |J|), such as the 2D curl space. The
+  // MFEM integrators use the physical shape functions.
+  SECTION("L2 Integrators")
+  {
+    mfem::L2_FECollection l2_fec(order, dim, mfem::BasisType::GaussLegendre,
+                                 mfem::FiniteElement::INTEGRAL);
+    FiniteElementSpace l2_fespace(mesh, &l2_fec), l2d_fespace(mesh, &l2_fec, dim);
+    SECTION("L2 Mass Integrator")
+    {
+      BilinearForm a_test(l2_fespace);
+      mfem::BilinearForm a_ref(&l2_fespace.Get());
+      if (!bdr_integ)  // No boundary elements for L2 spaces
+      {
+        switch (coeff_type)
+        {
+          case CoeffType::Const:
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+            break;
+          case CoeffType::Scalar:
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref,
+                                                                 Q, Q_ref);
+            break;
+          case CoeffType::Matrix:
+            break;
+        }
+      }
+      TestCeedOperator(a_test, a_ref);
+    }
+    SECTION("Vector L2 Mass Integrator")
+    {
+      BilinearForm a_test(l2d_fespace);
+      mfem::BilinearForm a_ref(&l2d_fespace.Get());
+      if (!bdr_integ)
+      {
+        switch (coeff_type)
+        {
+          case CoeffType::Const:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(bdr_integ, a_test,
+                                                                       a_ref);
+            break;
+          case CoeffType::Scalar:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
+        }
+      }
+      TestCeedOperator(a_test, a_ref);
+    }
+  }
+
   // Tests on H(curl) spaces.
   SECTION("H(curl) Integrators")
   {
@@ -1715,6 +1769,15 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
   {
     TestCeedQuadratureData(comm, h1_fespace, [&](BilinearForm &a)
                            { a.AddDomainIntegrator<DiffusionIntegrator>(MQ); });
+  }
+  SECTION("L2 Mass")
+  {
+    // Magnetic energy postprocessing for the 2D curl space.
+    mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                                 mfem::FiniteElement::INTEGRAL);
+    FiniteElementSpace l2_fespace(mesh, &l2_fec);
+    TestCeedQuadratureData(comm, l2_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<MassIntegrator>(Q); });
   }
 }
 

@@ -11,10 +11,12 @@
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
 #include "fem/output_functionals.hpp"
+#include "linalg/operator.hpp"
 
 namespace palace
 {
 
+class FiniteElementSpace;
 class GridFunction;
 class IoData;
 class MaterialOperator;
@@ -57,6 +59,9 @@ protected:
   // libCEED surface functionals for port power, voltage, and S-parameter computation,
   // replacing host boundary LinearForm paths when supported.
   mutable std::unique_ptr<SurfaceFunctional> power_func, v_func;
+
+  // Boundary mass operator of the resistive sheet, for the dissipated port power.
+  mutable std::unique_ptr<Operator> resistor_op;
 
   void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
   SurfaceModeCoefficient GetModeCoefficient(const LumpedElementData &elem,
@@ -126,6 +131,21 @@ public:
   std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
   std::complex<double> GetVoltage(GridFunction &E) const;
+
+  // Add the sheet admittance 1 / R_s of each port element, scaled by coeff, to the boundary
+  // coefficient. This term is zero for a port without resistance. It does not depend on
+  // whether the port is active.
+  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb) const;
+
+  // Time-averaged power dissipated in the resistive sheet of the port,
+  //                           P = 1/2 ∫ |E_t|² / R_s dS,
+  // for the field E on nd_fespace. This is the port contribution to the boundary quadratic
+  // of the damping matrix. For R > 0, the modal voltage gives |V|² / (2R) ≤ P, with
+  // equality only when E_t on each element matches the voltage mode of the port: field
+  // components orthogonal to that mode do not change V, but they dissipate power. The
+  // boundary operator is assembled on the first call.
+  double GetResistorPower(const FiniteElementSpace &nd_fespace,
+                          const GridFunction &E) const;
 };
 
 //
