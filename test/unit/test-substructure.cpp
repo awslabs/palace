@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <memory>
@@ -245,6 +246,65 @@ TEST_CASE("Eliminated rows without a stored diagonal become identity rows",
     CAPTURE(i);
     CHECK(yy[i] == expected[i]);
   }
+}
+
+TEST_CASE("Boundaries and points of the region", "[substructure][Serial][Parallel]")
+{
+  // Unit cube with the region at x < 1/2 and interior boundaries at x = 1/4 (attribute 7)
+  // and x = 1/2 (8), on processes alternating in x: the boundaries at x = 0 (5) and x = 1/4
+  // border the region only, the one at x = 1 (3) the environment only, and y = 0 (2) and
+  // x = 1/2 both.
+  mfem::Mesh cube = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  mfem::Mesh serial(3, cube.GetNV(), cube.GetNE(), cube.GetNBE() + 32);
+  for (int v = 0; v < cube.GetNV(); v++)
+  {
+    serial.AddVertex(cube.GetVertex(v));
+  }
+  mfem::Array<int> vtx;
+  mfem::Vector c;
+  for (int e = 0; e < cube.GetNE(); e++)
+  {
+    cube.GetElementVertices(e, vtx);
+    cube.GetElementCenter(e, c);
+    serial.AddHex(vtx.GetData(), (c(0) < 0.5) ? 1 : 2);
+  }
+  for (int b = 0; b < cube.GetNBE(); b++)
+  {
+    cube.GetBdrElementVertices(b, vtx);
+    serial.AddBdrQuad(vtx.GetData(), cube.GetBdrAttribute(b));
+  }
+  for (int f = 0; f < cube.GetNFaces(); f++)
+  {
+    cube.GetFaceVertices(f, vtx);
+    double lo = 1.0, hi = 0.0;
+    for (int v : vtx)
+    {
+      lo = std::min(lo, cube.GetVertex(v)[0]);
+      hi = std::max(hi, cube.GetVertex(v)[0]);
+    }
+    if (hi - lo < 1.0e-12 &&
+        (std::abs(lo - 0.25) < 1.0e-12 || std::abs(lo - 0.5) < 1.0e-12))
+    {
+      serial.AddBdrQuad(vtx.GetData(), (lo < 0.4) ? 7 : 8);
+    }
+  }
+  serial.FinalizeHexMesh(1, 0, true);
+  std::vector<int> part(serial.GetNE());
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    serial.GetElementCenter(e, c);
+    part[e] = (static_cast<int>(4.0 * c(0)) + 4 * static_cast<int>(4.0 * c(1))) %
+              Mpi::Size(Mpi::World());
+  }
+  mfem::ParMesh mesh(Mpi::World(), serial, part.data());
+  const std::vector<int> region = {1};
+  CHECK(BoundaryAttributesInRegion(mesh, region) == std::vector<int>{5, 7});
+  CHECK(BoundaryAttributesInRegion(mesh, {2}) == std::vector<int>{3});
+  CHECK(BoundaryAttributesInRegion(mesh, {1, 2}) ==
+        std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8});
+  CHECK(PointInRegion(mesh, {0.2, 0.4, 0.6}, region));
+  CHECK_FALSE(PointInRegion(mesh, {0.8, 0.4, 0.6}, region));
+  CHECK_FALSE(PointInRegion(mesh, {2.0, 0.4, 0.6}, region));
 }
 
 }  // namespace palace

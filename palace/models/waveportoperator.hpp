@@ -469,7 +469,11 @@ public:
                           const mfem::Array<int> &nd_dbc_tdof_list);
 
   // Assemble the normalized full n×H mode vector used by both driven excitation and
-  // S-parameter observation for one active port at a real frequency.
+  // S-parameter observation for one port at a real frequency.
+  std::unique_ptr<ComplexVector> GetModeVector(int port_idx, double omega,
+                                               FiniteElementSpace &nd_fespace,
+                                               const mfem::Array<int> &nd_dbc_tdof_list);
+  // The same, for the excitation of an active port.
   std::unique_ptr<ComplexVector>
   GetModeExcitationVector(int port_idx, double omega, FiniteElementSpace &nd_fespace,
                           const mfem::Array<int> &nd_dbc_tdof_list);

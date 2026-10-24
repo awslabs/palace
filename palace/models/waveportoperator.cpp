@@ -2261,10 +2261,19 @@ WavePortOperator::GetModeExcitationVector(int port_idx, double omega,
                                           FiniteElementSpace &nd_fespace,
                                           const mfem::Array<int> &nd_dbc_tdof_list)
 {
-  Initialize(omega);
   auto it = ports.find(port_idx);
   MFEM_VERIFY(it != ports.end(), "Unknown wave port index " << port_idx << "!");
   MFEM_VERIFY(it->second.active, "Cannot assemble mode vector for an inactive wave port!");
+  return GetModeVector(port_idx, omega, nd_fespace, nd_dbc_tdof_list);
+}
+
+std::unique_ptr<ComplexVector>
+WavePortOperator::GetModeVector(int port_idx, double omega, FiniteElementSpace &nd_fespace,
+                                const mfem::Array<int> &nd_dbc_tdof_list)
+{
+  Initialize(omega);
+  auto it = ports.find(port_idx);
+  MFEM_VERIFY(it != ports.end(), "Unknown wave port index " << port_idx << "!");
   auto cr = it->second.GetModeExcitationCoefficientReal(/*include_gradient=*/true);
   auto ci = it->second.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
   return AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, it->second.GetAttrMarker(), *cr,

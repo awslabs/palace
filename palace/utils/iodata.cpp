@@ -732,9 +732,10 @@ void IoData::CheckConfiguration()
   {
     const auto &sub = *solver.substructuring;
     MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
-                    problem.type == ProblemType::MAGNETOSTATIC,
-                "Substructuring is only supported for electrostatic and magnetostatic "
-                "problem types!");
+                    problem.type == ProblemType::MAGNETOSTATIC ||
+                    problem.type == ProblemType::DRIVEN,
+                "Substructuring is only supported for electrostatic, magnetostatic and "
+                "driven problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
@@ -753,6 +754,31 @@ void IoData::CheckConfiguration()
                   "Adaptive mesh refinement with substructuring requires nonconforming "
                   "refinement (\"Nonconformal\": true) without a level constraint "
                   "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
+    }
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      // Floquet ports and periodic boundaries make the system non-symmetric.
+      MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
+                  "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
+      MFEM_VERIFY(model.refinement.max_it == 0,
+                  "Adaptive mesh refinement with driven substructuring refines the full "
+                  "model: run the adaptation without \"Solver.Substructuring\" (with "
+                  "\"SaveAdaptMesh\") and condense the saved mesh offline!");
+      MFEM_VERIFY(boundaries.floquetport.empty() &&
+                      boundaries.periodic.boundary_pairs.empty(),
+                  "Driven substructuring does not support Floquet ports or periodic "
+                  "boundaries!");
+      // From a model (online, or after an adaptive sweep's samples), the field is known in
+      // the region and on Γ only.
+      MFEM_VERIFY(
+          (sub.mode != SubstructuringMode::ONLINE && solver.driven.adaptive_tol <= 0.0) ||
+              (boundaries.postpro.dielectric.empty() &&
+               boundaries.postpro.farfield.attributes.empty()),
+          "Online or adaptive driven substructuring does not compute interface dielectric "
+          "or far-field postprocessing yet!");
+#if !defined(MFEM_USE_MUMPS)
+      MFEM_ABORT("Driven substructuring requires MUMPS!");
+#endif
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {

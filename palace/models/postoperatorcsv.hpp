@@ -233,6 +233,13 @@ std::vector<std::size_t> table_expected_filling(std::size_t m_idx_row, std::size
                                                 std::size_t nr_rows,
                                                 std::size_t nr_col_blocks);
 
+// The same for a sweep that measures every excitation at a row before the next row (driven
+// substructuring): rows before m_idx_row are complete, and excitations before ex_idx_i hold
+// row m_idx_row too.
+std::vector<std::size_t> table_expected_filling_by_row(std::size_t m_idx_row,
+                                                       std::size_t ex_idx_i,
+                                                       std::size_t nr_col_blocks);
+
 }  // namespace _impl
 
 // Helper class to PostOperator to collect csv tables and printers for measurement that will
@@ -246,6 +253,7 @@ protected:
   // Copy savepath from PostOperator for simpler dependencies.
   fs::path post_dir;
   bool reload_table = false;  // Driven simulation with non-default restart.
+  bool row_major = false;     // All excitations measured at a row before the next one.
   // Adaptive driven output is buffered and written at most once per flush interval (and
   // at finalization), so an interrupted sweep still leaves usable tables.
   bool defer_table_writes = false;
@@ -291,6 +299,7 @@ protected:
 
   // Base (all solvers).
   std::optional<TableWithCSVFile> domain_E;
+  bool domain_partial = false;  // no total energies or participation ratios
   void InitializeDomainE(const DomainPostOperator &dom_post_op);
   void PrintDomainE();
 
