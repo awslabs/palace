@@ -99,6 +99,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed driven-sweep restarts with more than one excitation aborting with
+    `Writing data table at incorrect index`, because the frequencies reloaded from the CSV
+    tables (rounded to their printed precision) were compared exactly with the recomputed
+    ones.
+    [PR 1088](https://github.com/awslabs/palace/pull/1088).
   - Fixed the sign of the London penetration depth term for the out-of-plane field component
     in `"BoundaryMode"` simulations and wave ports.
     [PR 1025](https://github.com/awslabs/palace/pull/1025).
