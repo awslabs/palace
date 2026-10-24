@@ -31,6 +31,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added `Boundaries.Superconductor[].TwoSided`, which models a London film as two coupled
+    coincident faces (the exact two-port response of a slab of thickness `d`), capturing
+    screening on both faces when `d` is comparable to `lambda`. An isolated film reduces to
+    `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. Supports nonconformal adaptive
+    mesh refinement, which keeps the two faces matched. SchemaVer 2-4-0.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
 
 #### Interface Changes
 
@@ -61,6 +67,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refinement. Both used the out-of-plane magnetic flux density scaled by the element
     Jacobian determinant, which could put `E_mag` off by orders of magnitude.
     [PR 1069](https://github.com/awslabs/palace/pull/1069).
+  - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
+    cracked face with three vertices on the crack front (at a corner of the crack) merged
+    with its twin and broke parallel mesh construction.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every

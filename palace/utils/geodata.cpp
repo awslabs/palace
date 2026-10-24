@@ -254,6 +254,23 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
         // May require multiple calls due to early exit/retry approach.
       }
     }
+
+    // A nonconforming mesh identifies a face by three of its vertices, so refining a
+    // cracked film quadrilateral at a corner of the film can merge its two faces.
+    if (UseAmr(iodata.model.refinement) && iodata.model.refinement.nonconformal)
+    {
+      for (const auto &data : iodata.boundaries.superconductor)
+      {
+        for (int be = 0; data.two_sided && be < smesh->GetNBE(); be++)
+        {
+          MFEM_VERIFY(std::find(data.attributes.begin(), data.attributes.end(),
+                                smesh->GetBdrAttribute(be)) == data.attributes.end() ||
+                          smesh->GetBdrElementGeometry(be) == mfem::Geometry::TRIANGLE,
+                      "Superconductor boundary \"TwoSided\" with nonconformal adaptive "
+                      "mesh refinement requires triangular film faces!");
+        }
+      }
+    }
   }
   else
   {
@@ -3186,6 +3203,15 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         std::erase_if(cba, attr_in_elem);
       }
     }
+    // Two-sided (two-port) superconductor films must crack so their two coincident faces
+    // get independent DOFs; they are not otherwise crack candidates.
+    for (const auto &sc : iodata.boundaries.superconductor)
+    {
+      if (sc.two_sided)
+      {
+        cba.insert(cba.end(), sc.attributes.begin(), sc.attributes.end());
+      }
+    }
     return cba;
   }();
 
@@ -3783,6 +3809,59 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           }
         }
       }
+    }
+  }
+
+  // MFEM identifies a face by its three smallest vertex numbers, so the two faces of a
+  // cracked quadrilateral with three vertices on the crack front (at a corner of the crack)
+  // would merge. Numbering the crack front vertices last puts each face's own vertex among
+  // its three.
+  if (std::any_of(crack_bdr_elem.begin(), crack_bdr_elem.end(), [&orig_mesh](int be)
+                  { return orig_mesh->GetBdrElement(be)->GetNVertices() == 4; }))
+  {
+    const int nv = new_mesh->GetNV(), sdim = new_mesh->SpaceDimension();
+    std::vector<bool> front(nv, false);
+    for (const auto &[v, vert_components] : crack_vert_duplicates)
+    {
+      front[v] = vert_components.empty();
+    }
+    std::vector<int> perm(nv);
+    int next = 0;
+    for (bool last : {false, true})
+    {
+      for (int v = 0; v < nv; v++)
+      {
+        if (front[v] == last)
+        {
+          perm[v] = next++;
+        }
+      }
+    }
+    std::vector<double> x(static_cast<std::size_t>(nv) * sdim);
+    for (int v = 0; v < nv; v++)
+    {
+      std::copy(new_mesh->GetVertex(v), new_mesh->GetVertex(v) + sdim,
+                x.begin() + v * sdim);
+    }
+    for (int v = 0; v < nv; v++)
+    {
+      std::copy(x.begin() + v * sdim, x.begin() + (v + 1) * sdim,
+                new_mesh->GetVertex(perm[v]));
+    }
+    auto renumber = [&perm](mfem::Element &el)
+    {
+      for (int j = 0; j < el.GetNVertices(); j++)
+      {
+        el.GetVertices()[j] = perm[el.GetVertices()[j]];
+      }
+    };
+    for (int e = 0; e < new_mesh->GetNE(); e++)
+    {
+      renumber(*new_mesh->GetElement(e));
+    }
+    for (int be = 0; be < new_mesh->GetNBE(); be++)
+    {
+      renumber(*new_mesh->GetBdrElement(be));
     }
   }
 

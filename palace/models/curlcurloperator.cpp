@@ -373,11 +373,27 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     }
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    AddTwoPortCoupling(l, *K_l);
     K->AddOperator(std::move(K_l));
   }
 
   print_hdr = false;
   return K;
+}
+
+void CurlCurlOperator::AddTwoPortCoupling(std::size_t l, ParOperator &K_l)
+{
+  if (!sc_sheet_op.HasTwoPort())
+  {
+    return;
+  }
+  two_port_coupling_.resize(GetNDSpaces().GetNumLevels());
+  if (!two_port_coupling_[l])
+  {
+    two_port_coupling_[l] =
+        sc_sheet_op.BuildTwoPortCoupling(GetNDSpaces().GetFESpaceAtLevel(l).Get());
+  }
+  K_l.AddParallelMatrix(*two_port_coupling_[l]);
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
@@ -407,6 +423,7 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
     K_l->SetEssentialTrueDofs(pc_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    AddTwoPortCoupling(l, *K_l);
     K->AddOperator(std::move(K_l));
   }
   return K;
@@ -504,6 +521,7 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
     // set here is exactly the PEC + shorted-port set — no perimeter augmentation.
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
     K_l->SetEssentialTrueDofs(entry.dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    AddTwoPortCoupling(l, *K_l);
     K->AddOperator(std::move(K_l));
   }
   entry.K = std::move(K);
@@ -568,6 +586,8 @@ void CurlCurlOperator::EnsureSheetMass()
   }
   auto m_mat = m.Assemble(GetNDSpaces(), false);
   M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
+  // The full coupling (no essential DOFs): a_h is nonzero on film edges at the PEC.
+  AddTwoPortCoupling(GetNDSpaces().GetNumLevels() - 1, *M_sheet_);
 }
 
 template <ProblemType T>
