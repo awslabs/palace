@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-4-1",
+  "$id": "urn:palace:schema:2-5-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1645,6 +1645,17 @@
           "description": "Effective sheet penetration depth λ⊥ [mesh length units] used to model a FilmAttributes film that is not declared a \"Superconductor\" as the λ→0 perfect-screening limit. Smaller values approach an ideal perfect conductor.",
           "exclusiveMinimum": 0.0,
           "default": 1.0e-4
+        },
+        "Excitation": {
+          "description": "Excitation index of this flux loop, as for ports: can be a boolean or a non-negative integer. Flux loops sharing a positive index are driven together in one magnetostatic solve, each at its own FluxAmounts; 0 (false) holds the loop at zero fluxoid in every excitation. Defaults to the loop Index, so that each loop is its own excitation and the inductance matrix is extracted; when every excitation is a single loop the two indices must agree. See the [boundary conditions guide](../guide/boundaries.md#Flux-boundary) for details.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
         }
       }
     },
@@ -2915,7 +2926,7 @@
       "properties": {
         "Save": {
           "type": "integer",
-          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by excitation: the surface current sources in index order, then the flux loop excitations in excitation index order (the entries of the computed inductance matrix when each is a single source). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
         },

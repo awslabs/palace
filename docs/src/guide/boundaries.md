@@ -287,6 +287,21 @@ inactive; see [Magnetostatic problems](problem.md#Magnetostatic-problems) for de
 unit-current excitations for current-driven magnetostatic solves. Palace reports
 `terminal-Phi.csv` in physical webers.
 
+Each `"FluxLoop"` is its own excitation by default, so the loops are driven one at a time to
+assemble the inductance matrix. The `"Excitation"` keyword takes the same boolean or
+non-negative integer values as for [ports](#Lumped-and-wave-port-excitation): loops sharing a
+positive excitation index are driven together in a single solve, each at its own
+`"FluxAmounts"`, and `0` holds a loop at zero fluxoid in every excitation. For example,
+`"Excitation": 2` on loop 1 with `"FluxAmounts": [1.0]` and on loop 3 with
+`"FluxAmounts": [-0.5]` gives the fluxoid state ``(\Phi_1, \Phi_3) = (1, -0.5)`` of the two
+holes from one solve, superposing their per-loop states. As for ports, a loop belongs to one
+excitation, and when every excitation is a single loop the two indices must agree. The
+inductance matrix is reported when every excitation is a single loop. Otherwise the outputs
+are indexed by excitation: `terminal-Phi.csv` lists for each excitation its total stored
+energy ``E = \frac{1}{2}\Phi^T M^{-1} \Phi`` (volume magnetic plus London kinetic) in joules
+and the fluxoid it imposes on each loop in webers, the other postprocessing files have one
+row per excitation, and the fields are saved per excitation under `"Save"`.
+
 !!! note "Flux loop requirements"
 
     Flux loop boundaries require:

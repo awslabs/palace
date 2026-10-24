@@ -317,6 +317,26 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
     }
   }
 
+  // FluxLoop: JSON array with Index, C++ map keyed by Index.
+  if (j_boundaries.contains("FluxLoop"))
+  {
+    for (auto &j_loop : j_boundaries["FluxLoop"])
+    {
+      auto idx_it = j_loop.find("Index");
+      if (idx_it == j_loop.end())
+      {
+        continue;
+      }
+      auto it = boundaries.fluxloop.find(idx_it->get<int>());
+      if (it == boundaries.fluxloop.end())
+      {
+        continue;
+      }
+      ApplyEntries(j_loop, {{"Excitation", it->second.excitation},
+                            {"PecPenetrationDepth", it->second.pec_lperp}});
+    }
+  }
+
   // WavePort: JSON array with Index, C++ map keyed by Index.
   if (j_boundaries.contains("WavePort"))
   {

@@ -754,6 +754,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
+  paraview_max_cycle = -1;
   paraview->SetDataFormat(format);
   MFEM_VERIFY(use_ceed_domain_paraview,
               "ParaView domain output requires the libCEED point-field path!");
@@ -1223,6 +1224,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
         units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
+  paraview_max_cycle = std::max(paraview_max_cycle, step);
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
@@ -1260,7 +1262,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // non-used value to make the step identifiable within the data collection.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  paraview->SetCycle(paraview->GetCycle() + 1);
+  paraview->SetCycle(paraview_max_cycle + 1);
   if (paraview->GetTime() < 1.0)
   {
     paraview->SetTime(99.0);

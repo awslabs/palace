@@ -1003,7 +1003,22 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
-  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "", opts);
+  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "base", opts);
+}
+
+// The same two holes driven together as one excitation (loop 1 at fluxoid 1, loop 3 at
+// -0.5), so there is no inductance matrix: terminal-Phi.csv reports the excitation's stored
+// energy, E = ½ΦᵀM⁻¹Φ of the swept matrix above, and the fluxoid imposed on each loop. The
+// field is written under the excitation index.
+TEST_CASE("double_hole_london_flux_excitation", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("double_hole_london", "double_hole_excitation.json",
+                                  "excitation", opts);
 }
 
 // Narrow London ring vs the analytic thin-ring L = L_geom + L_ksq*2*pi*r/w: the extracted
