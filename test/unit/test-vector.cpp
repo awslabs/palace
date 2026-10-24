@@ -5,6 +5,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
 #include <complex>
 
 #include "linalg/vector.hpp"
@@ -131,6 +132,46 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   CHECK_THAT(cv.Imag()[0], WithinRel(10.0 * rank) || WithinAbs(0.0, 1e-14));
   CHECK_THAT(cv.Imag()[1], WithinRel(20.0 * rank) || WithinAbs(0.0, 1e-14));
+}
+
+TEST_CASE("ComplexVector LocalDot", "[vector][Serial][GPU]")
+{
+  // The fused complex dot must agree with the four real dots it replaces.
+  const auto N = GENERATE(0, 1, 7, 1000);
+  const bool on_dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  ComplexVector x(N), y(N);
+  x.UseDevice(on_dev);
+  y.UseDevice(on_dev);
+  {
+    auto *XR = x.Real().HostWrite(), *XI = x.Imag().HostWrite();
+    auto *YR = y.Real().HostWrite(), *YI = y.Imag().HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      XR[i] = std::sin(0.3 * i + 0.1);
+      XI[i] = std::cos(1.7 * i - 0.4);
+      YR[i] = std::sin(2.1 * i + 0.5) * (1.0 + i % 3);
+      YI[i] = std::cos(0.9 * i + 1.2) / (1.0 + i % 4);
+    }
+  }
+
+  const auto xy = linalg::LocalDot(x, y);
+  const double ref_r =
+      linalg::LocalDot(x.Real(), y.Real()) + linalg::LocalDot(x.Imag(), y.Imag());
+  const double ref_i =
+      linalg::LocalDot(x.Imag(), y.Real()) - linalg::LocalDot(x.Real(), y.Imag());
+  CHECK_THAT(xy.real(), WithinRel(ref_r, 1e-12) || WithinAbs(ref_r, 1e-12));
+  CHECK_THAT(xy.imag(), WithinRel(ref_i, 1e-12) || WithinAbs(ref_i, 1e-12));
+
+  // Conjugate symmetry, yᴴx = conj(xᴴy).
+  const auto yx = linalg::LocalDot(y, x);
+  CHECK_THAT(yx.real(), WithinRel(xy.real(), 1e-12) || WithinAbs(xy.real(), 1e-12));
+  CHECK_THAT(yx.imag(), WithinRel(-xy.imag(), 1e-12) || WithinAbs(-xy.imag(), 1e-12));
+
+  const auto xx = linalg::LocalDot(x, x);
+  const double ref_xx =
+      linalg::LocalDot(x.Real(), x.Real()) + linalg::LocalDot(x.Imag(), x.Imag());
+  CHECK_THAT(xx.real(), WithinRel(ref_xx, 1e-12) || WithinAbs(ref_xx, 1e-12));
+  CHECK(xx.imag() == 0.0);
 }
 
 TEST_CASE("StaticVectorConstruction", "[Vector][Serial]")

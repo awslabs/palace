@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <random>
 #include <mfem/general/forall.hpp>
+#include <mfem/general/reducers.hpp>
 #include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
 
@@ -671,17 +672,107 @@ double LocalDot(const Vector &x, const Vector &y)
   return hypre_SeqVectorInnerProd(X, Y);
 }
 
+namespace
+{
+
+// Partial sums yrᵀxr, yiᵀxi, yrᵀxi, yiᵀxr of the complex inner product yᴴx. Computing all
+// four together in one reduce() call is faster than four separate calls to the real
+// LocalDot: each real vector entry is read from memory once instead of up to four times,
+// and there is one kernel launch and one device-to-host reduction instead of four.
+struct ComplexDotSums
+{
+  double rr, ii, ir, ri;
+};
+
+// Joins two partial-sum reductions into one, so mfem::reduce can run this like any other
+// single-valued reduction (e.g. a tree reduction across GPU thread blocks).
+struct ComplexDotReducer
+{
+  using value_type = ComplexDotSums;
+  static MFEM_HOST_DEVICE void Join(value_type &a, const value_type &b)
+  {
+    a.rr += b.rr;
+    a.ii += b.ii;
+    a.ir += b.ir;
+    a.ri += b.ri;
+  }
+  static MFEM_HOST_DEVICE void SetInitialValue(value_type &a)
+  {
+    a = {.rr = 0.0, .ii = 0.0, .ir = 0.0, .ri = 0.0};
+  }
+};
+
+}  // namespace
+
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
-  if (&x == &y)
+  // The host loop sums each part in index order like hypre_SeqVectorInnerProd, so serial
+  // results match four calls to the real LocalDot.
+  MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
+  const bool herm = (&x == &y);
+  const bool use_dev = x.UseDevice() || y.UseDevice();
+  const int N = x.Size();
+  const auto *XR = x.Real().Read(use_dev);
+  const auto *XI = x.Imag().Read(use_dev);
+  const auto *YR = y.Real().Read(use_dev);
+  const auto *YI = y.Imag().Read(use_dev);
+  ComplexDotSums s = {.rr = 0.0, .ii = 0.0, .ir = 0.0, .ri = 0.0};
+  if (use_dev && mfem::Device::Allows(mfem::Backend::CUDA | mfem::Backend::HIP |
+                                      mfem::Backend::RAJA_CUDA | mfem::Backend::RAJA_HIP))
   {
-    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
+    static mfem::Array<ComplexDotSums> workspace;
+    if (herm)
+    {
+      mfem::reduce(
+          N, s,
+          [=] MFEM_HOST_DEVICE(int i, ComplexDotSums &r)
+          {
+            r.rr += XR[i] * XR[i];
+            r.ii += XI[i] * XI[i];
+          },
+          ComplexDotReducer{}, use_dev, workspace);
+    }
+    else
+    {
+      mfem::reduce(
+          N, s,
+          [=] MFEM_HOST_DEVICE(int i, ComplexDotSums &r)
+          {
+            r.rr += XR[i] * YR[i];
+            r.ii += XI[i] * YI[i];
+            r.ir += XI[i] * YR[i];
+            r.ri += XR[i] * YI[i];
+          },
+          ComplexDotReducer{}, use_dev, workspace);
+    }
   }
   else
   {
-    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
-            LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};
+    double rr = 0.0, ii = 0.0, ir = 0.0, ri = 0.0;
+    if (herm)
+    {
+      PalacePragmaOmp(parallel for reduction(+ : rr) reduction(+ : ii) schedule(static))
+      for (int i = 0; i < N; i++)
+      {
+        rr += XR[i] * XR[i];
+        ii += XI[i] * XI[i];
+      }
+    }
+    else
+    {
+      PalacePragmaOmp(parallel for reduction(+ : rr) reduction(+ : ii) reduction(+ : ir)
+                      reduction(+ : ri) schedule(static))
+      for (int i = 0; i < N; i++)
+      {
+        rr += XR[i] * YR[i];
+        ii += XI[i] * YI[i];
+        ir += XI[i] * YR[i];
+        ri += XR[i] * YI[i];
+      }
+    }
+    s = {.rr = rr, .ii = ii, .ir = ir, .ri = ri};
   }
+  return {s.rr + s.ii, herm ? 0.0 : s.ir - s.ri};
 }
 
 // We implement LocalSum using Hypre instead of using MFEM's Sum because it is
