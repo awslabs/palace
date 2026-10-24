@@ -76,6 +76,7 @@ private:
     // Shifted preconditioner for this screened operator, built lazily and kept alive with
     // it.
     std::unique_ptr<Operator> P;
+    std::vector<mfem::Array<int>> h1_dbc_tdof_lists;
   };
   std::deque<ScreenedStiffnessCacheEntry> screened_stiffness_cache;
 
@@ -106,6 +107,7 @@ private:
   // is added to every operator on the level (stiffness, preconditioners, and the sheet
   // mass), so the operator, the flux RHS, and the penalty energy stay consistent.
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> two_port_coupling_;
+  const mfem::HypreParMatrix &GetTwoPortCoupling(std::size_t l);
 
   // Add the two-sided sheet coupling on ND level l to an operator, eliminated on its
   // essential DOFs. Does nothing without a two-sided sheet.
@@ -117,6 +119,11 @@ private:
 
   // Preconditioner-only gauge shift (config LondonPCShift); see GetPreconditionerMatrix.
   double london_pc_shift_;
+
+  // Whether the shifted preconditioner carries auxiliary (gradient) operators for the
+  // multigrid smoother, and their H1 essential DOFs.
+  bool mg_smooth_aux_;
+  std::vector<mfem::Array<int>> h1_dbc_tdof_lists_;
 
   // Cached sheet-only mass operator M_sheet (the boundary term ∫_Σ (1/L_ksq) A_t·v_t). The
   // London flux excitation RHS = M_sheet·a_h is the Euler-Lagrange source of the shifted
@@ -135,10 +142,13 @@ private:
   void EnsureSheetMass();
 
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
-  // given per-level essential DOFs; preconditioner-only, so the extracted inductance is
-  // unchanged.
+  // given per-level essential DOFs (from attributes pc_dbc_attr); preconditioner-only, so
+  // the extracted inductance is unchanged. The auxiliary H1 essential DOFs are written to
+  // h1_dbc_tdof_lists, which must outlive the result.
   std::unique_ptr<Operator>
-  AssembleShiftedPreconditioner(const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists);
+  AssembleShiftedPreconditioner(const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists,
+                                const mfem::Array<int> &pc_dbc_attr,
+                                std::vector<mfem::Array<int>> &h1_dbc_tdof_lists);
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,

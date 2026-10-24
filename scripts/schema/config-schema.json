@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-4-0",
+  "$id": "urn:palace:schema:2-4-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2986,7 +2986,7 @@
         },
         "MGAuxiliarySmoother": {
           "type": "boolean",
-          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this by default for electrostatic and magnetostatic simulations and enables it otherwise.",
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with `\"Superconductor\"` or `\"FluxLoop\"` boundaries enable it when `\"LondonPCShift\"` is positive.",
           "x-palace-advanced": true
         },
         "MGCycleIts": {

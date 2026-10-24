@@ -61,7 +61,7 @@
         "FilmAttributes": [8],
         "HoleAttributes": [9],
         "FluxAmounts": [1.0],
-        "Direction": "+Z"
+        "Direction": "-Z"  // the cut meets hanging film edges after refinement
       }
     ]
   },

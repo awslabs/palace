@@ -949,9 +949,9 @@ TEST_CASE("circular_hole_london_two_sided", "[Serial][Parallel][GPU][Regression]
                                   "two_sided", opts);
 }
 
-// Two-sided film under nonconformal AMR. Locks the coupling on hanging and shared DOFs and
-// the refinement that keeps the two faces coincident. Omits [GPU] like the other adaptive
-// cases.
+// Two-sided film under nonconformal AMR. Locks the coupling on hanging and shared DOFs, the
+// refinement that keeps the two faces coincident, and the generator projection (the cut
+// meets hanging film edges). Omits [GPU] like the other adaptive cases.
 TEST_CASE("circular_hole_london_two_sided_nc_amr", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1075,11 +1075,10 @@ TEST_CASE("microstrip_superconductor", "[Serial][Parallel][GPU][Regression]")
                                   "superconductor", opts);
 }
 
-// London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
-// a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
-// curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
-// after one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
-// awslabs/palace#375).
+// London flux film under non-conformal AMR. Locks the curl-free projection of the cut
+// generator on the hanging-edge mesh, so L converges upward (15.1643 -> 15.1644 pH after
+// one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf.
+// cpw_wave_adaptive, awslabs/palace#375).
 TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1090,6 +1089,21 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("circular_hole_london", "circular_hole_nc_amr.json",
                                   "nc_amr", opts);
+}
+
+// As above with two refinements, each followed by a forced rebalance, so the film, the cut
+// and the hole are split differently across ranks at each solve.
+TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
+                                  opts);
 }
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface

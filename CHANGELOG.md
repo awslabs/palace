@@ -26,8 +26,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the total inductance is read from the field energy.
     [PR 929](https://github.com/awslabs/palace/pull/929).
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
-    London magnetostatic solve SPD-solvable by AMS.
-    [PR 929](https://github.com/awslabs/palace/pull/929).
+    London magnetostatic solve SPD-solvable by AMS. Magnetostatic simulations with
+    `Superconductor` or `FluxLoop` boundaries also enable
+    `Solver.Linear.MGAuxiliarySmoother` by default. SchemaVer 2-4-1
+    [PR 929](https://github.com/awslabs/palace/pull/929),
+    [PR 1051](https://github.com/awslabs/palace/pull/1051).
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
