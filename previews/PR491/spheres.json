@@ -1,0 +1,91 @@
+{
+  "Problem":
+  {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "postpro"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/spheres.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Probe":
+      [
+        {
+          "Index": 1,  // On surface of smaller sphere
+          "Center": [-1.5, 0.0, 0.0]
+        }
+      ],
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "Ground":
+    {
+      "Attributes": [2]
+    },
+    "Terminal":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3]  // Sphere A
+      },
+      {
+        "Index": 2,
+        "Attributes": [4]  // Sphere B
+      }
+    ],
+    "Postprocessing":  // Capacitance from charge instead of energy
+    {
+      "SurfaceFlux":
+      [
+        {
+          "Index": 1,
+          "Attributes": [3],  // Sphere A
+	  "Type": "Electric"
+        },
+        {
+          "Index": 2,
+          "Attributes": [4],  // Sphere B
+	  "Type": "Electric"
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Electrostatic":
+    {
+      "Save": 2
+    },
+    "Linear":
+    {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}
+

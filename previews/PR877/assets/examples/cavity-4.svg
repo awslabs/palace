@@ -1,0 +1,99 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 560' width='1200' height='560' font-family='"STIX Two Text", "Latin Modern Roman", "Times New Roman", Times, serif' role='img' aria-labelledby='title desc'>
+<title id='title'>Cylindrical cavity filled with a Lorentz medium</title>
+<desc id='desc'>Axial section of a PEC cylindrical cavity filled with a Lorentz medium, with the TM010 electric and magnetic field profiles, and the graphical solution of the mode condition omega squared times the relative permittivity equals epsilon infinity times the cavity frequency squared, which has one root on each side of a gap of negative permittivity between the resonance and the longitudinal frequency.</desc>
+<defs>
+<marker id='head-ink' viewBox='0 0 10 10' refX='8.5' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto'><path d='M0,0.5 L10,5 L0,9.5 L2.8,5 z' fill='#1a1a1a'/></marker>
+<marker id='head-red' viewBox='0 0 10 10' refX='8.5' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto'><path d='M0,0.5 L10,5 L0,9.5 L2.8,5 z' fill='#c0392b'/></marker>
+<marker id='head-blue' viewBox='0 0 10 10' refX='8.5' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto'><path d='M0,0.5 L10,5 L0,9.5 L2.8,5 z' fill='#1f5fa8'/></marker>
+<marker id='dim-end' viewBox='0 0 10 10' refX='10' refY='5' markerWidth='8' markerHeight='8' orient='auto'><path d='M0,1.8 L10,5 L0,8.2 z' fill='#1a1a1a'/></marker>
+<marker id='dim-start' viewBox='0 0 10 10' refX='0' refY='5' markerWidth='8' markerHeight='8' orient='auto'><path d='M10,1.8 L0,5 L10,8.2 z' fill='#1a1a1a'/></marker>
+<pattern id='pec' width='7' height='7' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'><rect width='7' height='7' fill='white'/><line x1='0' y1='0' x2='0' y2='7' stroke='#1a1a1a' stroke-width='1.5'/></pattern>
+</defs>
+<rect width='1200' height='560' fill='white'/>
+<text x='40.0' y='36.0' font-size='19' text-anchor='start' fill='#1a1a1a' font-weight='bold'>(a)</text>
+<text x='76.0' y='36.0' font-size='17' text-anchor='start' fill='#666666' >Axial section, TM<tspan dy='5' font-size='0.7em'>010</tspan><tspan dy='-5'></tspan> field</text>
+<rect x='110.0' y='100.0' width='360.0' height='360.0' fill='#eef3e6' stroke='none' stroke-width='1.4'/>
+<rect x='98.0' y='88.0' width='384.0' height='12.0' fill='url(#pec)' stroke='#1a1a1a' stroke-width='1.4'/>
+<rect x='98.0' y='460.0' width='384.0' height='12.0' fill='url(#pec)' stroke='#1a1a1a' stroke-width='1.4'/>
+<rect x='98.0' y='100.0' width='12.0' height='360.0' fill='url(#pec)' stroke='#1a1a1a' stroke-width='1.4'/>
+<rect x='470.0' y='100.0' width='12.0' height='360.0' fill='url(#pec)' stroke='#1a1a1a' stroke-width='1.4'/>
+<line x1='290.0' y1='78.0' x2='290.0' y2='482.0' stroke='#666666' stroke-width='0.9' stroke-dasharray='16 4 3 4'/>
+<line x1='131.6' y1='303.3' x2='131.6' y2='256.7' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='171.2' y1='348.5' x2='171.2' y2='211.5' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='210.8' y1='389.4' x2='210.8' y2='170.6' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='250.4' y1='417.8' x2='250.4' y2='142.2' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='290.0' y1='428.0' x2='290.0' y2='132.0' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='329.6' y1='417.8' x2='329.6' y2='142.2' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='369.2' y1='389.4' x2='369.2' y2='170.6' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='408.8' y1='348.5' x2='408.8' y2='211.5' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<line x1='448.4' y1='303.3' x2='448.4' y2='256.7' stroke='#c0392b' stroke-width='2.2' marker-end='url(#head-red)'/>
+<circle cx='335.0' cy='130.0' r='6.2' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<line x1='331.3' y1='126.3' x2='338.7' y2='133.7' stroke='#1f5fa8' stroke-width='1.4' />
+<line x1='331.3' y1='133.7' x2='338.7' y2='126.3' stroke='#1f5fa8' stroke-width='1.4' />
+<circle cx='245.0' cy='130.0' r='6.2' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<circle cx='245.0' cy='130.0' r='1.9' fill='#1f5fa8'/>
+<circle cx='335.0' cy='430.0' r='6.2' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<line x1='331.3' y1='426.3' x2='338.7' y2='433.7' stroke='#1f5fa8' stroke-width='1.4' />
+<line x1='331.3' y1='433.7' x2='338.7' y2='426.3' stroke='#1f5fa8' stroke-width='1.4' />
+<circle cx='245.0' cy='430.0' r='6.2' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<circle cx='245.0' cy='430.0' r='1.9' fill='#1f5fa8'/>
+<circle cx='380.0' cy='130.0' r='8.9' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<line x1='374.6' y1='124.6' x2='385.4' y2='135.4' stroke='#1f5fa8' stroke-width='1.4' />
+<line x1='374.6' y1='135.4' x2='385.4' y2='124.6' stroke='#1f5fa8' stroke-width='1.4' />
+<circle cx='200.0' cy='130.0' r='8.9' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<circle cx='200.0' cy='130.0' r='2.7' fill='#1f5fa8'/>
+<circle cx='380.0' cy='430.0' r='8.9' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<line x1='374.6' y1='424.6' x2='385.4' y2='435.4' stroke='#1f5fa8' stroke-width='1.4' />
+<line x1='374.6' y1='435.4' x2='385.4' y2='424.6' stroke='#1f5fa8' stroke-width='1.4' />
+<circle cx='200.0' cy='430.0' r='8.9' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<circle cx='200.0' cy='430.0' r='2.7' fill='#1f5fa8'/>
+<circle cx='428.6' cy='130.0' r='10.0' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<line x1='422.6' y1='124.0' x2='434.6' y2='136.0' stroke='#1f5fa8' stroke-width='1.4' />
+<line x1='422.6' y1='136.0' x2='434.6' y2='124.0' stroke='#1f5fa8' stroke-width='1.4' />
+<circle cx='151.4' cy='130.0' r='10.0' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<circle cx='151.4' cy='130.0' r='3.0' fill='#1f5fa8'/>
+<circle cx='428.6' cy='430.0' r='10.0' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<line x1='422.6' y1='424.0' x2='434.6' y2='436.0' stroke='#1f5fa8' stroke-width='1.4' />
+<line x1='422.6' y1='436.0' x2='434.6' y2='424.0' stroke='#1f5fa8' stroke-width='1.4' />
+<circle cx='151.4' cy='430.0' r='10.0' fill='white' stroke='#1f5fa8' stroke-width='1.4'/>
+<circle cx='151.4' cy='430.0' r='3.0' fill='#1f5fa8'/>
+<text x='374.6' y='286.0' font-size='19' text-anchor='middle' fill='#c0392b' ><tspan font-style='italic'>E</tspan><tspan dy='5' font-size='0.7em' font-style='italic'>z</tspan><tspan dy='-5'></tspan></text>
+<text x='118.0' y='166.0' font-size='19' text-anchor='start' fill='#1f5fa8' ><tspan font-style='italic'>H</tspan><tspan dy='5' font-size='0.7em' font-style='italic'>φ</tspan><tspan dy='-5'></tspan></text>
+<line x1='291.0' y1='502.0' x2='469.0' y2='502.0' stroke='#1a1a1a' stroke-width='1.0' marker-start='url(#dim-start)' marker-end='url(#dim-end)'/>
+<text x='380.0' y='494.0' font-size='18' text-anchor='middle' fill='#1a1a1a' ><tspan font-style='italic'>a</tspan></text>
+<line x1='508.0' y1='101.0' x2='508.0' y2='459.0' stroke='#1a1a1a' stroke-width='1.0' marker-start='url(#dim-start)' marker-end='url(#dim-end)'/>
+<text x='520.0' y='286.0' font-size='18' text-anchor='start' fill='#1a1a1a' ><tspan font-style='italic'>d</tspan> = 2<tspan font-style='italic'>a</tspan></text>
+<rect x='40.0' y='487.0' width='26.0' height='13.0' fill='#eef3e6' stroke='#1a1a1a' stroke-width='1.0'/>
+<text x='76.0' y='498.0' font-size='15' text-anchor='start' fill='#1a1a1a' >Lorentz medium, <tspan font-style='italic'>ε</tspan><tspan dy='5' font-size='0.7em'>r</tspan><tspan dy='-5'>(</tspan><tspan font-style='italic'>ω</tspan>)</text>
+<rect x='40.0' y='511.0' width='26.0' height='13.0' fill='url(#pec)' stroke='#1a1a1a' stroke-width='1.0'/>
+<text x='76.0' y='522.0' font-size='15' text-anchor='start' fill='#1a1a1a' >PEC</text>
+<text x='560.0' y='36.0' font-size='19' text-anchor='start' fill='#1a1a1a' font-weight='bold'>(b)</text>
+<text x='596.0' y='36.0' font-size='17' text-anchor='start' fill='#666666' >Mode condition, resonant medium</text>
+<rect x='858.6' y='92.0' width='57.3' height='378.0' fill='#f4e1de' stroke='none' stroke-width='1.4'/>
+<text x='887.2' y='114.0' font-size='15' text-anchor='middle' fill='#c0392b' ><tspan font-style='italic'>ε</tspan><tspan dy='5' font-size='0.7em'>r</tspan><tspan dy='-5'> &lt; 0</tspan></text>
+<line x1='640.0' y1='425.2' x2='1150.0' y2='425.2' stroke='#1a1a1a' stroke-width='1.2' />
+<line x1='640.0' y1='470.0' x2='640.0' y2='82.0' stroke='#1a1a1a' stroke-width='1.2' marker-end='url(#head-ink)'/>
+<line x1='1120.0' y1='425.2' x2='1160.0' y2='425.2' stroke='#1a1a1a' stroke-width='1.2' marker-end='url(#head-ink)'/>
+<text x='1154.0' y='451.2' font-size='17' text-anchor='middle' fill='#1a1a1a' ><tspan font-style='italic'>ω</tspan> / <tspan font-style='italic'>ω</tspan><tspan dy='5' font-size='0.7em' font-style='italic'>c</tspan><tspan dy='-5'></tspan></text>
+<text x='648.0' y='90.0' font-size='17' text-anchor='start' fill='#1a1a1a' ><tspan font-style='italic'>ω</tspan><tspan dy='-7' font-size='0.7em'>2</tspan><tspan dy='7'></tspan><tspan font-style='italic'>ε</tspan><tspan dy='5' font-size='0.7em'>r</tspan><tspan dy='-5'>(</tspan><tspan font-style='italic'>ω</tspan>) / <tspan font-style='italic'>ε</tspan><tspan dy='5' font-size='0.7em'>∞</tspan><tspan dy='-5'></tspan><tspan font-style='italic'>ω</tspan><tspan dy='5' font-size='0.7em' font-style='italic'>c</tspan><tspan dy='-5'></tspan><tspan dy='-7' font-size='0.7em'>2</tspan><tspan dy='7'></tspan></text>
+<polyline points='640.0,386.4 648.6,383.8 657.3,381.2 665.9,378.5 674.6,375.7 683.2,372.8 691.9,369.9 700.5,366.8 709.2,363.7 717.8,360.5 726.4,357.2 735.1,353.9 743.7,350.4 752.4,346.9 761.0,343.3 769.7,339.6 778.3,335.9 786.9,332.0 795.6,328.1 804.2,324.1 812.9,320.0 821.5,315.8 830.2,311.6 838.8,307.2 847.5,302.8 856.1,298.3 864.7,293.7 873.4,289.1 882.0,284.3 890.7,279.5 899.3,274.6 908.0,269.6 916.6,264.6 925.3,259.4 933.9,254.2 942.5,248.9 951.2,243.5 959.8,238.0 968.5,232.5 977.1,226.8 985.8,221.1 994.4,215.3 1003.1,209.4 1011.7,203.5 1020.3,197.5 1029.0,191.3 1037.6,185.1 1046.3,178.8 1054.9,172.5 1063.6,166.0 1072.2,159.5 1080.8,152.9 1089.5,146.2 1098.1,139.4 1106.8,132.6 1115.4,125.7 1124.1,118.7 1132.7,111.6 1141.4,104.4 1150.0,97.1' fill='none' stroke='#666666' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round' stroke-dasharray='6 4'/>
+<polyline points='640.0,372.5 641.1,372.0 642.2,371.5 643.3,371.0 644.4,370.5 645.5,370.1 646.6,369.6 647.7,369.1 648.8,368.5 649.9,368.0 651.0,367.5 652.1,367.0 653.2,366.5 654.2,366.0 655.3,365.4 656.4,364.9 657.5,364.4 658.6,363.8 659.7,363.3 660.8,362.8 661.9,362.2 663.0,361.7 664.1,361.1 665.2,360.5 666.3,360.0 667.4,359.4 668.5,358.8 669.6,358.3 670.7,357.7 671.8,357.1 672.9,356.5 674.0,355.9 675.1,355.3 676.2,354.7 677.3,354.1 678.4,353.5 679.5,352.9 680.5,352.3 681.6,351.6 682.7,351.0 683.8,350.4 684.9,349.7 686.0,349.1 687.1,348.4 688.2,347.8 689.3,347.1 690.4,346.5 691.5,345.8 692.6,345.1 693.7,344.4 694.8,343.8 695.9,343.1 697.0,342.4 698.1,341.7 699.2,341.0 700.3,340.2 701.4,339.5 702.5,338.8 703.6,338.1 704.7,337.3 705.8,336.6 706.9,335.8 707.9,335.1 709.0,334.3 710.1,333.5 711.2,332.8 712.3,332.0 713.4,331.2 714.5,330.4 715.6,329.6 716.7,328.7 717.8,327.9 718.9,327.1 720.0,326.3 721.1,325.4 722.2,324.5 723.3,323.7 724.4,322.8 725.5,321.9 726.6,321.0 727.7,320.1 728.8,319.2 729.9,318.3 731.0,317.4 732.1,316.4 733.2,315.5 734.2,314.5 735.3,313.5 736.4,312.5 737.5,311.5 738.6,310.5 739.7,309.5 740.8,308.5 741.9,307.4 743.0,306.4 744.1,305.3 745.2,304.2 746.3,303.1 747.4,302.0 748.5,300.8 749.6,299.7 750.7,298.5 751.8,297.4 752.9,296.2 754.0,294.9 755.1,293.7 756.2,292.5 757.3,291.2 758.4,289.9 759.5,288.6 760.5,287.3 761.6,285.9 762.7,284.6 763.8,283.2 764.9,281.7 766.0,280.3 767.1,278.8 768.2,277.4 769.3,275.8 770.4,274.3 771.5,272.7 772.6,271.1 773.7,269.5 774.8,267.8 775.9,266.1 777.0,264.4 778.1,262.6 779.2,260.8 780.3,259.0 781.4,257.1 782.5,255.1 783.6,253.2 784.7,251.2 785.8,249.1 786.9,247.0 787.9,244.8 789.0,242.6 790.1,240.3 791.2,238.0 792.3,235.6 793.4,233.1 794.5,230.6 795.6,228.0 796.7,225.3 797.8,222.5 798.9,219.7 800.0,216.7 801.1,213.7 802.2,210.6 803.3,207.3 804.4,204.0 805.5,200.5 806.6,196.9 807.7,193.2 808.8,189.3 809.9,185.3 811.0,181.1 812.1,176.8 813.2,172.2 814.2,167.5 815.3,162.5 816.4,157.3 817.5,151.8 818.6,146.1 819.7,140.1 820.8,133.8 821.9,127.1 823.0,120.0 824.1,112.5 825.2,104.6 826.3,96.1' fill='none' stroke='#1f5fa8' stroke-width='2.6' stroke-linejoin='round' stroke-linecap='round' />
+<polyline points='903.8,468.4 904.8,464.2 905.8,460.2 906.7,456.3 907.7,452.5 908.7,448.9 909.7,445.4 910.6,442.0 911.6,438.7 912.6,435.4 913.5,432.3 914.5,429.3 915.5,426.4 916.5,423.5 917.4,420.7 918.4,418.0 919.4,415.3 920.4,412.8 921.3,410.2 922.3,407.8 923.3,405.4 924.3,403.0 925.2,400.7 926.2,398.4 927.2,396.2 928.1,394.1 929.1,391.9 930.1,389.9 931.1,387.8 932.0,385.8 933.0,383.8 934.0,381.9 935.0,380.0 935.9,378.1 936.9,376.3 937.9,374.5 938.8,372.7 939.8,371.0 940.8,369.2 941.8,367.5 942.7,365.9 943.7,364.2 944.7,362.6 945.7,361.0 946.6,359.4 947.6,357.8 948.6,356.3 949.6,354.7 950.5,353.2 951.5,351.7 952.5,350.3 953.4,348.8 954.4,347.4 955.4,345.9 956.4,344.5 957.3,343.1 958.3,341.8 959.3,340.4 960.3,339.0 961.2,337.7 962.2,336.4 963.2,335.1 964.1,333.8 965.1,332.5 966.1,331.2 967.1,329.9 968.0,328.7 969.0,327.4 970.0,326.2 971.0,324.9 971.9,323.7 972.9,322.5 973.9,321.3 974.9,320.1 975.8,318.9 976.8,317.7 977.8,316.6 978.7,315.4 979.7,314.3 980.7,313.1 981.7,312.0 982.6,310.8 983.6,309.7 984.6,308.6 985.6,307.5 986.5,306.4 987.5,305.3 988.5,304.2 989.4,303.1 990.4,302.0 991.4,300.9 992.4,299.8 993.3,298.8 994.3,297.7 995.3,296.7 996.3,295.6 997.2,294.5 998.2,293.5 999.2,292.5 1000.1,291.4 1001.1,290.4 1002.1,289.4 1003.1,288.3 1004.0,287.3 1005.0,286.3 1006.0,285.3 1007.0,284.3 1007.9,283.3 1008.9,282.3 1009.9,281.3 1010.9,280.3 1011.8,279.3 1012.8,278.3 1013.8,277.3 1014.7,276.3 1015.7,275.3 1016.7,274.4 1017.7,273.4 1018.6,272.4 1019.6,271.4 1020.6,270.5 1021.6,269.5 1022.5,268.5 1023.5,267.6 1024.5,266.6 1025.4,265.7 1026.4,264.7 1027.4,263.8 1028.4,262.8 1029.3,261.9 1030.3,260.9 1031.3,260.0 1032.3,259.0 1033.2,258.1 1034.2,257.1 1035.2,256.2 1036.2,255.3 1037.1,254.3 1038.1,253.4 1039.1,252.5 1040.0,251.5 1041.0,250.6 1042.0,249.7 1043.0,248.8 1043.9,247.8 1044.9,246.9 1045.9,246.0 1046.9,245.1 1047.8,244.1 1048.8,243.2 1049.8,242.3 1050.7,241.4 1051.7,240.5 1052.7,239.6 1053.7,238.6 1054.6,237.7 1055.6,236.8 1056.6,235.9 1057.6,235.0 1058.5,234.1 1059.5,233.2 1060.5,232.3 1061.5,231.4 1062.4,230.5 1063.4,229.6 1064.4,228.7 1065.3,227.8 1066.3,226.9 1067.3,225.9 1068.3,225.0 1069.2,224.1 1070.2,223.2 1071.2,222.3 1072.2,221.4 1073.1,220.5 1074.1,219.6 1075.1,218.7 1076.0,217.8 1077.0,216.9 1078.0,216.1 1079.0,215.2 1079.9,214.3 1080.9,213.4 1081.9,212.5 1082.9,211.6 1083.8,210.7 1084.8,209.8 1085.8,208.9 1086.8,208.0 1087.7,207.1 1088.7,206.2 1089.7,205.3 1090.6,204.4 1091.6,203.5 1092.6,202.6 1093.6,201.7 1094.5,200.8 1095.5,199.9 1096.5,199.0 1097.5,198.2 1098.4,197.3 1099.4,196.4 1100.4,195.5 1101.3,194.6 1102.3,193.7 1103.3,192.8 1104.3,191.9 1105.2,191.0 1106.2,190.1 1107.2,189.2 1108.2,188.3 1109.1,187.4 1110.1,186.5 1111.1,185.6 1112.1,184.8 1113.0,183.9 1114.0,183.0 1115.0,182.1 1115.9,181.2 1116.9,180.3 1117.9,179.4 1118.9,178.5 1119.8,177.6 1120.8,176.7 1121.8,175.8 1122.8,174.9 1123.7,174.0 1124.7,173.1 1125.7,172.2 1126.6,171.3 1127.6,170.4 1128.6,169.5 1129.6,168.6 1130.5,167.7 1131.5,166.8 1132.5,165.9 1133.5,165.0 1134.4,164.1 1135.4,163.2 1136.4,162.3 1137.4,161.4 1138.3,160.5 1139.3,159.6 1140.3,158.7 1141.2,157.8 1142.2,156.9 1143.2,156.0 1144.2,155.1 1145.1,154.2 1146.1,153.3 1147.1,152.4 1148.1,151.5 1149.0,150.6 1150.0,149.7' fill='none' stroke='#1f5fa8' stroke-width='2.6' stroke-linejoin='round' stroke-linecap='round' />
+<line x1='858.6' y1='92.0' x2='858.6' y2='470.0' stroke='#666666' stroke-width='1.0' stroke-dasharray='3 3'/>
+<line x1='640.0' y1='297.0' x2='1130.0' y2='297.0' stroke='#1a1a1a' stroke-width='1.4' />
+<text x='1134.0' y='302.0' font-size='16' text-anchor='start' fill='#1a1a1a' >1</text>
+<line x1='752.1' y1='297.0' x2='752.1' y2='425.2' stroke='#1a1a1a' stroke-width='0.9' stroke-dasharray='2 3'/>
+<circle cx='752.1' cy='297.0' r='5.5' fill='#1a1a1a' stroke='#1a1a1a' stroke-width='1.4'/>
+<text x='752.1' y='449.2' font-size='17' text-anchor='middle' fill='#1a1a1a' ><tspan font-style='italic'>ω</tspan><tspan dy='5' font-size='0.7em'>−</tspan><tspan dy='-5'></tspan></text>
+<line x1='994.9' y1='297.0' x2='994.9' y2='425.2' stroke='#1a1a1a' stroke-width='0.9' stroke-dasharray='2 3'/>
+<circle cx='994.9' cy='297.0' r='5.5' fill='#1a1a1a' stroke='#1a1a1a' stroke-width='1.4'/>
+<text x='994.9' y='449.2' font-size='17' text-anchor='middle' fill='#1a1a1a' ><tspan font-style='italic'>ω</tspan><tspan dy='5' font-size='0.7em'>+</tspan><tspan dy='-5'></tspan></text>
+<text x='858.6' y='449.2' font-size='17' text-anchor='middle' fill='#666666' ><tspan font-style='italic'>ω</tspan><tspan dy='5' font-size='0.7em'>0</tspan><tspan dy='-5'></tspan></text>
+<text x='927.9' y='449.2' font-size='17' text-anchor='start' fill='#666666' ><tspan font-style='italic'>ω</tspan><tspan dy='5' font-size='0.7em' font-style='italic'>L</tspan><tspan dy='-5'></tspan></text>
+<line x1='752.1' y1='457.2' x2='752.1' y2='483.2' stroke='#1a1a1a' stroke-width='0.9' stroke-dasharray='2 3'/>
+<line x1='994.9' y1='457.2' x2='994.9' y2='483.2' stroke='#1a1a1a' stroke-width='0.9' stroke-dasharray='2 3'/>
+<line x1='753.1' y1='477.2' x2='993.9' y2='477.2' stroke='#1a1a1a' stroke-width='1.0' marker-start='url(#dim-start)' marker-end='url(#dim-end)'/>
+<text x='873.5' y='501.2' font-size='16' text-anchor='middle' fill='#1a1a1a' >Δ<tspan font-style='italic'>ω</tspan> = <tspan font-style='italic'>ω</tspan><tspan dy='5' font-size='0.7em'>0</tspan><tspan dy='-5'> √(</tspan>Δ<tspan font-style='italic'>ε</tspan> / <tspan font-style='italic'>ε</tspan><tspan dy='5' font-size='0.7em'>∞</tspan><tspan dy='-5'>)</tspan></text>
+<text x='693.4' y='395.3' font-size='15' text-anchor='middle' fill='#666666' >no resonance</text>
+<text x='1062.6' y='216.3' font-size='15' text-anchor='end' fill='#1f5fa8' >with resonance</text>
+</svg>
