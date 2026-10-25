@@ -7926,9 +7926,22 @@ LibrarySignatureKeys(const ProcessLibrary &library,
       if (!model.legacy_contract_aliases.empty())
       {
         // Claims-only (decision 899 B2): no Box / Context in the Signature and no plan-view
-        // conductor beyond the claims' (the twins hold the claims' metal only).
+        // conductor beyond the claims' (the twins hold the claims' metal only). The
+        // no-foreign-metal property is asserted from the model record: a model without a
+        // PlanViewBoundary cannot show it and is NOT claims-only (fail closed; the
+        // role-insensitive lookup never resolves its aliases).
         const auto &signature = *model.identification_signature;
         bool claims_only = !signature.contains("Box") && !signature.contains("Context");
+        if (claims_only && !model.plan_view_boundary)
+        {
+          claims_only = false;
+          Mpi::Warning(
+              "Fabrication-process response model \"{}\" carries legacy-contract aliases "
+              "but no PlanViewBoundary: its twins' metal cannot be read from the record, "
+              "so the role-insensitive alias lookup (decision 899 B2) does not apply to "
+              "it!\n",
+              model.name);
+        }
         if (claims_only && model.plan_view_boundary)
         {
           std::set<int> claim_conductors;
@@ -11531,8 +11544,19 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                    ? fmt::format(" ({:d} non-collinear midpoints kept)",
                                  geometry.refinement_vertices_kept)
                    : std::string());
-    if (iodata.model.refinement.uniform_ref_levels > 0 ||
-        iodata.model.refinement.ser_uniform_ref_levels > 0 ||
+    // The load-time refinements that add refinement-generated vertices BELOW the NC root:
+    // parallel uniform refinement (UniformLevels, on the NC ParMesh), the metal-edge tube
+    // refinement (EdgeRefinement) and the box / sphere region refinement of a tensor mesh
+    // (RegionRefine converts it to NC first). SerialUniformLevels refines the serial mesh
+    // BEFORE EnsureNCMesh and is part of the root: never a census vertex.
+    const bool region_refinement =
+        std::any_of(iodata.model.refinement.GetBoxes().begin(),
+                    iodata.model.refinement.GetBoxes().end(),
+                    [](const auto &box) { return box.ref_levels > 0; }) ||
+        std::any_of(iodata.model.refinement.GetSpheres().begin(),
+                    iodata.model.refinement.GetSpheres().end(),
+                    [](const auto &sphere) { return sphere.ref_levels > 0; });
+    if (iodata.model.refinement.uniform_ref_levels > 0 || region_refinement ||
         std::any_of(iodata.boundaries.postpro.dielectric.begin(),
                     iodata.boundaries.postpro.dielectric.end(), [](const auto &entry)
                     { return entry.second.edge_refinement.has_value(); }))
@@ -11540,7 +11564,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       Mpi::Warning(
           mesh.GetComm(),
           "The identification runs on the ROOT level of a nonconforming mesh refined at "
-          "load (UniformLevels / SerialUniformLevels / EdgeRefinement): its features and "
+          "load (UniformLevels / EdgeRefinement / Boxes / Spheres): its features and "
           "keys are those of the root perimeter, its patch cells coarser than a run that "
           "identified after the load-time refinement (decision 899)!\n");
     }

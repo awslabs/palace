@@ -1867,6 +1867,28 @@ TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
     CHECK(a.ma_interfaces == b.ma_interfaces);
     CHECK(a.metal_component == b.metal_component);
     CHECK(a.physical_chain == b.physical_chain);
+    // The merged segment's face normals (the union of its children's leaf faces') are the
+    // root edge's within the non-planar-metal classification's parallel tolerance: every
+    // normal on either side has a parallel one on the other (face_count is a leaf-level
+    // diagnostic without a consumer and is not compared).
+    auto Parallel = [](const std::vector<std::array<double, 3>> &normals,
+                       const std::vector<std::array<double, 3>> &others)
+    {
+      return std::all_of(normals.begin(), normals.end(),
+                         [&](const std::array<double, 3> &n)
+                         {
+                           return std::any_of(others.begin(), others.end(),
+                                              [&](const std::array<double, 3> &m)
+                                              {
+                                                return std::abs(n[0] * m[0] + n[1] * m[1] +
+                                                                n[2] * m[2]) > 1.0 - 1.0e-8;
+                                              });
+                         });
+    };
+    REQUIRE(!a.face_normals.empty());
+    REQUIRE(!b.face_normals.empty());
+    CHECK(Parallel(a.face_normals, b.face_normals));
+    CHECK(Parallel(b.face_normals, a.face_normals));
   }
   for (std::size_t v = 0; v < coarse.vertices.size(); v++)
   {

@@ -10733,10 +10733,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     follow_on["Problem"]["Output"] = follow_on_dir.string();
     test::RunElectrostatic(follow_on);
     Mpi::Barrier(comm);
+    // The premise of the comparison: the saved mesh's perimeter carries
+    // refinement-generated vertices, read as the LEAF perimeter (the post-processing
+    // extraction, unchanged by decision 899) of both meshes loaded through the same path
+    // (the initial mesh's sheets cracked at load, the saved mesh's as saved): more segments
+    // on the saved mesh. Without them the identification comparison would hold vacuously.
+    auto LeafSegments = [&](const json &run)
+    {
+      IoData iodata(run, false);
+      auto mesh = mesh::ReadMesh(iodata, comm);
+      return ExtractMetalEdgeGeometry(*mesh, iodata.boundaries,
+                                      JointNoiseExtractionFor(iodata.boundaries))
+          .segments.size();
+    };
+    const std::size_t initial_leaf_segments = LeafSegments(config);
+    const std::size_t saved_leaf_segments = LeafSegments(follow_on);
     if (!Mpi::Root(comm))
     {
       return;
     }
+    CHECK(saved_leaf_segments > initial_leaf_segments);
     {
       std::ifstream saved(saved_mesh_path);
       std::string header;
@@ -10957,6 +10973,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                              {"TargetInterfaces", {1, 2, 3}},
                                              {"UnmatchedPolicy", "Warn"},
                                              {"TraceCoupling", "Collocated"}}}};
+    // Beside the dry run, the LEAF perimeter of the mesh (the post-processing extraction,
+    // unchanged by decision 899): its segment count on the saved mesh exceeds the initial
+    // mesh's when the AMR refined the perimeter, the premise of the comparison below (the
+    // identification then merges the refinement vertices out; without them the comparison
+    // would hold vacuously).
     auto Identify = [&](const fs::path &mesh_file, const std::string &stem)
     {
       json run = identify;
@@ -10973,16 +10994,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       const fs::path requirements_path = out_dir / "surface-response-requirements.json";
       WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
       Mpi::Barrier(comm);
-      return std::make_pair(requirements_path, out_dir / "surface-response-patches.csv");
+      const auto leaf_perimeter = ExtractMetalEdgeGeometry(
+          *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+      return std::make_tuple(requirements_path, out_dir / "surface-response-patches.csv",
+                             leaf_perimeter.segments.size());
     };
-    const auto [initial_requirements, initial_patches] =
+    const auto [initial_requirements, initial_patches, initial_leaf_segments] =
         Identify(mesh_path, "adaptid-cpw-initial");
-    const auto [adapted_requirements, adapted_patches] =
+    const auto [adapted_requirements, adapted_patches, adapted_leaf_segments] =
         Identify(saved_mesh_path, "adaptid-cpw-adapted");
     if (!Mpi::Root(comm))
     {
       return;
     }
+    // The saved mesh's perimeter carries refinement-generated vertices.
+    CHECK(adapted_leaf_segments > initial_leaf_segments);
     const json initial = ReadJson(initial_requirements);
     const json adapted = ReadJson(adapted_requirements);
     const auto &initial_identification = initial["Identification"];

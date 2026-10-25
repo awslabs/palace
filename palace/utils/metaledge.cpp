@@ -450,6 +450,16 @@ std::vector<bool> RefinementGeneratedVertices(const mfem::ParMesh &mesh)
   {
     return flags;
   }
+  auto *ncmesh = const_cast<mfem::NCMesh *>(mesh.ncmesh);
+  // An unrefined NC mesh (every root element a leaf: the global leaf count is the root
+  // count; a refinement replaces one leaf by several) has no node with two distinct
+  // parents, so its census is empty by construction: the Print stream is skipped (the
+  // identification of every AMR producer's initial mesh, twice per identification). Both
+  // counts are the same on every rank (a reduction; the root set is replicated).
+  if (mesh.GetGlobalNE() == static_cast<long long int>(ncmesh->GetNumRootElements()))
+  {
+    return flags;
+  }
   VertexParentsFilter filter;
   {
     std::ostream os(&filter);
@@ -457,7 +467,6 @@ std::vector<bool> RefinementGeneratedVertices(const mfem::ParMesh &mesh)
     os.flush();
   }
   filter.Finish();
-  auto *ncmesh = const_cast<mfem::NCMesh *>(mesh.ncmesh);
   for (const long long int id : filter.NodeIds())
   {
     const int vertex = ncmesh->GetNodeVertex(static_cast<int>(id));
@@ -1858,6 +1867,12 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
         merged.vertices = vertex_point[far_a] < vertex_point[far_b]
                               ? std::array<std::size_t, 2>{far_a, far_b}
                               : std::array<std::size_t, 2>{far_b, far_a};
+        // Leaf-level diagnostics of the merged segment: face_count sums the children's
+        // distinct leaf faces (a coarser crack copy's face, covering both children, is
+        // counted once per child; the root segment's own count would need the face
+        // hierarchy, which the vertex-parents census does not carry; no consumer reads
+        // it); face_normals is the union of the children's (every child face is parallel
+        // to its root face: the non-planar-metal classification reads the same).
         merged.face_count = a.face_count + b.face_count;
         merged.face_normals.insert(merged.face_normals.end(), b.face_normals.begin(),
                                    b.face_normals.end());

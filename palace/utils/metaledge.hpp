@@ -153,7 +153,9 @@ struct MetalEdgeSegment
   // Distinct metal faces supporting the segment, their unit normals (sign-canonical), and
   // the domain element attributes adjacent to those faces over every coincident copy. A
   // sheet with the same material on both sides (an airbridge span, metal embedded in one
-  // dielectric) has a single side attribute.
+  // dielectric) has a single side attribute. On a root-level segment merged from leaf
+  // sub-segments (root_level_perimeter) face_count is the sum of the children's counts, a
+  // diagnostic without a consumer; face_normals is the union of theirs.
   int face_count = 0;
   std::vector<std::array<double, 3>> face_normals;
   std::vector<int> side_attributes;
