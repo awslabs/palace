@@ -11123,6 +11123,67 @@ TEST_CASE("Role-insensitive context digest ignores the Chain:false conductor lab
 namespace palace
 {
 
+namespace
+{
+
+// A plan of axis-aligned metal rectangles (x0, z0, x1, z1) on the sheet y = 0.5 of a
+// Cartesian hex mesh (x in [0, extent_x], y in [0, 1], z in [0, extent_z]; element size
+// 0.1): every internal face of the sheet inside a rectangle becomes a boundary element of
+// attribute 9 (the cracked PEC sheet of IslandConfig).
+struct PlanRectangle
+{
+  double x0, z0, x1, z1;
+};
+
+mfem::Mesh MakeSheetPlanMesh(double extent_x, double extent_z,
+                             const std::vector<PlanRectangle> &metal)
+{
+  constexpr double element_size = 0.1;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
+      static_cast<int>(std::llround(extent_x / element_size)), 4,
+      static_cast<int>(std::llround(extent_z / element_size)), mfem::Element::HEXAHEDRON,
+      extent_x, 1.0, extent_z);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent_x, xmax = 0.0, zmin = extent_z, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool inside_metal =
+        std::any_of(metal.begin(), metal.end(),
+                    [&](const PlanRectangle &r)
+                    {
+                      return xmin >= r.x0 - 1.0e-12 && xmax <= r.x1 + 1.0e-12 &&
+                             zmin >= r.z0 - 1.0e-12 && zmax <= r.z1 + 1.0e-12;
+                    });
+    if (on_plane && inside_metal)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return serial;
+}
+
+}  // namespace
+
 // Decision 899 B2 / 900 MAJOR-1 (OI-ROLEKEY), test U4: the role-insensitive legacy-alias
 // lookup END TO END. One straight-corner cluster geometry on the cracked sheet y = 0.5: a
 // 1 R wide finger standing on a 4 R thick bar (the two concave corners of the junction are
@@ -11177,18 +11238,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     TIED,         // role 1: the claw (bar + finger) and the pad one component
     CUT           // role 2: the tie absent, the pad its own component
   };
-  struct Rectangle
-  {
-    double x0, z0, x1, z1;
-  };
   auto MakeMesh = [&](Role role)
   {
-    constexpr double extent = 5.0;
-    constexpr int in_plane_elements = 50;
-    mfem::Mesh serial =
-        mfem::Mesh::MakeCartesian3D(in_plane_elements, 4, in_plane_elements,
-                                    mfem::Element::HEXAHEDRON, extent, 1.0, extent);
-    std::vector<Rectangle> metal = {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, 4.5}};
+    std::vector<PlanRectangle> metal = {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, 4.5}};
     if (role != Role::CLAIMS_ONLY)
     {
       metal.push_back({0.5, 2.5, 1.9, 4.5});
@@ -11197,42 +11249,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     {
       metal.push_back({0.5, 2.0, 1.0, 2.5});
     }
-    for (int face = 0; face < serial.GetNumFaces(); face++)
-    {
-      int element1, element2;
-      serial.GetFaceElements(face, &element1, &element2);
-      if (element1 < 0 || element2 < 0)
-      {
-        continue;
-      }
-      mfem::Array<int> vertices;
-      serial.GetFaceVertices(face, vertices);
-      bool on_plane = true;
-      double xmin = extent, xmax = 0.0, zmin = extent, zmax = 0.0;
-      for (const int vertex : vertices)
-      {
-        const double *point = serial.GetVertex(vertex);
-        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
-        xmin = std::min(xmin, point[0]);
-        xmax = std::max(xmax, point[0]);
-        zmin = std::min(zmin, point[2]);
-        zmax = std::max(zmax, point[2]);
-      }
-      const bool inside_metal =
-          std::any_of(metal.begin(), metal.end(),
-                      [&](const Rectangle &r)
-                      {
-                        return xmin >= r.x0 - 1.0e-12 && xmax <= r.x1 + 1.0e-12 &&
-                               zmin >= r.z0 - 1.0e-12 && zmax <= r.z1 + 1.0e-12;
-                      });
-      if (on_plane && inside_metal)
-      {
-        serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
-        serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
-      }
-    }
-    serial.FinalizeTopology();
-    serial.Finalize();
+    mfem::Mesh serial = MakeSheetPlanMesh(5.0, 5.0, metal);
     return std::make_unique<mfem::ParMesh>(comm, serial);
   };
 
@@ -11536,6 +11553,146 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         CHECK((*rows)[0][c] == tied_rows[0][c]);
       }
     }
+  }
+#endif
+}
+
+// Decision 899 B1 mechanism (B) / 900 MINOR-5 (OI-CTX-ARC-ADAPT), test U5: the Box +
+// Context key of a cluster whose box holds EXCLUDED perimeter segments is the root's on a
+// locally refined nonconforming mesh. The U4 claw (bar + finger) under a ceiling the finger
+// reaches: the finger's top edge is the edge where the sheet meets the PEC ceiling (an
+// excluded NonManifold edge, 2.5 R above the junction's concave corners: inside the
+// cluster's box, beyond the claims). The two hexahedra under the finger's top are refined
+// once (one side of the sheet; the mesh's EdgeFrameNormal keeps mechanism (A) out): the
+// leaf perimeter then splits the excluded edge at the refinement vertices, and the key
+// records every excluded segment inside the box per MESH segment — on main the cluster's
+// Hash, ContextDigest and Context.ExcludedSegments.Pieces change (the C1 abort / C3
+// unmatched pair of the record's class); on the branch the root-level perimeter reproduces
+// the unrefined mesh's key exactly. Serial + MPI-2 (the refined serial mesh is
+// distributed).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator cluster key with excluded segments in its box is "
+                 "the root's on a locally refined NC mesh",
+                 "[surfaceresponseoperator][3d][signature][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  // The plan (mesh units; R = 0.2; the domain 5 x 1 x 2.5): the bar x in [0.5, 4.5],
+  // z in [1.2, 2.0]; the finger x in [2.4, 2.6], z in [2.0, 2.5] up to the ceiling.
+  constexpr double ceiling = 2.5;
+  const std::vector<PlanRectangle> metal = {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, ceiling}};
+  auto MakeMesh = [&](bool refined)
+  {
+    mfem::Mesh serial = MakeSheetPlanMesh(5.0, ceiling, metal);
+    if (refined)
+    {
+      serial.EnsureNCMesh(true);
+      mfem::Array<int> marked;
+      for (int e = 0; e < serial.GetNE(); e++)
+      {
+        mfem::Vector center(3);
+        serial.GetElementCenter(e, center);
+        if (center(0) > 2.4 && center(0) < 2.6 && center(1) > 0.25 && center(1) < 0.5 &&
+            center(2) > ceiling - 0.1)
+        {
+          marked.Append(e);
+        }
+      }
+      REQUIRE(marked.Size() == 2);
+      serial.GeneralRefinement(marked);
+    }
+    return std::make_unique<mfem::ParMesh>(comm, serial);
+  };
+
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = spatial_cluster_library_3d_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  auto Identify = [&](bool refined, const std::string &stem)
+  {
+    json run = config;
+    const fs::path out_dir = temp.temp_dir / stem;
+    if (Mpi::Root(comm))
+    {
+      fs::create_directories(out_dir);
+    }
+    Mpi::Barrier(comm);
+    run["Problem"]["Output"] = out_dir.string();
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto mesh = MakeMesh(refined);
+    const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+    Mpi::Barrier(comm);
+    return std::make_pair(requirements_path, mesh->GetGlobalNE());
+  };
+  const auto [initial_requirements, initial_ne] = Identify(false, "u5-initial");
+  const auto [refined_requirements, refined_ne] = Identify(true, "u5-refined");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  CHECK(refined_ne == initial_ne + 14);  // two hexahedra -> eight children each
+  auto JunctionCluster = [](const json &manifest) -> json
+  {
+    json found;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "SpatialEdgeCluster")
+      {
+        continue;
+      }
+      const auto &vertices = feature["Signature"]["Vertices"];
+      if (std::any_of(vertices.begin(), vertices.end(),
+                      [](const json &vertex) { return vertex["Type"] == "ConcaveCorner"; }))
+      {
+        REQUIRE(found.is_null());
+        found = feature;
+      }
+    }
+    REQUIRE(found.is_object());
+    return found;
+  };
+  const json initial = ReadJson(initial_requirements);
+  const json refined = ReadJson(refined_requirements);
+  const json initial_cluster = JunctionCluster(initial);
+  const json refined_cluster = JunctionCluster(refined);
+  // The premise: excluded segments inside the box on the unrefined mesh (the finger's top
+  // edge at the ceiling), the cluster keyed with Box + Context.
+  CHECK(initial_cluster["SpatialSupport"]["Contract"] == 3);
+  const auto &initial_excluded =
+      initial_cluster["SpatialSupport"]["Context"]["ExcludedSegments"];
+  REQUIRE(initial_excluded["Pieces"].get<int>() >= 1);
+  const auto &initial_exclusions = initial["Identification"]["Exclusions"];
+  CHECK(std::any_of(
+      initial_exclusions.begin(), initial_exclusions.end(), [](const json &exclusion)
+      { return exclusion["Class"] == "NonManifold" && exclusion["Count"] == 2; }));
+  // The refined mesh: more leaf segments overall, the same identification (FAILS ON MAIN:
+  // the excluded pieces split, the key changes).
+  CHECK(refined["Identification"]["GeometryDigest"] ==
+        initial["Identification"]["GeometryDigest"]);
+  CHECK(refined_cluster["Hash"] == initial_cluster["Hash"]);
+  CHECK(refined_cluster["SpatialSupport"]["ContextDigest"] ==
+        initial_cluster["SpatialSupport"]["ContextDigest"]);
+  CHECK(refined_cluster["SpatialSupport"]["Context"]["ExcludedSegments"] ==
+        initial_excluded);
+  CHECK(refined_cluster["Signature"] == initial_cluster["Signature"]);
+  CHECK(refined["Identification"]["Exclusions"] == initial["Identification"]["Exclusions"]);
+  REQUIRE(refined["Identification"]["Features"].size() ==
+          initial["Identification"]["Features"].size());
+  for (std::size_t f = 0; f < initial["Identification"]["Features"].size(); f++)
+  {
+    CHECK(refined["Identification"]["Features"][f]["Hash"] ==
+          initial["Identification"]["Features"][f]["Hash"]);
   }
 #endif
 }
