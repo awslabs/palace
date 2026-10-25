@@ -11093,3 +11093,425 @@ TEST_CASE("Role-insensitive context digest ignores the Chain:false conductor lab
 }
 
 }  // namespace palace
+
+namespace palace
+{
+
+// Decision 899 B2 / 900 MAJOR-1 (OI-ROLEKEY), test U4: the role-insensitive legacy-alias
+// lookup END TO END. One straight-corner cluster geometry on the cracked sheet y = 0.5: a
+// 1 R wide finger standing on a 4 R thick bar (the two concave corners of the junction are
+// one 4-edge SpatialEdgeCluster, the claw of the transmon record's class) with a foreign
+// ground corner inside the cluster's support box (a pad whose corner sits 2.5 R from the
+// finger's edge and 2.5 R above the bar's edge: beyond the 2 R interaction distance, so its
+// edges are context, not claims; inside the box, which the claims' free ends extend by
+// 2 R + 1 R padding), built in two roles from one plan: role 1 the pad TIED to the bar by a
+// strip outside the box (one perimeter component, the pad edges read the claims' conductor
+// label 1), role 2 the tie CUT (two components, the pad edges read label 2). The claims,
+// the Box, the ClaimsKey, the chain pieces and the geometry of the foreign pieces are
+// identical: only the Chain: false Conductor labels differ, so the Hash and ContextDigest
+// differ. The test library carries the claims-only legacy model (its Signature = the
+// cluster's claims-only Signature from a third plan WITHOUT the pad, contract 2: the four
+// chain continuations are the decision-236 straight continuations) with a
+// LegacyContractAlias keyed in role 1 and a one-conductor PlanViewBoundary (claims-only: no
+// Box / Context, no plan conductor beyond the claims'). Role 1 resolves through the EXACT
+// alias path (USER decision 283: no RoleSwap record, RoleSwapAliasMatches 0, as on main);
+// role 2 resolves through the role-insensitive path (a RoleSwap record naming the
+// relabelled pieces, RoleSwapAliasMatches 1) and places the model in the same claims-only
+// frame: the same patch row. On main the role-2 cluster is Missing (74 + 6 on the
+// cut-short transmon, decision 895 (B)). The requirements dry run (no response matrices) on
+// every rank count: the identification is decided on the root and broadcast.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator role-insensitive legacy alias places the "
+                 "claims-only model in both conductor roles",
+                 "[surfaceresponseoperator][3d][signature][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+
+  // The plan on the sheet y = 0.5 (mesh units; R = 0.2 = the library's radius; element size
+  // 0.1 = 0.5 R; the domain 5 x 1 x 5, no metal on its boundary): the bar x in [0.5, 4.5],
+  // z in [1.2, 2.0]; the finger x in [2.4, 2.6], z in [2.0, 4.5] (the junction cluster's
+  // concave corners at (2.4, 2.0) and (2.6, 2.0); the finger's far end is its own cluster
+  // 12.5 R away); the pad x in [0.5, 1.9], z in [2.5, 4.5] (its corner (1.9, 2.5) is 2.5 R
+  // from the finger's left edge and 2.5 R above the bar's top edge; its bottom and right
+  // edges cross the box's left and top faces); the tie x in [0.5, 1.0], z in [2.0, 2.5]
+  // (role 1 only; its concave corners at x = 1.0 lie 7 R from the cluster, outside the
+  // box).
+  enum class Role
+  {
+    CLAIMS_ONLY,  // no pad: the legacy (claims-only, contract 2) key
+    TIED,         // role 1: the claw (bar + finger) and the pad one component
+    CUT           // role 2: the tie absent, the pad its own component
+  };
+  struct Rectangle
+  {
+    double x0, z0, x1, z1;
+  };
+  auto MakeMesh = [&](Role role)
+  {
+    constexpr double extent = 5.0;
+    constexpr int in_plane_elements = 50;
+    mfem::Mesh serial =
+        mfem::Mesh::MakeCartesian3D(in_plane_elements, 4, in_plane_elements,
+                                    mfem::Element::HEXAHEDRON, extent, 1.0, extent);
+    std::vector<Rectangle> metal = {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, 4.5}};
+    if (role != Role::CLAIMS_ONLY)
+    {
+      metal.push_back({0.5, 2.5, 1.9, 4.5});
+    }
+    if (role == Role::TIED)
+    {
+      metal.push_back({0.5, 2.0, 1.0, 2.5});
+    }
+    for (int face = 0; face < serial.GetNumFaces(); face++)
+    {
+      int element1, element2;
+      serial.GetFaceElements(face, &element1, &element2);
+      if (element1 < 0 || element2 < 0)
+      {
+        continue;
+      }
+      mfem::Array<int> vertices;
+      serial.GetFaceVertices(face, vertices);
+      bool on_plane = true;
+      double xmin = extent, xmax = 0.0, zmin = extent, zmax = 0.0;
+      for (const int vertex : vertices)
+      {
+        const double *point = serial.GetVertex(vertex);
+        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+        xmin = std::min(xmin, point[0]);
+        xmax = std::max(xmax, point[0]);
+        zmin = std::min(zmin, point[2]);
+        zmax = std::max(zmax, point[2]);
+      }
+      const bool inside_metal =
+          std::any_of(metal.begin(), metal.end(),
+                      [&](const Rectangle &r)
+                      {
+                        return xmin >= r.x0 - 1.0e-12 && xmax <= r.x1 + 1.0e-12 &&
+                               zmin >= r.z0 - 1.0e-12 && zmax <= r.z1 + 1.0e-12;
+                      });
+      if (on_plane && inside_metal)
+      {
+        serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+        serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+      }
+    }
+    serial.FinalizeTopology();
+    serial.Finalize();
+    return std::make_unique<mfem::ParMesh>(comm, serial);
+  };
+
+  // The requirements dry run of a plan against a library: the manifest and the patch
+  // table (written next to it).
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  auto Identify = [&](Role role, const fs::path &library, const std::string &stem)
+  {
+    json run = config;
+    run["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] = library.string();
+    const fs::path out_dir = temp.temp_dir / stem;
+    if (Mpi::Root(comm))
+    {
+      fs::create_directories(out_dir);
+    }
+    Mpi::Barrier(comm);
+    run["Problem"]["Output"] = out_dir.string();
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto mesh = MakeMesh(role);
+    const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+    Mpi::Barrier(comm);
+    return std::make_pair(requirements_path, out_dir / "surface-response-patches.csv");
+  };
+  // The junction cluster of a manifest: the one SpatialEdgeCluster with concave corners
+  // (the finger's far end is a cluster of convex corners; the tie's concave corners are
+  // 2.5 R apart and never cluster).
+  auto JunctionCluster = [](const json &manifest) -> json
+  {
+    json found;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "SpatialEdgeCluster")
+      {
+        continue;
+      }
+      const auto &vertices = feature["Signature"]["Vertices"];
+      if (std::any_of(vertices.begin(), vertices.end(),
+                      [](const json &vertex) { return vertex["Type"] == "ConcaveCorner"; }))
+      {
+        REQUIRE(found.is_null());
+        found = feature;
+      }
+    }
+    REQUIRE(found.is_object());
+    return found;
+  };
+  // The Context with the Conductor label removed from the Chain: false pieces (the test's
+  // own reading of the role-insensitive rule; RoleInsensitiveContextDigest is the code's).
+  auto RoleInsensitiveContext = [](json context)
+  {
+    for (auto &piece : context)
+    {
+      if (!piece.value("Chain", false))
+      {
+        piece.erase("Conductor");
+      }
+    }
+    return context;
+  };
+
+  // 1. The claims-only plan against the fixture library: the junction cluster is contract
+  //    2 (no Box / Context in its Signature) and Missing; its Signature is the legacy
+  //    model's.
+  const auto [claims_only_requirements, claims_only_patches] =
+      Identify(Role::CLAIMS_ONLY, spatial_cluster_library_3d_path, "u4-claims-only");
+  // 2. Role 1 against the fixture library: contract 3 with the pad's two foreign pieces;
+  //    Missing. Its Hash and ContextDigest key the alias.
+  const auto [tied_probe_requirements, tied_probe_patches] =
+      Identify(Role::TIED, spatial_cluster_library_3d_path, "u4-tied-probe");
+  json claims_only_feature, tied_probe_feature;
+  std::size_t foreign_pieces = 0;
+  const fs::path library_path = temp.temp_dir / "fabrication-process-u4-role-swap-3d.json";
+  const std::string model_name = "u4-claims-only-junction";
+  if (Mpi::Root(comm))
+  {
+    const json claims_only_manifest = ReadJson(claims_only_requirements);
+    claims_only_feature = JunctionCluster(claims_only_manifest);
+    CHECK(claims_only_feature["Match"]["Status"] == "Missing");
+    CHECK(claims_only_feature["SpatialSupport"]["Contract"] == 2);
+    REQUIRE(!claims_only_feature["Signature"].contains("Box"));
+    REQUIRE(!claims_only_feature["Signature"].contains("Context"));
+    CHECK(claims_only_feature["SpatialSupport"]["ClaimsKey"] ==
+          claims_only_feature["Hash"]);
+    CHECK(claims_only_manifest["Statistics"]["Matching"].value("RoleSwapAliasMatches", 0) ==
+          0);
+
+    const json tied_probe_manifest = ReadJson(tied_probe_requirements);
+    tied_probe_feature = JunctionCluster(tied_probe_manifest);
+    CHECK(tied_probe_feature["Match"]["Status"] == "Missing");
+    CHECK(tied_probe_feature["SpatialSupport"]["Contract"] == 3);
+    REQUIRE(tied_probe_feature["Signature"].contains("Box"));
+    REQUIRE(tied_probe_feature["Signature"].contains("Context"));
+    CHECK(tied_probe_feature["SpatialSupport"]["Context"]["ForeignPieces"] >= 2);
+    CHECK(tied_probe_feature["SpatialSupport"]["Context"]["ForeignConductors"] == 0);
+    CHECK(tied_probe_feature["SpatialSupport"]["ClaimsKey"] == claims_only_feature["Hash"]);
+    CHECK(tied_probe_feature["Hash"] != claims_only_feature["Hash"]);
+    // The foreign pieces (the pad's bottom and right edges inside the box; the pad corner's
+    // own claims split them) are labelled as the claims (one component); the chain pieces
+    // are the claims' continuations.
+    foreign_pieces = 0;
+    for (const auto &piece : tied_probe_feature["Signature"]["Context"])
+    {
+      if (!piece["Chain"].get<bool>())
+      {
+        foreign_pieces++;
+        CHECK(piece["Conductor"] == 1);
+      }
+      else
+      {
+        CHECK(piece["Conductor"] == 1);
+      }
+    }
+    CHECK(foreign_pieces >= 2);
+    CHECK(tied_probe_feature["SpatialSupport"]["Context"]["ForeignPieces"] ==
+          foreign_pieces);
+
+    // The test library: the fixture's cluster model becomes the claims-only legacy model
+    // (keyed by the claims-only Signature; a one-conductor PlanViewBoundary; the alias =
+    // the role-1 key with its context digest and recorded Box + Context).
+    json library = ReadJson(spatial_cluster_library_3d_path);
+    library["Name"] = "unit-test-process-u4-role-swap-3d";
+    auto &model = library["Models"].back();
+    model["Name"] = model_name;
+    model["Signature"] = claims_only_feature["Signature"];
+    model.erase("Edges");
+    model["PlanViewBoundary"] = {{{"Conductor", 1},
+                                  {"Segments",
+                                   {{{-100000000, 0, 0}, {100000000, 0, 0}},
+                                    {{-100000000, 0, 0}, {-100000000, 1000000000, 0}},
+                                    {{100000000, 0, 0}, {100000000, 1000000000, 0}}}}}};
+    model["LegacyContractAliases"] = {
+        {{"Key", tied_probe_feature["Hash"]},
+         {"ContextDigest", tied_probe_feature["SpatialSupport"]["ContextDigest"]},
+         {"Reason", "unit test U4 (decision 899 B2): the claw tied to the pad, role 1"},
+         {"Context",
+          {{"Box", tied_probe_feature["Signature"]["Box"]},
+           {"Context", tied_probe_feature["Signature"]["Context"]}}}}};
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+
+  // 3. The three plans against the test library.
+  const auto [legacy_requirements, legacy_patches] =
+      Identify(Role::CLAIMS_ONLY, library_path, "u4-legacy");
+  const auto [tied_requirements, tied_patches] =
+      Identify(Role::TIED, library_path, "u4-tied");
+  const auto [cut_requirements, cut_patches] = Identify(Role::CUT, library_path, "u4-cut");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const json legacy_manifest = ReadJson(legacy_requirements);
+  const json tied_manifest = ReadJson(tied_requirements);
+  const json cut_manifest = ReadJson(cut_requirements);
+  const json legacy_feature = JunctionCluster(legacy_manifest);
+  const json tied_feature = JunctionCluster(tied_manifest);
+  const json cut_feature = JunctionCluster(cut_manifest);
+
+  // The claims-only plan: the exact key (neither alias path).
+  CHECK(legacy_feature["Match"]["Status"] == "Matched");
+  CHECK(legacy_feature["Match"]["Model"] == model_name);
+  CHECK(!legacy_feature["Match"].contains("LegacyContract"));
+  CHECK(legacy_manifest["Statistics"]["Matching"].value("RoleSwapAliasMatches", 0) == 0);
+
+  // Role 1: the exact alias (USER decision 283), no RoleSwap record, as on main.
+  CHECK(tied_feature["Hash"] == tied_probe_feature["Hash"]);
+  CHECK(tied_feature["Match"]["Status"] == "Matched");
+  CHECK(tied_feature["Match"]["Model"] == model_name);
+  REQUIRE(tied_feature["Match"].contains("LegacyContract"));
+  CHECK(tied_feature["Match"]["LegacyContract"]["Key"] == tied_feature["Hash"]);
+  CHECK(tied_feature["Match"]["LegacyContract"]["ClaimsKey"] ==
+        claims_only_feature["Hash"]);
+  CHECK(!tied_feature["Match"]["LegacyContract"].contains("RoleSwap"));
+  CHECK_THAT(tied_feature["Match"]["Note"].get<std::string>(),
+             ContainsSubstring("legacy contract (USER decision 283)"));
+  CHECK(tied_manifest["Statistics"]["Matching"].value("RoleSwapAliasMatches", 0) == 0);
+
+  // Role 2: the same claims, Box and ClaimsKey; the foreign piece relabelled 2; the Hash
+  // and the ContextDigest differ (the exact alias cannot serve it); the role-insensitive
+  // contexts are equal.
+  CHECK(cut_feature["SpatialSupport"]["Contract"] == 3);
+  CHECK(cut_feature["SpatialSupport"]["ClaimsKey"] == claims_only_feature["Hash"]);
+  CHECK(cut_feature["Signature"]["Portions"] == tied_feature["Signature"]["Portions"]);
+  CHECK(cut_feature["Signature"]["Box"] == tied_feature["Signature"]["Box"]);
+  CHECK(cut_feature["Hash"] != tied_feature["Hash"]);
+  CHECK(cut_feature["SpatialSupport"]["ContextDigest"] !=
+        tied_feature["SpatialSupport"]["ContextDigest"]);
+  REQUIRE(cut_feature["Signature"]["Context"].size() ==
+          tied_feature["Signature"]["Context"].size());
+  CHECK(cut_feature["Signature"]["Context"] != tied_feature["Signature"]["Context"]);
+  CHECK(RoleInsensitiveContext(cut_feature["Signature"]["Context"]) ==
+        RoleInsensitiveContext(tied_feature["Signature"]["Context"]));
+  std::size_t relabelled_pieces = 0;
+  for (std::size_t i = 0; i < cut_feature["Signature"]["Context"].size(); i++)
+  {
+    const auto &cut_piece = cut_feature["Signature"]["Context"][i];
+    const auto &tied_piece = tied_feature["Signature"]["Context"][i];
+    CHECK(cut_piece["Chain"] == tied_piece["Chain"]);
+    if (cut_piece["Chain"].get<bool>())
+    {
+      CHECK(cut_piece["Conductor"] == 1);
+    }
+    else
+    {
+      relabelled_pieces++;
+      CHECK(cut_piece["Conductor"] == 2);
+    }
+  }
+  CHECK(relabelled_pieces == foreign_pieces);
+  CHECK(cut_feature["SpatialSupport"]["Context"]["ForeignPieces"] == foreign_pieces);
+  CHECK(cut_feature["SpatialSupport"]["Context"]["ForeignConductors"] == 1);
+  // Placed through the role-insensitive alias (decision 899 B2): FAILS ON MAIN (Missing).
+  CHECK(cut_feature["Match"]["Status"] == "Matched");
+  CHECK(cut_feature["Match"]["Model"] == model_name);
+  REQUIRE(cut_feature["Match"].contains("LegacyContract"));
+  const auto &contract = cut_feature["Match"]["LegacyContract"];
+  CHECK(contract["Key"] == tied_feature["Hash"]);
+  CHECK(contract["ContextDigest"] == tied_feature["SpatialSupport"]["ContextDigest"]);
+  CHECK(contract["ClaimsKey"] == claims_only_feature["Hash"]);
+  CHECK(contract["Model"] == model_name);
+  REQUIRE(contract.contains("RoleSwap"));
+  CHECK(contract["RoleSwap"]["FeatureKey"] == cut_feature["Hash"]);
+  CHECK(contract["RoleSwap"]["FeatureContextDigest"] ==
+        cut_feature["SpatialSupport"]["ContextDigest"]);
+  CHECK(contract["RoleSwap"]["RoleInsensitiveContextDigest"].get<std::string>().size() ==
+        64);
+  REQUIRE(contract["RoleSwap"]["RelabelledPieces"].size() == foreign_pieces);
+  for (const auto &relabelled : contract["RoleSwap"]["RelabelledPieces"])
+  {
+    CHECK(relabelled["FeatureConductor"] == 2);
+    CHECK(relabelled["AliasConductor"] == 1);
+    CHECK(!cut_feature["Signature"]["Context"][relabelled["Piece"].get<std::size_t>()]
+                      ["Chain"]
+                          .get<bool>());
+  }
+  CHECK_THAT(cut_feature["Match"]["Note"].get<std::string>(),
+             ContainsSubstring("role-insensitive legacy contract (decision 899 B2)"));
+  CHECK(cut_manifest["Statistics"]["Matching"]["RoleSwapAliasMatches"] == 1);
+  // No key renamed: the feature's own hash is the manifest's, the alias key stays role 1's.
+  CHECK(cut_feature["Hash"] != contract["Key"]);
+  // The same claims-only placement frame in both roles.
+  for (const char *key : {"Origin", "Chirality"})
+  {
+    CHECK(cut_feature["ClaimsFrame"][key] == tied_feature["ClaimsFrame"][key]);
+  }
+
+  // The patch table: the model's row is the same in both roles (the claims-only frame);
+  // the dry-run table carries text columns (Topology, Model) beside the numbers. The Patch
+  // and Feature ids are not compared (the tie adds features of its own).
+  auto ModelRows = [&](const fs::path &path)
+  {
+    std::vector<std::vector<std::string>> rows;
+    for (const auto &row : ReadPatchRows(path))
+    {
+      REQUIRE(row.size() >= 25);
+      if (row[3] == model_name)
+      {
+        rows.push_back(row);
+      }
+    }
+    return rows;
+  };
+  const auto tied_rows = ModelRows(tied_patches);
+  const auto cut_rows = ModelRows(cut_patches);
+  const auto legacy_rows = ModelRows(legacy_patches);
+  REQUIRE(tied_rows.size() == 1);
+  REQUIRE(cut_rows.size() == 1);
+  REQUIRE(legacy_rows.size() == 1);
+  auto Number = [](const std::string &field) -> std::optional<double>
+  {
+    std::size_t consumed = 0;
+    try
+    {
+      const double value = std::stod(field, &consumed);
+      return consumed == field.size() ? std::optional<double>(value) : std::nullopt;
+    }
+    catch (const std::exception &)
+    {
+      return std::nullopt;
+    }
+  };
+  for (const auto *rows : {&cut_rows, &legacy_rows})
+  {
+    REQUIRE((*rows)[0].size() == tied_rows[0].size());
+    for (std::size_t c = 2; c < tied_rows[0].size(); c++)
+    {
+      const auto tied_value = Number(tied_rows[0][c]);
+      const auto other_value = Number((*rows)[0][c]);
+      if (tied_value && other_value)
+      {
+        CHECK_THAT(*other_value, WithinAbs(*tied_value, 1.0e-12));
+      }
+      else
+      {
+        CHECK((*rows)[0][c] == tied_rows[0][c]);
+      }
+    }
+  }
+#endif
+}
+
+}  // namespace palace
