@@ -877,7 +877,7 @@
       "properties": {
         "Energy": {
           "type": "array",
-          "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory.",
+          "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory. In PML regions, the energies are computed with the material properties of the background medium of the layer (they measure the field in the layer rather than physical energies), and the participation ratios are relative to the energy of the physical region, which excludes the PML regions.",
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/Energy"

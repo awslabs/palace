@@ -75,7 +75,9 @@ These include:
     (associated with the specified domain attributes and indexed by the specified integer
     `"Index"`). These are from the electric and magnetic field solutions and written to the
     same `domain-E.csv` file in the specified postprocessing output directory used for the
-    global energies (described above).
+    global energies (described above). In the PML regions, which the global energies
+    exclude, they are computed with the material properties of the background medium of the
+    layer (see [Perfectly matched layer](boundaries.md#Perfectly-matched-layer)).
   - [`config["Domains"]["Postprocessing"]["Probe"]`](../config/reference.md#config-domains-postprocessing-probe) :
     Probe the values of the computed electric field and magnetic flux density solutions at
     specified locations in the computational domain. The availability of the ``\bm{E}`` and

@@ -17,6 +17,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
+    eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
+    `"Attributes"` are the domains of the PML regions (the other parameters have suitable
+    defaults). The stretch can be evaluated at a fixed reference frequency or at the
+    solve frequency (`"FrequencyDependent"`). For eigenmode simulations, the fraction of
+    the field energy of each mode in the PML regions is written to `eig.csv`, which
+    identifies the spurious modes of the layer. SchemaVer 4-3-0
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
 #### Interface Changes
 
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
@@ -298,12 +309,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Requires the `PenetrationDepth`/`Thickness` form, a 3D mesh, and an interior film.
     SchemaVer 4-1-0
     [PR 992](https://github.com/awslabs/palace/pull/992).
-  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
-    eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
-    `"Attributes"` are the domains of the PML regions (the other parameters have suitable
-    defaults). The stretch can be evaluated at a fixed reference frequency or at the
-    solve frequency (`"FrequencyDependent"`). SchemaVer 4-2-0
-    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes
 

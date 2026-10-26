@@ -16,7 +16,10 @@ for eigenmodes. The computed eigenvalues are written to an ASCII file named `eig
 the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). Also in
 this file are the mode quality factors and errors (absolute and backward) computed for each
-eigenpair.
+eigenpair, and, for models with
+[perfectly matched layers](boundaries.md#Perfectly-matched-layer), the fraction of the
+field energy of each mode in the PML regions, which identifies the spurious modes of the
+layer.
 
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
