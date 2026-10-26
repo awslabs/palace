@@ -470,10 +470,25 @@ LumpedPortData::LumpedPortData(const json &port)
                           "{:d} because it is excited; the excitation vector is always "
                           "added to the synthesis basis.",
                           index));
+  // Decision 929: the optional "Length" geometry override of a ragged planar element
+  // (mesh units, along the element's Direction): > 0 when present, Cartesian only.
+  auto ParseLengthOverride = [&](const json &e, internal::ElementData &elem)
+  {
+    elem.length = e.value("Length", 0.0);
+    MFEM_VERIFY(e.find("Length") == e.end() || elem.length > 0.0,
+                fmt::format("Lumped port index {:d}: \"Length\" must be positive (mesh "
+                            "units, measured along the element's \"Direction\")!",
+                            index));
+    MFEM_VERIFY(elem.length == 0.0 || elem.coordinate_system == CoordinateSystem::CARTESIAN,
+                fmt::format("Lumped port index {:d}: \"Length\" applies to a Cartesian "
+                            "(uniform) element only!",
+                            index));
+  };
   if (port.find("Attributes") != port.end())
   {
     auto &elem = elements.emplace_back();
     ParseElementData(port, true, elem);
+    ParseLengthOverride(port, elem);
   }
   else
   {
@@ -481,6 +496,7 @@ LumpedPortData::LumpedPortData(const json &port)
     {
       auto &elem = elements.emplace_back();
       ParseElementData(e, true, elem);
+      ParseLengthOverride(e, elem);
     }
   }
 }
@@ -2167,6 +2183,11 @@ void Nondimensionalize(const Units &units, LumpedPortData &data)
   data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  // The decision-929 length override is a mesh-unit length like the mesh coordinates.
+  for (auto &elem : data.elements)
+  {
+    elem.length /= units.GetMeshLengthRelativeScale();
+  }
 }
 
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data)

@@ -6,10 +6,12 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/drivensolver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
@@ -918,4 +920,68 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   CHECK(std::isfinite(S_proj.real()));
   CHECK(std::isfinite(S_proj.imag()));
   CHECK(std::abs(S_proj) > 0.0);
+}
+
+TEST_CASE("LumpedElement_RaggedTile_LengthOverride", "[lumped_port][Serial][Parallel]")
+{
+  // Decision 929: a ragged TWO-SIDED planar tile whose lexicographic bounding box is
+  // skewed. The tile = the two faces z = 0 and z = 0.1 of a 6 x 1 x 0.1 slab (60 x 10 x 1
+  // hexahedra) minus the one corner cell x > 5.9, y > 0.9 (a mitred corner node). The box
+  // algorithm's diagonal runs (0, 0) -> (6, 0.9) and its second axis (0, 1) -> (6, 0.9) is
+  // 0.95 degrees off +X (inside the 1-degree alignment tolerance), so the discovered length
+  // along that axis (6.016) differs from the extent projected on +X (6.000) by 0.27 % and
+  // the uniform element ABORTS on the projected-length check. With the "Length" override
+  // (6.0) the element runs: l = 6.0 and w = area / l with the exact area of the port faces
+  // on both sides, 2 x (6 x 1 - 0.1 x 0.1) = 11.98. Nothing else of the element changes.
+  MPI_Comm comm = Mpi::World();
+  std::unique_ptr<mfem::ParMesh> pmesh;
+  {
+    mfem::Mesh serial =
+        mfem::Mesh::MakeCartesian3D(60, 10, 1, mfem::Element::HEXAHEDRON, 6.0, 1.0, 0.1);
+    for (int be = 0; be < serial.GetNBE(); be++)
+    {
+      mfem::Array<int> vertices;
+      serial.GetBdrElementVertices(be, vertices);
+      std::array<double, 3> centroid{};
+      for (const int vertex : vertices)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          centroid[d] += serial.GetVertex(vertex)[d] / vertices.Size();
+        }
+      }
+      const bool z_face =
+          std::abs(centroid[2]) < 1.0e-12 || std::abs(centroid[2] - 0.1) < 1.0e-12;
+      const bool corner_cell = centroid[0] > 5.9 && centroid[1] > 0.9;
+      if (z_face && !corner_cell)
+      {
+        serial.SetBdrAttribute(be, 7);
+      }
+    }
+    serial.SetAttributes();
+    pmesh = std::make_unique<mfem::ParMesh>(comm, serial);
+  }
+  mfem::Array<int> attr_list;
+  attr_list.Append(7);
+  const std::array<double, 3> direction = {1.0, 0.0, 0.0};
+  // Without the key: today's behaviour, the abort of the projected-length check.
+  CHECK_THROWS_WITH(UniformElementData(direction, attr_list, *pmesh),
+                    ContainsSubstring("should match projected length"));
+  // With the key: the configured length, the width from the exact two-sided area.
+  const UniformElementData element(direction, attr_list, *pmesh, 6.0);
+  CHECK_THAT(element.GetGeometryLength(), WithinRel(6.0, 1.0e-12));
+  CHECK_THAT(element.GetGeometryWidth(), WithinRel(2.0 * (6.0 * 1.0 - 0.01) / 6.0, 1.0e-9));
+  // The override on an element whose box is NOT skewed changes only the length it states:
+  // the slab's y = 0 side (attribute 2 of MakeCartesian3D, a 6 x 0.1 rectangle) with l = 6
+  // reproduces the discovered values.
+  {
+    mfem::Array<int> full;
+    full.Append(2);
+    const UniformElementData discovered(direction, full, *pmesh);
+    const UniformElementData overridden(direction, full, *pmesh, 6.0);
+    CHECK_THAT(overridden.GetGeometryLength(),
+               WithinRel(discovered.GetGeometryLength(), 1.0e-12));
+    CHECK_THAT(overridden.GetGeometryWidth(),
+               WithinRel(discovered.GetGeometryWidth(), 1.0e-12));
+  }
 }
