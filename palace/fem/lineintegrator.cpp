@@ -358,7 +358,7 @@ void IntersectSegment(mfem::ElementTransformation &T,
 
 LineIntegrator::LineIntegrator(const mfem::ParMesh &mesh_,
                                const std::vector<mfem::Vector> &path, bool closed,
-                               int order)
+                               int field_order)
   : comm(mesh_.GetComm()), sdim(mesh_.SpaceDimension()), mesh_ptr(&mesh_)
 {
   // Non-const access is required for element transformations only.
@@ -371,15 +371,16 @@ LineIntegrator::LineIntegrator(const mfem::ParMesh &mesh_,
     MFEM_VERIFY(p.Size() == sdim,
                 "LineIntegrator path points must match the mesh space dimension!");
   }
-  const auto &ir = mfem::IntRules.Get(mfem::Geometry::SEGMENT, std::max(order, 1));
+  const int mesh_order =
+      mesh.GetNodes() ? mesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
+  const auto &ir = mfem::IntRules.Get(mfem::Geometry::SEGMENT,
+                                      2 * (std::max(field_order, 0) + mesh_order));
   const int nq = ir.GetNPoints();
   const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
 
   // Precompute the element boundaries once for all segments. Curved (high-order) mesh
   // elements use several polyline pieces per edge.
   const int ne = mesh.GetNE();
-  const int mesh_order =
-      mesh.GetNodes() ? mesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
   const int pieces_per_edge = (mesh_order > 1) ? 2 * mesh_order : 1;
   std::vector<ElementBoundary> bdrs;
   bdrs.reserve(ne);

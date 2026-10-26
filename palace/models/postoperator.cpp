@@ -225,12 +225,9 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
 
     // Coordinate-path line integrals are split at element boundaries and each piece is
-    // integrated with a Gauss rule exact for the field polynomial degree on straight-sided
-    // elements, see fem::LineIntegrator.
+    // integrated with a Gauss rule exact for the field on affine elements, see
+    // fem::LineIntegrator.
     const int field_order = fem_op->GetNDSpace().Get().GetMaxElementOrder();
-    const int mesh_order =
-        pmesh.GetNodes() ? pmesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
-    const int line_order = 2 * (field_order + mesh_order);
 
     // A path which misses the mesh would give zero, so reject it as for wave port voltage
     // paths, and warn if only part of it lies on the mesh.
@@ -238,7 +235,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
         [&](const std::vector<mfem::Vector> &path, bool closed, const char *name, int idx)
     {
       auto integrator =
-          std::make_shared<fem::LineIntegrator>(pmesh, path, closed, line_order);
+          std::make_shared<fem::LineIntegrator>(pmesh, path, closed, field_order);
       const double rel_uncovered =
           integrator->GetUncoveredLength() / integrator->GetPathLength();
       MFEM_VERIFY(rel_uncovered < 1.0 - 1.0e-12, name << " of postprocessing index " << idx

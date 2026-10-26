@@ -165,8 +165,7 @@ private:
   // LinearForm assembly in the legacy path when supported.
   mutable std::unique_ptr<SurfaceFunctional> power_func;
 
-  // Voltage path for line integral (optional, for impedance postprocessing).
-  std::vector<mfem::Vector> voltage_path;
+  // Whether a voltage path is given (optional, for impedance postprocessing).
   bool has_voltage_coords = false;
 
   // Element-aware quadrature for the voltage path on the embedded port submesh (the path
@@ -175,13 +174,13 @@ private:
   // point search on the full parent mesh.
   std::unique_ptr<fem::LineIntegrator> voltage_integrator;
 
-  void SetUpExcitationVoltagePath();
+  void SetUpExcitationVoltagePath(const std::vector<mfem::Vector> &voltage_path);
 
   // Optional polarity attributes (parent-mesh boundary attrs [high, low], signal
   // first, ground second). When non-zero (i.e. set by the user) the mode is flipped
   // so that E points from high to low, matching the lumped-port `+R Direction`
-  // convention. Computed without GSLIB by evaluating the mode at port-submesh
-  // boundary element centroids adjacent to each attribute.
+  // convention. Computed by evaluating the mode at port-submesh boundary element
+  // centroids adjacent to each attribute.
   std::array<int, 2> polarity_attributes = {0, 0};
 
 public:
@@ -239,7 +238,7 @@ public:
   // implied by the given pair of parent-mesh boundary attributes (signal terminal
   // first, ground terminal second). Returns +1, -1, or 0 if attributes were not
   // resolvable on this mesh partition. Used by Initialize() to flip the mode polarity
-  // without requiring GSLIB.
+  // without a VoltagePath.
   [[nodiscard]] int GetModePolaritySign(int high_attr, int low_attr) const;
 
   // Solve the cross-section modal EVP at a COMPLEX frequency and return the complex

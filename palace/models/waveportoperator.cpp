@@ -9,7 +9,6 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
-#include "fem/interpolator.hpp"
 #include "fem/output_functionals.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
@@ -892,6 +891,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   if (data.voltage_path.size() >= 2)
   {
     has_voltage_coords = true;
+    std::vector<mfem::Vector> voltage_path;
     for (const auto &pt : data.voltage_path)
     {
       mfem::Vector p(pt.size());
@@ -901,7 +901,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
       }
       voltage_path.push_back(std::move(p));
     }
-    SetUpExcitationVoltagePath();
+    SetUpExcitationVoltagePath(voltage_path);
   }
 
   // Store polarity attributes [high, low]. The config parser enforces that this is
@@ -929,7 +929,7 @@ void WavePortData::SetSynthesisEigTol(double eig_tol, double ksp_tol)
   mode_cache.valid = false;
 }
 
-void WavePortData::SetUpExcitationVoltagePath()
+void WavePortData::SetUpExcitationVoltagePath(const std::vector<mfem::Vector> &voltage_path)
 {
   auto &port_submesh = static_cast<mfem::ParSubMesh &>(port_mesh->Get());
   MFEM_VERIFY(port_submesh.Dimension() == 2 && port_submesh.SpaceDimension() == 3,
@@ -967,15 +967,10 @@ void WavePortData::SetUpExcitationVoltagePath()
   }
 
   // Split the path at the port submesh element boundaries and integrate each piece with a
-  // Gauss rule exact for the field polynomial degree on straight-sided elements, so the
-  // voltage is the exact line integral of the discrete field regardless of the local mesh
-  // size.
-  const int field_order = port_nd_fespace->Get().GetMaxElementOrder();
-  const int mesh_order = port_submesh.GetNodes()
-                             ? port_submesh.GetNodes()->FESpace()->GetMaxElementOrder()
-                             : 1;
+  // Gauss rule exact for the field on affine elements, so the voltage is the exact line
+  // integral of the discrete field regardless of the local mesh size.
   voltage_integrator = std::make_unique<fem::LineIntegrator>(
-      port_submesh, projected_path, false, 2 * (field_order + mesh_order));
+      port_submesh, projected_path, false, port_nd_fespace->Get().GetMaxElementOrder());
   const double rel_uncovered =
       voltage_integrator->GetUncoveredLength() / voltage_integrator->GetPathLength();
   MFEM_VERIFY(rel_uncovered < 1.0 - 1.0e-12,
@@ -1083,8 +1078,8 @@ void WavePortData::Initialize(double omega)
     // V_exc = ∫ E_mode · dl is real-positive along the path. This ties the wave port
     // mode polarity to a physically meaningful direction (the path direction, like a
     // lumped port's Direction), enabling consistent S-parameter signs in mixed lumped
-    // + wave port simulations. PolarityAttributes provides a lightweight (no-GSLIB)
-    // alternative when only polarity is needed.
+    // + wave port simulations. PolarityAttributes provides a lightweight alternative when
+    // only polarity is needed.
     int sign = 0;
     if (has_voltage_coords)
     {
@@ -1502,7 +1497,7 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
 
 int WavePortData::GetModePolaritySign(int high_attr, int low_attr) const
 {
-  // Without GSLIB, evaluate the modal E-field at the centroids of two port-submesh
+  // Evaluate the modal E-field at the centroids of two port-submesh
   // boundary elements — one with parent attribute high_attr (signal terminal) and one
   // with low_attr (ground terminal) — and return the sign of
   //   Re( E_avg · (c_low - c_high) ),

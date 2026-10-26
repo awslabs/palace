@@ -125,7 +125,7 @@ TEST_CASE("LineIntegrator 2D exact for discrete fields",
 
   auto Check = [&](const std::vector<mfem::Vector> &path, bool closed)
   {
-    fem::LineIntegrator integrator(mesh, path, closed, 2 * order);
+    fem::LineIntegrator integrator(mesh, path, closed, order);
     const double ref = ReferenceLineIntegral(F, path, closed, 2);
     CAPTURE(ref);
     CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));
@@ -153,7 +153,7 @@ TEST_CASE("LineIntegrator 2D exact for discrete fields",
   {
     // Only the portion inside the mesh contributes.
     std::vector<mfem::Vector> path = {Point({-1.0, 0.5}), Point({1.0, 0.5})};
-    fem::LineIntegrator integrator(mesh, path, false, 2 * order);
+    fem::LineIntegrator integrator(mesh, path, false, order);
     const double ref =
         ReferenceLineIntegral(F, {Point({0.0, 0.5}), Point({1.0, 0.5})}, false, 2);
     CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));
@@ -196,7 +196,7 @@ TEST_CASE("LineIntegrator on a 3D boundary submesh", "[lineintegrator][Serial][P
                                   Point({0.0, 0.9, 0.7})},
         std::vector<mfem::Vector>{Point({0.0, 0.5, 0.0}), Point({0.0, 0.5, 1.0})}})
   {
-    fem::LineIntegrator integrator(submesh, path, false, 2 * order);
+    fem::LineIntegrator integrator(submesh, path, false, order);
     const double ref = ReferenceLineIntegral(F, path, false, 3);
     CHECK_THAT(integrator.Integrate(U), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));
     CHECK_THAT(integrator.GetUncoveredLength(), WithinAbs(0.0, 1.0e-12));
@@ -268,12 +268,12 @@ TEST_CASE("LineIntegrator exact for discrete gradient fields",
   const auto vals = Phi({path.front(), path.back()});
   const double ref = vals[1] - vals[0];
   {
-    fem::LineIntegrator integrator(mesh, path, false, 2 * order);
+    fem::LineIntegrator integrator(mesh, path, false, order);
     CAPTURE(ref, integrator.GetNumSubIntervals());
     CHECK_THAT(integrator.Integrate(E), WithinAbs(ref, 1.0e-10 * (1.0 + std::abs(ref))));
   }
   {
-    fem::LineIntegrator integrator(mesh, path, true, 2 * order);
+    fem::LineIntegrator integrator(mesh, path, true, order);
     CHECK_THAT(integrator.Integrate(E), WithinAbs(0.0, 1.0e-10 * (1.0 + std::abs(ref))));
   }
 }
@@ -360,7 +360,7 @@ TEST_CASE("LineIntegrator on curved elements", "[lineintegrator][Serial][Paralle
         std::vector<mfem::Vector>{Point({rb * std::cos(th0), rb * std::sin(th0)}),
                                   Point({rb * std::cos(th1), rb * std::sin(th1)})}})
   {
-    fem::LineIntegrator integrator(mesh, path, false, 2 * (order + 3));
+    fem::LineIntegrator integrator(mesh, path, false, order);
     const double ref = Phi(path.back()) - Phi(path.front());
     CAPTURE(ref);
     CHECK_THAT(integrator.Integrate(E), WithinAbs(ref, 1.0e-8 * (1.0 + std::abs(ref))));

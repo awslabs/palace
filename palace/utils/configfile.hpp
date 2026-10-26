@@ -595,7 +595,7 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
 
   // Optional pair of parent-mesh boundary attributes [high, low] (signal terminal first,
-  // ground terminal second) used solely to fix the mode polarity (no GSLIB / no Z_PV).
+  // ground terminal second) used solely to fix the mode polarity (no Z_PV).
   // The mode is flipped if needed so that the modal E-field on the port face points from
   // the high-attribute (signal) terminal toward the low-attribute (ground) terminal,
   // matching the lumped-port `Direction` convention and the VoltagePath ordering. A

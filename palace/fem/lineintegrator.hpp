@@ -24,15 +24,15 @@ namespace fem
 //
 // Each path segment is split at every element boundary it crosses, so each sub-interval
 // lies inside a single element and is integrated with its own Gauss-Legendre rule. For
-// straight-sided elements the integrand is a polynomial on every sub-interval and the
+// affine elements (triangles, parallelograms) the integrand is polynomial and the
 // discrete line integral is computed exactly (to round-off) by a rule of sufficient order,
 // independent of how finely the mesh is refined along the path. This is in contrast to a
 // single Gauss-Legendre rule over the whole segment, whose error grows as elements become
 // small compared to the sample spacing, as happens under adaptive refinement near metal
 // edges where the field is singular, and which makes the result change erratically from
-// one mesh to the next. For curved (high-order) elements, the crossings with the element
-// boundaries are located on the exact curved edges, and the (no longer polynomial)
-// integrand on each piece is integrated with the given rule.
+// one mesh to the next. For other (bilinear or curved) elements, the crossings with the
+// element boundaries are located on the exact element edges, and the (no longer
+// polynomial) integrand on each piece is integrated with the same rule.
 //
 // Sub-intervals which lie on an edge shared by two elements (a path running along element
 // edges) are owned by exactly one element on one rank, so nothing is counted twice. The
@@ -42,7 +42,7 @@ namespace fem
 //
 class LineIntegrator
 {
-public:
+private:
   struct Sample
   {
     int element;                             // Local element index
@@ -50,7 +50,6 @@ public:
     std::array<double, 3> weighted_tangent;  // Quadrature weight times dl/dt
   };
 
-private:
   MPI_Comm comm;
   int sdim;
   const mfem::Mesh *mesh_ptr;
@@ -64,10 +63,11 @@ private:
 public:
   // Build the quadrature for the path given by consecutive points (each of size equal to
   // the mesh space dimension). When closed is true, a segment from the last point back to
-  // the first is added. Each sub-interval is integrated with a Gauss-Legendre rule of the
-  // given polynomial order.
+  // the first is added. Each sub-interval is integrated with a Gauss-Legendre rule of order
+  // 2 (field_order + mesh order), exact for a field of polynomial order field_order on
+  // affine elements.
   LineIntegrator(const mfem::ParMesh &mesh, const std::vector<mfem::Vector> &path,
-                 bool closed, int order);
+                 bool closed, int field_order);
 
   // Integrate the given vector field on the mesh along the path. The result is summed over
   // all processes of the mesh communicator (collective).
@@ -77,7 +77,6 @@ public:
   // Local contribution only (not summed over processes).
   double LocalIntegrate(const mfem::ParGridFunction &F) const;
 
-  const auto &GetSamples() const { return samples; }
   int GetNumSubIntervals() const { return num_subintervals; }
   double GetPathLength() const { return path_length; }
   double GetUncoveredLength() const { return uncovered_length; }
