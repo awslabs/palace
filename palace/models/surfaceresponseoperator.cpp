@@ -1679,6 +1679,9 @@ struct AutomaticResponseStatistics
   // Decision 899 B2: SpatialEdgeCluster features resolved through the role-insensitive
   // legacy alias lookup.
   long long int role_swap_alias_matches = 0;
+  // Decision 904 A3.1: contract-3 placements whose model Context agreed with the feature's
+  // within the cluster quantum near-match (not exactly).
+  long long int context_near_match_verifications = 0;
 
   long long int mask_gather_calls = 0;
   long long int mask_faces_scanned_local = 0;
@@ -1751,7 +1754,10 @@ nlohmann::json BuildAutomaticStatistics(MPI_Comm comm,
               {"Total", Replicated(global_pair_checks, "TotalPairChecks")}}},
             {"SpatialEvents", Replicated(statistics.spatial_events, "SpatialEvents")},
             {"RoleSwapAliasMatches",
-             Replicated(statistics.role_swap_alias_matches, "RoleSwapAliasMatches")}}},
+             Replicated(statistics.role_swap_alias_matches, "RoleSwapAliasMatches")},
+            {"ContextNearMatchVerifications",
+             Replicated(statistics.context_near_match_verifications,
+                        "ContextNearMatchVerifications")}}},
           {"Masks",
            {{"GatherCalls", Replicated(statistics.mask_gather_calls, "MaskGatherCalls")},
             {"FacesScanned", Distribution(statistics.mask_faces_scanned_local)},
@@ -7605,6 +7611,14 @@ public:
     }
     std::optional<std::tuple<double, int, std::string, std::size_t>> best;
     std::set<std::size_t> seen;
+    // A SpatialEdgeCluster within the quantum near-match of TWO OR MORE models fails closed
+    // (decision 904 (b)): the load-time refusal of near-duplicate models (two models within
+    // 2 k + 1/2 quanta) excludes it under the raw-number reading; with arc centres read by
+    // their geometric deviation the exclusion is not a triangle inequality, so it is
+    // enforced here as well.
+    std::vector<std::pair<std::string, double>> cluster_candidates;
+    const bool cluster =
+        feature_signature.value("Type", std::string{}) == "SpatialEdgeCluster";
     for (const std::size_t index : it->second)
     {
       if (!seen.insert(index).second)
@@ -7617,12 +7631,32 @@ public:
       {
         continue;
       }
+      if (cluster)
+      {
+        cluster_candidates.emplace_back(entries[index].name, *deviation);
+      }
       const std::tuple<double, int, std::string, std::size_t> candidate{
           *deviation, entries[index].rank, entries[index].name, index};
       if (!best || candidate < *best)
       {
         best = candidate;
       }
+    }
+    if (cluster_candidates.size() > 1)
+    {
+      std::string names;
+      for (const auto &[name, deviation] : cluster_candidates)
+      {
+        names += fmt::format("{}\"{}\" ({:.3g})", names.empty() ? "" : ", ", name,
+                             deviation * (kClusterQuantumNearMatchMaxQuanta +
+                                          kClusterQuantumInclusiveMargin));
+      }
+      MFEM_ABORT("SpatialEdgeCluster signature "
+                 << SignatureKeyAndHash(feature_signature, "SpatialEdgeCluster")
+                        .second.substr(0, 12)
+                 << " lies within the quantum near-match of " << cluster_candidates.size()
+                 << " library models (quanta): " << names
+                 << " - one geometry, several models (decision 904 (b): fail closed)!");
     }
     if (!best)
     {
@@ -9231,6 +9265,11 @@ struct FeaturePatchSummary
   // A10 extended to the context (decision 282 section 3): context piece ends of the placed
   // contract-3 models verified to lie on device edges.
   std::size_t context_points_checked = 0;
+  // Contract-3 placements whose model Context agreed with the feature's within the cluster
+  // quantum near-match, not exactly (decision 904, A3.1), and the largest quantum
+  // difference among them.
+  std::size_t context_near_match_verifications = 0;
+  double context_near_match_max_quanta = 0.0;
   // Conductor probes of the spatial cluster patches snapped onto the device chord polyline
   // (decision 611 (2)): the snapped knots over all patches and the largest displacement
   // (mesh units).
@@ -11265,11 +11304,30 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto &signature = *model.identification_signature;
         patch.provenance.support_box = signature.at("Box").get<std::array<double, 4>>();
         patch.provenance.has_support_box = true;
-        MFEM_VERIFY(feature.signature.contains("Context") &&
-                        signature.value("Context", nlohmann::json::array()) ==
-                            feature.signature["Context"],
-                    "The Context of model \"" << model.name
-                                              << "\" differs from the matched feature's!");
+        // The model's Context equals the feature's (exact: the bitwise path) or agrees
+        // within the cluster quantum near-match (decision 904, A3.1: the model reached
+        // this placement through the near-match, whose tolerance of record the exact
+        // equality contradicted — C1's abort on an ill-conditioned arc centre); a Context
+        // that truly differs still fails closed. A near-match verification is counted
+        // (Statistics.Matching.ContextNearMatchVerifications, one Identification line).
+        const auto context_agreement = CompareClusterContexts(
+            signature.value("Context", nlohmann::json::array()),
+            feature.signature.value("Context", nlohmann::json(nullptr)));
+        MFEM_VERIFY(
+            feature.signature.contains("Context") && context_agreement.agrees,
+            "The Context of model \""
+                << model.name
+                << "\" differs from the matched feature's beyond the cluster quantum "
+                   "near-match (max "
+                << context_agreement.max_delta_quanta << " quanta over "
+                << context_agreement.differing_paths.size()
+                << " differing number(s), or another topology)!");
+        if (!context_agreement.exact)
+        {
+          summary.context_near_match_verifications++;
+          summary.context_near_match_max_quanta = std::max(
+              summary.context_near_match_max_quanta, context_agreement.max_delta_quanta);
+        }
         const double tolerance = kSignatureParameterToleranceOverRadius * R;
         auto Global = [&](double x, double y)
         {
@@ -12616,6 +12674,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
         curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    if (statistics)
+    {
+      statistics->context_near_match_verifications =
+          static_cast<long long int>(summary.context_near_match_verifications);
+    }
     // Legacy-contract aliases resolved by the matching pass (USER decision 283): one record
     // per alias with the features it served, carried into the operator record and the
     // geometry cache.
@@ -12723,6 +12786,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                static_cast<int>(result.models.size()), summary.curved_family_features,
                summary.first_order_features, summary.corner_family_features,
                static_cast<int>(summary.context_points_checked));
+    if (summary.context_near_match_verifications > 0)
+    {
+      Mpi::Print(
+          " Context (decision 904): {:d} contract-3 placement(s) verified within the "
+          "cluster quantum near-match, not exactly (largest difference {:.3g} "
+          "quanta)\n",
+          static_cast<int>(summary.context_near_match_verifications),
+          summary.context_near_match_max_quanta);
+    }
     if (summary.probe_snaps > 0)
     {
       Mpi::Print(

@@ -1675,6 +1675,159 @@ SignatureParameters SplitSignatureParameters(const nlohmann::json &signature)
   return out;
 }
 
+namespace
+{
+
+// The serialised arc entry of a cluster signature (PortionGeometryInFrame): the chord ends
+// P = [a, b], Arc = [centre, midpoint] in frame units of R; the circle's radius is |a - c|.
+struct SerializedArc
+{
+  std::array<double, 2> a, b, c, m;
+  double r;
+};
+
+std::optional<SerializedArc> ReadSerializedArc(const nlohmann::json &entry)
+{
+  if (!entry.is_object() || !entry.contains("Arc") || !entry.contains("P") ||
+      !entry["Arc"].is_array() || entry["Arc"].size() != 4 || !entry["P"].is_array() ||
+      entry["P"].size() != 4)
+  {
+    return std::nullopt;
+  }
+  for (const auto &list : {entry["Arc"], entry["P"]})
+  {
+    for (const auto &v : list)
+    {
+      if (!v.is_number())
+      {
+        return std::nullopt;
+      }
+    }
+  }
+  const auto P = entry["P"].get<std::array<double, 4>>();
+  const auto arc = entry["Arc"].get<std::array<double, 4>>();
+  SerializedArc out{{P[0], P[1]}, {P[2], P[3]}, {arc[0], arc[1]}, {arc[2], arc[3]}, 0.0};
+  out.r = std::hypot(out.a[0] - out.c[0], out.a[1] - out.c[1]);
+  return out;
+}
+
+// The largest radial distance of the arc A (from its end a through its midpoint m to its
+// end b) from the circle of B: f(theta) = |c_A + r_A u(theta) - c_B| - r_B is monotone in
+// cos(theta - phi), phi the direction of c_A - c_B, so its extremes over the sweep lie at
+// the sweep's ends, at the midpoint or at theta = phi / phi + pi when those lie inside the
+// sweep; evaluated in the cancellation-free form (|q - c_B|^2 - r_B^2) / (|q - c_B| + r_B).
+double ArcRadialDeviationFrom(const SerializedArc &A, const SerializedArc &B)
+{
+  auto Radial = [&](const std::array<double, 2> &q)
+  {
+    const double dx = q[0] - B.c[0], dy = q[1] - B.c[1];
+    const double d2 = dx * dx + dy * dy, d = std::sqrt(d2);
+    return d + B.r > 0.0 ? std::abs((d2 - B.r * B.r) / (d + B.r)) : 0.0;
+  };
+  double worst = std::max({Radial(A.a), Radial(A.b), Radial(A.m)});
+  if (A.r <= 0.0)
+  {
+    return worst;
+  }
+  const double two_pi = 2.0 * std::acos(-1.0);
+  auto Angle = [&](const std::array<double, 2> &p)
+  { return std::atan2(p[1] - A.c[1], p[0] - A.c[0]); };
+  const double ta = Angle(A.a);
+  const bool closed =
+      std::hypot(A.a[0] - A.b[0], A.a[1] - A.b[1]) <= 1.0e-9 * std::max(A.r, 1.0);
+  const double ccw = std::fmod(std::fmod(Angle(A.b) - ta, two_pi) + two_pi, two_pi);
+  const double through = std::fmod(std::fmod(Angle(A.m) - ta, two_pi) + two_pi, two_pi);
+  const double sweep = closed ? two_pi : (through <= ccw + 1.0e-12 ? ccw : ccw - two_pi);
+  auto Inside = [&](double theta)
+  {
+    if (closed)
+    {
+      return true;
+    }
+    double t = std::fmod(std::fmod(theta - ta, two_pi) + two_pi, two_pi);
+    if (sweep < 0.0)
+    {
+      t = t > 0.0 ? t - two_pi : t;
+      return t >= sweep - 1.0e-12;
+    }
+    return t <= sweep + 1.0e-12;
+  };
+  const double phi = std::atan2(A.c[1] - B.c[1], A.c[0] - B.c[0]);
+  for (const double theta : {phi, phi + std::acos(-1.0)})
+  {
+    if (Inside(theta))
+    {
+      worst = std::max(
+          worst, Radial({A.c[0] + A.r * std::cos(theta), A.c[1] + A.r * std::sin(theta)}));
+    }
+  }
+  return worst;
+}
+
+// The geometric deviation of two arc entries (decision 904, A3.1): the larger of the two
+// radial deviations, in signature quanta. The fitted CENTRE of a near-straight arc is
+// ill-conditioned (its error ~ 8 rho^2 / L^2 x the coordinate roundoff: hundreds of quanta
+// at rho ~ 6e4 R under a 1e-14 relative round trip of the mesh coordinates) while the
+// chord ends and the arc midpoint are mesh points on the arc; the two circles' deviation
+// OVER THE PIECE is the quantity the response can depend on.
+double ArcDeviationQuanta(const SerializedArc &A, const SerializedArc &B)
+{
+  return std::max(ArcRadialDeviationFrom(A, B), ArcRadialDeviationFrom(B, A)) /
+         kSignatureLengthQuantumOverRadius;
+}
+
+// The arc entries of two signatures of one topology key, by the entry's parameter path
+// (the path prefix of its Arc[k] / P[k] numbers in SplitClusterParameters), with their
+// geometric deviation in quanta.
+void CollectArcDeviations(const nlohmann::json &a, const nlohmann::json &b,
+                          const std::string &path, std::map<std::string, double> &out)
+{
+  if (a.is_object() && b.is_object())
+  {
+    if (a.contains("Arc") && b.contains("Arc"))
+    {
+      const auto A = ReadSerializedArc(a), B = ReadSerializedArc(b);
+      if (A && B)
+      {
+        out.emplace(path, ArcDeviationQuanta(*A, *B));
+      }
+      return;
+    }
+    for (auto it = a.begin(); it != a.end(); ++it)
+    {
+      if (b.contains(it.key()))
+      {
+        CollectArcDeviations(it.value(), b.at(it.key()),
+                             path.empty() ? it.key() : path + "." + it.key(), out);
+      }
+    }
+  }
+  else if (a.is_array() && b.is_array() && a.size() == b.size())
+  {
+    for (std::size_t k = 0; k < a.size(); k++)
+    {
+      CollectArcDeviations(a[k], b[k], path + "[" + std::to_string(k) + "]", out);
+    }
+  }
+}
+
+// The arc entry path of an Arc[0] / Arc[1] parameter path ("Context[5].Arc[1]" ->
+// "Context[5]"), or nullopt for any other parameter.
+std::optional<std::string> ArcCentrePathPrefix(const std::string &path)
+{
+  for (const char *suffix : {".Arc[0]", ".Arc[1]"})
+  {
+    const std::string s = suffix;
+    if (path.size() > s.size() && path.compare(path.size() - s.size(), s.size(), s) == 0)
+    {
+      return path.substr(0, path.size() - s.size());
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 std::optional<ClusterSignatureDifference>
 ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json &b)
 {
@@ -1686,11 +1839,31 @@ ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json 
   {
     return std::nullopt;
   }
+  // Arc centres (decision 904, A3.1): the two numbers of an arc entry's centre contribute
+  // the geometric deviation of the two circles over the piece in place of their raw
+  // differences (the ends and the midpoint stay quantum-compared); two equal entries read
+  // 0.
+  std::map<std::string, double> arc_deviations;
+  if (IsClusterSignature(a))
+  {
+    CollectArcDeviations(a, b, "", arc_deviations);
+  }
   ClusterSignatureDifference out;
   for (std::size_t i = 0; i < pa.lengths_over_R.size(); i++)
   {
-    const double quanta = std::abs(pa.lengths_over_R[i] - pb.lengths_over_R[i]) /
-                          kSignatureLengthQuantumOverRadius;
+    double quanta = std::abs(pa.lengths_over_R[i] - pb.lengths_over_R[i]) /
+                    kSignatureLengthQuantumOverRadius;
+    if (quanta > 0.0 && i < pa.length_paths.size())
+    {
+      if (const auto prefix = ArcCentrePathPrefix(pa.length_paths[i]))
+      {
+        const auto deviation = arc_deviations.find(*prefix);
+        if (deviation != arc_deviations.end())
+        {
+          quanta = deviation->second;
+        }
+      }
+    }
     if (quanta > 0.5)  // a difference below half a quantum is the same grid value
     {
       out.differing_paths.push_back(pa.length_paths[i]);
@@ -1707,6 +1880,32 @@ ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json 
     }
     out.max_delta_quanta = std::max(out.max_delta_quanta, quanta);
   }
+  return out;
+}
+
+ClusterContextAgreement CompareClusterContexts(const nlohmann::json &model_context,
+                                               const nlohmann::json &feature_context)
+{
+  ClusterContextAgreement out;
+  if (model_context == feature_context)
+  {
+    out.agrees = out.exact = true;
+    return out;
+  }
+  if (!model_context.is_array() || !feature_context.is_array())
+  {
+    return out;
+  }
+  const nlohmann::json a = {{"Type", "SpatialEdgeCluster"}, {"Context", model_context}},
+                       b = {{"Type", "SpatialEdgeCluster"}, {"Context", feature_context}};
+  const auto difference = ClusterSignatureQuantumDifference(a, b);
+  if (!difference)
+  {
+    return out;
+  }
+  out.max_delta_quanta = difference->max_delta_quanta;
+  out.differing_paths = difference->differing_paths;
+  out.agrees = WithinClusterQuantumNearMatch(out.max_delta_quanta);
   return out;
 }
 
@@ -1802,14 +2001,17 @@ nlohmann::json QuantumNearMatchRecord(const std::string &model_key,
         {"Paths", difference.differing_paths}}},
       {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
       {"InclusiveMargin", kClusterQuantumInclusiveMargin},
-      {"Rule", "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster key whose "
-               "topology (every entry with its numbers nulled, order preserved) equals the "
-               "model's and whose numbers lie within MaxQuanta signature quanta (1e-6 R / "
-               "1e-6 deg; read half-quantum inclusive: <= MaxQuanta + InclusiveMargin, "
-               "decisions 287 / 288 / 317) of the model's is the same geometry at the "
-               "grid: matched Exact "
-               "to the model (placed in its own canonical frame with M = identity, the A10 "
-               "checks unchanged); the FeatureKey is recorded beside the ModelKey"}};
+      {"Rule",
+       "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster key whose "
+       "topology (every entry with its numbers nulled, order preserved) equals the "
+       "model's and whose numbers lie within MaxQuanta signature quanta (1e-6 R / "
+       "1e-6 deg; read half-quantum inclusive: <= MaxQuanta + InclusiveMargin, "
+       "decisions 287 / 288 / 317) of the model's is the same geometry at the "
+       "grid: matched Exact "
+       "to the model (placed in its own canonical frame with M = identity, the A10 "
+       "checks unchanged); the FeatureKey is recorded beside the ModelKey; an arc "
+       "entry's centre numbers (Arc[0..1]) read the geometric deviation of the two "
+       "circles over the piece in quanta, not their raw difference (decision 904)"}};
 }
 
 nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature)

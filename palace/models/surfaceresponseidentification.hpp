@@ -845,9 +845,31 @@ inline bool ClusterQuantumDuplicate(double max_delta_quanta)
 // The quantum difference of two cluster signatures of one topology key: the largest
 // |delta| in quanta over the parameters and the paths of every differing number; nullopt
 // when the topology keys differ. (ClusterSignatureDifference is declared with the
-// span-cap allowances above.)
+// span-cap allowances above.) An ARC entry's two centre numbers (Portions[].Arc[0..1],
+// Context[].Arc[0..1]) contribute the GEOMETRIC DEVIATION of the two circles over the piece
+// (the larger of the two radial deviations, in quanta) in place of their raw differences
+// (decision 904, DESIGN AMENDMENT 3 A3.1): the fitted centre of a near-straight arc moves
+// by hundreds of quanta under the 1e-14 relative coordinate round trip of a saved mesh
+// while the chord ends and the arc midpoint (mesh points on the arc, quantum-compared as
+// every other number) stay on the grid. Two equal entries read 0; the key text is
+// untouched.
 std::optional<ClusterSignatureDifference>
 ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json &b);
+
+// The Context verification of a placed contract-3 model against the matched feature
+// (decision 904, A3.1): the two Context arrays are EQUAL (exact, the bitwise path) or agree
+// within the cluster quantum near-match of the Context arrays alone (one topology, every
+// number within kClusterQuantumNearMatchMaxQuanta + 1/2 quanta, arc centres by their
+// geometric deviation); anything else does not agree (fail closed).
+struct ClusterContextAgreement
+{
+  bool agrees = false;
+  bool exact = false;
+  double max_delta_quanta = 0.0;
+  std::vector<std::string> differing_paths;
+};
+ClusterContextAgreement CompareClusterContexts(const nlohmann::json &model_context,
+                                               const nlohmann::json &feature_context);
 
 // The Match.QuantumNearMatch record of a feature matched to a model within the quantum
 // near-match (null for an exact-hash match): {ModelKey, FeatureKey, MaxDeltaQuanta,
