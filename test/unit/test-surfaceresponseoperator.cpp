@@ -11129,14 +11129,17 @@ namespace
 // A plan of axis-aligned metal rectangles (x0, z0, x1, z1) on the sheet y = 0.5 of a
 // Cartesian hex mesh (x in [0, extent_x], y in [0, 1], z in [0, extent_z]; element size
 // 0.1): every internal face of the sheet inside a rectangle becomes a boundary element of
-// attribute 9 (the cracked PEC sheet of IslandConfig).
+// attribute 9 (the cracked PEC sheet of IslandConfig); with plane_attribute > 0 every other
+// internal face of the sheet becomes a boundary element of that attribute (the dielectric
+// interface beside the metal, the CPW form's SA sheet).
 struct PlanRectangle
 {
   double x0, z0, x1, z1;
 };
 
 mfem::Mesh MakeSheetPlanMesh(double extent_x, double extent_z,
-                             const std::vector<PlanRectangle> &metal)
+                             const std::vector<PlanRectangle> &metal,
+                             int plane_attribute = 0)
 {
   constexpr double element_size = 0.1;
   mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
@@ -11175,6 +11178,11 @@ mfem::Mesh MakeSheetPlanMesh(double extent_x, double extent_z,
     {
       serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
       serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+    else if (on_plane && plane_attribute > 0)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, plane_attribute);
     }
   }
   serial.FinalizeTopology();
@@ -11694,6 +11702,270 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(refined["Identification"]["Features"][f]["Hash"] ==
           initial["Identification"]["Features"][f]["Hash"]);
   }
+#endif
+}
+
+}  // namespace palace
+
+namespace palace
+{
+
+// Decision 903 R2 / 904 (adaptid fix round 2, U7): a saved adapted mesh reproduces the
+// producing run's UNCOVERED-portion energies. The producer retains its initial-mesh
+// (root-level) edge-distance trees across the AMR cycles, so its uncovered portions are
+// credited over their whole root segments on the fine mesh; a follow-on on the saved mesh
+// must build the same trees (the root-level perimeter), not the leaf perimeter's, on which
+// a root portion spanning refined sub-segments is credited on its midpoint's sub-segment
+// only (the g3 residual: -13 % of the junction-lead cluster's uncovered raw energy). The
+// U5 claw (a finger on a bar on the cracked sheet, IslandConfig, R = 0.2) with the convex
+// library (isolated edge + convex corner): the bar's corners and the isolated edges are
+// placed, the junction's concave-corner cluster and the finger's far-end cluster have no
+// model and are uncovered requirements at the field singularities the AMR refines.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator saved adapted mesh reproduces the producing "
+                 "run's uncovered-portion energies",
+                 "[surfaceresponseoperator][3d][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  const fs::path mesh_path = temp.temp_dir / "adaptid-uncovered-claw.mesh";
+  const fs::path basis_path = temp.temp_dir / "adaptid-uncovered-basis-points.csv";
+  const fs::path library_path = temp.temp_dir / "fabrication-process-adaptid-uncovered-3d.json";
+  const fs::path producer_dir = temp.temp_dir / "adaptid-uncovered-producer";
+  const fs::path follow_on_dir = temp.temp_dir / "adaptid-uncovered-follow-on";
+  const fs::path saved_mesh_path = producer_dir / "adaptid-uncovered-claw.mesh";
+  // The plan (mesh units; the domain 5 x 1 x 3): the bar x in [0.5, 4.5], z in [1.2, 2.0];
+  // the finger x in [2.4, 2.6], z in [2.0, 2.8]; the rest of the sheet y = 0.5 is the SA
+  // interface (attribute 10) beside the metal, so that the within-R energy of the
+  // uncovered portions is the real field energy at the metal edges (on the PEC itself the
+  // tangential field vanishes and the uncovered energy would be roundoff). The library: the
+  // convex 3D library's isolated edge and 90-degree convex corner on the SA interface alone
+  // (the F-DB-a test's form: Interfaces SA / Coupon 1, the edge's basis points at +-R).
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial =
+        MakeSheetPlanMesh(5.0, 3.0, {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, 2.8}}, 10);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    {
+      std::ofstream basis(basis_path);
+      basis << "x,y,z\n"
+            << "-0.2,-0.2,0.0\n"
+            << "0.2,-0.2,0.0\n"
+            << "0.2,0.2,0.0\n"
+            << "-0.2,0.2,0.0\n";
+    }
+    json library = ReadJson(convex_library_3d_path);
+    library["Name"] = "unit-test-process-adaptid-uncovered-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    std::ofstream output_library(library_path);
+    output_library << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {10};
+  config["Model"]["Refinement"] = {{"MaxIts", 2},           {"Tol", 1.0e-12},
+                                   {"UpdateFraction", 0.5}, {"Nonconformal", true},
+                                   {"SaveAdaptMesh", true}, {"MaxNCLevels", 8}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  // The same (tight) solver tolerances in both runs: the 1e-8 energy bar under a different
+  // partition of the same mesh (the producer's rebalanced one, the follow-on's fresh one).
+  correction["SolveTol"] = 1.0e-13;
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 500}};
+  config["Problem"]["Output"] = producer_dir.string();
+  test::RunElectrostatic(config);
+  Mpi::Barrier(comm);
+  REQUIRE(fs::is_regular_file(saved_mesh_path));
+  json follow_on = config;
+  follow_on["Model"]["Mesh"] = saved_mesh_path.string();
+  follow_on["Model"]["Refinement"] = {{"MaxIts", 0}};
+  follow_on["Problem"]["Output"] = follow_on_dir.string();
+  test::RunElectrostatic(follow_on);
+  Mpi::Barrier(comm);
+  // The premise: the saved mesh's LEAF perimeter carries refinement-generated vertices (the
+  // post-processing extraction of main's form; without them the comparison is vacuous).
+  auto LeafSegments = [&](const json &run)
+  {
+    IoData iodata(run, false);
+    auto mesh = mesh::ReadMesh(iodata, comm);
+    return ExtractMetalEdgeGeometry(*mesh, iodata.boundaries,
+                                    JointNoiseExtractionFor(iodata.boundaries))
+        .segments.size();
+  };
+  const std::size_t initial_leaf_segments = LeafSegments(config);
+  const std::size_t saved_leaf_segments = LeafSegments(follow_on);
+  // The retained trees' perimeter: the producer's is its initial mesh's (leaf = root), the
+  // follow-on's the saved mesh's ROOT-LEVEL perimeter (decision 904 A3.2): the same
+  // segments in the same order, to the coordinate round trip.
+  auto RetainedPerimeter = [&](const json &run)
+  {
+    IoData iodata(run, false);
+    auto mesh = mesh::ReadMesh(iodata, comm);
+    MetalSurfaceExtraction surface = JointNoiseExtractionFor(iodata.boundaries);
+    surface.root_level_perimeter = true;
+    const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, surface);
+    std::vector<std::array<double, 6>> segments;
+    for (const auto &segment : geometry.segments)
+    {
+      const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+      const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+      segments.push_back({p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]});
+    }
+    return std::make_pair(segments, geometry.refinement_points.size());
+  };
+  const auto [initial_segments, initial_refinement_points] = RetainedPerimeter(config);
+  const auto [saved_segments, saved_refinement_points] = RetainedPerimeter(follow_on);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  CHECK(saved_leaf_segments > initial_leaf_segments);
+  CHECK(initial_refinement_points == 0);
+  CHECK(saved_refinement_points > 0);
+  REQUIRE(saved_segments.size() == initial_segments.size());
+  for (std::size_t i = 0; i < initial_segments.size(); i++)
+  {
+    for (int k = 0; k < 6; k++)
+    {
+      CHECK_THAT(saved_segments[i][k], WithinAbs(initial_segments[i][k], 1.0e-12));
+    }
+  }
+  const json producer_meta = ReadJson(producer_dir / "palace.json");
+  const json follow_on_meta = ReadJson(follow_on_dir / "palace.json");
+  CHECK(producer_meta["Problem"]["MeshElements"] == follow_on_meta["Problem"]["MeshElements"]);
+  const auto &producer_response = producer_meta["SurfaceResponse"];
+  const auto &follow_on_response = follow_on_meta["SurfaceResponse"];
+  // The placed set and the uncovered set are the producer's (decision 899 B1), and some
+  // feature IS uncovered: a positive uncovered length on both sides.
+  REQUIRE(producer_response["ModelCatalog"].size() ==
+          follow_on_response["ModelCatalog"].size());
+  for (std::size_t m = 0; m < producer_response["ModelCatalog"].size(); m++)
+  {
+    CHECK(producer_response["ModelCatalog"][m]["Name"] ==
+          follow_on_response["ModelCatalog"][m]["Name"]);
+    CHECK(producer_response["ModelCatalog"][m]["PatchCount"] ==
+          follow_on_response["ModelCatalog"][m]["PatchCount"]);
+  }
+  REQUIRE(producer_response["Diagnostics"]["Uncovered"]["Length"].get<double>() > 0.0);
+  CHECK(producer_response["Diagnostics"]["Uncovered"]["Length"] ==
+        follow_on_response["Diagnostics"]["Uncovered"]["Length"]);
+  CHECK(producer_response["Diagnostics"]["Uncovered"]["Count"] ==
+        follow_on_response["Diagnostics"]["Uncovered"]["Count"]);
+
+  // The uncovered-energy table (per source, evaluation and type: the within-R energy of the
+  // uncovered portions and its share, per target interface) of the producer's last cycle
+  // and of the follow-on: text fields equal, numbers to 1e-8 relative. ON MAIN'S FORM the
+  // follow-on's leaf trees credit a refined root portion on one sub-segment only: the
+  // uncovered energy differs by the footprint the refinement removed (-63 % here; the g3
+  // junction-lead cluster -13 %). In this fixture the uncovered energy is ~1e-9 of the
+  // interface energy (the SA sheet is the PEC itself), so this table carries the test; the
+  // corrected tables below hold the 1e-8 bar on both forms.
+  auto Number = [](const std::string &field) -> std::optional<double>
+  {
+    std::size_t consumed = 0;
+    try
+    {
+      const double value = std::stod(field, &consumed);
+      return consumed == field.size() ? std::optional<double>(value) : std::nullopt;
+    }
+    catch (const std::exception &)
+    {
+      return std::nullopt;
+    }
+  };
+  auto CompareRows = [&](const std::string &name)
+  {
+    REQUIRE(fs::is_regular_file(producer_dir / name));
+    REQUIRE(fs::is_regular_file(follow_on_dir / name));
+    const auto producer_rows = ReadPatchRows(producer_dir / name);
+    const auto follow_on_rows = ReadPatchRows(follow_on_dir / name);
+    REQUIRE(producer_rows.size() == follow_on_rows.size());
+    REQUIRE(!producer_rows.empty());
+    double table_scale = 0.0;
+    for (const auto &row : producer_rows)
+    {
+      for (const auto &field : row)
+      {
+        if (const auto value = Number(field))
+        {
+          table_scale = std::max(table_scale, std::abs(*value));
+        }
+      }
+    }
+    for (std::size_t r = 0; r < producer_rows.size(); r++)
+    {
+      REQUIRE(producer_rows[r].size() == follow_on_rows[r].size());
+      for (std::size_t c = 0; c < producer_rows[r].size(); c++)
+      {
+        const auto producer_value = Number(producer_rows[r][c]);
+        const auto follow_on_value = Number(follow_on_rows[r][c]);
+        if (producer_value && follow_on_value)
+        {
+          const double scale =
+              std::max({std::abs(*producer_value), 1.0e-6 * table_scale, 1.0e-30});
+          CHECK_THAT(*follow_on_value, WithinAbs(*producer_value, 1.0e-8 * scale));
+        }
+        else
+        {
+          CHECK(producer_rows[r][c] == follow_on_rows[r][c]);
+        }
+      }
+    }
+  };
+  CompareRows("surface-response-uncovered-energy.csv");
+  // The corrected energies of the producer's last cycle and of the follow-on (the uncovered
+  // raw energy is kept in the fixed-trace / fixed-flux / self-consistent energies): 1e-8
+  // relative at the same solver tolerance.
+  auto CompareTable = [&](const std::string &name)
+  {
+    Table producer_table = test::LoadCsv(producer_dir / name);
+    Table follow_on_table = test::LoadCsv(follow_on_dir / name);
+    REQUIRE(producer_table.n_cols() == follow_on_table.n_cols());
+    REQUIRE(producer_table.n_cols() > 0);
+    double table_scale = 0.0;
+    for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+    {
+      for (const double value : producer_table[c].data)
+      {
+        table_scale = std::max(table_scale, std::abs(value));
+      }
+    }
+    for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+    {
+      const Column &producer_column = producer_table[c];
+      const Column &follow_on_column = follow_on_table[c];
+      REQUIRE(producer_column.data.size() == follow_on_column.data.size());
+      for (std::size_t i = 0; i < producer_column.data.size(); i++)
+      {
+        const double scale =
+            std::max({std::abs(producer_column.data[i]), 1.0e-6 * table_scale, 1.0e-30});
+        CHECK_THAT(follow_on_column.data[i],
+                   WithinAbs(producer_column.data[i], 1.0e-8 * scale));
+      }
+    }
+  };
+  CompareTable("surface-Q-corrected.csv");
+  CompareTable("terminal-C-corrected.csv");
 #endif
 }
 
