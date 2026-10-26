@@ -18392,6 +18392,19 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         kSignatureParameterToleranceOverRadius * patches.matching_radius;
     const auto records = FindTranslationalStretchInsideSpatialSupport(
         patches.patches, boxes, 3, continuation_tolerance);
+    // The SpatialClusterPriority pass of the placement (decision 922) on the dry run, read
+    // BEFORE the continuation ownership as the operator reads it (the owned set = the
+    // arm-trimmed weight-0 cells): the corner / vertex coupons an exact cluster drops.
+    std::set<std::size_t> spatial_cluster_priority_owned;
+    for (std::size_t patch_idx = 0; patch_idx < patches.patches.size(); patch_idx++)
+    {
+      if (patches.patches[patch_idx].weight <= 0.0)
+      {
+        spatial_cluster_priority_owned.insert(patch_idx);
+      }
+    }
+    const auto spatial_cluster_priority_pairs = FindSpatialClusterPriorityExclusions(
+        boxes, patches, spatial_cluster_priority_owned, 3);
     // The placement's continuation ownership (decision 236 (2)) on the dry run: the
     // written patches are the placed ones (clipped cells, weight 0 inside the boxes).
     const auto ownership = ApplyContinuationOwnership(
@@ -18529,11 +18542,42 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         CollectDomainBoundaryPortions(exclusions, patches.patches, patches, ownership,
                                       uncovered_clipping, patches.matching_radius),
         coordinate_scale);
+    // OI-SCP-HOLE (decision 922): the dropped coupons with the raw remainder of their
+    // windows outside every cluster box, recorded only when one exists (a window without
+    // one keeps its manifest bytes; the dry-run patch table is unchanged: it lists every
+    // built patch, form (i) of the ruling).
+    if (!spatial_cluster_priority_pairs.empty())
+    {
+      const auto spatial_cluster_priority = CollectSpatialClusterPriorityPortions(
+          spatial_cluster_priority_pairs, patches.patches, patches, boxes, 3,
+          patches.matching_radius);
+      diagnostics["SpatialClusterPriority"] = DescribeSpatialClusterPriorityExclusions(
+          spatial_cluster_priority, patches.patches, patches, boxes, coordinate_scale);
+      manifest["Summary"]["SpatialClusterPriority"] = {
+          {"Patches", diagnostics["SpatialClusterPriority"]["Count"]},
+          {"WindowLength", diagnostics["SpatialClusterPriority"]["WindowLength"]},
+          {"OutsideLength", diagnostics["SpatialClusterPriority"]["OutsideLength"]}};
+      Mpi::Warning(
+          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
+          "window lie outside every cluster box and keep their raw within-R surface "
+          "energy in the corrected interface energies; the corners' own correction there "
+          "stays missing!\n",
+          diagnostics["SpatialClusterPriority"]["Count"].get<int>(),
+          diagnostics["SpatialClusterPriority"]["OutsideLength"].get<double>(),
+          diagnostics["SpatialClusterPriority"]["WindowLength"].get<double>());
+    }
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
     diagnostics["CornerArmTrim"]["ExcludedCoupons"] = DescribeCornerArmTrimExcludedCoupons(
         patches.corner_arm_trims, patches,
         [&](std::size_t patch_idx) -> std::optional<std::string>
         {
+          if (std::any_of(spatial_cluster_priority_pairs.begin(),
+                          spatial_cluster_priority_pairs.end(),
+                          [&](const auto &pair) { return pair.first == patch_idx; }))
+          {
+            return "SpatialClusterPriority";
+          }
           if (std::any_of(exclusions.patches.begin(), exclusions.patches.end(),
                           [&](const auto &exclusion)
                           { return exclusion.patch == patch_idx; }))
@@ -22311,6 +22355,192 @@ ExcludedPatchPortions CollectDomainBoundaryPortions(
   return result;
 }
 
+std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
+    const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
+    const std::set<std::size_t> &owned_patches, int dimension)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  auto IsCluster = [&](std::size_t patch)
+  {
+    const auto model = models.find(config.patches[patch].model);
+    MFEM_VERIFY(model != models.end(), "Unknown response model!");
+    return model->second->topology == "spatial edge cluster";
+  };
+  auto BoxOf = [&](const SpatialSupportBounds &support)
+  {
+    ElementBox box;
+    for (int d = 0; d < dimension; d++)
+    {
+      box.min[d] = support.min[d];
+      box.max[d] = support.max[d];
+    }
+    return box;
+  };
+  std::vector<std::pair<std::size_t, std::size_t>> exclusions;
+  std::set<std::size_t> owned = owned_patches;
+  for (std::size_t i = 0; i < supports.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < supports.size(); j++)
+    {
+      if (supports[i].from_signature_box || supports[j].from_signature_box)
+      {
+        continue;
+      }
+      const auto first = supports[i].patch;
+      const auto second = supports[j].patch;
+      if (owned.count(first) || owned.count(second))
+      {
+        continue;
+      }
+      const int interpolation_group = config.patches[first].interpolation_group;
+      if (interpolation_group > 0 &&
+          interpolation_group == config.patches[second].interpolation_group)
+      {
+        continue;
+      }
+      if (!BoxOf(supports[i]).InteriorOverlaps(BoxOf(supports[j]), dimension))
+      {
+        continue;
+      }
+      const bool first_cluster = IsCluster(first);
+      const bool second_cluster = IsCluster(second);
+      if (first_cluster == second_cluster)
+      {
+        continue;
+      }
+      const auto subordinate = first_cluster ? second : first;
+      exclusions.emplace_back(subordinate, first_cluster ? first : second);
+      owned.insert(subordinate);
+    }
+  }
+  return exclusions;
+}
+
+SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
+    const std::vector<std::pair<std::size_t, std::size_t>> &exclusions,
+    const std::vector<ResponsePatchData> &patches, const ResponseCorrectionData &config,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double matching_radius)
+{
+  SpatialClusterPriorityExclusions result;
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  for (const auto &[patch_idx, owner] : exclusions)
+  {
+    const auto &patch = patches[patch_idx];
+    const auto model =
+        std::find_if(config.models.begin(), config.models.end(),
+                     [&](const auto &entry) { return entry.idx == patch.model; });
+    MFEM_VERIFY(model != config.models.end(),
+                "SpatialClusterPriority-dropped patch refers to an unknown model index!");
+    SpatialClusterPriorityExclusions::Entry entry;
+    entry.patch = patch_idx;
+    entry.owner = owner;
+    // The dropped coupon's window = its raw claims (the arms' R windows), as portions.
+    std::vector<ResponseCorrectionData::UncoveredPortionData> window;
+    for (const auto &claim : patch.provenance.raw_claims)
+    {
+      window.push_back(
+          {patch.provenance.feature, model->topology, claim.segment, claim.p0, claim.p1});
+      entry.window_length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    // The parts inside any matched cluster's box are the owner coupons'; the kept pieces
+    // outside every box are the RAW remainder.
+    ClipUncoveredPortionsBySpatialSupport(window, supports, dimension);
+    for (const auto &portion : window)
+    {
+      entry.outside_length += Norm(Subtract(portion.p1, portion.p0));
+      AppendExcludedPatchPortion(result.portions, patch_idx, portion, false, tolerance);
+    }
+    result.entries.push_back(entry);
+  }
+  return result;
+}
+
+nlohmann::json DescribeSpatialClusterPriorityExclusions(
+    const SpatialClusterPriorityExclusions &exclusions,
+    const std::vector<ResponsePatchData> &patches, const ResponseCorrectionData &config,
+    const std::vector<SpatialSupportBounds> &supports, double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  auto Box = [&](std::size_t patch) -> nlohmann::json
+  {
+    const auto support = std::find_if(supports.begin(), supports.end(),
+                                      [&](const auto &s) { return s.patch == patch; });
+    if (support == supports.end())
+    {
+      return nullptr;
+    }
+    return {{"Min",
+             {support->min[0] * coordinate_scale, support->min[1] * coordinate_scale,
+              support->min[2] * coordinate_scale}},
+            {"Max",
+             {support->max[0] * coordinate_scale, support->max[1] * coordinate_scale,
+              support->max[2] * coordinate_scale}}};
+  };
+  auto Name = [&](std::size_t patch)
+  {
+    const auto model = models.find(patches[patch].model);
+    return model == models.end() ? std::string() : model->second->name;
+  };
+  nlohmann::json entries = nlohmann::json::array();
+  double window_length = 0.0, outside_length = 0.0;
+  for (const auto &entry : exclusions.entries)
+  {
+    const auto &patch = patches[entry.patch];
+    const auto model = models.find(patch.model);
+    window_length += entry.window_length;
+    outside_length += entry.outside_length;
+    entries.push_back(
+        {{"Patch", entry.patch},
+         {"Feature", patch.provenance.feature},
+         {"Model", Name(entry.patch)},
+         {"Topology", model == models.end() ? std::string() : model->second->topology},
+         {"Origin",
+          {patch.origin[0] * coordinate_scale, patch.origin[1] * coordinate_scale,
+           patch.origin[2] * coordinate_scale}},
+         {"Weight", patch.weight},
+         {"Box", Box(entry.patch)},
+         {"Owner",
+          {{"Patch", entry.owner},
+           {"Feature", patches[entry.owner].provenance.feature},
+           {"Model", Name(entry.owner)},
+           {"Box", Box(entry.owner)}}},
+         {"WindowLength", entry.window_length * coordinate_scale},
+         {"OutsideLength", entry.outside_length * coordinate_scale}});
+  }
+  return {
+      {"Count", static_cast<int>(exclusions.entries.size())},
+      {"WindowLength", window_length * coordinate_scale},
+      {"OutsideLength", outside_length * coordinate_scale},
+      {"Patches", std::move(entries)},
+      {"RawPortions",
+       DescribeExcludedPatchPortions(
+           exclusions.portions, coordinate_scale,
+           "OI-SCP-HOLE (decisions 915 / 918 / 922): the part of a dropped coupon's "
+           "raw claims (the arms' R windows) outside every matched cluster's box "
+           "keeps the device's raw within-R energy in every corrected interface "
+           "energy (fixed trace / fixed flux on the raw field, self-consistent on "
+           "the corrected field), reported per type in "
+           "surface-response-spatial-cluster-priority-energy.csv; the part inside a "
+           "box is the owner coupon's. Lengths in mesh units")},
+      {"Rule",
+       "SpatialClusterPriority (ApplyPlacementOwnership): an exact spatial cluster owns "
+       "its complete local interaction neighborhood, so a corner / vertex coupon whose "
+       "basis-point box interior-overlaps the cluster's is not applied (clipping the "
+       "dense coupon operator is not supported). Decision 922: the dropped coupon's "
+       "window outside the box is kept RAW (counted, uncorrected; RawPortions); its "
+       "own correction there stays missing until the cluster coupon's box is grown "
+       "(a library item). Lengths in mesh units"}};
+}
+
 nlohmann::json DescribeExcludedPatchPortions(const ExcludedPatchPortions &portions,
                                              double coordinate_scale,
                                              const std::string &rule)
@@ -22941,6 +23171,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   std::set<std::size_t> spatially_owned_patches;
   // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
   std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
+  // The SpatialClusterPriority exclusions (subordinate patch, owner patch) of this
+  // placement, read after the domain-boundary pass for the raw remainder (decision 922).
+  std::vector<std::pair<std::size_t, std::size_t>> spatial_cluster_priority_pairs;
   // The placed patches: the configured ones with the continuation ownership applied (3D).
   std::vector<ResponsePatchData> placed_patches = config.patches;
   // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
@@ -23039,6 +23272,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           spatially_owned_patches.insert(spatial_supports[subordinate].patch);
           vertex_coupon_exclusion_reasons.emplace(spatial_supports[subordinate].patch,
                                                   "SpatialClusterPriority");
+          spatial_cluster_priority_pairs.emplace_back(
+              spatial_supports[subordinate].patch,
+              spatial_supports[first_cluster ? i : j].patch);
           continue;
         }
         // Two clusters (decision 244): a margins-only overlap (no claim of either inside
@@ -23419,6 +23655,30 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                      domain_boundary_portions.duplicate_patches,
                      domain_boundary_portions.length * coordinate_scale);
       }
+    }
+    // OI-SCP-HOLE (decisions 915 / 918 / 922): the coupons the SpatialClusterPriority rule
+    // dropped keep the part of their raw claims OUTSIDE every matched cluster's box as the
+    // drivers' fourth raw class (GetSpatialClusterPriorityPortions); the record is written
+    // only when a coupon was dropped (a placement without one keeps its Diagnostics bytes).
+    spatial_cluster_priority = CollectSpatialClusterPriorityPortions(
+        spatial_cluster_priority_pairs, placed_patches, config, boxes, dimension,
+        config.matching_radius);
+    if (!spatial_cluster_priority.entries.empty())
+    {
+      ownership_diagnostics["SpatialClusterPriority"] =
+          DescribeSpatialClusterPriorityExclusions(spatial_cluster_priority, placed_patches,
+                                                   config, boxes, coordinate_scale);
+      Mpi::Warning(
+          fespace.GetComm(),
+          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
+          "window lie outside every cluster box and keep their raw within-R surface "
+          "energy in the corrected interface energies (reported per type in "
+          "surface-response-spatial-cluster-priority-energy.csv); the corners' own "
+          "correction there stays missing!\n",
+          static_cast<int>(spatial_cluster_priority.entries.size()),
+          ownership_diagnostics["SpatialClusterPriority"]["OutsideLength"].get<double>(),
+          ownership_diagnostics["SpatialClusterPriority"]["WindowLength"].get<double>());
     }
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
     ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =

@@ -334,6 +334,11 @@ PostOperator<solver_t>::PostOperator(
         surface_response_domain_boundary.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});
       }
+      for (const auto &portion : surface_response_op->GetSpatialClusterPriorityPortions())
+      {
+        surface_response_spatial_cluster_priority.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
     }
   }
 }
@@ -1792,6 +1797,12 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.domain_boundary = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
             target_interfaces, *E, D_recovered.get(), surface_response_domain_boundary);
       }
+      if (!surface_response_spatial_cluster_priority.empty())
+      {
+        result.spatial_cluster_priority = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+            target_interfaces, *E, D_recovered.get(),
+            surface_response_spatial_cluster_priority);
+      }
     }
     for (const auto &raw : measurement_cache.interface_eps_i)
     {
@@ -1842,7 +1853,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         // the modelled within-R energy by the coupon response, and keeps the raw within-R
         // energy of the uncovered requirements and the DomainBoundary claims.
         const double kept_raw = PortionEnergy(result.uncovered, target) +
-                                PortionEnergy(result.domain_boundary, target);
+                                PortionEnergy(result.domain_boundary, target) +
+                                PortionEnergy(result.spatial_cluster_priority, target);
         interface->second.corrected_energy =
             outside->energy_outside + fabricated->second + kept_raw;
         interface->second.corrected_energy_fixed_flux =
@@ -1915,6 +1927,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                     target_interfaces, corrected_field, corrected_flux,
                     surface_response_domain_boundary);
           }
+          if (!surface_response_spatial_cluster_priority.empty())
+          {
+            result.self_consistent_spatial_cluster_priority =
+                surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+                    target_interfaces, corrected_field, corrected_flux,
+                    surface_response_spatial_cluster_priority);
+          }
         }
         for (const int target : target_interfaces)
         {
@@ -1940,7 +1959,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           result.interfaces.at(target).self_consistent_energy =
               outside->energy_outside + fabricated->second +
               PortionEnergy(result.self_consistent_uncovered, target) +
-              PortionEnergy(result.self_consistent_domain_boundary, target);
+              PortionEnergy(result.self_consistent_domain_boundary, target) +
+              PortionEnergy(result.self_consistent_spatial_cluster_priority, target);
         }
         result.has_self_consistent = true;
       }
@@ -2357,18 +2377,21 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
   // column, then per target interface the raw within-R energy and its share of the
   // evaluation's corrected interface energy (0 fixed trace, 1 fixed flux on the raw field,
   // 2 self-consistent on the corrected field). A plain writer (the type column is text).
-  // Both tables are removed UNCONDITIONALLY at the first print before the conditional
+  // The three tables are removed UNCONDITIONALLY at the first print before the conditional
   // writes (decision 473 MAJOR-3): a stale table of an earlier run in the output directory
   // would otherwise read as a term this solve did not have; later prints append rows.
   using VT = Units::ValueType;
   const fs::path uncovered_path = post_dir / "surface-response-uncovered-energy.csv";
   const fs::path domain_boundary_path =
       post_dir / "surface-response-domain-boundary-energy.csv";
+  const fs::path spatial_cluster_priority_path =
+      post_dir / "surface-response-spatial-cluster-priority-energy.csv";
   const bool first_print = !surface_response_portion_tables_started;
   if (first_print)
   {
     fs::remove(uncovered_path);
     fs::remove(domain_boundary_path);
+    fs::remove(spatial_cluster_priority_path);
     surface_response_portion_tables_started = true;
   }
   const auto &result = *surface_response_measurement;
@@ -2520,6 +2543,25 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
     WritePortionEnergyTable(domain_boundary_path, portions_by_type, "geometric cells",
                             "domainboundary", result.domain_boundary,
                             result.self_consistent_domain_boundary);
+  }
+  if (!surface_response_spatial_cluster_priority.empty())
+  {
+    // OI-SCP-HOLE (decision 922): the SpatialClusterPriority share per type (the
+    // DomainBoundary table's columns).
+    std::map<std::string, PortionTypeRow> portions_by_type;
+    const auto &record =
+        surface_response_op->GetSpatialClusterPriorityExclusions().portions;
+    for (std::size_t i = 0; i < record.portions.size(); i++)
+    {
+      auto &entry = portions_by_type[record.portions[i].topology];
+      entry.portions++;
+      entry.length += PortionLength(record.portions[i]);
+      entry.extra += record.translational[i] ? 1.0 : 0.0;
+    }
+    WritePortionEnergyTable(spatial_cluster_priority_path, portions_by_type,
+                            "geometric cells", "spatialclusterpriority",
+                            result.spatial_cluster_priority,
+                            result.self_consistent_spatial_cluster_priority);
   }
 }
 

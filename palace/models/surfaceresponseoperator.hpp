@@ -86,6 +86,26 @@ struct ExcludedPatchPortions
   double length = 0.0;        // mesh units, over all portions
 };
 
+// OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons the
+// SpatialClusterPriority rule drops whole (a spatial-basis non-cluster patch whose basis-
+// point box interior-overlaps an exact spatial cluster's), each with its owner, and the
+// parts of their raw claims (the arms' R windows) OUTSIDE every matched cluster's box as
+// perimeter portions the drivers keep RAW in the corrected interface energies (the part
+// inside the box is modelled by the owner coupon). The record is the 915 MINOR-7
+// Diagnostics entry; it is written only when at least one coupon is dropped.
+struct SpatialClusterPriorityExclusions
+{
+  struct Entry
+  {
+    std::size_t patch = 0;        // the dropped (subordinate) patch
+    std::size_t owner = 0;        // the cluster patch owning the overlap
+    double window_length = 0.0;   // the dropped patch's raw claims, mesh units
+    double outside_length = 0.0;  // the part outside every matched cluster's box
+  };
+  std::vector<Entry> entries;
+  ExcludedPatchPortions portions;
+};
+
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
 // finite-element point interpolation is still rebuilt for every refined mesh.
 class SurfaceResponseGeometry
@@ -487,6 +507,10 @@ private:
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
   ExcludedPatchPortions domain_boundary_portions;
+  // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
+  // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
+  // matched cluster's box as the drivers' fourth raw class (counted, uncorrected).
+  SpatialClusterPriorityExclusions spatial_cluster_priority;
   // S7diag R1 (decision 758): the raw claim of every APPLIED patch the
   // conductor-consistency gate can probe (its model has conductor vertices on the process
   // plane), built at construction by the DomainBoundary rule (AppendExcludedPatchClaim) and
@@ -779,6 +803,22 @@ public:
   const ExcludedPatchPortions &GetDomainBoundaryPortionRecord() const
   {
     return domain_boundary_portions;
+  }
+  // The parts of the SpatialClusterPriority-dropped coupons' raw claims outside every
+  // matched cluster's box (OI-SCP-HOLE, decision 922; empty when no coupon is dropped or
+  // every dropped window lies inside its owner's box): kept in the corrected interface
+  // energies like the uncovered requirements and reported as the SpatialClusterPriority
+  // share. The inside part is the owner coupon's; the corner's own correction outside the
+  // box stays missing (a box growth of the cluster coupon is a library item).
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetSpatialClusterPriorityPortions() const
+  {
+    return spatial_cluster_priority.portions.portions;
+  }
+  const SpatialClusterPriorityExclusions &GetSpatialClusterPriorityExclusions() const
+  {
+    return spatial_cluster_priority;
   }
   // The raw claims of the patches the conductor-consistency gate has excluded so far
   // (S7diag R1, decision 758; empty before the first exclusion and on every window with 0
@@ -1594,6 +1634,39 @@ void ClipLongitudinalCell(
 std::array<double, 3>
 OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch,
                double c);
+
+// The SpatialClusterPriority pass of ApplyPlacementOwnership on a set of spatial supports
+// (the preflight's reading of the operator's rule): every pair of supports not already
+// owned and not of one interpolation group whose boxes interior-overlap with exactly one
+// of them a spatial edge cluster yields (subordinate patch, owner patch); a placeholder
+// support (from_signature_box: a Missing key, no coupon) and cluster / cluster pairs (the
+// margin-overlap record) are skipped. Deterministic in the supports' order.
+std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
+    const std::vector<SpatialSupportBounds> &supports,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const std::set<std::size_t> &owned_patches, int dimension);
+
+// The dropped coupons' raw claims (provenance raw_claims: the arms' R windows) clipped by
+// ClipUncoveredPortionsBySpatialSupport against every matched cluster's box; the kept
+// (outside) pieces are appended by the DomainBoundary rule (AppendExcludedPatchPortion:
+// the tolerance floor, the deduplication).
+SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
+    const std::vector<std::pair<std::size_t, std::size_t>> &exclusions,
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double matching_radius);
+
+// The Diagnostics entry "SpatialClusterPriority" (decision 915 MINOR-7 / 922): Count, the
+// dropped patches (patch, feature, model, topology, origin, weight, box, owner, window /
+// outside lengths), the raw portions (DescribeExcludedPatchPortions) and the rule.
+nlohmann::json DescribeSpatialClusterPriorityExclusions(
+    const SpatialClusterPriorityExclusions &exclusions,
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const std::vector<SpatialSupportBounds> &supports, double coordinate_scale);
 
 ExcludedPatchPortions CollectDomainBoundaryPortions(
     const DomainBoundaryExclusions &exclusions,

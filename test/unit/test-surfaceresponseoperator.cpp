@@ -10603,6 +10603,148 @@ TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
   }
 }
 
+TEST_CASE("SurfaceResponseOperatorSpatialClusterPriorityRawRemainder",
+          "[surfaceresponseoperator][scphole][Serial]")
+{
+  // OI-SCP-HOLE (decisions 915 / 918 / 922): the transmon's junction-lead cluster (box
+  // x in [-10.9, 10.9], y in [-5.7, 17.7], R = 1.9) drops the convex corner at (12, 12)
+  // whole (the corner's window x in [10.1, 13.9] overlaps the box over 0.8); its two arms
+  // (R along -x on the island edge y = 12, R along +y) are 3.8 of window of which 3.0 lies
+  // OUTSIDE the box ([10.9, 12] of the first arm, the whole second arm): that remainder is
+  // the fourth raw class; the arm part inside the box is the cluster coupon's. A corner
+  // wholly inside the box (the claw corners at (+-50, 541)) is dropped with no remainder; a
+  // corner whose window clears the box is not dropped; an already-owned corner and a
+  // Missing key's placeholder support are skipped as the operator skips them.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.9;
+  config::ElectrostaticSolverData::ResponseCorrectionData data;
+  data.matching_radius = R;
+  data.models.emplace_back().idx = 1;
+  data.models.back().name = "spatialedgecluster_edgecount-10";
+  data.models.back().topology = "spatial edge cluster";
+  data.models.back().spatial_basis = true;
+  data.models.emplace_back().idx = 2;
+  data.models.back().name = "convex-corner-90deg";
+  data.models.back().topology = "convex corner";
+  data.models.back().spatial_basis = true;
+  auto AddPatch = [&](int model, int feature, std::array<double, 3> origin)
+  {
+    auto &patch = data.patches.emplace_back();
+    patch.model = model;
+    patch.weight = 1.0;
+    patch.origin = origin;
+    patch.axis_u = {1.0, 0.0, 0.0};
+    patch.axis_v = {0.0, 1.0, 0.0};
+    patch.axis_w = {0.0, 0.0, 1.0};
+    patch.provenance.feature = feature;
+    return data.patches.size() - 1;
+  };
+  auto CornerArms = [&](std::size_t patch, std::array<double, 3> first_arm,
+                        std::array<double, 3> second_arm)
+  {
+    const auto &v = data.patches[patch].origin;
+    data.patches[patch].provenance.raw_claims = {
+        Claim{7, v, {v[0] + R * first_arm[0], v[1] + R * first_arm[1], v[2]}},
+        Claim{8, v, {v[0] + R * second_arm[0], v[1] + R * second_arm[1], v[2]}}};
+  };
+  auto CornerSupport = [&](std::size_t patch)
+  {
+    SpatialSupportBounds support;
+    support.patch = patch;
+    const auto &v = data.patches[patch].origin;
+    support.SetMeshAlignedBox({v[0] - R, v[1] - R, -R}, {v[0] + R, v[1] + R, R});
+    return support;
+  };
+  // The cluster (patch 0): its claims are the two lead edges inside its box.
+  const auto cluster_patch = AddPatch(1, 11, {0.0, 6.0, 0.0});
+  data.patches[cluster_patch].provenance.claims = {
+      Claim{1, {-10.9, 12.0, 0.0}, {10.9, 12.0, 0.0}},
+      Claim{2, {-10.9, 0.0, 0.0}, {10.9, 0.0, 0.0}}};
+  SpatialSupportBounds cluster;
+  cluster.patch = cluster_patch;
+  cluster.SetMeshAlignedBox({-10.9, -5.7, -1.95}, {10.9, 17.7, 2.0});
+  cluster.claims = data.patches[cluster_patch].provenance.claims;
+  cluster.matching_radius = R;
+  // The straddling corner (patch 1) at (12, 12): the island edge arm along -x, the other
+  // arm along +y.
+  const auto straddling = AddPatch(2, 34, {12.0, 12.0, 0.0});
+  CornerArms(straddling, {-1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  // The corner wholly inside the box (patch 2) at (0, 12) is dropped with no remainder.
+  const auto inside = AddPatch(2, 35, {0.0, 12.0, 0.0});
+  CornerArms(inside, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
+  // The corner clear of the box (patch 3) at (20, 12) keeps its coupon.
+  const auto clear = AddPatch(2, 36, {20.0, 12.0, 0.0});
+  CornerArms(clear, {-1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  // An already-owned straddling corner (patch 4: a trimmed cell's weight 0) is skipped.
+  const auto owned = AddPatch(2, 37, {-12.0, 12.0, 0.0});
+  CornerArms(owned, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  data.patches[owned].weight = 0.0;
+  std::vector<SpatialSupportBounds> supports = {cluster, CornerSupport(straddling),
+                                                CornerSupport(inside), CornerSupport(clear),
+                                                CornerSupport(owned)};
+
+  const auto exclusions = FindSpatialClusterPriorityExclusions(supports, data, {owned}, 3);
+  REQUIRE(exclusions.size() == 2);
+  CHECK(exclusions[0].first == straddling);
+  CHECK(exclusions[0].second == cluster_patch);
+  CHECK(exclusions[1].first == inside);
+  CHECK(exclusions[1].second == cluster_patch);
+
+  const auto record =
+      CollectSpatialClusterPriorityPortions(exclusions, data.patches, data, supports, 3, R);
+  REQUIRE(record.entries.size() == 2);
+  CHECK(record.entries[0].patch == straddling);
+  CHECK(record.entries[0].owner == cluster_patch);
+  CHECK_THAT(record.entries[0].window_length, WithinAbs(2.0 * R, 1.0e-12));
+  CHECK_THAT(record.entries[0].outside_length, WithinAbs(1.1 + R, 1.0e-9));
+  CHECK(record.entries[1].patch == inside);
+  CHECK_THAT(record.entries[1].window_length, WithinAbs(2.0 * R, 1.0e-12));
+  CHECK_THAT(record.entries[1].outside_length, WithinAbs(0.0, 1.0e-12));
+  // The raw remainder: the first arm's [10.9, 12] and the whole second arm, in arm order.
+  REQUIRE(record.portions.portions.size() == 2);
+  CHECK(record.portions.patches[0] == std::vector<std::size_t>{straddling});
+  CHECK(record.portions.portions[0].feature == 34);
+  CHECK(record.portions.portions[0].topology == "convex corner");
+  CHECK(record.portions.portions[0].segment == 7);
+  CHECK_THAT(record.portions.portions[0].p0[0], WithinAbs(12.0, 1.0e-12));
+  CHECK_THAT(record.portions.portions[0].p1[0], WithinAbs(10.9, 1.0e-9));
+  CHECK_THAT(record.portions.portions[0].p1[1], WithinAbs(12.0, 1.0e-12));
+  CHECK(record.portions.portions[1].segment == 8);
+  CHECK_THAT(record.portions.portions[1].p1[1], WithinAbs(12.0 + R, 1.0e-12));
+  CHECK(record.portions.translational == std::vector<bool>{false, false});
+  CHECK_THAT(record.portions.length, WithinAbs(1.1 + R, 1.0e-9));
+
+  const auto description =
+      DescribeSpatialClusterPriorityExclusions(record, data.patches, data, supports, 1.0);
+  CHECK(description["Count"] == 2);
+  CHECK_THAT(description["WindowLength"].get<double>(), WithinAbs(4.0 * R, 1.0e-12));
+  CHECK_THAT(description["OutsideLength"].get<double>(), WithinAbs(1.1 + R, 1.0e-9));
+  REQUIRE(description["Patches"].size() == 2);
+  CHECK(description["Patches"][0]["Patch"] == straddling);
+  CHECK(description["Patches"][0]["Feature"] == 34);
+  CHECK(description["Patches"][0]["Model"] == "convex-corner-90deg");
+  CHECK(description["Patches"][0]["Owner"]["Patch"] == cluster_patch);
+  CHECK(description["Patches"][0]["Owner"]["Model"] == "spatialedgecluster_edgecount-10");
+  CHECK_THAT(description["Patches"][0]["Owner"]["Box"]["Max"][0].get<double>(),
+             WithinAbs(10.9, 1.0e-12));
+  CHECK_THAT(description["Patches"][0]["Box"]["Min"][0].get<double>(),
+             WithinAbs(12.0 - R, 1.0e-12));
+  CHECK(description["RawPortions"]["Count"] == 2);
+  CHECK(description["RawPortions"]["ByType"]["convex corner"]["Portions"] == 2);
+
+  // A Missing key's placeholder support (from_signature_box) drops nothing.
+  auto placeholder = cluster;
+  placeholder.from_signature_box = true;
+  CHECK(FindSpatialClusterPriorityExclusions(
+            {placeholder, CornerSupport(straddling), CornerSupport(inside)}, data, {}, 3)
+            .empty());
+  // Two clusters are not this rule's (the margin-overlap record / the abort).
+  auto cluster_b = cluster;
+  cluster_b.patch = AddPatch(1, 12, {5.0, 6.0, 0.0});
+  CHECK(FindSpatialClusterPriorityExclusions({cluster, cluster_b}, data, {}, 3).empty());
+}
+
 }  // namespace palace
 
 TEST_CASE("SurfaceResponseOperatorMirrorFormedEdgeWeights",

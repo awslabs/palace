@@ -996,6 +996,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // and on the corrected field (self-consistent); empty when nothing is excluded.
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_domain_boundary;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_domain_boundary;
+    // SpatialClusterPriority raw remainders (OI-SCP-HOLE, decision 922): the raw within-R
+    // interface energy of the dropped coupons' windows outside every cluster box, on the
+    // raw field and on the corrected field; empty when no coupon is dropped.
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_spatial_cluster_priority;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+        corrected_spatial_cluster_priority;
     // ConductorConsistency raw claims (S7diag R1, decision 758): the raw within-R interface
     // energy of the claims of the patches the conductor-consistency gate has excluded by
     // this excitation (zero entries for an excitation before the first exclusion), on the
@@ -1017,6 +1023,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The DomainBoundary raw claims (F-DB-a) as the same kind of portions, integrated by the
   // same machinery in a separate call (their own table and share).
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> domain_boundary_portions;
+  // The SpatialClusterPriority raw remainders (decision 922) likewise.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+      spatial_cluster_priority_portions;
   if (response_correction)
   {
     for (const auto &portion : response_correction->GetUncoveredPortions())
@@ -1027,6 +1036,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     for (const auto &portion : response_correction->GetDomainBoundaryPortions())
     {
       domain_boundary_portions.push_back(
+          {portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    for (const auto &portion : response_correction->GetSpatialClusterPriorityPortions())
+    {
+      spatial_cluster_priority_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
   }
@@ -1177,6 +1191,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     EnergyData raw_energies;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_uncovered;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_domain_boundary;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_spatial_cluster_priority;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_conductor_consistency;
     // The ConductorConsistency raw claims (S7diag R1, decision 758) as the same kind of
     // portions: the list the gate has built so far, read AFTER this excitation's gate (the
@@ -1200,6 +1215,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
         raw_domain_boundary = post_op.GetElectrostaticUncoveredEdgeEnergies(
             response_correction->GetTargetInterfaces(), domain_boundary_portions);
+      }
+      if (!spatial_cluster_priority_portions.empty())
+      {
+        // The SpatialClusterPriority raw remainders' within-R energy (decision 922) on the
+        // same raw field.
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        raw_spatial_cluster_priority = post_op.GetElectrostaticUncoveredEdgeEnergies(
+            response_correction->GetTargetInterfaces(), spatial_cluster_priority_portions);
       }
     }
 
@@ -1259,6 +1282,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
                   &domain_boundary,
               const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+                  &spatial_cluster_priority,
+              const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
                   &conductor_consistency)
       {
         energies.domain += domain_correction;
@@ -1288,6 +1313,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {
             it->second.energy += domain_boundary_energy->second.energy;
           }
+          // A SpatialClusterPriority-dropped coupon's window outside every cluster box
+          // (OI-SCP-HOLE, decision 922) keeps its raw within-R energy of the same field:
+          // counted, uncorrected (the inside part is the owner coupon's).
+          const auto spatial_cluster_priority_energy =
+              spatial_cluster_priority.find(interface);
+          if (spatial_cluster_priority_energy != spatial_cluster_priority.end())
+          {
+            it->second.energy += spatial_cluster_priority_energy->second.energy;
+          }
           // A conductor-consistency-excluded patch's raw claim (S7diag R1, decision 758)
           // keeps its raw within-R energy of the same field: never dropped.
           const auto conductor_consistency_energy = conductor_consistency.find(interface);
@@ -1316,13 +1350,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           postprocess_response
               ? ApplyResponse(raw_energies, response.domain_correction,
                               response.fabricated_surface_energy, raw_uncovered,
-                              raw_domain_boundary, raw_conductor_consistency)
+                              raw_domain_boundary, raw_spatial_cluster_priority,
+                              raw_conductor_consistency)
               : Unavailable(raw_energies);
       auto postprocessed_fixed_flux =
           postprocess_response
               ? ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
                               response.fabricated_surface_energy_fixed_flux, raw_uncovered,
-                              raw_domain_boundary, raw_conductor_consistency)
+                              raw_domain_boundary, raw_spatial_cluster_priority,
+                              raw_conductor_consistency)
               : Unavailable(raw_energies);
       if (postprocess_response && !response.confident)
       {
@@ -1342,6 +1378,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       EnergyData corrected_energies = Unavailable(raw_energies);
       std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_uncovered;
       std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_domain_boundary;
+      std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+          corrected_spatial_cluster_priority;
       std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
           corrected_conductor_consistency;
       std::vector<SurfaceResponseOperator::ModelContribution> corrected_contributions;
@@ -1423,6 +1461,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               corrected_domain_boundary = post_op.GetElectrostaticUncoveredEdgeEnergies(
                   target_interfaces, domain_boundary_portions);
             }
+            if (!spatial_cluster_priority_portions.empty())
+            {
+              corrected_spatial_cluster_priority =
+                  post_op.GetElectrostaticUncoveredEdgeEnergies(
+                      target_interfaces, spatial_cluster_priority_portions);
+            }
             if (!raw_conductor_consistency.empty())
             {
               // The operator has probes: the same list on the corrected field (zero
@@ -1441,7 +1485,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           corrected_energies = ApplyResponse(
               std::move(corrected_energies), corrected_response.domain_correction,
               corrected_response.fabricated_surface_energy, corrected_uncovered,
-              corrected_domain_boundary, corrected_conductor_consistency);
+              corrected_domain_boundary, corrected_spatial_cluster_priority,
+              corrected_conductor_consistency);
           corrected_contributions = std::move(corrected_response.model_contributions);
           corrected_patch_contributions = std::move(corrected_response.patch_contributions);
         }
@@ -1463,6 +1508,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                             std::move(corrected_uncovered),
                             std::move(raw_domain_boundary),
                             std::move(corrected_domain_boundary),
+                            std::move(raw_spatial_cluster_priority),
+                            std::move(corrected_spatial_cluster_priority),
                             std::move(raw_conductor_consistency),
                             std::move(corrected_conductor_consistency),
                             response.trace_closure_spread,
@@ -1936,11 +1983,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       return std::sqrt(length2);
     };
-    // The three tables are removed UNCONDITIONALLY before the conditional write (decision
+    // The four tables are removed UNCONDITIONALLY before the conditional write (decision
     // 473 MAJOR-3): a stale table of an earlier run or attempt in the output directory
     // would otherwise read as a term this solve did not have.
     std::filesystem::remove(post_dir / "surface-response-uncovered-energy.csv");
     std::filesystem::remove(post_dir / "surface-response-domain-boundary-energy.csv");
+    std::filesystem::remove(post_dir /
+                            "surface-response-spatial-cluster-priority-energy.csv");
     std::filesystem::remove(post_dir / "surface-response-conductor-consistency-energy.csv");
     if (!uncovered_portions.empty())
     {
@@ -1983,6 +2032,30 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {
             return corrected ? result.corrected_domain_boundary
                              : result.raw_domain_boundary;
+          });
+    }
+    if (!spatial_cluster_priority_portions.empty())
+    {
+      // OI-SCP-HOLE (decision 922): the SpatialClusterPriority share per type (the
+      // DomainBoundary table's columns; the extra column = the dropped coupons folded into
+      // the portion, 0 for a plain arm window).
+      std::map<std::string, PortionTypeRow> portions_by_type;
+      const auto &record =
+          response_correction->GetSpatialClusterPriorityExclusions().portions;
+      for (std::size_t i = 0; i < record.portions.size(); i++)
+      {
+        auto &entry = portions_by_type[record.portions[i].topology];
+        entry.portions++;
+        entry.length += PortionLength(record.portions[i]);
+        entry.extra += record.translational[i] ? 1.0 : 0.0;
+      }
+      WritePortionEnergyTable(
+          post_dir / "surface-response-spatial-cluster-priority-energy.csv",
+          portions_by_type, "geometric cells", "spatialclusterpriority",
+          [](const CorrectedResult &result, bool corrected) -> const PortionEnergies &
+          {
+            return corrected ? result.corrected_spatial_cluster_priority
+                             : result.raw_spatial_cluster_priority;
           });
     }
     if (!response_correction->GetConductorConsistencyPortions().empty())

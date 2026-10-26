@@ -263,6 +263,10 @@ protected:
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> surface_response_uncovered;
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       surface_response_domain_boundary;
+  // The SpatialClusterPriority raw remainders (OI-SCP-HOLE, decision 922): the dropped
+  // coupons' windows outside every cluster box, kept raw like the two lists above.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+      surface_response_spatial_cluster_priority;
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
   std::unique_ptr<GridFunction> surface_response_corrected_field;
@@ -292,6 +296,9 @@ protected:
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> self_consistent_uncovered;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> domain_boundary;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> self_consistent_domain_boundary;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> spatial_cluster_priority;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+        self_consistent_spatial_cluster_priority;
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;
