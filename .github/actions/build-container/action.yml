@@ -263,22 +263,6 @@ runs:
         path: scripts/schema/config-schema.json
         retention-days: 1
 
-    - name: Extract SBOM
-      shell: bash
-      env:
-        IMAGE_NAME: ${{ steps.name.outputs.image_name }}
-      run: |
-        # SPDX 2.3 SBOM of Palace's Spack dependency DAG, kept in the image by
-        # PalaceDockerfile.
-        sudo podman run --rm --entrypoint cat "$IMAGE_NAME:latest" \
-          /opt/spack-environment/palace.spdx.json > "$IMAGE_NAME.spdx.json"
-
-    - name: Upload SBOM
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-      with:
-        name: ${{ steps.name.outputs.image_name }}-sbom
-        path: ${{ steps.name.outputs.image_name }}.spdx.json
-
     - name: Timing information
       shell: bash
       run: |

@@ -221,13 +221,9 @@ RUN set -e; \
       sort -zu | \
       xargs -0 -r -n 32 -P "$(nproc)" strip 2>/dev/null || true; \
     spack env activate --sh -d . > activate.sh && \
-    # Spack writes an SPDX SBOM into each install's .spack directory. Palace's
-    # covers its whole dependency DAG; keep it before .spack is pruned.
-    cp "$(spack location -i palace)/.spack/sbom/spdx-2.3.json" \
-      {{ paths.environment }}/palace.spdx.json && \
     find /opt/software -type d -name .spack -prune -exec rm -rf {} + && \
     find {{ paths.environment }} -mindepth 1 -maxdepth 1 \
-      ! -name activate.sh ! -name palace.spdx.json -exec rm -rf {} +
+      ! -name activate.sh -exec rm -rf {} +
 
 {% endblock %}
 
