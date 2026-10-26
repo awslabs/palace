@@ -45,6 +45,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+  - Removed the `"NSamples"` option of the wave port `"VoltagePath"` and of the
+    `"Impedance"` and `"Voltage"` boundary postprocessing paths. Coordinate-path line
+    integrals are now exact for the discrete field, so the number of samples no longer has
+    any effect, and configurations specifying it must be updated. SchemaVer 3-0-0
+    [PR 1049](https://github.com/awslabs/palace/pull/1049).
 
 #### Bug Fixes
 
@@ -161,6 +166,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     frequency, and circuit synthesis with a single distinct sample, which now aborts at
     startup instead of failing in the sweep.
     [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed coordinate-path line integrals (wave port `"VoltagePath"` and the `"Impedance"`
+    and `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) losing accuracy
+    on locally refined meshes: a few tenths of a percent in Z_PV on the CPW examples, and
+    up to about 1% after several levels of adaptive refinement towards conductor edges,
+    where Z_PV then changed erratically from one level to the next. They are now exact for
+    the discrete field on affine elements, and the wave port voltage no longer needs GSLIB
+    or a point search over the full 3D mesh.
+    [PR 1049](https://github.com/awslabs/palace/pull/1049).
 
 #### Performance Improvements
 
