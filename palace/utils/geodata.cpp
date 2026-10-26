@@ -1849,10 +1849,12 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   // the parent boundary face edges lying on the surface for the converse.
   std::vector<double> local_wall_pts;
   std::vector<int> local_wall_attrs;
-  for (const auto &[edge, be_attr] :
+  for (const auto &edge_attr :
        GetParentBoundaryEdges(parent, [&](int a) { return !surface_attr_set.contains(a); }))
   {
-    const EdgeCurve wall(parent, edge);
+    // Not a structured binding, which OpenMP does not support capturing in the lambda.
+    const int be_attr = edge_attr.second;
+    const EdgeCurve wall(parent, edge_attr.first);
     if (!sub_edges.Overlaps(wall.bb_min.data(), wall.bb_max.data()))
     {
       continue;
@@ -2029,9 +2031,11 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   std::vector<int> near_offsets;
   const EdgeSearch near_edges(GatherAll(local_near_pts, comm, &near_offsets), sdim);
   std::vector<int> near_attr(near_edges.Size(), std::numeric_limits<int>::max());
-  for (const auto &[edge, be_attr] : internal_edges)
+  for (const auto &edge_attr : internal_edges)
   {
-    const EdgeCurve wall(parent, edge);
+    // Not a structured binding, which OpenMP does not support capturing in the lambda.
+    const int be_attr = edge_attr.second;
+    const EdgeCurve wall(parent, edge_attr.first);
     if (!near_edges.Overlaps(wall.bb_min.data(), wall.bb_max.data()))
     {
       continue;
