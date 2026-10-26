@@ -223,7 +223,7 @@ microwave networks, circuit ``V`` and ``I`` are not generally well defined and h
 convention [[11, 12]](#References). This is tantamount to relating the circuit characteristic impedance
 
 ```math
-Z = \frac{V^{inc}}{I^{inc}} = \frac{\vert V^{inc} \vert^2}{[P^{inc}]^*},
+Z = \frac{V^{inc}}{I^{inc}} = \frac{\vert V^{inc} \vert^2}{2[P^{inc}]^*},
 ```
 
 to the physical surface (wave) impedance ``Z_s``. We discuss this for each port type below.
@@ -413,7 +413,7 @@ S_{ij} = \frac{\displaystyle\int_{\Gamma_i}\bm{E}\cdot\bm{E}^{inc}_i\,dS}
 ```
 
 For a resistive excited port, the incident field ``\bm{E}^{inc}`` is normalized so that the
-power integrated over the port boundary is unity, referenced to the port resistance
+time-averaged incident power integrated over the port boundary is unity, referenced to the port resistance
 ``R = R_{ref}``, and the excitation and termination coefficients coincide. A lumped port
 with nonzero inductance and/or capacitance may also be excited. In that case the port's
 full ``R``, ``L``, and ``C`` still enter the system matrix as a physical parallel
@@ -668,7 +668,7 @@ junction current for mode ``m``, and ``\mathcal{E}^{elec}_m`` is the time-averag
 energy in mode ``m`` (the numerator is likewise the time-averaged energy stored in the
 inductor). The junction current is computed using the mean voltage across the port,
 ``\overline{V}_{mj}``, as ``I_{mj} = \overline{V}_{mj}/Z_{mj}``, where
-``Z_{mj} = 1/(i\omega_m L_j)`` is the impedance of the inductive branch of the lumped
+``Z_{mj} = i\omega_m L_j`` is the impedance of the inductive branch of the lumped
 circuit. The mean port voltage depends on the computed electric field mode and the shape of
 the port:
 
@@ -688,8 +688,11 @@ Finally, the total time-averaged electric energy in mode ``m`` is
 
 where ``\bm{D}_m = \varepsilon_r\bm{E}_m`` is the electric flux density for mode ``m`` and
 the second term on the right-hand side accounts for any lumped capacitive boundaries with
-nonzero circuit capacitance ``C_j``. For an eigenmode, the time-averaged electric and
-magnetic energies are equal, so the total stored energy is ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``.
+nonzero circuit capacitance ``C_j``. For a lossless eigenmode with complete, consistent nondispersive storage,
+equipartition gives ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``. The port-Q estimate below
+retains this weak-loss approximation. It need not equal total energy for strongly damped,
+open or dispersive modes. Lumped circuit L/C storage also need not equal the distributed
+sheet storage used by the boundary operator when the port field differs from its circuit mode.
 
 The EPR can also be used to estimate mode quality factors due to input-output (I-O) line
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by

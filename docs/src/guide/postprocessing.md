@@ -264,3 +264,13 @@ contributed by each entity depends on its geometry at a given finite-element ord
 the counts this way makes the exact global degree-of-freedom size recoverable for mixed or
 non-simplicial meshes, where triangle and quadrilateral faces (and tetrahedral,
 hexahedral, prism, and pyramid cells) each contribute a different per-order count.
+
+### Limits of stored-energy accounting
+
+The phasor convention does not change which storage terms are measured. Boundary-mode
+energy outputs currently contain the transverse electric and longitudinal magnetic
+components, not the full modal energy. Lumped L/C outputs use the circuit voltage and
+branch current; they need not equal the distributed boundary-sheet storage for a
+non-modal port field. Surface-impedance, dispersive and London storage require their own
+accounting. Do not infer complete energy balance or exact equipartition from these
+columns alone. Port coupling rates retain their existing signed convention.
