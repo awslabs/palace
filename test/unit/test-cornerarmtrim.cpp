@@ -3287,6 +3287,150 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// PatchEnergy's spatial-trace export on the Maxwell path (decision 922 B-3; the d919 review
+// MAJOR-3): the Legacy spatial-cluster fixture (the offset corner pair: one spatial
+// edge-cluster patch, six corner patches, the isolated-edge cells) under an Eigenmode
+// PostOperator with "PatchEnergy" on a complex field: surface-response-traces.csv carries
+// one row per coefficient of every spatial trace of GetMaxwellResponse(E, omega, true): the
+// 1-based placed patch index, the model, the 1-based coefficient, the conductor-state flag
+// (a coefficient past the contour size), the real and imaginary values in volts, the mode
+// and excitation keys, and nothing else; the patch-energy table carries the patch set twice
+// (evaluations 0 / 1).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell spatial-trace export of a spatial cluster (decision 922 B-3)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][spatial][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path output_dir = temp.temp_dir / "spatial-traces-maxwell";
+  json config = ConvexMaxwellIslandConfig();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction["Library"] = spatial_cluster_library_3d_path.string();
+  correction["CorrectionMode"] = "PostprocessOnly";
+  correction["PatchEnergy"] = true;
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  iodata.boundaries.cracked_attributes.insert(10);
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->GetPatchCount() > 0);
+
+  GridFunction field(space_op.GetNDSpace(), true);
+  mfem::VectorConstantCoefficient real_coefficient = ConstantFieldCoefficient();
+  mfem::Vector imaginary_value(3);
+  imaginary_value[0] = -0.3;
+  imaginary_value[1] = 0.5;
+  imaginary_value[2] = 0.2;
+  mfem::VectorConstantCoefficient imaginary_coefficient(imaginary_value);
+  field.Real().ProjectCoefficient(real_coefficient);
+  field.Imag().ProjectCoefficient(imaginary_coefficient);
+  const std::complex<double> omega(1.0, 0.0);
+  const auto result = response->GetMaxwellResponse(field, omega, true);
+  REQUIRE(!result.spatial_traces.empty());
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  field.Imag().GetTrueDofs(e.Imag());
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto Int = [](const std::string &text)
+  { return static_cast<int>(std::lround(std::stod(text))); };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  auto Volt = [&](double value)
+  { return iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(value); };
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-traces.csv"));
+  const TextCsv traces = ReadTrimmedCsv(output_dir / "surface-response-traces.csv");
+  CHECK(traces.header == std::vector<std::string>{"i", "patch", "model", "coefficient",
+                                                  "conductor state", "value (V)",
+                                                  "value imag (V)", "m", "exc"});
+  std::size_t expected_rows = 0;
+  for (const auto &trace : result.spatial_traces)
+  {
+    expected_rows += trace.coefficients.size();
+  }
+  REQUIRE(traces.rows.size() == expected_rows);
+  std::size_t row = 0;
+  for (const auto &trace : result.spatial_traces)
+  {
+    for (std::size_t k = 0; k < trace.coefficients.size(); k++, row++)
+    {
+      const auto &cells = traces.rows[row];
+      CHECK(Int(cells[traces.Column("i")]) == 1);
+      CHECK(Int(cells[traces.Column("patch")]) == trace.patch + 1);
+      CHECK(Int(cells[traces.Column("model")]) == trace.model);
+      CHECK(Int(cells[traces.Column("coefficient")]) == static_cast<int>(k) + 1);
+      CHECK(Int(cells[traces.Column("conductor state")]) ==
+            (static_cast<int>(k) >= trace.contour_size ? 1 : 0));
+      CHECK_THAT(
+          std::stod(cells[traces.Column("value (V)")]),
+          WithinAbs(Volt(trace.coefficients[k].real()),
+                    1.0e-10 * std::max(1.0, std::abs(Volt(trace.coefficients[k].real())))));
+      CHECK_THAT(
+          std::stod(cells[traces.Column("value imag (V)")]),
+          WithinAbs(Volt(trace.coefficients[k].imag()),
+                    1.0e-10 * std::max(1.0, std::abs(Volt(trace.coefficients[k].imag())))));
+      CHECK(Int(cells[traces.Column("m")]) == 1);
+      CHECK(Int(cells[traces.Column("exc")]) == 0);
+    }
+  }
+  // A spatial trace per spatial patch, fewer than the applied patches (the translational
+  // cells carry none), and the imaginary part is a genuine column (the field is complex).
+  CHECK(result.spatial_traces.size() < static_cast<std::size_t>(response->GetPatchCount()));
+  bool imaginary_nonzero = false;
+  for (const auto &trace : result.spatial_traces)
+  {
+    for (const auto &coefficient : trace.coefficients)
+    {
+      imaginary_nonzero = imaginary_nonzero || std::abs(coefficient.imag()) > 1.0e-12;
+    }
+  }
+  CHECK(imaginary_nonzero);
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patch-energy.csv"));
+  const TextCsv patch_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-patch-energy.csv");
+  CHECK(patch_energy.rows.size() ==
+        2 * static_cast<std::size_t>(response->GetPatchCount()));
+#endif
+}
+
 // OI-ZERO-IFACE-NAN (decisions 891 / 922 C): a postprocessing Dielectric interface that is
 // NOT a response target (S6's L2 ground attr 126, no EdgeDistances) read NaN in every
 // corrected column of the Maxwell surface-Q-corrected.csv on main (the measurement

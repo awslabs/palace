@@ -1783,8 +1783,9 @@ patch index of `surface-response-traces.csv` (the preflight dry run's 0-based `P
 plus one). The rows of one source, evaluation and model sum to that model's row of
 `surface-response-model-energy.csv` to roundoff, and their count and weight sum to its
 `patch count` and `patch weight`; a patch excluded by the conductor-consistency gate
-keeps its row with weight 0. The same option on a driven or eigenmode run (not boundary
-mode) writes the Maxwell path's `surface-response-patches.csv` (at construction),
+keeps its row with weight 0. The same option on a three-dimensional driven or eigenmode
+run (not boundary mode, not a two-dimensional mesh) writes the Maxwell path's
+`surface-response-patches.csv` (at construction),
 `surface-response-patch-energy.csv` (the electrostatic columns as a strict prefix, `source`
 = the excitation on a driven solve / the mode on an eigenmode solve, then `f (GHz)` / `m`
 and `exc`, then the patch's `max loop residual`), `surface-response-traces.csv` (the

@@ -892,6 +892,16 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
   CHECK(boundary_mode_result.fabricated_surface_energy_fixed_flux.at(4) > 0.0);
   CHECK(boundary_mode_result.loop_residual < 1.0e-10);
   CHECK_THAT(boundary_mode_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+  // PatchEnergy is a three-dimensional export (decision 934; DESIGN B.2 "the 2D paths keep
+  // the refusal"): the configuration refuses it under BoundaryMode (IoData), and the
+  // Maxwell operator itself refuses it on a two-dimensional mesh, tested here with the flag
+  // set on the built IoData (past the configuration check).
+  {
+    auto patch_energy_iodata = boundary_mode_iodata;
+    patch_energy_iodata.solver.surface_response_correction->patch_energy = true;
+    CHECK_THROWS_WITH(SurfaceResponseOperator(patch_energy_iodata, boundary_mode_op),
+                      ContainsSubstring("three-dimensional export"));
+  }
 
   // Finite-impedance boundary-mode edges use the local metal surface as their voltage
   // reference. For a conservative field normal to the sheet this is gauge-equivalent to
@@ -5701,6 +5711,123 @@ TEST_CASE_METHOD(
   CHECK(spatial_cluster_result.loop_residual < 1.0e-10);
   CHECK_THAT(spatial_cluster_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
   CHECK(spatial_cluster_result.corner_neighborhood_fraction == 0.0);
+
+  // PatchEnergy on the Maxwell path (decision 922 B; d919 review MAJOR-3): the records of
+  // include_patches on a complex field. The totals are the include_patches = false result's
+  // bitwise (the records read values the loop computes anyway); the spatial traces are the
+  // spatial patches' (count, patch, model, contour size) with the real and imaginary
+  // coefficients equal to GetSpatialPatchTraces of the field's real and imaginary parts
+  // (the same line-integral trace of each part); the per-patch records sum to the model
+  // rows and the per-path contour-loop maximum is the gate quantity.
+  {
+    GridFunction complex_field(spatial_cluster_space.GetNDSpace(), true);
+    complex_field.Real().ProjectCoefficient(field_coefficient);
+    mfem::Vector imaginary_value(3);
+    imaginary_value[0] = -0.3;
+    imaginary_value[1] = 0.5;
+    imaginary_value[2] = 0.2;
+    mfem::VectorConstantCoefficient imaginary_coefficient(imaginary_value);
+    complex_field.Imag().ProjectCoefficient(imaginary_coefficient);
+    const auto without = spatial_cluster_response.GetMaxwellResponse(complex_field, 0.0);
+    const auto with = spatial_cluster_response.GetMaxwellResponse(complex_field, 0.0, true);
+    CHECK(without.patch_contributions.empty());
+    CHECK(without.spatial_traces.empty());
+    CHECK(without.path_loop_residuals.empty());
+    CHECK(with.domain_correction == without.domain_correction);
+    CHECK(with.domain_correction_fixed_flux == without.domain_correction_fixed_flux);
+    CHECK(with.fabricated_surface_energy == without.fabricated_surface_energy);
+    CHECK(with.fabricated_surface_energy_fixed_flux ==
+          without.fabricated_surface_energy_fixed_flux);
+    CHECK(with.loop_residual == without.loop_residual);
+    CHECK(with.response_weighted_loop_residual == without.response_weighted_loop_residual);
+    CHECK(with.maximum_trace_closure_spread == without.maximum_trace_closure_spread);
+    REQUIRE(with.model_contributions.size() == without.model_contributions.size());
+    for (std::size_t m = 0; m < with.model_contributions.size(); m++)
+    {
+      CHECK(with.model_contributions[m].domain_correction ==
+            without.model_contributions[m].domain_correction);
+      CHECK(with.model_contributions[m].fabricated_surface_energy ==
+            without.model_contributions[m].fabricated_surface_energy);
+    }
+    // The spatial traces (B-3: the spatial patches only) against GetSpatialPatchTraces.
+    Vector real_true, imaginary_true;
+    complex_field.Real().GetTrueDofs(real_true);
+    complex_field.Imag().GetTrueDofs(imaginary_true);
+    const auto real_traces = spatial_cluster_response.GetSpatialPatchTraces(real_true);
+    const auto imaginary_traces =
+        spatial_cluster_response.GetSpatialPatchTraces(imaginary_true);
+    REQUIRE(!with.spatial_traces.empty());
+    REQUIRE(with.spatial_traces.size() == real_traces.size());
+    REQUIRE(with.spatial_traces.size() == imaginary_traces.size());
+    CHECK(with.spatial_traces.size() <
+          static_cast<std::size_t>(spatial_cluster_response.GetPatchCount()));
+    for (std::size_t i = 0; i < with.spatial_traces.size(); i++)
+    {
+      const auto &trace = with.spatial_traces[i];
+      CHECK(trace.patch == real_traces[i].patch);
+      CHECK(trace.model == real_traces[i].model);
+      CHECK(trace.contour_size == real_traces[i].contour_size);
+      CHECK(trace.patch == imaginary_traces[i].patch);
+      REQUIRE(trace.coefficients.size() == real_traces[i].coefficients.size());
+      REQUIRE(trace.coefficients.size() == imaginary_traces[i].coefficients.size());
+      CHECK(trace.coefficients.size() >= static_cast<std::size_t>(trace.contour_size));
+      for (std::size_t k = 0; k < trace.coefficients.size(); k++)
+      {
+        CHECK_THAT(trace.coefficients[k].real(),
+                   WithinAbs(real_traces[i].coefficients[k], 1.0e-12));
+        CHECK_THAT(trace.coefficients[k].imag(),
+                   WithinAbs(imaginary_traces[i].coefficients[k], 1.0e-12));
+      }
+    }
+    // The per-patch records: every applied patch once, the sums the model rows.
+    CHECK(with.patch_contributions.size() ==
+          static_cast<std::size_t>(spatial_cluster_response.GetPatchCount()));
+    std::map<int, SurfaceResponseOperator::ModelContribution> sums;
+    for (const auto &contribution : with.patch_contributions)
+    {
+      auto &sum = sums[contribution.model];
+      sum.patch_count += 1.0;
+      sum.patch_weight += contribution.weight;
+      sum.domain_correction += contribution.domain_correction;
+      sum.domain_correction_fixed_flux += contribution.domain_correction_fixed_flux;
+      for (const auto &[interface, energy] : contribution.fabricated_surface_energy)
+      {
+        sum.fabricated_surface_energy[interface] += energy;
+      }
+    }
+    for (const auto &model : with.model_contributions)
+    {
+      if (model.patch_count == 0.0)
+      {
+        CHECK(sums.count(model.model) == 0);
+        continue;
+      }
+      const auto &sum = sums.at(model.model);
+      CHECK(sum.patch_count == model.patch_count);
+      CHECK_THAT(sum.patch_weight, WithinRel(model.patch_weight, 1.0e-12));
+      CHECK_THAT(sum.domain_correction, WithinRel(model.domain_correction, 1.0e-10));
+      CHECK_THAT(sum.domain_correction_fixed_flux,
+                 WithinRel(model.domain_correction_fixed_flux, 1.0e-10));
+      for (const auto &[interface, energy] : model.fabricated_surface_energy)
+      {
+        CHECK_THAT(sum.fabricated_surface_energy.at(interface), WithinRel(energy, 1.0e-10));
+      }
+    }
+    // The per-path loop residuals (decision 920): the contour-loop maximum is the gate.
+    REQUIRE(!with.path_loop_residuals.empty());
+    double maximum_contour_loop = 0.0;
+    for (const auto &record : with.path_loop_residuals)
+    {
+      CHECK((record.kind == 0 || record.kind == 1));
+      CHECK(record.scale > 0.0);
+      CHECK(record.residual >= 0.0);
+      if (record.kind == 0)
+      {
+        maximum_contour_loop = std::max(maximum_contour_loop, record.residual);
+      }
+    }
+    CHECK_THAT(maximum_contour_loop, WithinAbs(with.loop_residual, 1.0e-12));
+  }
 
   // U1 (decision 818 R2; DESIGN 5.1): the cap-interior hats (InteriorTraceCount) are
   // Maxwell trace coefficients too: each hat hangs from the nearest contour knot of its own

@@ -25093,6 +25093,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   MFEM_VERIFY((dimension == 2 || dimension == 3) && fespace.SpaceDimension() == dimension,
               "Maxwell surface response correction requires a two- or three-dimensional "
               "mesh!");
+  // PatchEnergy (decision 934, DESIGN B.2): the per-patch export and the per-model raw
+  // partition are three-dimensional (the claim collection and the edge-energy partition
+  // run on 3D devices only); a two-dimensional Maxwell response refuses the flag.
+  MFEM_VERIFY(dimension == 3 || !request->patch_energy,
+              "\"PatchEnergy\" is a three-dimensional export: the Maxwell surface response "
+              "of a two-dimensional mesh does not support it!");
 
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
