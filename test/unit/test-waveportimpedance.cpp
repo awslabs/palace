@@ -464,12 +464,12 @@ TEST_CASE("WavePort anisotropic mode ordering", "[waveportimpedance][Serial][Par
 // groups of the parent are not numbered in the same order on all processes, and MFEM's
 // ParSubMesh used to pair different shared entities on different processes. The port
 // finite element spaces were then inconsistent and gave spurious modes for some
-// partitionings. Check that a deliberately fragmented partitioning gives the same TE10
+// partitionings. Check that deliberately fragmented partitionings give the same TE10
 // modes as the default one. This needs at least 3 processes (with 2, the parent has a
-// single communication group); the chosen mesh and partitioning fail on 4 processes
-// without the fix.
+// single communication group), so the test runs at the regression rank count; without the
+// fix, at least one of the partitionings fails on 4, 5, 6 and 8 processes.
 TEST_CASE("WavePort modes with a fragmented mesh partitioning",
-          "[waveportimpedance][Serial][Parallel]")
+          "[waveportimpedance][Parallel][Regression]")
 {
   MPI_Comm comm = Mpi::World();
 
@@ -478,7 +478,9 @@ TEST_CASE("WavePort modes with a fragmented mesh partitioning",
   const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
   const double f_GHz = 10.0;
 
-  auto solve = [&](bool fragmented)
+  // Partition in blocks of consecutive elements cycling over the processes, or with the
+  // default partitioning for block = 0.
+  auto solve = [&](int block)
   {
     auto serial_mesh = std::make_unique<mfem::Mesh>(
         mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON, a_m, L_m, b_m));
@@ -514,15 +516,14 @@ TEST_CASE("WavePort modes with a fragmented mesh partitioning",
     iodata.CheckConfiguration();
 
     std::unique_ptr<mfem::ParMesh> par_mesh;
-    if (fragmented)
+    if (block > 0)
     {
-      // Distribute the mesh as mesh::DistributeMesh does, in blocks of a few consecutive
-      // elements cycling over the processes.
+      // Distribute the mesh as mesh::DistributeMesh does.
       const int size = Mpi::Size(comm);
       mfem::Array<int> partitioning(serial_mesh->GetNE());
       for (int e = 0; e < serial_mesh->GetNE(); e++)
       {
-        partitioning[e] = (e / 5) % size;
+        partitioning[e] = (e / block) % size;
       }
       mfem::MeshPartitioner partitioner(*serial_mesh, size, partitioning.GetData());
       mfem::MeshPart part;
@@ -562,23 +563,31 @@ TEST_CASE("WavePort modes with a fragmented mesh partitioning",
     return modes;
   };
 
-  const auto ref = solve(false);
-  const auto modes = solve(true);
+  // The default partitioning gives the TE10 mode.
+  const auto ref = solve(0);
   const double k0 = 2.0 * std::numbers::pi * f_GHz * 1.0e9 / electromagnetics::c0_;
   const double kc = std::numbers::pi / a_m;
   const double Z_TE = electromagnetics::Z0_ * k0 / std::sqrt(k0 * k0 - kc * kc);
   for (int i = 0; i < 2; i++)
   {
     const auto [kn_ref, Z_ref] = ref[i];
-    const auto [kn, Z] = modes[i];
-    CAPTURE(i, kn_ref, kn, Z_ref, Z);
-
-    // The default partitioning gives the TE10 mode, and the fragmented one gives the same
-    // discrete mode.
+    CAPTURE(i, kn_ref, Z_ref);
     CHECK_THAT(kn_ref, WithinRel(std::sqrt(k0 * k0 - kc * kc), 0.01));
     CHECK_THAT(Z_ref, WithinRel(2.0 * (b_m / a_m) * Z_TE, 0.01));
-    CHECK_THAT(kn, WithinRel(kn_ref, 1.0e-8));
-    CHECK_THAT(Z, WithinRel(Z_ref, 1.0e-6));
+  }
+
+  // Fragmented partitionings give the same discrete mode.
+  for (int block : {5, 7, 11, 13})
+  {
+    const auto modes = solve(block);
+    for (int i = 0; i < 2; i++)
+    {
+      const auto [kn_ref, Z_ref] = ref[i];
+      const auto [kn, Z] = modes[i];
+      CAPTURE(block, i, kn_ref, kn, Z_ref, Z);
+      CHECK_THAT(kn, WithinRel(kn_ref, 1.0e-8));
+      CHECK_THAT(Z, WithinRel(Z_ref, 1.0e-6));
+    }
   }
 }
 

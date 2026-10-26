@@ -187,7 +187,10 @@ to group cases into separate sweeps.
     and skipped from the default unit-test sweep. Opt in with
     `ctest -L "^regression$"` or
     `palace-unit-tests "[Regression]~[Long]"`. Each case lives in
-    `test/unit/regression/cases.cpp`.
+    `test/unit/regression/cases.cpp`. A `[Parallel]` unit test which needs
+    more MPI processes than `PALACE_TESTS_NUMPROC` (2 in CI) to be meaningful
+    can also be tagged `[Regression]`, so that it runs at
+    `PALACE_REGRESSION_NUMPROC`.
   - `[Long]` is a *modifier* on a regression case for solves that take
     long enough (~10 minutes) that they shouldn't run on every PR.
     These cases are tagged `[Regression][Long]` and registered as
