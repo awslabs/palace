@@ -58,7 +58,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     use the material model at the solution frequency. Compatible static limits are supported;
     transient problems are not. General PoleResidue models remain usable with gain and
     negative-energy warnings. Existing constant-permittivity inputs are unchanged.
-    SchemaVer 2-3-0
+    SchemaVer 3-1-0
     [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
