@@ -48,6 +48,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the sign of `Im{Z}` in `port-Z.csv` for wave ports with a `"VoltagePath"`: the
+    total-field impedance was computed as `|V|² / P` instead of `|V|² / conj(P)`, giving
+    `conj(Z)`. `Re{Z}` and `Z_PV` are unchanged.
+    [PR 1066](https://github.com/awslabs/palace/pull/1066).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
