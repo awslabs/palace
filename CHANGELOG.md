@@ -67,6 +67,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
+  - Fixed a segmentation fault reading 2D meshes with boundary elements which are not an
+    edge of any element, for example a conductor face tagged on an outer boundary of the
+    mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
+    no domain element is attached to, are now removed with a warning.
+    [Issue 1094](https://github.com/awslabs/palace/issues/1094).
 
 #### Build system
 
