@@ -1121,14 +1121,14 @@ void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
                         std::unique_ptr<GridFunction> &B, std::unique_ptr<GridFunction> &V,
                         std::unique_ptr<GridFunction> &A)
 {
-  // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
-  // the mesh which would carry into the fields during the mapping from reference to
-  // physical space through the element Jacobians. No transformation for V is needed (H1
-  // interpolation). Because the coefficients are always evaluating E, B in neighboring
-  // elements, the Jacobian scaling is the same for the domain and boundary data
-  // collections (instead of being different for B due to the dim - 1 evaluation). Wave
-  // port fields also do not require rescaling since their submesh object where they are
-  // evaluated remains nondimensionalized.
+  // For fields on H(curl), H(div), and L2 (INTEGRAL map type) spaces, we "undo" the
+  // effect of redimensionalizing the mesh which would carry into the fields during the
+  // mapping from reference to physical space through the element Jacobians. No
+  // transformation for V is needed (H1 interpolation). Because the coefficients are always
+  // evaluating E, B in neighboring elements, the Jacobian scaling is the same for the
+  // domain and boundary data collections (instead of being different for B due to the
+  // evaluation on the boundary). Wave port fields also do not require rescaling since their
+  // submesh object where they are evaluated remains nondimensionalized.
   if (E)
   {
     // Piola transform: J^-T
@@ -1136,8 +1136,13 @@ void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
   }
   if (B)
   {
-    // Piola transform: J / |J|
-    *B *= std::pow(L, dim - 1);
+    // Piola transform: J / |J| for B in H(div) (3D), and 1 / |J| for the scalar
+    // out-of-plane B in L2 with INTEGRAL map type (2D).
+    const auto map_type = B->ParFESpace()->FEColl()->GetMapType(dim);
+    MFEM_VERIFY(map_type == mfem::FiniteElement::H_DIV ||
+                    map_type == mfem::FiniteElement::INTEGRAL,
+                "Unexpected map type for the B field space!");
+    *B *= std::pow(L, (map_type == mfem::FiniteElement::INTEGRAL) ? dim : dim - 1);
   }
   if (A)
   {
