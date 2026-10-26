@@ -11738,7 +11738,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   const fs::path mesh_path = temp.temp_dir / "adaptid-uncovered-claw.mesh";
   const fs::path basis_path = temp.temp_dir / "adaptid-uncovered-basis-points.csv";
-  const fs::path library_path = temp.temp_dir / "fabrication-process-adaptid-uncovered-3d.json";
+  const fs::path library_path =
+      temp.temp_dir / "fabrication-process-adaptid-uncovered-3d.json";
   const fs::path producer_dir = temp.temp_dir / "adaptid-uncovered-producer";
   const fs::path follow_on_dir = temp.temp_dir / "adaptid-uncovered-follow-on";
   const fs::path saved_mesh_path = producer_dir / "adaptid-uncovered-claw.mesh";
@@ -11852,7 +11853,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   const json producer_meta = ReadJson(producer_dir / "palace.json");
   const json follow_on_meta = ReadJson(follow_on_dir / "palace.json");
-  CHECK(producer_meta["Problem"]["MeshElements"] == follow_on_meta["Problem"]["MeshElements"]);
+  CHECK(producer_meta["Problem"]["MeshElements"] ==
+        follow_on_meta["Problem"]["MeshElements"]);
   const auto &producer_response = producer_meta["SurfaceResponse"];
   const auto &follow_on_response = follow_on_meta["SurfaceResponse"];
   // The placed set and the uncovered set are the producer's (decision 899 B1), and some
