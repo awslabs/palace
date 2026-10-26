@@ -22,9 +22,11 @@ set(LIBXSMM_OPTIONS
   "VERBOSE=1"
 )
 
-# Homebrew Clang loses its implicit macOS SDK when LIBXSMM adds an explicit
-# Apple target triple. Pass the SDK as a compiler flag so system headers remain
-# available without requiring callers to export SDKROOT.
+# Homebrew Clang takes its macOS SDK from a per-target config file (e.g.
+# arm64-apple-macosx26.cfg). LIBXSMM adds -target arm64-apple-macos, which
+# matches none, so system headers are not found (seen with Homebrew LLVM 19.1.7
+# and 22.1.8, CMake 4.0.3). Pass the SDK as a compiler flag so system headers
+# remain available without requiring callers to export SDKROOT.
 if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
   set(LIBXSMM_OSX_SYSROOT "${CMAKE_OSX_SYSROOT}")
   if(NOT IS_ABSOLUTE "${LIBXSMM_OSX_SYSROOT}")
