@@ -157,7 +157,9 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
         auto *he = expected.HostWrite();
         for (int i = 0; i < expected.Size(); i++)
         {
-          he[i] = std::sqrt(hre[i] * hre[i] + him[i] * him[i]);
+          // At the same physical energy denominator, a peak phasor's squared
+          // error has half the weight of each instantaneous real-field result.
+          he[i] = std::sqrt(0.5 * (hre[i] * hre[i] + him[i] * him[i]));
         }
       }
       Compare(ind_c.Local(), expected, "complex estimate");

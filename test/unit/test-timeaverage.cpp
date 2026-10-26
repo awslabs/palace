@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <complex>
+#include <fstream>
 #include <memory>
 #include <vector>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -13,9 +15,12 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
+#include "models/boundarymodeoperator.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
@@ -346,6 +351,57 @@ TEST_CASE("Lumped port unit time-averaged incident power",
   double rhs_dot_e = linalg::Dot(comm, RHS1.Real(), e_inc);
   CHECK_THAT(iodata.units.Dimensionalize<VT::POWER>(rhs_dot_e),
              WithinRel(4.0 * phase.real(), 1.0e-10));
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Boundary mode Sn is SI time-averaged power density",
+                 "[timeaverage][postoperator][Serial][Parallel]")
+{
+  const auto comm = Mpi::World();
+  IoData iodata(Units(0.013, 0.43));
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.problem.output = temp_dir.string();
+  iodata.problem.output_formats.paraview = false;
+  iodata.problem.output_formats.gridfunction = true;
+  iodata.solver.order = 1;
+  iodata.solver.boundary_mode.freq = 2.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.boundary_mode.n_post = 1;
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.CheckConfiguration();
+  auto serial = mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL);
+  serial.EnsureNodes();
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, serial)));
+  MaterialOperator mat_op(iodata, *meshes.back());
+  BoundaryModeOperator mode_op(iodata, meshes, mat_op);
+  PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
+  // Vacuum plane wave, |E| = 1 V/m, kn = omega. The mode convention has B_t =
+  // -(kn/omega) z x E_t, so Sn is positive and equals 1/(2 Z0) W/m².
+  mfem::Vector field(2);
+  field = 0.0;
+  field(0) = iodata.units.Nondimensionalize<Units::ValueType::FIELD_E>(1.0);
+  mfem::VectorConstantCoefficient coeff(field);
+  GridFunction E(mode_op.GetNDSpace(), true);
+  E.Real().ProjectCoefficient(coeff);
+  E.Imag() = 0.0;
+  ComplexVector et(mode_op.GetNDTrueVSize()), en(mode_op.GetH1TrueVSize());
+  E.Real().GetTrueDofs(et.Real());
+  et.Imag() = 0.0;
+  en = 0.0;
+  post_op.MeasureAndPrintAll(0, et, en, 2.0, 2.0, 0.0, 0.0, 1);
+  Mpi::Barrier(comm);
+  const int digits = post_op.GetPadDigitsDefault();
+  const auto path =
+      temp_dir / "gridfunction/boundarymode" /
+      fmt::format("Sn_{:0{}d}.gf.{:0{}d}", 1, digits, Mpi::Rank(comm), digits);
+  std::ifstream input(path);
+  REQUIRE(input.good());
+  mfem::GridFunction Sn(&meshes.back()->Get(), input);
+  REQUIRE(Sn.Size() > 0);
+  for (int i = 0; i < Sn.Size(); i++)
+  {
+    CHECK_THAT(Sn(i), WithinRel(1.0 / (2.0 * electromagnetics::Z0_), 1.0e-5));
+  }
 }
 
 }  // namespace palace

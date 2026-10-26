@@ -52,7 +52,7 @@ public:
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
-  mutable std::unique_ptr<mfem::LinearForm> s, v;
+  mutable std::unique_ptr<mfem::LinearForm> v;
 
   // libCEED surface functionals for port power, voltage, and S-parameter computation,
   // replacing host boundary LinearForm paths when supported.

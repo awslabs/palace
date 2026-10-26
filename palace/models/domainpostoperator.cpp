@@ -241,7 +241,7 @@ double DomainPostOperator::GetFieldEnergy(const Operator &M, const GridFunction 
     dot += linalg::LocalDot(u.Imag(), Mu);
   }
   Mpi::GlobalSum(1, &dot, u.GetComm());
-  return 0.5 * electromagnetics::TimeAverageWeight(u.HasImag()) * dot;
+  return EnergyWeight(u.HasImag()) * dot;
 }
 
 double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const

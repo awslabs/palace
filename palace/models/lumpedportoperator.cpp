@@ -221,7 +221,7 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
 {
   const auto &mesh = *nd_fespace.GetParMesh();
   mfem::Array<int> attr_marker;
-  if (!s || !v)
+  if (!v)
   {
     mfem::Array<int> attr_list;
     for (const auto &elem : elems)
@@ -230,38 +230,6 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     }
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
-  }
-
-  // The projection of the field onto the time-harmonic incident port mode, (E x H_inc) ⋅ n
-  // = E ⋅ (E_inc / Z_s), integrated over the port surface, with the same H_inc as the
-  // excitation source term (unit time-averaged incident power). The port S-parameter is
-  // this projection divided by the full power overlap of the incident mode, V_inc I_inc = 2
-  // (see GetSParameter).
-  if (!s)
-  {
-    SumVectorCoefficient fb(mesh.SpaceDimension());
-    for (const auto &elem : elems)
-    {
-      // Reference the S-parameter projection to the same real resistance used to normalize
-      // the incident drive (R for a resistive port; the unit reference for a purely
-      // reactive R == 0 port, so this does not divide by zero). The reactance is already
-      // present in the system matrix, so the projected field is the physical response; a
-      // purely reactive port's own S is not a meaningful traveling-wave quantity
-      // regardless.
-      const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
-      const double Hinc = (std::abs(Rs) > 0.0)
-                              ? electromagnetics::UnitPowerAmplitude(true) /
-                                    std::sqrt(Rs * elem->GetGeometryWidth() *
-                                              elem->GetGeometryLength() * elems.size())
-                              : 0.0;
-      fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
-    }
-    s = std::make_unique<mfem::LinearForm>(&nd_fespace);
-    s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
-    s->UseFastAssembly(false);
-    s->UseDevice(false);
-    s->Assemble();
-    s->UseDevice(true);
   }
 
   // The voltage across a port is computed using the electric field solution.

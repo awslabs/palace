@@ -330,6 +330,8 @@ protected:
   // They dispatch on solver type within the function itself using `if constexpr`, and do
   // nothing if the measurement is not solver appropriate.
   void MeasureDomainFieldEnergy() const;
+  void MeasureLumpedPortCircuit(const LumpedPortData &data,
+                                Measurement::PortPostData &vi) const;
   void MeasureLumpedPorts() const;
   void MeasureWavePorts() const;
   void MeasureFloquetPorts() const;

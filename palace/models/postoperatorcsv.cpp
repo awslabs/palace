@@ -1188,7 +1188,7 @@ void PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
   requires(solver_t == ProblemType::DRIVEN)
 {
   auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
-  if (nr_ports == 0 || !fem_op.GetPortExcitations().IsMultipleSimple())
+  if (nr_ports == 0 || !fem_op.GetPortExcitations().HasSParameters())
   {
     return;
   }
@@ -1299,7 +1299,7 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_op)
   requires(solver_t == ProblemType::DRIVEN)
 {
-  if (fem_op.GetFloquetPortOp().Empty())
+  if (fem_op.GetFloquetPortOp().Empty() || !fem_op.GetPortExcitations().HasSParameters())
   {
     return;
   }

@@ -9,6 +9,7 @@
 #include <utility>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/constants.hpp"
 
 namespace palace
 {
@@ -36,6 +37,12 @@ struct DomainPostData;
 class DomainPostOperator
 {
 public:
+  // Weight of a field-energy quadratic form; shared with reduced-coordinate evaluation.
+  static constexpr double EnergyWeight(bool complex_phasor)
+  {
+    return 0.5 * electromagnetics::TimeAverageWeight(complex_phasor);
+  }
+
   // Temporary vectors for inner product calculations.
   mutable Vector D, H;
 

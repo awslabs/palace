@@ -643,7 +643,8 @@ inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEne
   return 0.5 * dot * scaling;
 }
 
-// Compute time-averaged Poynting vector Re{E x H⋆}, without the typical factor of 1/2. For
+// Compute the raw Poynting product Re{E x H⋆}; the owner supplies the time-average
+// weight and unit conversion through scaling. For
 // internal boundary elements, the solution is taken as the average.
 class PoyntingVectorCoefficient : public mfem::VectorCoefficient,
                                   public BdrGridFunctionCoefficient

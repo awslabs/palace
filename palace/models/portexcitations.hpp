@@ -129,6 +129,21 @@ public:
     return std::make_tuple(false, 0, PortType::Undefined, 0);
   }
 
+  // Scattering requires one power-normalized port source per excitation, not an
+  // impressed current or a coherent combination of sources. Shared by measurement
+  // and CSV setup so rejected sources cannot leak unnormalized overlaps as S.
+  [[nodiscard]] bool HasSParameters() const
+  {
+    return !Empty() && std::all_of(excitations.begin(), excitations.end(),
+                                   [](const auto &ex)
+                                   {
+                                     const auto [simple, type, idx] = ex.second.IsSimple();
+                                     return simple && (type == PortType::LumpedPort ||
+                                                       type == PortType::WavePort ||
+                                                       type == PortType::FloquetPort);
+                                   });
+  }
+
   // Multiple Simple (only 1 port per excitation) Excitation.
   [[nodiscard]] bool IsMultipleSimple() const
   {

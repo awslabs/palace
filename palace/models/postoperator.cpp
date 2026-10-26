@@ -582,8 +582,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   {
     // Boundary mode longitudinal power density Sn = Re{Et · (ẑ × Ht⋆)}, time-averaged for
     // the complex mode fields.
-    MakeFieldEvaluator(PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(),
-                       Bt_inplane->ParFESpace(), quadratic_weight, Sn_eval, Sn_gf);
+    MakeFieldEvaluator(
+        PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(), Bt_inplane->ParFESpace(),
+        quadratic_weight * units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0),
+        Sn_eval, Sn_gf);
   }
 
   if constexpr (HasVGridFunction<solver_t>())
@@ -1696,6 +1699,55 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 }
 
+// Full and reduced postprocessing share the circuit quantities derived from port V.
+// Neither path may reinterpret the incident reference or the peak-phasor L/C energies.
+template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureLumpedPortCircuit(const LumpedPortData &data,
+                                                      Measurement::PortPostData &vi) const
+{
+  // Compute current from the port impedance, separate contributions for R, L, C
+  // branches.
+  // Get value and make real: Matches current behaviour (even for eigensolver!).
+  MFEM_VERIFY(measurement_cache.freq.real() > 0.0,
+              "Frequency domain lumped port postprocessing requires nonzero frequency!");
+  vi.I_RLC[0] = (std::abs(data.R) > 0.0)
+                    ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                             LumpedPortData::Branch::R)
+                    : 0.0;
+  vi.I_RLC[1] = (std::abs(data.L) > 0.0)
+                    ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                             LumpedPortData::Branch::L)
+                    : 0.0;
+  vi.I_RLC[2] = (std::abs(data.C) > 0.0)
+                    ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                             LumpedPortData::Branch::C)
+                    : 0.0;
+  vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(), std::complex<double>{0.0, 0.0});
+  vi.S = vi.V / data.GetReferenceVoltage();
+
+  // Add contribution due to all inductive lumped boundaries in the model, as the
+  // time-averaged stored energy for the peak phasor branch current:
+  //                      E_ind = ∑_j 1/2 L_j <i_j(t)²> = ∑_j 1/4 L_j |I_mj|².
+  if (std::abs(data.L) > 0.0)
+  {
+    std::complex<double> I_mj = vi.I_RLC[1];
+    vi.inductor_energy = 0.5 * electromagnetics::TimeAverageWeight(true) *
+                         std::abs(data.L) * std::norm(I_mj);
+    measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
+  }
+
+  // Add contribution due to all capacitive lumped boundaries in the model, as the
+  // time-averaged stored energy for the peak phasor port voltage:
+  //                      E_cap = ∑_j 1/2 C_j <v_j(t)²> = ∑_j 1/4 C_j |V_mj|².
+  if (std::abs(data.C) > 0.0)
+  {
+    std::complex<double> V_mj = vi.V;
+    vi.capacitor_energy = 0.5 * electromagnetics::TimeAverageWeight(true) *
+                          std::abs(data.C) * std::norm(V_mj);
+    measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
+  }
+}
+
 template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureLumpedPorts() const
 {
@@ -1715,52 +1767,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       vi.V = port_voltages.at(idx);
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
-        // Compute current from the port impedance, separate contributions for R, L, C
-        // branches.
-        // Get value and make real: Matches current behaviour (even for eigensolver!).
-        MFEM_VERIFY(
-            measurement_cache.freq.real() > 0.0,
-            "Frequency domain lumped port postprocessing requires nonzero frequency!");
-        vi.I_RLC[0] =
-            (std::abs(data.R) > 0.0)
-                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
-                                                         LumpedPortData::Branch::R)
-                : 0.0;
-        vi.I_RLC[1] =
-            (std::abs(data.L) > 0.0)
-                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
-                                                         LumpedPortData::Branch::L)
-                : 0.0;
-        vi.I_RLC[2] =
-            (std::abs(data.C) > 0.0)
-                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
-                                                         LumpedPortData::Branch::C)
-                : 0.0;
-        vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(),
-                               std::complex<double>{0.0, 0.0});
-        vi.S = vi.V / data.GetReferenceVoltage();
-
-        // Add contribution due to all inductive lumped boundaries in the model, as the
-        // time-averaged stored energy for the peak phasor branch current:
-        //                      E_ind = ∑_j 1/2 L_j <i_j(t)²> = ∑_j 1/4 L_j |I_mj|².
-        if (std::abs(data.L) > 0.0)
-        {
-          std::complex<double> I_mj = vi.I_RLC[1];
-          vi.inductor_energy = 0.5 * electromagnetics::TimeAverageWeight(true) *
-                               std::abs(data.L) * std::norm(I_mj);
-          measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
-        }
-
-        // Add contribution due to all capacitive lumped boundaries in the model, as the
-        // time-averaged stored energy for the peak phasor port voltage:
-        //                      E_cap = ∑_j 1/2 C_j <v_j(t)²> = ∑_j 1/4 C_j |V_mj|².
-        if (std::abs(data.C) > 0.0)
-        {
-          std::complex<double> V_mj = vi.V;
-          vi.capacitor_energy = 0.5 * electromagnetics::TimeAverageWeight(true) *
-                                std::abs(data.C) * std::norm(V_mj);
-          measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
-        }
+        MeasureLumpedPortCircuit(data, vi);
       }
       else
       {
@@ -1780,8 +1787,8 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
   {
     auto freq_re = measurement_cache.freq.real();
     // Time-averaged electric energy of the mode, in the domain and in capacitive lumped
-    // elements. For an eigenmode the electric and magnetic time-averaged energies are equal
-    // (E_elec + E_cap = E_mag + E_ind), so the total stored energy is twice this value.
+    // elements. Preserve the weak-loss equipartition approximation E_total = 2 E_electric.
+    // This is not a complete storage model for dispersive or distributed sheet elements.
     auto energy_electric_all = measurement_cache.domain_E_field_energy_all +
                                measurement_cache.lumped_port_capacitor_energy;
     auto energy_total = 2.0 * energy_electric_all;
@@ -1920,7 +1927,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // Don't measure S-Matrix unless there is only one excitation per port. All port
     // families (lumped, wave, Floquet) normalize their incident waves to unit time-averaged
     // power, so mixed lumped/wave/Floquet S-parameters need no cross-family scaling.
-    if (!fem_op->GetPortExcitations().IsMultipleSimple())
+    if (!fem_op->GetPortExcitations().HasSParameters())
     {
       return;
     }
@@ -1932,25 +1939,19 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // GetExcitationRefResistance() (the user-specified R, or the unit internal reference
     // for a purely reactive R == 0 port — any port reactance acts through the
     // system-matrix termination, not this normalization); wave ports implicitly use the
-    // line's characteristic impedance encoded in the unit time-averaged power
-    // normalization of the boundary mode (1/2 |∫ E_mode×H_mode⋆ ⋅ n dS| = 1).
+    // line's characteristic impedance encoded in the stored unit-overlap mode:
+    // |∫ E_mode×H_mode⋆ ⋅ n dS| = 1. The incident wave is sqrt(2) times this mode,
+    // carrying 1 W of time-averaged power for a lossless propagating mode.
     //
     // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
     //   - Lumped: V / V_ref with V_ref = sqrt(2 R_ref) the peak incident voltage of the
     //     unit-power wave (see LumpedPortData::GetReferenceVoltage)
-    //   - Wave:   ∫(E×H_mode⋆)·n dS / 2, the modal power-overlap normalized by the full
-    //     overlap of the unit-power mode
+    //   - Wave:   ∫(E×H_mode⋆)·n dS / sqrt(2), so the incident wave projects to 1
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
 
     // Get information about excited port.
     auto [drive_is_simple, drive_port_type, drive_port_idx] =
         fem_op->GetPortExcitations().excitations.at(measurement_cache.ex_idx).IsSimple();
-
-    if (drive_port_type != PortType::LumpedPort && drive_port_type != PortType::WavePort &&
-        drive_port_type != PortType::FloquetPort)
-    {
-      return;
-    }
 
     // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
     // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
@@ -2164,7 +2165,7 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
       fem_op->GetSurfaceCurrentOp().Size() > 0 || !surf_post_op.flux_surfs.empty() ||
       !surf_post_op.eps_surfs.empty() || surf_post_op.farfield.size() > 0 ||
-      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().IsMultipleSimple())
+      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().HasSParameters())
   {
     return;
   }
@@ -2250,7 +2251,10 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   SetEGridFunction(e);
 
   auto quadratic = [&y](const Eigen::MatrixXd &Q)
-  { return 0.5 * std::real(y.dot(Q.cast<std::complex<double>>() * y)); };
+  {
+    return DomainPostOperator::EnergyWeight(true) *
+           std::real(y.dot(Q.cast<std::complex<double>>() * y));
+  };
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
@@ -2323,31 +2327,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   {
     auto &vi = measurement_cache.lumped_port_vi[idx];
     vi.V = port_voltages.at(idx);
-    vi.I_RLC[0] = (std::abs(data.R) > 0.0)
-                      ? vi.V / data.GetCharacteristicImpedance(omega.real(),
-                                                               LumpedPortData::Branch::R)
-                      : 0.0;
-    vi.I_RLC[1] = (std::abs(data.L) > 0.0)
-                      ? vi.V / data.GetCharacteristicImpedance(omega.real(),
-                                                               LumpedPortData::Branch::L)
-                      : 0.0;
-    vi.I_RLC[2] = (std::abs(data.C) > 0.0)
-                      ? vi.V / data.GetCharacteristicImpedance(omega.real(),
-                                                               LumpedPortData::Branch::C)
-                      : 0.0;
-    vi.I =
-        std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(), std::complex<double>{0.0, 0.0});
-    vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
-    if (std::abs(data.L) > 0.0)
-    {
-      vi.inductor_energy = 0.5 * std::abs(data.L) * std::norm(vi.I_RLC[1]);
-      measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
-    }
-    if (std::abs(data.C) > 0.0)
-    {
-      vi.capacitor_energy = 0.5 * std::abs(data.C) * std::norm(vi.V);
-      measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
-    }
+    MeasureLumpedPortCircuit(data, vi);
   }
   for (const auto &[idx, data] : fem_op->GetWavePortOp())
   {
