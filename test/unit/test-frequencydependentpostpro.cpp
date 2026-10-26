@@ -557,6 +557,89 @@ TEST_CASE_METHOD(test::SharedTempDir, "Floquet ports in a lossy frequency-depend
   CheckS(E_rom, "PROM");
 }
 
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Floquet port orders capped by the largest element stretch",
+                 "[floquetport][Serial][Parallel]")
+{
+  // The diffraction orders of a Floquet port are capped at the Nyquist limit of the port
+  // elements, |b| h_max < p π, with h_max the largest singular value of the 3 x 2 boundary
+  // element Jacobians. The port faces of a periodic box of 3 x 4 elements over a x a are
+  // affine rectangles with sides a / 3 and a / 4, so h_max = a / 3 and |b| = 2π / a: for
+  // p = 3, the cap is ⌊1.5 · 3⌋ = 4 below MaxOrder = 5. The shorter side a / 4 gives no
+  // cap, the diagonal (Frobenius norm) gives 3. In a lossy medium every order carries
+  // power, so the port reports S-parameters for all (2 M + 1)² orders in both
+  // polarizations.
+  using json = nlohmann::json;
+  MPI_Comm comm = Mpi::World();
+  IoData iodata{Units(1.0e-3, 1.0e-3)};
+  iodata.model.L0 = 1.0e-3;
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::DRIVEN;
+  constexpr int p = 3, max_order = 5, nx = 3, ny = 4;
+  iodata.solver.order = p;
+  iodata.solver.driven.sample_f = {100.0};  // GHz
+  json permittivity = {{"HighFrequency", 2.0},
+                       {"Terms", json::array({{{"Type", "Drude"},
+                                               {"PlasmaFrequency", 100.0},
+                                               {"CollisionFrequency", 50.0}}})}};
+  iodata.domains = config::DomainData(json{
+      {"Materials",
+       json::array({{{"Attributes", json::array({1})}, {"Permittivity", permittivity}}})}});
+  iodata.boundaries = config::BoundaryData(json{
+      {"Periodic",
+       {{"BoundaryPairs", json::array({{{"DonorAttributes", json::array({5})},
+                                        {"ReceiverAttributes", json::array({3})}},
+                                       {{"DonorAttributes", json::array({2})},
+                                        {"ReceiverAttributes", json::array({4})}}})}}},
+      {"FloquetPort",
+       json::array(
+           {{{"Index", 1},
+             {"Attributes", json::array({1})},
+             {"Excitation", 1},
+             {"MaxOrder", max_order}},
+            {{"Index", 2}, {"Attributes", json::array({6})}, {"MaxOrder", max_order}}})}});
+  iodata.CheckConfiguration();
+  constexpr double a = 0.5, L = 0.25;
+  iodata.model.mesh = (temp_dir / "floquet_cap_box.mesh").string();
+  if (Mpi::Root(comm))
+  {
+    auto box = mfem::Mesh::MakeCartesian3D(nx, ny, 2, mfem::Element::HEXAHEDRON, a, a, L);
+    std::ofstream ofs(iodata.model.mesh);
+    box.Print(ofs);
+  }
+  Mpi::Barrier(comm);
+  auto smesh = mesh::Load(iodata, comm);
+  iodata.NondimensionalizeInputs(smesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), comm)));
+  SpaceOperator space_op(iodata, mesh);
+
+  auto cap = [&](double h)
+  {
+    const double b = 2.0 * std::numbers::pi / a;
+    return std::min(max_order,
+                    static_cast<int>(std::floor(p * std::numbers::pi / (b * h))));
+  };
+  const int M = cap(a / nx);
+  REQUIRE(M == 4);
+  REQUIRE(cap(a / ny) == max_order);
+  REQUIRE(cap(std::hypot(a / nx, a / ny)) == 3);
+
+  auto &floquet_op = space_op.GetFloquetPortOp();
+  floquet_op.Initialize(iodata.solver.driven.sample_f.front());
+  GridFunction E(space_op.GetNDSpace(), true);
+  E.Real() = 0.0;
+  E.Imag() = 0.0;
+  for (int idx : {1, 2})
+  {
+    const auto S = floquet_op.GetPort(idx).GetAllSParameters(E);
+    CAPTURE(idx, S.size());
+    CHECK(S.size() == static_cast<std::size_t>(2 * (2 * M + 1) * (2 * M + 1)));
+    CHECK(S.contains(std::make_tuple(M, -M, false)));
+    CHECK_FALSE(S.contains(std::make_tuple(M + 1, 0, true)));
+  }
+}
+
 TEST_CASE("Electric surface flux of frequency-dependent materials",
           "[frequencydependent][Serial][Parallel][GPU]")
 {

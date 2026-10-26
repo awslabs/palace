@@ -8,6 +8,7 @@
 #include <fmt/core.h>
 #include <mfem.hpp>
 #include "fem/integrator.hpp"
+#include "linalg/densematrix.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -277,9 +278,15 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     {
       if (bdr_marker[mesh.GetBdrAttribute(be) - 1])
       {
+        // The largest stretch of the boundary element is the largest singular value of
+        // its Jacobian, which has more rows than columns: the square root of the largest
+        // eigenvalue of JᵀJ. DenseMatrix::CalcSingularvalue requires a square matrix.
         auto *T = mesh.GetBdrElementTransformation(be);
         T->SetIntPoint(&mfem::Geometries.GetCenter(T->GetGeometryType()));
-        h_max = std::max(h_max, T->Jacobian().CalcSingularvalue(0));
+        const auto &J = T->Jacobian();
+        mfem::DenseMatrix JtJ(J.Width());
+        mfem::MultAtB(J, J, JtJ);
+        h_max = std::max(h_max, std::sqrt(linalg::SingularValueMax(JtJ)));
       }
     }
     Mpi::GlobalMax(1, &h_max, nd_fespace.GetComm());
