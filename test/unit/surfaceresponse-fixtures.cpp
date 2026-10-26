@@ -1488,7 +1488,7 @@ std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeTouchingIslandMesh()
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
-std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeOffsetCornerPairMesh()
+mfem::Mesh SurfaceResponseFiles::MakeSerialOffsetCornerPairMesh()
 {
   constexpr double extent = 2.0;
   mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 4, 16, mfem::Element::HEXAHEDRON,
@@ -1527,6 +1527,12 @@ std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeOffsetCornerPairMesh()
   }
   serial.FinalizeTopology();
   serial.Finalize();
+  return serial;
+}
+
+std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeOffsetCornerPairMesh()
+{
+  mfem::Mesh serial = MakeSerialOffsetCornerPairMesh();
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 

@@ -10604,7 +10604,7 @@ TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
 }
 
 TEST_CASE("SurfaceResponseOperatorSpatialClusterPriorityRawRemainder",
-          "[surfaceresponseoperator][scphole][Serial]")
+          "[surfaceresponseoperator][scphole][Serial][Parallel]")
 {
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the transmon's junction-lead cluster (box
   // x in [-10.9, 10.9], y in [-5.7, 17.7], R = 1.9) drops the convex corner at (12, 12)
