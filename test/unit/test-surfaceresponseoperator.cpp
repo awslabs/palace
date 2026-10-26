@@ -10837,7 +10837,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           }
         }
       }
-      REQUIRE(std::isfinite(table_scale));
+      REQUIRE(table_scale > 0.0);
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         const Column &producer_column = producer_table[c];
@@ -11973,7 +11973,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
     }
-    REQUIRE(std::isfinite(table_scale));
+    REQUIRE(table_scale > 0.0);
     for (std::size_t c = 0; c < producer_table.n_cols(); c++)
     {
       const Column &producer_column = producer_table[c];
