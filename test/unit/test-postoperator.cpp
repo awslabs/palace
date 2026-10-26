@@ -662,6 +662,77 @@ TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normal
              WithinRel(total / (interface.energy * 0.02), 1.0e-12));
 }
 
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Driven excitation without S-parameters removes stale S files",
+                 "[postoperator][Serial][Parallel]")
+{
+  // A lumped port and a Floquet port excited together are not one power-normalized port
+  // source (PortExcitations::HasSParameters), so the run omits port-S.csv and
+  // port-floquet-S.csv. A fresh run removes those files of an earlier run from its output
+  // folder at setup, and keeps the other files there.
+  const auto output = temp_dir / "postpro";
+  const std::vector<std::string> omitted = {"port-S.csv", "port-floquet-S.csv"};
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(Units(1.0e-3, 1.0e-3));
+  iodata.model.L0 = 1.0e-3;
+  iodata.model.Lc = 1.0;
+  iodata.model.mesh = (temp_dir / "floquet_box.mesh").string();
+  if (Mpi::Root(comm))
+  {
+    fs::create_directories(output);
+    for (const auto &name : omitted)
+    {
+      std::ofstream(output / name) << "stale\n";
+    }
+    std::ofstream(output / "unrelated.txt") << "kept\n";
+    auto box =
+        mfem::Mesh::MakeCartesian3D(3, 3, 2, mfem::Element::HEXAHEDRON, 0.5, 0.5, 0.25);
+    std::ofstream ofs(iodata.model.mesh);
+    box.Print(ofs);
+  }
+  Mpi::Barrier(comm);
+  iodata.problem.type = ProblemType::DRIVEN;
+  iodata.problem.output = output.string();
+  iodata.solver.order = 1;
+  iodata.solver.linear.mg_max_levels = 1;
+  iodata.solver.driven.sample_f = {100.0};
+  iodata.domains = config::DomainData(
+      json{{"Materials", json::array({{{"Attributes", json::array({1})}}})}});
+  // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = L), 5 and 3 (x faces), 2 and
+  // 4 (y faces).
+  iodata.boundaries = config::BoundaryData(
+      json{{"Periodic",
+            {{"BoundaryPairs", json::array({{{"DonorAttributes", json::array({5})},
+                                             {"ReceiverAttributes", json::array({3})}},
+                                            {{"DonorAttributes", json::array({2})},
+                                             {"ReceiverAttributes", json::array({4})}}})}}},
+           {"FloquetPort",
+            json::array({{{"Index", 1}, {"Attributes", {1}}, {"Excitation", 1}}})},
+           {"LumpedPort", json::array({{{"Index", 2},
+                                        {"Attributes", {6}},
+                                        {"R", 50.0},
+                                        {"Direction", "+X"},
+                                        {"Excitation", 1}}})}});
+  iodata.CheckConfiguration();
+  auto smesh = mesh::Load(iodata, comm);
+  iodata.NondimensionalizeInputs(smesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), comm)));
+  SpaceOperator space_op(iodata, mesh);
+  REQUIRE_FALSE(space_op.GetPortExcitations().HasSParameters());
+  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  Mpi::Barrier(comm);
+  if (Mpi::Root(comm))
+  {
+    for (const auto &name : omitted)
+    {
+      CAPTURE(name);
+      CHECK_FALSE(fs::exists(output / name));
+    }
+    CHECK(fs::exists(output / "unrelated.txt"));
+  }
+}
+
 TEST_CASE_METHOD(test::SharedTempDir, "Field export",
                  "[gridfunction][paraview][Serial][Parallel]")
 {
@@ -810,6 +881,30 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     CHECK_THAT(pvd_time, Catch::Matchers::WithinRel(expected_freq, 1.0e-5));
   }
 
+  SECTION("Current source with passive port does not write S")
+  {
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.sample_f = {1.0};
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Index", 1}, {"Attributes", {2}}, {"R", 50.0}, {"Direction", "+X"}}}},
+        {"SurfaceCurrent", {{{"Index", 2}, {"Attributes", {3}}, {"Direction", "+Y"}}}}};
+    iodata.boundaries = config::BoundaryData(boundaries);
+    SpaceOperator space_op(iodata, mesh);
+    CHECK(space_op.GetPortExcitations().IsMultipleSimple());
+    CHECK_FALSE(space_op.GetPortExcitations().HasSParameters());
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
+    E = 1.0;
+    B = 0.0;
+    post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    Mpi::Barrier(comm);
+    CHECK(fs::is_regular_file(fs::path(iodata.problem.output) / "port-V.csv"));
+    CHECK_FALSE(fs::exists(fs::path(iodata.problem.output) / "port-S.csv"));
+    CHECK_FALSE(fs::exists(fs::path(iodata.problem.output) / "port-floquet-S.csv"));
+  }
+
   SECTION("Driven multiple excitations")
   {
     // Create operator with two excitations.
@@ -888,6 +983,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
                                  {{{"Attributes", {2}},
                                    {"Index", 1},
                                    {"L", 1.0},
+                                   {"C", 0.01},
                                    {"Direction", "+X"},
                                    {"Excitation", true}}}}};
     config::BoundaryData reactive_port(reactive_boundaries);
@@ -919,6 +1015,9 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto S_legacy = port.GetSParameter(E_gf);
     CHECK_THAT(std::abs(vi.S - S_legacy),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(S_legacy)));
+
+    REQUIRE(std::abs(port.C) > 0.0);
+    CHECK_THAT(vi.capacitor_energy, WithinRel(0.25 * port.C * std::norm(vi.V), 1.0e-12));
 
     // The stored inductor energy is the time average 1/4 L |I_L|² for the peak phasor
     // branch current I_L = V / (iωL) (the physical definition, written out explicitly).

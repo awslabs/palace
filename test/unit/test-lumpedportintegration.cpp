@@ -47,7 +47,6 @@ public:
   {
     InitializeLinearForms(nd_fespace);
   }
-  mfem::LinearForm *GetLinearFormS() const { return s.get(); }
   mfem::LinearForm *GetLinearFormV() const { return v.get(); }
 };
 
@@ -671,9 +670,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(port_normalization_beta, WithinRel(1.0));
   }
 
-  // Now "s" form in LumpedPortData is just e_t / eta (with Z_R = R). So check inner
-  // product. The S-parameter is referenced to the peak incident voltage of the unit time-
-  // averaged power wave, V_ref = sqrt(2 R).
+  // Check the voltage-based S projection. The S-parameter is referenced to the peak
+  // incident voltage of the unit time-averaged power wave, V_ref = sqrt(2 R).
   //
   // Note: s should not change during change of field normalization alpha, but formula
   // assumes 1.0 and does not normalized. Also, the integral seems wrong with metal, as the
@@ -687,22 +685,17 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(s_param.imag(), WithinAbs(0.0, 1e-12));
   }
 
-  // Extract s and v linear forms to check equality. Use reinterpret cast to identical
-  // layout Test structure from original structure. Done not to populate code with friend
-  // functions, but still access private members for testing.
+  // The source is twice the incident H overlap, derived from the voltage functional.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
   port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
-  auto *form_s = port_1_test_cast.GetLinearFormS();
-  ComplexVector VecFormS;
-  VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
-  VecFormS.UseDevice(true);
-  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
-
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
   VecFormV.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormV.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
+  ComplexVector VecFormS(VecFormV);
+  VecFormS.Real() *=
+      std::sqrt(2.0) / iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.0));
 
   // Now GetExcitationVector1 in space op, returns the dual of 2 e_t / eta (with Z_R = R).
   ComplexVector RHS;
@@ -739,19 +732,6 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
       }
     }
     CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
-  }
-
-  // Check that form_s and form_v are the same apart from the factor sqrt(2) / sqrt(R): the
-  // s form is the projection onto the incident mode H_inc carrying unit time-averaged
-  // power (sqrt(2) larger than for a unit product of the phasors). In actual fact, this
-  // should only true in the ideal case, without any metal subtraction. Here it is always
-  // true because of the form definitions.
-  REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
-  const auto *vec_v = VecFormV.Real().HostRead();
-  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
-  for (int i = 0; i < VecFormS.Real().Size(); i++)
-  {
-    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r / std::sqrt(2.0), 1e-12));
   }
 }
 
@@ -1043,9 +1023,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(port_normalization_beta, WithinRel(1.0));
   }
 
-  // Now "s" form in LumpedPortData is just e_t / eta (with Z_R = R). So check inner
-  // product. The S-parameter is referenced to the peak incident voltage of the unit time-
-  // averaged power wave, V_ref = sqrt(2 R).
+  // Check the voltage-based S projection. The S-parameter is referenced to the peak
+  // incident voltage of the unit time-averaged power wave, V_ref = sqrt(2 R).
   //
   // Note: s should not change during change of field normalization alpha, but formula
   // assumes 1.0 and does not normalized. Also, the integral seems wrong with metal, as the
@@ -1059,22 +1038,17 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(s_param.imag(), WithinAbs(0.0, 1e-12));
   }
 
-  // Extract s and v linear forms to check equality. Use reinterpret cast to identical
-  // layout Test structure from original structure. Done not to populate code with friend
-  // functions, but still access private members for testing.
+  // The source is twice the incident H overlap, derived from the voltage functional.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
   port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
-  auto *form_s = port_1_test_cast.GetLinearFormS();
-  ComplexVector VecFormS;
-  VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
-  VecFormS.UseDevice(true);
-  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
-
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
   VecFormV.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormV.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
+  ComplexVector VecFormS(VecFormV);
+  VecFormS.Real() *=
+      std::sqrt(2.0) / iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.0));
 
   // Now GetExcitationVector1 in space op, returns the dual of 2 e_t / eta (with Z_R = R).
   ComplexVector RHS;
@@ -1109,19 +1083,6 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
       }
     }
     CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
-  }
-
-  // Check that form_s and form_v are the same apart from the factor sqrt(2) / sqrt(R): the
-  // s form is the projection onto the incident mode H_inc carrying unit time-averaged
-  // power (sqrt(2) larger than for a unit product of the phasors). In actual fact, this
-  // should only true in the ideal case, without any metal subtraction. Here it is always
-  // true because of the form definitions.
-  REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
-  const auto *vec_v = VecFormV.Real().HostRead();
-  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
-  for (int i = 0; i < VecFormS.Real().Size(); i++)
-  {
-    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r / std::sqrt(2.0), 1e-12));
   }
 }
 

@@ -654,8 +654,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   {
     // Boundary mode longitudinal power density Sn = Re{Et · (ẑ × Ht⋆)}, time-averaged for
     // the complex mode fields.
-    MakeFieldEvaluator(PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(),
-                       Bt_inplane->ParFESpace(), quadratic_weight, Sn_eval, Sn_gf);
+    MakeFieldEvaluator(
+        PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(), Bt_inplane->ParFESpace(),
+        quadratic_weight * units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0),
+        Sn_eval, Sn_gf);
   }
 
   if constexpr (HasVGridFunction<solver_t>())
@@ -1917,9 +1920,10 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
   {
     // The coupling rates and participations are normalized by the time-averaged
     // electric-side energy U (Measurement::ElectricEnergyNormalization), which is
-    // E_elec + E_cap for constant materials, and are left empty without one. For an
-    // eigenmode the electric and magnetic time-averaged energies are equal
-    // (E_elec + E_cap = E_mag + E_ind), so the total stored energy is 2 U.
+    // E_elec + E_cap for constant materials, and are left empty without one. Preserve the
+    // weak-loss equipartition approximation of the total stored energy, 2 U
+    // (E_elec + E_cap = E_mag + E_ind). This is not a complete storage model for
+    // distributed sheet elements.
     const auto energy_electric_all = measurement_cache.ElectricEnergyNormalization();
     if (!energy_electric_all)
     {
@@ -2069,7 +2073,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // Don't measure S-Matrix unless there is only one excitation per port. All port
     // families (lumped, wave, Floquet) normalize their incident waves to unit time-averaged
     // power, so mixed lumped/wave/Floquet S-parameters need no cross-family scaling.
-    if (!fem_op->GetPortExcitations().IsMultipleSimple())
+    if (!fem_op->GetPortExcitations().HasSParameters())
     {
       return;
     }
@@ -2081,8 +2085,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // GetExcitationRefResistance() (the user-specified R, or the unit internal reference
     // for a purely reactive R == 0 port — any port reactance acts through the
     // system-matrix termination, not this normalization); wave ports implicitly use the
-    // line's characteristic impedance encoded in the unit time-averaged power
-    // normalization of the boundary mode (1/2 |∫ E_mode×H_mode⋆ ⋅ n dS| = 1).
+    // line's characteristic impedance encoded in the stored unit-overlap mode:
+    // |∫ E_mode×H_mode⋆ ⋅ n dS| = 1. The incident wave is sqrt(2) times this mode,
+    // carrying 1 W of time-averaged power for a lossless propagating mode.
     //
     // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
     //   - Lumped: V / V_ref with V_ref = sqrt(2 R_ref) the peak incident voltage of the
@@ -2106,19 +2111,12 @@ void PostOperator<solver_t>::MeasureSParameter() const
     auto [drive_is_simple, drive_port_type, drive_port_idx] =
         fem_op->GetPortExcitations().excitations.at(measurement_cache.ex_idx).IsSimple();
 
-    if (drive_port_type != PortType::LumpedPort && drive_port_type != PortType::WavePort &&
-        drive_port_type != PortType::FloquetPort)
-    {
-      return;
-    }
-
     // Drive weight a = A exp(iφ) of the excited port (1 for wave and Floquet ports, which
     // do not carry a weight in this version).
     const std::complex<double> drive_weight =
         (drive_port_type == PortType::LumpedPort)
             ? fem_op->GetLumpedPortOp().GetPort(drive_port_idx).GetExcitationWeight()
             : std::complex<double>{1.0, 0.0};
-
     // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
     // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
     // Applied independently on the source and observation sides, so cross-type S
@@ -2346,7 +2344,7 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
       fem_op->GetSurfaceCurrentOp().Size() > 0 || !surf_post_op.flux_surfs.empty() ||
       !surf_post_op.eps_surfs.empty() || surf_post_op.farfield.size() > 0 ||
-      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().IsMultipleSimple())
+      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().HasSParameters())
   {
     return;
   }
@@ -2510,12 +2508,16 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     SetEGridFunction(*e);
   }
 
-  // The quadratic forms in real arithmetic, on the columns [Re{y}, Im{y}].
+  // The quadratic forms in real arithmetic, on the columns [Re{y}, Im{y}], with the
+  // field-energy weight of the full evaluation.
   Eigen::MatrixX2d Y(y.size(), 2);
   Y << y.real(), y.imag();
   const Eigen::MatrixX2d RY = reduced_curl_R * Y;
   auto quadratic = [](const Eigen::MatrixXd &A, const Eigen::MatrixX2d &X)
-  { return 0.5 * (X.array() * (A.selfadjointView<Eigen::Lower>() * X).array()).sum(); };
+  {
+    return DomainPostOperator::EnergyWeight(true) *
+           (X.array() * (A.selfadjointView<Eigen::Lower>() * X).array()).sum();
+  };
   auto quadratic_E = [&](const Eigen::MatrixXd &A, const ReducedFrequencyDependentForms &fd,
                          DomainPostOperator::ElectricEnergy type)
   {
@@ -2542,7 +2544,8 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   }
   measurement_cache.domain_E_field_energy_material = quadratic_E(
       reduced_energy_E, reduced_energy_E_fd, DomainPostOperator::ElectricEnergy::MATERIAL);
-  measurement_cache.domain_H_field_energy_all = 0.5 * RY.squaredNorm() * scale_H;
+  measurement_cache.domain_H_field_energy_all =
+      DomainPostOperator::EnergyWeight(true) * RY.squaredNorm() * scale_H;
   for (const auto &[idx, forms] : reduced_domain_energy)
   {
     auto &d = measurement_cache.domain_E_field_energy_i.emplace_back(

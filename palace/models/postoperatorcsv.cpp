@@ -1324,8 +1324,14 @@ void PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
   requires(solver_t == ProblemType::DRIVEN)
 {
   auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
-  if (nr_ports == 0 || !fem_op.GetPortExcitations().IsMultipleSimple())
+  if (nr_ports == 0)
   {
+    return;
+  }
+  // Only power-normalized port sources define S-parameters, so omitted without them.
+  if (!fem_op.GetPortExcitations().HasSParameters())
+  {
+    RemoveOmittedTable("port-S.csv");
     return;
   }
   port_S = TableWithCSVFile(post_dir / "port-S.csv", reload_table);
@@ -1437,6 +1443,12 @@ void PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
 {
   if (fem_op.GetFloquetPortOp().Empty())
   {
+    return;
+  }
+  // Only power-normalized port sources define S-parameters, so omitted without them.
+  if (!fem_op.GetPortExcitations().HasSParameters())
+  {
+    RemoveOmittedTable("port-floquet-S.csv");
     return;
   }
 

@@ -359,7 +359,7 @@ double DomainPostOperator::ElectricFieldEnergy(const Operator &M,
     energy += GetFrequencyDependentEnergyWeight(m, omega, type) * dot(*op);
   }
   Mpi::GlobalSum(1, &energy, E.GetComm());
-  return 0.5 * electromagnetics::TimeAverageWeight(E.HasImag()) * energy;
+  return EnergyWeight(E.HasImag()) * energy;
 }
 
 double DomainPostOperator::GetFieldEnergy(const Operator &M, const GridFunction &u,
@@ -375,7 +375,7 @@ double DomainPostOperator::GetFieldEnergy(const Operator &M, const GridFunction 
     dot += linalg::LocalDot(u.Imag(), Mu);
   }
   Mpi::GlobalSum(1, &dot, u.GetComm());
-  return 0.5 * electromagnetics::TimeAverageWeight(u.HasImag()) * dot;
+  return EnergyWeight(u.HasImag()) * dot;
 }
 
 double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E, double omega,
@@ -415,7 +415,7 @@ DomainPostOperator::GetElectricFieldEnergies(const GridFunction &E, double omega
     energy[1] += GetFrequencyDependentEnergyWeight(m, omega, ElectricEnergy::MATERIAL) * d;
   }
   Mpi::GlobalSum(2, energy, E.GetComm());
-  const double weight = 0.5 * electromagnetics::TimeAverageWeight(E.HasImag());
+  const double weight = EnergyWeight(E.HasImag());
   return {stored ? std::optional<double>(weight * energy[0]) : std::nullopt,
           weight * energy[1]};
 }
@@ -477,7 +477,7 @@ double DomainPostOperator::GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm co
   M_mag->Mult(a_l, H);
   double dot = linalg::LocalDot(a_l, H);
   Mpi::GlobalSum(1, &dot, comm);
-  return 0.5 * electromagnetics::TimeAverageWeight(false) * dot;
+  return EnergyWeight(false) * dot;
 }
 
 double DomainPostOperator::GetLondonKineticEnergy(const Vector &a_l, MPI_Comm comm) const
@@ -489,7 +489,7 @@ double DomainPostOperator::GetLondonKineticEnergy(const Vector &a_l, MPI_Comm co
   M_london->Mult(a_l, H);
   double dot = linalg::LocalDot(a_l, H);
   Mpi::GlobalSum(1, &dot, comm);
-  return 0.5 * electromagnetics::TimeAverageWeight(false) * dot;
+  return EnergyWeight(false) * dot;
 }
 
 double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx, const Vector &a_l,
@@ -505,7 +505,7 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx, const Vector &a
   it->second.second->Mult(a_l, H);
   double dot = linalg::LocalDot(a_l, H);
   Mpi::GlobalSum(1, &dot, comm);
-  return 0.5 * electromagnetics::TimeAverageWeight(false) * dot;
+  return EnergyWeight(false) * dot;
 }
 
 }  // namespace palace
