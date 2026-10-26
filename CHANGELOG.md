@@ -32,7 +32,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `S`, `J_s`), which were scaled by `L0 / Lc`, the mesh length unit over the reference
     length: off by orders of magnitude for meshes in micrometers with the default `Lc`. The
     CSV postprocessing was not affected.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1098](https://github.com/awslabs/palace/pull/1098).
 
 ## [0.19.0] - 2026-11-02
 
