@@ -167,11 +167,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     startup instead of failing in the sweep.
     [PR 952](https://github.com/awslabs/palace/pull/952).
   - Fixed coordinate-path line integrals (wave port `"VoltagePath"` and the `"Impedance"`
-    and `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) being inaccurate
-    on refined meshes, which made the wave port Z_PV oscillate under adaptive mesh
-    refinement. Paths are now split at element boundaries, located on the exact geometry of
-    curved elements, and each piece is integrated with a rule exact for the discrete field
-    on straight-sided elements. The wave port driven-field voltage no longer requires GSLIB
+    and `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) losing accuracy
+    on locally refined meshes: a few tenths of a percent in Z_PV on the CPW examples, and
+    up to about 1% after several levels of adaptive refinement towards conductor edges,
+    where Z_PV then changed erratically from one level to the next. They are now exact for
+    the discrete field on affine elements, and the wave port voltage no longer needs GSLIB
     or a point search over the full 3D mesh.
     [PR 1049](https://github.com/awslabs/palace/pull/1049).
 
