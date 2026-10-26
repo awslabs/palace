@@ -225,8 +225,9 @@ void DimensionalizeForPostOperatorOutput(const Units &units, GridFunction &E,
   const double e_scale = L * units.GetScaleFactor<Units::ValueType::FIELD_E>();
   E *= e_scale;
 
-  const double b_scale =
-      std::pow(L, mesh.Dimension() - 1) * units.GetScaleFactor<Units::ValueType::FIELD_B>();
+  // B is in H(div) in 3D (Piola transform J / |J|, so L^{dim - 1}), and the scalar
+  // out-of-plane field in L2 with INTEGRAL map type in 2D (1 / |J|, so L^dim).
+  const double b_scale = L * L * units.GetScaleFactor<Units::ValueType::FIELD_B>();
   B *= b_scale;
 }
 

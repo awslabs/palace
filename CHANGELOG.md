@@ -27,6 +27,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     gave a garbage element size and could randomly drop Floquet orders from the solve and
     the `port-floquet-S.csv` output.
     [PR 1091](https://github.com/awslabs/palace/pull/1091).
+  - Fixed the ParaView and grid function output of the out-of-plane magnetic flux density
+    `B` of 2D simulations and boundary modes, and of the fields computed from it (`U_m`,
+    `S`, `J_s`), which were scaled by `L0 / Lc`, the mesh length unit over the reference
+    length: off by orders of magnitude for meshes in micrometers with the default `Lc`. The
+    CSV postprocessing was not affected.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
 
 ## [0.19.0] - 2026-11-02
 

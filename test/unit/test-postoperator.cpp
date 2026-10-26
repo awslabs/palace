@@ -999,3 +999,118 @@ TEST_CASE("GridFunction scaling keeps face-neighbor data consistent",
   GridFunction gf_complex(nd_fespace, true);
   CheckScaling(gf_complex, scale);
 }
+
+TEST_CASE("Mesh scaling preserves physical field values",
+          "[postoperator][Serial][Parallel]")
+{
+  // Redimensionalizing the mesh for output rescales the element Jacobians, and
+  // ScaleGridFunctions must undo its effect on the fields mapped from the reference
+  // element: after scaling both, the fields must take the same values at the same reference
+  // points. The spaces are those of the PostOperator: E and A in H(curl), V in H1, and B in
+  // H(div) in 3D or the scalar out-of-plane field in L2 with INTEGRAL map type in 2D.
+  constexpr double rtol = 1.0e-12;
+  constexpr double L = 3.7;
+  constexpr int order = 2;
+  const int dim = GENERATE(2, 3);
+  const bool simplex = GENERATE(true, false);
+  CAPTURE(dim, simplex);
+
+  auto comm = Mpi::World();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      (dim == 2)
+          ? mfem::Mesh::MakeCartesian2D(
+                4, 3, simplex ? mfem::Element::TRIANGLE : mfem::Element::QUADRILATERAL,
+                true, 1.3, 0.7)
+          : mfem::Mesh::MakeCartesian3D(
+                3, 2, 2, simplex ? mfem::Element::TETRAHEDRON : mfem::Element::HEXAHEDRON,
+                1.3, 0.7, 0.9));
+  serial_mesh->EnsureNodes();
+  mfem::ParMesh mesh(comm, *serial_mesh);
+
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::H1_FECollection h1_fec(order, dim);
+  std::unique_ptr<mfem::FiniteElementCollection> b_fec;
+  if (dim == 2)
+  {
+    b_fec = std::make_unique<mfem::L2_FECollection>(
+        order - 1, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL);
+  }
+  else
+  {
+    b_fec = std::make_unique<mfem::RT_FECollection>(order - 1, dim);
+  }
+  mfem::ParFiniteElementSpace nd_fespace(&mesh, &nd_fec), h1_fespace(&mesh, &h1_fec),
+      b_fespace(&mesh, b_fec.get());
+
+  std::unique_ptr<GridFunction> E, B, V, A;
+  E = std::make_unique<GridFunction>(nd_fespace, true);
+  B = std::make_unique<GridFunction>(b_fespace, true);
+  V = std::make_unique<GridFunction>(h1_fespace);
+  A = std::make_unique<GridFunction>(nd_fespace);
+  int seed = 1;
+  auto SetRandomField = [&](mfem::ParGridFunction &gf)
+  {
+    Vector x(gf.ParFESpace()->GetTrueVSize());
+    linalg::SetRandom(comm, x, seed++);
+    gf.SetFromTrueDofs(x);
+  };
+  SetRandomField(E->Real());
+  SetRandomField(E->Imag());
+  SetRandomField(B->Real());
+  SetRandomField(B->Imag());
+  SetRandomField(V->Real());
+  SetRandomField(A->Real());
+
+  // Evaluate each field at a set of reference points in every local element.
+  const std::vector<std::pair<std::string, const mfem::ParGridFunction *>> fields = {
+      {"E_real", &E->Real()}, {"E_imag", &E->Imag()}, {"B_real", &B->Real()},
+      {"B_imag", &B->Imag()}, {"V", &V->Real()},      {"A", &A->Real()}};
+  auto Sample = [&]()
+  {
+    std::vector<std::vector<double>> values(fields.size());
+    mfem::Vector val;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      const auto &ir = mfem::IntRules.Get(mesh.GetElementGeometry(e), 2 * order);
+      auto &T = *mesh.GetElementTransformation(e);
+      for (int q = 0; q < ir.GetNPoints(); q++)
+      {
+        const auto &ip = ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        for (std::size_t i = 0; i < fields.size(); i++)
+        {
+          fields[i].second->GetVectorValue(T, ip, val);
+          values[i].insert(values[i].end(), val.begin(), val.end());
+        }
+      }
+    }
+    return values;
+  };
+  auto Compare = [&](const std::vector<std::vector<double>> &ref,
+                     const std::vector<std::vector<double>> &values)
+  {
+    for (std::size_t i = 0; i < fields.size(); i++)
+    {
+      REQUIRE(ref[i].size() == values[i].size());
+      double max_ref = 0.0, max_diff = 0.0;
+      for (std::size_t j = 0; j < ref[i].size(); j++)
+      {
+        max_ref = std::max(max_ref, std::abs(ref[i][j]));
+        max_diff = std::max(max_diff, std::abs(values[i][j] - ref[i][j]));
+      }
+      Mpi::GlobalMax(1, &max_ref, comm);
+      Mpi::GlobalMax(1, &max_diff, comm);
+      CAPTURE(fields[i].first, max_ref, max_diff);
+      CHECK(max_ref > 0.0);
+      CHECK(max_diff <= rtol * max_ref);
+    }
+  };
+
+  const auto values_before = Sample();
+  mesh::DimensionalizeMesh(mesh, L);
+  ScaleGridFunctions(L, dim, E, B, V, A);
+  Compare(values_before, Sample());
+  mesh::NondimensionalizeMesh(mesh, L);
+  ScaleGridFunctions(1.0 / L, dim, E, B, V, A);
+  Compare(values_before, Sample());
+}
