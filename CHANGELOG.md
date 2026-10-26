@@ -283,7 +283,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     edge of any element, for example a conductor face tagged on an outer boundary of the
     mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
     no domain element is attached to, are now removed with a warning.
-    [Issue 1094](https://github.com/awslabs/palace/issues/1094).
+    [PR 1100](https://github.com/awslabs/palace/pull/1100).
 
 #### Performance Improvements
 
