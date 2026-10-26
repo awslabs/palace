@@ -50,6 +50,7 @@ class SpaceOperator
 private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
+  const bool pc_mat_amg;      // Preconditioner uses AMS/BoomerAMG on the real-valued matrix
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
