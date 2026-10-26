@@ -92,6 +92,16 @@ These include:
     for electrostatics). For each computed field, the postprocessed values are written to
     `probe-E.csv` and `probe-B.csv` in the specified output directory.
 
+### Limits of stored-energy accounting
+
+The phasor convention does not change which storage terms are measured. Boundary-mode
+energy outputs currently contain the transverse electric and longitudinal magnetic
+components, not the full modal energy. Lumped L/C outputs use the circuit voltage and
+branch current; they need not equal the distributed boundary-sheet storage for a
+non-modal port field. Surface-impedance, dispersive and London storage require their own
+accounting. Do not infer complete energy balance or exact equipartition from these
+columns alone. Port coupling rates retain their existing signed convention.
+
 ## Boundary postprocessing
 
 Boundary postprocessing capabilities are enabled by including objects under

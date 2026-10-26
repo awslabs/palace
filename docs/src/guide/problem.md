@@ -294,9 +294,10 @@ direction of propagation.
 When impedance postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/reference.md#config-boundaries-postprocessing-impedance),
 the complex characteristic impedance is computed using the power-voltage definition
-``Z_\text{PV} = |V|^2 / P^*`` and, when a current path is also specified, the voltage-current
-definition ``Z_\text{VI} = V / I`` (see the [reference](../reference.md) for details). The
-per-unit-length inductance ``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
+``Z_\text{PV} = |V|^2 / (2P^*)``, with the complex time-averaged power ``P`` of the mode, and,
+when a current path is also specified, the voltage-current definition ``Z_\text{VI} = V / I``
+(see the [reference](../reference.md) for details). The per-unit-length inductance
+``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
 ``C = \text{Re}\{n_\text{eff} / Z\} / c_0`` are derived from each impedance ``Z``, from the
 series impedance ``i k_n Z = R + i\omega L`` and shunt admittance ``i k_n / Z = G + i\omega C``
 per unit length of the line. The results are written to `mode-Z.csv`. Similarly, when voltage

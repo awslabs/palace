@@ -36,6 +36,31 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - **Breaking:** Frequency-domain energies and powers now use time averages of peak
+    phasors: field and lumped C/L energies carry 1/4, power carries 1/2. Lumped and wave
+    incident fields now carry 1 W time-averaged power, rather than 0.5 W. For 50 Ω this
+    means 10 V and 0.2 A peak. Floquet normalization is unchanged; impressed current
+    sources remain current-normalized, not power-normalized. SchemaVer 6-0-0
+    [PR 937](https://github.com/awslabs/palace/pull/937).
+
+    Conversion from previous outputs for the same configuration:
+
+    | Solver / excitation                 | Fields, V/I, probes, `rE`, electric/magnetic flux | Energies and power flux |
+    |:----------------------------------- |:------------------------------------------------- |:----------------------- |
+    | Driven lumped or wave port          | ×√2                                               | unchanged               |
+    | Driven Floquet or impressed current | unchanged                                         | ×1/2                    |
+    | Eigenmode or boundary mode          | unchanged                                         | ×1/2                    |
+    | Transient or static                 | unchanged                                         | unchanged               |
+
+    Apply the row per excitation in mixed-port sweeps. Simultaneous current/port sources
+    have no single conversion factor. S-parameters, impedances, eigenfrequencies, Q, κ,
+    EPR, participation ratios and normalized error indicators are unchanged by the
+    convention. Stored wave-port basis modes retain unit raw overlap, not 1 W physical
+    power. Boundary-mode `Sn` additionally gains the missing SI H/B conversion (1/μ₀),
+    and current-source drives no longer write invalid S-parameter CSVs.
+    **Do not append new results to old restart CSVs**: headers and units are unchanged,
+    but the conventions differ. Start a fresh output directory when changing versions.
+
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous
     one, transferred to the refined mesh, instead of the start vector of
@@ -53,6 +78,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
     several of them. Set `"Type": "SuperLU"` to keep using SuperLU_DIST. SchemaVer 4-2-0
     [PR 1148](https://github.com/awslabs/palace/pull/1148).
+
   - The `mode-Z.csv` output of boundary-mode solves now reports the complex characteristic
     impedances, `Re{Z_PV}` and `Im{Z_PV}` with `Z_PV = |V|² / 2P*` as for wave ports, and
     `Re{Z_VI}` and `Im{Z_VI}` with `Z_VI = V / I` (oriented with the mode power) instead of
@@ -60,6 +86,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
     modes.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+
   - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
     vector (`"FloquetWaveVector"`), as it already did Floquet ports, instead of synthesizing
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
@@ -571,21 +598,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     processes it runs on, which adds the `[Parallel]`-only regression cases to the Spack
     test jobs.
     [PR 1241](https://github.com/awslabs/palace/pull/1241).
-
-#### Interface Changes
-
-  - Frequency domain outputs now follow the standard peak-phasor convention: every
-    quadratic quantity (domain, subdomain, interface and lumped-element energies, port and
-    surface power, `U_e`/`U_m`/`S` visualization fields, wave-port `Z[i][j]`) is the time
-    average over one period (factor 1/2 relative to the product of the peak phasors), and
-    all port families (lumped, wave, Floquet) are excited with 1 W of *time-averaged*
-    incident power (for a 50 Ω lumped port, `V_inc = 10` V and `I_inc = 0.2` A peak). Previously
-    lumped and wave ports carried 1 W of peak-product (0.5 W time-averaged) power and the
-    quadratic outputs were twice the time averages. Fields, voltages, currents, S- and
-    Z-parameters, Q, κ, EPR and participation ratios, error indicators, and time domain and
-    static outputs are unchanged in meaning; absolute energies, powers and (for lumped/wave
-    driven problems) field amplitudes change by 1/2 or √2 accordingly. See the developer
-    notes on phasor and power conventions.
 
 ## [0.19.0] - 2026-11-02
 
