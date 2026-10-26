@@ -126,13 +126,14 @@ jobs:
           #
           # Ask the API what the build run produced BEFORE downloading, so we
           # can tell "legitimately nothing" apart from "download dropped some".
-          #   - no images -> clean skip. Either the paths-filter skipped the
-          #     build (e.g. a labeled PR whose push touched no container-relevant
-          #     path), or the build did not save its images because it was not
-          #     publishing and only uploaded SBOMs (e.g. a PR labeled after its
-          #     build finished). The run still succeeds and is authorized, but
-          #     there is nothing to publish. Pushes to main always build and
-          #     save images, so main never lands here;
+          #   - no images, pull request -> clean skip. Either the paths-filter
+          #     skipped the build (e.g. a labeled PR whose push touched no
+          #     container-relevant path), or the build did not save its images
+          #     because it was not publishing (e.g. a PR labeled after its build
+          #     finished). The run is authorized, but there is nothing to publish;
+          #   - no images, any other event -> fail. Pushes to main, release tags,
+          #     and dispatches always build and save images, so none means the
+          #     build broke;
           #   - images    -> the download MUST succeed and yield every artifact,
           #     or we fail. A partial download must never publish a subset
           #     (which would update some architectures and leave the others
@@ -143,6 +144,10 @@ jobs:
                       --jq '.artifacts[] | select(.name | endswith("-oci")) | .name' | wc -l | tr -d ' ')"
           echo "Build run reports $expected artifact(s), $images of them image(s)."
           if [ "$images" -eq 0 ]; then
+            if [ "$SOURCE_EVENT" != "pull_request" ]; then
+              echo "::error::$SOURCE_EVENT builds always save images, but this one saved none"
+              exit 1
+            fi
             echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
             echo "No images; nothing to publish."
             exit 0
