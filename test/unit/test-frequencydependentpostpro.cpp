@@ -609,4 +609,152 @@ TEST_CASE("Electric energy density of frequency-dependent materials",
   }
 }
 
+namespace
+{
+
+// The 2D magnetic recovery test setup: the curl space
+// with the INTEGRAL map (B = B̂ / |J|) and its H1 recovery space.
+struct Curl2D
+{
+  Mesh mesh;
+  mfem::L2_FECollection l2_fec;
+  mfem::H1_FECollection h1_fec;
+  FiniteElementSpace l2_fespace;
+  FiniteElementSpaceHierarchy h1_fespaces;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op;
+
+  static Mesh Make(mfem::Element::Type type, bool distort)
+  {
+    auto serial = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian2D(3, 3, type, false, 1.0, 0.7));
+    // Unequal element sizes, and for quadrilaterals non-parallelograms (straight sides).
+    serial->Transform(
+        [distort](const mfem::Vector &x, mfem::Vector &y)
+        {
+          y = x;
+          y(0) = x(0) * x(0) * 0.6 + 0.4 * x(0);
+          if (distort)
+          {
+            y(1) += 0.12 * std::sin(std::numbers::pi * x(0)) *
+                    std::sin(std::numbers::pi * x(1) / 0.7);
+          }
+        });
+    for (int i = 0; i < serial->GetNE(); i++)
+    {
+      serial->SetAttribute(i, 1);
+    }
+    serial->SetAttributes();
+    return Mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial));
+  }
+
+  Curl2D(mfem::Element::Type type, bool distort, int order)
+    : mesh(Make(type, distort)),
+      l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL),
+      h1_fec(order, 2), l2_fespace(mesh, &l2_fec),
+      h1_fespaces(std::make_unique<FiniteElementSpace>(mesh, &h1_fec)),
+      mat_op(
+          [&]()
+          {
+            config::MaterialData m;
+            m.attributes = {1};
+            m.mu_r.s = {2.0, 2.0, 2.0};
+            return std::vector<config::MaterialData>{m};
+          }(),
+          periodic, ProblemType::EIGENMODE, mesh)
+  {
+  }
+};
+
+}  // namespace
+
+TEST_CASE("2D magnetic flux recovery uses the physical B of the INTEGRAL map",
+          "[errorestimator][Serial][Parallel][GPU]")
+{
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  constexpr double mu = 2.0;
+
+  SECTION("Constant B has zero indicator on unequal and distorted cells")
+  {
+    const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+    const bool distort = GENERATE(false, true);
+    CAPTURE(type, distort);
+    Curl2D c(type, distort, order);
+    GridFunction B(c.l2_fespace);
+    mfem::ConstantCoefficient one(1.0);
+    B.Real().ProjectCoefficient(one);
+    CurlFluxErrorEstimator<Vector> estimator(c.mat_op, c.l2_fespace, c.h1_fespaces, 1.0e-14,
+                                             1000, 0, false);
+    ErrorIndicator ind;
+    estimator.AddErrorIndicator(B.Real(), 0.5, ind);  // Scale 1
+    const auto *h = ind.Local().HostRead();
+    for (int i = 0; i < ind.Local().Size(); i++)
+    {
+      CHECK(h[i] < 1.0e-10);
+    }
+  }
+
+  SECTION("Nonzero indicator matches physical quadrature")
+  {
+    // Discontinuous B on unequal triangles; H* is the H1 projection of μ⁻¹ B computed with
+    // MFEM physical shape functions and η²_K = ∫_K |μ^(-1/2) B − μ^(1/2) H*|².
+    Curl2D c(mfem::Element::TRIANGLE, false, order);
+    auto &pmesh = c.mesh.Get();
+    GridFunction B(c.l2_fespace);
+    mfem::FunctionCoefficient f([](const mfem::Vector &x)
+                                { return 1.0 + x(0) * x(1) + std::sin(3.0 * x(0)); });
+    B.Real().ProjectCoefficient(f);
+    auto &h1 = c.h1_fespaces.GetFinestFESpace();
+    mfem::ParBilinearForm m(&h1.Get());
+    m.AddDomainIntegrator(new mfem::MassIntegrator);
+    m.Assemble();
+    m.Finalize();
+    std::unique_ptr<mfem::HypreParMatrix> M(m.ParallelAssemble());
+    mfem::GridFunctionCoefficient B_coeff(&B.Real());
+    mfem::ProductCoefficient rhs_coeff(1.0 / mu, B_coeff);
+    mfem::ParLinearForm b(&h1.Get());
+    const auto &lf_ir = mfem::IntRules.Get(mfem::Geometry::TRIANGLE, 10);
+    b.AddDomainIntegrator(new mfem::DomainLFIntegrator(rhs_coeff, &lf_ir));
+    b.Assemble();
+    std::unique_ptr<mfem::HypreParVector> rhs(b.ParallelAssemble());
+    mfem::HypreParVector Ht(*rhs);
+    Ht = 0.0;
+    mfem::CGSolver cg(pmesh.GetComm());
+    cg.SetRelTol(1.0e-15);
+    cg.SetAbsTol(0.0);
+    cg.SetMaxIter(2000);
+    cg.SetOperator(*M);
+    cg.Mult(*rhs, Ht);
+    mfem::ParGridFunction H(&h1.Get());
+    H.SetFromTrueDofs(Ht);
+
+    CurlFluxErrorEstimator<Vector> estimator(c.mat_op, c.l2_fespace, c.h1_fespaces, 1.0e-15,
+                                             2000, 0, false);
+    ErrorIndicator ind;
+    estimator.AddErrorIndicator(B.Real(), 0.5, ind);  // Scale 1: η_K
+    const auto *h = ind.Local().HostRead();
+    double max_ref = 0.0;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      auto *T = pmesh.GetElementTransformation(e);
+      const auto &ir = mfem::IntRules.Get(pmesh.GetElementGeometry(e), 12);
+      double eta2 = 0.0;
+      for (int q = 0; q < ir.GetNPoints(); q++)
+      {
+        const auto &ip = ir.IntPoint(q);
+        T->SetIntPoint(&ip);
+        const double d =
+            B.Real().GetValue(*T, ip) / std::sqrt(mu) - std::sqrt(mu) * H.GetValue(*T, ip);
+        eta2 += ip.weight * T->Weight() * d * d;
+      }
+      max_ref = std::max(max_ref, std::sqrt(eta2));
+      CHECK_THAT(h[e], WithinRel(std::sqrt(eta2), 1.0e-8));
+    }
+    Mpi::GlobalMax(1, &max_ref, pmesh.GetComm());
+    CHECK(max_ref > 1.0e-4);  // Not vacuous
+  }
+}
+
 }  // namespace palace
