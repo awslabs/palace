@@ -120,14 +120,13 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   }
   else
   {
-    mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
+    mfem::HypreParMatrix hR(
         test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
         test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
         const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));
     hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(*hR, AP), true);
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(hR, AP), true);
     hypre_ParCSRMatrixDestroy(AP);
-    delete hR;
   }
 
   hypre_ParCSRMatrixDiag(hA) = hA_diag;
@@ -400,7 +399,7 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
                                        bool test_restrict)
   : ComplexOperator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
     data_A((dAr != nullptr || dAi != nullptr)
-               ? ceed::CreateComplexOperator(std::move(dAr), std::move(dAi))
+               ? ceed::CreateComplexOperator(std::move(dAr), std::move(dAi), trial_fespace)
                : std::make_unique<ComplexWrapperOperator>(pAr, pAi)),
     A(data_A.get()), trial_fespace(trial_fespace), test_fespace(test_fespace),
     use_R(test_restrict), diag_policy(Operator::DiagonalPolicy::DIAG_ONE),

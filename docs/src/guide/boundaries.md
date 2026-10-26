@@ -143,6 +143,17 @@ for implementation details.
     wave port currently being considered, in the case wave ports are touching and share one
     or more edges, are also considered as PEC for the wave port boundary mode analysis.
 
+    The port modes are ranked by their distance to a target, by default just above the
+    bulk propagation constants of the port materials, which ranks the modes below it by
+    decreasing wave number. The kinetic inductance of superconducting lines makes their
+    modes slower than bulk waves, above the default target; they are found too, but on a
+    cross-section with several modes, set
+    [`"Target"`](../config/reference.md#config-boundaries-waveport-target) to an estimate
+    of the effective index of the desired mode.
+    The driven wave port boundary condition models a lossless port line: for a lossy line,
+    the reflection coefficient of a matched port is of the order of the ratio of the
+    attenuation to the phase constant.
+
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
@@ -162,12 +173,12 @@ for implementation details.
       + [`"VoltagePath"`](../config/reference.md#config-boundaries-waveport-voltagepath): an
         ordered list of coordinate points across the port face, directed signal → ground.
         The mode is flipped so that `\int E_{\text{mode}} \cdot dl > 0` along this path.
-        Also enables ``Z_{PV}`` postprocessing. Requires GSLIB.
+        Also enables ``Z_{PV}`` postprocessing.
       + [`"PolarityAttributes"`](../config/reference.md#config-boundaries-waveport-polarityattributes):
         a pair of parent-mesh boundary attributes `[signal, ground]` (e.g. distinct PEC
         attributes for the two terminals). The mode is flipped so that the modal E-field
         points from the signal attribute toward the ground attribute. Lightweight
-        polarity-only alternative to `"VoltagePath"` (no GSLIB).
+        polarity-only alternative to `"VoltagePath"`.
 
   - [`config["Boundaries"]["FloquetPort"]`](../config/reference.md#config-boundaries-floquetport) :
     Floquet ports are available for frequency domain driven simulations on periodic

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <sstream>
 #include <string_view>
@@ -572,6 +573,7 @@ WavePortData::WavePortData(const json &port)
   std::ranges::sort(attributes);
   mode_idx = port.value("Mode", mode_idx);
   d_offset = port.value("Offset", d_offset);
+  target = port.value("Target", target);
   eigen_solver = port.value("SolverType", eigen_solver);
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);
@@ -597,7 +599,6 @@ WavePortData::WavePortData(const json &port)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = port.value("NSamples", n_samples);
   if (auto it = port.find("PolarityAttributes"); it != port.end())
   {
     auto pa = it->get<std::vector<int>>();
@@ -732,7 +733,6 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
       current_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = imp.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Impedance boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
@@ -758,7 +758,6 @@ ModeVoltageData::ModeVoltageData(const json &volt)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = volt.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Voltage boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
@@ -1144,15 +1143,21 @@ std::vector<double> ConstructLinearRange(double start, double end, double delta)
 }
 std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 {
+  // A single sample is the interval start (as in numpy.linspace).
   std::vector<double> f(n_sample);
   for (int i = 0; i < n_sample; i++)
   {
-    f[i] = start + (double(i) / (n_sample - 1)) * (end - start);
+    f[i] = start + (n_sample > 1 ? double(i) / (n_sample - 1) : 0.0) * (end - start);
   }
   return f;
 }
 std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 {
+  MFEM_VERIFY(n_sample > 0, "Invalid number of samples for log frequency range!");
+  if (n_sample == 1)
+  {
+    return {start};
+  }
   std::vector<double> f(n_sample);
   double log_start = std::log10(start);
   double log_end = std::log10(end);
@@ -1523,16 +1528,18 @@ SolverData::SolverData(const json &solver)
 
 int GetNumSteps(double start, double end, double delta)
 {
-  if (end < start)
-  {
-    return 1;
-  }
+  MFEM_VERIFY(delta > 0.0 && end >= start,
+              "Invalid range from " << start << " to " << end << " in steps of " << delta
+                                    << ": the step must be positive and the end must not "
+                                       "be less than the start!");
   constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
-  double dn = std::abs(end - start) / std::abs(delta);
+  double dn = (end - start) / delta;
+  MFEM_VERIFY(dn < std::numeric_limits<int>::max() - 2,
+              "Step " << delta << " is too small for the range [" << start << ", " << end
+                      << "]: " << dn << " steps!");
   int n_step = 1 + static_cast<int>(dn);
   double dfinal = start + n_step * delta;
-  return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
-                   (delta > 0.0 && dfinal - end < delta_eps * end));
+  return n_step + (dfinal - end < delta_eps * end);
 }
 
 std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::string str,

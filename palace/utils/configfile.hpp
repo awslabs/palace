@@ -543,6 +543,10 @@ public:
   // Port offset for de-embedding [m].
   double d_offset = 0.0;
 
+  // Target effective index for the boundary mode eigenvalue solver. When zero, the target
+  // lies just above the bulk propagation constants of the port materials.
+  double target = 0.0;
+
   // Eigenvalue solver type for boundary mode calculation.
   EigenSolverBackend eigen_solver = EigenSolverBackend::DEFAULT;
 
@@ -589,10 +593,9 @@ public:
   // Optional coordinate path for voltage line integral on the port face.
   // When non-empty, enables GetVoltage(). List of points [x, y, z].
   std::vector<std::vector<double>> voltage_path = {};
-  int n_samples = 100;
 
   // Optional pair of parent-mesh boundary attributes [high, low] (signal terminal first,
-  // ground terminal second) used solely to fix the mode polarity (no GSLIB / no Z_PV).
+  // ground terminal second) used solely to fix the mode polarity (no Z_PV).
   // The mode is flipped if needed so that the modal E-field on the port face points from
   // the high-attribute (signal) terminal toward the low-attribute (ground) terminal,
   // matching the lumped-port `Direction` convention and the VoltagePath ordering. A
@@ -724,11 +727,6 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
   std::vector<std::vector<double>> current_path = {};
 
-  // Quadrature order for the coordinate-based line integral. Higher values give more
-  // integration points and better accuracy near field singularities at conductor edges.
-  // Default 100 gives ~50 Gauss-Legendre points, sufficient for typical geometries.
-  int n_samples = 100;
-
   ModeImpedanceData() = default;
   ModeImpedanceData(const json &imp);
 };
@@ -743,9 +741,6 @@ public:
   // attributes). A list of points [x, y(, z)]. The voltage is integrated along the open
   // path V = integral of E . dl from first to last point.
   std::vector<std::vector<double>> voltage_path = {};
-
-  // Quadrature order for the coordinate-based line integral.
-  int n_samples = 100;
 
   ModeVoltageData() = default;
   ModeVoltageData(const json &volt);
@@ -1222,8 +1217,8 @@ public:
   SolverData(const json &solver);
 };
 
-// Calculate the number of steps from [start, end) in increments of delta. Will only include
-// end if it is a multiple of delta beyond start.
+// Calculate the number of steps from [start, end) in increments of delta > 0, for end >=
+// start. Will only include end if it is a multiple of delta beyond start.
 int GetNumSteps(double start, double end, double delta);
 
 // Parse a string as a direction vector, returning the direction and coordinate system.

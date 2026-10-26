@@ -208,6 +208,29 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
+  SECTION("Invalid attributes are ignored")
+  {
+    // Attributes <= 0 or above the mesh max (6 here) must be skipped without writing
+    // out of bounds on the marker arrays.
+    config::ImpedanceData imp1;
+    imp1.Rs = Rs;
+    imp1.Ls = Ls;
+    imp1.Cs = Cs;
+    imp1.attributes = {1, 0, 7};
+    config::ImpedanceData imp2;
+    imp2.Rs = Rs;
+    imp2.Ls = Ls;
+    imp2.Cs = Cs;
+    imp2.attributes = {7, -2};
+    std::unordered_set<int> cracked = {};
+
+    SurfaceImpedanceOperator op({imp1, imp2}, cracked, units, mat_op, palace_mesh);
+
+    auto attrs = op.GetAttrList();
+    REQUIRE(attrs.Size() == 1);
+    CHECK(attrs[0] == 1);
+  }
+
   SECTION("Combined terms are added once per attribute")
   {
     // Both attributes get the same stiffness term first, so they share one entry of the

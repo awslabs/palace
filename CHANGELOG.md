@@ -45,9 +45,27 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+  - Removed the `"NSamples"` option of the wave port `"VoltagePath"` and of the
+    `"Impedance"` and `"Voltage"` boundary postprocessing paths. Coordinate-path line
+    integrals are now exact for the discrete field, so the number of samples no longer has
+    any effect, and configurations specifying it must be updated. SchemaVer 3-0-0
+    [PR 1049](https://github.com/awslabs/palace/pull/1049).
 
 #### Bug Fixes
 
+  - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
+    kinetic inductance makes the line modes slower than bulk waves, above the eigenvalue
+    target of the port mode solve, which only sought modes below it. The port modes are
+    now sought on both sides of the target. Added `Boundaries.WavePort[].Target`, the
+    effective index near which the port modes are sought, to select a mode far from the
+    default target. Wave ports warn when the selected mode is evanescent. SchemaVer 2-3-0
+    [PR 1067](https://github.com/awslabs/palace/pull/1067).
+  - Fixed the 2D magnetic field energy (`E_mag`, `p_mag`) of driven, eigenmode, and
+    transient simulations and of boundary modes (the out-of-plane part), and the 2D error
+    estimates of all problem types but electrostatics, which also drive adaptive mesh
+    refinement. Both used the out-of-plane magnetic flux density scaled by the element
+    Jacobian determinant, which could put `E_mag` off by orders of magnitude.
+    [PR 1069](https://github.com/awslabs/palace/pull/1069).
   - Fixed the sign of `Im{Z}` in `port-Z.csv` for wave ports with a `"VoltagePath"`: the
     total-field impedance was computed as `|V|² / P` instead of `|V|² / conj(P)`, giving
     `conj(Z)`. `Re{Z}` and `Z_PV` are unchanged.
@@ -140,9 +158,32 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `GRID` points with a nonzero coordinate system (`CP`, or a `GRDSET` default) now abort,
     since coordinate systems are not applied.
     [PR 951](https://github.com/awslabs/palace/pull/951).
+  - Fixed driven frequency sampling edge cases: `"NSample": 1` now samples `"MinFreq"`
+    instead of producing a NaN frequency, and a `"FreqStep"` sweep with `"MaxFreq"` below
+    `"MinFreq"`, a nonpositive step, or too many steps for an `int` now aborts instead of
+    sampling only `"MinFreq"`, crashing, or sweeping below `"MinFreq"`. `validate-config`
+    now also rejects circuit synthesis without a positive `"AdaptiveTol"`, as *Palace*
+    already did, and the schema rejects 0 GHz samples, where the driven solve is singular.
+    SchemaVer 2-2-1
+    [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed adaptive frequency sweeps hanging when all samples were nearly the same
+    frequency, and circuit synthesis with a single distinct sample, which now aborts at
+    startup instead of failing in the sweep.
+    [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed coordinate-path line integrals (wave port `"VoltagePath"` and the `"Impedance"`
+    and `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) losing accuracy
+    on locally refined meshes: a few tenths of a percent in Z_PV on the CPW examples, and
+    up to about 1% after several levels of adaptive refinement towards conductor edges,
+    where Z_PV then changed erratically from one level to the next. They are now exact for
+    the discrete field on affine elements, and the wave port voltage no longer needs GSLIB
+    or a point search over the full 3D mesh.
+    [PR 1049](https://github.com/awslabs/palace/pull/1049).
 
 #### Performance Improvements
 
+  - Reduced matrix-free material and boundary operator work by omitting elements outside
+    shared nonzero-coefficient support unions, including compatible complex operator packing.
+    [PR 987](https://github.com/awslabs/palace/pull/987).
   - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
     PROM trained on the offline modes. Also reusing reduced operators and wave-port state
     across excitations, evaluating the wave-port modal correction and excitation of the
@@ -158,6 +199,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - CSV output tables are now appended row by row instead of rewritten at every measurement,
     so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
     [PR 942](https://github.com/awslabs/palace/pull/942).
+
+#### Documentation
+
+  - Documented in the developer notes that schema validation tightenings which only
+    reject configurations that never produced valid solver output are bug fixes
+    (ADDITION), not breaking (MODEL) changes.
+    [PR 952](https://github.com/awslabs/palace/pull/952).
 
 #### Build system
 

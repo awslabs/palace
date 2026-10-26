@@ -144,7 +144,6 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial][Parallel]")
   wave.excitation = 0;
   wave.active = true;
   wave.voltage_path = {{0.0, a_m / 2.0, 0.0}, {0.0, a_m / 2.0, b_m}};
-  wave.n_samples = 200;
   wave.eig_tol = 1.0e-8;
   wave.ksp_tol = 1.0e-8;
   wave.ksp_max_its = 100;
@@ -495,7 +494,6 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   wave.mode_idx = 1;
   wave.excitation = 0;
   wave.active = true;
-  wave.n_samples = 200;
   wave.eig_tol = 1.0e-10;
   wave.ksp_tol = 1.0e-10;
   wave.ksp_max_its = 200;

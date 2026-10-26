@@ -332,10 +332,8 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
                                data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
-      CeedElemRestriction nd_restr =
-          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedElemRestriction rt_restr =
-          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction nd_restr = nd_fespace.GetCeedElemRestriction(ceed, geom, data);
+      CeedElemRestriction rt_restr = rt_fespace.GetCeedElemRestriction(ceed, geom, data);
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
 
@@ -420,6 +418,10 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
   // Construct the libCEED operator used for integrating the element-wise error. The
   // discontinuous flux is μ⁻¹ B ≃ μ⁻¹ ∇ × E.
   const auto &mesh = rt_fespace.GetMesh();
+  MFEM_VERIFY(mesh.Dimension() == 3 ||
+                  rt_fespace.GetFEColl().GetMapType(mesh.Dimension()) ==
+                      mfem::FiniteElement::INTEGRAL,
+              "CurlFluxErrorEstimator in 2D requires an L2 space with INTEGRAL map type!");
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
@@ -455,10 +457,8 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
                                data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
-      CeedElemRestriction rt_restr =
-          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedElemRestriction nd_restr =
-          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction rt_restr = rt_fespace.GetCeedElemRestriction(ceed, geom, data);
+      CeedElemRestriction nd_restr = nd_fespace.GetCeedElemRestriction(ceed, geom, data);
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
 
@@ -497,6 +497,10 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
                      << ") for CurlFluxErrorEstimator!");
       }
       info.trial_ops = info.test_ops = ceed::EvalMode::Interp;
+      if (scalar_curl)
+      {
+        info.trial_ops |= ceed::EvalMode::Weight;
+      }
 
       CeedOperator sub_op;
       ceed::AssembleCeedElementErrorIntegrator(

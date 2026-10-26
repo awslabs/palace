@@ -24,8 +24,8 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -104,7 +104,7 @@ jobs:
     # (See comment above matrix)
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-22.04-arm' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
@@ -150,7 +150,7 @@ jobs:
 
       - name: Configure Intel MPI
         if: needs.filter.outputs.test == 'true' && matrix.mpi == 'intelmpi'
-        uses: mpi4py/setup-mpi@v1
+        uses: mpi4py/setup-mpi@3417e34f1394a16723d7913c236642c24e95fd5a # v1.4.4
         with:
           mpi: ${{ matrix.mpi }}
 
@@ -248,12 +248,12 @@ jobs:
 
       # Julia is needed for the antenna postprocessing example below; the
       # regression sweep itself uses the Catch2 binary and doesn't need it.
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
         if: needs.filter.outputs.test == 'true'
         with:
           version: '1'
 
-      - uses: julia-actions/cache@v3
+      - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
         if: needs.filter.outputs.test == 'true'
 
       - name: Build Palace
@@ -405,7 +405,7 @@ jobs:
         if: |
           needs.filter.outputs.test == 'true' && matrix.with-coverage &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: palace-build/coverage_html
@@ -431,14 +431,14 @@ jobs:
 
       - name: Upload coverage report
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
           path: palace-build/coverage_html/
 
       - name: Upload coverage to Codecov
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: palace-build/coverage_filtered.info
           disable_search: true
