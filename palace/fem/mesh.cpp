@@ -449,37 +449,6 @@ void Mesh::Update()
   lossy_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
-
-  // Complete the transfer of interior boundary sides through a rebalance.
-  if (crack_gf)
-  {
-    if (crack_mesh == mesh.get() && mesh->GetSequence() == crack_sequence + 1 &&
-        mesh->GetLastOperation() == mfem::Mesh::REBALANCE)
-    {
-      crack_fespace->Update();
-      crack_gf->Update();
-      const int ne = mesh->GetNE();
-      const auto *h_gf = crack_gf->HostRead();
-      crack_sides.Reset(ne);
-      for (int e = 0; e < ne; e++)
-      {
-        crack_sides.split[e] = static_cast<std::uint32_t>(std::llround(h_gf[e]));
-        for (int w = 0; w < 4; w++)
-        {
-          crack_sides.version[e][w] =
-              static_cast<std::uint32_t>(std::llround(h_gf[(1 + w) * ne + e]));
-        }
-        crack_sides.carrier[e] =
-            static_cast<std::uint64_t>(std::llround(h_gf[5 * ne + e])) |
-            (static_cast<std::uint64_t>(std::llround(h_gf[6 * ne + e])) << 32);
-        crack_sides.side[e] = std::llround(h_gf[7 * ne + e]);
-      }
-      crack_sequence = mesh->GetSequence();
-    }
-    crack_gf.reset();
-    crack_fespace.reset();
-    crack_fec.reset();
-  }
 }
 
 const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
@@ -506,59 +475,41 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   {
     crack_sides = mesh::ComputeCrackSides(*mesh, marker);
   }
-  else if (!mesh::ReconstructCrackSides(*mesh, marker, crack_sides))
+  else
   {
-    // The sides of a nonconforming mesh refined in this simulation are inherited through
-    // the refinements, so this is a nonconforming input mesh whose refinement hierarchy
-    // cannot be derefined (Palace itself only refines isotropically, and MFEM does not
-    // refine meshes with pyramids and nodes).
-    Mpi::Warning(mesh->GetComm(),
-                 "The sides of the interior boundaries cannot be identified on this "
-                 "nonconforming mesh, which has pyramids, anisotropic refinements, or a "
-                 "nonconforming coarsest mesh: error estimation will assume continuous "
-                 "fluxes across interior boundaries for the whole simulation, which "
-                 "overestimates the error next to them!\n");
-    crack_sides.Reset(mesh->GetNE());
+    // The sides of the root elements of the mesh are computed once, and the sides of the
+    // elements of the mesh are inherited from them through any refinement and rebalancing.
+    if (key != root_crack_attr_list || root_crack_mesh != mesh.get())
+    {
+      root_crack_valid = mesh::ComputeRootCrackSides(*mesh, marker, root_crack_sides);
+      root_crack_attr_list = key;
+      root_crack_mesh = mesh.get();
+      if (!root_crack_valid)
+      {
+        // For example a nonconforming mesh created from the elements of another one, whose
+        // refinement hierarchy is lost.
+        Mpi::Warning(mesh->GetComm(),
+                     "The sides of the interior boundaries cannot be identified on this "
+                     "nonconforming mesh, whose interior boundaries are not faces of the "
+                     "elements of the coarsest mesh of its refinement hierarchy, or whose "
+                     "coarsest mesh is nonconforming: error estimation will assume "
+                     "continuous fluxes across interior boundaries for the whole "
+                     "simulation, which overestimates the error next to them!\n");
+      }
+    }
+    if (root_crack_valid)
+    {
+      crack_sides = mesh::InheritRootCrackSides(*mesh, root_crack_sides);
+    }
+    else
+    {
+      crack_sides.Reset(mesh->GetNE());
+    }
   }
   crack_attr_list = std::move(key);
   crack_mesh = mesh.get();
   crack_sequence = mesh->GetSequence();
   return crack_sides;
-}
-
-void Mesh::RefineCrackSides()
-{
-  // Only a single refinement since the sides were computed can be followed.
-  if (crack_mesh != mesh.get() || mesh->GetSequence() != crack_sequence + 1 ||
-      mesh->GetLastOperation() != mfem::Mesh::REFINE || !mesh->Nonconforming())
-  {
-    crack_mesh = nullptr;
-    return;
-  }
-  crack_sides =
-      mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), crack_sides);
-  crack_sequence = mesh->GetSequence();
-
-  // Prepare the transfer of the sides through a possible rebalance, which keeps the mesh
-  // object for a nonconforming mesh: the split entities, the versions and carriers (32-bit
-  // words) and the side label of each element, all exactly represented as doubles.
-  crack_fec = std::make_unique<mfem::L2_FECollection>(0, mesh->Dimension());
-  crack_fespace =
-      std::make_unique<mfem::ParFiniteElementSpace>(mesh.get(), crack_fec.get(), 8);
-  crack_gf = std::make_unique<mfem::ParGridFunction>(crack_fespace.get());
-  const int ne = mesh->GetNE();
-  auto *h_gf = crack_gf->HostWrite();
-  for (int e = 0; e < ne; e++)
-  {
-    h_gf[e] = static_cast<double>(crack_sides.split[e]);
-    for (int w = 0; w < 4; w++)
-    {
-      h_gf[(1 + w) * ne + e] = static_cast<double>(crack_sides.version[e][w]);
-    }
-    h_gf[5 * ne + e] = static_cast<double>(crack_sides.carrier[e] & 0xFFFFFFFFu);
-    h_gf[6 * ne + e] = static_cast<double>(crack_sides.carrier[e] >> 32);
-    h_gf[7 * ne + e] = static_cast<double>(crack_sides.side[e]);
-  }
 }
 
 void Mesh::RebuildCeedAttributes()

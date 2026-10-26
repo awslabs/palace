@@ -97,6 +97,16 @@ struct CrackSides
   bool Any() const;
 };
 
+// Interior boundary sides of the root elements of a nonconforming mesh, the elements of the
+// coarsest mesh of its refinement hierarchy (see mfem::NCMesh::GetRootTransforms), in
+// contiguous blocks of root elements: process p holds the sides of the root elements
+// offsets[p], ..., offsets[p + 1] - 1, and offsets.back() is the number of root elements.
+struct RootCrackSides
+{
+  std::vector<int> offsets;
+  CrackSides sides;
+};
+
 namespace mesh
 {
 
@@ -106,8 +116,8 @@ CrackSides ComputeCrackSides(const mfem::ParMesh &mesh,
                              const mfem::Array<int> &bdr_attr_marker);
 
 // Return whether the mesh has hanging (nonconforming) vertices, edges, or faces, in which
-// case the interior boundary sides cannot be discovered from the mesh topology and need to
-// be inherited through refinement instead. Collective.
+// case the interior boundary sides cannot be discovered from the mesh topology and are
+// inherited from the root elements instead (see ComputeRootCrackSides). Collective.
 bool HasHangingEntities(const mfem::ParMesh &mesh);
 
 // Interior boundary sides after a refinement of the mesh, given the sides of the coarse
@@ -120,15 +130,23 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
                              const mfem::CoarseFineTransformations &cf,
                              const CrackSides &coarse_sides);
 
-// Compute the interior boundary sides for a nonconforming mesh with hanging entities, for
-// example one refined in a previous simulation, from those of the coarsest mesh without
-// hanging entities in its refinement hierarchy: a copy of the mesh is gathered on the root
-// process and derefined until it has no hanging entities, and the sides discovered there
-// are inherited back through the refinements. Returns false, leaving the sides unchanged,
-// when this is not possible: for 3D meshes with anisotropic refinements or with pyramids,
-// or when the coarsest mesh of the hierarchy has hanging entities. Collective.
-bool ReconstructCrackSides(const mfem::ParMesh &mesh,
-                           const mfem::Array<int> &bdr_attr_marker, CrackSides &sides);
+// Compute the interior boundary sides of the root elements of a nonconforming mesh, on the
+// coarsest mesh of its refinement hierarchy rebuilt on the root process, and distribute
+// them (see RootCrackSides). The sides of the elements of the mesh, in particular one with
+// hanging entities, are inherited from them with InheritRootCrackSides, through any
+// refinement and rebalancing of the mesh. Returns false, leaving the root sides unchanged,
+// when the interior boundaries are not faces of the root elements, or when the root
+// elements do not form a conforming mesh (as for a nonconforming mesh created from the
+// elements of another one, see mesh::RebuildNonconformingMesh). Collective.
+bool ComputeRootCrackSides(const mfem::ParMesh &mesh,
+                           const mfem::Array<int> &bdr_attr_marker,
+                           RootCrackSides &root_sides);
+
+// Interior boundary sides of the elements of a nonconforming mesh, inherited from those of
+// their root elements (see InheritCrackSides), with the side labels of the root elements.
+// Collective.
+CrackSides InheritRootCrackSides(const mfem::ParMesh &mesh,
+                                 const RootCrackSides &root_sides);
 
 }  // namespace mesh
 

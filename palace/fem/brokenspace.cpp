@@ -11,6 +11,8 @@
 #include <memory>
 #include <numeric>
 #include <set>
+#include <unordered_map>
+#include <utility>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -768,26 +770,34 @@ bool OnFacePlane(const Point &p, const std::vector<Point> &face)
 namespace
 {
 
-// See InheritCrackSides, with the geometries of the fine elements.
+// See InheritCrackSides, with the geometries of the fine elements, and those of the coarse
+// elements when given (empty otherwise).
 CrackSides InheritCrackSides(int dim, const std::vector<mfem::Geometry::Type> &fine_geoms,
                              const mfem::CoarseFineTransformations &cf,
-                             const CrackSides &coarse_sides)
+                             const CrackSides &coarse_sides,
+                             std::vector<mfem::Geometry::Type> coarse_geoms = {})
 {
   const int ne = static_cast<int>(fine_geoms.size());
   MFEM_VERIFY(cf.embeddings.Size() >= ne,
               "Invalid coarse-to-fine transformations for interior boundary sides!");
 
-  // The embeddings give the geometry of the fine element, but the point matrices are those
-  // of the parent geometry, which differ for the tetrahedra of a refined pyramid: a parent
-  // is a pyramid if any of its fine elements is, and otherwise has their geometry.
-  std::vector<mfem::Geometry::Type> coarse_geoms(coarse_sides.split.size(),
-                                                 mfem::Geometry::INVALID);
+  // The embeddings of mfem::Mesh::GetRefinementTransforms give the geometry of the fine
+  // element, but the point matrices are those of the parent geometry, which differ for the
+  // tetrahedra of a refined pyramid: a parent is a pyramid if any of its fine elements is,
+  // and otherwise has their geometry.
+  const bool find_coarse_geoms = coarse_geoms.empty();
+  if (find_coarse_geoms)
+  {
+    coarse_geoms.assign(coarse_sides.split.size(), mfem::Geometry::INVALID);
+  }
+  MFEM_VERIFY(coarse_geoms.size() == coarse_sides.split.size(),
+              "Invalid coarse element geometries for interior boundary sides!");
   for (int e = 0; e < ne; e++)
   {
     const int parent = cf.embeddings[e].parent;
     MFEM_VERIFY(parent >= 0 && static_cast<std::size_t>(parent) < coarse_geoms.size(),
                 "Invalid parent element for interior boundary sides!");
-    if (coarse_geoms[parent] != mfem::Geometry::PYRAMID)
+    if (find_coarse_geoms && coarse_geoms[parent] != mfem::Geometry::PYRAMID)
     {
       coarse_geoms[parent] = fine_geoms[e];
     }
@@ -930,142 +940,421 @@ CrackSides InheritCrackSides(const mfem::Mesh &fine_mesh,
                            coarse_sides);
 }
 
-bool ReconstructCrackSides(const mfem::ParMesh &mesh,
-                           const mfem::Array<int> &bdr_attr_marker, CrackSides &sides)
+namespace
 {
-  MPI_Comm comm = mesh.GetComm();
-  const int dim = mesh.Dimension(), ne = mesh.GetNE();
 
-  // MFEM does not support the derefinement of anisotropic refinements in 3D, and its
-  // derefinement transformations do not support pyramids (refined into pyramids and
-  // tetrahedra: the point matrices are computed for the geometry of the fine element). An
-  // isotropic refinement reduces the element size by 8 in 3D.
-  int supported = mesh.Nonconforming();
-  for (int e = 0; supported && e < ne; e++)
+// Local codimension-1 entity (face in 3D, edge in 2D) of the reference element of the given
+// geometry on which all the given points lie, or -1 if there is none.
+int FindReferenceFacet(mfem::Geometry::Type geom, const std::vector<Point> &x)
+{
+  const auto &t = GetReferenceTopology(geom);
+  if (mfem::Geometry::Dimension[geom] == 3)
   {
-    const int depth = mesh.pncmesh->GetElementDepth(e);
-    supported = (mesh.GetElementGeometry(e) != mfem::Geometry::PYRAMID) &&
-                (dim < 3 || (depth <= 10 && mesh.pncmesh->GetElementSizeReduction(e) ==
-                                                (1 << (3 * depth))));
+    std::vector<Point> face_pts;
+    for (std::size_t k = 0; k < t.faces.size(); k++)
+    {
+      face_pts.clear();
+      for (auto v : t.faces[k])
+      {
+        face_pts.push_back(t.verts[v]);
+      }
+      if (std::all_of(x.begin(), x.end(),
+                      [&](const Point &p) { return OnFacePlane(p, face_pts); }))
+      {
+        return static_cast<int>(k);
+      }
+    }
   }
-  Mpi::GlobalMin(1, &supported, comm);
-  if (!supported)
+  else
+  {
+    for (std::size_t j = 0; j < t.edges.size(); j++)
+    {
+      const auto &a = t.verts[t.edges[j][0]], &b = t.verts[t.edges[j][1]];
+      if (std::all_of(x.begin(), x.end(),
+                      [&](const Point &p) { return OnSegment(p, a, b); }))
+      {
+        return static_cast<int>(j);
+      }
+    }
+  }
+  return -1;
+}
+
+// Local vertices of the local codimension-1 entity f of the reference element.
+const std::vector<int> &GetReferenceFacetVertices(mfem::Geometry::Type geom, int f)
+{
+  const auto &t = GetReferenceTopology(geom);
+  return (mfem::Geometry::Dimension[geom] == 3) ? t.faces[f] : t.edges[f];
+}
+
+// Measure of a segment, triangle, or (planar) quadrilateral with the given vertices.
+double Measure(const std::vector<Point> &x)
+{
+  if (x.size() == 2)
+  {
+    const auto d = Sub(x[1], x[0]);
+    return std::sqrt(Dot(d, d));
+  }
+  const auto n = (x.size() == 3) ? Cross(Sub(x[1], x[0]), Sub(x[2], x[0]))
+                                 : Cross(Sub(x[2], x[0]), Sub(x[3], x[1]));
+  return 0.5 * std::sqrt(Dot(n, n));
+}
+
+// Codimension-1 entity of a root element containing a codimension-1 entity of a local
+// element: the root element, its local entity (-1 if none), and the fraction of the root
+// element entity covered by the local element entity.
+struct RootFacet
+{
+  int root, facet;
+  double fraction;
+};
+
+// The root element entity containing the local codimension-1 entity f of the local element
+// e, from the root transformations of the mesh.
+RootFacet GetRootFacet(const mfem::Mesh &mesh, const mfem::CoarseFineTransformations &cf,
+                       int e, int f)
+{
+  const auto &emb = cf.embeddings[e];
+  const auto root_geom = static_cast<mfem::Geometry::Type>(emb.geom);
+  const mfem::DenseMatrix &pm = cf.point_matrices[root_geom](emb.matrix);
+  std::vector<Point> x;
+  for (auto v : GetReferenceFacetVertices(mesh.GetElementGeometry(e), f))
+  {
+    x.push_back(
+        {pm(0, v), (pm.Height() > 1) ? pm(1, v) : 0.0, (pm.Height() > 2) ? pm(2, v) : 0.0});
+  }
+  const int facet = FindReferenceFacet(root_geom, x);
+  if (facet < 0)
+  {
+    return {emb.parent, -1, 0.0};
+  }
+  const auto &t = GetReferenceTopology(root_geom);
+  std::vector<Point> y;
+  for (auto v : GetReferenceFacetVertices(root_geom, facet))
+  {
+    y.push_back(t.verts[v]);
+  }
+  return {emb.parent, facet, Measure(x) / Measure(y)};
+}
+
+// Gather lists of values of all processes on the root process.
+template <typename T>
+std::vector<T> GatherOnRoot(MPI_Comm comm, const std::vector<T> &local)
+{
+  const int num_procs = Mpi::Size(comm);
+  int count = static_cast<int>(local.size());
+  std::vector<int> counts(Mpi::Root(comm) ? num_procs : 0), displs(counts.size(), 0);
+  MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+  for (std::size_t p = 1; p < counts.size(); p++)
+  {
+    displs[p] = displs[p - 1] + counts[p - 1];
+  }
+  std::vector<T> global(counts.empty() ? 0 : displs.back() + counts.back());
+  MPI_Gatherv(local.data(), count, mpi::DataType<T>(), global.data(), counts.data(),
+              displs.data(), mpi::DataType<T>(), 0, comm);
+  return global;
+}
+
+// The sides of a coarse element (split entities, versions, carriers, and side label), as
+// integers for communication.
+constexpr int sides_stride = 7;
+
+void PackSides(const CrackSides &sides, int e, std::int64_t *entry)
+{
+  entry[0] = sides.split[e];
+  for (int w = 0; w < 4; w++)
+  {
+    entry[1 + w] = sides.version[e][w];
+  }
+  entry[5] = static_cast<std::int64_t>(sides.carrier[e]);
+  entry[6] = sides.side[e];
+}
+
+void UnpackSides(const std::int64_t *entry, CrackSides &sides, int e)
+{
+  sides.split[e] = static_cast<std::uint32_t>(entry[0]);
+  for (int w = 0; w < 4; w++)
+  {
+    sides.version[e][w] = static_cast<std::uint32_t>(entry[1 + w]);
+  }
+  sides.carrier[e] = static_cast<std::uint64_t>(entry[5]);
+  sides.side[e] = entry[6];
+}
+
+}  // namespace
+
+bool ComputeRootCrackSides(const mfem::ParMesh &cmesh,
+                           const mfem::Array<int> &bdr_attr_marker,
+                           RootCrackSides &root_sides)
+{
+  // The face information of mfem::ParMesh requires the face neighbor data.
+  auto &mesh = const_cast<mfem::ParMesh &>(cmesh);
+  MPI_Comm comm = mesh.GetComm();
+  const int dim = mesh.Dimension();
+  MFEM_VERIFY(mesh.Nonconforming(),
+              "Interior boundary sides of root elements require a nonconforming mesh!");
+  auto &ncmesh = *mesh.ncmesh;
+  const int num_roots = ncmesh.GetNumRootElements();
+  mfem::CoarseFineTransformations cf;
+  ncmesh.GetRootTransforms(cf);
+  mesh.ExchangeFaceNbrData();
+
+  // The faces of the root elements carrying a marked boundary attribute, and those on the
+  // exterior boundary, from the faces of the local elements lying on them (as pairs of the
+  // root element and its local face, with the fraction of the root element face covered by
+  // marked faces). Interior boundaries must be unions of faces of the root elements.
+  int valid = 1;
+  std::vector<int> sheet, exterior;
+  std::vector<double> sheet_fraction;
+  auto Append = [&](std::vector<int> &list, int e, int f)
+  {
+    const auto [root, facet, fraction] = GetRootFacet(mesh, cf, e, f);
+    valid = valid && (facet >= 0);
+    list.push_back(root);
+    list.push_back(facet);
+    return fraction;
+  };
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const int attr = mesh.GetBdrAttribute(be);
+    if (attr > 0 && attr <= bdr_attr_marker.Size() && bdr_attr_marker[attr - 1])
+    {
+      int e, info;
+      mesh.GetBdrElementAdjacentElement(be, e, info);
+      sheet_fraction.push_back(Append(sheet, e, info / 64));
+    }
+  }
+  for (int f = 0; f < mesh.GetNumFaces(); f++)
+  {
+    const auto finfo = mesh.GetFaceInformation(f);
+    if (finfo.IsBoundary())
+    {
+      Append(exterior, finfo.element[0].index, finfo.element[0].local_face_id);
+    }
+  }
+  Mpi::GlobalMin(1, &valid, comm);
+  if (!valid)
+  {
+    return false;
+  }
+  const auto global_sheet = GatherOnRoot(comm, sheet);
+  const auto global_sheet_fraction = GatherOnRoot(comm, sheet_fraction);
+  const auto global_exterior = GatherOnRoot(comm, exterior);
+
+  // Rebuild the coarsest mesh on the root process, topologically (the sides do not depend
+  // on the vertex coordinates), with the root elements in order and boundary elements for
+  // the marked faces. Without hanging vertices, its boundary faces are the exterior
+  // boundary of the domain.
+  CrackSides all_sides;
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh root_mesh(dim, 0, num_roots, 0, dim);
+    std::unordered_map<int, int> node_vertex;
+    std::vector<std::vector<int>> root_vertices(num_roots);
+    mfem::Array<int> nodes;
+    const double origin[3] = {0.0, 0.0, 0.0};
+    for (int r = 0; r < num_roots; r++)
+    {
+      ncmesh.GetElementCornerNodes(r, nodes);
+      for (auto node : nodes)
+      {
+        auto [it, inserted] = node_vertex.try_emplace(node, root_mesh.GetNV());
+        if (inserted)
+        {
+          root_mesh.AddVertex(origin);
+        }
+        root_vertices[r].push_back(it->second);
+      }
+      const auto &el = ncmesh.GetElement(r);
+      auto *root = root_mesh.NewElement(el.Geom());
+      root->SetVertices(root_vertices[r].data());
+      root->SetAttribute(el.GetAttribute());
+      root_mesh.AddElement(root);
+    }
+    std::map<std::vector<int>, double> facets;  // Covered fraction of each marked face
+    for (std::size_t i = 0; i < global_sheet.size(); i += 2)
+    {
+      const int r = global_sheet[i], k = global_sheet[i + 1];
+      const auto geom = ncmesh.GetElement(r).Geom();
+      std::vector<int> v;
+      for (auto lv : GetReferenceFacetVertices(geom, k))
+      {
+        v.push_back(root_vertices[r][lv]);
+      }
+      std::vector<int> key(v);
+      std::sort(key.begin(), key.end());
+      auto [it, inserted] = facets.try_emplace(key, 0.0);
+      it->second += global_sheet_fraction[i / 2];
+      if (inserted)
+      {
+        auto *facet =
+            root_mesh.NewElement((dim == 3) ? ((v.size() == 3) ? mfem::Geometry::TRIANGLE
+                                                               : mfem::Geometry::SQUARE)
+                                            : mfem::Geometry::SEGMENT);
+        facet->SetVertices(v.data());
+        facet->SetAttribute(1);
+        root_mesh.AddBdrElement(facet);
+      }
+    }
+    root_mesh.FinalizeTopology(false);
+
+    // The marked faces of the root elements must be covered by marked faces (at least once:
+    // boundary elements may be duplicated).
+    for (const auto &[key, fraction] : facets)
+    {
+      valid = valid && (fraction > 1.0 - 1.0e-8);
+    }
+
+    // The faces of the rebuilt mesh with a single element must be exterior faces, and
+    // conversely, which fails for root elements with hanging vertices.
+    std::set<std::pair<int, int>> exterior_facets;
+    for (std::size_t i = 0; i < global_exterior.size(); i += 2)
+    {
+      exterior_facets.emplace(global_exterior[i], global_exterior[i + 1]);
+    }
+    std::size_t num_boundary = 0;
+    for (int f = 0; f < root_mesh.GetNumFaces() && valid; f++)
+    {
+      int e1, e2, inf1, inf2;
+      root_mesh.GetFaceElements(f, &e1, &e2);
+      root_mesh.GetFaceInfos(f, &inf1, &inf2);
+      if (e2 < 0)
+      {
+        num_boundary++;
+        valid = exterior_facets.count({e1, inf1 / 64}) > 0;
+      }
+    }
+    valid = valid && (num_boundary == exterior_facets.size());
+    if (valid)
+    {
+      mfem::Array<int> partitioning(num_roots), marker(1);
+      partitioning = 0;
+      marker = 1;
+      mfem::ParMesh root_pmesh(MPI_COMM_SELF, root_mesh, partitioning.HostRead());
+      all_sides = ComputeCrackSides(root_pmesh, marker);
+    }
+  }
+  Mpi::Broadcast(1, &valid, 0, comm);
+  if (!valid)
   {
     return false;
   }
 
-  // Gather a copy of the mesh on the root process, keeping track of the process and local
-  // index of each element (the element ordering after rebalancing is not specified). The
-  // copy needs its own nodes, which would otherwise be shared with (and modified for) the
-  // original mesh.
-  mfem::ParMesh gmesh(mesh, true);
-  std::vector<int> orig_rank, orig_index;
+  // Distribute the sides of the root elements in contiguous blocks.
+  const int num_procs = Mpi::Size(comm);
+  root_sides.offsets.resize(num_procs + 1);
+  for (int p = 0; p <= num_procs; p++)
   {
-    mfem::L2_FECollection fec(0, dim);
-    mfem::ParFiniteElementSpace fespace(&gmesh, &fec, 2);
-    mfem::ParGridFunction id(&fespace);
-    auto *h_id = id.HostWrite();
-    for (int e = 0; e < ne; e++)
+    root_sides.offsets[p] =
+        static_cast<int>(static_cast<std::int64_t>(num_roots) * p / num_procs);
+  }
+  std::vector<int> counts(num_procs), displs(num_procs);
+  for (int p = 0; p < num_procs; p++)
+  {
+    counts[p] = sides_stride * (root_sides.offsets[p + 1] - root_sides.offsets[p]);
+    displs[p] = sides_stride * root_sides.offsets[p];
+  }
+  std::vector<std::int64_t> send;
+  if (Mpi::Root(comm))
+  {
+    send.resize(sides_stride * static_cast<std::size_t>(num_roots));
+    for (int r = 0; r < num_roots; r++)
     {
-      h_id[e] = Mpi::Rank(comm);
-      h_id[ne + e] = e;
-    }
-    mfem::Array<int> partition(ne);
-    partition = 0;
-    gmesh.Rebalance(partition);
-    fespace.Update();
-    id.Update();
-    const int gne = gmesh.GetNE();
-    const auto *h_gid = id.HostRead();
-    orig_rank.resize(gne);
-    orig_index.resize(gne);
-    for (int e = 0; e < gne; e++)
-    {
-      orig_rank[e] = static_cast<int>(std::lround(h_gid[e]));
-      orig_index[e] = static_cast<int>(std::lround(h_gid[gne + e]));
+      PackSides(all_sides, r, send.data() + sides_stride * static_cast<std::size_t>(r));
     }
   }
-
-  // Derefine until there are no hanging entities, one level of the refinement hierarchy at
-  // a time, keeping the fine element geometries and derefinement transformations.
-  struct Level
-  {
-    std::vector<mfem::Geometry::Type> fine_geoms;
-    mfem::CoarseFineTransformations cf;
-  };
-  std::vector<Level> levels;
-  while (HasHangingEntities(gmesh))
-  {
-    Level level;
-    level.fine_geoms = GetElementGeometries(gmesh);
-    mfem::Vector zero(gmesh.GetNE());
-    zero = 0.0;
-    if (!gmesh.DerefineByError(zero, 1.0))
-    {
-      return false;  // The coarsest mesh of the hierarchy has hanging entities
-    }
-    level.cf = gmesh.pncmesh->GetDerefinementTransforms();
-    levels.push_back(std::move(level));
-  }
-
-  // Discover the sides on the coarsest mesh and inherit them through the refinements.
-  CrackSides gsides = ComputeCrackSides(gmesh, bdr_attr_marker);
-  for (auto it = levels.rbegin(); it != levels.rend(); ++it)
-  {
-    gsides = InheritCrackSides(dim, it->fine_geoms, it->cf, gsides);
-  }
-
-  // Send the sides of each element back to its process: the local element index, the split
-  // entities, the versions, the carriers, and the side label.
-  constexpr int stride = 8;
-  const int num_procs = Mpi::Size(comm), gne = static_cast<int>(orig_rank.size());
-  std::vector<int> counts(num_procs, 0), displs(num_procs, 0);
-  for (int e = 0; e < gne; e++)
-  {
-    counts[orig_rank[e]] += stride;
-  }
-  for (int p = 1; p < num_procs; p++)
-  {
-    displs[p] = displs[p - 1] + counts[p - 1];
-  }
-  std::vector<std::int64_t> send(stride * static_cast<std::size_t>(gne)),
-      recv(stride * static_cast<std::size_t>(ne));
-  {
-    std::vector<int> pos(displs);
-    for (int e = 0; e < gne; e++)
-    {
-      auto *entry = send.data() + pos[orig_rank[e]];
-      entry[0] = orig_index[e];
-      entry[1] = gsides.split[e];
-      for (int w = 0; w < 4; w++)
-      {
-        entry[2 + w] = gsides.version[e][w];
-      }
-      entry[6] = static_cast<std::int64_t>(gsides.carrier[e]);
-      entry[7] = gsides.side[e];
-      pos[orig_rank[e]] += stride;
-    }
-  }
-  int recv_count = 0;
-  MPI_Scatter(counts.data(), 1, MPI_INT, &recv_count, 1, MPI_INT, 0, comm);
-  MFEM_VERIFY(recv_count == stride * ne,
-              "Unexpected element count when reconstructing interior boundary sides!");
+  const int rank = Mpi::Rank(comm);
+  const int num_local = root_sides.offsets[rank + 1] - root_sides.offsets[rank];
+  std::vector<std::int64_t> recv(sides_stride * static_cast<std::size_t>(num_local));
   MPI_Scatterv(send.data(), counts.data(), displs.data(), MPI_INT64_T, recv.data(),
-               stride * ne, MPI_INT64_T, 0, comm);
-  sides.Reset(ne);
-  for (int i = 0; i < ne; i++)
+               counts[rank], MPI_INT64_T, 0, comm);
+  root_sides.sides.Reset(num_local);
+  for (int i = 0; i < num_local; i++)
   {
-    const auto *entry = recv.data() + stride * static_cast<std::size_t>(i);
-    const auto e = static_cast<std::size_t>(entry[0]);
-    sides.split[e] = static_cast<std::uint32_t>(entry[1]);
-    for (int w = 0; w < 4; w++)
-    {
-      sides.version[e][w] = static_cast<std::uint32_t>(entry[2 + w]);
-    }
-    sides.carrier[e] = static_cast<std::uint64_t>(entry[6]);
-    sides.side[e] = entry[7];
+    UnpackSides(recv.data() + sides_stride * static_cast<std::size_t>(i), root_sides.sides,
+                i);
   }
   return true;
+}
+
+CrackSides InheritRootCrackSides(const mfem::ParMesh &mesh,
+                                 const RootCrackSides &root_sides)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int num_procs = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  MFEM_VERIFY(mesh.Nonconforming() &&
+                  static_cast<int>(root_sides.offsets.size()) == num_procs + 1 &&
+                  root_sides.offsets.back() == mesh.ncmesh->GetNumRootElements(),
+              "Interior boundary sides of root elements do not match the mesh!");
+  mfem::CoarseFineTransformations cf;
+  mesh.ncmesh->GetRootTransforms(cf);
+  const int ne = mesh.GetNE();
+
+  // Request the sides of the root elements of the local elements from the processes
+  // holding them.
+  std::vector<int> roots(ne);
+  for (int e = 0; e < ne; e++)
+  {
+    roots[e] = cf.embeddings[e].parent;
+  }
+  std::sort(roots.begin(), roots.end());
+  roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+  std::vector<int> send_counts(num_procs, 0), recv_counts(num_procs);
+  for (auto r : roots)
+  {
+    const auto it =
+        std::upper_bound(root_sides.offsets.begin(), root_sides.offsets.end(), r);
+    send_counts[std::distance(root_sides.offsets.begin(), it) - 1]++;
+  }
+  MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT, comm);
+  std::vector<int> send_displs(num_procs, 0), recv_displs(num_procs, 0);
+  for (int p = 1; p < num_procs; p++)
+  {
+    send_displs[p] = send_displs[p - 1] + send_counts[p - 1];
+    recv_displs[p] = recv_displs[p - 1] + recv_counts[p - 1];
+  }
+  std::vector<int> requests(recv_displs.back() + recv_counts.back());
+  MPI_Alltoallv(roots.data(), send_counts.data(), send_displs.data(), MPI_INT,
+                requests.data(), recv_counts.data(), recv_displs.data(), MPI_INT, comm);
+
+  // Answer the requests, and receive the sides of the root elements of the local elements,
+  // in the order of the sorted list of root elements.
+  std::vector<std::int64_t> answers(sides_stride * requests.size()),
+      received(sides_stride * roots.size());
+  for (std::size_t i = 0; i < requests.size(); i++)
+  {
+    const int r = requests[i] - root_sides.offsets[rank];
+    MFEM_ASSERT(r >= 0 && r < static_cast<int>(root_sides.sides.split.size()),
+                "Invalid request for the sides of a root element!");
+    PackSides(root_sides.sides, r, answers.data() + sides_stride * i);
+  }
+  for (int p = 0; p < num_procs; p++)
+  {
+    send_counts[p] *= sides_stride;
+    send_displs[p] *= sides_stride;
+    recv_counts[p] *= sides_stride;
+    recv_displs[p] *= sides_stride;
+  }
+  MPI_Alltoallv(answers.data(), recv_counts.data(), recv_displs.data(), MPI_INT64_T,
+                received.data(), send_counts.data(), send_displs.data(), MPI_INT64_T, comm);
+  CrackSides coarse_sides;
+  coarse_sides.Reset(roots.size());
+  std::vector<mfem::Geometry::Type> coarse_geoms(roots.size());
+  for (std::size_t i = 0; i < roots.size(); i++)
+  {
+    UnpackSides(received.data() + sides_stride * i, coarse_sides, static_cast<int>(i));
+    coarse_geoms[i] = mesh.ncmesh->GetElement(roots[i]).Geom();
+  }
+
+  // Inherit the sides from the root elements, numbered locally.
+  for (int e = 0; e < ne; e++)
+  {
+    auto &emb = cf.embeddings[e];
+    emb.parent = static_cast<int>(std::distance(
+        roots.begin(), std::lower_bound(roots.begin(), roots.end(), emb.parent)));
+  }
+  return InheritCrackSides(mesh.Dimension(), GetElementGeometries(mesh), cf, coarse_sides,
+                           std::move(coarse_geoms));
 }
 
 }  // namespace mesh

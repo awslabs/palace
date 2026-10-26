@@ -103,10 +103,9 @@ std::vector<CrossSectionFace> GetCrossSectionFaces(const mfem::Mesh &mesh,
 }
 
 // Derefine a nonconforming 3D mesh until it has no hanging entities, one level of its
-// refinement hierarchy at a time as in mesh::ReconstructCrackSides, and return the number
-// of levels derefined. The mesh is not modified if its refinements cannot be derefined
-// (pyramids, anisotropic refinements), and only partially derefined if the coarsest mesh
-// of the hierarchy has hanging entities.
+// refinement hierarchy at a time, and return the number of levels derefined. The mesh is
+// not modified if its refinements cannot be derefined (pyramids, anisotropic refinements),
+// and only partially derefined if the coarsest mesh of the hierarchy has hanging entities.
 int DerefineToConforming(mfem::Mesh &mesh)
 {
   auto Hanging = [&mesh]()

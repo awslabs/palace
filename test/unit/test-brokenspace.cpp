@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -643,7 +644,6 @@ void RefineWhere(Mesh &mesh, Predicate &&pred)
     }
   }
   pmesh.GeneralRefinement(marked, 1, 0);
-  mesh.RefineCrackSides();
 }
 
 }  // namespace
@@ -883,6 +883,119 @@ TEST_CASE("Interior boundary sides through refinement", "[brokenspace][Serial][P
   CHECK((num_same_copy == num_split || num_flipped_copy == num_split));
 }
 
+TEST_CASE("Interior boundary sides of root elements", "[brokenspace][Serial][Parallel]")
+{
+  // After nonconforming refinements next to the interior boundary, which leave hanging
+  // entities, the sides inherited from the root elements are those inherited through each
+  // refinement (up to the numbering of the copies of each split entity), also for the
+  // tetrahedral children of pyramids and for anisotropic refinements.
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
+                             mfem::Element::WEDGE, mfem::Element::PYRAMID,
+                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const double y_max = GENERATE(1.0, 0.5);
+  const bool aniso = (type == mfem::Element::HEXAHEDRON && y_max < 1.0);
+  CAPTURE(type, y_max);
+  auto smesh = MakeCrackedCubeMesh(4, type, y_max);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  mfem::ParMesh pmesh(comm, smesh, part.data());
+  mfem::Array<int> marker(crack_attr);
+  marker = 0;
+  marker[crack_attr - 1] = 1;
+  auto sides = mesh::ComputeCrackSides(pmesh, marker);
+  for (int level = 0; level < 2; level++)
+  {
+    mfem::Array<mfem::Refinement> refs;
+    mfem::Vector c;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      pmesh.GetElementCenter(e, c);
+      if (std::abs(c(0) - x_crack) < 0.3 && c(1) < 0.5)
+      {
+        refs.Append(aniso ? mfem::Refinement(e, (level == 0) ? mfem::Refinement::X
+                                                             : mfem::Refinement::YZ)
+                          : mfem::Refinement(e));
+      }
+    }
+    pmesh.GeneralRefinement(refs, 1, 0);
+    sides = mesh::InheritCrackSides(pmesh, pmesh.GetRefinementTransforms(), sides);
+  }
+  REQUIRE(mesh::HasHangingEntities(pmesh));
+  RootCrackSides root_sides;
+  REQUIRE(mesh::ComputeRootCrackSides(pmesh, marker, root_sides));
+  const auto inherited = mesh::InheritRootCrackSides(pmesh, root_sides);
+
+  // The split entities and their carriers agree, and the versions of each split entity
+  // correspond one to one.
+  int num_split = 0, num_diff_split = 0, num_diff_carrier = 0, num_diff_version = 0;
+  std::map<std::pair<int, int>, std::map<int, int>> to_inherited, to_sides;
+  mfem::Array<int> verts, edges, faces, ori;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    const auto split = sides.split[e];
+    num_split += (split != 0);
+    num_diff_split += (inherited.split[e] != split);
+    pmesh.GetElementVertices(e, verts);
+    pmesh.GetElementEdges(e, edges, ori);
+    if (pmesh.Dimension() == 3)
+    {
+      pmesh.GetElementFaces(e, faces, ori);
+    }
+    for (int b = 0; b < 32; b++)
+    {
+      if (!((split >> b) & 1u))
+      {
+        continue;
+      }
+      num_diff_carrier += (inherited.GetCarrier(e, b) != sides.GetCarrier(e, b));
+      const std::pair<int, int> entity =
+          (b < verts.Size()) ? std::pair{0, verts[b]}
+          : (b < verts.Size() + edges.Size())
+              ? std::pair{1, edges[b - verts.Size()]}
+              : std::pair{2, faces[b - verts.Size() - edges.Size()]};
+      const int v = sides.GetVersion(e, b), w = inherited.GetVersion(e, b);
+      num_diff_version += (to_inherited[entity].try_emplace(v, w).first->second != w);
+      num_diff_version += (to_sides[entity].try_emplace(w, v).first->second != v);
+    }
+  }
+  Mpi::GlobalSum(1, &num_split, comm);
+  Mpi::GlobalSum(1, &num_diff_split, comm);
+  Mpi::GlobalSum(1, &num_diff_carrier, comm);
+  Mpi::GlobalSum(1, &num_diff_version, comm);
+  INFO("split " << num_split << ", diff. split " << num_diff_split << ", diff. carrier "
+                << num_diff_carrier << ", diff. version " << num_diff_version);
+  CHECK(num_split > 0);
+  CHECK(num_diff_split == 0);
+  CHECK(num_diff_carrier == 0);
+  CHECK(num_diff_version == 0);
+
+  // The interior boundary must be a union of faces of the root elements: not when part of
+  // a refined root element face is removed from it.
+  int num_removed = 0;
+  for (int be = 0; be < pmesh.GetNBE(); be++)
+  {
+    pmesh.GetBdrElementVertices(be, verts);
+    double c[3] = {0.0, 0.0, 0.0};
+    for (auto v : verts)
+    {
+      for (int d = 0; d < pmesh.SpaceDimension(); d++)
+      {
+        c[d] += pmesh.GetVertex(v)[d] / verts.Size();
+      }
+    }
+    if (pmesh.GetBdrAttribute(be) == crack_attr && c[1] < 0.1 &&
+        (pmesh.Dimension() < 3 || c[2] < 0.1))
+    {
+      pmesh.SetBdrAttribute(be, crack_attr + 1);
+      num_removed++;
+    }
+  }
+  Mpi::GlobalSum(1, &num_removed, comm);
+  REQUIRE(num_removed > 0);
+  CHECK_FALSE(mesh::ComputeRootCrackSides(pmesh, marker, root_sides));
+}
+
 TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
 {
   const auto comm = MPI_COMM_WORLD;
@@ -1076,11 +1189,11 @@ TEST_CASE("Broken space error estimators",
     CompareEstimates(comm, grad_cut, grad_cut_ref, "gradient flux (cut)");
     CompareEstimates(comm, curl_cut, curl_cut_ref, "curl flux (cut)");
 
-    // The same with algebraic multigrid preconditioning, on the assembled operators.
-    const auto [grad_amg, curl_amg] =
-        uncut_setup.Estimate(SmoothE, SmoothB, attr_list, true);
-    CompareEstimates(comm, grad_amg, grad_broken, "gradient flux (AMG vs. Jacobi)");
-    CompareEstimates(comm, curl_amg, curl_broken, "curl flux (AMG vs. Jacobi)");
+    // With multigrid requested, the broken spaces still use Jacobi preconditioning (without
+    // a multigrid hierarchy), so the estimates are the same.
+    const auto [grad_mg, curl_mg] = uncut_setup.Estimate(SmoothE, SmoothB, attr_list, true);
+    CompareEstimates(comm, grad_mg, grad_broken, "gradient flux (multigrid requested)");
+    CompareEstimates(comm, curl_mg, curl_broken, "curl flux (multigrid requested)");
 
     // Without the broken recovery the estimates differ.
     const auto [grad_cont, curl_cont] =
@@ -1228,11 +1341,11 @@ TEST_CASE("Broken space error estimators (nonconforming)",
     Compare(grad_broken, grad_cut, "gradient flux (broken vs. cut)");
     Compare(curl_broken, curl_cut, "curl flux (broken vs. cut)");
 
-    // The same with algebraic multigrid preconditioning, on the assembled operators.
-    const auto [grad_amg, curl_amg] =
-        uncut_setup.Estimate(SmoothE, SmoothB, attr_list, true);
-    CompareEstimates(comm, grad_amg, grad_broken, "gradient flux (AMG vs. Jacobi)");
-    CompareEstimates(comm, curl_amg, curl_broken, "curl flux (AMG vs. Jacobi)");
+    // With multigrid requested, the broken spaces still use Jacobi preconditioning (without
+    // a multigrid hierarchy), so the estimates are the same.
+    const auto [grad_mg, curl_mg] = uncut_setup.Estimate(SmoothE, SmoothB, attr_list, true);
+    CompareEstimates(comm, grad_mg, grad_broken, "gradient flux (multigrid requested)");
+    CompareEstimates(comm, curl_mg, curl_broken, "curl flux (multigrid requested)");
   }
 
   SECTION("Exact recovery of a jump with hanging entities across the interior boundary")
@@ -1291,11 +1404,95 @@ TEST_CASE("Broken space error estimators (nonconforming)",
   }
 }
 
+TEST_CASE("Broken space error estimators (nonconforming input mesh)",
+          "[brokenspace][errorestimator][Serial][Parallel]")
+{
+  // A nonconforming input mesh, refined before the simulation, with pyramids or with
+  // anisotropic refinements, whose interior boundary sides are inherited from those of its
+  // root elements. With the same refinement on both sides of the interior boundary, the
+  // estimates with the broken spaces are those of the cut mesh refined in the same way.
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::PYRAMID, mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON},
+      {mfem::Element::PYRAMID, mfem::Element::HEXAHEDRON})));
+  CAPTURE(type);
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {2.0, 3.0, 4.0};
+  material.mu_r.s = {1.0, 1.5, 2.0};
+  config::PeriodicBoundaryData periodic;
+
+  // Two levels of refinement of the elements touching the interior boundary (for y < 0.5),
+  // anisotropic (normal to it) for the mesh of hexahedra, and of the tetrahedral children
+  // of the pyramids. The refinement is the same on both sides of the interior boundary (the
+  // estimates differ where only one side is refined). MFEM does not refine meshes with
+  // pyramids and nodes, so the meshes are refined before creating the setups.
+  auto smesh = MakeCrackedCubeMesh(4, type);
+  auto cut = CutMesh(smesh);
+  for (auto *m : {&smesh, &cut})
+  {
+    m->EnsureNCMesh(true);
+    for (int level = 0; level < 2; level++)
+    {
+      mfem::Array<mfem::Refinement> refs;
+      mfem::Array<int> v;
+      mfem::Vector c;
+      for (int e = 0; e < m->GetNE(); e++)
+      {
+        m->GetElementCenter(e, c);
+        m->GetElementVertices(e, v);
+        if (c(1) < 0.5 &&
+            std::any_of(v.begin(), v.end(), [&](int i)
+                        { return std::abs(m->GetVertex(i)[0] - x_crack) < 1.0e-12; }))
+        {
+          refs.Append((type == mfem::Element::HEXAHEDRON)
+                          ? mfem::Refinement(e, mfem::Refinement::X)
+                          : mfem::Refinement(e));
+        }
+      }
+      m->GeneralRefinement(refs, 1, 0);
+    }
+  }
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto cut_part = Partition(cut, Mpi::Size(comm));
+  EstimatorSetup uncut_setup(comm, smesh, part, order, material, periodic);
+  EstimatorSetup cut_setup(comm, cut, cut_part, order, material, periodic);
+  REQUIRE(mesh::HasHangingEntities(uncut_setup.mesh.Get()));
+  const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
+  int any_split = uncut_setup.mesh.GetCrackSides(attr_list).Any();
+  Mpi::GlobalMax(1, &any_split, comm);
+  REQUIRE(any_split);
+
+  const auto [grad_broken, curl_broken] = uncut_setup.Estimate(SmoothE, SmoothB, attr_list);
+  const auto [grad_cut, curl_cut] = cut_setup.Estimate(SmoothE, SmoothB, no_attr_list);
+  auto Compare = [&](const Vector &a, const Vector &b, const char *what)
+  {
+    const auto sa = SortByCenter(uncut_setup.mesh, a);
+    const auto sb = SortByCenter(cut_setup.mesh, b);
+    CHECK(sa.size() == sb.size());  // Not REQUIRE: the reductions below are collective
+    double max_diff = 0.0, max_ref = 0.0;
+    for (std::size_t i = 0; i < std::min(sa.size(), sb.size()); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(sa[i] - sb[i]));
+      max_ref = std::max(max_ref, std::abs(sb[i]));
+    }
+    Mpi::GlobalMax(1, &max_diff, comm);
+    Mpi::GlobalMax(1, &max_ref, comm);
+    INFO(what << ": max. difference " << max_diff << " (max. estimate " << max_ref << ")");
+    CHECK(max_diff <= 1.0e-8 * max_ref + 1.0e-14);
+  };
+  Compare(grad_broken, grad_cut, "gradient flux (broken vs. cut)");
+  Compare(curl_broken, curl_cut, "curl flux (broken vs. cut)");
+}
+
 TEST_CASE("Broken space error estimators (saved nonconforming mesh)",
           "[brokenspace][errorestimator][Serial][Parallel]")
 {
   // A nonconforming mesh refined in a previous simulation, saved and loaded as for a
-  // restart: the interior boundary sides are reconstructed from the refinement hierarchy.
+  // restart: the interior boundary sides are inherited from the root elements of its
+  // refinement hierarchy.
   const auto comm = MPI_COMM_WORLD;
   const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {1})));
   const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
@@ -1625,7 +1822,7 @@ TEST_CASE("Broken space error estimators (2D nonconforming mesh without history)
           "[brokenspace][errorestimator][Serial][Parallel]")
 {
   // A mesh refined before its interior boundary sides are computed, as one loaded from a
-  // previous simulation: the sides are reconstructed from the refinement hierarchy. The
+  // previous simulation: the sides are inherited from the root elements. The
   // refinement is the same on both sides of the interior boundary, for the equivalence with
   // a cut mesh (the limits in y are on element boundaries, so that the triangles on both
   // sides of an interior boundary edge are refined alike).

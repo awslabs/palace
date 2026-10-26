@@ -102,15 +102,16 @@ private:
   // which are broken across interior boundaries (see fem/brokenspace.hpp), for the sorted
   // list of boundary attributes forming the interior boundaries. The sides are valid for
   // the mesh object and sequence number they were computed for. On a nonconforming mesh
-  // they are carried through refinement and rebalancing, since they cannot be discovered in
-  // the presence of hanging entities.
+  // with hanging entities, where they cannot be discovered, they are inherited from those
+  // of the root elements of the mesh, which are computed once for the mesh object.
   mutable std::vector<int> crack_attr_list;
   mutable CrackSides crack_sides;
   mutable const mfem::ParMesh *crack_mesh = nullptr;
   mutable long crack_sequence = -1;
-  std::unique_ptr<mfem::L2_FECollection> crack_fec;
-  std::unique_ptr<mfem::ParFiniteElementSpace> crack_fespace;
-  std::unique_ptr<mfem::ParGridFunction> crack_gf;
+  mutable std::vector<int> root_crack_attr_list;
+  mutable RootCrackSides root_crack_sides;
+  mutable const mfem::ParMesh *root_crack_mesh = nullptr;
+  mutable bool root_crack_valid = false;
 
 public:
   template <typename... T>
@@ -195,12 +196,6 @@ public:
   // formed by the given boundary attributes (see fem/brokenspace.hpp), computed on first
   // use. Collective.
   const CrackSides &GetCrackSides(const std::vector<int> &attr_list) const;
-
-  // Update the interior boundary sides after a refinement of the mesh, before any other
-  // modification such as rebalancing: on a nonconforming mesh they are inherited from the
-  // parent elements and followed through a subsequent rebalance (completed in Update()),
-  // otherwise they are recomputed when needed. Collective.
-  void RefineCrackSides();
 
   auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }
   auto MaxCeedBdrAttribute() const
