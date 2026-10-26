@@ -181,11 +181,14 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   {
     out.first_target_stats = mode_solver.GetReducedModelStats();
     out.first_target_basis_size = mode_solver.GetReducedBasisSize();
+    // The final evaluation may converge a different number of modes than the first one,
+    // for example a reduced solve after an exact fallback.
+    int final_converged = result.num_converged;
     for (int i = 1; i < reduced_evaluations; i++)
     {
-      solve_at(omega);
+      final_converged = solve_at(omega).first.num_converged;
     }
-    for (int i = 0; i < result.num_converged; i++)
+    for (int i = 0; i < final_converged; i++)
     {
       out.final_kn.push_back(mode_solver.GetPropagationConstant(i));
       out.final_reduced_backward_errors.push_back(
@@ -608,8 +611,15 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   CHECK(exact.reduced_stats.reduced_solves == 0);
   CHECK(exact.reduced_stats.exact_solves == 1);
 
+  // The mode shapes of the homogeneous waveguide do not depend on frequency, so the
+  // eigenvectors of the second training solve only differ from the basis by their errors,
+  // which are added to the basis if they exceed its orthogonalization tolerance. With the
+  // default eigenvalue tolerance, these errors are close to that tolerance, so whether they
+  // are added, which can make the first reduced solve fall back to an exact solve, depends
+  // on roundoff. Solve the eigenproblems accurately to keep the errors well below it.
   auto reduced = SolveRectangularModes(
-      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, 21);
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, 21, 16, {0.9, 1.1},
+      1.0e-3, 1.0e-12);
   REQUIRE(reduced.num_converged >= num_modes);
   REQUIRE(reduced.reduced_basis_size >= num_modes);
   CHECK(reduced.reduced_stats.reduced_solves == 21);
