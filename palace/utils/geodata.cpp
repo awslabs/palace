@@ -1468,134 +1468,182 @@ void RemapSubMeshAttributes(SubMeshT &submesh)
 namespace
 {
 
-// Points along a mesh edge, uniformly spaced in its reference coordinate: its endpoints for
-// straight-sided meshes, or EDGE_SAMPLES + 1 points for curved meshes. Nonconforming
-// refinement splits edges at their reference midpoints, so the endpoints of descendant
-// edges (up to log2(EDGE_SAMPLES) levels) are among the points of their ancestors.
-constexpr int EDGE_SAMPLES = 16;
+// The submesh boundary edges and parent boundary face edges matched below can be owned by
+// different processes, and on a nonconforming mesh one can contain the other rather than
+// equal it. Neither the ParMesh vertex or edge numbering, nor the NCMesh node ids, nor the
+// slave/master classification of edges (which only reflects the elements a process sees)
+// identify an edge consistently across processes after parallel refinement and
+// rebalancing, so edges are matched geometrically: an edge contains another if the
+// endpoints of the other lie on it. This is tested on the process which owns the
+// containing edge, where its exact (possibly curved) geometry is available, against the
+// endpoints of the edges of all processes. Each matching is done in both directions, once
+// with each set of edges gathered.
 
-int NumEdgePoints(const mfem::Mesh &mesh)
-{
-  const bool curved =
-      mesh.GetNodes() && mesh.GetNodes()->FESpace()->GetMaxElementOrder() > 1;
-  return curved ? EDGE_SAMPLES + 1 : 2;
-}
+// Tolerance of the containment test, relative to the edge lengths. The two sides of a
+// cracked internal boundary are only separated by CrackDisplacementFactor (by default
+// 1.0e-12) times the mesh size, so they match as one.
+constexpr double EDGE_REL_TOL = 1.0e-6;
 
-void GetEdgePoints(const mfem::Mesh &mesh, int edge, int npts, double *pts)
+// The exact geometry of a mesh edge, for testing whether points lie on it.
+class EdgeCurve
 {
-  // Use the edge transformation rather than the vertex coordinates, which are not kept
-  // up to date with the nodes of a mesh with a nodal grid function.
-  const int sdim = mesh.SpaceDimension();
-  mfem::IsoparametricTransformation T;
-  mesh.GetEdgeTransformation(edge, &T);
-  mfem::IntegrationPoint ip;
-  mfem::Vector x(sdim);
-  for (int k = 0; k < npts; k++)
+private:
+  int sdim, order;
+  mutable mfem::IsoparametricTransformation T;
+  mutable mfem::IntegrationPoint ip;
+  // Points at the parameters k / (2 order), k = 0, ..., 2 order.
+  std::vector<double> samples;
+
+  void Eval(double t, double *x) const
   {
-    ip.x = static_cast<double>(k) / (npts - 1);
-    T.Transform(ip, x);
-    std::copy(x.GetData(), x.GetData() + sdim, pts + k * sdim);
+    ip.x = t;
+    mfem::Vector xv(x, sdim);
+    T.Transform(ip, xv);
   }
-}
 
-// Distance from a point to the polyline through npts points.
-double PolylineDistance(const double *p, const double *pts, int npts, int sdim)
-{
-  double d2 = mfem::infinity();
-  for (int k = 0; k + 1 < npts; k++)
+public:
+  std::array<double, 3> bb_min = {0.0, 0.0, 0.0}, bb_max = {0.0, 0.0, 0.0};
+  double length = 0.0;  // Distance between the endpoints
+
+  EdgeCurve(const mfem::Mesh &mesh, int edge) : sdim(mesh.SpaceDimension())
   {
-    const double *a = pts + k * sdim, *b = pts + (k + 1) * sdim;
-    double ab2 = 0.0, apab = 0.0;
+    // Use the edge transformation rather than the vertex coordinates, which are not kept
+    // up to date with the nodes of a mesh with a nodal grid function.
+    mesh.GetEdgeTransformation(edge, &T);
+    order = std::max(T.GetFE()->GetOrder(), 1);
+    const int n = 2 * order + 1;
+    samples.resize(static_cast<std::size_t>(n) * sdim);
+    for (int k = 0; k < n; k++)
+    {
+      Eval(static_cast<double>(k) / (n - 1), samples.data() + k * sdim);
+    }
+    double l2 = 0.0;
     for (int d = 0; d < sdim; d++)
     {
-      ab2 += (b[d] - a[d]) * (b[d] - a[d]);
-      apab += (p[d] - a[d]) * (b[d] - a[d]);
+      const double c = samples[(n - 1) * sdim + d] - samples[d];
+      l2 += c * c;
     }
-    const double t = (ab2 > 0.0) ? std::clamp(apab / ab2, 0.0, 1.0) : 0.0;
-    double e2 = 0.0;
+    length = std::sqrt(l2);
+    // The bounding box of the samples, enlarged to contain the curve between them.
+    const double margin = (order > 1 ? 0.25 : EDGE_REL_TOL) * length;
     for (int d = 0; d < sdim; d++)
     {
-      const double c = a[d] + t * (b[d] - a[d]) - p[d];
-      e2 += c * c;
+      bb_min[d] = mfem::infinity();
+      bb_max[d] = -mfem::infinity();
+      for (int k = 0; k < n; k++)
+      {
+        bb_min[d] = std::min(bb_min[d], samples[k * sdim + d]);
+        bb_max[d] = std::max(bb_max[d], samples[k * sdim + d]);
+      }
+      bb_min[d] -= margin;
+      bb_max[d] += margin;
     }
-    d2 = std::min(d2, e2);
   }
-  return std::sqrt(d2);
-}
 
-double PolylineLength(const double *pts, int npts, int sdim)
-{
-  double l = 0.0;
-  for (int k = 0; k + 1 < npts; k++)
+  const double *Point(int k) const { return samples.data() + k * sdim; }
+  const double *Endpoint(int k) const { return Point(k == 0 ? 0 : 2 * order); }
+
+  // Distance from a point to the curve: closest sample, then Gauss-Newton on the edge
+  // parameter, which converges in one step for straight edges.
+  double Distance(const double *p) const
   {
-    double e2 = 0.0;
-    for (int d = 0; d < sdim; d++)
+    const int n = 2 * order + 1;
+    auto Dist2 = [this, p](const double *x)
     {
-      const double c = pts[(k + 1) * sdim + d] - pts[k * sdim + d];
-      e2 += c * c;
+      double d2 = 0.0;
+      for (int d = 0; d < sdim; d++)
+      {
+        d2 += (x[d] - p[d]) * (x[d] - p[d]);
+      }
+      return d2;
+    };
+    int k0 = 0;
+    for (int k = 1; k < n; k++)
+    {
+      if (Dist2(Point(k)) < Dist2(Point(k0)))
+      {
+        k0 = k;
+      }
     }
-    l += std::sqrt(e2);
+    double t = static_cast<double>(k0) / (n - 1);
+    std::array<double, 3> x;
+    for (int it = 0; it < 20; it++)
+    {
+      Eval(t, x.data());
+      T.SetIntPoint(&ip);
+      const auto &J = T.Jacobian();
+      double g = 0.0, h = 0.0;
+      for (int d = 0; d < sdim; d++)
+      {
+        g += J(d, 0) * (x[d] - p[d]);
+        h += J(d, 0) * J(d, 0);
+      }
+      if (h <= 0.0)
+      {
+        break;
+      }
+      const double t_new = std::clamp(t - g / h, 0.0, 1.0);
+      const bool converged = std::abs(t_new - t) < 1.0e-14;
+      t = t_new;
+      if (converged)
+      {
+        break;
+      }
+    }
+    Eval(t, x.data());
+    return std::sqrt(Dist2(x.data()));
   }
-  return l;
-}
 
-// Whether one of two edges, given by their points, contains the other: the endpoints of
-// one lie on the other within a tolerance relative to the edge lengths. On a
-// nonconforming mesh an edge and its descendants are related this way, and two
-// distinct edges which are neither equal nor nested only share at most an endpoint.
-bool EdgesNested(const double *a, double a_length, const double *b, double b_length,
-                 int npts, int sdim)
-{
-  constexpr double rel_tol = 1.0e-6;
-  const double tol = rel_tol * std::max(a_length, b_length);
-  auto Contains = [&](const double *outer, const double *inner)
+  // Whether the edge with the given endpoints and length lies on this edge.
+  bool Contains(const double *p0, const double *p1, double other_length) const
   {
-    return PolylineDistance(inner, outer, npts, sdim) <= tol &&
-           PolylineDistance(inner + (npts - 1) * sdim, outer, npts, sdim) <= tol;
-  };
-  return Contains(a, b) || Contains(b, a);
-}
+    const double tol = EDGE_REL_TOL * std::max(length, other_length);
+    return Distance(p0) <= tol && Distance(p1) <= tol;
+  }
+};
 
-// A set of edges given by their points (see GetEdgePoints), with a search for the edges
-// whose bounding box overlaps a given box.
+// A set of edges given by their endpoints (two points of the space dimension each), with
+// a search for the edges whose bounding box overlaps a given box. The bounding boxes are
+// those of the endpoints, unless given (min and max corners of each edge in turn).
 class EdgeSearch
 {
 private:
-  int npts, sdim, axis = 0;
+  int sdim, axis = 0;
   std::vector<double> pts, bb_min, bb_max, length, sorted_min;
   std::vector<int> order;
   double max_extent = 0.0;
 
 public:
-  // Global bounding box of all edges and a tolerance for box tests relative to its size.
+  // Global bounding box of the endpoints, and a tolerance for box tests relative to its
+  // size.
   std::vector<double> glob_min, glob_max;
   double bb_tol = 0.0;
 
-  EdgeSearch(std::vector<double> &&points, int npts, int sdim)
-    : npts(npts), sdim(sdim), pts(std::move(points)), glob_min(sdim, mfem::infinity()),
+  EdgeSearch(std::vector<double> &&points, int sdim, const std::vector<double> &boxes = {})
+    : sdim(sdim), pts(std::move(points)), glob_min(sdim, mfem::infinity()),
       glob_max(sdim, -mfem::infinity())
   {
     const int n = Size();
+    MFEM_VERIFY(boxes.empty() || boxes.size() == static_cast<std::size_t>(n) * 2 * sdim,
+                "Invalid edge bounding boxes!");
     bb_min.resize(static_cast<std::size_t>(n) * sdim);
     bb_max.resize(static_cast<std::size_t>(n) * sdim);
     length.resize(n);
     for (int i = 0; i < n; i++)
     {
-      const double *p = Points(i);
+      const double *p = Endpoint(i, 0), *q = Endpoint(i, 1);
+      double l2 = 0.0;
       for (int d = 0; d < sdim; d++)
       {
-        double lo = mfem::infinity(), hi = -mfem::infinity();
-        for (int k = 0; k < npts; k++)
-        {
-          lo = std::min(lo, p[k * sdim + d]);
-          hi = std::max(hi, p[k * sdim + d]);
-        }
-        bb_min[i * sdim + d] = lo;
-        bb_max[i * sdim + d] = hi;
-        glob_min[d] = std::min(glob_min[d], lo);
-        glob_max[d] = std::max(glob_max[d], hi);
+        bb_min[i * sdim + d] =
+            boxes.empty() ? std::min(p[d], q[d]) : boxes[2 * i * sdim + d];
+        bb_max[i * sdim + d] =
+            boxes.empty() ? std::max(p[d], q[d]) : boxes[(2 * i + 1) * sdim + d];
+        glob_min[d] = std::min(glob_min[d], bb_min[i * sdim + d]);
+        glob_max[d] = std::max(glob_max[d], bb_max[i * sdim + d]);
+        l2 += (q[d] - p[d]) * (q[d] - p[d]);
       }
-      length[i] = PolylineLength(p, npts, sdim);
+      length[i] = std::sqrt(l2);
     }
     double extent = 0.0;
     for (int d = 0; d < sdim && n > 0; d++)
@@ -1606,8 +1654,6 @@ public:
         axis = d;
       }
     }
-    // Absolute tolerance for the bounding box tests: cracked boundaries are displaced by
-    // a tiny fraction of the local mesh size.
     bb_tol = 1.0e-8 * extent;
     order.resize(n);
     std::iota(order.begin(), order.end(), 0);
@@ -1621,10 +1667,10 @@ public:
     }
   }
 
-  int Size() const { return static_cast<int>(pts.size()) / (npts * sdim); }
-  const double *Points(int i) const
+  int Size() const { return static_cast<int>(pts.size()) / (2 * sdim); }
+  const double *Endpoint(int i, int k) const
   {
-    return pts.data() + static_cast<std::size_t>(i) * npts * sdim;
+    return pts.data() + (static_cast<std::size_t>(i) * 2 + k) * sdim;
   }
   double Length(int i) const { return length[i]; }
 
@@ -1638,10 +1684,10 @@ public:
         return false;
       }
     }
-    return true;
+    return Size() > 0;
   }
 
-  // Call f(i) for the edges whose bounding box overlaps the given box.
+  // Call f(i) for the edges whose endpoints' bounding box overlaps the given box.
   template <typename F>
   void ForEachCandidate(const double *q_min, const double *q_max, F &&f) const
   {
@@ -1664,20 +1710,6 @@ public:
     }
   }
 };
-
-void GetBoundingBox(const double *pts, int npts, int sdim, double *q_min, double *q_max)
-{
-  for (int d = 0; d < sdim; d++)
-  {
-    q_min[d] = mfem::infinity();
-    q_max[d] = -mfem::infinity();
-    for (int k = 0; k < npts; k++)
-    {
-      q_min[d] = std::min(q_min[d], pts[k * sdim + d]);
-      q_max[d] = std::max(q_max[d], pts[k * sdim + d]);
-    }
-  }
-}
 
 // Gather the given values from all processes, returning them concatenated in order of rank
 // and the offsets of the values of each rank.
@@ -1705,16 +1737,72 @@ std::vector<T> GatherAll(const std::vector<T> &local, MPI_Comm comm,
   return all;
 }
 
-// Points (in parent coordinates) of a submesh edge: the submesh coordinates may already
+// The curve (in parent coordinates) of a submesh edge: the submesh coordinates may already
 // have been projected to 2D.
 template <class SubMeshT>
-void GetSubMeshEdgePoints(const SubMeshT &submesh, int submesh_edge, int npts, double *pts)
+EdgeCurve GetSubMeshEdgeCurve(const SubMeshT &submesh, int submesh_edge)
 {
   const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
   MFEM_VERIFY(submesh_edge >= 0 && submesh_edge < parent_edge_map.Size() &&
                   parent_edge_map[submesh_edge] >= 0,
               "Submesh edge has no parent edge!");
-  GetEdgePoints(*submesh.GetParent(), parent_edge_map[submesh_edge], npts, pts);
+  return EdgeCurve(*submesh.GetParent(), parent_edge_map[submesh_edge]);
+}
+
+void AppendEndpoints(const EdgeCurve &curve, int sdim, std::vector<double> &pts)
+{
+  for (int k = 0; k < 2; k++)
+  {
+    pts.insert(pts.end(), curve.Endpoint(k), curve.Endpoint(k) + sdim);
+  }
+}
+
+void AppendBoundingBox(const EdgeCurve &curve, int sdim, std::vector<double> &boxes)
+{
+  boxes.insert(boxes.end(), curve.bb_min.begin(), curve.bb_min.begin() + sdim);
+  boxes.insert(boxes.end(), curve.bb_max.begin(), curve.bb_max.begin() + sdim);
+}
+
+// Whether both endpoints of an edge lie in a box, within a tolerance.
+bool EndpointsInside(const EdgeCurve &curve, int sdim, const std::vector<double> &q_min,
+                     const std::vector<double> &q_max, double tol)
+{
+  for (int k = 0; k < 2; k++)
+  {
+    for (int d = 0; d < sdim; d++)
+    {
+      const double x = curve.Endpoint(k)[d];
+      if (x < q_min[d] - tol || x > q_max[d] + tol)
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// The local edges of the parent boundary faces with the given attributes, as (edge,
+// attribute) pairs with each pair listed once.
+template <typename AttrFilter>
+std::vector<std::pair<int, int>> GetParentBoundaryEdges(const mfem::Mesh &parent,
+                                                        AttrFilter &&keep)
+{
+  std::set<std::pair<int, int>> edge_attrs;
+  mfem::Array<int> edges, orientations;
+  for (int be = 0; be < parent.GetNBE(); be++)
+  {
+    const int attr = parent.GetBdrAttribute(be);
+    if (!keep(attr))
+    {
+      continue;
+    }
+    parent.GetBdrElementEdges(be, edges, orientations);
+    for (int edge : edges)
+    {
+      edge_attrs.insert({edge, attr});
+    }
+  }
+  return {edge_attrs.begin(), edge_attrs.end()};
 }
 
 }  // namespace
@@ -1729,91 +1817,90 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   // it lies on, other than the selected surface itself. If several physical boundaries
   // meet at the same edge, choose the smallest attribute deterministically; an edge with
   // no adjacent non-surface parent boundary keeps MFEM's generated attribute (it can be an
-  // artificial NC submesh boundary).
-  //
-  // The edges are matched geometrically: the parent boundary face adjacent to a submesh
-  // edge can be owned by another process, and on a nonconforming mesh it can contain the
-  // edge, or be contained in it, rather than share it. Neither the ParMesh vertex or edge
-  // numbering, nor the NCMesh node ids, nor the slave/master classification of edges
-  // (which only reflects the elements a process sees), identify an edge consistently
-  // across processes after parallel refinement and rebalancing. The coordinates do.
+  // artificial NC submesh boundary). The edges are matched geometrically, see above.
   const auto &parent = *submesh.GetParent();
   MPI_Comm comm = GetSubMeshComm(submesh);
   const int sdim = parent.SpaceDimension();
-  const int npts = NumEdgePoints(parent);
-  const int rec_size = npts * sdim;
+  std::unordered_set<int> surface_attr_set(surface_attrs.begin(), surface_attrs.end());
 
-  std::unordered_set<int> surface_attr_set;
-  for (int attr : surface_attrs)
-  {
-    surface_attr_set.insert(attr);
-  }
-
-  // Gather the points of all submesh boundary edges on all processes.
+  // Gather the endpoints and bounding boxes of the submesh boundary edges.
   const int nbe = submesh.GetNBE();
-  std::vector<double> local_pts(static_cast<std::size_t>(nbe) * rec_size);
+  std::vector<double> local_sub_pts, local_sub_boxes;
+  local_sub_pts.reserve(static_cast<std::size_t>(nbe) * 2 * sdim);
+  local_sub_boxes.reserve(static_cast<std::size_t>(nbe) * 2 * sdim);
   for (int sbe = 0; sbe < nbe; sbe++)
   {
-    GetSubMeshEdgePoints(submesh, submesh.GetBdrElementFaceIndex(sbe), npts,
-                         local_pts.data() + static_cast<std::size_t>(sbe) * rec_size);
+    const EdgeCurve sub = GetSubMeshEdgeCurve(submesh, submesh.GetBdrElementFaceIndex(sbe));
+    AppendEndpoints(sub, sdim, local_sub_pts);
+    AppendBoundingBox(sub, sdim, local_sub_boxes);
   }
-  std::vector<int> offsets;
-  const EdgeSearch sub_edges(GatherAll(local_pts, comm, &offsets), npts, sdim);
+  std::vector<int> sub_offsets;
+  const EdgeSearch sub_edges(GatherAll(local_sub_pts, comm, &sub_offsets), sdim,
+                             GatherAll(local_sub_boxes, comm));
   const int nedges = sub_edges.Size();
   if (nedges == 0)
   {
     return;
   }
-
-  // Match the edges of the local parent boundary faces (other than the surface) against
-  // the gathered submesh edges.
+  const int offset = sub_offsets[Mpi::Rank(comm)] / (2 * sdim);
   std::vector<int> attr(nedges, std::numeric_limits<int>::max());
-  std::vector<double> parent_pts(rec_size), q_min(sdim), q_max(sdim);
-  std::set<std::pair<int, int>> visited;
-  mfem::Array<int> edges, orientations;
-  for (int be = 0; be < parent.GetNBE(); be++)
+
+  // Submesh edges lying on local parent boundary face edges, and gather the endpoints of
+  // the parent boundary face edges lying on the surface for the converse.
+  std::vector<double> local_wall_pts;
+  std::vector<int> local_wall_attrs;
+  for (const auto &[edge, be_attr] :
+       GetParentBoundaryEdges(parent, [&](int a) { return !surface_attr_set.contains(a); }))
   {
-    const int be_attr = parent.GetBdrAttribute(be);
-    if (surface_attr_set.contains(be_attr))
+    const EdgeCurve wall(parent, edge);
+    if (!sub_edges.Overlaps(wall.bb_min.data(), wall.bb_max.data()))
     {
       continue;
     }
-    parent.GetBdrElementEdges(be, edges, orientations);
-    for (int edge : edges)
-    {
-      if (!visited.insert({edge, be_attr}).second)
-      {
-        continue;
-      }
-      GetEdgePoints(parent, edge, npts, parent_pts.data());
-      GetBoundingBox(parent_pts.data(), npts, sdim, q_min.data(), q_max.data());
-      if (!sub_edges.Overlaps(q_min.data(), q_max.data()))
-      {
-        continue;
-      }
-      const double parent_length = PolylineLength(parent_pts.data(), npts, sdim);
-      sub_edges.ForEachCandidate(q_min.data(), q_max.data(),
-                                 [&](int i)
+    sub_edges.ForEachCandidate(wall.bb_min.data(), wall.bb_max.data(),
+                               [&](int i)
+                               {
+                                 if (be_attr < attr[i] &&
+                                     wall.Contains(sub_edges.Endpoint(i, 0),
+                                                   sub_edges.Endpoint(i, 1),
+                                                   sub_edges.Length(i)))
                                  {
-                                   if (be_attr < attr[i] &&
-                                       EdgesNested(sub_edges.Points(i), sub_edges.Length(i),
-                                                   parent_pts.data(), parent_length, npts,
-                                                   sdim))
-                                   {
-                                     attr[i] = be_attr;
-                                   }
-                                 });
+                                   attr[i] = be_attr;
+                                 }
+                               });
+    if (EndpointsInside(wall, sdim, sub_edges.glob_min, sub_edges.glob_max,
+                        sub_edges.bb_tol))
+    {
+      AppendEndpoints(wall, sdim, local_wall_pts);
+      local_wall_attrs.push_back(be_attr);
     }
+  }
+
+  // Parent boundary face edges lying on local submesh boundary edges.
+  const std::vector<int> wall_attrs = GatherAll(local_wall_attrs, comm);
+  const EdgeSearch walls(GatherAll(local_wall_pts, comm), sdim);
+  for (int sbe = 0; sbe < nbe && walls.Size() > 0; sbe++)
+  {
+    const EdgeCurve sub = GetSubMeshEdgeCurve(submesh, submesh.GetBdrElementFaceIndex(sbe));
+    int &a = attr[offset + sbe];
+    walls.ForEachCandidate(
+        sub.bb_min.data(), sub.bb_max.data(),
+        [&](int i)
+        {
+          if (wall_attrs[i] < a &&
+              sub.Contains(walls.Endpoint(i, 0), walls.Endpoint(i, 1), walls.Length(i)))
+          {
+            a = wall_attrs[i];
+          }
+        });
   }
   Mpi::GlobalMin(nedges, attr.data(), comm);
 
-  const int offset = offsets[Mpi::Rank(comm)] / rec_size;
   for (int sbe = 0; sbe < nbe; sbe++)
   {
-    const int a = attr[offset + sbe];
-    if (a != std::numeric_limits<int>::max())
+    if (attr[offset + sbe] != std::numeric_limits<int>::max())
     {
-      submesh.SetBdrAttribute(sbe, a);
+      submesh.SetBdrAttribute(sbe, attr[offset + sbe]);
     }
   }
 
@@ -1835,30 +1922,22 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
 
   // Add a submesh boundary element on each interior submesh edge lying on a parent
   // boundary face with one of the given attributes (for example an uncracked PEC sheet
-  // crossing the surface), with the smallest such attribute. As in
-  // RemapSubMeshBdrAttributes, the edges are matched geometrically, because the parent
-  // boundary face can be owned by another process, and on a nonconforming mesh contain
-  // the edge or be contained in it. On a nonconforming submesh, boundary elements are
-  // only added on conforming and slave edges, not on master edges (whose essential
-  // degrees of freedom follow from their slaves). An edge shared by several processes is
-  // added by the lowest of them, so that it is only integrated over once.
+  // crossing the surface), with the smallest such attribute. The edges are matched
+  // geometrically, see above. On a nonconforming submesh, boundary elements are only
+  // added on conforming and slave edges, not on master edges (whose essential degrees of
+  // freedom follow from their slaves). An edge shared by several processes is added by
+  // the lowest of them, so that it is only integrated over once.
   const auto &parent = *submesh.GetParent();
   MPI_Comm comm = GetSubMeshComm(submesh);
   const int rank = Mpi::Rank(comm);
   const int sdim = parent.SpaceDimension();
-  const int npts = NumEdgePoints(parent);
-  const int rec_size = npts * sdim;
-
-  std::unordered_set<int> surface_attr_set, internal_attr_set;
-  for (int attr : surface_attrs)
+  std::unordered_set<int> surface_attr_set(surface_attrs.begin(), surface_attrs.end());
+  std::unordered_set<int> internal_attr_set;
+  for (int a : internal_bdr_attrs)
   {
-    surface_attr_set.insert(attr);
-  }
-  for (int attr : internal_bdr_attrs)
-  {
-    if (!surface_attr_set.contains(attr))
+    if (!surface_attr_set.contains(a))
     {
-      internal_attr_set.insert(attr);
+      internal_attr_set.insert(a);
     }
   }
 
@@ -1869,34 +1948,24 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
     bdr_edges.insert(submesh.GetBdrElementFaceIndex(sbe));
   }
   std::vector<int> cand_edges;
-  std::vector<double> cand_pts;
+  std::vector<double> glob_min(sdim, mfem::infinity()), glob_max(sdim, -mfem::infinity());
   for (int e = 0; e < submesh.GetNEdges(); e++)
   {
+    const EdgeCurve curve = GetSubMeshEdgeCurve(submesh, e);
+    for (int d = 0; d < sdim; d++)
+    {
+      glob_min[d] = std::min(glob_min[d], curve.bb_min[d]);
+      glob_max[d] = std::max(glob_max[d], curve.bb_max[d]);
+    }
     if (bdr_edges.contains(e) ||
         (submesh.Nonconforming() && submesh.GetFaceInformation(e).IsNonconformingCoarse()))
     {
       continue;
     }
     cand_edges.push_back(e);
-    cand_pts.resize(cand_pts.size() + rec_size);
-    GetSubMeshEdgePoints(submesh, e, npts, cand_pts.data() + cand_pts.size() - rec_size);
   }
-
-  // Global bounding box of the submesh.
-  std::vector<double> glob_min(sdim, mfem::infinity()), glob_max(sdim, -mfem::infinity());
-  {
-    std::vector<double> all_pts(static_cast<std::size_t>(submesh.GetNEdges()) * rec_size);
-    for (int e = 0; e < submesh.GetNEdges(); e++)
-    {
-      GetSubMeshEdgePoints(submesh, e, npts,
-                           all_pts.data() + static_cast<std::size_t>(e) * rec_size);
-    }
-    const EdgeSearch local_edges(std::move(all_pts), npts, sdim);
-    glob_min = local_edges.glob_min;
-    glob_max = local_edges.glob_max;
-    Mpi::GlobalMin(sdim, glob_min.data(), comm);
-    Mpi::GlobalMax(sdim, glob_max.data(), comm);
-  }
+  Mpi::GlobalMin(sdim, glob_min.data(), comm);
+  Mpi::GlobalMax(sdim, glob_max.data(), comm);
   double extent = 0.0;
   for (int d = 0; d < sdim; d++)
   {
@@ -1904,67 +1973,87 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   }
   const double bb_tol = 1.0e-8 * extent;
 
-  // Gather the edges of the parent boundary faces with internal attributes which lie in
-  // the bounding box of the submesh.
-  std::vector<double> local_int_pts, parent_pts(rec_size), q_min(sdim), q_max(sdim);
-  std::vector<int> local_int_attrs;
+  // Gather the endpoints of the internal boundary face edges lying on the surface.
+  const auto internal_edges =
+      GetParentBoundaryEdges(parent, [&](int a) { return internal_attr_set.contains(a); });
+  std::vector<double> local_wall_pts, local_wall_boxes;
+  std::vector<int> local_wall_attrs;
+  for (const auto &[edge, be_attr] : internal_edges)
   {
-    std::set<std::pair<int, int>> visited;
-    mfem::Array<int> edges, orientations;
-    for (int be = 0; be < parent.GetNBE(); be++)
+    const EdgeCurve wall(parent, edge);
+    if (EndpointsInside(wall, sdim, glob_min, glob_max, bb_tol))
     {
-      const int be_attr = parent.GetBdrAttribute(be);
-      if (!internal_attr_set.contains(be_attr))
-      {
-        continue;
-      }
-      parent.GetBdrElementEdges(be, edges, orientations);
-      for (int edge : edges)
-      {
-        if (!visited.insert({edge, be_attr}).second)
-        {
-          continue;
-        }
-        GetEdgePoints(parent, edge, npts, parent_pts.data());
-        GetBoundingBox(parent_pts.data(), npts, sdim, q_min.data(), q_max.data());
-        bool inside = true;
-        for (int d = 0; d < sdim; d++)
-        {
-          inside = inside && q_min[d] >= glob_min[d] - bb_tol &&
-                   q_max[d] <= glob_max[d] + bb_tol;
-        }
-        if (inside)
-        {
-          local_int_pts.insert(local_int_pts.end(), parent_pts.begin(), parent_pts.end());
-          local_int_attrs.push_back(be_attr);
-        }
-      }
+      AppendEndpoints(wall, sdim, local_wall_pts);
+      AppendBoundingBox(wall, sdim, local_wall_boxes);
+      local_wall_attrs.push_back(be_attr);
     }
   }
-  const std::vector<int> int_attrs = GatherAll(local_int_attrs, comm);
-  const EdgeSearch int_edges(GatherAll(local_int_pts, comm), npts, sdim);
-  if (int_edges.Size() == 0)
+  const std::vector<int> wall_attrs = GatherAll(local_wall_attrs, comm);
+  const EdgeSearch walls(GatherAll(local_wall_pts, comm), sdim,
+                         GatherAll(local_wall_boxes, comm));
+  if (walls.Size() == 0)
   {
     return;
   }
 
-  // Match the candidate submesh edges against the internal boundary edges.
+  // Internal boundary edges lying on local candidate edges, and gather the endpoints of the
+  // candidate edges near internal boundary edges (whose bounding boxes overlap) for the
+  // converse.
   std::vector<int> match_attr(cand_edges.size(), std::numeric_limits<int>::max());
+  std::vector<double> local_near_pts;
+  std::vector<int> local_near;
+  std::vector<double> q_min(sdim), q_max(sdim);
   for (std::size_t j = 0; j < cand_edges.size(); j++)
   {
-    const double *p = cand_pts.data() + j * rec_size;
-    GetBoundingBox(p, npts, sdim, q_min.data(), q_max.data());
-    const double l = PolylineLength(p, npts, sdim);
-    int_edges.ForEachCandidate(
-        q_min.data(), q_max.data(),
+    const EdgeCurve cand = GetSubMeshEdgeCurve(submesh, cand_edges[j]);
+    bool near = false;
+    walls.ForEachCandidate(
+        cand.bb_min.data(), cand.bb_max.data(),
         [&](int i)
         {
-          if (int_attrs[i] < match_attr[j] &&
-              EdgesNested(p, l, int_edges.Points(i), int_edges.Length(i), npts, sdim))
+          near = true;
+          if (wall_attrs[i] < match_attr[j] &&
+              cand.Contains(walls.Endpoint(i, 0), walls.Endpoint(i, 1), walls.Length(i)))
           {
-            match_attr[j] = int_attrs[i];
+            match_attr[j] = wall_attrs[i];
           }
         });
+    if (near)
+    {
+      AppendEndpoints(cand, sdim, local_near_pts);
+      local_near.push_back(static_cast<int>(j));
+    }
+  }
+
+  // Candidate edges lying on local internal boundary edges.
+  std::vector<int> near_offsets;
+  const EdgeSearch near_edges(GatherAll(local_near_pts, comm, &near_offsets), sdim);
+  std::vector<int> near_attr(near_edges.Size(), std::numeric_limits<int>::max());
+  for (const auto &[edge, be_attr] : internal_edges)
+  {
+    const EdgeCurve wall(parent, edge);
+    if (!near_edges.Overlaps(wall.bb_min.data(), wall.bb_max.data()))
+    {
+      continue;
+    }
+    near_edges.ForEachCandidate(wall.bb_min.data(), wall.bb_max.data(),
+                                [&](int i)
+                                {
+                                  if (be_attr < near_attr[i] &&
+                                      wall.Contains(near_edges.Endpoint(i, 0),
+                                                    near_edges.Endpoint(i, 1),
+                                                    near_edges.Length(i)))
+                                  {
+                                    near_attr[i] = be_attr;
+                                  }
+                                });
+  }
+  Mpi::GlobalMin(static_cast<int>(near_attr.size()), near_attr.data(), comm);
+  const int near_offset = near_offsets[rank] / (2 * sdim);
+  for (std::size_t k = 0; k < local_near.size(); k++)
+  {
+    match_attr[local_near[k]] =
+        std::min(match_attr[local_near[k]], near_attr[near_offset + k]);
   }
 
   // Each edge is added by the lowest process on which it matched.
@@ -1975,43 +2064,55 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
     if (match_attr[j] != std::numeric_limits<int>::max())
     {
       local_matches.push_back(static_cast<int>(j));
-      local_match_pts.insert(local_match_pts.end(), cand_pts.begin() + j * rec_size,
-                             cand_pts.begin() + (j + 1) * rec_size);
+      AppendEndpoints(GetSubMeshEdgeCurve(submesh, cand_edges[j]), sdim, local_match_pts);
     }
   }
   std::vector<int> match_offsets;
-  const EdgeSearch all_matches(GatherAll(local_match_pts, comm, &match_offsets), npts,
-                               sdim);
+  const EdgeSearch all_matches(GatherAll(local_match_pts, comm, &match_offsets), sdim);
   std::vector<int> match_rank(all_matches.Size());
   for (int r = 0; r < Mpi::Size(comm); r++)
   {
-    for (int i = match_offsets[r] / rec_size; i < match_offsets[r + 1] / rec_size; i++)
+    for (int i = match_offsets[r] / (2 * sdim); i < match_offsets[r + 1] / (2 * sdim); i++)
     {
       match_rank[i] = r;
     }
   }
-
   mfem::Array<mfem::Element *> new_bdr_elems;
   mfem::Array<int> new_be_to_face;
   mfem::Array<int> edge_verts;
-  for (int j : local_matches)
+  const int match_offset = match_offsets[rank] / (2 * sdim);
+  for (std::size_t k = 0; k < local_matches.size(); k++)
   {
-    const double *p = cand_pts.data() + static_cast<std::size_t>(j) * rec_size;
-    GetBoundingBox(p, npts, sdim, q_min.data(), q_max.data());
-    const double l = PolylineLength(p, npts, sdim);
+    const int j = local_matches[k];
+    const int self = match_offset + static_cast<int>(k);
+    const double *p0 = all_matches.Endpoint(self, 0), *p1 = all_matches.Endpoint(self, 1);
+    const double tol = EDGE_REL_TOL * all_matches.Length(self);
+    for (int d = 0; d < sdim; d++)
+    {
+      q_min[d] = std::min(p0[d], p1[d]);
+      q_max[d] = std::max(p0[d], p1[d]);
+    }
     bool owner = true;
     all_matches.ForEachCandidate(
         q_min.data(), q_max.data(),
         [&](int i)
         {
-          if (match_rank[i] < rank &&
-              PolylineDistance(p, all_matches.Points(i), npts, sdim) <= 1.0e-6 * l &&
-              PolylineDistance(p + (npts - 1) * sdim, all_matches.Points(i), npts, sdim) <=
-                  1.0e-6 * l &&
-              std::abs(all_matches.Length(i) - l) <= 1.0e-6 * l)
+          if (match_rank[i] >= rank || !owner)
           {
-            owner = false;
+            return;
           }
+          // The same edge, with its endpoints in either order.
+          auto Close = [&](const double *a, const double *b)
+          {
+            double d2 = 0.0;
+            for (int d = 0; d < sdim; d++)
+            {
+              d2 += (a[d] - b[d]) * (a[d] - b[d]);
+            }
+            return std::sqrt(d2) <= tol;
+          };
+          const double *q0 = all_matches.Endpoint(i, 0), *q1 = all_matches.Endpoint(i, 1);
+          owner = !((Close(p0, q0) && Close(p1, q1)) || (Close(p0, q1) && Close(p1, q0)));
         });
     if (!owner)
     {

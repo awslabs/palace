@@ -295,6 +295,84 @@ TEST_CASE("RemapSubMeshBdrAttributes after parallel nonconforming refinement",
   CHECK(wrong == 0);
 }
 
+TEST_CASE("RemapSubMeshBdrAttributes on curved meshes with deep nonconforming refinement",
+          "[geodata][Serial][Parallel]")
+{
+  // Refine a curved cube towards the edge x = 0, y = 0 on the side of its x = 0 face
+  // (MFEM boundary attribute 5) only, with no limit on the nonconforming levels, so that
+  // the perimeter edges of the face's submesh on that line are many levels finer than the
+  // curved edges of the adjacent y = 0 face (attribute 2) which contain them. The submesh
+  // edges must still get attribute 2 there (matching against a fixed number of points along
+  // each curved edge loses them past a few levels).
+  MPI_Comm comm = Mpi::World();
+  auto Deform = [](double y, double z) { return y + 0.1 * std::sin(std::numbers::pi * z); };
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  serial_mesh.SetCurvature(2);
+  serial_mesh.Transform(
+      [&](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        y(1) = Deform(x(1), x(2));
+      });
+  serial_mesh.EnsureNCMesh(true);
+  mfem::ParMesh par_mesh(comm, serial_mesh);
+  mfem::Vector c;
+  constexpr int levels = 7;
+  for (int level = 0; level < levels; level++)
+  {
+    mfem::Array<int> marked;
+    for (int e = 0; e < par_mesh.GetNE(); e++)
+    {
+      par_mesh.GetElementCenter(e, c);
+      const double y = c(1) - (Deform(c(1), c(2)) - c(1));
+      if (c(0) < 0.5 * y && y < 0.6 * std::pow(0.6, level))
+      {
+        marked.Append(e);
+      }
+    }
+    par_mesh.GeneralRefinement(marked, 1, 0);
+    par_mesh.Rebalance();
+  }
+
+  mfem::Array<int> surface_attrs({5});
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(par_mesh, surface_attrs);
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+
+  int wrong = 0, on_line = 0;
+  mfem::IsoparametricTransformation T;
+  mfem::IntegrationPoint ip;
+  ip.x = 0.5;
+  mfem::Vector x(3);
+  double min_length = mfem::infinity();
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    submesh.GetEdgeTransformation(submesh.GetBdrElementFaceIndex(sbe), &T);
+    T.Transform(ip, x);
+    const double y = x(1) - (Deform(x(1), x(2)) - x(1));
+    if (std::abs(y) < 1.0e-3)
+    {
+      on_line++;
+      wrong += (submesh.GetBdrAttribute(sbe) != 2);
+      mfem::Vector x0(3), x1(3);
+      mfem::IntegrationPoint ip0, ip1;
+      ip0.x = 0.0;
+      ip1.x = 1.0;
+      T.Transform(ip0, x0);
+      T.Transform(ip1, x1);
+      min_length = std::min(min_length, x0.DistanceTo(x1));
+    }
+  }
+  Mpi::GlobalSum(1, &wrong, comm);
+  Mpi::GlobalSum(1, &on_line, comm);
+  Mpi::GlobalMin(1, &min_length, comm);
+  CAPTURE(on_line, min_length);
+  // The finest submesh edges on the line are at least 5 levels below the coarse wall edges
+  // (of length about 0.5).
+  REQUIRE(min_length < 0.5 / 32.0);
+  CHECK(wrong == 0);
+}
+
 TEST_CASE("AddSubMeshInternalBoundaryElements after parallel nonconforming refinement",
           "[geodata][Serial][Parallel]")
 {
