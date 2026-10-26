@@ -759,10 +759,14 @@ FloquetPortData::OutgoingPropagationConstant(std::complex<double> gamma_sq)
   // medium: Im{γ} < 0 (decay) for a passive one, Im{γ} > 0 (growth) for a gain medium,
   // which a general PoleResidue model may have. A lossless evanescent order (γ² < 0) lies
   // on the branch cut: take the limit Im{γ²} → 0⁻, the decaying root −i|γ|. The port is
-  // only evaluated at real frequencies (driven problems).
+  // only evaluated at real frequencies (driven problems). The lossless roots are formed
+  // from the real square root: std::sqrt of a complex number on the negative real axis
+  // can return a real part of round-off size (1e-16 with libc++), which ModalPower > 0
+  // would count as a propagating order.
   if (gamma_sq.imag() == 0.0)
   {
-    gamma_sq.imag(-0.0);
+    return (gamma_sq.real() < 0.0) ? std::complex<double>(0.0, -std::sqrt(-gamma_sq.real()))
+                                   : std::complex<double>(std::sqrt(gamma_sq.real()), -0.0);
   }
   return std::sqrt(gamma_sq);
 }

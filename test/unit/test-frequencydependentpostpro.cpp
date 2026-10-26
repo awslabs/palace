@@ -337,11 +337,22 @@ TEST_CASE("Absorbing boundaries next to Drude and zero-pole materials",
 TEST_CASE("Floquet propagation constants in lossy and gain media", "[floquetport][Serial]")
 {
   using F = FloquetPortData;
-  // Lossless propagating and evanescent orders keep their established roots.
+  // Lossless propagating and evanescent orders keep their established roots, exactly: a
+  // real part of round-off size on an evanescent order would count it as propagating.
   CHECK(F::OutgoingPropagationConstant({4.0, 0.0}) == std::complex<double>(2.0, 0.0));
-  const auto evanescent = F::OutgoingPropagationConstant({-4.0, 0.0});
-  CHECK(evanescent.real() == 0.0);
-  CHECK(evanescent.imag() == -2.0);
+  CHECK(F::OutgoingPropagationConstant({0.0, 0.0}) == std::complex<double>(0.0, 0.0));
+  for (const double zero : {0.0, -0.0})
+  {
+    const auto evanescent = F::OutgoingPropagationConstant({-4.0, zero});
+    CHECK(evanescent.real() == 0.0);
+    CHECK(evanescent.imag() == -2.0);
+    // No power in either polarization of a lossless evanescent order.
+    CHECK(F::DtNEigenvalue(true, evanescent, 2.0, 1.5).real() == 0.0);
+    CHECK(F::DtNEigenvalue(false, evanescent, 2.0, 1.5).real() == 0.0);
+    const auto far = F::OutgoingPropagationConstant({-3.0e7, zero});
+    CHECK(far.real() == 0.0);
+    CHECK(far.imag() == -std::sqrt(3.0e7));
+  }
   // A passive lossy medium decays in the outgoing direction.
   const auto lossy = F::OutgoingPropagationConstant({4.0, -1.0});
   CHECK(lossy.real() > 0.0);
