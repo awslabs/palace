@@ -3285,6 +3285,213 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// OI-ZERO-IFACE-NAN (decisions 891 / 922 C): a postprocessing Dielectric interface that is
+// NOT a response target (S6's L2 ground attr 126, no EdgeDistances) read NaN in every
+// corrected column of the Maxwell surface-Q-corrected.csv on main (the measurement
+// initialised every interface to NaN and filled the targets), where the electrostatic
+// driver carries such an interface's RAW energy forward. With the fix the untargeted row
+// reads corrected = fixed-flux = raw, spread 0, matched / corner fractions 0 / 0 and the
+// "response target" flag 0 (the column exists only when such an interface exists); the
+// target row's values are those of the same fixture without the extra interface, column by
+// column by name (the self-consistent columns, NaN when the mode is PostprocessOnly on both
+// paths, are the one "not computed" class left as is).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell untargeted postprocessing interface carries its raw energy "
+                 "(decision 922 C)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[untargeted][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "untargeted-lead.mesh";
+  const auto basis_path = temp.temp_dir / "untargeted-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-untargeted-edges.json";
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-untargeted-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  config["Solver"] = {{"Order", 1},
+                      {"Eigenmode", {{"Target", 1.0}}},
+                      {"SurfaceResponseCorrection",
+                       {{"Library", edge_library_path.string()},
+                        {"TargetInterfaces", {4}},
+                        {"UnmatchedPolicy", "Warn"},
+                        {"CorrectionMode", "PostprocessOnly"}}}};
+  auto Run = [&](bool extra_interface, const char *stem)
+  {
+    json run = config;
+    const fs::path output_dir = temp.temp_dir / stem;
+    run["Problem"]["Output"] = output_dir.string();
+    if (extra_interface)
+    {
+      // The sheet (attribute 9) once more as an untargeted SA interface (S6's [2] / [3]
+      // share their attributes the same way): no EdgeDistances, not in TargetInterfaces, a
+      // non-zero raw energy (an MS entry of this fixture's sheet reads 0: the zero-energy
+      // class, handled the same way).
+      run["Boundaries"]["Postprocessing"]["Dielectric"].push_back({{"Index", 5},
+                                                                   {"Attributes", {9}},
+                                                                   {"Type", "SA"},
+                                                                   {"Thickness", 0.002},
+                                                                   {"Permittivity", 4.0},
+                                                                   {"LossTan", 0.002}});
+    }
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    MakeOutputFolder(iodata, comm);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+    SpaceOperator space_op(iodata, meshes);
+    PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+    REQUIRE(post_op.GetSurfaceResponseOperator());
+    mfem::VectorFunctionCoefficient rotational(3,
+                                               [](const mfem::Vector &x, mfem::Vector &v)
+                                               {
+                                                 v.SetSize(3);
+                                                 v(0) = 0.4 * (x[1] - 0.5) + 0.1 * x[2];
+                                                 v(1) = -0.4 * (x[0] - 0.5) + 0.3;
+                                                 v(2) = 0.2 * x[0] * (x[1] - 0.5);
+                                               });
+    GridFunction field(space_op.GetNDSpace(), true);
+    field.Real().ProjectCoefficient(rotational);
+    field.Imag() = 0.0;
+    ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+    field.Real().GetTrueDofs(e.Real());
+    e.Imag() = 0.0;
+    ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+    b = 0.0;
+    post_op.MeasureAndPrintAll(0, e, b, std::complex<double>(1.0, 0.0), 0.0, 0.0, 1);
+    Mpi::Barrier(comm);
+    return output_dir;
+  };
+  const fs::path with_dir = Run(true, "untargeted-with");
+  const fs::path without_dir = Run(false, "untargeted-without");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  const TextCsv with = ReadTrimmedCsv(with_dir / "surface-Q-corrected.csv");
+  const TextCsv without = ReadTrimmedCsv(without_dir / "surface-Q-corrected.csv");
+  // The flag column exists only with the untargeted interface; the other columns are the
+  // same set in the same order.
+  REQUIRE(with.header.size() == without.header.size() + 1);
+  CHECK(with.header.back() == "response target");
+  CHECK(std::vector<std::string>(with.header.begin(), with.header.end() - 1) ==
+        without.header);
+  REQUIRE(without.rows.size() == 1);
+  REQUIRE(with.rows.size() == 2);
+  auto Row = [&](const TextCsv &csv, int interface) -> const std::vector<std::string> &
+  {
+    for (const auto &row : csv.rows)
+    {
+      if (std::lround(std::stod(row[csv.Column("interface")])) == interface)
+      {
+        return row;
+      }
+    }
+    FAIL("interface " << interface << " row missing");
+    return csv.rows.front();
+  };
+  const auto &target_with = Row(with, 4);
+  const auto &target_without = Row(without, 4);
+  const auto &untargeted = Row(with, 5);
+  // The target row: every shared column equal as text (the extra interface changes nothing
+  // of the target's measurement); flag 1.
+  for (const auto &name : without.header)
+  {
+    INFO(name);
+    CHECK(target_with[with.Column(name)] == target_without[without.Column(name)]);
+  }
+  CHECK(std::lround(std::stod(target_with[with.Column("response target")])) == 1);
+  // The untargeted row: raw carried into the corrected columns, spread 0, fractions 0 / 0,
+  // flag 0, no NaN outside the self-consistent columns (PostprocessOnly).
+  CHECK(std::lround(std::stod(untargeted[with.Column("response target")])) == 0);
+  const double raw = std::stod(untargeted[with.Column("E_surf raw (J)")]);
+  CHECK(raw > 0.0);
+  CHECK_THAT(std::stod(untargeted[with.Column("E_surf corrected (J)")]),
+             WithinRel(raw, 1.0e-12));
+  CHECK_THAT(std::stod(untargeted[with.Column("E_surf corrected fixed-flux (J)")]),
+             WithinRel(raw, 1.0e-12));
+  CHECK(std::stod(untargeted[with.Column("trace closure spread")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column("matched edge fraction")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column("unmodeled corner neighborhood fraction")]) ==
+        0.0);
+  // p_surf corrected = raw / E_norm corrected (the corrected normalisation of the run).
+  CHECK_THAT(
+      std::stod(untargeted[with.Column("p_surf corrected")]),
+      WithinRel(raw / std::stod(untargeted[with.Column("E_norm corrected (J)")]), 1.0e-9));
+  for (const auto &name : with.header)
+  {
+    if (name.find("self-consistent") != std::string::npos)
+    {
+      continue;
+    }
+    INFO(name);
+    CHECK(!std::isnan(std::stod(untargeted[with.Column(name)])));
+  }
+#endif
+}
+
 // Decision 399 MAJOR-1: an uncovered portion inside a matched spatial cluster's support box
 // would be counted twice (the cluster coupon models its whole box; F2 keeps the raw
 // within-R energy of the portion), so the placement clips the uncovered portions by every

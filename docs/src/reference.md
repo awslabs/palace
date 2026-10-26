@@ -1484,7 +1484,12 @@ cells`, then per target interface `conductorconsistency raw energy[k] (J)` and
 `conductorconsistency share[k]`; written only when a patch was excluded, an excitation
 evaluated before the exclusion reads zero), with the portions under
 `Diagnostics.ConductorConsistency.RawPortions`. A solve with no exclusion writes nothing
-new. A corner / vertex coupon that an exact spatial cluster drops whole (its basis-point
+new. On the Maxwell path a postprocessing interface that is not a response target carries
+its raw energy in the corrected and fixed-flux columns of `surface-Q-corrected.csv` (the
+electrostatic driver's convention; trace closure spread 0, matched edge fraction and
+unmodeled corner neighborhood fraction 0 / 0), and a run with such an interface adds the
+column `response target` (1 / 0) to that table; the self-consistent columns stay NaN when
+no self-consistent solve was requested. A corner / vertex coupon that an exact spatial cluster drops whole (its basis-point
 box overlaps the cluster's: the `SpatialClusterPriority` rule) keeps the part of its arm
 windows OUTSIDE every matched cluster's box raw the same way (the part inside is the
 cluster coupon's; the corner's own correction outside the box stays missing until the

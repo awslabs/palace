@@ -1861,6 +1861,18 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       interface.self_consistent_energy = nan;
       interface.trace_closure_spread = nan;
       interface.loss_tangent = raw.tandelta;
+      interface.response_target = target_interfaces.count(raw.idx) > 0;
+      if (surface_response_postprocess_enabled && !interface.response_target)
+      {
+        // OI-ZERO-IFACE-NAN (decisions 891 / 922 C): an untargeted interface's corrected
+        // energies are its raw energy, as the electrostatic driver carries them (no
+        // response applies to it; nothing to close). The confidence gate never reads it:
+        // the closure spread is formed over the response's fabricated (target) interfaces
+        // and the matched / corner fractions are the identification's.
+        interface.corrected_energy = raw.energy;
+        interface.corrected_energy_fixed_flux = raw.energy;
+        interface.trace_closure_spread = 0.0;
+      }
     }
     if (surface_response_postprocess_enabled)
     {
@@ -2120,6 +2132,18 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("trace_closure_spread", "trace closure spread");
     table.insert("matched_fraction", "matched edge fraction");
     table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
+    // OI-ZERO-IFACE-NAN (decision 922 C-3 (ii)): the "response target" flag column only
+    // when a postprocessing interface is not a target (a run whose interfaces are all
+    // targets keeps its column set byte for byte).
+    const auto &measured = *surface_response_measurement;
+    surface_response_untargeted_interface =
+        std::any_of(measured.interfaces.begin(), measured.interfaces.end(),
+                    [](const auto &entry) { return !entry.second.response_target; });
+    if (surface_response_untargeted_interface)
+    {
+      table.insert("response_target", "response target");
+      table["response_target"].print_as_int = true;
+    }
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE ||
@@ -2242,14 +2266,20 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table["participation_self_consistent"] << p_self_consistent;
     table["quality_self_consistent"] << q_self_consistent;
     table["trace_closure_spread"] << interface.trace_closure_spread;
+    // An untargeted interface (922 C-2): nothing is matched or modelled there, 0 / 0.
+    const bool untargeted = result.has_postprocessed && !interface.response_target;
     table["matched_fraction"]
         << (matched_fraction != confidence.matched_length_fraction_by_interface.end()
                 ? matched_fraction->second
-                : nan);
+                : (untargeted ? 0.0 : nan));
     table["corner_fraction"]
         << (corner_fraction != confidence.corner_neighborhood_fraction_by_interface.end()
                 ? corner_fraction->second
-                : nan);
+                : (untargeted ? 0.0 : nan));
+    if (surface_response_untargeted_interface)
+    {
+      table["response_target"] << (interface.response_target ? 1.0 : 0.0);
+    }
   }
   surface_Q_corrected->WriteFullTableTrunc();
 

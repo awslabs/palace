@@ -296,6 +296,12 @@ protected:
       double self_consistent_energy = 0.0;
       double trace_closure_spread = 0.0;
       double loss_tangent = 0.0;
+      // OI-ZERO-IFACE-NAN (decisions 891 / 922 C): a postprocessing interface that is not a
+      // response target carries its RAW energy in the corrected / fixed-flux entries (the
+      // electrostatic driver's convention) with spread 0, and reads 0 / 0 for the matched /
+      // corner fractions; the surface-Q-corrected.csv "response target" column (written
+      // only when such an interface exists) marks it.
+      bool response_target = true;
     };
     // Per target interface, the uncovered requirements' and the DomainBoundary claims' raw
     // within-R energy of the raw field (fixed trace / fixed flux) and of the corrected
@@ -326,6 +332,9 @@ protected:
   };
   mutable std::optional<MaxwellSurfaceResponseMeasurement> surface_response_measurement;
   mutable std::unique_ptr<TableWithCSVFile> surface_Q_corrected;
+  // surface-Q-corrected.csv carries the "response target" column (decision 922 C-3 (ii)):
+  // decided at the first print from the measured interfaces.
+  mutable bool surface_response_untargeted_interface = false;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_confidence;
   // surface-response-model-energy.csv on the Maxwell path (decisions 845 O-C / 846): the
   // electrostatic driver's column set EXACTLY and in order as a strict prefix (`source` =
