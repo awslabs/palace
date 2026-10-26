@@ -893,8 +893,9 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   oversampled_mortar["MortarOversampling"] = 0;
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", oversampled_mortar}}));
-  // Decision 352 follow-up (1): the per-patch energy export, off by default; electrostatic
-  // only (the Maxwell SurfaceResponseCorrection refuses it).
+  // Decision 352 follow-up (1): the per-patch energy export, off by default; since decision
+  // 922 B the Maxwell SurfaceResponseCorrection parses it too (the driven / eigenmode
+  // per-patch export; the boundary-mode refusal is IoData's).
   CHECK_FALSE(oversampled_data.response_correction->patch_energy);
   auto patch_energy = automatic_correction;
   patch_energy["PatchEnergy"] = true;
@@ -904,8 +905,10 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(patch_energy_data.response_correction->patch_energy);
   CHECK_NOTHROW(
       config::SolverData(json{{"SurfaceResponseCorrection", automatic_correction}}));
-  CHECK_THROWS_WITH(config::SolverData(json{{"SurfaceResponseCorrection", patch_energy}}),
-                    Catch::Matchers::ContainsSubstring("PatchEnergy"));
+  const config::SolverData maxwell_patch_energy(
+      json{{"SurfaceResponseCorrection", patch_energy}});
+  REQUIRE(maxwell_patch_energy.surface_response_correction);
+  CHECK(maxwell_patch_energy.surface_response_correction->patch_energy);
 
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;
