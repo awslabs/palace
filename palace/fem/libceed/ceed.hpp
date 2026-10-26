@@ -78,7 +78,7 @@ mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom);
 struct CeedAssemblyScratch
 {
   Ceed ceed;
-  std::vector<CeedVector> vecs;
+  std::vector<CeedVector> vectors;
   std::vector<CeedElemRestriction> restrictions;
   std::vector<CeedBasis> bases;
 
