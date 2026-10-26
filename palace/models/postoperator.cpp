@@ -319,6 +319,7 @@ PostOperator<solver_t>::PostOperator(
       surface_response_postprocess_enabled = response.IncludesPostprocessing();
       surface_response_self_consistent_enabled =
           solver_t != ProblemType::BOUNDARYMODE && response.IncludesSelfConsistent();
+      surface_response_patch_energy_enabled = response.patch_energy;
       surface_response_op =
           std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
       MFEM_VERIFY(surface_response_op->HasSurfaceResponse(),
@@ -338,6 +339,47 @@ PostOperator<solver_t>::PostOperator(
       {
         surface_response_spatial_cluster_priority.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      for (const auto &portion : surface_response_op->GetModelRawClaimPortions().portions)
+      {
+        surface_response_model_raw.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      if (surface_response_patch_energy_enabled && Mpi::Root(fem_op->GetComm()) &&
+          !surface_response_op->GetPatchAssignments().empty())
+      {
+        // PatchEnergy (decision 922 B): the applied patch table at construction, the
+        // electrostatic driver's column form (no solve-time gate rewrites it here).
+        TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
+        patches.table.insert(Column("model", "model", 0, 0, 2, ""));
+        for (const char *coordinate : {"x", "y", "z"})
+        {
+          patches.table.insert(fmt::format("origin_{}", coordinate),
+                               fmt::format("origin {} (m)", coordinate));
+        }
+        for (const char *axis : {"u", "v", "w"})
+        {
+          for (const char *coordinate : {"x", "y", "z"})
+          {
+            patches.table.insert(fmt::format("axis_{}_{}", axis, coordinate),
+                                 fmt::format("axis {} {}", axis, coordinate));
+          }
+        }
+        patches.table.insert("weight", "weight");
+        for (const auto &patch : surface_response_op->GetPatchAssignments())
+        {
+          patches.table["model"] << patch.model;
+          for (int d = 0; d < 3; d++)
+          {
+            patches.table[fmt::format("origin_{}", "xyz"[d])]
+                << units.Dimensionalize<Units::ValueType::LENGTH>(patch.origin[d]);
+            patches.table[fmt::format("axis_u_{}", "xyz"[d])] << patch.axis_u[d];
+            patches.table[fmt::format("axis_v_{}", "xyz"[d])] << patch.axis_v[d];
+            patches.table[fmt::format("axis_w_{}", "xyz"[d])] << patch.axis_w[d];
+          }
+          patches.table["weight"] << patch.weight;
+        }
+        patches.WriteFullTableTrunc();
       }
     }
   }
@@ -1759,8 +1801,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     result.self_consistent_mode_overlap = nan;
     if (surface_response_postprocess_enabled)
     {
-      result.confidence =
-          surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq);
+      result.confidence = surface_response_op->GetMaxwellResponse(
+          *E, measurement_cache.freq, surface_response_patch_energy_enabled);
       result.corrected_normalization_energy =
           result.raw_normalization_energy + result.confidence.domain_correction;
       result.corrected_normalization_energy_fixed_flux =
@@ -1802,6 +1844,12 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.spatial_cluster_priority = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
             target_interfaces, *E, D_recovered.get(),
             surface_response_spatial_cluster_priority);
+      }
+      if (!surface_response_model_raw.empty())
+      {
+        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set.
+        result.model_raw_partition = surf_post_op.GetInterfacePartitionedEdgeEnergies(
+            target_interfaces, *E, D_recovered.get(), surface_response_model_raw);
       }
     }
     for (const auto &raw : measurement_cache.interface_eps_i)
@@ -1893,8 +1941,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         }
         const auto corrected_frequency =
             surface_response_corrected_frequency.value_or(measurement_cache.freq);
-        const auto corrected_response =
-            surface_response_op->GetMaxwellResponse(corrected_field, corrected_frequency);
+        const auto corrected_response = surface_response_op->GetMaxwellResponse(
+            corrected_field, corrected_frequency, surface_response_patch_energy_enabled);
         result.self_consistent_confidence = corrected_response;
         result.self_consistent_frequency = corrected_frequency;
         result.self_consistent_mode_overlap =
@@ -2274,7 +2322,96 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       << (result.has_postprocessed ? confidence.response_weighted_hat_residual : nan);
   surface_response_confidence->WriteFullTableTrunc();
   PrintSurfaceResponseModelEnergies(output_index, excitation);
+  if (surface_response_patch_energy_enabled)
+  {
+    PrintSurfaceResponsePatchEnergies(output_index, excitation);
+  }
   PrintSurfaceResponsePortionEnergies(output_index, excitation);
+  PrintSurfaceResponseModelRawEnergies(output_index, excitation);
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_index,
+                                                                  int excitation) const
+{
+  // PatchEnergy (decision 922 B-1; the 851 (C) export). Root only (the caller returns on
+  // the other ranks). Plain text tables (the label column is text):
+  // surface-response-model-raw-energy.csv rows = source, evaluation (0: the raw field),
+  // label, then per postprocessing interface the raw within-R energy on the label's pieces
+  // (0 for a non-target interface), then the Maxwell keys "f (GHz)" / "m" and "exc";
+  // surface-response-model-raw-groups.csv rows = label, model, patches, weight x length
+  // (m), written once (the claims are mesh-independent per configuration). Rows accumulate
+  // over the prints like the other Maxwell tables.
+  using VT = Units::ValueType;
+  const auto &result = *surface_response_measurement;
+  if (result.model_raw_partition.empty())
+  {
+    return;
+  }
+  const auto energy_path = post_dir / "surface-response-model-raw-energy.csv";
+  const auto groups_path = post_dir / "surface-response-model-raw-groups.csv";
+  const int source = solver_t == ProblemType::DRIVEN
+                         ? excitation
+                         : static_cast<int>(std::lround(output_index));
+  if (!surface_response_model_raw_started)
+  {
+    surface_response_model_raw_started = true;
+    std::ofstream energy(energy_path);
+    MFEM_VERIFY(energy, "Unable to open " << energy_path.string() << " for writing!");
+    energy << "source,evaluation,label";
+    for (const auto &[interface, data] : result.interfaces)
+    {
+      (void)data;
+      energy << fmt::format(",raw energy[{}] (J)", interface);
+    }
+    energy << (solver_t == ProblemType::DRIVEN ? ",f (GHz),exc\n" : ",m,exc\n");
+    std::ofstream groups(groups_path);
+    MFEM_VERIFY(groups, "Unable to open " << groups_path.string() << " for writing!");
+    groups << "label,model,patches,weight length (m)\n";
+    for (const auto &member : surface_response_op->GetModelRawClaimPortions().members)
+    {
+      groups << fmt::format("{},{},{},{:+.12e}\n", member.label, member.model,
+                            member.patches,
+                            units.Dimensionalize<VT::LENGTH>(member.weight_length));
+    }
+  }
+  std::set<std::string> labels;
+  for (const auto &[interface, partition] : result.model_raw_partition)
+  {
+    (void)interface;
+    for (const auto &[label, energy] : partition)
+    {
+      (void)energy;
+      labels.insert(label);
+    }
+  }
+  std::ofstream energy(energy_path, std::ios::app);
+  MFEM_VERIFY(energy, "Unable to open " << energy_path.string() << " for appending!");
+  for (const auto &label : labels)
+  {
+    energy << fmt::format("{},{},{}", source, 0, label);
+    for (const auto &[interface, data] : result.interfaces)
+    {
+      (void)data;
+      const auto partition = result.model_raw_partition.find(interface);
+      double value = 0.0;
+      if (partition != result.model_raw_partition.end())
+      {
+        const auto entry = partition->second.find(label);
+        value = entry != partition->second.end() ? entry->second : 0.0;
+      }
+      energy << fmt::format(",{:+.12e}", units.Dimensionalize<VT::ENERGY>(value));
+    }
+    if constexpr (solver_t == ProblemType::DRIVEN)
+    {
+      energy << fmt::format(",{:.8e},{}\n", output_index, excitation);
+    }
+    else
+    {
+      energy << fmt::format(",{},{}\n", static_cast<int>(std::lround(output_index)),
+                            excitation);
+    }
+  }
 }
 
 template <ProblemType solver_t>
@@ -2366,6 +2503,218 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelEnergies(double output_ind
     }
   }
   surface_response_model_energy->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_index,
+                                                               int excitation) const
+{
+  // PatchEnergy (decisions 913 / 920 / 922 B). Root only (the caller returns on the other
+  // ranks); the records are replicated by the response's gathers. The electrostatic
+  // driver's per-patch rows per print as it writes them per source: every applied patch at
+  // evaluation 0 (fixed trace) and 1 (fixed flux) on the raw field, at evaluation 2 on the
+  // self-consistent corrected field when it exists; `patch` = the 1-based placed patch
+  // index of the traces file; the origin from the patch table; then the Maxwell keys and
+  // the patch's max contour-loop residual (decision 920; 0 without a path record). The
+  // spatial traces (real part in the electrostatic column, the imaginary part after the
+  // prefix) and the per-path loop residuals follow the same key form. Rows accumulate
+  // over the prints.
+  using VT = Units::ValueType;
+  const auto &result = *surface_response_measurement;
+  std::map<int, const SurfaceResponseOperator::PatchAssignment *> assignments;
+  for (const auto &assignment : surface_response_op->GetPatchAssignments())
+  {
+    assignments.emplace(assignment.global_index, &assignment);
+  }
+  const int source = solver_t == ProblemType::DRIVEN
+                         ? excitation
+                         : static_cast<int>(std::lround(output_index));
+  const char *index_label = solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m";
+  auto MaxLoopResidual = [](const SurfaceResponseOperator::MaxwellResponse &response)
+  {
+    std::map<int, double> by_patch;
+    for (const auto &loop : response.path_loop_residuals)
+    {
+      if (loop.kind == 0)
+      {
+        auto &value = by_patch[loop.patch];
+        value = std::max(value, loop.residual);
+      }
+    }
+    return by_patch;
+  };
+  if (!surface_response_patch_energy)
+  {
+    surface_response_patch_energy =
+        std::make_unique<TableWithCSVFile>(post_dir / "surface-response-patch-energy.csv");
+    auto &table = surface_response_patch_energy->table;
+    table.insert(Column("source", "source", 0, 0, 2, ""));
+    table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
+    table.insert(Column("patch", "patch", 0, 0, 2, ""));
+    table.insert(Column("model", "model", 0, 0, 2, ""));
+    table.insert(Column("feature", "feature", 0, 0, 2, ""));
+    table.insert("weight", "weight");
+    table.insert("cell_begin", "cell begin (m)");
+    table.insert("cell_end", "cell end (m)");
+    for (const char *coordinate : {"x", "y", "z"})
+    {
+      table.insert(fmt::format("origin_{}", coordinate),
+                   fmt::format("origin {} (m)", coordinate));
+    }
+    table.insert("domain_correction", "domain correction (J)");
+    for (const auto &[interface, data] : result.interfaces)
+    {
+      (void)data;
+      table.insert(fmt::format("interface_{}", interface),
+                   fmt::format("fabricated surface energy[{}] (J)", interface));
+    }
+    table.insert("idx", index_label);
+    table.insert("excitation", "exc");
+    table.insert("max_loop_residual", "max loop residual");
+    table["excitation"].print_as_int = true;
+    if constexpr (solver_t == ProblemType::EIGENMODE ||
+                  solver_t == ProblemType::BOUNDARYMODE)
+    {
+      table["idx"].print_as_int = true;
+    }
+  }
+  {
+    auto &table = surface_response_patch_energy->table;
+    auto Append =
+        [&](int evaluation, const SurfaceResponseOperator::MaxwellResponse &response,
+            const SurfaceResponseOperator::PatchContribution &data, bool fixed_flux)
+    {
+      const auto assignment = assignments.find(data.patch);
+      MFEM_VERIFY(assignment != assignments.end(),
+                  "Per-patch Maxwell response energy of an unknown patch " << data.patch + 1
+                                                                           << "!");
+      const auto max_loops = MaxLoopResidual(response);
+      table["source"] << source;
+      table["evaluation"] << evaluation;
+      table["patch"] << data.patch + 1;
+      table["model"] << data.model;
+      table["feature"] << data.feature;
+      table["weight"] << data.weight;
+      table["cell_begin"] << units.Dimensionalize<VT::LENGTH>(data.cell[0]);
+      table["cell_end"] << units.Dimensionalize<VT::LENGTH>(data.cell[1]);
+      for (int d = 0; d < 3; d++)
+      {
+        table[fmt::format("origin_{}", "xyz"[d])]
+            << units.Dimensionalize<VT::LENGTH>(assignment->second->origin[d]);
+      }
+      table["domain_correction"] << units.Dimensionalize<VT::ENERGY>(
+          fixed_flux ? data.domain_correction_fixed_flux : data.domain_correction);
+      const auto &energies = fixed_flux ? data.fabricated_surface_energy_fixed_flux
+                                        : data.fabricated_surface_energy;
+      for (const auto &[interface, interface_data] : result.interfaces)
+      {
+        (void)interface_data;
+        const auto energy = energies.find(interface);
+        table[fmt::format("interface_{}", interface)] << units.Dimensionalize<VT::ENERGY>(
+            energy != energies.end() ? energy->second : 0.0);
+      }
+      table["idx"] << output_index;
+      table["excitation"] << excitation;
+      const auto max_loop = max_loops.find(data.patch);
+      table["max_loop_residual"] << (max_loop != max_loops.end() ? max_loop->second : 0.0);
+    };
+    if (result.has_postprocessed)
+    {
+      for (const auto &contribution : result.confidence.patch_contributions)
+      {
+        Append(0, result.confidence, contribution, false);
+        Append(1, result.confidence, contribution, true);
+      }
+    }
+    if (result.has_self_consistent)
+    {
+      for (const auto &contribution : result.self_consistent_confidence.patch_contributions)
+      {
+        Append(2, result.self_consistent_confidence, contribution, false);
+      }
+    }
+    surface_response_patch_energy->WriteFullTableTrunc();
+  }
+  if (result.has_postprocessed && !result.confidence.spatial_traces.empty())
+  {
+    if (!surface_response_traces)
+    {
+      surface_response_traces =
+          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-traces.csv");
+      auto &table = surface_response_traces->table;
+      table.insert(Column("source", "i", 0, 0, 2, ""));
+      table.insert(Column("patch", "patch", 0, 0, 2, ""));
+      table.insert(Column("model", "model", 0, 0, 2, ""));
+      table.insert(Column("coefficient", "coefficient", 0, 0, 2, ""));
+      table.insert(Column("conductor_state", "conductor state", 0, 0, 2, ""));
+      table.insert("value", "value (V)");
+      table.insert("value_imag", "value imag (V)");
+      table.insert("idx", index_label);
+      table.insert("excitation", "exc");
+      table["excitation"].print_as_int = true;
+      if constexpr (solver_t == ProblemType::EIGENMODE ||
+                    solver_t == ProblemType::BOUNDARYMODE)
+      {
+        table["idx"].print_as_int = true;
+      }
+    }
+    auto &table = surface_response_traces->table;
+    for (const auto &entry : result.confidence.spatial_traces)
+    {
+      for (std::size_t i = 0; i < entry.coefficients.size(); i++)
+      {
+        table["source"] << source;
+        table["patch"] << entry.patch + 1;
+        table["model"] << entry.model;
+        table["coefficient"] << static_cast<int>(i) + 1;
+        table["conductor_state"] << (static_cast<int>(i) >= entry.contour_size ? 1 : 0);
+        table["value"] << units.Dimensionalize<VT::VOLTAGE>(entry.coefficients[i].real());
+        table["value_imag"] << units.Dimensionalize<VT::VOLTAGE>(
+            entry.coefficients[i].imag());
+        table["idx"] << output_index;
+        table["excitation"] << excitation;
+      }
+    }
+    surface_response_traces->WriteFullTableTrunc();
+  }
+  if (result.has_postprocessed && !result.confidence.path_loop_residuals.empty())
+  {
+    if (!surface_response_patch_loops)
+    {
+      surface_response_patch_loops =
+          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-patch-loops.csv");
+      auto &table = surface_response_patch_loops->table;
+      table.insert(Column("source", "source", 0, 0, 2, ""));
+      table.insert(Column("patch", "patch", 0, 0, 2, ""));
+      table.insert(Column("model", "model", 0, 0, 2, ""));
+      table.insert(Column("path", "path", 0, 0, 2, ""));
+      table.insert(Column("kind", "kind", 0, 0, 2, ""));
+      table.insert("residual", "loop residual");
+      table.insert("scale", "loop scale (V)");
+      table.insert("idx", index_label);
+      table.insert("excitation", "exc");
+      table["excitation"].print_as_int = true;
+      if constexpr (solver_t == ProblemType::EIGENMODE ||
+                    solver_t == ProblemType::BOUNDARYMODE)
+      {
+        table["idx"].print_as_int = true;
+      }
+    }
+    auto &table = surface_response_patch_loops->table;
+    for (const auto &loop : result.confidence.path_loop_residuals)
+    {
+      table["source"] << source;
+      table["patch"] << loop.patch + 1;
+      table["model"] << loop.model;
+      table["path"] << loop.path;
+      table["kind"] << loop.kind;
+      table["residual"] << loop.residual;
+      table["scale"] << units.Dimensionalize<VT::VOLTAGE>(loop.scale);
+      table["idx"] << output_index;
+      table["excitation"] << excitation;
+    }
+    surface_response_patch_loops->WriteFullTableTrunc();
+  }
 }
 
 template <ProblemType solver_t>

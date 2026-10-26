@@ -346,6 +346,160 @@ public:
 
 }  // namespace
 
+namespace
+{
+
+// PatchEnergy (decision 922 B-1; the 851 (C) export): the exact partition of one
+// interface's perimeter into elementary pieces, each labelled by the UNION of the labels of
+// the portions covering it (labels are '+'-joined "m<idx>" tokens; the union is the
+// ascending token set). Pieces are the sub-intervals between consecutive distinct interval
+// ends on a tree segment; a piece is labelled by the portions containing its midpoint
+// (closed intervals), so overlapping portions of different labels yield a shared piece
+// instead of a double count.
+struct PartitionedEdgePieces
+{
+  struct Piece
+  {
+    double a = 0.0, b = 0.0;
+    int group = -1;
+  };
+  std::map<std::size_t, std::vector<Piece>> by_segment;  // ascending, non-overlapping
+  std::vector<std::string> groups;
+
+  PartitionedEdgePieces(const UncoveredEdgeIntervals &intervals)
+  {
+    auto Tokens = [](const std::string &label)
+    {
+      std::set<std::string> tokens;
+      std::size_t begin = 0;
+      while (begin <= label.size())
+      {
+        const auto end = label.find('+', begin);
+        tokens.insert(label.substr(begin, end == std::string::npos ? std::string::npos
+                                                                   : end - begin));
+        if (end == std::string::npos)
+        {
+          break;
+        }
+        begin = end + 1;
+      }
+      return tokens;
+    };
+    auto Model = [](const std::string &token)
+    { return token.size() > 1 && token[0] == 'm' ? std::stoi(token.substr(1)) : -1; };
+    for (const auto &[segment, list] : intervals.by_segment)
+    {
+      std::vector<double> ends;
+      for (const auto &interval : list)
+      {
+        ends.push_back(interval.a);
+        ends.push_back(interval.b);
+      }
+      std::sort(ends.begin(), ends.end());
+      ends.erase(std::unique(ends.begin(), ends.end()), ends.end());
+      auto &pieces = by_segment[segment];
+      for (std::size_t i = 0; i + 1 < ends.size(); i++)
+      {
+        const double midpoint = 0.5 * (ends[i] + ends[i + 1]);
+        std::set<std::string> tokens;
+        for (const auto &interval : list)
+        {
+          if (midpoint >= interval.a && midpoint <= interval.b)
+          {
+            const auto portion_tokens = Tokens(intervals.types[interval.type]);
+            tokens.insert(portion_tokens.begin(), portion_tokens.end());
+          }
+        }
+        if (tokens.empty())
+        {
+          continue;
+        }
+        std::vector<std::string> ordered(tokens.begin(), tokens.end());
+        std::sort(ordered.begin(), ordered.end(),
+                  [&](const auto &x, const auto &y) { return Model(x) < Model(y); });
+        std::string label;
+        for (const auto &token : ordered)
+        {
+          label += (label.empty() ? "" : "+") + token;
+        }
+        auto group = std::find(groups.begin(), groups.end(), label);
+        if (group == groups.end())
+        {
+          groups.push_back(label);
+          group = std::prev(groups.end());
+        }
+        pieces.push_back({ends[i], ends[i + 1], static_cast<int>(group - groups.begin())});
+      }
+    }
+  }
+};
+
+// The within-R energy density of the quadrature points whose nearest perimeter foot lies
+// on a piece of the requested group (`group` = the groups' size: on NO piece, the unclaimed
+// within-R remainder). Pieces are half-open [a, b); the last piece of a segment is closed.
+class PartitionedEdgeCoefficient : public mfem::Coefficient
+{
+private:
+  mfem::Coefficient &coefficient;
+  const EdgeDistanceTree &edge_distance_tree;
+  const PartitionedEdgePieces &pieces;
+  const double radius;
+  const double smoothing;
+  const int group;
+
+public:
+  PartitionedEdgeCoefficient(mfem::Coefficient &coefficient,
+                             const EdgeDistanceTree &edge_distance_tree,
+                             const PartitionedEdgePieces &pieces, double radius,
+                             double smoothing, int group)
+    : coefficient(coefficient), edge_distance_tree(edge_distance_tree), pieces(pieces),
+      radius(radius), smoothing(smoothing), group(group)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    const auto nearest = edge_distance_tree.Nearest(point);
+    const double within = 1.0 - EdgeDistanceOutsideWeight(
+                                    std::sqrt(nearest.distance_squared), radius, smoothing);
+    if (within <= 0.0)
+    {
+      return 0.0;
+    }
+    int found = static_cast<int>(pieces.groups.size());
+    const auto it = pieces.by_segment.find(nearest.segment);
+    if (it != pieces.by_segment.end() && !it->second.empty())
+    {
+      const auto &segment = edge_distance_tree.GetSegment(nearest.segment);
+      double length2 = 0.0, projection = 0.0;
+      for (int d = 0; d < point.Size(); d++)
+      {
+        const double chord = segment.p1[d] - segment.p0[d];
+        length2 += chord * chord;
+        projection += (point(d) - segment.p0[d]) * chord;
+      }
+      const double foot = std::clamp(projection / length2, 0.0, 1.0) * std::sqrt(length2);
+      const auto &list = it->second;
+      auto piece = std::upper_bound(list.begin(), list.end(), foot,
+                                    [](double x, const auto &p) { return x < p.a; });
+      if (piece != list.begin())
+      {
+        piece = std::prev(piece);
+        const bool last = std::next(piece) == list.end();
+        if (foot >= piece->a && (foot < piece->b || (last && foot == piece->b)))
+        {
+          found = piece->group;
+        }
+      }
+    }
+    return found == group ? within * coefficient.Eval(T, ip) : 0.0;
+  }
+};
+
+}  // namespace
+
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
     const config::SurfaceFluxData &data, const mfem::ParMesh &mesh,
     const mfem::Array<int> &bdr_attr_marker)
@@ -995,6 +1149,56 @@ SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies(
     auto &energy = energies.at(entries[i].first);
     energy.by_type[entries[i].second] += local_energies[i];
     energy.energy += local_energies[i];
+  }
+  return energies;
+}
+
+std::map<int, std::map<std::string, double>>
+SurfacePostOperator::GetInterfacePartitionedEdgeEnergies(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<UncoveredPerimeterPortion> &portions) const
+{
+  // PatchEnergy (decision 922 B-1). One integral per (interface, group) and one for the
+  // unclaimed remainder; the groups come from the exact piece partition of the portions.
+  const auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::map<int, std::map<std::string, double>> energies;
+  std::vector<double> local_energies;
+  std::vector<std::pair<int, std::string>> entries;
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "Partitioned edge energies require a matching edge distance!");
+    energies.emplace(idx, std::map<std::string, double>{});
+    const double radius = data.edge_distances.back();
+    const UncoveredEdgeIntervals intervals(*data.edge_distance_tree, portions,
+                                           kSignatureParameterToleranceOverRadius * radius);
+    const PartitionedEdgePieces pieces(intervals);
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    for (std::size_t group = 0; group <= pieces.groups.size(); group++)
+    {
+      PartitionedEdgeCoefficient partitioned(*coefficient, *data.edge_distance_tree, pieces,
+                                             radius, data.edge_distance_smoothing,
+                                             static_cast<int>(group));
+      local_energies.push_back(GetLocalSurfaceIntegral(partitioned, attr_marker,
+                                                       data.ownership_quadrature_order));
+      entries.emplace_back(idx, group < pieces.groups.size() ? pieces.groups[group]
+                                                             : std::string("unclaimed"));
+    }
+  }
+  if (!local_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                   E.GetComm());
+  }
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    energies.at(entries[i].first)[entries[i].second] += local_energies[i];
   }
   return energies;
 }

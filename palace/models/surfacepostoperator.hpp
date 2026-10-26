@@ -304,6 +304,17 @@ public:
   std::map<int, UncoveredEdgeEnergy> GetInterfaceUncoveredEdgeEnergies(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
+  // PatchEnergy (decision 922 B-1; the 851 (C) export): the within-R energy of each
+  // requested interface partitioned EXACTLY over the portions' labels (`type` = a
+  // '+'-joined "m<idx>" model-set label): per label (the union label where portions of
+  // different labels overlap on a tree segment) the energy whose nearest perimeter foot
+  // lies on a piece of that label, plus the key "unclaimed" for the within-R energy whose
+  // foot lies on no portion. The labels and "unclaimed" sum to the within-R energy (the
+  // interface energy minus the outside energy) exactly, up to the quadrature of the two
+  // integrals.
+  std::map<int, std::map<std::string, double>> GetInterfacePartitionedEdgeEnergies(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<UncoveredPerimeterPortion> &portions) const;
   std::vector<InterfaceLocalEdgeEnergy>
   GetInterfaceLocalEdgeElectricFieldEnergies(int idx, const GridFunction &E,
                                              const GridFunction *D = nullptr,

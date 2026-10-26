@@ -106,6 +106,33 @@ struct SpatialClusterPriorityExclusions
   ExcludedPatchPortions portions;
 };
 
+// PatchEnergy (decision 922 B-1; the 851 (C) diagnosis export formalised, scratch
+// 3232e29548): the raw claims of every APPLIED patch (weight > 0, not
+// DomainBoundary-excluded), built by the DomainBoundary rule (AppendExcludedPatchClaim),
+// labelled by the SET of models whose patches cover the claim ("m13" alone, "m13+m14" for a
+// co-located first-order split cell). The surface postoperator partitions the within-R raw
+// energy over these claims (GetInterfacePartitionedEdgeEnergies): per label, the raw energy
+// on exactly the cells those models correct, i.e. r_raw of decision 850 (d) "on the model's
+// own patches".
+struct ModelRawClaimPortions
+{
+  // The claims; `topology` carries the model-set label.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      portions;
+  // Per label and model of that label: the patches of the model on the label's claims and
+  // the sum over those claims of (patch weight x claim length, mesh units), the share the
+  // diagnosis attributes a shared label's raw energy with.
+  struct GroupMember
+  {
+    std::string label;
+    int model = 0;
+    int patches = 0;
+    double weight_length = 0.0;
+  };
+  std::vector<GroupMember> members;  // ascending (label, model)
+  double length = 0.0;               // mesh units, over all portions
+};
+
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
 // finite-element point interpolation is still rebuilt for every refined mesh.
 class SurfaceResponseGeometry
@@ -521,6 +548,9 @@ private:
   // sticky).
   std::map<int, ExcludedPatchPortions> conductor_consistency_claims;
   ExcludedPatchPortions conductor_consistency_portions;
+  // PatchEnergy (decision 922 B-1): the applied patches' raw claims by model set; empty
+  // unless the configuration requests PatchEnergy.
+  ModelRawClaimPortions model_raw_claim_portions;
   // kSignatureParameterToleranceOverRadius x R (mesh units): the claim portions' length
   // floor and deduplication tolerance (the DomainBoundary rule's).
   double conductor_consistency_claim_tolerance = 0.0;
@@ -694,6 +724,35 @@ public:
     // surface-response-model-energy.csv), one entry per runtime model in model-index order,
     // gathered by the one batched reduction and replicated on all ranks.
     std::vector<ModelContribution> model_contributions;
+    // PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B; include_patches): every
+    // applied patch's own increments (the electrostatic PatchContribution form: the
+    // per-model sums are the entries above to roundoff; `cell` = the mortar longitudinal
+    // strip), the spatial patches' complex trace coefficients (the electrostatic traces
+    // file's form, real and imaginary parts), and the per-path loop residuals of the
+    // line-integral trace lift (920: one record per contour loop (kind 0) or cap-interior
+    // hat loop (kind 1) with a non-zero scale, `residual` = |Σ terms| / Σ |terms|, `scale`
+    // = Σ |terms| in the field's units; the maximum over the records is `loop_residual`,
+    // the quantity behind the 0.05 gate). All three ordered by global patch index and
+    // replicated on all ranks; empty without include_patches.
+    std::vector<PatchContribution> patch_contributions;
+    struct SpatialTrace
+    {
+      int patch = 0;
+      int model = 0;
+      int contour_size = 0;
+      std::vector<std::complex<double>> coefficients;
+    };
+    std::vector<SpatialTrace> spatial_traces;
+    struct PathLoopResidual
+    {
+      int patch = 0;
+      int model = 0;
+      int path = 0;
+      int kind = 0;
+      double residual = 0.0;
+      double scale = 0.0;
+    };
+    std::vector<PathLoopResidual> path_loop_residuals;
   };
 
   SurfaceResponseOperator(
@@ -752,6 +811,9 @@ public:
 
 private:
   std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only) const;
+  // Every rank's local records concatenated in rank order (Allgatherv), the per-patch
+  // record gathers' shared step.
+  std::vector<double> AllgatherRecords(const std::vector<double> &local_records) const;
 
 public:
   // Conductor-consistency gate (decision 277 (A)), solve time only: measure every applied
@@ -773,8 +835,8 @@ public:
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through
   // Hermitian response-matrix quadratic forms.
-  MaxwellResponse GetMaxwellResponse(const GridFunction &E,
-                                     std::complex<double> omega) const;
+  MaxwellResponse GetMaxwellResponse(const GridFunction &E, std::complex<double> omega,
+                                     bool include_patches = false) const;
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
@@ -837,6 +899,12 @@ public:
   const ExcludedPatchPortions &GetConductorConsistencyPortionRecord() const
   {
     return conductor_consistency_portions;
+  }
+  // PatchEnergy (decision 922 B-1): the applied patches' raw claims labelled by model set
+  // (empty without PatchEnergy).
+  const ModelRawClaimPortions &GetModelRawClaimPortions() const
+  {
+    return model_raw_claim_portions;
   }
   // Whether this construction reused the first construction's domain-boundary containment
   // result through the cached automatic geometry (decision 734 F2; false on the first

@@ -314,6 +314,11 @@ void IoData::CheckConfiguration()
                           CorrectionMode::SELF_CONSISTENT,
               "Boundary mode does not support SurfaceResponseCorrection CorrectionMode "
               "\"SelfConsistent\"; use \"PostprocessOnly\" or \"Both\"!");
+  MFEM_VERIFY(!solver.surface_response_correction ||
+                  problem.type != ProblemType::BOUNDARYMODE ||
+                  !solver.surface_response_correction->patch_energy,
+              "Boundary mode does not support SurfaceResponseCorrection \"PatchEnergy\" "
+              "(the per-patch export is a driven / eigenmode option)!");
 
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.

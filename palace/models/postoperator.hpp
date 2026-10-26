@@ -267,8 +267,17 @@ protected:
   // coupons' windows outside every cluster box, kept raw like the two lists above.
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       surface_response_spatial_cluster_priority;
+  // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
+  // model set (empty without PatchEnergy), whose within-R raw energy is partitioned per
+  // model set (surface-response-model-raw-energy.csv).
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> surface_response_model_raw;
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
+  // PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B): the per-patch export
+  // (surface-response-patches.csv at construction; surface-response-patch-energy.csv,
+  // -traces.csv and -patch-loops.csv per print) and the per-model raw partition. Off by
+  // default: every output is then byte-identical to a run without the option.
+  bool surface_response_patch_energy_enabled = false;
   std::unique_ptr<GridFunction> surface_response_corrected_field;
   std::unique_ptr<GridFunction> surface_response_corrected_flux;
   bool has_surface_response_corrected_field = false;
@@ -299,6 +308,9 @@ protected:
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> spatial_cluster_priority;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
         self_consistent_spatial_cluster_priority;
+    // PatchEnergy (decision 922 B-1): per target interface, the raw field's within-R energy
+    // per model-set label (+ "unclaimed").
+    std::map<int, std::map<std::string, double>> model_raw_partition;
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;
@@ -321,6 +333,20 @@ protected:
   // Maxwell key columns "f (GHz)" / "m" and "exc" so that every row of a multi-frequency
   // sweep is unambiguous; rows accumulate over the prints like surface-Q-corrected.csv.
   mutable std::unique_ptr<TableWithCSVFile> surface_response_model_energy;
+  // PatchEnergy (decision 922 B): the electrostatic driver's per-patch columns EXACTLY as a
+  // strict prefix (surface-response-patch-energy.csv: source, evaluation, patch, model,
+  // feature, weight, cell begin / end (m), origin x / y / z (m), domain correction (J),
+  // fabricated surface energy[k] (J) per postprocessing interface), then "f (GHz)" / "m"
+  // and "exc", then (decision 920) the patch's "max loop residual" (its contour loops' max;
+  // 0 for a patch without a path record); surface-response-traces.csv: the electrostatic
+  // spatial-trace columns (source, patch, model, coefficient, conductor state, value (V) =
+  // the real part) then "value imag (V)", "f (GHz)" / "m", "exc";
+  // surface-response-patch-loops.csv (920): source, patch, model, path, kind (0 contour
+  // loop / 1 cap-interior hat), loop residual, loop scale (V), "f (GHz)" / "m", "exc".
+  mutable std::unique_ptr<TableWithCSVFile> surface_response_patch_energy;
+  mutable std::unique_ptr<TableWithCSVFile> surface_response_traces;
+  mutable std::unique_ptr<TableWithCSVFile> surface_response_patch_loops;
+  void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;
   mutable bool surface_response_warning_printed = false;
   mutable bool surface_response_portion_tables_started = false;
   // The per-type portion tables of the Maxwell correction (decision 751): the uncovered
@@ -332,6 +358,12 @@ protected:
   // exists) as the electrostatic driver writes them, from the response's ModelContribution
   // entries.
   void PrintSurfaceResponseModelEnergies(double output_index, int excitation) const;
+  // PatchEnergy (decision 922 B-1): surface-response-model-raw-energy.csv (per model-set
+  // label the raw within-R energy per postprocessing interface) and
+  // surface-response-model-raw-groups.csv (per label and model: patches, weight x length),
+  // plain text tables appended per print, root only.
+  void PrintSurfaceResponseModelRawEnergies(double output_index, int excitation) const;
+  mutable bool surface_response_model_raw_started = false;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -760,6 +792,18 @@ public:
   {
     return surf_post_op.GetInterfaceUncoveredEdgeEnergies(response_targets, *E,
                                                           D_recovered.get(), portions);
+  }
+  // PatchEnergy (decision 922 B-1): the same field's within-R energy partitioned per
+  // model-set label over the applied patches' raw claims.
+  template <ProblemType U = solver_t>
+  auto GetElectrostaticPartitionedEdgeEnergies(
+      const std::set<int> &response_targets,
+      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions) const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
+                          std::map<int, std::map<std::string, double>>>
+  {
+    return surf_post_op.GetInterfacePartitionedEdgeEnergies(response_targets, *E,
+                                                            D_recovered.get(), portions);
   }
 
   // Evaluate localized interface energies for an electrostatic field without producing

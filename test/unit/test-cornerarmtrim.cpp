@@ -15,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <fmt/format.h>
 #include <mfem.hpp>
@@ -2690,6 +2691,597 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // outside and the uncovered raw energy.
   CHECK_THAT(std::stod(table.rows[0][table.Column("fabricated surface energy[4] (J)")]),
              WithinRel(csv_ft - Joule(outside + uncovered), 1.0e-9));
+#endif
+}
+
+// PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B; the 851 (C) per-model RAW
+// partition formalised). On the lead fixture of the case above with "PatchEnergy": true:
+// (1) the applied patches' raw claims (GetModelRawClaimPortions) carry one label "m<idx>"
+// for the isolated-edge model on both the electrostatic and the Maxwell operator, with the
+// model's patch count; the surface postoperator partitions the within-R energy of any
+// field EXACTLY over the labels plus the unclaimed remainder: Σ labels + unclaimed = E_raw
+// − E_out to 1e-9 on both postoperators (the two operators' portions give the same
+// partition); the unclaimed remainder equals the uncovered requirements' energy (the two
+// Missing corners' portions); the Maxwell path writes surface-response-model-raw-energy.csv
+// / -groups.csv with those values. (2) The Maxwell per-patch export: the patch table at
+// construction, surface-response-patch-energy.csv (the electrostatic columns as a strict
+// prefix, then "m" / "exc" / "max loop residual") whose per-model sums are the
+// surface-response-model-energy.csv rows, and surface-response-patch-loops.csv (920) whose
+// contour-loop maximum is the confidence table's "loop residual" (the 0.05-gate quantity)
+// and whose response-weighted RMS, recomputed from the per-path rows and the per-patch
+// response energies, is its "response-weighted loop residual". (3) Without PatchEnergy
+// (the default) none of the files exists, the claims are empty and
+// surface-response-model-energy.csv is byte-identical. On main the Maxwell configuration
+// refuses "PatchEnergy" (configfile.cpp) and the operator has no per-patch records.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell per-patch export and per-model raw partition (decision 922 B)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "model-raw-lead.mesh";
+  const auto basis_path = temp.temp_dir / "model-raw-basis-points.csv";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-model-raw-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-model-raw-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    REQUIRE(models.size() == 1);
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = edge_library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["DomainBoundary"] = {{"Mirror", "Off"}};
+  correction["PatchEnergy"] = true;
+  const fs::path electrostatic_output_dir = temp.temp_dir / "model-raw-electrostatic";
+  config["Problem"]["Output"] = electrostatic_output_dir.string();
+  IoData electrostatic_iodata(config, false);
+  electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(electrostatic_iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> electrostatic_meshes;
+  electrostatic_meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  LaplaceOperator laplace_op(electrostatic_iodata, electrostatic_meshes);
+  SurfaceResponseOperator electrostatic_response(electrostatic_iodata, laplace_op);
+  PostOperator<ProblemType::ELECTROSTATIC> electrostatic_post_op(electrostatic_iodata,
+                                                                 laplace_op);
+
+  const fs::path output_dir = temp.temp_dir / "model-raw-maxwell";
+  json maxwell_config = config;
+  maxwell_config["Problem"]["Type"] = "Eigenmode";
+  maxwell_config["Problem"]["Output"] = output_dir.string();
+  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  maxwell_config["Boundaries"].erase("Terminal");
+  maxwell_config["Solver"] = {{"Order", 1},
+                              {"Eigenmode", {{"Target", 1.0}}},
+                              {"SurfaceResponseCorrection",
+                               {{"Library", edge_library_path.string()},
+                                {"TargetInterfaces", {4}},
+                                {"UnmatchedPolicy", "Warn"},
+                                {"CorrectionMode", "PostprocessOnly"},
+                                {"PatchEnergy", true}}}};
+  IoData iodata(maxwell_config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->GetPatchCount() == electrostatic_response.GetPatchCount());
+
+  // The claims: one label for the one applied model on both operators, every applied patch
+  // of the model on it, the same portion count (the same placed patches).
+  const auto &electrostatic_claims = electrostatic_response.GetModelRawClaimPortions();
+  const auto &maxwell_claims = response->GetModelRawClaimPortions();
+  REQUIRE(!electrostatic_claims.portions.empty());
+  REQUIRE(electrostatic_claims.portions.size() == maxwell_claims.portions.size());
+  REQUIRE(electrostatic_claims.members.size() == 1);
+  REQUIRE(maxwell_claims.members.size() == 1);
+  const auto &member = electrostatic_claims.members.front();
+  const std::string label = fmt::format("m{}", member.model);
+  CHECK(member.label == label);
+  CHECK(maxwell_claims.members.front().label == label);
+  CHECK(maxwell_claims.members.front().model == member.model);
+  CHECK(maxwell_claims.members.front().patches == member.patches);
+  CHECK_THAT(maxwell_claims.members.front().weight_length,
+             WithinRel(member.weight_length, 1.0e-12));
+  CHECK_THAT(maxwell_claims.length, WithinRel(electrostatic_claims.length, 1.0e-12));
+  for (const auto &portion : electrostatic_claims.portions)
+  {
+    CHECK(portion.topology == label);
+  }
+  auto Perimeter = [](const auto &portions)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+    for (const auto &portion : portions)
+    {
+      perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    return perimeter;
+  };
+
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
+  auto Gradient = [&](auto &h1_fespace, auto &nd_fespace)
+  {
+    mfem::ParGridFunction potential(&h1_fespace.Get());
+    potential.ProjectCoefficient(potential_coefficient);
+    mfem::ParDiscreteLinearOperator gradient(&h1_fespace.Get(), &nd_fespace.Get());
+    gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+    gradient.Assemble();
+    auto field = std::make_unique<GridFunction>(nd_fespace, false);
+    gradient.Mult(potential, field->Real());
+    field->Real() *= -1.0;
+    Vector e(nd_fespace.GetTrueVSize());
+    field->Real().GetTrueDofs(e);
+    field->Real().SetFromTrueDofs(e);
+    field->Real().ExchangeFaceNbrData();
+    return field;
+  };
+  // The exact partition identity on both postoperators with both operators' claims:
+  // Σ labels + unclaimed = E_raw − E_out to 1e-9; the two claim sets partition alike.
+  auto CheckPartition = [&](const SurfacePostOperator &surf_post_op,
+                            const GridFunction &field, const char *path)
+  {
+    INFO(path);
+    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+    const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(4, field);
+    REQUIRE(edge_energies.size() == 1);
+    const double within = raw - edge_energies[0].energy_outside;
+    REQUIRE(within > 0.0);
+    const auto uncovered = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+        {4}, field, nullptr, Perimeter(response->GetUncoveredPortions()));
+    std::map<std::string, double> reference;
+    for (const auto *claims : {&electrostatic_claims, &maxwell_claims})
+    {
+      const auto partition = surf_post_op.GetInterfacePartitionedEdgeEnergies(
+          {4}, field, nullptr, Perimeter(claims->portions));
+      REQUIRE(partition.size() == 1);
+      const auto &by_label = partition.at(4);
+      REQUIRE(by_label.size() == 2);
+      REQUIRE(by_label.count(label) == 1);
+      REQUIRE(by_label.count("unclaimed") == 1);
+      CHECK(by_label.at(label) > 0.0);
+      double sum = 0.0;
+      for (const auto &[key, energy] : by_label)
+      {
+        (void)key;
+        sum += energy;
+      }
+      CHECK_THAT(sum, WithinRel(within, 1.0e-9));
+      // The unclaimed remainder is the uncovered requirements' energy (the claims and the
+      // uncovered portions tile the perimeter within R).
+      CHECK_THAT(by_label.at("unclaimed"), WithinRel(uncovered.at(4).energy, 1.0e-9));
+      if (reference.empty())
+      {
+        reference = by_label;
+      }
+      else
+      {
+        for (const auto &[key, energy] : by_label)
+        {
+          CHECK_THAT(energy, WithinRel(reference.at(key), 1.0e-12));
+        }
+      }
+    }
+    return reference.at(label);
+  };
+  const auto electrostatic_field =
+      Gradient(laplace_op.GetH1Space(), laplace_op.GetNDSpace());
+  CheckPartition(electrostatic_post_op.GetSurfacePostOp(), *electrostatic_field,
+                 "electrostatic");
+  const auto maxwell_field = Gradient(space_op.GetH1Space(), space_op.GetNDSpace());
+  const double model_raw =
+      CheckPartition(post_op.GetSurfacePostOp(), *maxwell_field, "maxwell");
+
+  // The Maxwell path's tables of the same field.
+  GridFunction field(space_op.GetNDSpace(), true);
+  field.Real() = maxwell_field->Real();
+  field.Imag() = 0.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  e.Imag() = 0.0;
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+  // A second print (mode 2) with a ROTATIONAL field: the line-integral trace lift of a
+  // non-conservative field closes its loops with O(1) residuals, so that the per-path
+  // records (decision 920) are read on a non-trivial case (the gradient field above
+  // closes every loop to roundoff).
+  {
+    mfem::VectorFunctionCoefficient rotational(3,
+                                               [](const mfem::Vector &x, mfem::Vector &v)
+                                               {
+                                                 v.SetSize(3);
+                                                 v(0) = 0.4 * (x[1] - 0.5) + 0.1 * x[2];
+                                                 v(1) = -0.4 * (x[0] - 0.5) + 0.3;
+                                                 v(2) = 0.2 * x[0] * (x[1] - 0.5);
+                                               });
+    GridFunction rotational_field(space_op.GetNDSpace(), true);
+    rotational_field.Real().ProjectCoefficient(rotational);
+    rotational_field.Imag() = 0.0;
+    ComplexVector e2(space_op.GetNDSpace().GetTrueVSize());
+    rotational_field.Real().GetTrueDofs(e2.Real());
+    e2.Imag() = 0.0;
+    post_op.MeasureAndPrintAll(1, e2, b, omega, 0.0, 0.0, 2);
+  }
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Joule = [&](double energy)
+  { return iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy); };
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  // The integer columns print in the tables' numeric form ("1.60e+01"): read as numbers.
+  auto Int = [](const std::string &field)
+  { return static_cast<int>(std::lround(std::stod(field))); };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-model-raw-energy.csv"));
+  const TextCsv table =
+      ReadTrimmedCsv(output_dir / "surface-response-model-raw-energy.csv");
+  const std::vector<std::string> expected_header = {
+      "source", "evaluation", "label", "raw energy[4] (J)", "m", "exc"};
+  CHECK(table.header == expected_header);
+  REQUIRE(table.rows.size() == 4);  // 2 labels x 2 modes
+  std::map<std::string, std::vector<std::string>> by_label;
+  for (const auto &row : table.rows)
+  {
+    CHECK(Int(row[table.Column("evaluation")]) == 0);
+    CHECK(Int(row[table.Column("exc")]) == 0);
+    CHECK(Int(row[table.Column("source")]) == Int(row[table.Column("m")]));
+    if (Int(row[table.Column("m")]) == 1)
+    {
+      by_label[row[table.Column("label")]] = row;
+    }
+  }
+  REQUIRE(by_label.count(label) == 1);
+  REQUIRE(by_label.count("unclaimed") == 1);
+  CHECK_THAT(std::stod(by_label.at(label)[table.Column("raw energy[4] (J)")]),
+             WithinRel(Joule(model_raw), 1.0e-10));
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-model-raw-groups.csv"));
+  const TextCsv groups =
+      ReadTrimmedCsv(output_dir / "surface-response-model-raw-groups.csv");
+  CHECK(groups.header ==
+        std::vector<std::string>{"label", "model", "patches", "weight length (m)"});
+  REQUIRE(groups.rows.size() == 1);
+  CHECK(groups.rows[0][groups.Column("label")] == label);
+  CHECK(Int(groups.rows[0][groups.Column("model")]) == member.model);
+  CHECK(Int(groups.rows[0][groups.Column("patches")]) == member.patches);
+
+  // (2) The per-patch export of the same print.
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patches.csv"));
+  const TextCsv patch_table = ReadTrimmedCsv(output_dir / "surface-response-patches.csv");
+  CHECK(patch_table.header ==
+        std::vector<std::string>{"model", "origin x (m)", "origin y (m)", "origin z (m)",
+                                 "axis u x", "axis u y", "axis u z", "axis v x", "axis v y",
+                                 "axis v z", "axis w x", "axis w y", "axis w z", "weight"});
+  CHECK(patch_table.rows.size() == static_cast<std::size_t>(response->GetPatchCount()));
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patch-energy.csv"));
+  const TextCsv patch_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-patch-energy.csv");
+  CHECK(patch_energy.header ==
+        std::vector<std::string>{"source", "evaluation", "patch", "model", "feature",
+                                 "weight", "cell begin (m)", "cell end (m)", "origin x (m)",
+                                 "origin y (m)", "origin z (m)", "domain correction (J)",
+                                 "fabricated surface energy[4] (J)", "m", "exc",
+                                 "max loop residual"});
+  // Evaluation 0 and 1 for every applied patch and mode (PostprocessOnly: no evaluation 2).
+  REQUIRE(patch_energy.rows.size() ==
+          4 * static_cast<std::size_t>(response->GetPatchCount()));
+  const TextCsv model_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-model-energy.csv");
+  std::map<std::tuple<int, int, int>, std::array<double, 4>> model_sums;  // (m, model, ev)
+  double max_patch_loop = 0.0;                                            // mode 2
+  std::map<int, double> patch_response_energy;  // mode 2: the weight of the loop RMS
+  for (const auto &row : patch_energy.rows)
+  {
+    const int mode = Int(row[patch_energy.Column("m")]);
+    CHECK(Int(row[patch_energy.Column("source")]) == mode);
+    CHECK(Int(row[patch_energy.Column("exc")]) == 0);
+    const int ev = Int(row[patch_energy.Column("evaluation")]);
+    const int model = Int(row[patch_energy.Column("model")]);
+    const int patch = Int(row[patch_energy.Column("patch")]);
+    auto &sums = model_sums[{mode, model, ev}];
+    sums[0] += 1.0;
+    sums[1] += std::stod(row[patch_energy.Column("weight")]);
+    sums[2] += std::stod(row[patch_energy.Column("domain correction (J)")]);
+    const double energy =
+        std::stod(row[patch_energy.Column("fabricated surface energy[4] (J)")]);
+    sums[3] += energy;
+    if (mode == 2)
+    {
+      patch_response_energy[patch] =
+          std::max(patch_response_energy[patch], std::abs(energy));
+      max_patch_loop = std::max(max_patch_loop,
+                                std::stod(row[patch_energy.Column("max loop residual")]));
+    }
+  }
+  REQUIRE(model_energy.rows.size() == 4);
+  for (const auto &row : model_energy.rows)
+  {
+    const int mode = Int(row[model_energy.Column("m")]);
+    const int ev = Int(row[model_energy.Column("evaluation")]);
+    const int model = Int(row[model_energy.Column("model")]);
+    REQUIRE(model_sums.count({mode, model, ev}) == 1);
+    const auto &sums = model_sums.at({mode, model, ev});
+    CHECK_THAT(sums[0],
+               WithinRel(std::stod(row[model_energy.Column("patch count")]), 1.0e-12));
+    CHECK_THAT(sums[1],
+               WithinRel(std::stod(row[model_energy.Column("patch weight")]), 1.0e-9));
+    CHECK_THAT(
+        sums[2],
+        WithinRel(std::stod(row[model_energy.Column("domain correction (J)")]), 1.0e-9));
+    CHECK_THAT(
+        sums[3],
+        WithinRel(std::stod(row[model_energy.Column("fabricated surface energy[4] (J)")]),
+                  1.0e-9));
+  }
+  // No spatial patch on this fixture: no traces file.
+  CHECK(!fs::exists(output_dir / "surface-response-traces.csv"));
+  // (920) The per-path loop residuals: every row a contour loop or a hat of an applied
+  // patch; the contour-loop maximum = the gate quantity; the response-weighted RMS
+  // recomputed with the operator's weights (a patch's response energy split over its paths
+  // by the squared loop scale) = the confidence table's.
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patch-loops.csv"));
+  const TextCsv loops = ReadTrimmedCsv(output_dir / "surface-response-patch-loops.csv");
+  CHECK(loops.header == std::vector<std::string>{"source", "patch", "model", "path", "kind",
+                                                 "loop residual", "loop scale (V)", "m",
+                                                 "exc"});
+  REQUIRE(!loops.rows.empty());
+  const TextCsv confidence = ReadTrimmedCsv(output_dir / "surface-response-confidence.csv");
+  REQUIRE(confidence.rows.size() == 2);
+  REQUIRE(Int(confidence.rows[1][confidence.Column("m")]) == 2);
+  const double gate_loop_residual =
+      std::stod(confidence.rows[1][confidence.Column("loop residual")]);
+  const double gate_weighted =
+      std::stod(confidence.rows[1][confidence.Column("response-weighted loop residual")]);
+  REQUIRE(gate_loop_residual > 1.0e-3);  // the rotational field: a real residual
+  double max_loop = 0.0;
+  std::map<int, std::vector<std::pair<double, double>>> paths_by_patch;
+  for (const auto &row : loops.rows)
+  {
+    CHECK(Int(row[loops.Column("source")]) == Int(row[loops.Column("m")]));
+    if (Int(row[loops.Column("m")]) != 2)
+    {
+      continue;
+    }
+    const int patch = Int(row[loops.Column("patch")]);
+    const int kind = Int(row[loops.Column("kind")]);
+    CHECK((kind == 0 || kind == 1));
+    CHECK(patch_response_energy.count(patch) == 1);
+    const double residual = std::stod(row[loops.Column("loop residual")]);
+    const double scale = std::stod(row[loops.Column("loop scale (V)")]);
+    CHECK(scale > 0.0);
+    if (kind == 0)
+    {
+      max_loop = std::max(max_loop, residual);
+      paths_by_patch[patch].emplace_back(residual, scale * scale);
+    }
+  }
+  CHECK(max_loop > 0.0);
+  CHECK_THAT(max_loop, WithinRel(gate_loop_residual, 1.0e-9));
+  CHECK_THAT(max_patch_loop, WithinRel(gate_loop_residual, 1.0e-9));
+  double weighted_squared = 0.0, weight_sum = 0.0;
+  for (const auto &[patch, paths] : paths_by_patch)
+  {
+    double scale_squared = 0.0;
+    for (const auto &[residual, s2] : paths)
+    {
+      (void)residual;
+      scale_squared += s2;
+    }
+    for (const auto &[residual, s2] : paths)
+    {
+      const double weight = patch_response_energy.at(patch) * s2 / scale_squared;
+      weighted_squared += weight * residual * residual;
+      weight_sum += weight;
+    }
+  }
+  REQUIRE(weight_sum > 0.0);
+  {
+    double a2 = 0.0, an = 0.0, b2 = 0.0, bn = 0.0;
+    for (const auto &[patch, paths] : paths_by_patch)
+    {
+      for (const auto &[residual, s2] : paths)
+      {
+        a2 += residual * residual;
+        an += 1.0;
+        b2 += s2 * residual * residual;
+        bn += s2;
+      }
+    }
+    UNSCOPED_INFO("unweighted RMS " << std::sqrt(a2 / an) << " scale2-weighted RMS "
+                                    << std::sqrt(b2 / bn) << " patches "
+                                    << paths_by_patch.size() << " energies "
+                                    << patch_response_energy.size());
+  }
+  CHECK_THAT(std::sqrt(weighted_squared / weight_sum), WithinRel(gate_weighted, 1.0e-7));
+#endif
+}
+
+// The default (no "PatchEnergy"): the same fixture writes none of the per-patch files, the
+// operator collects no claims, and surface-response-model-energy.csv is byte-identical to
+// the PatchEnergy run's (the export reads values the totals compute anyway).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell per-patch export is off by default (decision 922 B)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "patch-off-lead.mesh";
+  const auto basis_path = temp.temp_dir / "patch-off-basis-points.csv";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-patch-off-edges.json";
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-patch-off-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  auto Run = [&](bool patch_energy, const char *stem)
+  {
+    json run = config;
+    const fs::path output_dir = temp.temp_dir / stem;
+    run["Problem"]["Output"] = output_dir.string();
+    run["Solver"] = {{"Order", 1},
+                     {"Eigenmode", {{"Target", 1.0}}},
+                     {"SurfaceResponseCorrection",
+                      {{"Library", edge_library_path.string()},
+                       {"TargetInterfaces", {4}},
+                       {"UnmatchedPolicy", "Warn"},
+                       {"CorrectionMode", "PostprocessOnly"}}}};
+    if (patch_energy)
+    {
+      run["Solver"]["SurfaceResponseCorrection"]["PatchEnergy"] = true;
+    }
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    MakeOutputFolder(iodata, comm);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+    SpaceOperator space_op(iodata, meshes);
+    PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+    auto *response = post_op.GetSurfaceResponseOperator();
+    REQUIRE(response);
+    CHECK(response->GetModelRawClaimPortions().portions.empty() == !patch_energy);
+    mfem::FunctionCoefficient potential_coefficient(
+        [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
+    mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+    potential.ProjectCoefficient(potential_coefficient);
+    mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                             &space_op.GetNDSpace().Get());
+    gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+    gradient.Assemble();
+    GridFunction field(space_op.GetNDSpace(), true);
+    gradient.Mult(potential, field.Real());
+    field.Real() *= -1.0;
+    ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+    field.Real().GetTrueDofs(e.Real());
+    e.Imag() = 0.0;
+    ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+    b = 0.0;
+    post_op.MeasureAndPrintAll(0, e, b, std::complex<double>(1.0, 0.0), 0.0, 0.0, 1);
+    Mpi::Barrier(comm);
+    return output_dir;
+  };
+  const fs::path on_dir = Run(true, "patch-on");
+  const fs::path off_dir = Run(false, "patch-off");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  for (const char *name :
+       {"surface-response-patches.csv", "surface-response-patch-energy.csv",
+        "surface-response-patch-loops.csv", "surface-response-model-raw-energy.csv",
+        "surface-response-model-raw-groups.csv"})
+  {
+    CHECK(fs::is_regular_file(on_dir / name));
+    CHECK(!fs::exists(off_dir / name));
+  }
+  for (const char *name : {"surface-response-model-energy.csv", "surface-Q-corrected.csv",
+                           "surface-response-confidence.csv"})
+  {
+    INFO(name);
+    CHECK(ReadFile(on_dir / name) == ReadFile(off_dir / name));
+  }
 #endif
 }
 

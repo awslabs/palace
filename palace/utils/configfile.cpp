@@ -1915,9 +1915,8 @@ SolverData::SolverData(const json &solver)
   {
     ElectrostaticSolverData response_parser(json{{"ResponseCorrection", *it}});
     surface_response_correction = std::move(response_parser.response_correction);
-    MFEM_VERIFY(!surface_response_correction->patch_energy,
-                "\"PatchEnergy\" is an electrostatic response-correction option (the"
-                " Maxwell surface response has no per-patch energy export)!");
+    // "PatchEnergy" (decisions 913 / 920 / 922 B): the per-patch export of the driven and
+    // eigenmode paths (per frequency / per mode); the boundary-mode refusal is IoData's.
   }
 
   driven = ParseOptional<DrivenSolverData>(solver, "Driven");

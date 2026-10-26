@@ -1026,6 +1026,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The SpatialClusterPriority raw remainders (decision 922) likewise.
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       spatial_cluster_priority_portions;
+  // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
+  // model set (empty without PatchEnergy) and, per source, the raw field's within-R energy
+  // partitioned over them.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> model_raw_portions;
+  std::vector<std::pair<int, std::map<int, std::map<std::string, double>>>>
+      raw_model_partitions;
   if (response_correction)
   {
     for (const auto &portion : response_correction->GetUncoveredPortions())
@@ -1041,6 +1047,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     for (const auto &portion : response_correction->GetSpatialClusterPriorityPortions())
     {
       spatial_cluster_priority_portions.push_back(
+          {portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    for (const auto &portion : response_correction->GetModelRawClaimPortions().portions)
+    {
+      model_raw_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
   }
@@ -1223,6 +1234,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
         raw_spatial_cluster_priority = post_op.GetElectrostaticUncoveredEdgeEnergies(
             response_correction->GetTargetInterfaces(), spatial_cluster_priority_portions);
+      }
+      if (!model_raw_portions.empty())
+      {
+        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set.
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        raw_model_partitions.emplace_back(
+            idx, post_op.GetElectrostaticPartitionedEdgeEnergies(
+                     response_correction->GetTargetInterfaces(), model_raw_portions));
       }
     }
 
@@ -1991,6 +2010,65 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::filesystem::remove(post_dir /
                             "surface-response-spatial-cluster-priority-energy.csv");
     std::filesystem::remove(post_dir / "surface-response-conductor-consistency-energy.csv");
+    // PatchEnergy (decision 922 B-1): surface-response-model-raw-energy.csv (per source and
+    // model-set label the raw within-R energy per postprocessing interface, 0 for a
+    // non-target interface) and surface-response-model-raw-groups.csv (per label and
+    // model: patches, weight x length), the Maxwell tables' columns with the electrostatic
+    // `source` key.
+    std::filesystem::remove(post_dir / "surface-response-model-raw-energy.csv");
+    std::filesystem::remove(post_dir / "surface-response-model-raw-groups.csv");
+    if (!raw_model_partitions.empty())
+    {
+      std::ofstream energy(post_dir / "surface-response-model-raw-energy.csv");
+      MFEM_VERIFY(energy, "Unable to open surface-response-model-raw-energy.csv!");
+      energy << "source,evaluation,label";
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        energy << fmt::format(",raw energy[{}] (J)", interface);
+      }
+      energy << '\n';
+      for (const auto &[source, partition_by_interface] : raw_model_partitions)
+      {
+        std::set<std::string> labels;
+        for (const auto &[interface, partition] : partition_by_interface)
+        {
+          (void)interface;
+          for (const auto &[label, value] : partition)
+          {
+            (void)value;
+            labels.insert(label);
+          }
+        }
+        for (const auto &label : labels)
+        {
+          energy << fmt::format("{},{},{}", source, 0, label);
+          for (const auto &[interface, data] : interfaces)
+          {
+            (void)data;
+            const auto partition = partition_by_interface.find(interface);
+            double value = 0.0;
+            if (partition != partition_by_interface.end())
+            {
+              const auto entry = partition->second.find(label);
+              value = entry != partition->second.end() ? entry->second : 0.0;
+            }
+            energy << fmt::format(",{:+.12e}",
+                                  iodata.units.Dimensionalize<VT::ENERGY>(value));
+          }
+          energy << '\n';
+        }
+      }
+      std::ofstream groups(post_dir / "surface-response-model-raw-groups.csv");
+      MFEM_VERIFY(groups, "Unable to open surface-response-model-raw-groups.csv!");
+      groups << "label,model,patches,weight length (m)\n";
+      for (const auto &member : response_correction->GetModelRawClaimPortions().members)
+      {
+        groups << fmt::format(
+            "{},{},{},{:+.12e}\n", member.label, member.model, member.patches,
+            iodata.units.Dimensionalize<VT::LENGTH>(member.weight_length));
+      }
+    }
     if (!uncovered_portions.empty())
     {
       std::map<std::string, PortionTypeRow> portions_by_type;

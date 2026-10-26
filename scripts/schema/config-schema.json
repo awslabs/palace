@@ -3403,7 +3403,7 @@
             },
             "PatchEnergy": {
               "type": "boolean",
-              "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`. Electrostatic only; every other output is unchanged.",
+              "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`; and `surface-response-model-raw-energy.csv` / `-groups.csv`, the raw field's within-R energy partitioned exactly over the applied patches' claims by model set plus the unclaimed remainder. Electrostatic, driven and eigenmode (per frequency / per mode, with the `f (GHz)` / `m` and `exc` keys after the electrostatic columns; the Maxwell path also writes `surface-response-patches.csv`, `surface-response-traces.csv` with the complex spatial traces and `surface-response-patch-loops.csv`, the per-path loop residuals of the line-integral trace lift); not supported by boundary mode. Every other output is unchanged.",
               "default": false
             },
             "DomainBoundary": {

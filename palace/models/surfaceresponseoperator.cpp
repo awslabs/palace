@@ -6350,6 +6350,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   result.translational_domain_correction = request.translational_domain_correction;
   result.trace_coupling = request.trace_coupling;
   result.mortar_oversampling = request.mortar_oversampling;
+  result.patch_energy = request.patch_energy;
   int next_model_index = 1;
   int matched_clusters = 0;
   int matched_edges = 0;
@@ -11766,6 +11767,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.translational_domain_correction = request.translational_domain_correction;
   result.trace_coupling = request.trace_coupling;
   result.mortar_oversampling = request.mortar_oversampling;
+  result.patch_energy = request.patch_energy;
   result.matching_radius = library.matching_radius;
   int next_model_index = 1;
   int next_interpolation_group = 1;
@@ -22460,6 +22462,65 @@ SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
   return result;
 }
 
+// PatchEnergy (decision 922 B-1; the 851 (C) diagnosis export formalised): the raw claims
+// of every applied patch (weight > 0 and not in `excluded`), by the DomainBoundary rule,
+// labelled by the ascending set of the models whose patches share the claim ("m<idx>"
+// joined by '+').
+ModelRawClaimPortions CollectModelRawClaimPortions(
+    const std::set<std::size_t> &excluded, const std::vector<ResponsePatchData> &patches,
+    const ResponseCorrectionData &config, const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius)
+{
+  ExcludedPatchPortions claims;
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    if (excluded.count(patch_idx) || patches[patch_idx].weight <= 0.0)
+    {
+      continue;
+    }
+    AppendExcludedPatchClaim(claims, patch_idx, patches, config, ownership,
+                             uncovered_clipping, tolerance);
+  }
+  ModelRawClaimPortions result;
+  result.length = claims.length;
+  std::map<std::pair<std::string, int>, ModelRawClaimPortions::GroupMember> members;
+  for (std::size_t i = 0; i < claims.portions.size(); i++)
+  {
+    auto portion = claims.portions[i];
+    std::map<int, std::pair<int, double>> by_model;  // model -> (patches, weight sum)
+    for (const std::size_t patch_idx : claims.patches[i])
+    {
+      auto &entry = by_model[patches[patch_idx].model];
+      entry.first++;
+      entry.second += patches[patch_idx].weight;
+    }
+    std::string label;
+    for (const auto &[model, entry] : by_model)
+    {
+      (void)entry;
+      label += fmt::format("{}m{}", label.empty() ? "" : "+", model);
+    }
+    const double length = Norm(Subtract(portion.p1, portion.p0));
+    for (const auto &[model, entry] : by_model)
+    {
+      auto &member = members[{label, model}];
+      member.label = label;
+      member.model = model;
+      member.patches += entry.first;
+      member.weight_length += entry.second * length;
+    }
+    portion.topology = label;
+    result.portions.push_back(std::move(portion));
+  }
+  for (auto &[key, member] : members)
+  {
+    (void)key;
+    result.members.push_back(std::move(member));
+  }
+  return result;
+}
+
 nlohmann::json DescribeSpatialClusterPriorityExclusions(
     const SpatialClusterPriorityExclusions &exclusions,
     const std::vector<ResponsePatchData> &patches, const ResponseCorrectionData &config,
@@ -23604,6 +23665,15 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                  patch_idx, placed_patches, config, ownership,
                                  uncovered_spatial_support_clipping,
                                  conductor_consistency_claim_tolerance);
+      }
+      // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
+      // patch's raw claim by model set, for the per-model raw energy partition of
+      // surface-response-model-raw-energy.csv; off by default (the list stays empty).
+      if (config.patch_energy)
+      {
+        model_raw_claim_portions = CollectModelRawClaimPortions(
+            spatially_owned_patches, placed_patches, config, ownership,
+            uncovered_spatial_support_clipping, config.matching_radius);
       }
       if (!config.mirror_band.empty())
       {
@@ -27564,9 +27634,8 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
   return result;
 }
 
-std::vector<SurfaceResponseOperator::PatchContribution>
-SurfaceResponseOperator::GatherPatchContributions(
-    const std::vector<double> &local_records) const
+std::vector<double>
+SurfaceResponseOperator::AllgatherRecords(const std::vector<double> &local_records) const
 {
   MFEM_VERIFY(local_records.size() <=
                   static_cast<std::size_t>(std::numeric_limits<int>::max()),
@@ -27586,7 +27655,14 @@ SurfaceResponseOperator::GatherPatchContributions(
   std::vector<double> records(total_values);
   Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
                   value_counts.data(), value_offsets.data(), fespace.GetComm());
+  return records;
+}
 
+std::vector<SurfaceResponseOperator::PatchContribution>
+SurfaceResponseOperator::GatherPatchContributions(
+    const std::vector<double> &local_records) const
+{
+  const std::vector<double> records = AllgatherRecords(local_records);
   std::vector<PatchContribution> contributions;
   std::size_t offset = 0;
   while (offset < records.size())
@@ -27697,9 +27773,8 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) c
   return traces;
 }
 
-SurfaceResponseOperator::MaxwellResponse
-SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
-                                            std::complex<double> omega) const
+SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResponse(
+    const GridFunction &E, std::complex<double> omega, bool include_patches) const
 {
   MFEM_VERIFY(maxwell && maxwell_contours.size() == patches.size(),
               "Maxwell surface response was not configured!");
@@ -27749,6 +27824,12 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
   Vector fixed_flux_real, fixed_flux_imag, workspace;
+  // PatchEnergy (decision 922 B; include_patches): the per-patch records in the
+  // electrostatic form (GatherPatchContributions), the per-path loop residuals [patch,
+  // model, path, kind, residual, scale] (decision 920) and the spatial traces [patch,
+  // model, contour size, basis size, real..., imag...], gathered below. The totals'
+  // arithmetic is untouched: the records read the values the loop computes anyway.
+  std::vector<double> local_patch_records, local_loop_records, local_trace_records;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
     const auto &patch = patches[patch_index];
@@ -27760,6 +27841,21 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     Vector patch_trace_imag(trace_imag.GetData() + patch.trace_offset, model.basis_size);
     fixed_flux_real.SetSize(model.basis_size);
     fixed_flux_imag.SetSize(model.basis_size);
+    if (include_patches && model.spatial_basis)
+    {
+      local_trace_records.insert(
+          local_trace_records.end(),
+          {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+           static_cast<double>(model.contour_size), static_cast<double>(model.basis_size)});
+      for (int i = 0; i < model.basis_size; i++)
+      {
+        local_trace_records.push_back(patch_trace_real(i));
+      }
+      for (int i = 0; i < model.basis_size; i++)
+      {
+        local_trace_records.push_back(patch_trace_imag(i));
+      }
+    }
 
     std::vector<std::pair<double, double>> path_diagnostics;
     std::vector<std::pair<double, double>> hat_diagnostics;
@@ -27804,6 +27900,13 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
           const double residual = std::abs(loop_integral) / loop_scale;
           result.hat_residual = std::max(result.hat_residual, residual);
           hat_diagnostics.emplace_back(residual, loop_scale * loop_scale);
+          if (include_patches)
+          {
+            local_loop_records.insert(
+                local_loop_records.end(),
+                {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+                 static_cast<double>(path_index - path_begin), 1.0, residual, loop_scale});
+          }
         }
         continue;
       }
@@ -27827,6 +27930,13 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
         const double residual = std::abs(loop_integral) / loop_scale;
         result.loop_residual = std::max(result.loop_residual, residual);
         path_diagnostics.emplace_back(residual, loop_scale * loop_scale);
+        if (include_patches)
+        {
+          local_loop_records.insert(
+              local_loop_records.end(),
+              {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+               static_cast<double>(path_index - path_begin), 0.0, residual, loop_scale});
+        }
       }
     }
 
@@ -27851,6 +27961,16 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     result.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
     contribution.domain_correction += domain_weight * domain_defect_form;
     contribution.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
+    if (include_patches)
+    {
+      local_patch_records.insert(
+          local_patch_records.end(),
+          {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+           static_cast<double>(patch.feature), patch.weight,
+           patch.mortar_longitudinal_strip[0], patch.mortar_longitudinal_strip[1],
+           domain_weight * domain_defect_form, domain_weight * fixed_flux_defect_form,
+           static_cast<double>(model.fabricated_surfaces.size())});
+    }
     double patch_response_energy = 0.0;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
@@ -27862,6 +27982,12 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
       contribution.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
+      if (include_patches)
+      {
+        local_patch_records.insert(
+            local_patch_records.end(),
+            {static_cast<double>(interface), fixed_trace_energy, fixed_flux_energy});
+      }
       const double weight =
           std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
       patch_response_energy += weight;
@@ -27998,6 +28124,49 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     }
   }
   MFEM_ASSERT(i == reduction.size(), "Incorrect batched Maxwell response reduction!");
+  if (include_patches)
+  {
+    result.patch_contributions = GatherPatchContributions(local_patch_records);
+    const std::vector<double> loops = AllgatherRecords(local_loop_records);
+    MFEM_VERIFY(loops.size() % 6 == 0, "Truncated per-path loop-residual record!");
+    for (std::size_t offset = 0; offset < loops.size(); offset += 6)
+    {
+      result.path_loop_residuals.push_back(
+          {static_cast<int>(std::llround(loops[offset])),
+           static_cast<int>(std::llround(loops[offset + 1])),
+           static_cast<int>(std::llround(loops[offset + 2])),
+           static_cast<int>(std::llround(loops[offset + 3])), loops[offset + 4],
+           loops[offset + 5]});
+    }
+    std::stable_sort(result.path_loop_residuals.begin(), result.path_loop_residuals.end(),
+                     [](const auto &first, const auto &second)
+                     {
+                       return std::tie(first.patch, first.kind, first.path) <
+                              std::tie(second.patch, second.kind, second.path);
+                     });
+    const std::vector<double> traces = AllgatherRecords(local_trace_records);
+    std::size_t offset = 0;
+    while (offset < traces.size())
+    {
+      MFEM_VERIFY(traces.size() - offset >= 4, "Truncated spatial patch-trace record!");
+      MaxwellResponse::SpatialTrace entry;
+      entry.patch = static_cast<int>(std::llround(traces[offset++]));
+      entry.model = static_cast<int>(std::llround(traces[offset++]));
+      entry.contour_size = static_cast<int>(std::llround(traces[offset++]));
+      const auto basis = static_cast<std::size_t>(std::llround(traces[offset++]));
+      MFEM_VERIFY(2 * basis <= traces.size() - offset,
+                  "Invalid gathered spatial patch-trace record!");
+      for (std::size_t k = 0; k < basis; k++)
+      {
+        entry.coefficients.emplace_back(traces[offset + k], traces[offset + basis + k]);
+      }
+      offset += 2 * basis;
+      result.spatial_traces.push_back(std::move(entry));
+    }
+    std::sort(result.spatial_traces.begin(), result.spatial_traces.end(),
+              [](const auto &first, const auto &second)
+              { return first.patch < second.patch; });
+  }
 
   constexpr double maximum_kR = 0.1;
   constexpr double maximum_weighted_loop_residual = 0.05;
