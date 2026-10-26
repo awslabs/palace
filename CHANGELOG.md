@@ -152,7 +152,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `S`, `J_s`), which were scaled by `L0 / Lc`, the mesh length unit over the reference
     length: off by orders of magnitude for meshes in micrometers with the default `Lc`. The
     CSV postprocessing was not affected.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1098](https://github.com/awslabs/palace/pull/1098).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
