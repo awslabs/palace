@@ -23,7 +23,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigenmode simulations, configured with blocks of `config["Domains"]["PML"]`, whose
     `"Attributes"` are the domains of the PML regions (the other parameters have suitable
     defaults). The stretch can be evaluated at a fixed reference frequency or at the
-    solve frequency (`"FrequencyDependent"`). SchemaVer 6-1-0
+    solve frequency (`"FrequencyDependent"`). For eigenmode simulations, the fraction of
+    the field energy of each mode in the PML regions is written to `eig.csv`, which
+    identifies the spurious modes of the layer. SchemaVer 6-1-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Bug Fixes

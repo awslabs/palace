@@ -48,8 +48,13 @@ public:
   // Temporary vectors for inner product calculations.
   mutable Vector D, H;
 
-  // Bilinear forms for computing field energy integrals over domains.
-  std::unique_ptr<Operator> M_elec, M_mag;
+  // Bilinear forms for computing field energy integrals over domains. The total energies
+  // M_elec and M_mag exclude the PML regions, whose energies M_elec_pml and M_mag_pml (and
+  // those of the domains M_i in the PML regions) are computed with the material properties
+  // of the background medium of the layer: in the PML, the fields are those of the
+  // stretched coordinates, and the integrals measure the field in the layer rather than a
+  // physical energy.
+  std::unique_ptr<Operator> M_elec, M_mag, M_elec_pml, M_mag_pml;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
   // London domain mass ∫ (μλ²)⁻¹ A·v for magnetostatics, with ½AᵀM_london·A the kinetic
@@ -136,6 +141,12 @@ public:
   // instantaneous energies.
   double GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm comm) const;
   double GetDomainMagneticFieldEnergy(int idx, const Vector &a_l, MPI_Comm comm) const;
+
+  // Get volume integrals for the electric or magnetic field energy in the PML regions (zero
+  // without PML regions).
+  bool HasPML() const { return M_elec_pml != nullptr; }
+  double GetPMLElectricFieldEnergy(const GridFunction &E) const;
+  double GetPMLMagneticFieldEnergy(const GridFunction &B) const;
 
   // The kinetic energy of the London domains from a real L-vector of the space of
   // construction. A real-valued field, so an instantaneous energy.
