@@ -10822,15 +10822,22 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       REQUIRE(producer_table.n_cols() == follow_on_table.n_cols());
       REQUIRE(producer_table.n_cols() > 0);
       // 1e-8 relative; an entry at roundoff of the table's scale (a zero energy, a closure
-      // residual) is read against that scale.
+      // residual) is read against that scale. The scale is taken over the FINITE entries
+      // only and a non-finite entry (the +inf Q of an interface without LossTan, a NaN of
+      // an absent evaluation) must be reproduced as such: an infinite scale would make
+      // every finite comparison vacuous.
       double table_scale = 0.0;
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         for (const double value : producer_table[c].data)
         {
-          table_scale = std::max(table_scale, std::abs(value));
+          if (std::isfinite(value))
+          {
+            table_scale = std::max(table_scale, std::abs(value));
+          }
         }
       }
+      REQUIRE(std::isfinite(table_scale));
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         const Column &producer_column = producer_table[c];
@@ -10838,6 +10845,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         REQUIRE(producer_column.data.size() == follow_on_column.data.size());
         for (std::size_t i = 0; i < producer_column.data.size(); i++)
         {
+          if (!std::isfinite(producer_column.data[i]))
+          {
+            CHECK(((std::isnan(producer_column.data[i]) &&
+                    std::isnan(follow_on_column.data[i])) ||
+                   follow_on_column.data[i] == producer_column.data[i]));
+            continue;
+          }
           const double scale =
               std::max({std::abs(producer_column.data[i]), 1.0e-6 * table_scale, 1.0e-30});
           CHECK_THAT(follow_on_column.data[i],
@@ -11878,10 +11892,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // uncovered portions and its share, per target interface) of the producer's last cycle
   // and of the follow-on: text fields equal, numbers to 1e-8 relative. ON MAIN'S FORM the
   // follow-on's leaf trees credit a refined root portion on one sub-segment only: the
-  // uncovered energy differs by the footprint the refinement removed (-63 % here; the g3
-  // junction-lead cluster -13 %). In this fixture the uncovered energy is ~1e-9 of the
-  // interface energy (the SA sheet is the PEC itself), so this table carries the test; the
-  // corrected tables below hold the 1e-8 bar on both forms.
+  // uncovered energy differs by the footprint the refinement removed (-57 % to -68 % here;
+  // the g3 junction-lead cluster -13 %). In this fixture the uncovered energy is up to ~2 %
+  // of a target interface's corrected energy (the within-R field at the metal edges beside
+  // the sheet), so the corrected tables below discriminate too: the follow-on's corrected
+  // interface energies read up to ~1.5 % below the producer's on main's form.
   auto Number = [](const std::string &field) -> std::optional<double>
   {
     std::size_t consumed = 0;
@@ -11937,7 +11952,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CompareRows("surface-response-uncovered-energy.csv");
   // The corrected energies of the producer's last cycle and of the follow-on (the uncovered
   // raw energy is kept in the fixed-trace / fixed-flux / self-consistent energies): 1e-8
-  // relative at the same solver tolerance.
+  // relative at the same solver tolerance. The table scale is taken over the FINITE entries
+  // only and a non-finite entry (the +inf Q of this LossTan-free interface, a NaN of an
+  // absent evaluation) must be reproduced as such: an infinite scale would make every
+  // finite comparison vacuous.
   auto CompareTable = [&](const std::string &name)
   {
     Table producer_table = test::LoadCsv(producer_dir / name);
@@ -11949,9 +11967,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     {
       for (const double value : producer_table[c].data)
       {
-        table_scale = std::max(table_scale, std::abs(value));
+        if (std::isfinite(value))
+        {
+          table_scale = std::max(table_scale, std::abs(value));
+        }
       }
     }
+    REQUIRE(std::isfinite(table_scale));
     for (std::size_t c = 0; c < producer_table.n_cols(); c++)
     {
       const Column &producer_column = producer_table[c];
@@ -11959,6 +11981,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       REQUIRE(producer_column.data.size() == follow_on_column.data.size());
       for (std::size_t i = 0; i < producer_column.data.size(); i++)
       {
+        if (!std::isfinite(producer_column.data[i]))
+        {
+          CHECK(((std::isnan(producer_column.data[i]) &&
+                  std::isnan(follow_on_column.data[i])) ||
+                 follow_on_column.data[i] == producer_column.data[i]));
+          continue;
+        }
         const double scale =
             std::max({std::abs(producer_column.data[i]), 1.0e-6 * table_scale, 1.0e-30});
         CHECK_THAT(follow_on_column.data[i],
