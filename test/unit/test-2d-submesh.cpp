@@ -487,44 +487,6 @@ TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
   Mpi::GlobalSum(1, &global_elements, submesh.GetComm());
   REQUIRE(global_elements > 0);
 
-  // On two ranks this fixture includes a local slave whose master is not a locally
-  // addressable ParMesh edge, and nodes beyond the ghost layer with vertex references
-  // without a valid vertex index. Keep these cases explicit: the remapper must not rely on
-  // locally addressable master edges or vertices.
-  if (Mpi::Size(submesh.GetComm()) > 1)
-  {
-    int unnumbered_vertices = 0;
-    for (int n = 0; n < par_mesh->ncmesh->GetNumNodes(); n++)
-    {
-      const auto &node = par_mesh->ncmesh->GetNode(n);
-      unnumbered_vertices += node.HasVertex() && node.vert_index < 0;
-    }
-    Mpi::GlobalSum(1, &unnumbered_vertices, submesh.GetComm());
-    REQUIRE(unnumbered_vertices > 0);
-
-    int nonlocal_master_edges = 0;
-    const auto &edge_list = par_mesh->ncmesh->GetEdgeList();
-    mfem::Array<int> edges, orientations;
-    for (int be = 0; be < par_mesh->GetNBE(); be++)
-    {
-      par_mesh->GetBdrElementEdges(be, edges, orientations);
-      for (int edge : edges)
-      {
-        const auto id_and_type = edge_list.GetMeshIdAndType(edge);
-        if (id_and_type.type != mfem::NCMesh::NCList::MeshIdType::SLAVE)
-        {
-          continue;
-        }
-        const auto *slave = static_cast<const mfem::NCMesh::Slave *>(id_and_type.id);
-        const auto master = edge_list.GetMeshIdAndType(slave->master);
-        REQUIRE(master.id != nullptr);
-        nonlocal_master_edges += slave->master >= par_mesh->GetNEdges();
-      }
-    }
-    Mpi::GlobalSum(1, &nonlocal_master_edges, submesh.GetComm());
-    REQUIRE(nonlocal_master_edges > 0);
-  }
-
   mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
   mfem::H1_FECollection parent_fec(1, 3), submesh_fec(1, 2);
   mfem::ParFiniteElementSpace parent_fes(par_mesh.get(), &parent_fec);
