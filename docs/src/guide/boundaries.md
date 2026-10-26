@@ -112,6 +112,17 @@ of the PML regions of the block). A real stretch `"KappaMax"` > 1 improves the a
 evanescent waves, when near fields reach the layer, but reduces the accuracy for propagating
 waves on a given mesh.
 
+The PML regions of a block may have different materials (a layered background medium, when
+a material interface crosses the layer) and elements of any type (for example prisms and
+hexahedra extruded from the faces of the box, with tetrahedra in the physical region), and
+PEC surfaces may cross them, such as a ground plane which extends to the outer boundary. The
+stretch must be continuous, which is checked at the start of the simulation: the physical
+region may only touch a PML block on the inner faces of the layer, where there is no
+stretch, and not on the faces of the layer across its thickness. A region which extends
+through the layer to the outer boundary must therefore be part of the PML block, with its
+material as the background medium of the layer, and an absorber which does not line the
+whole face of the domain must be modeled with a lossy material rather than a PML.
+
 The absorption of the layer is limited by its discretization: a strongly absorbing layer
 reflects and absorbs spuriously when its stretch changes too much between neighboring
 elements. By default (`"SigmaMax": "Auto"`), the conductivity of each face is therefore
@@ -138,7 +149,7 @@ in the PML regions.
 A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
 of the structures, which it distorts instead. The PML regions should therefore be placed at
 a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
-lowest frequency of interest. Otherwise, a weaker absorption (a largerv`"ReflectionTarget"`)
+lowest frequency of interest. Otherwise, a weaker absorption (a larger `"ReflectionTarget"`)
 reduces the spurious losses, at the cost of larger reflections of the propagating waves.
 
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
@@ -148,6 +159,27 @@ remain linear, while the absorption in the layer grows with frequency. With
 `"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
 frequency, for an absorption independent of frequency, and a complex frequency shift
 `"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency.
+
+In eigenmode simulations, the PML adds modes which are not those of the physical problem:
+modes of the layer, with low quality factors and often large imaginary parts of the
+frequency, or negative ones for growing modes (the quality factor in `eig.csv` is always
+positive), and clusters of modes of the continuum of waves leaving the domain. With PML
+regions, the fraction of the field energy of each mode in the PML regions is written to
+`eig.csv` (`"PML fraction"`) to identify them: it is small for the modes of the physical
+problem. Clusters of such modes near the target slow down the convergence of the eigenvalue
+solver, so that it is best to request few modes
+([`config["Solver"]["Eigenmode"]["N"]`](../config/reference.md#config-solver-eigenmode-n))
+with a `"Target"` close to the modes of interest and a moderate `"Tol"`, and to increase
+the dimension `"MaxSize"` of the subspace of the eigenvalue solver when more modes are
+needed.
+
+The total field energies written to `domain-E.csv` exclude the PML regions. In the PML
+regions, the field energies of the domains of
+[`config["Domains"]["Postprocessing"]["Energy"]`](../config/reference.md#config-domains-postprocessing-energy),
+as well as the PML fractions of eigenmodes, are computed with the material properties of the
+background medium: the fields in the layer are those of the stretched coordinates, so that
+these energies measure the field in the layer rather than physical energies (and their
+participation ratios, relative to the energy of the physical region, can exceed one).
 
 PML can cause convergence difficulties in iterative linear solvers. By default,
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),

@@ -472,12 +472,25 @@ void CheckStretchContinuity(const std::vector<Layer> &layers, const Mesh &mesh)
                      : fmt::format("attribute {} of the PML block with attributes {}", attr,
                                    layers[k].GetAttributes());
     };
+    const bool physical = LayerIndex(bad_attr[0]) < 0 || LayerIndex(bad_attr[1]) < 0;
+    if (physical)
+    {
+      MFEM_ABORT("The PML stretch is discontinuous across the interface between "
+                 << Region(bad_attr[0]) << " and " << Region(bad_attr[1])
+                 << ": the physical region may only touch a PML block on the inner faces "
+                    "of the layer, where there is no stretch (see the \"Direction\" and "
+                    "\"Thickness\" of the block), and not on the faces of the layer across "
+                    "its thickness. A region which reaches the outer boundary "
+                    "through the layer must be part of the PML block (with its material as "
+                    "the background medium of the layer), and an absorber which does not "
+                    "line the whole face of the domain must be modeled with a lossy "
+                    "material instead of a PML!");
+    }
     MFEM_ABORT("The PML stretch is discontinuous across the interface between "
                << Region(bad_attr[0]) << " and " << Region(bad_attr[1])
-               << ": there must be no stretch at the interfaces with the physical "
-                  "region, and the PML blocks must have the same stretch on their "
-                  "interfaces (the same \"Direction\", \"Thickness\", \"Order\", "
-                  "absorption, and frequency dependence)!");
+               << ": the PML blocks must have the same stretch on their interfaces (the "
+                  "same \"Direction\", \"Thickness\", \"Order\", absorption, and "
+                  "frequency dependence)!");
   }
 }
 

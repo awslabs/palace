@@ -1682,6 +1682,15 @@ palace::test::CustomCheck TestPMLCavityResonance(double rtol, double f_re, doubl
     INFO("resonance Re{f} = " << f_re_a << " GHz, Q = " << q_a);
     CHECK_THAT(f_re_a, Catch::Matchers::WithinRel(f_re, rtol_f_re));
     CHECK_THAT(q_a, Catch::Matchers::WithinRel(q, rtol_q));
+
+    // The resonance of the cavity has a small fraction of its energy in the PML region (the
+    // field leaking through the iris and attenuated in the layer).
+    const int a = col(actual, "PML fraction"), r = col(reference, "PML fraction");
+    REQUIRE(a >= 0);
+    REQUIRE(r >= 0);
+    INFO("PML fraction = " << actual[a].data[0]);
+    CHECK_THAT(actual[a].data[0], Catch::Matchers::WithinRel(reference[r].data[0], rtol_q));
+    CHECK(actual[a].data[0] < 0.05);
   };
 }
 

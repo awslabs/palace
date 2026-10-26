@@ -966,8 +966,13 @@ void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &at
     }
 
     // Find all attributes in restricted list of attributes which map to this material index
-    // and process them together.
+    // and process them together. Attributes without a material (for example the PML
+    // attributes for the bulk attribute map) have none in the restricted coefficient.
     const int orig_mat_idx = attr_mat_orig[attr - 1];
+    if (orig_mat_idx < 0)
+    {
+      continue;
+    }
     const int new_mat_idx = mat_coeff.SizeK();
     for (auto attr2 : attr_list)
     {
