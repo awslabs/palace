@@ -247,7 +247,10 @@ struct MetalSurfaceExtraction
   // refinement_points), so the segments, vertices and their numbering are those of the
   // mesh's root level = the initial mesh of the run that refined it. Set by the
   // identification path (a saved adapted mesh then reproduces the producing run's
-  // identification); the post-processing edge tools keep the leaf perimeter. Without
+  // identification) and by the SurfacePostOperator for its RETAINED automatic edge-distance
+  // trees (decision 904 A3.2: the producing run's initial-mesh trees, so the uncovered /
+  // DomainBoundary / ConductorConsistency portions are credited over whole root segments);
+  // only the LocalizeEdgeEnergy trees keep the leaf perimeter. Without
   // refinement-generated vertices the extraction is unchanged.
   bool root_level_perimeter = false;
 };
