@@ -5091,6 +5091,253 @@ TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationNearStraightArcPieces",
+          "[surfaceresponseidentification][adaptid][Serial]")
+{
+  // Decision 903 R1 / 904 (adaptid fix round 2, U6): the fitted CENTRE of a near-straight
+  // arc piece is ill-conditioned (sensitivity ~8 rho^2 / L^2 x the coordinate roundoff: at
+  // rho = 6e4 R a 1e-13 relative vertex perturbation moves it by hundreds of 1e-6 R quanta)
+  // while the chord ends and the arc midpoint are mesh points on the arc (well
+  // conditioned). The C3 / C1 comparators on the saved Maxwell meshes differed from the
+  // producing runs in exactly those two Signature leaves (Context[k].Arc[0..1]) -> Missing
+  // / the Context verification abort. The near-match and the Context verification compare
+  // arc pieces by the GEOMETRIC DEVIATION of the two circles over the piece (in quanta) in
+  // place of the raw centre differences; the key text / Hash / ContextDigest are untouched.
+  const double R = 2.0;
+  const double rho = 6.0e4 * R;           // 120 mm: the C3 record's class of context arc
+  const Point2 shift = {5000.0, 3000.0};  // chip-scale coordinates: the round trip's scale
+  const double rotation = 37.0;
+  // The SpatialSupportContract scene (pad A, conductor 0; the 2-um lead B, conductor 1,
+  // ending 1 um above the pad's top edge) with the pad's TOP edge a polyline on a circle of
+  // radius rho through (40, 0) and (-40, 0), bowing toward the lead: 20 chords of 4 um,
+  // each joint turning ~0.002 deg (the arc rule's finely chorded curve: chord sagitta ~1e-5
+  // R, far below the 0.05 R joint noise resolution; every joint concyclic exactly). The
+  // claimed pad portions AND the chain-continuation context pieces are then arcs whose
+  // centre lies ~6e4 R from the cluster's frame origin.
+  auto Scene = [&]()
+  {
+    std::vector<Point2> pad = {{-40.0, -10.0}, {40.0, -10.0}};
+    const int chords = 20;
+    const double base = std::sqrt(rho * rho - 40.0 * 40.0);
+    for (int k = 0; k <= chords; k++)
+    {
+      const double x = 40.0 - 80.0 * k / chords;
+      pad.push_back({x, std::sqrt(rho * rho - x * x) - base});
+    }
+    std::vector<LoopSpec> loops = {{pad, 0, 100.0},
+                                   {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0}};
+    for (auto &loop : loops)
+    {
+      loop.points = RotatedAndShifted(loop.points, rotation, shift);
+    }
+    return loops;
+  };
+  // Every loop vertex coordinate x (1 + 1e-13 s), s = +-1 by a fixed per-coordinate pattern
+  // (the saved mesh's coordinate round trip, at 1e-13 relative).
+  auto Perturbed = [&](std::vector<LoopSpec> loops)
+  {
+    std::size_t index = 0;
+    for (auto &loop : loops)
+    {
+      for (auto &p : loop.points)
+      {
+        for (int d = 0; d < 2; d++)
+        {
+          const std::size_t h =
+              (index * 2654435761u + static_cast<std::size_t>(d) * 40503u) >> 7;
+          p[d] *= 1.0 + 1.0e-13 * ((h & 1u) ? 1.0 : -1.0);
+        }
+        index++;
+      }
+    }
+    return loops;
+  };
+  const Point2 probe = RotatedAndShifted({{0.0, 1.0}}, rotation, shift)[0];
+  auto ClusterSignatureOf = [&](const std::vector<LoopSpec> &loops)
+  {
+    const auto input = MakeInput(loops, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    REQUIRE(cluster->signature.contains("Box"));
+    REQUIRE(cluster->signature.contains("Context"));
+    return cluster->signature;
+  };
+  const nlohmann::json a = ClusterSignatureOf(Scene());
+  const nlohmann::json b = ClusterSignatureOf(Perturbed(Scene()));
+
+  // The premise: arc pieces with a far centre in the Portions and in the Context; one
+  // topology key; the two keys differ by more than the near-match (> 4.5 quanta) ONLY in
+  // arc-centre leaves (every P and arc midpoint within one grid step: a sub-quantum
+  // perturbation rounds at most one quantum away).
+  auto ArcEntries = [](const nlohmann::json &signature, const char *list)
+  {
+    std::vector<std::size_t> indices;
+    for (std::size_t i = 0; i < signature.at(list).size(); i++)
+    {
+      if (signature.at(list)[i].contains("Arc"))
+      {
+        indices.push_back(i);
+      }
+    }
+    return indices;
+  };
+  REQUIRE(!ArcEntries(a, "Portions").empty());
+  REQUIRE(!ArcEntries(a, "Context").empty());
+  double far_centre = 0.0;
+  for (const char *list : {"Portions", "Context"})
+  {
+    for (const std::size_t i : ArcEntries(a, list))
+    {
+      const auto arc = a.at(list)[i].at("Arc").get<std::array<double, 4>>();
+      far_centre = std::max(far_centre, std::hypot(arc[0], arc[1]));
+    }
+  }
+  CHECK(far_centre > 1.0e4);  // units of R
+  CHECK(SplitSignatureParameters(a).topology_key ==
+        SplitSignatureParameters(b).topology_key);
+  CHECK(a.dump() != b.dump());
+  double max_centre_quanta = 0.0, max_other_quanta = 0.0;
+  for (const char *list : {"Portions", "Context"})
+  {
+    REQUIRE(a.at(list).size() == b.at(list).size());
+    for (std::size_t i = 0; i < a.at(list).size(); i++)
+    {
+      const auto &ea = a.at(list)[i], &eb = b.at(list)[i];
+      const auto pa = ea.at("P").get<std::array<double, 4>>(),
+                 pb = eb.at("P").get<std::array<double, 4>>();
+      for (int k = 0; k < 4; k++)
+      {
+        max_other_quanta = std::max(
+            max_other_quanta, std::abs(pa[k] - pb[k]) / kSignatureLengthQuantumOverRadius);
+      }
+      if (ea.contains("Arc"))
+      {
+        const auto xa = ea.at("Arc").get<std::array<double, 4>>(),
+                   xb = eb.at("Arc").get<std::array<double, 4>>();
+        for (int k = 0; k < 2; k++)
+        {
+          max_centre_quanta =
+              std::max(max_centre_quanta,
+                       std::abs(xa[k] - xb[k]) / kSignatureLengthQuantumOverRadius);
+          max_other_quanta =
+              std::max(max_other_quanta,
+                       std::abs(xa[2 + k] - xb[2 + k]) / kSignatureLengthQuantumOverRadius);
+        }
+      }
+    }
+  }
+  CHECK(max_centre_quanta >
+        kClusterQuantumNearMatchMaxQuanta + kClusterQuantumInclusiveMargin);
+  CHECK(max_other_quanta <= 1.0 + 1.0e-6);
+
+  // The near-match holds (the Match of LibrarySignatureIndex is SignatureDeviation <= 1):
+  // the centre leaves contribute the geometric deviation of the two circles over the piece
+  // (about a quantum here: the 1e-6 R rounding of a centre 6e4 R away shifts the serialised
+  // circle radially by up to half a quantum), not their raw difference of thousands of
+  // quanta. FAILS before decision 904.
+  const auto difference = ClusterSignatureQuantumDifference(a, b);
+  REQUIRE(difference.has_value());
+  CHECK(WithinClusterQuantumNearMatch(difference->max_delta_quanta));
+  CHECK(difference->max_delta_quanta < 2.0);
+  CHECK(SignatureDeviation(a, b).value_or(2.0) <= 1.0);
+  // The Context verification of a placed contract-3 model (BuildFeaturePatches) accepts the
+  // two Contexts: exact equality, else within the near-match of the Context arrays alone.
+  auto ContextOnly = [](const nlohmann::json &signature)
+  {
+    return nlohmann::json{{"Type", "SpatialEdgeCluster"},
+                          {"Context", signature.at("Context")}};
+  };
+  CHECK(a["Context"] != b["Context"]);
+  CHECK(SignatureDeviation(ContextOnly(a), ContextOnly(b)).value_or(2.0) <= 1.0);
+  {
+    const auto agreement = CompareClusterContexts(a["Context"], b["Context"]);
+    CHECK(agreement.agrees);
+    CHECK(!agreement.exact);
+    CHECK(agreement.max_delta_quanta < 2.0);
+    const auto same = CompareClusterContexts(a["Context"], a["Context"]);
+    CHECK(same.agrees);
+    CHECK(same.exact);
+    CHECK(same.max_delta_quanta == 0.0);
+    CHECK(!CompareClusterContexts(a["Context"], a["Portions"]).agrees);  // another topology
+  }
+  // Unchanged: equal signatures read 0 exactly; the hashes of the two keys differ (no key
+  // renamed: the exact path is the Hash).
+  CHECK(ClusterSignatureQuantumDifference(a, a)->max_delta_quanta == 0.0);
+  CHECK(SignatureKeyAndHash(a, "SpatialEdgeCluster").second !=
+        SignatureKeyAndHash(b, "SpatialEdgeCluster").second);
+
+  // Guards (fail closed unchanged): a context arc whose MIDPOINT moves 5 quanta (the arc
+  // bows differently) is refused; a truly different circle through the same chord ends (a
+  // 2 R quarter fillet vs the circle through its ends with the centre 1e-4 R away: the
+  // midpoint moves ~29 quanta, the radial deviation over the piece ~41 quanta) is refused.
+  {
+    nlohmann::json bowed = a;
+    const std::size_t i = ArcEntries(a, "Context").front();
+    bowed["Context"][i]["Arc"][2] = bowed["Context"][i]["Arc"][2].get<double>() +
+                                    5.0 * kSignatureLengthQuantumOverRadius;
+    const auto refused = ClusterSignatureQuantumDifference(a, bowed);
+    REQUIRE(refused.has_value());
+    CHECK(!WithinClusterQuantumNearMatch(refused->max_delta_quanta));
+    CHECK(SignatureDeviation(ContextOnly(a), ContextOnly(bowed)).value_or(2.0) > 1.0);
+    CHECK(!CompareClusterContexts(a["Context"], bowed["Context"]).agrees);
+  }
+  {
+    auto Grid = [](double v)
+    {
+      return std::round(v / kSignatureLengthQuantumOverRadius) *
+             kSignatureLengthQuantumOverRadius;
+    };
+    auto Fillet = [&](double cx, double cy)
+    {
+      const double r = std::hypot(2.0 - cx, 0.0 - cy);
+      const double s = std::sqrt(0.5);
+      return nlohmann::json{
+          {"P", {0.0, 2.0, 2.0, 0.0}},
+          {"Arc", {Grid(cx), Grid(cy), Grid(cx + r * s), Grid(cy + r * s)}},
+          {"GapRadial", 1},
+          {"Interfaces", {"MS"}},
+          {"Law", "{\"Type\":\"PEC\"}"},
+          {"Conductor", 1},
+          {"Chain", true}};
+    };
+    const nlohmann::json exact = {{"Type", "SpatialEdgeCluster"},
+                                  {"Context", {Fillet(0.0, 0.0)}}};
+    const nlohmann::json other = {{"Type", "SpatialEdgeCluster"},
+                                  {"Context", {Fillet(-1.0e-4, -1.0e-4)}}};
+    const auto refused = ClusterSignatureQuantumDifference(exact, other);
+    REQUIRE(refused.has_value());
+    CHECK(!WithinClusterQuantumNearMatch(refused->max_delta_quanta));
+    CHECK(ClusterSignatureQuantumDifference(exact, exact)->max_delta_quanta == 0.0);
+  }
+  // The C3 record (merge prep PBS 73297, cluster Id 9 saved vs initial mesh): the centre of
+  // a 1.4e5 R context arc moved 4,893 / 734 quanta with P and the midpoint equal -> within
+  // the near-match by the geometric deviation (below a quantum).
+  {
+    auto Entry = [](std::array<double, 4> arc)
+    {
+      return nlohmann::json{{"Arc", arc},
+                            {"Chain", true},
+                            {"Conductor", 1},
+                            {"GapRadial", 1},
+                            {"Interfaces", {"MA", "MS", "SA"}},
+                            {"Law", "{\"Type\":\"PEC\"}"},
+                            {"P", {-0.606201, 4.827001, -0.164236, 7.773606}}};
+    };
+    const nlohmann::json saved = {
+        {"Type", "SpatialEdgeCluster"},
+        {"Context", {Entry({141113.080771, -21159.466629, -0.385226, 6.300304})}}};
+    const nlohmann::json initial = {
+        {"Type", "SpatialEdgeCluster"},
+        {"Context", {Entry({141113.085664, -21159.467363, -0.385226, 6.300304})}}};
+    const auto record = ClusterSignatureQuantumDifference(saved, initial);
+    REQUIRE(record.has_value());
+    CHECK(record->max_delta_quanta < 1.0);
+    CHECK(WithinClusterQuantumNearMatch(record->max_delta_quanta));
+    CHECK(SignatureDeviation(saved, initial).value_or(2.0) <= 1.0);
+  }
+}
+
 TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
           "[surfaceresponseidentification][Serial]")
 {

@@ -10682,3 +10682,1322 @@ TEST_CASE("SurfaceResponseOperatorMirrorFormedEdgeWeights",
                       Catch::Matchers::ContainsSubstring("RealPortions are empty"));
   }
 }
+
+namespace palace
+{
+
+// Decision 899 (OI-CTX-ARC-ADAPT): a run whose INPUT mesh is the saved adapted mesh of an
+// AMR run (SaveAdaptMesh, the MFEM nonconforming format) identifies on the ROOT level of
+// that mesh — the producing run's initial mesh — so it reproduces the producing run's
+// identification (the features, keys, matched lengths and patches the producer carried
+// through its own AMR) and, on the same final mesh with the same patches, its final-cycle
+// corrected energies to solver roundoff. Two fixtures: (a) two rounded islands with linear
+// fillets (bend arcs) whose corners form one SpatialEdgeCluster matched by a version-2
+// Signature model, 2 nonconforming AMR cycles; (b) the cracked 3D CPW (two PEC sheets, the
+// isolated-edge patches per segment cell, no EdgeFrameNormal: the process side comes from
+// the two crack copies), 3 cycles. On main the follow-on identifies on the leaf perimeter:
+// (a) a split perimeter (more segments / vertices), (b) more patches (the segment cells)
+// and UndeterminedProcessSide exclusions where the crack copies were refined differently.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator saved adapted mesh reproduces the producing run",
+                 "[surfaceresponseoperator][3d][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+
+  // The producer (AMR with SaveAdaptMesh) and the follow-on on its saved mesh, then the
+  // comparison of the identification, the patch table and the corrected energies.
+  auto ProduceAndFollow = [&](json config, const std::string &stem, long long initial_ne,
+                              const std::string &placed_model)
+  {
+    const fs::path producer_dir = temp.temp_dir / (stem + "-producer");
+    const fs::path follow_on_dir = temp.temp_dir / (stem + "-follow-on");
+    const fs::path saved_mesh_path =
+        producer_dir /
+        (fs::path(config["Model"]["Mesh"].get<std::string>()).stem().string() + ".mesh");
+    config["Problem"]["Output"] = producer_dir.string();
+    test::RunElectrostatic(config);
+    Mpi::Barrier(comm);
+    REQUIRE(fs::is_regular_file(saved_mesh_path));
+    json follow_on = config;
+    follow_on["Model"]["Mesh"] = saved_mesh_path.string();
+    follow_on["Model"]["Refinement"] = {{"MaxIts", 0}};
+    follow_on["Problem"]["Output"] = follow_on_dir.string();
+    test::RunElectrostatic(follow_on);
+    Mpi::Barrier(comm);
+    // The premise of the comparison: the saved mesh's perimeter carries
+    // refinement-generated vertices, read as the LEAF perimeter (the post-processing
+    // extraction, unchanged by decision 899) of both meshes loaded through the same path
+    // (the initial mesh's sheets cracked at load, the saved mesh's as saved): more segments
+    // on the saved mesh. Without them the identification comparison would hold vacuously.
+    auto LeafSegments = [&](const json &run)
+    {
+      IoData iodata(run, false);
+      auto mesh = mesh::ReadMesh(iodata, comm);
+      return ExtractMetalEdgeGeometry(*mesh, iodata.boundaries,
+                                      JointNoiseExtractionFor(iodata.boundaries))
+          .segments.size();
+    };
+    const std::size_t initial_leaf_segments = LeafSegments(config);
+    const std::size_t saved_leaf_segments = LeafSegments(follow_on);
+    if (!Mpi::Root(comm))
+    {
+      return;
+    }
+    CHECK(saved_leaf_segments > initial_leaf_segments);
+    {
+      std::ifstream saved(saved_mesh_path);
+      std::string header;
+      std::getline(saved, header);
+      CHECK(header == "MFEM NC mesh v1.0");
+    }
+    const json producer_meta = ReadJson(producer_dir / "palace.json");
+    const json follow_on_meta = ReadJson(follow_on_dir / "palace.json");
+    // The producer refined the mesh and the follow-on solved on that mesh.
+    CHECK(producer_meta["Problem"]["MeshElements"] ==
+          follow_on_meta["Problem"]["MeshElements"]);
+    CHECK(producer_meta["Problem"]["MeshElements"].get<long long int>() > initial_ne);
+
+    // The identification: the same perimeter (segments, vertices, chains, components), the
+    // same models with the same patch counts, the same uncovered length.
+    const auto &producer_response = producer_meta["SurfaceResponse"];
+    const auto &follow_on_response = follow_on_meta["SurfaceResponse"];
+    for (const char *key : {"MetalSegments", "MetalVertices", "PhysicalChains",
+                            "MetalComponents", "PhysicalComponents"})
+    {
+      CHECK(producer_response["Geometry"][key] == follow_on_response["Geometry"][key]);
+    }
+    REQUIRE(producer_response["ModelCatalog"].size() ==
+            follow_on_response["ModelCatalog"].size());
+    bool model_placed = false;
+    for (std::size_t m = 0; m < producer_response["ModelCatalog"].size(); m++)
+    {
+      const auto &producer_model = producer_response["ModelCatalog"][m];
+      const auto &follow_on_model = follow_on_response["ModelCatalog"][m];
+      CHECK(producer_model["Name"] == follow_on_model["Name"]);
+      CHECK(producer_model["PatchCount"] == follow_on_model["PatchCount"]);
+      if (producer_model["Name"] == placed_model)
+      {
+        model_placed = producer_model["PatchCount"].get<int>() >= 1 &&
+                       follow_on_model["PatchCount"].get<int>() >= 1;
+      }
+    }
+    CHECK(model_placed);
+    CHECK(producer_response["Diagnostics"]["Uncovered"]["Length"] ==
+          follow_on_response["Diagnostics"]["Uncovered"]["Length"]);
+
+    // The patch table: the same rows (model, origin, axes, weight) to roundoff.
+    const auto producer_rows = ReadPatchRows(producer_dir / "surface-response-patches.csv");
+    const auto follow_on_rows =
+        ReadPatchRows(follow_on_dir / "surface-response-patches.csv");
+    REQUIRE(producer_rows.size() == follow_on_rows.size());
+    REQUIRE(!producer_rows.empty());
+    for (std::size_t r = 0; r < producer_rows.size(); r++)
+    {
+      REQUIRE(producer_rows[r].size() == follow_on_rows[r].size());
+      REQUIRE(producer_rows[r].size() == 14);
+      CHECK(std::stoi(producer_rows[r][0]) == std::stoi(follow_on_rows[r][0]));
+      for (std::size_t c = 1; c < producer_rows[r].size(); c++)
+      {
+        CHECK_THAT(std::stod(follow_on_rows[r][c]),
+                   WithinAbs(std::stod(producer_rows[r][c]), 1.0e-12));
+      }
+    }
+
+    // The corrected energies of the producer's last cycle (its final postprocessing files)
+    // and of the follow-on on the same mesh with the same patches: 1e-8 relative at the
+    // same solver tolerance.
+    auto CompareTable = [&](const std::string &name)
+    {
+      Table producer_table = test::LoadCsv(producer_dir / name);
+      Table follow_on_table = test::LoadCsv(follow_on_dir / name);
+      REQUIRE(producer_table.n_cols() == follow_on_table.n_cols());
+      REQUIRE(producer_table.n_cols() > 0);
+      // 1e-8 relative; an entry at roundoff of the table's scale (a zero energy, a closure
+      // residual) is read against that scale. The scale is taken over the FINITE entries
+      // only and a non-finite entry (the +inf Q of an interface without LossTan, a NaN of
+      // an absent evaluation) must be reproduced as such: an infinite scale would make
+      // every finite comparison vacuous.
+      double table_scale = 0.0;
+      for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+      {
+        for (const double value : producer_table[c].data)
+        {
+          if (std::isfinite(value))
+          {
+            table_scale = std::max(table_scale, std::abs(value));
+          }
+        }
+      }
+      REQUIRE(table_scale > 0.0);
+      for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+      {
+        const Column &producer_column = producer_table[c];
+        const Column &follow_on_column = follow_on_table[c];
+        REQUIRE(producer_column.data.size() == follow_on_column.data.size());
+        for (std::size_t i = 0; i < producer_column.data.size(); i++)
+        {
+          if (!std::isfinite(producer_column.data[i]))
+          {
+            CHECK(((std::isnan(producer_column.data[i]) &&
+                    std::isnan(follow_on_column.data[i])) ||
+                   follow_on_column.data[i] == producer_column.data[i]));
+            continue;
+          }
+          const double scale =
+              std::max({std::abs(producer_column.data[i]), 1.0e-6 * table_scale, 1.0e-30});
+          CHECK_THAT(follow_on_column.data[i],
+                     WithinAbs(producer_column.data[i], 1.0e-8 * scale));
+        }
+      }
+    };
+    CompareTable("surface-Q-corrected.csv");
+    CompareTable("terminal-C-corrected.csv");
+    CompareTable("surface-response-model-energy.csv");
+  };
+
+  // (a) The rounded islands: the initial mesh (written for the driver), the cluster's
+  // Signature on it, the library (the spatial cluster library's isolated edge and convex
+  // corner, the rounded library's fillet corner, the cluster as a Signature model).
+  {
+    const fs::path mesh_path = temp.temp_dir / "adaptid-islands.mesh";
+    const fs::path library_path = temp.temp_dir / "fabrication-process-adaptid-3d.json";
+    json config = HighOrderSpatialConfig();
+    auto spatial_mesh = MakeIslandMesh(true, false, false, true);
+    if (Mpi::Root(comm))
+    {
+      mfem::Mesh serial = MakeSerialIslandMesh(true, false, false, true);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    Mpi::Barrier(comm);
+    const auto requirements_path =
+        temp.temp_dir / "surface-response-requirements-adaptid.json";
+    {
+      IoData iodata(config, false);
+      iodata.boundaries.cracked_attributes.insert(9);
+      iodata.boundaries.cracked_attributes.insert(10);
+      WriteSurfaceResponseRequirements(iodata, *spatial_mesh, requirements_path.string());
+    }
+    const json requirements = ReadJson(requirements_path);
+    const auto cluster_feature = std::find_if(
+        requirements["Identification"]["Features"].begin(),
+        requirements["Identification"]["Features"].end(),
+        [](const auto &feature) { return feature["Type"] == "SpatialEdgeCluster"; });
+    REQUIRE(cluster_feature != requirements["Identification"]["Features"].end());
+    if (Mpi::Root(comm))
+    {
+      json library = ReadJson(spatial_cluster_library_3d_path);
+      const json rounded = ReadJson(rounded_library_3d_path);
+      library["Name"] = "unit-test-process-adaptid-3d";
+      library["Models"].push_back(rounded["Models"][1]);
+      auto &signature_model = library["Models"][2];
+      signature_model["Name"] = "adaptid-signature-cluster";
+      signature_model["Signature"] = (*cluster_feature)["Signature"];
+      signature_model.erase("Edges");
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(comm);
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
+    config["Model"]["Refinement"] = {{"MaxIts", 2},           {"Tol", 1.0e-12},
+                                     {"UpdateFraction", 0.5}, {"Nonconformal", true},
+                                     {"SaveAdaptMesh", true}, {"MaxNCLevels", 8}};
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["Library"] = library_path.string();
+    correction.erase("PatchConstruction");  // Features (the default)
+    correction["UnmatchedPolicy"] = "Warn";
+    // The same solver tolerances in both runs, tight enough for the 1e-8 energy bar under
+    // a different partition of the same mesh (the producer's rebalanced one, the
+    // follow-on's fresh one).
+    correction["SolveTol"] = 1.0e-13;
+    config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 400}};
+    ProduceAndFollow(config, "adaptid-islands", spatial_mesh->GetGlobalNE(),
+                     "adaptid-signature-cluster");
+  }
+
+  // (b) The cracked 3D CPW (test mesh cpw3d-surface-nc.msh: PEC trace 1 / ground 2, the SA
+  // sheet 3, substrate 1 / vacuum 2; no EdgeFrameNormal: the process side comes from the
+  // two crack copies): the producer is a plain electrostatic AMR run (3 cycles, the metal
+  // perimeter refined on one crack side or the other) and the identification is compared
+  // at the requirements level (the dry run writes the manifest and the patch table without
+  // reading response matrices) on the initial mesh and on the saved mesh.
+  {
+    const fs::path mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+    const fs::path producer_dir = temp.temp_dir / "adaptid-cpw-producer";
+    const fs::path saved_mesh_path = producer_dir / "cpw3d-surface-nc.mesh";
+    json dielectric = {{"Thickness", 2.0e-3},
+                       {"AutomaticEdges", true},
+                       {"EdgeDistances", {2.0}},
+                       {"LocalizeEdgeEnergy", false}};
+    json sa = dielectric, ms = dielectric, ma = dielectric;
+    sa.update({{"Index", 1},
+               {"Attributes", {3}},
+               {"Type", "SA"},
+               {"Permittivity", 4.0},
+               {"LossTan", 2.0e-3}});
+    ms.update({{"Index", 2},
+               {"Attributes", {1, 2}},
+               {"Type", "MS"},
+               {"Permittivity", 11.47},
+               {"LossTan", 3.0e-4}});
+    ma.update({{"Index", 3},
+               {"Attributes", {1, 2}},
+               {"Type", "MA"},
+               {"Permittivity", 10.0},
+               {"LossTan", 3.0e-2}});
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
+        {"Model",
+         {{"Mesh", mesh_path.string()},
+          {"L0", 1.0e-6},
+          {"Refinement",
+           {{"MaxIts", 3},
+            {"Tol", 1.0e-12},
+            {"UpdateFraction", 0.7},
+            {"Nonconformal", true},
+            {"SaveAdaptMesh", true},
+            {"MaxNCLevels", 8}}}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 11.47}},
+            {{"Attributes", {2}}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {2, 4}}}},
+          {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+          {"Postprocessing", {{"Dielectric", {sa, ms, ma}}}}}},
+        {"Solver", {{"Order", 1}, {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 500}}}}}};
+    test::RunElectrostatic(config);
+    Mpi::Barrier(comm);
+    REQUIRE(fs::is_regular_file(saved_mesh_path));
+
+    json identify = config;
+    identify["Model"]["Refinement"] = {{"MaxIts", 0}};
+    identify["Solver"]["Electrostatic"] = {{"ResponseCorrection",
+                                            {{"Library", library_3d_path.string()},
+                                             {"TargetInterfaces", {1, 2, 3}},
+                                             {"UnmatchedPolicy", "Warn"},
+                                             {"TraceCoupling", "Collocated"}}}};
+    // Beside the dry run, the LEAF perimeter of the mesh (the post-processing extraction,
+    // unchanged by decision 899): its segment count on the saved mesh exceeds the initial
+    // mesh's when the AMR refined the perimeter, the premise of the comparison below (the
+    // identification then merges the refinement vertices out; without them the comparison
+    // would hold vacuously).
+    auto Identify = [&](const fs::path &mesh_file, const std::string &stem)
+    {
+      json run = identify;
+      run["Model"]["Mesh"] = mesh_file.string();
+      const fs::path out_dir = temp.temp_dir / stem;
+      run["Problem"]["Output"] = out_dir.string();
+      if (Mpi::Root(comm))
+      {
+        fs::create_directories(out_dir);
+      }
+      Mpi::Barrier(comm);
+      IoData iodata(run, false);
+      auto mesh = mesh::ReadMesh(iodata, comm);
+      const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+      WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+      Mpi::Barrier(comm);
+      const auto leaf_perimeter = ExtractMetalEdgeGeometry(
+          *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+      return std::make_tuple(requirements_path, out_dir / "surface-response-patches.csv",
+                             leaf_perimeter.segments.size());
+    };
+    const auto [initial_requirements, initial_patches, initial_leaf_segments] =
+        Identify(mesh_path, "adaptid-cpw-initial");
+    const auto [adapted_requirements, adapted_patches, adapted_leaf_segments] =
+        Identify(saved_mesh_path, "adaptid-cpw-adapted");
+    if (!Mpi::Root(comm))
+    {
+      return;
+    }
+    // The saved mesh's perimeter carries refinement-generated vertices.
+    CHECK(adapted_leaf_segments > initial_leaf_segments);
+    const json initial = ReadJson(initial_requirements);
+    const json adapted = ReadJson(adapted_requirements);
+    const auto &initial_identification = initial["Identification"];
+    const auto &adapted_identification = adapted["Identification"];
+    CHECK(adapted_identification["GeometryDigest"] ==
+          initial_identification["GeometryDigest"]);
+    REQUIRE(adapted_identification["Features"].size() ==
+            initial_identification["Features"].size());
+    REQUIRE(initial_identification["Features"].size() >= 4);
+    for (std::size_t f = 0; f < initial_identification["Features"].size(); f++)
+    {
+      const auto &a = initial_identification["Features"][f];
+      const auto &b = adapted_identification["Features"][f];
+      CHECK(a["Type"] == b["Type"]);
+      CHECK(a["Hash"] == b["Hash"]);
+      CHECK(a["Match"]["Status"] == b["Match"]["Status"]);
+      CHECK_THAT(b["Length"].get<double>(), WithinRel(a["Length"].get<double>(), 1.0e-9));
+    }
+    CHECK(adapted_identification["Exclusions"] == initial_identification["Exclusions"]);
+    const auto initial_rows = ReadPatchRows(initial_patches);
+    const auto adapted_rows = ReadPatchRows(adapted_patches);
+    REQUIRE(initial_rows.size() == adapted_rows.size());
+    REQUIRE(!initial_rows.empty());
+    // The dry-run table carries text columns (Topology, Model) beside the numbers.
+    auto Number = [](const std::string &field) -> std::optional<double>
+    {
+      std::size_t consumed = 0;
+      try
+      {
+        const double value = std::stod(field, &consumed);
+        return consumed == field.size() ? std::optional<double>(value) : std::nullopt;
+      }
+      catch (const std::exception &)
+      {
+        return std::nullopt;
+      }
+    };
+    for (std::size_t r = 0; r < initial_rows.size(); r++)
+    {
+      REQUIRE(initial_rows[r].size() == adapted_rows[r].size());
+      for (std::size_t c = 0; c < initial_rows[r].size(); c++)
+      {
+        const auto initial_value = Number(initial_rows[r][c]);
+        const auto adapted_value = Number(adapted_rows[r][c]);
+        if (initial_value && adapted_value)
+        {
+          CHECK_THAT(*adapted_value, WithinAbs(*initial_value, 1.0e-12));
+        }
+        else
+        {
+          CHECK(initial_rows[r][c] == adapted_rows[r][c]);
+        }
+      }
+    }
+  }
+#endif
+}
+
+}  // namespace palace
+
+namespace palace
+{
+
+// Decision 899 B2 (OI-ROLEKEY): the role-insensitive Box + Context digest drops the
+// Conductor label of the Chain: false pieces only. Two contexts that differ in a Chain:
+// false label (the claw shorted to ground vs the cut-short claw whose ground is a new
+// conductor) share the digest; a Chain: true label, the geometry or the Box still separate
+// them; the stored SpatialSupportContextDigest of the role-1 context is unchanged (no key
+// renamed).
+TEST_CASE("Role-insensitive context digest ignores the Chain:false conductor labels",
+          "[surfaceresponseoperator][signature][adaptid][Serial]")
+{
+  const json role_1 = {{"Type", "SpatialEdgeCluster"},
+                       {"Box", {-2.6878, -5.339595, 5.364831, 6.061562}},
+                       {"Context",
+                        {{{"Chain", false},
+                          {"Conductor", 1},
+                          {"Gap", {-1.0, 0.0}},
+                          {"Interfaces", {"MA", "MS", "SA"}},
+                          {"Law", "{\"Type\":\"PEC\"}"},
+                          {"P", {3.522726, -5.339595, 3.522726, -2.796911}}},
+                         {{"Chain", true},
+                          {"Conductor", 1},
+                          {"Gap", {-1.0, 0.0}},
+                          {"Interfaces", {"MA", "MS", "SA"}},
+                          {"Law", "{\"Type\":\"PEC\"}"},
+                          {"P", {-0.6878, -5.339595, -0.6878, -2.339595}}}}}};
+  json role_2 = role_1;
+  role_2["Context"][0]["Conductor"] = 2;  // the foreign piece on its own conductor
+  json chain_relabelled = role_1;
+  chain_relabelled["Context"][1]["Conductor"] = 2;  // a chain piece: part of the claims
+  json moved = role_1;
+  moved["Context"][0]["P"][1] = -5.0;
+  json other_box = role_1;
+  other_box["Box"][0] = -2.5;
+
+  const std::string digest_1 = RoleInsensitiveContextDigest(role_1);
+  REQUIRE(digest_1.size() == 64);
+  CHECK(RoleInsensitiveContextDigest(role_2) == digest_1);
+  CHECK(RoleInsensitiveContextDigest(chain_relabelled) != digest_1);
+  CHECK(RoleInsensitiveContextDigest(moved) != digest_1);
+  CHECK(RoleInsensitiveContextDigest(other_box) != digest_1);
+  CHECK(SpatialSupportContextDigest(role_1) != SpatialSupportContextDigest(role_2));
+  CHECK(SpatialSupportContextDigest(role_1) != digest_1);
+  json no_box = role_1;
+  no_box.erase("Box");
+  CHECK(RoleInsensitiveContextDigest(no_box).empty());
+}
+
+}  // namespace palace
+
+namespace palace
+{
+
+namespace
+{
+
+// A plan of axis-aligned metal rectangles (x0, z0, x1, z1) on the sheet y = 0.5 of a
+// Cartesian hex mesh (x in [0, extent_x], y in [0, 1], z in [0, extent_z]; element size
+// 0.1): every internal face of the sheet inside a rectangle becomes a boundary element of
+// attribute 9 (the cracked PEC sheet of IslandConfig); with plane_attribute > 0 every other
+// internal face of the sheet becomes a boundary element of that attribute (the dielectric
+// interface beside the metal, the CPW form's SA sheet).
+struct PlanRectangle
+{
+  double x0, z0, x1, z1;
+};
+
+mfem::Mesh MakeSheetPlanMesh(double extent_x, double extent_z,
+                             const std::vector<PlanRectangle> &metal,
+                             int plane_attribute = 0)
+{
+  constexpr double element_size = 0.1;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
+      static_cast<int>(std::llround(extent_x / element_size)), 4,
+      static_cast<int>(std::llround(extent_z / element_size)), mfem::Element::HEXAHEDRON,
+      extent_x, 1.0, extent_z);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent_x, xmax = 0.0, zmin = extent_z, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool inside_metal =
+        std::any_of(metal.begin(), metal.end(),
+                    [&](const PlanRectangle &r)
+                    {
+                      return xmin >= r.x0 - 1.0e-12 && xmax <= r.x1 + 1.0e-12 &&
+                             zmin >= r.z0 - 1.0e-12 && zmax <= r.z1 + 1.0e-12;
+                    });
+    if (on_plane && inside_metal)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+    else if (on_plane && plane_attribute > 0)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, plane_attribute);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return serial;
+}
+
+}  // namespace
+
+// Decision 899 B2 / 900 MAJOR-1 (OI-ROLEKEY), test U4: the role-insensitive legacy-alias
+// lookup END TO END. One straight-corner cluster geometry on the cracked sheet y = 0.5: a
+// 1 R wide finger standing on a 4 R thick bar (the two concave corners of the junction are
+// one 4-edge SpatialEdgeCluster, the claw of the transmon record's class) with a foreign
+// ground corner inside the cluster's support box (a pad whose corner sits 2.5 R from the
+// finger's edge and 2.5 R above the bar's edge: beyond the 2 R interaction distance, so its
+// edges are context, not claims; inside the box, which the claims' free ends extend by
+// 2 R + 1 R padding), built in two roles from one plan: role 1 the pad TIED to the bar by a
+// strip outside the box (one perimeter component, the pad edges read the claims' conductor
+// label 1), role 2 the tie CUT (two components, the pad edges read label 2). The claims,
+// the Box, the ClaimsKey, the chain pieces and the geometry of the foreign pieces are
+// identical: only the Chain: false Conductor labels differ, so the Hash and ContextDigest
+// differ. The test library carries the claims-only legacy model (its Signature = the
+// cluster's claims-only Signature from a third plan WITHOUT the pad, contract 2: the four
+// chain continuations are the decision-236 straight continuations) with a
+// LegacyContractAlias keyed in role 1 and a one-conductor PlanViewBoundary (claims-only: no
+// Box / Context, no plan conductor beyond the claims'). Role 1 resolves through the EXACT
+// alias path (USER decision 283: no RoleSwap record, RoleSwapAliasMatches 0, as on main);
+// role 2 resolves through the role-insensitive path (a RoleSwap record naming the
+// relabelled pieces, RoleSwapAliasMatches 1) and places the model in the same claims-only
+// frame: the same patch row. On main the role-2 cluster is Missing (74 + 6 on the
+// cut-short transmon, decision 895 (B)). The requirements dry run (no response matrices) on
+// every rank count: the identification is decided on the root and broadcast.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator role-insensitive legacy alias places the "
+                 "claims-only model in both conductor roles",
+                 "[surfaceresponseoperator][3d][signature][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+
+  // The plan on the sheet y = 0.5 (mesh units; R = 0.2 = the library's radius; element size
+  // 0.1 = 0.5 R; the domain 5 x 1 x 5, no metal on its boundary): the bar x in [0.5, 4.5],
+  // z in [1.2, 2.0]; the finger x in [2.4, 2.6], z in [2.0, 4.5] (the junction cluster's
+  // concave corners at (2.4, 2.0) and (2.6, 2.0); the finger's far end is its own cluster
+  // 12.5 R away); the pad x in [0.5, 1.9], z in [2.5, 4.5] (its corner (1.9, 2.5) is 2.5 R
+  // from the finger's left edge and 2.5 R above the bar's top edge; its bottom and right
+  // edges cross the box's left and top faces); the tie x in [0.5, 1.0], z in [2.0, 2.5]
+  // (role 1 only; its concave corners at x = 1.0 lie 7 R from the cluster, outside the
+  // box).
+  enum class Role
+  {
+    CLAIMS_ONLY,  // no pad: the legacy (claims-only, contract 2) key
+    TIED,         // role 1: the claw (bar + finger) and the pad one component
+    CUT           // role 2: the tie absent, the pad its own component
+  };
+  auto MakeMesh = [&](Role role)
+  {
+    std::vector<PlanRectangle> metal = {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, 4.5}};
+    if (role != Role::CLAIMS_ONLY)
+    {
+      metal.push_back({0.5, 2.5, 1.9, 4.5});
+    }
+    if (role == Role::TIED)
+    {
+      metal.push_back({0.5, 2.0, 1.0, 2.5});
+    }
+    mfem::Mesh serial = MakeSheetPlanMesh(5.0, 5.0, metal);
+    return std::make_unique<mfem::ParMesh>(comm, serial);
+  };
+
+  // The requirements dry run of a plan against a library: the manifest and the patch
+  // table (written next to it).
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  auto Identify = [&](Role role, const fs::path &library, const std::string &stem)
+  {
+    json run = config;
+    run["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] = library.string();
+    const fs::path out_dir = temp.temp_dir / stem;
+    if (Mpi::Root(comm))
+    {
+      fs::create_directories(out_dir);
+    }
+    Mpi::Barrier(comm);
+    run["Problem"]["Output"] = out_dir.string();
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto mesh = MakeMesh(role);
+    const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+    Mpi::Barrier(comm);
+    return std::make_pair(requirements_path, out_dir / "surface-response-patches.csv");
+  };
+  // The junction cluster of a manifest: the one SpatialEdgeCluster with concave corners
+  // (the finger's far end is a cluster of convex corners; the tie's concave corners are
+  // 2.5 R apart and never cluster).
+  auto JunctionCluster = [](const json &manifest) -> json
+  {
+    json found;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "SpatialEdgeCluster")
+      {
+        continue;
+      }
+      const auto &vertices = feature["Signature"]["Vertices"];
+      if (std::any_of(vertices.begin(), vertices.end(),
+                      [](const json &vertex) { return vertex["Type"] == "ConcaveCorner"; }))
+      {
+        REQUIRE(found.is_null());
+        found = feature;
+      }
+    }
+    REQUIRE(found.is_object());
+    return found;
+  };
+  // The Context with the Conductor label removed from the Chain: false pieces (the test's
+  // own reading of the role-insensitive rule; RoleInsensitiveContextDigest is the code's).
+  auto RoleInsensitiveContext = [](json context)
+  {
+    for (auto &piece : context)
+    {
+      if (!piece.value("Chain", false))
+      {
+        piece.erase("Conductor");
+      }
+    }
+    return context;
+  };
+
+  // 1. The claims-only plan against the fixture library: the junction cluster is contract
+  //    2 (no Box / Context in its Signature) and Missing; its Signature is the legacy
+  //    model's.
+  const auto [claims_only_requirements, claims_only_patches] =
+      Identify(Role::CLAIMS_ONLY, spatial_cluster_library_3d_path, "u4-claims-only");
+  // 2. Role 1 against the fixture library: contract 3 with the pad's two foreign pieces;
+  //    Missing. Its Hash and ContextDigest key the alias.
+  const auto [tied_probe_requirements, tied_probe_patches] =
+      Identify(Role::TIED, spatial_cluster_library_3d_path, "u4-tied-probe");
+  json claims_only_feature, tied_probe_feature;
+  std::size_t foreign_pieces = 0;
+  const fs::path library_path = temp.temp_dir / "fabrication-process-u4-role-swap-3d.json";
+  const std::string model_name = "u4-claims-only-junction";
+  if (Mpi::Root(comm))
+  {
+    const json claims_only_manifest = ReadJson(claims_only_requirements);
+    claims_only_feature = JunctionCluster(claims_only_manifest);
+    CHECK(claims_only_feature["Match"]["Status"] == "Missing");
+    CHECK(claims_only_feature["SpatialSupport"]["Contract"] == 2);
+    REQUIRE(!claims_only_feature["Signature"].contains("Box"));
+    REQUIRE(!claims_only_feature["Signature"].contains("Context"));
+    CHECK(claims_only_feature["SpatialSupport"]["ClaimsKey"] ==
+          claims_only_feature["Hash"]);
+    CHECK(claims_only_manifest["Statistics"]["Matching"].value("RoleSwapAliasMatches", 0) ==
+          0);
+
+    const json tied_probe_manifest = ReadJson(tied_probe_requirements);
+    tied_probe_feature = JunctionCluster(tied_probe_manifest);
+    CHECK(tied_probe_feature["Match"]["Status"] == "Missing");
+    CHECK(tied_probe_feature["SpatialSupport"]["Contract"] == 3);
+    REQUIRE(tied_probe_feature["Signature"].contains("Box"));
+    REQUIRE(tied_probe_feature["Signature"].contains("Context"));
+    CHECK(tied_probe_feature["SpatialSupport"]["Context"]["ForeignPieces"] >= 2);
+    CHECK(tied_probe_feature["SpatialSupport"]["Context"]["ForeignConductors"] == 0);
+    CHECK(tied_probe_feature["SpatialSupport"]["ClaimsKey"] == claims_only_feature["Hash"]);
+    CHECK(tied_probe_feature["Hash"] != claims_only_feature["Hash"]);
+    // The foreign pieces (the pad's bottom and right edges inside the box; the pad corner's
+    // own claims split them) are labelled as the claims (one component); the chain pieces
+    // are the claims' continuations.
+    foreign_pieces = 0;
+    for (const auto &piece : tied_probe_feature["Signature"]["Context"])
+    {
+      if (!piece["Chain"].get<bool>())
+      {
+        foreign_pieces++;
+        CHECK(piece["Conductor"] == 1);
+      }
+      else
+      {
+        CHECK(piece["Conductor"] == 1);
+      }
+    }
+    CHECK(foreign_pieces >= 2);
+    CHECK(tied_probe_feature["SpatialSupport"]["Context"]["ForeignPieces"] ==
+          foreign_pieces);
+
+    // The test library: the fixture's cluster model becomes the claims-only legacy model
+    // (keyed by the claims-only Signature; a one-conductor PlanViewBoundary; the alias =
+    // the role-1 key with its context digest and recorded Box + Context).
+    json library = ReadJson(spatial_cluster_library_3d_path);
+    library["Name"] = "unit-test-process-u4-role-swap-3d";
+    auto &model = library["Models"].back();
+    model["Name"] = model_name;
+    model["Signature"] = claims_only_feature["Signature"];
+    model.erase("Edges");
+    model["PlanViewBoundary"] = {{{"Conductor", 1},
+                                  {"Segments",
+                                   {{{-100000000, 0, 0}, {100000000, 0, 0}},
+                                    {{-100000000, 0, 0}, {-100000000, 1000000000, 0}},
+                                    {{100000000, 0, 0}, {100000000, 1000000000, 0}}}}}};
+    model["LegacyContractAliases"] = {
+        {{"Key", tied_probe_feature["Hash"]},
+         {"ContextDigest", tied_probe_feature["SpatialSupport"]["ContextDigest"]},
+         {"Reason", "unit test U4 (decision 899 B2): the claw tied to the pad, role 1"},
+         {"Context",
+          {{"Box", tied_probe_feature["Signature"]["Box"]},
+           {"Context", tied_probe_feature["Signature"]["Context"]}}}}};
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+
+  // 3. The three plans against the test library.
+  const auto [legacy_requirements, legacy_patches] =
+      Identify(Role::CLAIMS_ONLY, library_path, "u4-legacy");
+  const auto [tied_requirements, tied_patches] =
+      Identify(Role::TIED, library_path, "u4-tied");
+  const auto [cut_requirements, cut_patches] = Identify(Role::CUT, library_path, "u4-cut");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const json legacy_manifest = ReadJson(legacy_requirements);
+  const json tied_manifest = ReadJson(tied_requirements);
+  const json cut_manifest = ReadJson(cut_requirements);
+  const json legacy_feature = JunctionCluster(legacy_manifest);
+  const json tied_feature = JunctionCluster(tied_manifest);
+  const json cut_feature = JunctionCluster(cut_manifest);
+
+  // The claims-only plan: the exact key (neither alias path).
+  CHECK(legacy_feature["Match"]["Status"] == "Matched");
+  CHECK(legacy_feature["Match"]["Model"] == model_name);
+  CHECK(!legacy_feature["Match"].contains("LegacyContract"));
+  CHECK(legacy_manifest["Statistics"]["Matching"].value("RoleSwapAliasMatches", 0) == 0);
+
+  // Role 1: the exact alias (USER decision 283), no RoleSwap record, as on main.
+  CHECK(tied_feature["Hash"] == tied_probe_feature["Hash"]);
+  CHECK(tied_feature["Match"]["Status"] == "Matched");
+  CHECK(tied_feature["Match"]["Model"] == model_name);
+  REQUIRE(tied_feature["Match"].contains("LegacyContract"));
+  CHECK(tied_feature["Match"]["LegacyContract"]["Key"] == tied_feature["Hash"]);
+  CHECK(tied_feature["Match"]["LegacyContract"]["ClaimsKey"] ==
+        claims_only_feature["Hash"]);
+  CHECK(!tied_feature["Match"]["LegacyContract"].contains("RoleSwap"));
+  CHECK_THAT(tied_feature["Match"]["Note"].get<std::string>(),
+             ContainsSubstring("legacy contract (USER decision 283)"));
+  CHECK(tied_manifest["Statistics"]["Matching"].value("RoleSwapAliasMatches", 0) == 0);
+
+  // Role 2: the same claims, Box and ClaimsKey; the foreign piece relabelled 2; the Hash
+  // and the ContextDigest differ (the exact alias cannot serve it); the role-insensitive
+  // contexts are equal.
+  CHECK(cut_feature["SpatialSupport"]["Contract"] == 3);
+  CHECK(cut_feature["SpatialSupport"]["ClaimsKey"] == claims_only_feature["Hash"]);
+  CHECK(cut_feature["Signature"]["Portions"] == tied_feature["Signature"]["Portions"]);
+  CHECK(cut_feature["Signature"]["Box"] == tied_feature["Signature"]["Box"]);
+  CHECK(cut_feature["Hash"] != tied_feature["Hash"]);
+  CHECK(cut_feature["SpatialSupport"]["ContextDigest"] !=
+        tied_feature["SpatialSupport"]["ContextDigest"]);
+  REQUIRE(cut_feature["Signature"]["Context"].size() ==
+          tied_feature["Signature"]["Context"].size());
+  CHECK(cut_feature["Signature"]["Context"] != tied_feature["Signature"]["Context"]);
+  CHECK(RoleInsensitiveContext(cut_feature["Signature"]["Context"]) ==
+        RoleInsensitiveContext(tied_feature["Signature"]["Context"]));
+  std::size_t relabelled_pieces = 0;
+  for (std::size_t i = 0; i < cut_feature["Signature"]["Context"].size(); i++)
+  {
+    const auto &cut_piece = cut_feature["Signature"]["Context"][i];
+    const auto &tied_piece = tied_feature["Signature"]["Context"][i];
+    CHECK(cut_piece["Chain"] == tied_piece["Chain"]);
+    if (cut_piece["Chain"].get<bool>())
+    {
+      CHECK(cut_piece["Conductor"] == 1);
+    }
+    else
+    {
+      relabelled_pieces++;
+      CHECK(cut_piece["Conductor"] == 2);
+    }
+  }
+  CHECK(relabelled_pieces == foreign_pieces);
+  CHECK(cut_feature["SpatialSupport"]["Context"]["ForeignPieces"] == foreign_pieces);
+  CHECK(cut_feature["SpatialSupport"]["Context"]["ForeignConductors"] == 1);
+  // Placed through the role-insensitive alias (decision 899 B2): FAILS ON MAIN (Missing).
+  CHECK(cut_feature["Match"]["Status"] == "Matched");
+  CHECK(cut_feature["Match"]["Model"] == model_name);
+  REQUIRE(cut_feature["Match"].contains("LegacyContract"));
+  const auto &contract = cut_feature["Match"]["LegacyContract"];
+  CHECK(contract["Key"] == tied_feature["Hash"]);
+  CHECK(contract["ContextDigest"] == tied_feature["SpatialSupport"]["ContextDigest"]);
+  CHECK(contract["ClaimsKey"] == claims_only_feature["Hash"]);
+  CHECK(contract["Model"] == model_name);
+  REQUIRE(contract.contains("RoleSwap"));
+  CHECK(contract["RoleSwap"]["FeatureKey"] == cut_feature["Hash"]);
+  CHECK(contract["RoleSwap"]["FeatureContextDigest"] ==
+        cut_feature["SpatialSupport"]["ContextDigest"]);
+  CHECK(contract["RoleSwap"]["RoleInsensitiveContextDigest"].get<std::string>().size() ==
+        64);
+  REQUIRE(contract["RoleSwap"]["RelabelledPieces"].size() == foreign_pieces);
+  for (const auto &relabelled : contract["RoleSwap"]["RelabelledPieces"])
+  {
+    CHECK(relabelled["FeatureConductor"] == 2);
+    CHECK(relabelled["AliasConductor"] == 1);
+    CHECK(!cut_feature["Signature"]["Context"][relabelled["Piece"].get<std::size_t>()]
+                      ["Chain"]
+                          .get<bool>());
+  }
+  CHECK_THAT(cut_feature["Match"]["Note"].get<std::string>(),
+             ContainsSubstring("role-insensitive legacy contract (decision 899 B2)"));
+  CHECK(cut_manifest["Statistics"]["Matching"]["RoleSwapAliasMatches"] == 1);
+  // No key renamed: the feature's own hash is the manifest's, the alias key stays role 1's.
+  CHECK(cut_feature["Hash"] != contract["Key"]);
+  // The same claims-only placement frame in both roles.
+  for (const char *key : {"Origin", "Chirality"})
+  {
+    CHECK(cut_feature["ClaimsFrame"][key] == tied_feature["ClaimsFrame"][key]);
+  }
+
+  // The patch table: the model's row is the same in both roles (the claims-only frame);
+  // the dry-run table carries text columns (Topology, Model) beside the numbers. The Patch
+  // and Feature ids are not compared (the tie adds features of its own).
+  auto ModelRows = [&](const fs::path &path)
+  {
+    std::vector<std::vector<std::string>> rows;
+    for (const auto &row : ReadPatchRows(path))
+    {
+      REQUIRE(row.size() >= 25);
+      if (row[3] == model_name)
+      {
+        rows.push_back(row);
+      }
+    }
+    return rows;
+  };
+  const auto tied_rows = ModelRows(tied_patches);
+  const auto cut_rows = ModelRows(cut_patches);
+  const auto legacy_rows = ModelRows(legacy_patches);
+  REQUIRE(tied_rows.size() == 1);
+  REQUIRE(cut_rows.size() == 1);
+  REQUIRE(legacy_rows.size() == 1);
+  auto Number = [](const std::string &field) -> std::optional<double>
+  {
+    std::size_t consumed = 0;
+    try
+    {
+      const double value = std::stod(field, &consumed);
+      return consumed == field.size() ? std::optional<double>(value) : std::nullopt;
+    }
+    catch (const std::exception &)
+    {
+      return std::nullopt;
+    }
+  };
+  for (const auto *rows : {&cut_rows, &legacy_rows})
+  {
+    REQUIRE((*rows)[0].size() == tied_rows[0].size());
+    for (std::size_t c = 2; c < tied_rows[0].size(); c++)
+    {
+      const auto tied_value = Number(tied_rows[0][c]);
+      const auto other_value = Number((*rows)[0][c]);
+      if (tied_value && other_value)
+      {
+        CHECK_THAT(*other_value, WithinAbs(*tied_value, 1.0e-12));
+      }
+      else
+      {
+        CHECK((*rows)[0][c] == tied_rows[0][c]);
+      }
+    }
+  }
+#endif
+}
+
+// Decision 899 B1 mechanism (B) / 900 MINOR-5 (OI-CTX-ARC-ADAPT), test U5: the Box +
+// Context key of a cluster whose box holds EXCLUDED perimeter segments is the root's on a
+// locally refined nonconforming mesh. The U4 claw (bar + finger) under a ceiling the finger
+// reaches: the finger's top edge is the edge where the sheet meets the PEC ceiling (an
+// excluded NonManifold edge, 2.5 R above the junction's concave corners: inside the
+// cluster's box, beyond the claims). The two hexahedra under the finger's top are refined
+// once (one side of the sheet; the mesh's EdgeFrameNormal keeps mechanism (A) out): the
+// leaf perimeter then splits the excluded edge at the refinement vertices, and the key
+// records every excluded segment inside the box per MESH segment — on main the cluster's
+// Hash, ContextDigest and Context.ExcludedSegments.Pieces change (the C1 abort / C3
+// unmatched pair of the record's class); on the branch the root-level perimeter reproduces
+// the unrefined mesh's key exactly. Serial + MPI-2 (the refined serial mesh is
+// distributed).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator cluster key with excluded segments in its box is "
+                 "the root's on a locally refined NC mesh",
+                 "[surfaceresponseoperator][3d][signature][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  // The plan (mesh units; R = 0.2; the domain 5 x 1 x 2.5): the bar x in [0.5, 4.5],
+  // z in [1.2, 2.0]; the finger x in [2.4, 2.6], z in [2.0, 2.5] up to the ceiling.
+  constexpr double ceiling = 2.5;
+  const std::vector<PlanRectangle> metal = {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, ceiling}};
+  auto MakeMesh = [&](bool refined)
+  {
+    mfem::Mesh serial = MakeSheetPlanMesh(5.0, ceiling, metal);
+    if (refined)
+    {
+      serial.EnsureNCMesh(true);
+      mfem::Array<int> marked;
+      for (int e = 0; e < serial.GetNE(); e++)
+      {
+        mfem::Vector center(3);
+        serial.GetElementCenter(e, center);
+        if (center(0) > 2.4 && center(0) < 2.6 && center(1) > 0.25 && center(1) < 0.5 &&
+            center(2) > ceiling - 0.1)
+        {
+          marked.Append(e);
+        }
+      }
+      REQUIRE(marked.Size() == 2);
+      serial.GeneralRefinement(marked);
+    }
+    return std::make_unique<mfem::ParMesh>(comm, serial);
+  };
+
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = spatial_cluster_library_3d_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  auto Identify = [&](bool refined, const std::string &stem)
+  {
+    json run = config;
+    const fs::path out_dir = temp.temp_dir / stem;
+    if (Mpi::Root(comm))
+    {
+      fs::create_directories(out_dir);
+    }
+    Mpi::Barrier(comm);
+    run["Problem"]["Output"] = out_dir.string();
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto mesh = MakeMesh(refined);
+    const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+    Mpi::Barrier(comm);
+    return std::make_pair(requirements_path, mesh->GetGlobalNE());
+  };
+  const auto [initial_requirements, initial_ne] = Identify(false, "u5-initial");
+  const auto [refined_requirements, refined_ne] = Identify(true, "u5-refined");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  CHECK(refined_ne == initial_ne + 14);  // two hexahedra -> eight children each
+  auto JunctionCluster = [](const json &manifest) -> json
+  {
+    json found;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "SpatialEdgeCluster")
+      {
+        continue;
+      }
+      const auto &vertices = feature["Signature"]["Vertices"];
+      if (std::any_of(vertices.begin(), vertices.end(),
+                      [](const json &vertex) { return vertex["Type"] == "ConcaveCorner"; }))
+      {
+        REQUIRE(found.is_null());
+        found = feature;
+      }
+    }
+    REQUIRE(found.is_object());
+    return found;
+  };
+  const json initial = ReadJson(initial_requirements);
+  const json refined = ReadJson(refined_requirements);
+  const json initial_cluster = JunctionCluster(initial);
+  const json refined_cluster = JunctionCluster(refined);
+  // The premise: excluded segments inside the box on the unrefined mesh (the finger's top
+  // edge at the ceiling), the cluster keyed with Box + Context.
+  CHECK(initial_cluster["SpatialSupport"]["Contract"] == 3);
+  const auto &initial_excluded =
+      initial_cluster["SpatialSupport"]["Context"]["ExcludedSegments"];
+  REQUIRE(initial_excluded["Pieces"].get<int>() >= 1);
+  const auto &initial_exclusions = initial["Identification"]["Exclusions"];
+  CHECK(std::any_of(
+      initial_exclusions.begin(), initial_exclusions.end(), [](const json &exclusion)
+      { return exclusion["Class"] == "NonManifold" && exclusion["Count"] == 2; }));
+  // The refined mesh: more leaf segments overall, the same identification (FAILS ON MAIN:
+  // the excluded pieces split, the key changes).
+  CHECK(refined["Identification"]["GeometryDigest"] ==
+        initial["Identification"]["GeometryDigest"]);
+  CHECK(refined_cluster["Hash"] == initial_cluster["Hash"]);
+  CHECK(refined_cluster["SpatialSupport"]["ContextDigest"] ==
+        initial_cluster["SpatialSupport"]["ContextDigest"]);
+  CHECK(refined_cluster["SpatialSupport"]["Context"]["ExcludedSegments"] ==
+        initial_excluded);
+  CHECK(refined_cluster["Signature"] == initial_cluster["Signature"]);
+  CHECK(refined["Identification"]["Exclusions"] == initial["Identification"]["Exclusions"]);
+  REQUIRE(refined["Identification"]["Features"].size() ==
+          initial["Identification"]["Features"].size());
+  for (std::size_t f = 0; f < initial["Identification"]["Features"].size(); f++)
+  {
+    CHECK(refined["Identification"]["Features"][f]["Hash"] ==
+          initial["Identification"]["Features"][f]["Hash"]);
+  }
+#endif
+}
+
+}  // namespace palace
+
+namespace palace
+{
+
+// Decision 903 R2 / 904 (adaptid fix round 2, U7): a saved adapted mesh reproduces the
+// producing run's UNCOVERED-portion energies. The producer retains its initial-mesh
+// (root-level) edge-distance trees across the AMR cycles, so its uncovered portions are
+// credited over their whole root segments on the fine mesh; a follow-on on the saved mesh
+// must build the same trees (the root-level perimeter), not the leaf perimeter's, on which
+// a root portion spanning refined sub-segments is credited on its midpoint's sub-segment
+// only (the g3 residual: -13 % of the junction-lead cluster's uncovered raw energy). The
+// U5 claw (a finger on a bar on the cracked sheet, IslandConfig, R = 0.2) with the convex
+// library (isolated edge + convex corner): the bar's corners and the isolated edges are
+// placed, the junction's concave-corner cluster and the finger's far-end cluster have no
+// model and are uncovered requirements at the field singularities the AMR refines.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator saved adapted mesh reproduces the producing "
+                 "run's uncovered-portion energies",
+                 "[surfaceresponseoperator][3d][adaptid][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  const fs::path mesh_path = temp.temp_dir / "adaptid-uncovered-claw.mesh";
+  const fs::path basis_path = temp.temp_dir / "adaptid-uncovered-basis-points.csv";
+  const fs::path library_path =
+      temp.temp_dir / "fabrication-process-adaptid-uncovered-3d.json";
+  const fs::path producer_dir = temp.temp_dir / "adaptid-uncovered-producer";
+  const fs::path follow_on_dir = temp.temp_dir / "adaptid-uncovered-follow-on";
+  const fs::path saved_mesh_path = producer_dir / "adaptid-uncovered-claw.mesh";
+  // The plan (mesh units; the domain 5 x 1 x 3): the bar x in [0.5, 4.5], z in [1.2, 2.0];
+  // the finger x in [2.4, 2.6], z in [2.0, 2.8]; the rest of the sheet y = 0.5 is the SA
+  // interface (attribute 10) beside the metal, so that the within-R energy of the
+  // uncovered portions is the real field energy at the metal edges (on the PEC itself the
+  // tangential field vanishes and the uncovered energy would be roundoff). The library: the
+  // convex 3D library's isolated edge and 90-degree convex corner on the SA interface alone
+  // (the F-DB-a test's form: Interfaces SA / Coupon 1, the edge's basis points at +-R).
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial =
+        MakeSheetPlanMesh(5.0, 3.0, {{0.5, 1.2, 4.5, 2.0}, {2.4, 2.0, 2.6, 2.8}}, 10);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    {
+      std::ofstream basis(basis_path);
+      basis << "x,y,z\n"
+            << "-0.2,-0.2,0.0\n"
+            << "0.2,-0.2,0.0\n"
+            << "0.2,0.2,0.0\n"
+            << "-0.2,0.2,0.0\n";
+    }
+    json library = ReadJson(convex_library_3d_path);
+    library["Name"] = "unit-test-process-adaptid-uncovered-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    std::ofstream output_library(library_path);
+    output_library << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {10};
+  config["Model"]["Refinement"] = {{"MaxIts", 2},           {"Tol", 1.0e-12},
+                                   {"UpdateFraction", 0.5}, {"Nonconformal", true},
+                                   {"SaveAdaptMesh", true}, {"MaxNCLevels", 8}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  // The same (tight) solver tolerances in both runs: the 1e-8 energy bar under a different
+  // partition of the same mesh (the producer's rebalanced one, the follow-on's fresh one).
+  correction["SolveTol"] = 1.0e-13;
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 500}};
+  config["Problem"]["Output"] = producer_dir.string();
+  test::RunElectrostatic(config);
+  Mpi::Barrier(comm);
+  REQUIRE(fs::is_regular_file(saved_mesh_path));
+  json follow_on = config;
+  follow_on["Model"]["Mesh"] = saved_mesh_path.string();
+  follow_on["Model"]["Refinement"] = {{"MaxIts", 0}};
+  follow_on["Problem"]["Output"] = follow_on_dir.string();
+  test::RunElectrostatic(follow_on);
+  Mpi::Barrier(comm);
+  // The premise: the saved mesh's LEAF perimeter carries refinement-generated vertices (the
+  // post-processing extraction of main's form; without them the comparison is vacuous).
+  auto LeafSegments = [&](const json &run)
+  {
+    IoData iodata(run, false);
+    auto mesh = mesh::ReadMesh(iodata, comm);
+    return ExtractMetalEdgeGeometry(*mesh, iodata.boundaries,
+                                    JointNoiseExtractionFor(iodata.boundaries))
+        .segments.size();
+  };
+  const std::size_t initial_leaf_segments = LeafSegments(config);
+  const std::size_t saved_leaf_segments = LeafSegments(follow_on);
+  // The retained trees' perimeter: the producer's is its initial mesh's (leaf = root), the
+  // follow-on's the saved mesh's ROOT-LEVEL perimeter (decision 904 A3.2): the same
+  // segments in the same order, to the coordinate round trip.
+  auto RetainedPerimeter = [&](const json &run)
+  {
+    IoData iodata(run, false);
+    auto mesh = mesh::ReadMesh(iodata, comm);
+    MetalSurfaceExtraction surface = JointNoiseExtractionFor(iodata.boundaries);
+    surface.root_level_perimeter = true;
+    const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, surface);
+    std::vector<std::array<double, 6>> segments;
+    for (const auto &segment : geometry.segments)
+    {
+      const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+      const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+      segments.push_back({p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]});
+    }
+    return std::make_pair(segments, geometry.refinement_points.size());
+  };
+  const auto [initial_segments, initial_refinement_points] = RetainedPerimeter(config);
+  const auto [saved_segments, saved_refinement_points] = RetainedPerimeter(follow_on);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  CHECK(saved_leaf_segments > initial_leaf_segments);
+  CHECK(initial_refinement_points == 0);
+  CHECK(saved_refinement_points > 0);
+  REQUIRE(saved_segments.size() == initial_segments.size());
+  for (std::size_t i = 0; i < initial_segments.size(); i++)
+  {
+    for (int k = 0; k < 6; k++)
+    {
+      CHECK_THAT(saved_segments[i][k], WithinAbs(initial_segments[i][k], 1.0e-12));
+    }
+  }
+  const json producer_meta = ReadJson(producer_dir / "palace.json");
+  const json follow_on_meta = ReadJson(follow_on_dir / "palace.json");
+  CHECK(producer_meta["Problem"]["MeshElements"] ==
+        follow_on_meta["Problem"]["MeshElements"]);
+  const auto &producer_response = producer_meta["SurfaceResponse"];
+  const auto &follow_on_response = follow_on_meta["SurfaceResponse"];
+  // The placed set and the uncovered set are the producer's (decision 899 B1), and some
+  // feature IS uncovered: a positive uncovered length on both sides.
+  REQUIRE(producer_response["ModelCatalog"].size() ==
+          follow_on_response["ModelCatalog"].size());
+  for (std::size_t m = 0; m < producer_response["ModelCatalog"].size(); m++)
+  {
+    CHECK(producer_response["ModelCatalog"][m]["Name"] ==
+          follow_on_response["ModelCatalog"][m]["Name"]);
+    CHECK(producer_response["ModelCatalog"][m]["PatchCount"] ==
+          follow_on_response["ModelCatalog"][m]["PatchCount"]);
+  }
+  REQUIRE(producer_response["Diagnostics"]["Uncovered"]["Length"].get<double>() > 0.0);
+  CHECK(producer_response["Diagnostics"]["Uncovered"]["Length"] ==
+        follow_on_response["Diagnostics"]["Uncovered"]["Length"]);
+  CHECK(producer_response["Diagnostics"]["Uncovered"]["Count"] ==
+        follow_on_response["Diagnostics"]["Uncovered"]["Count"]);
+
+  // The uncovered-energy table (per source, evaluation and type: the within-R energy of the
+  // uncovered portions and its share, per target interface) of the producer's last cycle
+  // and of the follow-on: text fields equal, numbers to 1e-8 relative. ON MAIN'S FORM the
+  // follow-on's leaf trees credit a refined root portion on one sub-segment only: the
+  // uncovered energy differs by the footprint the refinement removed (-57 % to -68 % here;
+  // the g3 junction-lead cluster -13 %). In this fixture the uncovered energy is up to ~2 %
+  // of a target interface's corrected energy (the within-R field at the metal edges beside
+  // the sheet), so the corrected tables below discriminate too: the follow-on's corrected
+  // interface energies read up to ~1.5 % below the producer's on main's form.
+  auto Number = [](const std::string &field) -> std::optional<double>
+  {
+    std::size_t consumed = 0;
+    try
+    {
+      const double value = std::stod(field, &consumed);
+      return consumed == field.size() ? std::optional<double>(value) : std::nullopt;
+    }
+    catch (const std::exception &)
+    {
+      return std::nullopt;
+    }
+  };
+  auto CompareRows = [&](const std::string &name)
+  {
+    REQUIRE(fs::is_regular_file(producer_dir / name));
+    REQUIRE(fs::is_regular_file(follow_on_dir / name));
+    const auto producer_rows = ReadPatchRows(producer_dir / name);
+    const auto follow_on_rows = ReadPatchRows(follow_on_dir / name);
+    REQUIRE(producer_rows.size() == follow_on_rows.size());
+    REQUIRE(!producer_rows.empty());
+    double table_scale = 0.0;
+    for (const auto &row : producer_rows)
+    {
+      for (const auto &field : row)
+      {
+        if (const auto value = Number(field))
+        {
+          table_scale = std::max(table_scale, std::abs(*value));
+        }
+      }
+    }
+    for (std::size_t r = 0; r < producer_rows.size(); r++)
+    {
+      REQUIRE(producer_rows[r].size() == follow_on_rows[r].size());
+      for (std::size_t c = 0; c < producer_rows[r].size(); c++)
+      {
+        const auto producer_value = Number(producer_rows[r][c]);
+        const auto follow_on_value = Number(follow_on_rows[r][c]);
+        if (producer_value && follow_on_value)
+        {
+          const double scale =
+              std::max({std::abs(*producer_value), 1.0e-6 * table_scale, 1.0e-30});
+          CHECK_THAT(*follow_on_value, WithinAbs(*producer_value, 1.0e-8 * scale));
+        }
+        else
+        {
+          CHECK(producer_rows[r][c] == follow_on_rows[r][c]);
+        }
+      }
+    }
+  };
+  CompareRows("surface-response-uncovered-energy.csv");
+  // The corrected energies of the producer's last cycle and of the follow-on (the uncovered
+  // raw energy is kept in the fixed-trace / fixed-flux / self-consistent energies): 1e-8
+  // relative at the same solver tolerance. The table scale is taken over the FINITE entries
+  // only and a non-finite entry (the +inf Q of this LossTan-free interface, a NaN of an
+  // absent evaluation) must be reproduced as such: an infinite scale would make every
+  // finite comparison vacuous.
+  auto CompareTable = [&](const std::string &name)
+  {
+    Table producer_table = test::LoadCsv(producer_dir / name);
+    Table follow_on_table = test::LoadCsv(follow_on_dir / name);
+    REQUIRE(producer_table.n_cols() == follow_on_table.n_cols());
+    REQUIRE(producer_table.n_cols() > 0);
+    double table_scale = 0.0;
+    for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+    {
+      for (const double value : producer_table[c].data)
+      {
+        if (std::isfinite(value))
+        {
+          table_scale = std::max(table_scale, std::abs(value));
+        }
+      }
+    }
+    REQUIRE(table_scale > 0.0);
+    for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+    {
+      const Column &producer_column = producer_table[c];
+      const Column &follow_on_column = follow_on_table[c];
+      REQUIRE(producer_column.data.size() == follow_on_column.data.size());
+      for (std::size_t i = 0; i < producer_column.data.size(); i++)
+      {
+        if (!std::isfinite(producer_column.data[i]))
+        {
+          CHECK(((std::isnan(producer_column.data[i]) &&
+                  std::isnan(follow_on_column.data[i])) ||
+                 follow_on_column.data[i] == producer_column.data[i]));
+          continue;
+        }
+        const double scale =
+            std::max({std::abs(producer_column.data[i]), 1.0e-6 * table_scale, 1.0e-30});
+        CHECK_THAT(follow_on_column.data[i],
+                   WithinAbs(producer_column.data[i], 1.0e-8 * scale));
+      }
+    }
+  };
+  CompareTable("surface-Q-corrected.csv");
+  CompareTable("terminal-C-corrected.csv");
+#endif
+}
+
+}  // namespace palace

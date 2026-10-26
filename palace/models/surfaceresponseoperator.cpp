@@ -1676,6 +1676,12 @@ struct AutomaticResponseStatistics
   long long int pair_checks_safety = 0;
   long long int pair_checks_patch_construction = 0;
   long long int spatial_events = 0;
+  // Decision 899 B2: SpatialEdgeCluster features resolved through the role-insensitive
+  // legacy alias lookup.
+  long long int role_swap_alias_matches = 0;
+  // Decision 904 A3.1: contract-3 placements whose model Context agreed with the feature's
+  // within the cluster quantum near-match (not exactly).
+  long long int context_near_match_verifications = 0;
 
   long long int mask_gather_calls = 0;
   long long int mask_faces_scanned_local = 0;
@@ -1746,7 +1752,12 @@ nlohmann::json BuildAutomaticStatistics(MPI_Comm comm,
               {"PatchConstruction", Replicated(statistics.pair_checks_patch_construction,
                                                "PatchConstructionPairChecks")},
               {"Total", Replicated(global_pair_checks, "TotalPairChecks")}}},
-            {"SpatialEvents", Replicated(statistics.spatial_events, "SpatialEvents")}}},
+            {"SpatialEvents", Replicated(statistics.spatial_events, "SpatialEvents")},
+            {"RoleSwapAliasMatches",
+             Replicated(statistics.role_swap_alias_matches, "RoleSwapAliasMatches")},
+            {"ContextNearMatchVerifications",
+             Replicated(statistics.context_near_match_verifications,
+                        "ContextNearMatchVerifications")}}},
           {"Masks",
            {{"GatherCalls", Replicated(statistics.mask_gather_calls, "MaskGatherCalls")},
             {"FacesScanned", Distribution(statistics.mask_faces_scanned_local)},
@@ -2929,8 +2940,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       if (auto metal_grading = trace_basis->find("MetalKnotGrading");
           metal_grading != trace_basis->end())
       {
-        // The metal-graded refinement (the concave-MS remedy, decisions 590 / 629); absent =
-        // the recorded equal-fraction metal knots, so every record written before it (the
+        // The metal-graded refinement (the concave-MS remedy, decisions 590 / 629); absent
+        // = the recorded equal-fraction metal knots, so every record written before it (the
         // published refined-rule models) reads unchanged. A 220-knot coupon whose record
         // lacks the key fails the load-time file check (its knots are not at the
         // equal-fraction positions): fail closed.
@@ -7600,6 +7611,14 @@ public:
     }
     std::optional<std::tuple<double, int, std::string, std::size_t>> best;
     std::set<std::size_t> seen;
+    // A SpatialEdgeCluster within the quantum near-match of TWO OR MORE models fails closed
+    // (decision 904 (b)): the load-time refusal of near-duplicate models (two models within
+    // 2 k + 1/2 quanta) excludes it under the raw-number reading; with arc centres read by
+    // their geometric deviation the exclusion is not a triangle inequality, so it is
+    // enforced here as well.
+    std::vector<std::pair<std::string, double>> cluster_candidates;
+    const bool cluster =
+        feature_signature.value("Type", std::string{}) == "SpatialEdgeCluster";
     for (const std::size_t index : it->second)
     {
       if (!seen.insert(index).second)
@@ -7612,12 +7631,32 @@ public:
       {
         continue;
       }
+      if (cluster)
+      {
+        cluster_candidates.emplace_back(entries[index].name, *deviation);
+      }
       const std::tuple<double, int, std::string, std::size_t> candidate{
           *deviation, entries[index].rank, entries[index].name, index};
       if (!best || candidate < *best)
       {
         best = candidate;
       }
+    }
+    if (cluster_candidates.size() > 1)
+    {
+      std::string names;
+      for (const auto &[name, deviation] : cluster_candidates)
+      {
+        names += fmt::format("{}\"{}\" ({:.3g})", names.empty() ? "" : ", ", name,
+                             deviation * (kClusterQuantumNearMatchMaxQuanta +
+                                          kClusterQuantumInclusiveMargin));
+      }
+      MFEM_ABORT("SpatialEdgeCluster signature "
+                 << SignatureKeyAndHash(feature_signature, "SpatialEdgeCluster")
+                        .second.substr(0, 12)
+                 << " lies within the quantum near-match of " << cluster_candidates.size()
+                 << " library models (quanta): " << names
+                 << " - one geometry, several models (decision 904 (b): fail closed)!");
     }
     if (!best)
     {
@@ -7677,16 +7716,69 @@ public:
     std::string model;
     nlohmann::json model_signature;
     LegacyContractAlias alias;
+    // The legacy model is claims-only (decision 899 B2): its Signature carries no Box /
+    // Context and its plan-view boundary no conductor beyond the claims', so its twins hold
+    // no foreign metal and its matrices no state of a foreign conductor.
+    bool claims_only = false;
   };
   void AddAlias(const std::string &model, const nlohmann::json &model_signature,
-                const LegacyContractAlias &alias)
+                const LegacyContractAlias &alias, bool claims_only)
   {
-    aliases.emplace(alias.key, AliasEntry{model, model_signature, alias});
+    aliases.emplace(alias.key, AliasEntry{model, model_signature, alias, claims_only});
   }
   const AliasEntry *FindAlias(const std::string &hash) const
   {
     const auto it = aliases.find(hash);
     return it == aliases.end() ? nullptr : &it->second;
+  }
+  // The role-insensitive alias lookup (decision 899 B2, OI-ROLEKEY): tried only after the
+  // exact key, the near-match and the exact alias failed, for a SpatialEdgeCluster whose
+  // claims-only key is a claims-only legacy model's key and whose Box + Context equal the
+  // alias's once every Chain: false piece loses its Conductor label (the label of a piece
+  // not connected to the claims inside the box depends on the conductor roles outside it:
+  // a claw shorted to ground reads label 1 where the cut-short claw's ground reads 2). The
+  // model's stored response has no state for those pieces, so the same matrices serve both
+  // roles. An alias whose stored Context does not re-hash to its ContextDigest is skipped
+  // with a warning (never resolved through this path). At most one alias can qualify (the
+  // claims key names one legacy model).
+  const AliasEntry *FindRoleInsensitiveAlias(const IdentifiedFeature &feature,
+                                             const std::string &claims_hash) const
+  {
+    if (claims_hash.empty() || !feature.signature.is_object() ||
+        !feature.signature.contains("Box"))
+    {
+      return nullptr;
+    }
+    const std::string feature_digest = RoleInsensitiveContextDigest(feature.signature);
+    for (const auto &[key, entry] : aliases)
+    {
+      if (!entry.claims_only)
+      {
+        continue;
+      }
+      const auto [model_key, model_hash] =
+          SignatureKeyAndHash(entry.model_signature, feature.type);
+      (void)model_key;
+      if (model_hash != claims_hash)
+      {
+        continue;
+      }
+      if (!entry.alias.context.is_object() ||
+          SpatialSupportContextDigest(entry.alias.context) != entry.alias.context_digest)
+      {
+        Mpi::Warning(
+            "Legacy-contract alias {} of model \"{}\": the stored Context does not "
+            "re-hash to its ContextDigest; the role-insensitive lookup (decision "
+            "899 B2) skips it!\n",
+            key.substr(0, 12), entry.model);
+        continue;
+      }
+      if (RoleInsensitiveContextDigest(entry.alias.context) == feature_digest)
+      {
+        return &entry;
+      }
+    }
+    return nullptr;
   }
 
 private:
@@ -7751,6 +7843,83 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                "and the model (mismatch aborts)"}};
 }
 
+std::string RoleInsensitiveContextDigest(const nlohmann::json &signature)
+{
+  if (!signature.is_object() || !signature.contains("Box"))
+  {
+    return {};
+  }
+  nlohmann::json context = signature.value("Context", nlohmann::json::array());
+  for (auto &piece : context)
+  {
+    if (piece.is_object() && !piece.value("Chain", false))
+    {
+      piece.erase("Conductor");
+    }
+  }
+  const nlohmann::json digest = {{"Box", signature.at("Box")}, {"Context", context}};
+  return Sha256Hex(digest.dump());
+}
+
+nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
+    const std::string &model_name, const nlohmann::json &model_signature,
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature)
+{
+  const std::string digest = SpatialSupportContextDigest(feature.signature);
+  const std::string role_insensitive = RoleInsensitiveContextDigest(feature.signature);
+  MFEM_VERIFY(!role_insensitive.empty() &&
+                  role_insensitive == RoleInsensitiveContextDigest(alias.context),
+              "Role-insensitive legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the role-insensitive context digests differ (fail closed)!");
+  const std::string claims_hash =
+      feature.spatial_support.is_object()
+          ? feature.spatial_support.value("ClaimsKey", std::string{})
+          : std::string{};
+  const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
+  (void)model_key;
+  MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
+              "Role-insensitive legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the feature's claims-only key " << claims_hash
+                  << " is not the legacy model's key " << model_hash << " (fail closed)!");
+  // The relabelled pieces: the Chain: false entries whose Conductor differs.
+  nlohmann::json relabelled = nlohmann::json::array();
+  const auto &feature_context = feature.signature.value("Context", nlohmann::json::array());
+  const auto &alias_context = alias.context.value("Context", nlohmann::json::array());
+  for (std::size_t i = 0; i < feature_context.size() && i < alias_context.size(); i++)
+  {
+    if (!feature_context[i].value("Chain", false) &&
+        feature_context[i].value("Conductor", 0) != alias_context[i].value("Conductor", 0))
+    {
+      relabelled.push_back({{"Piece", i},
+                            {"FeatureConductor", feature_context[i].value("Conductor", 0)},
+                            {"AliasConductor", alias_context[i].value("Conductor", 0)}});
+    }
+  }
+  return nlohmann::json{
+      {"Model", model_name},
+      {"Key", alias.key},
+      {"ContextDigest", alias.context_digest},
+      {"ClaimsKey", claims_hash},
+      {"Reason", alias.reason},
+      {"Context",
+       {{"Box", feature.signature.value("Box", nlohmann::json(nullptr))},
+        {"Context", feature_context}}},
+      {"RoleSwap",
+       {{"FeatureKey", feature.hash},
+        {"FeatureContextDigest", digest},
+        {"RoleInsensitiveContextDigest", role_insensitive},
+        {"RelabelledPieces", relabelled}}},
+      {"Rule", "decision 899 B2 (OI-ROLEKEY): a claims-only legacy model's alias resolved "
+               "for a key whose Box + Context equal the alias's once the Chain: false "
+               "pieces lose their Conductor label (the roles of the conductors outside the "
+               "box); the stored response has no state for those pieces, so the same "
+               "matrices serve both roles; tried only after the exact key, the near-match "
+               "and the exact alias; no key renamed; the claims-only key is verified "
+               "against the model (mismatch aborts)"}};
+}
+
 namespace
 {
 
@@ -7788,9 +7957,45 @@ LibrarySignatureKeys(const ProcessLibrary &library,
       index.Add(*model.identification_signature,
                 model.identification_signature->at("Type").get<std::string>(), model.name,
                 rank);
-      for (const auto &alias : model.legacy_contract_aliases)
+      if (!model.legacy_contract_aliases.empty())
       {
-        index.AddAlias(model.name, *model.identification_signature, alias);
+        // Claims-only (decision 899 B2): no Box / Context in the Signature and no plan-view
+        // conductor beyond the claims' (the twins hold the claims' metal only). The
+        // no-foreign-metal property is asserted from the model record: a model without a
+        // PlanViewBoundary cannot show it and is NOT claims-only (fail closed; the
+        // role-insensitive lookup never resolves its aliases).
+        const auto &signature = *model.identification_signature;
+        bool claims_only = !signature.contains("Box") && !signature.contains("Context");
+        if (claims_only && !model.plan_view_boundary)
+        {
+          claims_only = false;
+          Mpi::Warning(
+              "Fabrication-process response model \"{}\" carries legacy-contract aliases "
+              "but no PlanViewBoundary: its twins' metal cannot be read from the record, "
+              "so the role-insensitive alias lookup (decision 899 B2) does not apply to "
+              "it!\n",
+              model.name);
+        }
+        if (claims_only && model.plan_view_boundary)
+        {
+          std::set<int> claim_conductors;
+          for (const auto &portion : signature.value("Portions", nlohmann::json::array()))
+          {
+            claim_conductors.insert(portion.value("Conductor", 0));
+          }
+          const auto boundary = nlohmann::json::parse(*model.plan_view_boundary);
+          for (const auto &conductor : boundary)
+          {
+            if (!claim_conductors.count(conductor.value("Conductor", 0)))
+            {
+              claims_only = false;
+            }
+          }
+        }
+        for (const auto &alias : model.legacy_contract_aliases)
+        {
+          index.AddAlias(model.name, *model.identification_signature, alias, claims_only);
+        }
       }
       continue;
     }
@@ -8255,6 +8460,32 @@ IdentificationResult RunGeometryIdentification(
           "legacy contract (USER decision 283): key " + feature.hash.substr(0, 12) +
           " resolved through the alias of \"" + alias->model + "\" (context digest " +
           alias->alias.context_digest.substr(0, 12) + " verified)";
+    }
+    else if (const auto *role_alias = library_keys.FindRoleInsensitiveAlias(
+                 feature, feature.spatial_support.is_object()
+                              ? feature.spatial_support.value("ClaimsKey", std::string{})
+                              : std::string{}))
+    {
+      // Role-insensitive legacy alias (decision 899 B2, OI-ROLEKEY): recorded, placed in
+      // the claims-only frame exactly as the exact alias.
+      feature.legacy_contract = ResolveRoleInsensitiveLegacyContractAlias(
+          role_alias->model, role_alias->model_signature, role_alias->alias, feature);
+      feature.origin = feature.claims_origin;
+      feature.axes = feature.claims_axes;
+      feature.chirality = feature.claims_chirality;
+      feature.legacy_contract["PlacementFrame"] =
+          "the claims-only canonical frame (Features[].ClaimsFrame), the legacy model's";
+      feature.matched_model = role_alias->model;
+      feature.match_deviation = 0.0;
+      feature.match_note = "role-insensitive legacy contract (decision 899 B2): key " +
+                           feature.hash.substr(0, 12) + " resolved through the alias " +
+                           role_alias->alias.key.substr(0, 12) + " of \"" +
+                           role_alias->model + "\" (the Chain: false pieces relabelled)";
+      Mpi::Print(
+          "  Identification role-insensitive legacy alias (decision 899 B2): cluster "
+          "key {} -> model \"{}\" through alias {}\n",
+          feature.hash.substr(0, 12), role_alias->model,
+          role_alias->alias.key.substr(0, 12));
     }
     else if (StraightTopologyOfCurvedFeature(feature.type) && !feature.portions.empty())
     {
@@ -9034,6 +9265,11 @@ struct FeaturePatchSummary
   // A10 extended to the context (decision 282 section 3): context piece ends of the placed
   // contract-3 models verified to lie on device edges.
   std::size_t context_points_checked = 0;
+  // Contract-3 placements whose model Context agreed with the feature's within the cluster
+  // quantum near-match, not exactly (decision 904, A3.1), and the largest quantum
+  // difference among them.
+  std::size_t context_near_match_verifications = 0;
+  double context_near_match_max_quanta = 0.0;
   // Conductor probes of the spatial cluster patches snapped onto the device chord polyline
   // (decision 611 (2)): the snapped knots over all patches and the largest displacement
   // (mesh units).
@@ -11068,11 +11304,30 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto &signature = *model.identification_signature;
         patch.provenance.support_box = signature.at("Box").get<std::array<double, 4>>();
         patch.provenance.has_support_box = true;
-        MFEM_VERIFY(feature.signature.contains("Context") &&
-                        signature.value("Context", nlohmann::json::array()) ==
-                            feature.signature["Context"],
-                    "The Context of model \"" << model.name
-                                              << "\" differs from the matched feature's!");
+        // The model's Context equals the feature's (exact: the bitwise path) or agrees
+        // within the cluster quantum near-match (decision 904, A3.1: the model reached
+        // this placement through the near-match, whose tolerance of record the exact
+        // equality contradicted — C1's abort on an ill-conditioned arc centre); a Context
+        // that truly differs still fails closed. A near-match verification is counted
+        // (Statistics.Matching.ContextNearMatchVerifications, one Identification line).
+        const auto context_agreement = CompareClusterContexts(
+            signature.value("Context", nlohmann::json::array()),
+            feature.signature.value("Context", nlohmann::json(nullptr)));
+        MFEM_VERIFY(
+            feature.signature.contains("Context") && context_agreement.agrees,
+            "The Context of model \""
+                << model.name
+                << "\" differs from the matched feature's beyond the cluster quantum "
+                   "near-match (max "
+                << context_agreement.max_delta_quanta << " quanta over "
+                << context_agreement.differing_paths.size()
+                << " differing number(s), or another topology)!");
+        if (!context_agreement.exact)
+        {
+          summary.context_near_match_verifications++;
+          summary.context_near_match_max_quanta = std::max(
+              summary.context_near_match_max_quanta, context_agreement.max_delta_quanta);
+        }
         const double tolerance = kSignatureParameterToleranceOverRadius * R;
         auto Global = [&](double x, double y)
         {
@@ -11320,6 +11575,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   [](const auto &model) { return model.plan_view_boundary.has_value(); });
   // The identification needs every metal face for the decision-73(3) cross-layer zones.
   surface.retain_global_faces = true;
+  // Root-level perimeter (decision 899, OI-CTX-ARC-ADAPT): on a nonconforming mesh the
+  // identification sees the root level's perimeter (the initial mesh of the run that
+  // refined it), so a saved adapted mesh reproduces the producing run's identification;
+  // without refinement-generated vertices nothing changes.
+  surface.root_level_perimeter = true;
   // Wall time of the geometry steps before the identification (a chip-scale mesh spends
   // minutes here; the identification prints its own stage lines).
   const auto geometry_started = std::chrono::steady_clock::now();
@@ -11333,6 +11593,49 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   MFEM_VERIFY(!geometry.Empty(),
               "Fabrication-process response matching found no metal perimeter!");
+  if (!geometry.refinement_points.empty())
+  {
+    Mpi::Print("  Identification root-level perimeter: {:d} refinement vertices merged out"
+               "{}\n",
+               geometry.refinement_points.size(),
+               geometry.refinement_vertices_kept > 0
+                   ? fmt::format(" ({:d} non-collinear midpoints kept)",
+                                 geometry.refinement_vertices_kept)
+                   : std::string());
+    // The load-time refinements that add refinement-generated vertices BELOW the NC root:
+    // parallel uniform refinement (UniformLevels, on the NC ParMesh), the metal-edge tube
+    // refinement (EdgeRefinement) and the box / sphere region refinement of a tensor mesh
+    // (RegionRefine converts it to NC first). SerialUniformLevels refines the serial mesh
+    // BEFORE EnsureNCMesh and is part of the root: never a census vertex.
+    const bool region_refinement =
+        std::any_of(iodata.model.refinement.GetBoxes().begin(),
+                    iodata.model.refinement.GetBoxes().end(),
+                    [](const auto &box) { return box.ref_levels > 0; }) ||
+        std::any_of(iodata.model.refinement.GetSpheres().begin(),
+                    iodata.model.refinement.GetSpheres().end(),
+                    [](const auto &sphere) { return sphere.ref_levels > 0; });
+    if (iodata.model.refinement.uniform_ref_levels > 0 || region_refinement ||
+        std::any_of(iodata.boundaries.postpro.dielectric.begin(),
+                    iodata.boundaries.postpro.dielectric.end(), [](const auto &entry)
+                    { return entry.second.edge_refinement.has_value(); }))
+    {
+      Mpi::Warning(
+          mesh.GetComm(),
+          "The identification runs on the ROOT level of a nonconforming mesh refined at "
+          "load (UniformLevels / EdgeRefinement / Boxes / Spheres): its features and "
+          "keys are those of the root perimeter, its patch cells coarser than a run that "
+          "identified after the load-time refinement (decision 899)!\n");
+    }
+    if (geometry.refinement_vertices_kept > 0)
+    {
+      Mpi::Warning(mesh.GetComm(),
+                   "{:d} refinement-generated perimeter vertices are not collinear with "
+                   "their neighbours (curved edges) and stay vertices of the root-level "
+                   "perimeter: the identification may differ from the producing run's "
+                   "(decision 899)!\n",
+                   geometry.refinement_vertices_kept);
+    }
+  }
   GeometryStageLine("extracted: " + std::to_string(geometry.segments.size()) +
                     " segments, " + std::to_string(geometry.global_faces.size()) +
                     " global faces");
@@ -12305,6 +12608,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       maxwell ? nullptr : &request, &mirror_band);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
+  if (statistics)
+  {
+    statistics->role_swap_alias_matches =
+        std::count_if(identification.features.begin(), identification.features.end(),
+                      [](const auto &feature)
+                      {
+                        return feature.legacy_contract.is_object() &&
+                               feature.legacy_contract.contains("RoleSwap");
+                      });
+  }
   // The mirror band in the operator record and the geometry cache (DESIGN 3.1).
   result.mirror_planes.clear();
   for (const auto &plane : mirror_band.planes)
@@ -12361,6 +12674,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
         curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    if (statistics)
+    {
+      statistics->context_near_match_verifications =
+          static_cast<long long int>(summary.context_near_match_verifications);
+    }
     // Legacy-contract aliases resolved by the matching pass (USER decision 283): one record
     // per alias with the features it served, carried into the operator record and the
     // geometry cache.
@@ -12468,6 +12786,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                static_cast<int>(result.models.size()), summary.curved_family_features,
                summary.first_order_features, summary.corner_family_features,
                static_cast<int>(summary.context_points_checked));
+    if (summary.context_near_match_verifications > 0)
+    {
+      Mpi::Print(
+          " Context (decision 904): {:d} contract-3 placement(s) verified within the "
+          "cluster quantum near-match, not exactly (largest difference {:.3g} "
+          "quanta)\n",
+          static_cast<int>(summary.context_near_match_verifications),
+          summary.context_near_match_max_quanta);
+    }
     if (summary.probe_snaps > 0)
     {
       Mpi::Print(

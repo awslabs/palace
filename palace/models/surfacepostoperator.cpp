@@ -582,8 +582,11 @@ SurfacePostOperator::SurfacePostOperator(
     std::optional<EdgeExclusionRecord> edge_exclusion;
   };
   std::map<EdgeDistanceTreeKey, EdgeDistanceTreeEntry> edge_distance_trees;
+  // The leaf / root flag first (decision 904 A3.2): on a refined nonconforming mesh the
+  // retained trees are built from the root-level perimeter and the localized ones from the
+  // leaf perimeter, whose segment indices are different spaces.
   using AutomaticEdgeDistanceTreeKey =
-      std::tuple<std::vector<std::size_t>, std::optional<std::array<double, 3>>,
+      std::tuple<bool, std::vector<std::size_t>, std::optional<std::array<double, 3>>,
                  std::vector<std::array<double, 6>>, std::vector<double>>;
   std::map<AutomaticEdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
       automatic_edge_distance_trees;
@@ -594,7 +597,11 @@ SurfacePostOperator::SurfacePostOperator(
   {
     new_automatic_geometry = std::make_shared<SurfacePostGeometry>();
   }
+  // The perimeter of the RETAINED trees (root-level, decision 904 A3.2) and, where it
+  // differs, the LEAF perimeter of the LocalizeEdgeEnergy trees.
   MetalEdgeGeometry metal_edges;
+  MetalEdgeGeometry leaf_metal_edges;
+  bool leaf_extraction = false;
   const bool use_automatic_edges = std::any_of(
       postpro.dielectric.begin(), postpro.dielectric.end(),
       [cached_automatic_geometry](const auto &entry)
@@ -613,8 +620,36 @@ SurfacePostOperator::SurfacePostOperator(
     MFEM_VERIFY(boundaries,
                 "Automatic metal edge extraction requires complete boundary data!");
     // The joint noise rule at the largest edge distance of the automatic-edge interfaces.
-    metal_edges =
-        ExtractMetalEdgeGeometry(mesh, *boundaries, JointNoiseExtractionFor(*boundaries));
+    // The retained (non-localized) trees are, under AMR, the producing run's INITIAL-mesh
+    // trees (SurfacePostGeometry); a run on a SAVED nonconforming mesh builds the same
+    // trees from the ROOT-LEVEL perimeter (decision 904 A3.2; the identification's rule of
+    // decision 899: the refinement-generated vertices merged out, fail closed), so that the
+    // uncovered / DomainBoundary / ConductorConsistency portions - root segments - are
+    // credited over their whole segments exactly as the producer credits them (on the leaf
+    // perimeter a root portion spanning refined sub-segments was credited on its midpoint's
+    // sub-segment only). Without refinement-generated vertices the extraction is the leaf
+    // perimeter's byte for byte.
+    MetalSurfaceExtraction retained_surface = JointNoiseExtractionFor(*boundaries);
+    retained_surface.root_level_perimeter = true;
+    metal_edges = ExtractMetalEdgeGeometry(mesh, *boundaries, retained_surface);
+    // The LocalizeEdgeEnergy trees are rebuilt on every mesh from the LEAF perimeter (the
+    // producing run's own form on its last cycle; OI-LOCALEDGE, decision 854): a second
+    // extraction only where the two perimeters differ.
+    const bool localized = std::any_of(postpro.dielectric.begin(), postpro.dielectric.end(),
+                                       [](const auto &entry)
+                                       {
+                                         const auto &[idx, data] = entry;
+                                         (void)idx;
+                                         return data.automatic_edges &&
+                                                data.localize_edge_energy &&
+                                                !data.edge_distances.empty();
+                                       });
+    if (localized && !metal_edges.refinement_points.empty())
+    {
+      leaf_metal_edges =
+          ExtractMetalEdgeGeometry(mesh, *boundaries, JointNoiseExtractionFor(*boundaries));
+      leaf_extraction = true;
+    }
   }
   using OwnershipKey = std::tuple<std::string, int, InterfaceDielectric, std::vector<int>,
                                   double, double, bool>;
@@ -683,22 +718,23 @@ SurfacePostOperator::SurfacePostOperator(
         }
       }
 
-      auto segment_indices =
-          GetInterfaceMetalEdgeSegmentIndices(metal_edges, idx, data.type);
-      ExcludeMetalEdgeSegmentIndices(mesh, metal_edges, data.edge_exclude_attributes,
+      const bool leaf = data.localize_edge_energy && leaf_extraction;
+      const MetalEdgeGeometry &edges = leaf ? leaf_metal_edges : metal_edges;
+      auto segment_indices = GetInterfaceMetalEdgeSegmentIndices(edges, idx, data.type);
+      ExcludeMetalEdgeSegmentIndices(mesh, edges, data.edge_exclude_attributes,
                                      segment_indices);
       EdgeExclusionRecord exclusion_record;
       ExcludeCoincidentMetalEdgeSegmentIndices(
-          metal_edges, data.edge_exclude_segments, data.edge_exclude_segment_sagittas,
+          edges, data.edge_exclude_segments, data.edge_exclude_segment_sagittas,
           data.edge_exclude_segment_tolerance, mesh.SpaceDimension(), segment_indices,
           &exclusion_record);
       if (!data.edge_exclude_segments.empty())
       {
         it->second.edge_exclusion = exclusion_record;
       }
-      const AutomaticEdgeDistanceTreeKey tree_key{segment_indices, data.edge_frame_normal,
-                                                  data.edge_exclude_segments,
-                                                  data.edge_exclude_segment_sagittas};
+      const AutomaticEdgeDistanceTreeKey tree_key{
+          leaf, segment_indices, data.edge_frame_normal, data.edge_exclude_segments,
+          data.edge_exclude_segment_sagittas};
       auto tree_it = automatic_edge_distance_trees.find(tree_key);
       if (tree_it == automatic_edge_distance_trees.end())
       {
@@ -706,12 +742,12 @@ SurfacePostOperator::SurfacePostOperator(
         if (data.localize_edge_energy)
         {
           process_normals = BuildMetalEdgeProcessNormals(
-              mesh, metal_edges, segment_indices, [this](int attribute)
+              mesh, edges, segment_indices, [this](int attribute)
               { return this->mat_op.GetLightSpeedMax(attribute); }, data.edge_frame_normal);
         }
         tree_it =
             automatic_edge_distance_trees
-                .try_emplace(tree_key, BuildEdgeDistanceTree(metal_edges, segment_indices,
+                .try_emplace(tree_key, BuildEdgeDistanceTree(edges, segment_indices,
                                                              std::move(process_normals)))
                 .first;
       }
