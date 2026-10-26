@@ -1695,6 +1695,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(close(reduced_port.inductor_energy, full_port.inductor_energy));
     CHECK(close(reduced_port.capacitor_energy, full_port.capacitor_energy));
   }
+  // Pin the physical convention independently of the shared implementation, at the
+  // excited port.
+  {
+    const auto &port = space_op.GetLumpedPortOp().GetPort(1);
+    const auto &full_port = full.lumped_port_vi.at(1);
+    check_complex(full_port.S,
+                  full_port.V / std::sqrt(2.0 * port.GetExcitationRefResistance()) - 1.0);
+    CHECK(close(full_port.capacitor_energy, 0.25 * port.C * std::norm(full_port.V)));
+    CHECK(close(full_port.inductor_energy, 0.25 * port.L * std::norm(full_port.I_RLC[1])));
+  }
   CHECK(close(reduced.lumped_port_inductor_energy, full.lumped_port_inductor_energy));
   CHECK(close(reduced.lumped_port_capacitor_energy, full.lumped_port_capacitor_energy));
 
