@@ -187,7 +187,7 @@ CeedAssemblyScratch::CeedAssemblyScratch(Ceed ceed_) : ceed(ceed_) {}
 
 CeedAssemblyScratch::~CeedAssemblyScratch()
 {
-  for (auto &v : vecs)
+  for (auto &v : vectors)
   {
     PalaceCeedCall(ceed, CeedVectorDestroy(&v));
   }
