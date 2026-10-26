@@ -627,6 +627,17 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(config::Validate(boundary_data).has_value());
     boundaries["SurfaceCurrent"][0]["Index"] = 4;
     CHECK(!config::Validate(config::BoundaryData(boundaries)).has_value());
+    // A lone loop under a foreign excitation index next to the group collides too.
+    boundaries["FluxLoop"].push_back({{"Index", 5},
+                                      {"FilmAttributes", {8}},
+                                      {"HoleAttributes", {11}},
+                                      {"FluxAmounts", {1.0}},
+                                      {"Direction", "+Z"},
+                                      {"Excitation", 4}});
+    auto error = config::Validate(config::BoundaryData(boundaries));
+    REQUIRE(error.has_value());
+    CHECK_THAT(*error,
+               Catch::Matchers::ContainsSubstring("FluxLoop \"Excitation\" 4 collides"));
   }
 
   SECTION("Excited FluxLoop must have a nonzero FluxAmounts")

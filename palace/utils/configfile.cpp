@@ -1670,11 +1670,11 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
   }
   else
   {
-    // A grouped flux loop excitation is a magnetostatic source under its own index, next to
-    // the surface current sources, so the two must not collide in the outputs.
+    // A flux loop excitation is a magnetostatic source under its own index, next to the
+    // surface current sources, so the two must not collide in the outputs.
     for (const auto &[excitation, loops] : groups)
     {
-      if (loops.size() > 1 && boundaries.current.contains(excitation))
+      if (boundaries.current.contains(excitation))
       {
         errors << "FluxLoop \"Excitation\" " << excitation
                << " collides with SurfaceCurrent \"Index\" " << excitation << "\n";
