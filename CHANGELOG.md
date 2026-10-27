@@ -28,6 +28,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     identifies the spurious modes of the layer. SchemaVer 6-1-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
+#### Interface Changes
+
+  - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
+    `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
+    instead of aborting without output.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
 #### Bug Fixes
 
   - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
