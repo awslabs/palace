@@ -307,6 +307,52 @@ private:
     int integral_sign = 0;
   };
 
+  // OI-MX-LOOPGATE (decisions 950 / 952 / 954 / 955): the per-patch weighted least-squares
+  // lift of the Maxwell trace. The chain above sets every knot by ONE route, so on a patch
+  // whose field carries a circulation (an inductive patch) the trace is route-dependent.
+  // The fit treats every line the paths evaluate as an EQUATION phi(to) - phi(from) = -L
+  // between two NODES (a trace coefficient, or the ground super-node -1 = the reference
+  // anchor and every PEC knot), weighted by 1 / length (the polyline L2 projection of the
+  // tangential field), and solves the normal equations in the CYCLE SPACE: the chain is the
+  // exact solution of the TREE equations (the lines it uses), the CLOSING equations (a
+  // ring's last step, a free arc's step onto its PEC knot and its return line, a non-tree
+  // open path's end line; the hat check lines are information only, decision 818 R2) carry
+  // the loop misclosures r; the loop currents I = G^-1 r with G = D_C + K D_T K^T (K = the
+  // fundamental cycles' +-1 incidence on the tree steps, D = the step lengths) give the
+  // correction u_j = -l_j sum_c K_cj I_c on every tree step, accumulated along the tree.
+  // When every loop closes (r = 0) the fit is the chain to roundoff. The W-norm of the
+  // circulating remainder is r^T G^-1 r; its share of the patch's route norm sum_j L_j^2 /
+  // l_j is the patch's circulating share s_p (GetMaxwellResponse).
+  struct MaxwellLoopFit
+  {
+    // A tree step in topological order (parent set before child): the chain's route into
+    // `child` (a trace index; parent -1 = ground), its legs [line_begin, line_begin +
+    // line_count) and their total length (0 for an identification by a coincident line).
+    struct TreeStep
+    {
+      int parent = -1;
+      int child = -1;
+      int line_begin = 0;
+      int line_count = 0;
+      double length = 0.0;
+    };
+    // A closing equation phi(to) - phi(from) = -L (from / to as the legs run; -1 = ground)
+    // with its fundamental cycle: the tree steps on the tree path from `from` to `to` with
+    // the sign +1 where the path runs parent -> child.
+    struct ClosingStep
+    {
+      int from = -1;
+      int to = -1;
+      int line_begin = 0;
+      int line_count = 0;
+      double length = 0.0;
+      std::vector<std::pair<int, double>> cycle;
+    };
+    std::vector<TreeStep> tree;
+    std::vector<ClosingStep> closing;
+    mfem::DenseMatrix cycle_inverse;  // G^-1, closing.size() square
+  };
+
   struct OpenContourPath
   {
     std::vector<int> indices;
@@ -500,6 +546,14 @@ private:
   std::vector<MaxwellConductorPath> maxwell_conductor_paths;
   std::vector<std::pair<int, int>> maxwell_patch_paths;
   int maxwell_quadrature_order = 0;
+  // OI-MX-LOOPGATE: per local patch the least-squares structure, the line lengths (mesh
+  // units) and, keyed by the placed patch index on every rank, every applied patch's raw
+  // claim (the DomainBoundary rule, AppendExcludedPatchClaim) for the remainder energy.
+  std::vector<MaxwellLoopFit> maxwell_loop_fits;
+  std::vector<double> maxwell_line_lengths;
+  std::map<int, ExcludedPatchPortions> maxwell_patch_raw_claims;
+  long long int maxwell_loop_fit_cycle_count = 0;
+  long long int maxwell_loop_fit_unconstrained_count = 0;
 
   double matching_radius = 0.0;
   double mesh_coordinate_scale = 1.0;
@@ -517,6 +571,8 @@ private:
   mutable std::vector<double> point_owned_values, point_packed_values;
   mutable std::vector<double> point_owned_values_pair, point_packed_values_pair;
   mutable Vector maxwell_point_values, maxwell_trace_adjoint, maxwell_path_adjoint;
+  mutable Vector maxwell_fit_adjoint, maxwell_fit_line_adjoint;
+  mutable std::vector<double> maxwell_loop_workspace;
 
   // Mesh-independent matching statistics are cached with the automatic geometry. The
   // remaining counters describe this mesh-specific interpolation and runtime operator.
@@ -591,8 +647,22 @@ private:
   void EvaluateMaxwellLines(const Vector &xr, const Vector &xi, Vector &vr,
                             Vector &vi) const;
   void AddMaxwellLinesTranspose(const Vector &values, Vector &y) const;
+  // The chain lift (one route per knot; the loop-residual detector's trace, decision 955
+  // D3) and its transpose.
+  void BuildMaxwellChainTrace(const Vector &line_values, Vector &values) const;
+  void BuildMaxwellChainTraceTranspose(const Vector &values, Vector &line_values) const;
+  // The least-squares lift (the chain plus the cycle-space correction of every patch) and
+  // its transpose: the trace of the energies and of the self-consistent Mult.
   void BuildMaxwellTrace(const Vector &line_values, Vector &values) const;
   void BuildMaxwellTraceTranspose(const Vector &values, Vector &line_values) const;
+  // One patch's cycle-space correction added to its chain values in `values` (a real
+  // line-value vector); returns the circulating W-norm r^T G^-1 r of that vector.
+  double AddMaxwellLoopFitCorrection(std::size_t patch_index, const Vector &line_values,
+                                     Vector &values) const;
+  // One patch's route norm sum_j L_j^2 / l_j over its equations with a positive length.
+  double MaxwellLoopFitRouteNorm(std::size_t patch_index, const Vector &line_values) const;
+  // Builds maxwell_loop_fits from the paths (ConfigureMaxwellResponse, after the paths).
+  void ConfigureMaxwellLoopFit();
   void ApplyTrace(const Vector &x, Vector &values) const;
   void ApplyTraceTranspose(const Vector &values, Vector &y) const;
   // The conductor-consistency probes of a spatial surface-mortar model (decision 277):
@@ -753,7 +823,62 @@ public:
       double scale = 0.0;
     };
     std::vector<PathLoopResidual> path_loop_residuals;
+    // OI-MX-LOOPGATE (decision 955): per patch the circulating share s_p = ||r||_W^2 /
+    // ||L||_W^2 of its line integrals (0 for a curl-free field), the detector weight (the
+    // patch's response energy on the CHAIN trace, the loop-RMS weight) and the fallback
+    // flag; every patch when include_patches, ordered by global patch index, replicated.
+    struct PatchLoopShare
+    {
+      int patch = 0;
+      double share = 0.0;
+      double detector_energy = 0.0;
+      int fallback = 0;
+    };
+    std::vector<PatchLoopShare> patch_loop_shares;
+    // The patches whose circulating remainder is counted RAW: rho_p = share above the
+    // floor kLoopFitShareFloor (fallback 0), or rho_p = 1 above kLoopFitFallbackShare
+    // (fallback 1: the patch is served raw, its fabricated energies and domain defects are
+    // not added). Always gathered, ordered by global patch index, replicated.
+    struct LoopRemainder
+    {
+      int patch = 0;
+      int model = 0;
+      double share = 0.0;
+      double circulation = 0.0;  // r^T G^-1 r, real + imaginary parts (V^2 / mesh unit)
+      double total = 0.0;        // sum_j |L_j|^2 / l_j over the patch's equations
+      int fallback = 0;
+    };
+    std::vector<LoopRemainder> loop_remainders;
+    double maximum_loop_fit_share = 0.0;
+    double response_weighted_loop_fit_share = 0.0;
+    int loop_remainder_patch_count = 0;
+    int loop_fallback_patch_count = 0;
   };
+  // OI-MX-LOOPGATE (decision 955 D5 / D6, pre-registered): a patch whose circulating share
+  // is at most the floor contributes no remainder (the uncounted part is at most the floor
+  // times its within-R energy); above the fallback share its potential is not worth
+  // correcting and the whole patch is served raw.
+  static constexpr double kLoopFitShareFloor = 1.0e-4;
+  static constexpr double kLoopFitFallbackShare = 0.25;
+  // The raw claims of the patches of `remainders` as perimeter portions labelled
+  // "m<model>" with the per-portion weight rho_p (the surface postoperator's weighted
+  // partitioned integral), and per label the patch count and the rho-weighted claim length
+  // (mesh units).
+  struct LoopRemainderPortions
+  {
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        portions;
+    std::vector<double> weights;
+    struct Row
+    {
+      int patches = 0;
+      double weighted_length = 0.0;
+    };
+    std::map<std::string, Row> rows;
+  };
+  LoopRemainderPortions GetLoopRemainderPortions(
+      const std::vector<MaxwellResponse::LoopRemainder> &remainders) const;
 
   SurfaceResponseOperator(
       const IoData &iodata, const LaplaceOperator &laplace_op,

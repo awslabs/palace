@@ -1826,6 +1826,16 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       const auto it = energies.find(target);
       return it != energies.end() ? it->second.energy : 0.0;
     };
+    auto RemainderPerimeter =
+        [](const SurfaceResponseOperator::LoopRemainderPortions &remainder_portions)
+    {
+      std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+      for (const auto &portion : remainder_portions.portions)
+      {
+        perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      return perimeter;
+    };
     if (surface_response_postprocess_enabled)
     {
       BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
@@ -1851,7 +1861,33 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.model_raw_partition = surf_post_op.GetInterfacePartitionedEdgeEnergies(
             target_interfaces, *E, D_recovered.get(), surface_response_model_raw);
       }
+      if (!result.confidence.loop_remainders.empty())
+      {
+        // OI-MX-LOOPGATE (decision 955): the circulating remainders' share of their
+        // patches' raw within-R energy, kept raw like the uncovered class.
+        const auto remainder_portions = surface_response_op->GetLoopRemainderPortions(
+            result.confidence.loop_remainders);
+        result.loop_remainder_rows = remainder_portions.rows;
+        result.loop_remainder = surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+            target_interfaces, *E, D_recovered.get(),
+            RemainderPerimeter(remainder_portions), remainder_portions.weights);
+      }
     }
+    auto RemainderEnergy =
+        [](const std::map<int, std::map<std::string, double>> &energies, int target)
+    {
+      const auto it = energies.find(target);
+      double total = 0.0;
+      if (it != energies.end())
+      {
+        for (const auto &[label, energy] : it->second)
+        {
+          (void)label;
+          total += energy;
+        }
+      }
+      return total;
+    };
     for (const auto &raw : measurement_cache.interface_eps_i)
     {
       auto &interface = result.interfaces[raw.idx];
@@ -1914,7 +1950,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         // energy of the uncovered requirements and the DomainBoundary claims.
         const double kept_raw = PortionEnergy(result.uncovered, target) +
                                 PortionEnergy(result.domain_boundary, target) +
-                                PortionEnergy(result.spatial_cluster_priority, target);
+                                PortionEnergy(result.spatial_cluster_priority, target) +
+                                RemainderEnergy(result.loop_remainder, target);
         interface->second.corrected_energy =
             outside->energy_outside + fabricated->second + kept_raw;
         interface->second.corrected_energy_fixed_flux =
@@ -1994,6 +2031,15 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                     target_interfaces, corrected_field, corrected_flux,
                     surface_response_spatial_cluster_priority);
           }
+          if (!corrected_response.loop_remainders.empty())
+          {
+            const auto remainder_portions = surface_response_op->GetLoopRemainderPortions(
+                corrected_response.loop_remainders);
+            result.self_consistent_loop_remainder =
+                surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+                    target_interfaces, corrected_field, corrected_flux,
+                    RemainderPerimeter(remainder_portions), remainder_portions.weights);
+          }
         }
         for (const int target : target_interfaces)
         {
@@ -2020,7 +2066,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
               outside->energy_outside + fabricated->second +
               PortionEnergy(result.self_consistent_uncovered, target) +
               PortionEnergy(result.self_consistent_domain_boundary, target) +
-              PortionEnergy(result.self_consistent_spatial_cluster_priority, target);
+              PortionEnergy(result.self_consistent_spatial_cluster_priority, target) +
+              RemainderEnergy(result.self_consistent_loop_remainder, target);
         }
         result.has_self_consistent = true;
       }
@@ -2358,6 +2405,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   }
   PrintSurfaceResponsePortionEnergies(output_index, excitation);
   PrintSurfaceResponseModelRawEnergies(output_index, excitation);
+  PrintSurfaceResponseLoopFit(output_index, excitation);
 }
 
 template <ProblemType solver_t>
@@ -2441,6 +2489,133 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_
       energy << fmt::format(",{},{}\n", static_cast<int>(std::lround(output_index)),
                             excitation);
     }
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
+                                                         int excitation) const
+{
+  // OI-MX-LOOPGATE (decision 955). Root only (the caller returns on the other ranks). Plain
+  // text tables (the label column is text). surface-response-loop-fit.csv rows = source,
+  // evaluation (0 fixed trace / 1 fixed flux on the raw field; 2 self-consistent on the
+  // corrected field), the Maxwell key "f (GHz)" / "m" and "exc", max loop share,
+  // response-weighted loop share, remainder patches, fallback patches, weighted claim
+  // length (m) (sum over the remainder patches of rho_p x the raw-claim length).
+  // surface-response-loop-remainder-energy.csv rows = source, evaluation, model row
+  // ("m<idx>" / "Total"), patches, weighted claim length (m), the remainder's raw energy
+  // per target interface (J), then the keys; a clean window writes the Total row with 0.
+  using VT = Units::ValueType;
+  const auto &result = *surface_response_measurement;
+  const auto fit_path = post_dir / "surface-response-loop-fit.csv";
+  const auto remainder_path = post_dir / "surface-response-loop-remainder-energy.csv";
+  const int source = solver_t == ProblemType::DRIVEN
+                         ? excitation
+                         : static_cast<int>(std::lround(output_index));
+  const auto target_interfaces = surface_response_op->GetTargetInterfaces();
+  const bool first_print = !surface_response_loop_fit_started;
+  if (first_print)
+  {
+    surface_response_loop_fit_started = true;
+    fs::remove(fit_path);
+    fs::remove(remainder_path);
+  }
+  if (!result.has_postprocessed && !result.has_self_consistent)
+  {
+    return;
+  }
+  auto Keys = [&]()
+  {
+    if constexpr (solver_t == ProblemType::DRIVEN)
+    {
+      return fmt::format("{:+.12e},{}", output_index, excitation);
+    }
+    else
+    {
+      return fmt::format("{},{}", static_cast<int>(std::lround(output_index)), excitation);
+    }
+  };
+  const char *key_header = solver_t == ProblemType::DRIVEN ? "f (GHz),exc" : "m,exc";
+  std::ofstream fit(fit_path, first_print ? std::ios::out | std::ios::trunc
+                                          : std::ios::out | std::ios::app);
+  MFEM_VERIFY(fit, "Unable to open " << fit_path.string() << " for writing!");
+  std::ofstream remainder(remainder_path, first_print ? std::ios::out | std::ios::trunc
+                                                      : std::ios::out | std::ios::app);
+  MFEM_VERIFY(remainder, "Unable to open " << remainder_path.string() << " for writing!");
+  if (first_print)
+  {
+    fit << "source,evaluation," << key_header
+        << ",max loop share,response-weighted loop share,remainder patches,fallback "
+           "patches,weighted claim length (m)\n";
+    remainder << "source,evaluation,model,patches,weighted claim length (m)";
+    for (const int interface : target_interfaces)
+    {
+      remainder << fmt::format(",remainder energy[{}] (J)", interface);
+    }
+    remainder << "," << key_header << "\n";
+  }
+  auto Rows = [&](const SurfaceResponseOperator::MaxwellResponse &response)
+  { return surface_response_op->GetLoopRemainderPortions(response.loop_remainders).rows; };
+  auto Write = [&](int evaluation, const SurfaceResponseOperator::MaxwellResponse &response,
+                   const std::map<int, std::map<std::string, double>> &energies)
+  {
+    const auto rows = Rows(response);
+    SurfaceResponseOperator::LoopRemainderPortions::Row total;
+    for (const auto &[label, row] : rows)
+    {
+      (void)label;
+      total.patches += row.patches;
+      total.weighted_length += row.weighted_length;
+    }
+    fit << fmt::format(
+        "{},{},{},{:+.12e},{:+.12e},{},{},{:+.12e}\n", source, evaluation, Keys(),
+        response.maximum_loop_fit_share, response.response_weighted_loop_fit_share,
+        response.loop_remainder_patch_count, response.loop_fallback_patch_count,
+        units.Dimensionalize<VT::LENGTH>(total.weighted_length));
+    auto Line = [&](const std::string &label,
+                    const SurfaceResponseOperator::LoopRemainderPortions::Row &row)
+    {
+      remainder << fmt::format("{},{},{},{},{:+.12e}", source, evaluation, label,
+                               row.patches,
+                               units.Dimensionalize<VT::LENGTH>(row.weighted_length));
+      for (const int interface : target_interfaces)
+      {
+        double energy = 0.0;
+        const auto it = energies.find(interface);
+        if (it != energies.end())
+        {
+          if (label == "Total")
+          {
+            for (const auto &[key, value] : it->second)
+            {
+              (void)key;
+              energy += value;
+            }
+          }
+          else
+          {
+            const auto entry = it->second.find(label);
+            energy = entry != it->second.end() ? entry->second : 0.0;
+          }
+        }
+        remainder << fmt::format(",{:+.12e}", units.Dimensionalize<VT::ENERGY>(energy));
+      }
+      remainder << "," << Keys() << "\n";
+    };
+    for (const auto &[label, row] : rows)
+    {
+      Line(label, row);
+    }
+    Line("Total", total);
+  };
+  if (result.has_postprocessed)
+  {
+    Write(0, result.confidence, result.loop_remainder);
+    Write(1, result.confidence, result.loop_remainder);
+  }
+  if (result.has_self_consistent)
+  {
+    Write(2, result.self_consistent_confidence, result.self_consistent_loop_remainder);
   }
 }
 
@@ -2601,7 +2776,11 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
     table.insert("idx", index_label);
     table.insert("excitation", "exc");
     table.insert("max_loop_residual", "max loop residual");
+    table.insert("loop_share", "loop share");
+    table.insert("loop_fallback", "loop fallback");
+    table.insert("loop_weight", "loop weight (J)");
     table["excitation"].print_as_int = true;
+    table["loop_fallback"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE ||
                   solver_t == ProblemType::BOUNDARYMODE)
     {
@@ -2647,6 +2826,17 @@ void PostOperator<solver_t>::PrintSurfaceResponsePatchEnergies(double output_ind
       table["excitation"] << excitation;
       const auto max_loop = max_loops.find(data.patch);
       table["max_loop_residual"] << (max_loop != max_loops.end() ? max_loop->second : 0.0);
+      // OI-MX-LOOPGATE (decision 955): the patch's circulating share, the fallback flag and
+      // the detector weight (its response energy on the chain trace: the loop-RMS weight).
+      const auto share = std::lower_bound(
+          response.patch_loop_shares.begin(), response.patch_loop_shares.end(), data.patch,
+          [](const auto &entry, int patch) { return entry.patch < patch; });
+      MFEM_VERIFY(share != response.patch_loop_shares.end() && share->patch == data.patch,
+                  "Per-patch Maxwell loop share of patch " << data.patch + 1
+                                                           << " missing!");
+      table["loop_share"] << share->share;
+      table["loop_fallback"] << share->fallback;
+      table["loop_weight"] << units.Dimensionalize<VT::ENERGY>(share->detector_energy);
     };
     if (result.has_postprocessed)
     {

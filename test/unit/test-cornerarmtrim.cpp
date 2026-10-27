@@ -29,6 +29,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
@@ -3023,11 +3024,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const TextCsv patch_energy =
       ReadTrimmedCsv(output_dir / "surface-response-patch-energy.csv");
   CHECK(patch_energy.header ==
-        std::vector<std::string>{"source", "evaluation", "patch", "model", "feature",
-                                 "weight", "cell begin (m)", "cell end (m)", "origin x (m)",
-                                 "origin y (m)", "origin z (m)", "domain correction (J)",
-                                 "fabricated surface energy[4] (J)", "m", "exc",
-                                 "max loop residual"});
+        std::vector<std::string>{
+            "source", "evaluation", "patch", "model", "feature", "weight", "cell begin (m)",
+            "cell end (m)", "origin x (m)", "origin y (m)", "origin z (m)",
+            "domain correction (J)", "fabricated surface energy[4] (J)", "m", "exc",
+            "max loop residual", "loop share", "loop fallback", "loop weight (J)"});
   // Evaluation 0 and 1 for every applied patch and mode (PostprocessOnly: no evaluation 2).
   REQUIRE(patch_energy.rows.size() ==
           4 * static_cast<std::size_t>(response->GetPatchCount()));
@@ -3053,8 +3054,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     sums[3] += energy;
     if (mode == 2)
     {
-      patch_response_energy[patch] =
-          std::max(patch_response_energy[patch], std::abs(energy));
+      // The loop-RMS weight is the patch's response energy on the CHAIN trace (decision 955
+      // D3: the detector is independent of the least-squares lift), exported as "loop
+      // weight (J)"; on the rotational field it differs from the fitted energy above.
+      patch_response_energy[patch] = std::stod(row[patch_energy.Column("loop weight (J)")]);
       max_patch_loop = std::max(max_patch_loop,
                                 std::stod(row[patch_energy.Column("max loop residual")]));
     }
@@ -3282,6 +3285,710 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     INFO(name);
     CHECK(ReadFile(on_dir / name) == ReadFile(off_dir / name));
+  }
+#endif
+}
+
+// OI-MX-LOOPGATE (decision 955) fixture: the 922-B lead (MakeLeadMesh(0.0, 0.75)) with the
+// one isolated-edge model of the convex library on a 4-knot ring (the square of side 2 R =
+// 0.4 shifted R / 2 along v: the path's start knot, the nearest to the PEC anchor (-R, 0),
+// is then unique, while the rotation about the square's centre stays uniform along every
+// side), under an Eigenmode PostOperator with "PatchEnergy" and the one target interface 4.
+// Returns the Maxwell configuration; writes the mesh / basis / library files on root. The
+// field E = -a + c z x (x - o) (a in the lead plane, o between the two long edges) is exact
+// in the lowest-order ND hex space.
+struct LoopFitLeadFixture
+{
+  static constexpr double R = 0.2;
+  static constexpr std::array<std::array<double, 2>, 4> knots = {
+      {{-R, -0.5 * R}, {R, -0.5 * R}, {R, 1.5 * R}, {-R, 1.5 * R}}};
+  static constexpr std::array<double, 3> a = {0.3, 0.7, 0.0};
+  static constexpr std::array<double, 3> o = {0.5, 0.5, 0.0};
+  static std::array<double, 3> Field(const std::array<double, 3> &x, double c)
+  {
+    return {-a[0] - c * (x[1] - o[1]), -a[1] + c * (x[0] - o[0]), -a[2]};
+  }
+  static double Dot(const std::array<double, 3> &x, const std::array<double, 3> &y)
+  {
+    return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  }
+  static json Config(const test::SurfaceResponseFiles &files, const fs::path &output_dir,
+                     const std::string &tag)
+  {
+    const fs::path mesh_path = files.temp.temp_dir / (tag + "-lead.mesh");
+    const auto basis_path = files.temp.temp_dir / (tag + "-basis-points.csv");
+    const auto edge_library_path =
+        files.temp.temp_dir / ("fabrication-process-" + tag + "-edges.json");
+    if (Mpi::Root(Mpi::World()))
+    {
+      {
+        mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+        std::ofstream output(mesh_path);
+        serial.Print(output);
+      }
+      {
+        std::ofstream output(basis_path);
+        output << "x,y,z\n";
+        for (const auto &knot : knots)
+        {
+          output << knot[0] << "," << knot[1] << ",0.0\n";
+        }
+      }
+      std::ifstream input(files.convex_library_3d_path);
+      REQUIRE(input);
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-" + tag + "-edges";
+      json models = json::array();
+      for (auto &model : library["Models"])
+      {
+        if (model["Topology"] == "IsolatedEdge")
+        {
+          model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+          model["BasisPoints"] = basis_path.string();
+          models.push_back(model);
+        }
+      }
+      REQUIRE(models.size() == 1);
+      library["Models"] = std::move(models);
+      std::ofstream output(edge_library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    json config = files.IslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;
+    config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+    config["Boundaries"].erase("Terminal");
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Problem"]["Output"] = output_dir.string();
+    config["Solver"] = {{"Order", 1},
+                        {"Eigenmode", {{"Target", 1.0}}},
+                        {"SurfaceResponseCorrection",
+                         {{"Library", edge_library_path.string()},
+                          {"TargetInterfaces", {4}},
+                          {"UnmatchedPolicy", "Warn"},
+                          {"CorrectionMode", "PostprocessOnly"},
+                          {"PatchEnergy", true}}}};
+    return config;
+  }
+  // The field as a complex ND grid function (imaginary part 0) and its real true dofs.
+  static std::unique_ptr<GridFunction> MakeField(SpaceOperator &space_op, double c,
+                                                 Vector &e_real)
+  {
+    mfem::VectorFunctionCoefficient coefficient(3,
+                                                [c](const mfem::Vector &x, mfem::Vector &v)
+                                                {
+                                                  const auto value =
+                                                      Field({x[0], x[1], x[2]}, c);
+                                                  v.SetSize(3);
+                                                  v(0) = value[0];
+                                                  v(1) = value[1];
+                                                  v(2) = value[2];
+                                                });
+    auto field = std::make_unique<GridFunction>(space_op.GetNDSpace(), true);
+    field->Real().ProjectCoefficient(coefficient);
+    field->Imag() = 0.0;
+    e_real.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    field->Real().GetTrueDofs(e_real);
+    field->Real().SetFromTrueDofs(e_real);
+    field->Real().ExchangeFaceNbrData();
+    return field;
+  }
+  // The fitted (gradient-part) knot potentials of a patch: -a + c z x (q - o) (q = the
+  // square's centre) integrated from the PEC anchor A = origin - R u, minus the anchor
+  // line's own circulating integral (a tree step in no cycle: the chain's value stands).
+  // Also the knot positions and the anchor for the caller's line integrals.
+  struct Geometry
+  {
+    std::array<std::array<double, 3>, 4> device{};
+    std::array<double, 3> anchor{};
+    std::array<double, 3> centre{};
+    std::size_t start = 0;
+    bool long_edge = false;
+    std::array<double, 4> fit{};
+  };
+  static Geometry Expect(const SurfaceResponseOperator::PatchAssignment &assignment,
+                         double c)
+  {
+    Geometry g;
+    g.long_edge = std::abs(assignment.axis_w[2]) > 0.5;
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        g.device[k][d] = assignment.origin[d] + knots[k][0] * assignment.axis_u[d] +
+                         knots[k][1] * assignment.axis_v[d];
+        g.centre[d] += 0.25 * g.device[k][d];
+      }
+    }
+    for (int d = 0; d < 3; d++)
+    {
+      g.anchor[d] = assignment.origin[d] - R * assignment.axis_u[d];
+    }
+    double start_distance = mfem::infinity();
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      std::array<double, 3> delta;
+      for (int d = 0; d < 3; d++)
+      {
+        delta[d] = g.device[k][d] - g.anchor[d];
+      }
+      const double distance = std::sqrt(Dot(delta, delta));
+      if (distance < start_distance - 1.0e-6)
+      {
+        g.start = k;
+        start_distance = distance;
+      }
+    }
+    REQUIRE(g.start == 0);
+    const std::array<double, 3> gradient = {a[0] + c * (g.centre[1] - o[1]),
+                                            a[1] - c * (g.centre[0] - o[0]), a[2]};
+    std::array<double, 3> anchor_midpoint, anchor_delta;
+    for (int d = 0; d < 3; d++)
+    {
+      anchor_midpoint[d] = 0.5 * (g.anchor[d] + g.device[g.start][d]);
+      anchor_delta[d] = g.device[g.start][d] - g.anchor[d];
+    }
+    const std::array<double, 3> rotation_at_midpoint = {
+        -c * (anchor_midpoint[1] - g.centre[1]), c * (anchor_midpoint[0] - g.centre[0]),
+        0.0};
+    const double anchor_circulation = Dot(rotation_at_midpoint, anchor_delta);
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      std::array<double, 3> delta;
+      for (int d = 0; d < 3; d++)
+      {
+        delta[d] = g.device[k][d] - g.anchor[d];
+      }
+      g.fit[k] = Dot(gradient, delta) - anchor_circulation;
+    }
+    return g;
+  }
+};
+
+// OI-MX-LOOPGATE (decision 955), the FAILING-FIRST case (main's interfaces only): on the
+// fixture above with the circulating field (c = 0.5) the Maxwell trace of GetPatchTraces
+// equals the gradient part's knot potentials on every long-edge patch (the chain lift of
+// main carries the ring's loop EMF into the knots after the start knot in route order and
+// FAILS), and the print writes surface-response-loop-fit.csv and the "loop share" column of
+// surface-response-patch-energy.csv (absent on main).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell loop fit recovers the gradient potentials of a circulating field "
+                 "(decision 955, failing-first)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[loopfit][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path output_dir = temp.temp_dir / "loop-fit-failing-first";
+  const json config = LoopFitLeadFixture::Config(*this, output_dir, "loop-fit-ff");
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  Vector e_real;
+  const auto field = LoopFitLeadFixture::MakeField(space_op, 0.5, e_real);
+  const auto traces = response->GetPatchTraces(e_real);
+  REQUIRE(traces.size() == static_cast<std::size_t>(response->GetPatchCount()));
+  if (Mpi::Root(comm))
+  {
+    const auto &assignments = response->GetPatchAssignments();
+    REQUIRE(assignments.size() == traces.size());
+    int long_edges = 0;
+    for (std::size_t p = 0; p < assignments.size(); p++)
+    {
+      const auto geometry = LoopFitLeadFixture::Expect(assignments[p], 0.5);
+      if (!geometry.long_edge)
+      {
+        continue;
+      }
+      long_edges++;
+      INFO("patch " << assignments[p].global_index);
+      REQUIRE(traces[p].patch == assignments[p].global_index);
+      REQUIRE(traces[p].coefficients.size() == 4);
+      for (std::size_t k = 0; k < 4; k++)
+      {
+        CHECK_THAT(traces[p].coefficients[k], WithinAbs(geometry.fit[k], 1.0e-10));
+      }
+    }
+    REQUIRE(long_edges > 0);
+  }
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize()),
+      b(space_op.GetRTSpace().GetTrueVSize());
+  e.Real() = e_real;
+  e.Imag() = 0.0;
+  b = 0.0;
+  post_op.MeasureAndPrintAll(0, e, b, std::complex<double>(1.0, 0.0), 0.0, 0.0, 1);
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  CHECK(fs::is_regular_file(output_dir / "surface-response-loop-fit.csv"));
+  CHECK(fs::is_regular_file(output_dir / "surface-response-loop-remainder-energy.csv"));
+  const TextCsv patch_energy =
+      ReadTextCsv(output_dir / "surface-response-patch-energy.csv");
+  bool share_column = false;
+  for (const auto &name : patch_energy.header)
+  {
+    share_column = share_column || name.find("loop share") != std::string::npos;
+  }
+  CHECK(share_column);
+#endif
+}
+
+// OI-MX-LOOPGATE (decisions 950 / 952 / 954 / 955): the weighted least-squares gradient /
+// circulating separation of the Maxwell line-integral trace lift, on the 922-B lead fixture
+// (a 4-knot square ring of side 2 R = 0.4 around the PEC lead's edges, shifted R / 2 off
+// the edge along v, one isolated-edge model, the PEC anchor R inside the edge). The field E
+// = -a + c z x (x - o) is exact in the lowest-order ND hex space, so every line integral is
+// the midpoint rule on its straight legs and every expectation below is analytic per patch
+// from the patch table: on a long edge (axis +-z) the rotation about the square's centre q
+// is the uniform tangential field c R along the ring (plus a constant field c z x (q - o),
+// a gradient), so the ring's loop misclosure is c R x its perimeter while the fit recovers
+// the gradient potentials exactly (the anchor line, in no cycle, keeps its own circulating
+// integral: a gauge term named in the lane record); on the cap (axis +-x) the rotation is
+// normal to the ring plane and the loops close. (1) c = 0 (curl-free): the fit reproduces
+// the chain = the analytic potentials, every share is 0 to roundoff, no remainder, the
+// loop-fit file is written and the remainder file carries the Total rows with 0 (passes on
+// main except for the files); (2) c = 0.5 (a remainder on every long-edge patch, no
+// fallback): the fitted trace = the gradient potentials; per patch the circulating norm r^T
+// G^-1 r = (sum of the ring integrals)^2 / perimeter and the route norm = sum L_j^2 / l_j;
+// the chain-based loop residual = the analytic one; the remainder energy = sum_p s_p x the
+// raw within-R energy on the patch's own claims (an independent partitioned integral with
+// per-patch labels); the corrected E_surf = E_out + fabricated + uncovered + remainder on
+// both closures; (3) c = 10 (a fallback on every long-edge patch): those patches carry 0
+// energies and the fallback flag, rho = 1 on their claims, the same identities. (4) The
+// fit's transpose: <Mult p, q> = <p, Mult q> on random vectors. On main (2) and (3) FAIL:
+// the chain's knot values carry the loop EMF in route order and none of the records exists.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell loop fit separates the circulating part of the trace lift "
+                 "(decision 955)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[loopfit][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path output_dir = temp.temp_dir / "loop-fit-maxwell";
+  const json config = LoopFitLeadFixture::Config(*this, output_dir, "loop-fit");
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  const int patch_count = response->GetPatchCount();
+  REQUIRE(patch_count > 0);
+
+  // Per patch (root: the patch table), the analytic line integrals of the five legs the
+  // path evaluates (the anchor line A -> the start knot and the four ring sides in cyclic
+  // order; a linear field is exactly integrated by the midpoint rule on a straight leg).
+  struct PatchExpectation
+  {
+    bool long_edge = false;
+    std::array<double, 4> fit{};  // the fitted knot potentials
+    double circulation = 0.0;     // (sum of the ring integrals)^2 / perimeter
+    double route_norm = 0.0;      // sum_j L_j^2 / l_j
+    double share = 0.0;
+    double residual = 0.0;  // |sum of the ring integrals| / sum |ring integrals|
+  };
+  auto Expect = [&](const SurfaceResponseOperator::PatchAssignment &assignment, double c)
+  {
+    const auto geometry = LoopFitLeadFixture::Expect(assignment, c);
+    PatchExpectation expectation;
+    expectation.long_edge = geometry.long_edge;
+    expectation.fit = geometry.fit;
+    auto Leg = [&](const std::array<double, 3> &p, const std::array<double, 3> &q)
+    {
+      std::array<double, 3> midpoint, delta;
+      for (int d = 0; d < 3; d++)
+      {
+        midpoint[d] = 0.5 * (p[d] + q[d]);
+        delta[d] = q[d] - p[d];
+      }
+      return std::make_pair(
+          LoopFitLeadFixture::Dot(LoopFitLeadFixture::Field(midpoint, c), delta),
+          std::sqrt(LoopFitLeadFixture::Dot(delta, delta)));
+    };
+    const auto [anchor_integral, anchor_length] =
+        Leg(geometry.anchor, geometry.device[geometry.start]);
+    double ring_sum = 0.0, ring_abs = 0.0, perimeter = 0.0;
+    expectation.route_norm = anchor_integral * anchor_integral / anchor_length;
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      const auto [integral, length] = Leg(geometry.device[k], geometry.device[(k + 1) % 4]);
+      ring_sum += integral;
+      ring_abs += std::abs(integral);
+      perimeter += length;
+      expectation.route_norm += integral * integral / length;
+    }
+    expectation.circulation = ring_sum * ring_sum / perimeter;
+    expectation.share = expectation.circulation / expectation.route_norm;
+    expectation.residual = ring_abs > 0.0 ? std::abs(ring_sum) / ring_abs : 0.0;
+    return expectation;
+  };
+
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  struct Case
+  {
+    double c;
+    int mode;
+    bool remainder;
+    bool fallback;
+  };
+  const std::array<Case, 3> cases = {
+      {{0.0, 1, false, false}, {0.5, 2, true, false}, {10.0, 3, true, true}}};
+  std::map<int, double> expected_remainder;  // mode -> sum_p rho_p E_p (interface 4)
+  for (const auto &test_case : cases)
+  {
+    INFO("c = " << test_case.c);
+    Vector e_real;
+    const auto field = LoopFitLeadFixture::MakeField(space_op, test_case.c, e_real);
+    const auto measured = response->GetMaxwellResponse(*field, omega, true);
+    const auto traces = response->GetPatchTraces(e_real);
+    REQUIRE(traces.size() == static_cast<std::size_t>(patch_count));
+    REQUIRE(measured.patch_loop_shares.size() == static_cast<std::size_t>(patch_count));
+    std::map<int, double> rho;  // the remainder patches' rho_p
+    for (const auto &remainder : measured.loop_remainders)
+    {
+      rho[remainder.patch] = remainder.fallback ? 1.0 : remainder.share;
+    }
+    if (Mpi::Root(comm))
+    {
+      const auto &assignments = response->GetPatchAssignments();
+      REQUIRE(assignments.size() == static_cast<std::size_t>(patch_count));
+      std::map<int, double> loop_residuals;
+      for (const auto &loop : measured.path_loop_residuals)
+      {
+        if (loop.kind == 0)
+        {
+          loop_residuals[loop.patch] = std::max(loop_residuals[loop.patch], loop.residual);
+        }
+      }
+      int long_edges = 0;
+      for (std::size_t p = 0; p < assignments.size(); p++)
+      {
+        const auto &assignment = assignments[p];
+        const auto &trace = traces[p];
+        const auto &share = measured.patch_loop_shares[p];
+        REQUIRE(trace.patch == assignment.global_index);
+        REQUIRE(share.patch == assignment.global_index);
+        REQUIRE(trace.coefficients.size() == 4);
+        const auto expectation = Expect(assignment, test_case.c);
+        INFO("patch " << assignment.global_index
+                      << (expectation.long_edge ? " (long edge)" : " (cap)"));
+        long_edges += expectation.long_edge ? 1 : 0;
+        // (1) / (2) / (3) (i): the fitted trace = the gradient potentials.
+        for (std::size_t k = 0; k < 4; k++)
+        {
+          CHECK_THAT(trace.coefficients[k], WithinAbs(expectation.fit[k], 1.0e-10));
+        }
+        // (ii) the share, and the remainder record's norms.
+        if (test_case.c == 0.0 || !expectation.long_edge)
+        {
+          CHECK(expectation.share <= 1.0e-24);
+          CHECK(share.share <= 1.0e-14);
+          CHECK(share.fallback == 0);
+          CHECK(rho.count(assignment.global_index) == 0);
+        }
+        else
+        {
+          // The constants were chosen so that the long-edge patches are remainder patches
+          // (c = 0.5) or fallback patches (c = 10): asserted on the analytic share.
+          REQUIRE(expectation.share > SurfaceResponseOperator::kLoopFitShareFloor);
+          REQUIRE((expectation.share > SurfaceResponseOperator::kLoopFitFallbackShare) ==
+                  test_case.fallback);
+          CHECK_THAT(share.share, WithinRel(expectation.share, 1.0e-9));
+          CHECK(share.fallback == (test_case.fallback ? 1 : 0));
+          const auto remainder = std::find_if(
+              measured.loop_remainders.begin(), measured.loop_remainders.end(),
+              [&](const auto &entry) { return entry.patch == assignment.global_index; });
+          REQUIRE(remainder != measured.loop_remainders.end());
+          CHECK_THAT(remainder->circulation, WithinRel(expectation.circulation, 1.0e-9));
+          CHECK_THAT(remainder->total, WithinRel(expectation.route_norm, 1.0e-9));
+          CHECK(remainder->fallback == (test_case.fallback ? 1 : 0));
+          // (iii) the chain-based loop residual export = the analytic ring residual.
+          REQUIRE(loop_residuals.count(assignment.global_index) == 1);
+          CHECK(expectation.residual > 1.0e-3);
+          CHECK_THAT(loop_residuals.at(assignment.global_index),
+                     WithinRel(expectation.residual, 1.0e-9));
+        }
+      }
+      REQUIRE(long_edges > 0);
+      CHECK(measured.loop_remainder_patch_count ==
+            (test_case.remainder && !test_case.fallback ? long_edges : 0));
+      CHECK(measured.loop_fallback_patch_count == (test_case.fallback ? long_edges : 0));
+      CHECK(static_cast<int>(measured.loop_remainders.size()) ==
+            (test_case.remainder ? long_edges : 0));
+    }
+    // (iv) the remainder energy = sum_p rho_p x the raw within-R energy on the patch's own
+    // claims: the claims per patch through the public portion accessor, labelled per patch,
+    // partitioned by the (unweighted) exact partition.
+    if (!measured.loop_remainders.empty())
+    {
+      std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+      for (const auto &remainder : measured.loop_remainders)
+      {
+        const auto portions = response->GetLoopRemainderPortions({remainder});
+        REQUIRE(!portions.portions.empty());
+        for (const auto &portion : portions.portions)
+        {
+          perimeter.push_back({portion.p0, portion.p1, fmt::format("p{}", remainder.patch),
+                               portion.feature});
+        }
+      }
+      const auto partition = post_op.GetSurfacePostOp().GetInterfacePartitionedEdgeEnergies(
+          {4}, *field, nullptr, perimeter);
+      double expected = 0.0;
+      int positive = 0;
+      for (const auto &remainder : measured.loop_remainders)
+      {
+        const auto label = fmt::format("p{}", remainder.patch);
+        positive += partition.at(4).at(label) > 0.0 ? 1 : 0;
+        REQUIRE(partition.at(4).count(label) == 1);
+        CHECK(partition.at(4).at(label) >= 0.0);
+        expected += rho.at(remainder.patch) * partition.at(4).at(label);
+      }
+      REQUIRE(positive > 0);
+      REQUIRE(expected > 0.0);
+      expected_remainder[test_case.mode] = expected;
+    }
+    else
+    {
+      expected_remainder[test_case.mode] = 0.0;
+    }
+    ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+    e.Real() = e_real;
+    e.Imag() = 0.0;
+    post_op.MeasureAndPrintAll(test_case.mode - 1, e, b, omega, 0.0, 0.0, test_case.mode);
+  }
+
+  // (4) The transpose of the fit through the operator's Mult.
+  {
+    Vector p(space_op.GetNDSpace().GetTrueVSize()), q(p.Size()), Mp, Mq;
+    auto *p_data = p.HostWrite();
+    auto *q_data = q.HostWrite();
+    for (int i = 0; i < p.Size(); i++)
+    {
+      p_data[i] = std::sin(0.37 * (i + 1 + 11 * Mpi::Rank(comm)));
+      q_data[i] = std::cos(0.53 * (i + 3 + 7 * Mpi::Rank(comm)));
+    }
+    p.SetSubVector(space_op.GetNDDbcTDofLists().back(), 0.0);
+    q.SetSubVector(space_op.GetNDDbcTDofLists().back(), 0.0);
+    response->Mult(p, Mp);
+    response->Mult(q, Mq);
+    const double pMq = linalg::Dot(comm, p, Mq), qMp = linalg::Dot(comm, q, Mp);
+    REQUIRE(std::abs(pMq) > 0.0);
+    CHECK_THAT(pMq, WithinRel(qMp, 1.0e-10));
+  }
+
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Joule = [&](double energy)
+  { return iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy); };
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto Int = [](const std::string &field)
+  { return static_cast<int>(std::lround(std::stod(field))); };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  // The loop-fit file: one row per (mode, evaluation 0 / 1) with the counts.
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-loop-fit.csv"));
+  const TextCsv fit = ReadTrimmedCsv(output_dir / "surface-response-loop-fit.csv");
+  CHECK(fit.header ==
+        std::vector<std::string>{"source", "evaluation", "m", "exc", "max loop share",
+                                 "response-weighted loop share", "remainder patches",
+                                 "fallback patches", "weighted claim length (m)"});
+  REQUIRE(fit.rows.size() == 6);
+  std::map<int, std::array<int, 2>> fit_counts;  // mode -> (remainder, fallback)
+  std::map<int, double> fit_max_share;
+  for (const auto &row : fit.rows)
+  {
+    const int mode = Int(row[fit.Column("m")]);
+    CHECK(Int(row[fit.Column("source")]) == mode);
+    CHECK((Int(row[fit.Column("evaluation")]) == 0 ||
+           Int(row[fit.Column("evaluation")]) == 1));
+    fit_counts[mode] = {Int(row[fit.Column("remainder patches")]),
+                        Int(row[fit.Column("fallback patches")])};
+    fit_max_share[mode] = std::stod(row[fit.Column("max loop share")]);
+  }
+  CHECK(fit_max_share.at(1) <= 1.0e-14);
+  CHECK(fit_counts.at(1) == std::array<int, 2>{0, 0});
+  CHECK(fit_counts.at(2)[0] > 0);
+  CHECK(fit_counts.at(2)[1] == 0);
+  CHECK(fit_counts.at(3)[0] == 0);
+  CHECK(fit_counts.at(3)[1] == fit_counts.at(2)[0]);
+  CHECK(fit_max_share.at(3) > SurfaceResponseOperator::kLoopFitFallbackShare);
+  // The remainder file: per mode and evaluation a Total row (0 on mode 1) and the model row
+  // of the one isolated-edge model where a remainder exists.
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-loop-remainder-energy.csv"));
+  const TextCsv remainder =
+      ReadTrimmedCsv(output_dir / "surface-response-loop-remainder-energy.csv");
+  CHECK(remainder.header == std::vector<std::string>{"source", "evaluation", "model",
+                                                     "patches", "weighted claim length (m)",
+                                                     "remainder energy[4] (J)", "m",
+                                                     "exc"});
+  std::map<std::pair<int, int>, double> remainder_total;  // (mode, ev) -> Total energy
+  std::map<int, int> remainder_rows;                      // mode -> rows per evaluation 0
+  for (const auto &row : remainder.rows)
+  {
+    const int mode = Int(row[remainder.Column("m")]);
+    const int ev = Int(row[remainder.Column("evaluation")]);
+    if (row[remainder.Column("model")] == "Total")
+    {
+      remainder_total[{mode, ev}] =
+          std::stod(row[remainder.Column("remainder energy[4] (J)")]);
+      CHECK(Int(row[remainder.Column("patches")]) ==
+            fit_counts.at(mode)[0] + fit_counts.at(mode)[1]);
+    }
+    else if (ev == 0)
+    {
+      remainder_rows[mode]++;
+      CHECK(row[remainder.Column("model")].rfind("m", 0) == 0);
+    }
+  }
+  CHECK(remainder_rows.count(1) == 0);
+  CHECK(remainder_rows.at(2) == 1);
+  CHECK(remainder_rows.at(3) == 1);
+  for (const auto &test_case : cases)
+  {
+    INFO("mode " << test_case.mode);
+    for (const int ev : {0, 1})
+    {
+      REQUIRE(remainder_total.count({test_case.mode, ev}) == 1);
+      if (expected_remainder.at(test_case.mode) == 0.0)
+      {
+        CHECK(remainder_total.at({test_case.mode, ev}) == 0.0);
+      }
+      else
+      {
+        CHECK_THAT(remainder_total.at({test_case.mode, ev}),
+                   WithinRel(Joule(expected_remainder.at(test_case.mode)), 1.0e-9));
+      }
+    }
+  }
+  // The corrected E_surf = E_out + fabricated + uncovered + remainder on both closures.
+  const TextCsv edge = ReadTrimmedCsv(output_dir / "surface-Q-edge.csv");
+  const TextCsv corrected = ReadTrimmedCsv(output_dir / "surface-Q-corrected.csv");
+  const TextCsv model_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-model-energy.csv");
+  const TextCsv uncovered =
+      ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy.csv");
+  const TextCsv patch_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-patch-energy.csv");
+  CHECK(patch_energy.header ==
+        std::vector<std::string>{
+            "source", "evaluation", "patch", "model", "feature", "weight", "cell begin (m)",
+            "cell end (m)", "origin x (m)", "origin y (m)", "origin z (m)",
+            "domain correction (J)", "fabricated surface energy[4] (J)", "m", "exc",
+            "max loop residual", "loop share", "loop fallback", "loop weight (J)"});
+  for (const auto &test_case : cases)
+  {
+    INFO("mode " << test_case.mode);
+    double e_out = std::numeric_limits<double>::quiet_NaN();
+    for (const auto &row : edge.rows)
+    {
+      if (Int(row[edge.Column("m")]) == test_case.mode &&
+          Int(row[edge.Column("interface")]) == 4)
+      {
+        e_out = std::stod(row[edge.Column("E_out (J)")]);
+      }
+    }
+    REQUIRE(std::isfinite(e_out));
+    std::array<double, 2> fabricated{}, kept{}, surf{};
+    for (const auto &row : model_energy.rows)
+    {
+      if (Int(row[model_energy.Column("m")]) == test_case.mode)
+      {
+        fabricated[Int(row[model_energy.Column("evaluation")])] +=
+            std::stod(row[model_energy.Column("fabricated surface energy[4] (J)")]);
+      }
+    }
+    for (const auto &row : uncovered.rows)
+    {
+      if (Int(row[uncovered.Column("m")]) == test_case.mode &&
+          row[uncovered.Column("type")] == "Total" &&
+          Int(row[uncovered.Column("evaluation")]) < 2)
+      {
+        kept[Int(row[uncovered.Column("evaluation")])] +=
+            std::stod(row[uncovered.Column("uncovered raw energy[4] (J)")]);
+      }
+    }
+    for (const auto &row : corrected.rows)
+    {
+      if (Int(row[corrected.Column("m")]) == test_case.mode &&
+          Int(row[corrected.Column("interface")]) == 4)
+      {
+        surf[0] = std::stod(row[corrected.Column("E_surf corrected (J)")]);
+        surf[1] = std::stod(row[corrected.Column("E_surf corrected fixed-flux (J)")]);
+      }
+    }
+    for (const int ev : {0, 1})
+    {
+      CHECK_THAT(surf[ev], WithinRel(e_out + fabricated[ev] + kept[ev] +
+                                         remainder_total.at({test_case.mode, ev}),
+                                     1.0e-10));
+    }
+    // The per-patch columns: a fallback patch carries 0 energies and the flag.
+    int fallback_rows = 0;
+    for (const auto &row : patch_energy.rows)
+    {
+      if (Int(row[patch_energy.Column("m")]) != test_case.mode)
+      {
+        continue;
+      }
+      const int flag = Int(row[patch_energy.Column("loop fallback")]);
+      const double share = std::stod(row[patch_energy.Column("loop share")]);
+      CHECK(std::stod(row[patch_energy.Column("loop weight (J)")]) >= 0.0);
+      if (flag == 1)
+      {
+        fallback_rows++;
+        CHECK(share > SurfaceResponseOperator::kLoopFitFallbackShare);
+        CHECK(std::stod(row[patch_energy.Column("fabricated surface energy[4] (J)")]) ==
+              0.0);
+        CHECK(std::stod(row[patch_energy.Column("domain correction (J)")]) == 0.0);
+      }
+      else
+      {
+        CHECK(share <= SurfaceResponseOperator::kLoopFitFallbackShare);
+      }
+    }
+    CHECK(fallback_rows == 2 * fit_counts.at(test_case.mode)[1]);  // evaluations 0 and 1
   }
 #endif
 }

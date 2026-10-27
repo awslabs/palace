@@ -498,6 +498,143 @@ public:
   }
 };
 
+// OI-MX-LOOPGATE (decision 955): the exact piece partition of one interface's perimeter by
+// WEIGHTED portions. The intervals are built with one type per portion index so that each
+// interval knows its portion; a piece takes the largest weight among the portions covering
+// its midpoint and that portion's label.
+struct WeightedEdgePieces
+{
+  struct Piece
+  {
+    double a = 0.0, b = 0.0;
+    int group = -1;
+    double weight = 0.0;
+  };
+  std::map<std::size_t, std::vector<Piece>> by_segment;  // ascending, non-overlapping
+  std::vector<std::string> groups;
+
+  WeightedEdgePieces(
+      const EdgeDistanceTree &tree,
+      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions,
+      const std::vector<double> &weights, double tolerance)
+  {
+    MFEM_VERIFY(portions.size() == weights.size(),
+                "Weighted perimeter portions require one weight per portion!");
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> indexed(portions);
+    for (std::size_t i = 0; i < indexed.size(); i++)
+    {
+      indexed[i].type = std::to_string(i);
+    }
+    const UncoveredEdgeIntervals intervals(tree, indexed, tolerance);
+    for (const auto &[segment, list] : intervals.by_segment)
+    {
+      std::vector<double> ends;
+      for (const auto &interval : list)
+      {
+        ends.push_back(interval.a);
+        ends.push_back(interval.b);
+      }
+      std::sort(ends.begin(), ends.end());
+      ends.erase(std::unique(ends.begin(), ends.end()), ends.end());
+      auto &pieces = by_segment[segment];
+      for (std::size_t i = 0; i + 1 < ends.size(); i++)
+      {
+        const double midpoint = 0.5 * (ends[i] + ends[i + 1]);
+        int best = -1;
+        for (const auto &interval : list)
+        {
+          if (midpoint >= interval.a && midpoint <= interval.b)
+          {
+            const int portion = std::stoi(intervals.types[interval.type]);
+            if (best < 0 || weights[portion] > weights[best])
+            {
+              best = portion;
+            }
+          }
+        }
+        if (best < 0)
+        {
+          continue;
+        }
+        auto group = std::find(groups.begin(), groups.end(), portions[best].type);
+        if (group == groups.end())
+        {
+          groups.push_back(portions[best].type);
+          group = std::prev(groups.end());
+        }
+        pieces.push_back({ends[i], ends[i + 1], static_cast<int>(group - groups.begin()),
+                          weights[best]});
+      }
+    }
+  }
+};
+
+// rho x the within-R energy density of the quadrature points whose nearest perimeter foot
+// lies on a weighted piece of the requested group. Pieces are half-open [a, b); the last
+// piece of a segment is closed.
+class WeightedEdgeCoefficient : public mfem::Coefficient
+{
+private:
+  mfem::Coefficient &coefficient;
+  const EdgeDistanceTree &edge_distance_tree;
+  const WeightedEdgePieces &pieces;
+  const double radius;
+  const double smoothing;
+  const int group;
+
+public:
+  WeightedEdgeCoefficient(mfem::Coefficient &coefficient,
+                          const EdgeDistanceTree &edge_distance_tree,
+                          const WeightedEdgePieces &pieces, double radius, double smoothing,
+                          int group)
+    : coefficient(coefficient), edge_distance_tree(edge_distance_tree), pieces(pieces),
+      radius(radius), smoothing(smoothing), group(group)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    const auto nearest = edge_distance_tree.Nearest(point);
+    const double within = 1.0 - EdgeDistanceOutsideWeight(
+                                    std::sqrt(nearest.distance_squared), radius, smoothing);
+    if (within <= 0.0)
+    {
+      return 0.0;
+    }
+    const auto it = pieces.by_segment.find(nearest.segment);
+    if (it == pieces.by_segment.end() || it->second.empty())
+    {
+      return 0.0;
+    }
+    const auto &segment = edge_distance_tree.GetSegment(nearest.segment);
+    double length2 = 0.0, projection = 0.0;
+    for (int d = 0; d < point.Size(); d++)
+    {
+      const double chord = segment.p1[d] - segment.p0[d];
+      length2 += chord * chord;
+      projection += (point(d) - segment.p0[d]) * chord;
+    }
+    const double foot = std::clamp(projection / length2, 0.0, 1.0) * std::sqrt(length2);
+    const auto &list = it->second;
+    auto piece = std::upper_bound(list.begin(), list.end(), foot,
+                                  [](double x, const auto &p) { return x < p.a; });
+    if (piece == list.begin())
+    {
+      return 0.0;
+    }
+    piece = std::prev(piece);
+    const bool last = std::next(piece) == list.end();
+    if (piece->group != group ||
+        !(foot >= piece->a && (foot < piece->b || (last && foot == piece->b))))
+    {
+      return 0.0;
+    }
+    return piece->weight * within * coefficient.Eval(T, ip);
+  }
+};
+
 }  // namespace
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
@@ -1189,6 +1326,62 @@ SurfacePostOperator::GetInterfacePartitionedEdgeEnergies(
                                                        data.ownership_quadrature_order));
       entries.emplace_back(idx, group < pieces.groups.size() ? pieces.groups[group]
                                                              : std::string("unclaimed"));
+    }
+  }
+  if (!local_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                   E.GetComm());
+  }
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    energies.at(entries[i].first)[entries[i].second] += local_energies[i];
+  }
+  return energies;
+}
+
+std::map<int, std::map<std::string, double>>
+SurfacePostOperator::GetInterfaceWeightedPortionEdgeEnergies(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<UncoveredPerimeterPortion> &portions,
+    const std::vector<double> &weights) const
+{
+  // OI-MX-LOOPGATE (decision 955). One integral per (interface, label).
+  const auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::map<int, std::map<std::string, double>> energies;
+  std::vector<double> local_energies;
+  std::vector<std::pair<int, std::string>> entries;
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "Weighted portion edge energies require a matching edge distance!");
+    energies.emplace(idx, std::map<std::string, double>{});
+    if (portions.empty())
+    {
+      continue;
+    }
+    const double radius = data.edge_distances.back();
+    const WeightedEdgePieces pieces(*data.edge_distance_tree, portions, weights,
+                                    kSignatureParameterToleranceOverRadius * radius);
+    if (pieces.groups.empty())
+    {
+      continue;
+    }
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    for (std::size_t group = 0; group < pieces.groups.size(); group++)
+    {
+      WeightedEdgeCoefficient weighted(*coefficient, *data.edge_distance_tree, pieces,
+                                       radius, data.edge_distance_smoothing,
+                                       static_cast<int>(group));
+      local_energies.push_back(
+          GetLocalSurfaceIntegral(weighted, attr_marker, data.ownership_quadrature_order));
+      entries.emplace_back(idx, pieces.groups[group]);
     }
   }
   if (!local_energies.empty())

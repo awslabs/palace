@@ -315,6 +315,17 @@ public:
   std::map<int, std::map<std::string, double>> GetInterfacePartitionedEdgeEnergies(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
+  // OI-MX-LOOPGATE (decision 955): the within-R energy of each requested interface on the
+  // portions, WEIGHTED per portion (`weights`, parallel to `portions`: the patch's rho_p)
+  // and grouped by the portions' `type` label (the model row "m<idx>"): per label the
+  // integral of rho x the within-R energy density over the pieces whose nearest perimeter
+  // foot lies on a portion of that label. A piece covered by several portions takes the
+  // LARGEST weight among them and is attributed to that portion's label (the design's
+  // co-located rule). One surface integral per (interface, label).
+  std::map<int, std::map<std::string, double>> GetInterfaceWeightedPortionEdgeEnergies(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<UncoveredPerimeterPortion> &portions,
+      const std::vector<double> &weights) const;
   std::vector<InterfaceLocalEdgeEnergy>
   GetInterfaceLocalEdgeElectricFieldEnergies(int idx, const GridFunction &E,
                                              const GridFunction *D = nullptr,

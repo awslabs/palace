@@ -1788,7 +1788,8 @@ run (not boundary mode, not a two-dimensional mesh) writes the Maxwell path's
 `surface-response-patches.csv` (at construction),
 `surface-response-patch-energy.csv` (the electrostatic columns as a strict prefix, `source`
 = the excitation on a driven solve / the mode on an eigenmode solve, then `f (GHz)` / `m`
-and `exc`, then the patch's `max loop residual`), `surface-response-traces.csv` (the
+and `exc`, then the patch's `max loop residual`, its `loop share`, `loop fallback` and
+`loop weight (J)` of the least-squares lift described below), `surface-response-traces.csv` (the
 spatial patches' complex trace coefficients: the electrostatic columns with `value (V)` the
 real part, then `value imag (V)`, `f (GHz)` / `m`, `exc`) and
 `surface-response-patch-loops.csv` (`source`, `patch`, `model`, `path`, `kind` 0 = a contour
@@ -2187,9 +2188,39 @@ The maximum loop residual identifies the worst local violation of the quasi-elec
 approximation or contour resolution. It does not gate confidence because an arbitrarily
 small trace can have a large relative residual without affecting the corrected energy.
 For response weighting, each coupon patch is assigned the larger of its fixed-trace and
-fixed-flux fabricated surface energies, summed over target interfaces. That weight is
+fixed-flux fabricated surface energies on the chain trace (the one-route lift the loop
+residuals read, so that the loop statistics are a property of the field and its contour
+routes alone), summed over target interfaces. That weight is
 split among a patch's contour paths in proportion to the squared sum of absolute segment
-integrals. The weighted RMS and failed-response fraction gate whether nonconservative
+integrals.
+
+The trace that feeds the coupon response is not the chain but a weighted least-squares
+lift of it: per patch, every line the contour paths evaluate is an equation between the
+potentials of its two end knots (the reference anchor and every PEC knot at zero), weighted
+by the inverse of its length, and the knot potentials are the least-squares solution. The
+chain solves the equations of the tree it walks exactly; the loop misclosures of the
+closing lines (a ring's last step, a free arc's step onto its PEC knot and its return line,
+a non-tree open path's end line) are distributed over each loop's steps in proportion to
+their lengths through the cycle matrix of the step lengths. On a curl-free field every
+loop closes and the lift is the chain to roundoff; on a field with a circulation (an
+inductive patch) the lift is the curl-free part of the line integrals and the remainder,
+with its W-norm fraction ``s_p`` of the patch's route norm ``\sum_j L_j^2 / \ell_j``
+(the patch's `loop share`), is counted RAW: its share ``s_p`` of the raw within-R
+interface energy on the patch's own claims is added to the corrected interface energies on
+both closures like the uncovered requirements. A patch whose share is at most ``10^{-4}``
+contributes no remainder; a patch whose share exceeds ``0.25`` (`loop fallback` 1) has no
+potential worth correcting and is served raw: its fabricated energies and domain defects
+are not added and its whole raw claim is kept. Every Maxwell run writes
+`surface-response-loop-fit.csv` (per source and evaluation the `max loop share`, the
+`response-weighted loop share` with the loop-residual weights, the `remainder patches` and
+`fallback patches` counts and the share-weighted claim length) and
+`surface-response-loop-remainder-energy.csv` (per model row `m<idx>` with a remainder and
+`Total`: `patches`, `weighted claim length (m)`, `remainder energy[k] (J)` per target
+interface; a window without a remainder writes the `Total` row with zeros), and records
+the bounds under `SurfaceResponse.Diagnostics.LoopFit` in `palace.json`. The
+self-consistent correction applies the least-squares lift without the fallback. The route
+share stands in for the circulating part's share of the surface energy and the cross term
+between the two parts on the surfaces is neglected. The weighted RMS and failed-response fraction gate whether nonconservative
 paths carry a material fraction of the modeled response. The remaining columns test
 whether the geometry is
 represented by the isolated-, paired-, or corner-response library. The interface-wise
