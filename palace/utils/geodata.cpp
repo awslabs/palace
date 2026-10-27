@@ -239,21 +239,70 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   // Box / sphere region refinement on the serial mesh, before partitioning. Done here
   // (rather than in parallel RefineMesh) so the user-facing 3D box / sphere geometry
   // stays in sync with the mesh the problem actually solves on — BoundaryMode's
-  // Preprocess may extract a 2D submesh from this refined 3D mesh.
+  // Preprocess may extract a 2D submesh from this refined 3D mesh. A nonconformal mesh
+  // cannot be cracked along interior boundaries: a nonconformal input mesh, for example
+  // from a previous adaptive simulation, must already be cracked along the interior
+  // boundaries which are to be cracked, and region refinement makes a mesh with
+  // hexahedra, prisms, or pyramids nonconformal. Both are an error when interior boundaries
+  // are to be cracked, since the cracking is part of the model.
+  const bool conforming = smesh->Conforming();
+  std::set<int> interior_crack_attrs;
+  if (iodata.model.crack_bdr_elements.value_or(true))
+  {
+    const auto crack_attrs =
+        iodata.boundaries.GetMeshCrackAttributes(iodata.model.crack_bdr_elements);
+    const int bdr_attr_max = smesh->bdr_attributes.Size() ? smesh->bdr_attributes.Max() : 0;
+    const auto crack_marker = mesh::AttrToMarker(bdr_attr_max, crack_attrs, true);
+    for (int be = 0; be < smesh->GetNBE(); be++)
+    {
+      const int attr = smesh->GetBdrAttribute(be);
+      int e1, e2;
+      smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+      if (attr > 0 && attr <= bdr_attr_max && crack_marker[attr - 1] && e1 >= 0 && e2 >= 0)
+      {
+        interior_crack_attrs.insert(attr);
+      }
+    }
+  }
+  MFEM_VERIFY(interior_crack_attrs.empty() || conforming,
+              "The nonconformal mesh "
+                  << iodata.model.mesh
+                  << " is not cracked along the interior boundaries with "
+                     "attributes "
+                  << fmt::format("{}", fmt::join(interior_crack_attrs, ", "))
+                  << " (with \"Crack\": true, or with boundary conditions "
+                     "applying to each side separately), and cannot be "
+                     "cracked! Use a mesh which is cracked along them, for "
+                     "example from a previous adaptive simulation with the "
+                     "same boundary conditions.");
   RegionRefine(refinement, *smesh);
+  MFEM_VERIFY(
+      interior_crack_attrs.empty() || smesh->Conforming(),
+      "Refinement boxes and spheres make a mesh with hexahedra, prisms, or pyramids "
+      "nonconformal, which cannot be cracked along the interior boundaries with "
+      "attributes "
+          << fmt::format("{}", fmt::join(interior_crack_attrs, ", "))
+          << " (with \"Crack\": true, or with boundary conditions applying to "
+             "each side separately)! Remove the refinement regions, or use a "
+             "simplex mesh.");
 
   // Exterior-boundary check and optional material-interface / crack boundary element
   // insertion. Only meaningful on an initial conformal mesh.
   if (smesh->Conforming())
   {
     auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
-    if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+    if (iodata.model.crack_bdr_elements.value_or(true) || iodata.model.add_bdr_elements)
     {
       while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
       {
         // May require multiple calls due to early exit/retry approach.
       }
     }
+  }
+  else if (conforming)
+  {
+    Mpi::Warning("Refinement boxes and spheres make the mesh nonconformal, skipping mesh "
+                 "modification preprocessing steps!\n\n");
   }
   else
   {
@@ -290,7 +339,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   }
 
   // Broadcast cracked boundary attributes from root to all ranks.
-  if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+  if (iodata.model.crack_bdr_elements.value_or(true) || iodata.model.add_bdr_elements)
   {
     int size = iodata.boundaries.cracked_attributes.size();
     Mpi::Broadcast(1, &size, 0, comm);
@@ -310,6 +359,10 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
       iodata.boundaries.cracked_attributes.clear();
       iodata.boundaries.cracked_attributes.insert(data.begin(), data.end());
     }
+  }
+  if (iodata.model.crack_bdr_elements.value_or(false))
+  {
+    iodata.boundaries.split_impedance_attributes = iodata.boundaries.cracked_attributes;
   }
 
   // Generate partitioning from the serial mesh on loading ranks.
@@ -3529,23 +3582,12 @@ struct UnorderedPairHasher
 int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
-  // Exclude some internal boundary conditions for which cracking would give invalid
-  // results: lumpedports in particular.
-  const auto crack_boundary_attributes = [&iodata]()
-  {
-    auto cba = iodata.boundaries.attributes;
-    // Remove lumped port attributes.
-    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
-    {
-      for (const auto &e : data.elements)
-      {
-        auto attr_in_elem = [&](auto x)
-        { return std::ranges::find(e.attributes, x) != e.attributes.end(); };
-        std::erase_if(cba, attr_in_elem);
-      }
-    }
-    return cba;
-  }();
+  // By default, interior boundaries with boundary conditions applying to each side
+  // separately are cracked, as well as impedance and conductivity sheets modeled as two
+  // independent surfaces ("Crack"). Lumped ports are never cracked, which would give
+  // invalid results.
+  const auto crack_boundary_attributes =
+      iodata.boundaries.GetMeshCrackAttributes(iodata.model.crack_bdr_elements);
 
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (crack_boundary_attributes.empty() && !iodata.model.add_bdr_elements)
@@ -3568,7 +3610,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
   std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
       crack_vert_duplicates;
   std::unique_ptr<mfem::Table> vert_to_elem;
-  if (!crack_boundary_attributes.empty() && iodata.model.crack_bdr_elements)
+  if (!crack_boundary_attributes.empty() && iodata.model.crack_bdr_elements.value_or(true))
   {
     auto crack_bdr_marker = mesh::AttrToMarker(
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,

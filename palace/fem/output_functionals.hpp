@@ -141,6 +141,10 @@ private:
   KernelKind kind;
   InterfaceDielectric epr_type = InterfaceDielectric::DEFAULT;
   double epr_t = 0.0, epr_epsilon = 0.0;
+  // Boundary attributes (marker) of interior boundaries which separate the fields on their
+  // two sides, for which the interface energy is the sum of the energies on both sides
+  // instead of the energy of the average field.
+  mfem::Array<int> epr_sum_sides_marker;
   SurfaceFlux flux_type = SurfaceFlux::ELECTRIC;
   bool flux_two_sided = false;
   // Electric flux and surface charge kernels evaluate D = ε E with the real permittivity by
@@ -279,11 +283,13 @@ public:
                     const mfem::ParFiniteElementSpace *fespace = nullptr);
 
   // Construct an interface dielectric energy participation functional with the given
-  // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient).
+  // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient). On
+  // interior boundaries with attributes marked in sum_sides_marker (if given), the energies
+  // of both qualifying sides are summed, as for a mesh cut along the boundary.
   SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &nd_fespace,
                     const MaterialOperator &mat_op, InterfaceDielectric type, double t_i,
-                    double epsilon_i);
+                    double epsilon_i, const mfem::Array<int> *sum_sides_marker = nullptr);
 
   // Construct a surface flux functional (see BdrSurfaceFluxCoefficient). The required
   // finite element spaces depend on the flux type: ELECTRIC requires nd_fespace,
