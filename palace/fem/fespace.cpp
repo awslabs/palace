@@ -37,8 +37,17 @@ FiniteElementSpace::FiniteElementSpace(Mesh &mesh, const mfem::FiniteElementColl
 
 void FiniteElementSpace::InitBroken()
 {
-  if (std::any_of(break_attributes.begin(), break_attributes.end(),
-                  [this](int attr) { return mesh.Get().bdr_attributes.Find(attr) >= 0; }))
+  if (break_attributes.empty())
+  {
+    return;
+  }
+  int present =
+      std::any_of(break_attributes.begin(), break_attributes.end(),
+                  [this](int attr) { return mesh.Get().bdr_attributes.Find(attr) >= 0; });
+  // Empty ranks can have an empty attribute table. Construction must take the
+  // same collective path even when this rank has no boundary representation.
+  Mpi::GlobalMax(1, &present, GetComm());
+  if (present)
   {
     broken = fem::BuildBrokenDofLayout(fespace, break_attributes);
     // Complete construction collectively, before threaded assembly or applications.
@@ -120,6 +129,17 @@ void FiniteElementSpace::GetElementEntityDofs(int e, int dimension, int local_en
   RemapDofs(e, dofs);
 }
 
+void FiniteElementSpace::GetFaceNbrElementDofs(int e, mfem::Array<int> &dofs,
+                                               mfem::DofTransformation &dt) const
+{
+  fespace.GetFaceNbrElementVDofs(e, dofs, dt);
+  MFEM_VERIFY(broken, "Neighbour L-rows require an owned broken space!");
+  for (int j = 0; j < dofs.Size(); j++)
+  {
+    dofs[j] = broken->nbr_dofs[broken->nbr_offsets[e] + j];
+  }
+}
+
 void FiniteElementSpace::GetInteriorFaceDofs(int f, mfem::Array<int> &first,
                                              mfem::DofTransformation &dt1,
                                              mfem::Array<int> &second,
@@ -134,13 +154,7 @@ void FiniteElementSpace::GetInteriorFaceDofs(int f, mfem::Array<int> &first,
   }
   else
   {
-    const int e = face.element[1].index;
-    fespace.GetFaceNbrElementVDofs(e, second, dt2);
-    MFEM_VERIFY(broken, "Neighbour trace rows require an owned broken space!");
-    for (int j = 0; j < second.Size(); j++)
-    {
-      second[j] = broken->nbr_dofs[broken->nbr_offsets[e] + j];
-    }
+    GetFaceNbrElementDofs(face.element[1].index, second, dt2);
   }
 }
 
@@ -266,6 +280,23 @@ void FiniteElementSpace::CopyFromConforming(const Vector &x, Vector &y) const
     if (source >= 0)
     {
       local(l) = original(source);
+    }
+  }
+  // R may read a neighbour's injective trace when this rank only reads an edge
+  // of the master. Supply those conforming reads too; never import a DG snapshot.
+  mfem::ParGridFunction field(const_cast<mfem::ParFiniteElementSpace *>(&fespace));
+  field.SetFromTrueDofs(x);
+  field.ExchangeFaceNbrData();
+  mfem::Array<int> coordinate, actual;
+  mfem::DofTransformation dt;
+  for (int e = 0; e < mesh.Get().GetNFaceNeighborElements(); e++)
+  {
+    fespace.GetFaceNbrElementVDofs(e, coordinate, dt);
+    GetFaceNbrElementDofs(e, actual, dt);
+    for (int j = 0; j < actual.Size(); j++)
+    {
+      local(actual[j] >= 0 ? actual[j] : -1 - actual[j]) =
+          field.FaceNbrData()(coordinate[j] >= 0 ? coordinate[j] : -1 - coordinate[j]);
     }
   }
   y.SetSize(GetTrueVSize());
@@ -535,6 +566,10 @@ std::unique_ptr<mfem::HypreParMatrix> FiniteElementSpace::AssembleInterpolator(
     {
       local->GetData()[k] /= count(l);
     }
+  }
+  if (test.broken)
+  {
+    return fem::BuildTrueInterpolator(trial, test, *test.broken, *local);
   }
   ParOperator result(std::move(local), trial, test, true);
   return result.StealParallelAssemble();

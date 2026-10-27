@@ -342,6 +342,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03",
                 when="@4.10:",
             ),
+            # An empty NC rank has an empty entity list and no shared-flag buffer.
+            patch("mfem_empty_nc_rank.diff", when="@4.10.0"),
         ],
     )
 

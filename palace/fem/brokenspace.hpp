@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_BROKEN_SPACE_HPP
 #define PALACE_FEM_BROKEN_SPACE_HPP
 
+#include <array>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -21,6 +22,8 @@ namespace fem
 struct BrokenDofLayout
 {
   std::vector<int> offsets, dofs, nbr_offsets, nbr_dofs, row_origin;
+  // Stored neighbour row, reading rank, and that rank's actual L-row.
+  std::vector<std::array<int, 3>> neighbour_rows;
   mfem::Array<HYPRE_BigInt> row_offsets, col_offsets;
   std::unique_ptr<mfem::HypreParMatrix> P;
   std::unique_ptr<mfem::SparseMatrix> R;
@@ -38,6 +41,12 @@ BuildBrokenDofLayout(mfem::ParFiniteElementSpace &space,
 // recovered from complete injective trace blocks. Remote columns must cancel as well.
 // Construction is collective; application never communicates or solves a system.
 std::unique_ptr<mfem::SparseMatrix> BuildBrokenRestriction(const FiniteElementSpace &space);
+
+// Complete neighbour interpolation reads before applying the local restriction.
+// Ghost rows copy their producer's element-local I P, not an independently solved field.
+std::unique_ptr<mfem::HypreParMatrix>
+BuildTrueInterpolator(const FiniteElementSpace &trial, const FiniteElementSpace &test,
+                      const BrokenDofLayout &layout, const mfem::SparseMatrix &local);
 
 }  // namespace fem
 }  // namespace palace

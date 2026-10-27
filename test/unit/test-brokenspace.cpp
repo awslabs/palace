@@ -1092,6 +1092,108 @@ TEST_CASE("Broken space interior traces", "[brokenspace][Serial][Parallel]")
   CHECK_THAT(area, WithinAbs(1.0, 1.0e-12));
 }
 
+TEST_CASE("Broken restriction on an edge-only reading rank", "[brokenspace][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  if (Mpi::Size(comm) < 3)
+  {
+    SKIP("Needs three ranks");
+  }
+  auto smesh = MakeCrackedCubeMesh(2, mfem::Element::TETRAHEDRON);
+  smesh.EnsureNCMesh(true);
+  mfem::Array<int> refined, vertices;
+  Vector center;
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    smesh.GetElementCenter(e, center);
+    if (center(0) > x_crack)
+    {
+      refined.Append(e);
+    }
+  }
+  smesh.GeneralRefinement(refined, 1, 0);
+  std::vector<int> part(smesh.GetNE());
+  int selected = -1;
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    smesh.GetElementCenter(e, center);
+    part[e] = center(0) < x_crack ? 2 : 1;
+    if (center(0) < x_crack)
+    {
+      continue;
+    }
+    smesh.GetElementVertices(e, vertices);
+    std::vector<int> plane;
+    for (auto v : vertices)
+    {
+      if (std::abs(smesh.GetVertex(v)[0] - x_crack) < 1.0e-14)
+      {
+        plane.push_back(v);
+      }
+    }
+    if (selected < 0 && plane.size() == 2 &&
+        std::abs(smesh.GetVertex(plane[0])[1] - 0.25) < 1.0e-14 &&
+        std::abs(smesh.GetVertex(plane[1])[1] - 0.25) < 1.0e-14)
+    {
+      selected = e;
+      part[e] = 0;
+    }
+  }
+  REQUIRE(selected >= 0);
+  auto mesh = MakeParMesh(comm, smesh, part);
+  mfem::H1_FECollection h1_fec(2, 3);
+  mfem::ND_FECollection nd_fec(2, 3);
+  mfem::RT_FECollection rt_fec(1, 3);
+  FiniteElementSpace h1(mesh, &h1_fec, {crack_attr}), nd(mesh, &nd_fec, {crack_attr}),
+      rt(mesh, &rt_fec, {crack_attr});
+  Vector x(h1.GetTrueVSize()), gradient(nd.GetTrueVSize()), curl(rt.GetTrueVSize());
+  for (int i = 0; i < x.Size(); i++)
+  {
+    x(i) = std::sin(i + 1.7 * Mpi::Rank(comm));
+  }
+  nd.GetDiscreteInterpolator(h1).Mult(x, gradient);
+  rt.GetDiscreteInterpolator(nd).Mult(gradient, curl);
+  double error = curl.Normlinf(), scale = gradient.Normlinf();
+  Mpi::GlobalMax(1, &error, comm);
+  Mpi::GlobalMax(1, &scale, comm);
+  CHECK(error < 1.0e-12 * scale);
+  Vector input(nd.GetTrueVSize()), local(nd.GetVSize()), recovered(nd.GetTrueVSize());
+  for (int i = 0; i < input.Size(); i++)
+  {
+    input(i) = std::cos(0.8 * i + Mpi::Rank(comm));
+  }
+  rt.GetDiscreteInterpolator(nd).Mult(input, curl);
+  nd.GetProlongationMatrix()->Mult(input, local);
+  nd.GetRestrictionMatrix()->Mult(local, recovered);
+  recovered -= input;
+  error = recovered.Normlinf();
+  Mpi::GlobalMax(1, &error, comm);
+  CHECK(error < 1.0e-12 * scale);
+
+  Mesh fine(std::make_unique<mfem::ParMesh>(mesh.Get()));
+  fine.Get().UniformRefinement();
+  FiniteElementSpaceHierarchy nh, rh;
+  nh.AddLevel(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec, std::vector<int>{crack_attr}));
+  nh.AddLevel(
+      std::make_unique<FiniteElementSpace>(fine, &nd_fec, std::vector<int>{crack_attr}));
+  rh.AddLevel(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec, std::vector<int>{crack_attr}));
+  rh.AddLevel(
+      std::make_unique<FiniteElementSpace>(fine, &rt_fec, std::vector<int>{crack_attr}));
+  Vector refined_nd(nh.GetFinestFESpace().GetTrueVSize()),
+      refined_rt(rh.GetFinestFESpace().GetTrueVSize()), expected(refined_rt.Size());
+  nh.GetProlongationAtLevel(0).Mult(input, refined_nd);
+  rh.GetFinestFESpace()
+      .GetDiscreteInterpolator(nh.GetFinestFESpace())
+      .Mult(refined_nd, refined_rt);
+  rh.GetProlongationAtLevel(0).Mult(curl, expected);
+  refined_rt -= expected;
+  error = refined_rt.Normlinf();
+  Mpi::GlobalMax(1, &error, comm);
+  CHECK(error < 1.0e-11 * scale);
+}
+
 TEST_CASE("Broken space hanging sheet version counts", "[brokenspace][Serial][Parallel]")
 {
   const auto comm = MPI_COMM_WORLD;

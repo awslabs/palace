@@ -150,6 +150,8 @@ public:
   void GetInteriorFaceDofs(int face, mfem::Array<int> &first, mfem::DofTransformation &dt1,
                            mfem::Array<int> &second, mfem::DofTransformation &dt2) const;
   const mfem::FiniteElement *GetFaceNbrFE(int e) const { return fespace.GetFaceNbrFE(e); }
+  void GetFaceNbrElementDofs(int e, mfem::Array<int> &dofs,
+                             mfem::DofTransformation &dt) const;
   // Collective: each selected physical interior patch is returned on exactly one
   // rank holding its boundary representation, including master/slave and shared faces.
   std::vector<int> GetInteriorBoundaryFaces(const std::vector<int> &attributes) const;

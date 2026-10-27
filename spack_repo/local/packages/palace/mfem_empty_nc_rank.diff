@@ -1,0 +1,13 @@
+diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -503,4 +503,9 @@ void ParNCMesh::MakeSharedList(const NCList &list, NCList &shared)
+ {
++   if (list.Empty())
++   {
++      shared.Clear();
++      return;
++   }
+    MFEM_VERIFY(tmp_shared_flag.Size(), "wrong code path");
+ 
+    // combine flags of masters and slaves

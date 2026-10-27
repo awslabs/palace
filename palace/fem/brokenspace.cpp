@@ -941,6 +941,7 @@ BuildBrokenDofLayout(mfem::ParFiniteElementSpace &space,
         }
         if (inserted)
         {
+          out->neighbour_rows.push_back({it->second, p, Unsigned(d)});
           rows.push_back(std::move(row));
           out->row_origin.push_back(-1);
         }
@@ -973,6 +974,59 @@ BuildBrokenDofLayout(mfem::ParFiniteElementSpace &space,
   return out;
 }
 
+namespace
+{
+std::vector<int> TracePositions(const mfem::FiniteElementCollection &fec,
+                                const mfem::Element &el, int order, int dim, int local)
+{
+  const int nv = el.GetNVertices(), ne = el.GetNEdges();
+  const int vd = fec.GetNumDof(mfem::Geometry::POINT, order);
+  const int ed = fec.GetNumDof(mfem::Geometry::SEGMENT, order);
+  const int *vertices = dim == 1 ? el.GetEdgeVertices(local) : el.GetFaceVertices(local);
+  const int n = dim == 1 ? 2 : el.GetNFaceVertices(local);
+  std::set<int> closure(vertices, vertices + n);
+  std::vector<int> positions;
+  for (auto v : closure)
+  {
+    for (int j = 0; j < vd; j++)
+    {
+      positions.push_back(v * vd + j);
+    }
+  }
+  for (int e = 0; e < ne; e++)
+  {
+    const auto *ev = el.GetEdgeVertices(e);
+    if ((dim == 1 && e == local) ||
+        (dim == 2 && closure.count(ev[0]) && closure.count(ev[1])))
+    {
+      for (int j = 0; j < ed; j++)
+      {
+        positions.push_back(nv * vd + e * ed + j);
+      }
+    }
+  }
+  if (dim == 2)
+  {
+    int offset = nv * vd + ne * ed;
+    for (int f = 0; f <= local; f++)
+    {
+      const auto geom =
+          el.GetNFaceVertices(f) == 3 ? mfem::Geometry::TRIANGLE : mfem::Geometry::SQUARE;
+      const int fd = fec.GetNumDof(geom, order);
+      if (f == local)
+      {
+        for (int j = 0; j < fd; j++)
+        {
+          positions.push_back(offset + j);
+        }
+      }
+      offset += fd;
+    }
+  }
+  return positions;
+}
+}  // namespace
+
 std::unique_ptr<mfem::SparseMatrix> BuildBrokenRestriction(const FiniteElementSpace &space)
 {
   const auto &P = *space.Dof_TrueDof_Matrix();
@@ -991,9 +1045,9 @@ std::unique_ptr<mfem::SparseMatrix> BuildBrokenRestriction(const FiniteElementSp
       active[Unsigned(d)] = 1;
     }
   }
-  for (int l = 0; l < P.Height(); l++)
+  auto Select = [&](int l)
   {
-    if (active[l] && rows[l].size() == 1)
+    if (rows[l].size() == 1)
     {
       const auto &entry = rows[l][0];
       const auto t = entry.col - begin;
@@ -1003,10 +1057,19 @@ std::unique_ptr<mfem::SparseMatrix> BuildBrokenRestriction(const FiniteElementSp
         selected[t] = 1;
       }
     }
+  };
+  for (int l = 0; l < P.Height(); l++)
+  {
+    if (active[l])
+    {
+      Select(l);
+    }
   }
 
-  // A child's complete trace is an injective restriction of the master trace.
-  // Its inverse includes the closure, since face rows alone also read edge/vertex
+  // Hanging constraints and parallel ND orientations can leave a master coefficient
+  // without a singleton P row, so even signed/scaled row selection cannot invert P.
+  // A child's complete trace is injective. Its inverse includes the closure,
+  // since face rows alone also read edge/vertex
   // coefficients. Parallel ND orientation blocks are recovered by the same rule.
   // The SVD is a setup-only local inverse, not an iterative/global solve or average.
   auto Recover = [&](std::vector<int> trace)
@@ -1025,9 +1088,8 @@ std::unique_ptr<mfem::SparseMatrix> BuildBrokenRestriction(const FiniteElementSp
     cols.erase(std::unique(cols.begin(), cols.end()), cols.end());
     const int m = trace.size(), n = cols.size();
     if (!n || m < n ||
-        std::none_of(
-            cols.begin(), cols.end(),
-            [&](auto c) { return c >= begin && c < begin + nt && !selected[c - begin]; }))
+        std::none_of(cols.begin(), cols.end(), [&](auto c)
+                     { return c >= begin && c < begin + nt && !selected[c - begin]; }))
     {
       return;
     }
@@ -1112,10 +1174,125 @@ std::unique_ptr<mfem::SparseMatrix> BuildBrokenRestriction(const FiniteElementSp
   }
   int missing = std::count(selected.begin(), selected.end(), 0);
   Mpi::GlobalSum(1, &missing, space.GetComm());
+  if (missing)
+  {
+    // Lowest reading rank need not own a full slave face: a tet can touch it
+    // only along a hanging edge. Its stored face-neighbour L-rows can supply
+    // direct reads or a complete injective trace.
+    for (int e = 0; e < mesh.GetNFaceNeighborElements(); e++)
+    {
+      space.GetFaceNbrElementDofs(e, dofs, dt);
+      // A halo singleton can recover an owned coefficient even when its containing
+      // trace also has unrelated columns which prevent inversion of the whole block.
+      for (auto d : dofs)
+      {
+        Select(Unsigned(d));
+      }
+      const auto &el = *mesh.face_nbr_elements[e];
+      for (int dim = 1; dim < mesh.Dimension(); dim++)
+      {
+        const int count = dim == 1 ? el.GetNEdges() : el.GetNFaces();
+        for (int entity = 0; entity < count; entity++)
+        {
+          std::vector<int> trace;
+          for (auto j : TracePositions(space.GetFEColl(), el, space.GetMaxElementOrder(),
+                                       dim, entity))
+          {
+            trace.push_back(Unsigned(dofs[j]));
+          }
+          Recover(std::move(trace));
+        }
+      }
+    }
+  }
+  missing = std::count(selected.begin(), selected.end(), 0);
+  Mpi::GlobalSum(1, &missing, space.GetComm());
   MFEM_VERIFY(missing == 0,
               missing << " owned broken DOF(s) have no injective local trace!");
   R->Finalize();
   return R;
+}
+
+std::unique_ptr<mfem::HypreParMatrix> BuildTrueInterpolator(const FiniteElementSpace &trial,
+                                                            const FiniteElementSpace &test,
+                                                            const BrokenDofLayout &layout,
+                                                            const mfem::SparseMatrix &local)
+{
+  const auto comm = test.GetComm();
+  mfem::HypreParMatrix I(comm, test.GlobalVSize(), trial.GlobalVSize(),
+                         test.GetDofOffsets(), trial.GetDofOffsets(),
+                         const_cast<mfem::SparseMatrix *>(&local));
+  std::unique_ptr<mfem::HypreParMatrix> IP(
+      new mfem::HypreParMatrix(hypre_ParCSRMatMat(I, *trial.Dof_TrueDof_Matrix()), true));
+  auto rows = ReadRows(*IP);
+  const auto &mesh = test.GetParMesh();
+  std::vector<std::vector<std::int64_t>> packets(Mpi::Size(comm));
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dt;
+  for (int fn = 0; fn < mesh.GetNFaceNeighbors(); fn++)
+  {
+    std::set<int> read;
+    for (int k = 0; k < mesh.send_face_nbr_elements.RowSize(fn); k++)
+    {
+      test.GetElementDofs(mesh.send_face_nbr_elements.GetRow(fn)[k], dofs, dt);
+      for (auto d : dofs)
+      {
+        read.insert(Unsigned(d));
+      }
+    }
+    auto &packet = packets[mesh.GetFaceNbrRank(fn)];
+    for (auto l : read)
+    {
+      packet.insert(packet.end(), {l, static_cast<std::int64_t>(rows[l].size())});
+      for (const auto &entry : rows[l])
+      {
+        packet.push_back(entry.col);
+        packet.push_back(std::bit_cast<std::int64_t>(entry.value));
+      }
+    }
+  }
+  const auto received = Exchange(comm, packets);
+  std::map<std::pair<int, int>, Row> neighbours;
+  for (int p = 0; p < Mpi::Size(comm); p++)
+  {
+    const auto &packet = received[p];
+    for (std::size_t pos = 0; pos < packet.size();)
+    {
+      const int l = packet.at(pos++), n = packet.at(pos++);
+      auto &row = neighbours[{p, l}];
+      for (int k = 0; k < n; k++)
+      {
+        const Index col = packet.at(pos++);
+        row.push_back({col, std::bit_cast<double>(packet.at(pos++))});
+      }
+    }
+  }
+  for (const auto &origin : layout.neighbour_rows)
+  {
+    rows[origin[0]] = neighbours.at({origin[1], origin[2]});
+  }
+  std::vector<int> indices(1, 0);
+  std::vector<Index> columns;
+  std::vector<double> values;
+  for (const auto &row : rows)
+  {
+    for (const auto &entry : row)
+    {
+      columns.push_back(entry.col);
+      values.push_back(entry.value);
+    }
+    indices.push_back(columns.size());
+  }
+  mfem::HypreParMatrix complete(
+      comm, test.GetVSize(), test.GlobalVSize(), trial.GlobalTrueVSize(), indices.data(),
+      columns.data(), values.data(), test.GetDofOffsets(), trial.GetTrueDofOffsets());
+  mfem::HypreParMatrix R(comm, test.GlobalTrueVSize(), test.GlobalVSize(),
+                         test.GetTrueDofOffsets(), test.GetDofOffsets(),
+                         const_cast<mfem::SparseMatrix *>(test.GetRestrictionMatrix()));
+  auto result =
+      std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(R, complete), true);
+  hypre_ParCSRMatrixSetNumNonzeros(*result);
+  return result;
 }
 
 }  // namespace palace::fem

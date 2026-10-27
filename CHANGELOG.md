@@ -346,10 +346,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     were bumped to their latest releases. The Spack package now uses a libCEED release
     instead of a development commit.
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
-  - Added an MFEM patch for [mfem/mfem#5698](https://github.com/mfem/mfem/pull/5698)
-    (`NCMesh::GetRootTransforms`), used to identify the interior boundary sides of
-    nonconforming meshes.
-    [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Removed the MFEM root-transform patch (mfem/mfem#5698): broken spaces identify
+    interior boundary sides on the current mesh without root reconstruction.
 
 ## [0.18.1] - 2026-09-21
 
