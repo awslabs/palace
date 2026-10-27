@@ -7,15 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Testing
 
-*Palace* comes with two types of tests:
+*Palace* comes with three complementary types of tests:
 
   - Unit tests in `test/unit/` test individual components in isolation
   - Regression tests, registered in `test/unit/regression/cases.cpp`, run
     full Palace solves on fixtures under `test/data/regression/input/`
     and compare generated CSVs against `test/data/regression/ref/`
+  - Numerical verification tests compare computed solutions and convergence
+    rates against mathematical solutions and theoretical predictions
 
-Both types of tests are run automatically as part of the project's continuous
+All three types of tests are run automatically as part of the project's continuous
 integration (CI) workflows.
+
+Mathematical solution and convergence studies are described separately in
+[Numerical Verification](verification.md).
 
 ## Building and running unit tests
 
@@ -35,6 +40,65 @@ test assertions. If you want to also measure test coverage, turn
 `PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
 for more details on this. For Spack, these are the `mfem+exceptions` and the
 `palace+coverage` variants.
+
+### Enzyme-backed MMS tests
+
+The automatic-differentiation MMS tests are optional because they require the
+Enzyme compiler plugin. Enzyme must be built with the same upstream LLVM
+version as the Clang compiler used to build *Palace*, including the LLVM and
+Clang development packages. This integration cannot use the Xcode Apple Clang
+toolchain because it does not provide matching upstream development packages
+for building and loading the plugin. Upstream LLVM and Clang can still be used
+on macOS, for example through Homebrew.
+
+With matching `clang`, `clang++`, and `llvm-config` executables on `PATH`,
+configure the superbuild with:
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_C_COMPILER=clang \
+      -DCMAKE_CXX_COMPILER=clang++ \
+      -DLLVM_DIR="$(llvm-config --cmakedir)" \
+      -DPALACE_MFEM_USE_EXCEPTIONS=yes \
+      -DPALACE_WITH_ENZYME=yes ..
+make -j $(nproc) palace-tests
+```
+
+On macOS with Homebrew LLVM:
+
+```bash
+LLVM_PREFIX="$(brew --prefix llvm)"
+cmake -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+      -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+      -DLLVM_DIR="$("$LLVM_PREFIX/bin/llvm-config" --cmakedir)" \
+      -DPALACE_MFEM_USE_EXCEPTIONS=yes \
+      -DPALACE_WITH_ENZYME=yes ..
+```
+
+The superbuild downloads and installs Enzyme. To reuse an existing compatible
+installation, additionally set `ENZYME_DIR` to its CMake package directory.
+The Enzyme-specific tests are omitted entirely when `PALACE_WITH_ENZYME` is
+disabled.
+
+The analytic electrostatic MMS tests are available in every test-enabled build:
+
+```bash
+bin/palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
+mpirun -np 2 bin/palace-unit-tests \
+  "[electrostatic][mms][analytic]" --skip-benchmarks
+```
+
+In an Enzyme-enabled build, replace `[analytic]` with `[enzyme]` to run the
+Enzyme-backed tests.
+
+With Palace's local Spack recipe registered, enable `+enzyme`, select a
+supported upstream LLVM compiler, and request root-package tests:
+
+```bash
+spack install --test root local.palace@develop+enzyme %llvm@19
+```
+
+The Clang compiler and Enzyme's `libllvm` versions must match.
 
 Once the build completes, the `palace-unit-tests` executable will be installed
 in the same `bin/` directory as the main `palace` executable, and you can run

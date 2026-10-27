@@ -324,6 +324,66 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
   };
 }
 
+// Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
+// port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
+// implied by the reflection coefficient in the sibling port-S.csv,
+//   Z_PV (1 + S_ii) / (1 - S_ii).
+// V and P are integrals of the total field while S_ii is a modal overlap, so the two
+// agree only with the correct conjugation of P: a flipped Im{Z} is off by O(1) and cannot
+// be hidden by regenerating the reference data. The reference diff of port-Z.csv still
+// runs first at the case tolerances; the same rtol bounds |Z - Z_S| / |Z_S|.
+palace::test::CustomCheck TestWavePortInputImpedance(int port,
+                                                     palace::test::RegressionOptions opts)
+{
+  return [port, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+
+    auto find_header = [](palace::Table &table,
+                          const std::string &header) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+    palace::TableWithCSVFile s_file((actual_path.parent_path() / "port-S.csv").string(),
+                                    /*load_existing_file=*/true);
+    const std::string ii = "[" + std::to_string(port) + "][" + std::to_string(port) + "]";
+    palace::Column *re_z = find_header(actual, "Re{Z" + ii + "} (Ohm)");
+    palace::Column *im_z = find_header(actual, "Im{Z" + ii + "} (Ohm)");
+    palace::Column *re_z_pv =
+        find_header(actual, "Re{Z_PV[" + std::to_string(port) + "]} (Ohm)");
+    palace::Column *im_z_pv =
+        find_header(actual, "Im{Z_PV[" + std::to_string(port) + "]} (Ohm)");
+    palace::Column *abs_s = find_header(s_file.table, "|S" + ii + "| (dB)");
+    palace::Column *arg_s = find_header(s_file.table, "arg(S" + ii + ") (deg.)");
+    REQUIRE(re_z != nullptr);
+    REQUIRE(im_z != nullptr);
+    REQUIRE(re_z_pv != nullptr);
+    REQUIRE(im_z_pv != nullptr);
+    REQUIRE(abs_s != nullptr);
+    REQUIRE(arg_s != nullptr);
+    REQUIRE(s_file.table.n_rows() == actual.n_rows());
+    for (std::size_t r = 0; r < actual.n_rows(); r++)
+    {
+      const std::complex<double> Z(re_z->data[r], im_z->data[r]);
+      const std::complex<double> Z_PV(re_z_pv->data[r], im_z_pv->data[r]);
+      const std::complex<double> S = std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                                                arg_s->data[r] * std::numbers::pi / 180.0);
+      const std::complex<double> Z_S = Z_PV * (1.0 + S) / (1.0 - S);
+      INFO("row " << r + 1 << ": Z" << ii << " = " << Z
+                  << ", Z_PV (1 + S) / (1 - S) = " << Z_S);
+      CHECK(std::abs(Z - Z_S) <= opts.rtol * std::abs(Z_S));
+    }
+  };
+}
+
 // Compare synthesized rom-eigenvalues.csv against the (regenerated) reference. Spurious
 // low-Q roots (large HDM backward error) interleave with the converged eigenpairs (backward
 // error <= bkwd_max), and their count/order drift with the partition, so pair each
@@ -946,7 +1006,22 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
-  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "", opts);
+  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "base", opts);
+}
+
+// The same two holes driven together as one excitation (loop 1 at fluxoid 1, loop 3 at
+// -0.5), so there is no inductance matrix: terminal-Phi.csv reports the excitation's stored
+// energy, E = ½ΦᵀM⁻¹Φ of the swept matrix above, and the fluxoid imposed on each loop. The
+// field is written under the excitation index.
+TEST_CASE("double_hole_london_flux_excitation", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("double_hole_london", "double_hole_excitation.json",
+                                  "excitation", opts);
 }
 
 // Narrow London ring vs the analytic thin-ring L = L_geom + L_ksq*2*pi*r/w: the extracted
@@ -1018,10 +1093,9 @@ TEST_CASE("microstrip_superconductor", "[Serial][Parallel][GPU][Regression]")
                                   "superconductor", opts);
 }
 
-// London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
-// a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
-// curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
-// after one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
+// London flux film under non-conformal AMR. Locks the curl-free projection of the cut
+// generator on the hanging-edge mesh, so L converges upward (15.1643 -> 15.1644 pH after
+// one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
 // awslabs/palace#375).
 TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 {
@@ -1033,6 +1107,21 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("circular_hole_london", "circular_hole_nc_amr.json",
                                   "nc_amr", opts);
+}
+
+// As above with two refinements, each followed by a forced rebalance, so the film, the cut
+// and the hole are split differently across ranks at each solve.
+TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
+                                  opts);
 }
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
@@ -1325,6 +1414,8 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  // Wave port 2 at its own excitation: Z[2][2] against Z_PV (1 + S22) / (1 - S22).
+  opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(2, opts);
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
                                   opts);
 }
