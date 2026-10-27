@@ -1920,10 +1920,9 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
   {
     // The coupling rates and participations are normalized by the time-averaged
     // electric-side energy U (Measurement::ElectricEnergyNormalization), which is
-    // E_elec + E_cap for constant materials, and are left empty without one. Preserve the
-    // weak-loss equipartition approximation of the total stored energy, 2 U
-    // (E_elec + E_cap = E_mag + E_ind). This is not a complete storage model for
-    // distributed sheet elements.
+    // E_elec + E_cap for constant materials, and are left empty without one. The total
+    // stored energy uses the weak-loss equipartition 2 U (E_elec + E_cap = E_mag + E_ind),
+    // which leaves out distributed sheet storage.
     const auto energy_electric_all = measurement_cache.ElectricEnergyNormalization();
     if (!energy_electric_all)
     {

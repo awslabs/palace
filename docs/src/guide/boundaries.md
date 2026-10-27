@@ -356,7 +356,8 @@ for implementation details.
 
 In the frequency domain, the excitation of each port is normalized to have unit
 time-averaged incident power over the port boundary surface (see the
-[mathematical reference](../reference.md#Lumped-ports-and-wave-ports)); transient
+[mathematical reference](../reference.md#Lumped-ports-and-wave-ports), which also compares
+the excitation with those of COMSOL and HFSS under "Comparing with other tools"); transient
 excitations carry unit instantaneous power at unit pulse amplitude. Lumped ports with
 reactive elements (`"L"` and/or `"C"`, or the surface-parameter
 equivalents `"Ls"` and/or `"Cs"`) may also be excited, including purely reactive ports with

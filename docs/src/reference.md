@@ -224,14 +224,39 @@ P^{inc} = \frac{1}{2} V^{inc} [I^{inc}]^*  = \frac{1}{2} \sum_e \int_{\Gamma_e} 
 normalization applies to lumped ports, wave ports, and Floquet ports, so that mixed-port
 S-parameters need no additional scaling. For a lumped port with reference resistance
 ``R = 50~\Omega``, the incident wave has ``V^{inc} = 10~\mathrm{V}`` and ``I^{inc} = 0.2~\mathrm{A}``
-(peak). In the time domain, the excitation instead carries unit instantaneous incident power at
-unit pulse amplitude. For a wave port whose cross section contains lossy material, the mode
-power is complex and the normalization above fixes its magnitude, so the transported (real)
-incident power and the conjugate-mode S-parameter projection are exact only to leading order in
-the loss tangent of the port cross section.
+(peak). In the time domain, the excitation carries unit instantaneous incident power at unit
+pulse amplitude. When a wave port's cross section contains lossy material, the mode power is
+complex and this normalization fixes its magnitude, so the transported (real) incident power is
+exact only to first order in the loss tangent. The S-parameters of such a port are not
+affected: they are obtained from the unconjugated reaction with the port mode, as described
+for [wave ports](#Wave-ports).
 
 Here we have allowed for the possibility that a port can be made of disjoint surface elements ``e``,
 which separately contribute to the Poynting vector.
+
+**Comparing with other tools.** With these conventions, each excited port of a driven *Palace*
+simulation carries 1 W of time-averaged incident power (``A^2`` W with an excitation amplitude
+``A``). This is the default port excitation of HFSS (driven modal) and of a COMSOL port (an input
+power of 1 W), and that of a COMSOL lumped port with a power source of 1 W or an incident voltage
+``V_0 = \sqrt{2R \cdot 1~\mathrm{W}}`` (10 V for 50 Ω, where the default of COMSOL is 1 V).
+*Palace*, HFSS, and COMSOL all use peak phasors with the time dependence
+``e^{i\omega t}`` and time-averaged powers, so fields, voltages, power fluxes, and S-parameters
+compare directly.
+
+``E_{elec}`` and ``E_{mag}`` are time averages, and their sum is the time-averaged energy stored in
+the fields. The HFSS field calculator recipe for the peak electric energy,
+``\frac{1}{2}\int \varepsilon |\bm{E}|^2\,dV``, which equals the time-averaged stored energy of a
+closed resonator at resonance, gives twice ``E_{elec}``.
+
+Some outputs need a factor. In the time domain, a lumped port excitation of unit amplitude has
+``1/\sqrt{2}`` of the frequency domain amplitude, and an
+[`"ExcitationAmplitude"`](config/reference.md#config-boundaries-lumpedport) of ``\sqrt{2}`` gives
+the same drive. A surface current source drives ``1/\sqrt{Z_0} \approx 51.5`` mA, which is
+reported in `surface-I.csv`. Eigenmodes are normalized to unit norm, so their fields, voltages,
+and energies have an arbitrary scale and only the frequencies and ratios (quality factors,
+coupling rates, participation ratios) compare. COMSOL's quality factor uses
+``\text{Re}\{\omega\}`` in place of ``|\omega|``, which makes it smaller by a relative
+``1/(8Q^2)``.
 
 There is an additional normalization related to voltages and currents. For AC simulations of
 microwave networks, circuit ``V`` and ``I`` are not generally well defined and have to be fixed by
@@ -337,14 +362,16 @@ The incident field ``\bm{E}^{inc}(\bm{x},t)`` is
 \bm{E}^{inc}(\bm{x},t) = p(t)\bm{E}^{inc}(\bm{x})
 ```
 
-where ``\bm{E}^{inc}(\bm{x})`` is identical to the spatial excitation in the frequency domain
-formulation, and ``p(t)`` describes the temporal shape of the excitation. Possible options for
+where ``\bm{E}^{inc}(\bm{x})`` has the spatial form of the frequency domain excitation with
+``1/\sqrt{2}`` of its amplitude (unit instantaneous incident power at ``p = 1``), and ``p(t)``
+describes the temporal shape of the excitation. Possible options for
 [`config["Solver"]["Transient"]["Excitation"]`](config/reference.md#config-solver-transient-excitation)
 include a sinusoidal, Gaussian, modulated Gaussian, or step excitation.
 
 For AC simulations, a surface-current source and a resistive lumped port with the same geometry
 produce right-hand-side source terms with the same spatial form, up to an overall normalization. A
-surface-current source is normalized to unit current and only drives the right-hand side: it
+surface-current source is normalized to a current of ``1/\sqrt{Z_0} \approx 51.5`` mA, the unit
+of current of *Palace*'s nondimensionalization, and only drives the right-hand side: it
 prescribes no boundary condition and provides no termination or dissipation. A lumped port is
 normalized to the unit incident power described above and also imposes its impedance (Robin)
 boundary condition, so a nonzero resistance allows energy to leave the model through the port. Thus,
@@ -836,11 +863,11 @@ Finally, the total time-averaged electric energy in mode ``m`` is
 
 where ``\bm{D}_m = \varepsilon_r\bm{E}_m`` is the electric flux density for mode ``m`` and
 the second term on the right-hand side accounts for any lumped capacitive boundaries with
-nonzero circuit capacitance ``C_j``. For a lossless eigenmode with complete, consistent nondispersive storage,
-equipartition gives ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``. The port-Q estimate below
-retains this weak-loss approximation. It need not equal total energy for strongly damped,
-open or dispersive modes. Lumped circuit L/C storage also need not equal the distributed
-sheet storage used by the boundary operator when the port field differs from its circuit mode.
+nonzero circuit capacitance ``C_j``. For a lossless mode with nondispersive storage,
+equipartition gives the total energy ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``, and the
+port-Q estimate below uses it. This holds for weak loss. It can fail for strongly damped,
+open or dispersive modes, and when the port field is not uniform, since the lumped L/C energy
+then differs from the energy stored in the boundary sheet.
 
 The EPR can also be used to estimate mode quality factors due to input-output (I-O) line
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
@@ -881,9 +908,7 @@ present in domain ``j`` with associated loss tangent ``\tan{\delta}_j`` is given
 ```
 
 where, as above, ``\mathcal{E}^{elec}`` is the total time-averaged electric field energy in
-the domain, including the contributions due to capacitive lumped elements (the participation
-ratio ``p_j`` is independent of whether the peak or time-averaged energies are used, as long
-as numerator and denominator use the same convention).
+the domain, including the contributions due to capacitive lumped elements.
 
 Likewise, the quality factor due to surface interface dielectric loss for interface ``j`` is
 given by
