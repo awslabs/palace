@@ -593,6 +593,30 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     CHECK_THAT(pvd_time, Catch::Matchers::WithinRel(expected_freq, 1.0e-5));
   }
 
+  SECTION("Current source with passive port does not write S")
+  {
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.sample_f = {1.0};
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Index", 1}, {"Attributes", {2}}, {"R", 50.0}, {"Direction", "+X"}}}},
+        {"SurfaceCurrent", {{{"Index", 2}, {"Attributes", {3}}, {"Direction", "+Y"}}}}};
+    iodata.boundaries = config::BoundaryData(boundaries);
+    SpaceOperator space_op(iodata, mesh);
+    CHECK(space_op.GetPortExcitations().IsMultipleSimple());
+    CHECK_FALSE(space_op.GetPortExcitations().HasSParameters());
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
+    E = 1.0;
+    B = 0.0;
+    post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    Mpi::Barrier(comm);
+    CHECK(fs::is_regular_file(fs::path(iodata.problem.output) / "port-V.csv"));
+    CHECK_FALSE(fs::exists(fs::path(iodata.problem.output) / "port-S.csv"));
+    CHECK_FALSE(fs::exists(fs::path(iodata.problem.output) / "port-floquet-S.csv"));
+  }
+
   SECTION("Driven multiple excitations")
   {
     // Create operator with two excitations.
@@ -643,6 +667,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
                                  {{{"Attributes", {2}},
                                    {"Index", 1},
                                    {"L", 1.0},
+                                   {"C", 0.01},
                                    {"Direction", "+X"},
                                    {"Excitation", true}}}}};
     config::BoundaryData reactive_port(reactive_boundaries);
@@ -660,8 +685,13 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto vi = post_op.MeasureLumpedPortForTest(1, E, B, 1.0);
     const auto &port = space_op.GetLumpedPortOp().GetPort(1);
     REQUIRE(std::abs(vi.V) > 0.0);
-    CHECK_THAT(std::abs(vi.S - vi.V / std::sqrt(port.GetExcitationRefResistance())),
+    // S = V / V_ref with V_ref = sqrt(2 R_ref) the peak incident voltage of the unit time-
+    // averaged power wave referenced to the port reference resistance.
+    CHECK_THAT(std::abs(vi.S - vi.V / port.GetReferenceVoltage()),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(vi.V)));
+    CHECK_THAT(port.GetReferenceVoltage(),
+               Catch::Matchers::WithinRel(
+                   std::sqrt(2.0 * port.GetExcitationRefResistance()), 1.0e-12));
 
     GridFunction E_gf(space_op.GetNDSpace(), true);
     E_gf.Real().SetFromTrueDofs(E.Real());
@@ -669,6 +699,16 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto S_legacy = port.GetSParameter(E_gf);
     CHECK_THAT(std::abs(vi.S - S_legacy),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(S_legacy)));
+
+    REQUIRE(std::abs(port.C) > 0.0);
+    CHECK_THAT(vi.capacitor_energy, WithinRel(0.25 * port.C * std::norm(vi.V), 1.0e-12));
+
+    // The stored inductor energy is the time average 1/4 L |I_L|² for the peak phasor
+    // branch current I_L = V / (iωL) (the physical definition, written out explicitly).
+    REQUIRE(std::abs(vi.I_RLC[1]) > 0.0);
+    CHECK_THAT(vi.inductor_energy,
+               Catch::Matchers::WithinRel(0.25 * std::abs(port.L) * std::norm(vi.I_RLC[1]),
+                                          1.0e-12));
   }
 
   SECTION("Eigenmode")

@@ -195,6 +195,26 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial][Parallel]")
   CAPTURE(Z_PV_ohm, Z_PV_analytical);
 
   CHECK_THAT(Z_PV_ohm, WithinRel(Z_PV_analytical, 1.0e-3));
+
+  // The port voltage line integral is linear in the field, so it scales with the sqrt(2)
+  // driven amplitude. Check it with an exactly representable uniform field, since an
+  // interpolated modal coefficient need not reproduce the stored NC submesh mode.
+  const auto &port = wave_port_op.GetPort(1);
+  GridFunction field(nd_fespace_palace, true);
+  mfem::Vector value(3);
+  value = 0.0;
+  value(2) = 1.0;
+  mfem::VectorConstantCoefficient coeff(value);
+  field.Real().ProjectCoefficient(coeff);
+  field.Imag().ProjectCoefficient(coeff);
+  const std::complex<double> voltage(b_m, b_m);  // Integral of (1+i) along the z path.
+  CHECK_THAT(std::abs(port.GetVoltage(field) - voltage), WithinAbs(0.0, 1.0e-10 * b_m));
+  field.Real() *= std::numbers::sqrt2;
+  field.Imag() *= std::numbers::sqrt2;
+  CHECK_THAT(std::abs(port.GetVoltage(field) - std::numbers::sqrt2 * voltage),
+             WithinAbs(0.0, 1.0e-10 * b_m));
+  CHECK_THAT(Z_PV_nondim.real(),
+             WithinRel(std::norm(port.GetExcitationVoltage()), 1.0e-12));
 }
 
 // Validate WavePortData::GetModePolaritySign returns the expected sign for the TE10
@@ -294,7 +314,9 @@ TEST_CASE("WavePort port power", "[waveportimpedance][Serial][GPU]")
   B.Real().ProjectCoefficient(fbr);
   B.Imag().ProjectCoefficient(fbi);
 
-  auto ref = RefWavePortPower(mat_op, wave_port_op.GetPort(1).GetAttrList(), E, B);
+  // GetPower returns the time-averaged complex power 1/2 ∫ (E x H⋆) ⋅ n dS of the complex
+  // peak phasors; RefWavePortPower evaluates the raw overlap ∫ (E x H⋆) ⋅ n dS.
+  auto ref = 0.5 * RefWavePortPower(mat_op, wave_port_op.GetPort(1).GetAttrList(), E, B);
   auto val = wave_port_op.GetPort(1).GetPower(E, B);
   CAPTURE(ref, val);
   CHECK_THAT(val.real(), WithinRel(ref.real(), 1.0e-10));

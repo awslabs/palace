@@ -55,17 +55,40 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - **Breaking:** Frequency-domain energies and powers are time averages of the peak
+    phasors: energies carry a factor 1/4 and powers 1/2. Lumped, wave and Floquet port
+    excitations carry 1 W of time-averaged incident power; a 50 Ω lumped port has 10 V and
+    0.2 A peak. Impressed current sources are normalized to unit current. SchemaVer 4-0-0
+    [PR 937](https://github.com/awslabs/palace/pull/937).
+
+    To compare with results from 0.18 or earlier, for the same configuration:
+
+    | Solver / excitation                 | Fields, V/I, probes, `rE`, electric/magnetic flux | Energies and power flux |
+    |:----------------------------------- |:------------------------------------------------- |:----------------------- |
+    | Driven lumped or wave port          | ×√2                                               | same                    |
+    | Driven Floquet or impressed current | same                                              | ×1/2                    |
+    | Eigenmode or boundary mode          | same                                              | ×1/2                    |
+    | Transient or static                 | same                                              | same                    |
+
+    S-parameters, impedances, eigenfrequencies, Q, κ, EPR, participation ratios and error
+    indicators are the same. In a mixed-port sweep, use the row for each excitation; a
+    drive that combines current and port sources has no single factor. Write results to a
+    new output directory rather than appending to restart CSVs from an earlier version:
+    the headers and units match, but the values do not.
+
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
     must be updated. SchemaVer 2-0-0
     [PR 929](https://github.com/awslabs/palace/pull/929).
+
   - Added `Solver.Eigenmode.NonlinearMaxIts` (default 100), the maximum number of
     quasi-Newton iterations of each attempt to converge an eigenpair in the hybrid nonlinear
     eigenvalue solver. `Solver.Eigenmode.MaxIts` no longer limits these iterations, and
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+
   - Removed the `"NSamples"` option of the wave port `"VoltagePath"` and of the
     `"Impedance"` and `"Voltage"` boundary postprocessing paths. Coordinate-path line
     integrals are now exact for the discrete field, so the number of samples no longer has
@@ -74,6 +97,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the boundary-mode `Sn` output, which lacked the 1/μ₀ that converts B to H.
+    [PR 937](https://github.com/awslabs/palace/pull/937).
+  - Fixed S-parameter CSVs being written for driven excitations that are not a single
+    power-normalized port, such as an impressed current. Their port overlaps are not
+    S-parameters.
+    [PR 937](https://github.com/awslabs/palace/pull/937).
   - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
     kinetic inductance makes the line modes slower than bulk waves, above the eigenvalue
     target of the port mode solve, which only sought modes below it. The port modes are

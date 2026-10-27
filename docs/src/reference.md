@@ -197,14 +197,22 @@ transmission line with the wave-port cross section. The boundary modes will be u
 ``\bm{E}`` and ``\bm{H}``, which will only be impedance-like for TEM, TE or TM modes. Additionally,
 users can choose which of the found modes to excite.
 
-We normalize port fields so the total power flow is ``\vert P^{inc} \vert = 1~\mathrm{W}``, where
-
-*Palace* uses peak phasors for this convention, so ``P^{inc}`` is twice the time-averaged power for
-a propagating mode.
+We normalize port fields so the time-averaged incident power is ``\vert P^{inc} \vert = 1~\mathrm{W}``,
+where
 
 ```math
-P^{inc} = V^{inc} [I^{inc}]^*  = \sum_e \int_{\Gamma_e} dS_e \,  \bm{n}_e \cdot (\bm{E}_e^{inc} \times [\bm{H}_e^{inc}]^*).
+P^{inc} = \frac{1}{2} V^{inc} [I^{inc}]^*  = \frac{1}{2} \sum_e \int_{\Gamma_e} dS_e \,  \bm{n}_e \cdot (\bm{E}_e^{inc} \times [\bm{H}_e^{inc}]^*).
 ```
+
+*Palace* uses peak phasors for frequency domain fields, voltages, and currents, so the factor of
+``1/2`` converts the product of the phasors to the time average over one period. The same
+normalization applies to lumped ports, wave ports, and Floquet ports, so that mixed-port
+S-parameters need no additional scaling. For a lumped port with reference resistance
+``R = 50~\Omega``, the incident wave has ``V^{inc} = 10~\mathrm{V}`` and ``I^{inc} = 0.2~\mathrm{A}``
+(peak). In the time domain, the excitation carries unit instantaneous incident power at unit
+pulse amplitude. When a wave port's cross section contains lossy material, the mode power is
+complex and this normalization fixes its magnitude. The transported (real) incident power and
+the S-parameter projection are then exact only to first order in the loss tangent.
 
 Here we have allowed for the possibility that a port can be made of disjoint surface elements ``e``,
 which separately contribute to the Poynting vector.
@@ -214,7 +222,7 @@ microwave networks, circuit ``V`` and ``I`` are not generally well defined and h
 convention [[11, 12]](#References). This is tantamount to relating the circuit characteristic impedance
 
 ```math
-Z = \frac{V^{inc}}{I^{inc}} = \frac{\vert V^{inc} \vert^2}{[P^{inc}]^*},
+Z = \frac{V^{inc}}{I^{inc}} = \frac{\vert V^{inc} \vert^2}{2[P^{inc}]^*},
 ```
 
 to the physical surface (wave) impedance ``Z_s``. We discuss this for each port type below.
@@ -368,11 +376,11 @@ field component on the port.
 **Impedance.** The *power-voltage* characteristic impedance is defined as
 
 ```math
-Z_{PV} = \frac{|V|^2}{P}
+Z_{PV} = \frac{|V|^2}{2P}
 ```
 
-where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
-peak-phasor power flux through the port cross-section, equal to twice the time-averaged power. For
+where ``P = \frac{1}{2}\int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
+time-averaged power flux through the port cross-section for the peak-phasor fields. For
 TEM modes with a voltage path between the two conductors, ``Z_{PV}`` reduces to the conventional TEM
 characteristic impedance. For wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
 specified.
@@ -404,7 +412,7 @@ S_{ij} = \frac{\displaystyle\int_{\Gamma_i}\bm{E}\cdot\bm{E}^{inc}_i\,dS}
 ```
 
 For a resistive excited port, the incident field ``\bm{E}^{inc}`` is normalized so that the
-power integrated over the port boundary is unity, referenced to the port resistance
+time-averaged incident power integrated over the port boundary is unity, referenced to the port resistance
 ``R = R_{ref}``, and the excitation and termination coefficients coincide. A lumped port
 with nonzero inductance and/or capacitance may also be excited. In that case the port's
 full ``R``, ``L``, and ``C`` still enter the system matrix as a physical parallel
@@ -650,15 +658,16 @@ electric and magnetic fields corresponding to eigenmode ``m``, ``\bm{E}_m`` and
 ``\bm{H}_m``, using the formula
 
 ```math
-p_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2} \, L_j I_{mj}^2
+p_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{4} \, L_j |I_{mj}|^2
 ```
 
 where ``p_{mj}\in[-1,1]`` denotes the signed participation ratio for junction ``j`` in mode
 ``m``, ``L_j`` is the provided junction circuit inductance, ``I_ {mj}`` is the peak
-junction current for mode ``m``, and ``\mathcal{E}^{elec}_m`` is the electric energy in
-mode ``m``. The junction current is computed using the mean voltage across the port,
+junction current for mode ``m``, and ``\mathcal{E}^{elec}_m`` is the time-averaged electric
+energy in mode ``m`` (the numerator is likewise the time-averaged energy stored in the
+inductor). The junction current is computed using the mean voltage across the port,
 ``\overline{V}_{mj}``, as ``I_{mj} = \overline{V}_{mj}/Z_{mj}``, where
-``Z_{mj} = 1/(i\omega_m L_j)`` is the impedance of the inductive branch of the lumped
+``Z_{mj} = i\omega_m L_j`` is the impedance of the inductive branch of the lumped
 circuit. The mean port voltage depends on the computed electric field mode and the shape of
 the port:
 
@@ -668,17 +677,21 @@ the port:
  2. *Coaxial ports*:
     ``\overline{V}_{mj} = \frac{1}{2\pi}\int_{\Gamma_j}\frac{\bm{E}_m}{r}\cdot\hat{\bm{r}}_j\,dS``.
 
-Finally, the total electric energy in mode ``m`` is
+Finally, the total time-averaged electric energy in mode ``m`` is
 
 ```math
 \mathcal{E}^{elec}_m
-    = \frac{1}{2} \, \text{Re}\left\{\int_\Omega\bm{D}_m^*\cdot\bm{E}_m\,dV\right\}
-    + \sum_j \frac{1}{2} \, C_jV_{mj}^2
+    = \frac{1}{4} \, \text{Re}\left\{\int_\Omega\bm{D}_m^*\cdot\bm{E}_m\,dV\right\}
+    + \sum_j \frac{1}{4} \, C_j|V_{mj}|^2
 ```
 
 where ``\bm{D}_m = \varepsilon_r\bm{E}_m`` is the electric flux density for mode ``m`` and
 the second term on the right-hand side accounts for any lumped capacitive boundaries with
-nonzero circuit capacitance ``C_j``.
+nonzero circuit capacitance ``C_j``. For a lossless mode with nondispersive storage,
+equipartition gives the total energy ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``, and the
+port-Q estimate below uses it. This holds for weak loss. It can fail for strongly damped,
+open or dispersive modes, and when the port field is not uniform, since the lumped L/C energy
+then differs from the energy stored in the boundary sheet.
 
 The EPR can also be used to estimate mode quality factors due to input-output (I-O) line
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
@@ -690,8 +703,12 @@ Q_{mj} = \frac{\omega_m}{\kappa_{mj}}
 where the port coupling rate ``\kappa_{mj}`` is calculated as
 
 ```math
-\kappa_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2}\,R_j I_{mj}^2 \,.
+\kappa_{mj} = \frac{1}{\mathcal{E}_m} \, \frac{1}{2}\,R_j |I_{mj}|^2
+    = \frac{1}{2\mathcal{E}^{elec}_m} \, \frac{1}{2}\,R_j |I_{mj}|^2 \,,
 ```
+
+the ratio of the time-averaged power dissipated in the port resistance to the total stored
+energy of the mode.
 
 ## Bulk and interface dielectric loss
 
@@ -700,19 +717,19 @@ present in domain ``j`` with associated loss tangent ``\tan{\delta}_j`` is given
 
 ```math
 \frac{1}{Q_j} = p_j \tan{\delta}_j =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \, \tan{\delta}_j \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \, \tan{\delta}_j \,
     \text{Re}\left\{\int_{\Omega_j}\bm{D}^*\cdot\bm{E}\,dV\right\}
 ```
 
-where, as above, ``\mathcal{E}^{elec}`` is the total electric field energy in the domain,
-including the contributions due to capacitive lumped elements.
+where, as above, ``\mathcal{E}^{elec}`` is the total time-averaged electric field energy in
+the domain, including the contributions due to capacitive lumped elements.
 
 Likewise, the quality factor due to surface interface dielectric loss for interface ``j`` is
 given by
 
 ```math
 \frac{1}{Q_j} = p_j \tan{\delta}_j =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \, t_j\tan{\delta}_j \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \, t_j\tan{\delta}_j \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{D}^*\cdot\bm{E}\,dS\right\}
 ```
 
@@ -729,7 +746,7 @@ quality factor for interface ``j`` is given by
 
 ```math
 \frac{1}{Q^{MA}_j} =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \,
     \frac{t_j\tan{\delta}_j}{\varepsilon_{r,j}^{MA}} \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{E}_n^*\cdot\bm{E}_n\,dS\right\}
 ```
@@ -738,7 +755,7 @@ quality factor for interface ``j`` is given by
 
 ```math
 \frac{1}{Q^{MS}_j} =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \,
     \frac{t_j\tan{\delta}_j(\varepsilon_{r,j}^{S})^2}{\varepsilon_{r,j}^{MS}} \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{E}_n^*\cdot\bm{E}_n\,dS\right\}
 ```
@@ -747,7 +764,7 @@ quality factor for interface ``j`` is given by
 
 ```math
 \frac{1}{Q^{SA}_j} =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \,
     t_j\tan{\delta}_j\left(\varepsilon_{r,j}^{SA} \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{E}_t^*\cdot\bm{E}_t\,dS\right\}
     + \frac{1}{\varepsilon_{r,j}^{SA}} \,

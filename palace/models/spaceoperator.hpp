@@ -117,8 +117,11 @@ private:
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
-  // Helper functions for excitation vector assembly.
-  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
+  // Helper functions for excitation vector assembly. Lumped port excitations carry unit
+  // time-averaged incident power in the time-harmonic RHS and unit instantaneous power in
+  // the time domain one (see LumpedPortOperator::AddExcitationBdrCoefficients). Impressed
+  // current sources carry unit current.
+  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS, bool time_harmonic);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
   // Helper functions to build the preconditioner matrix. The type of a3 selects the

@@ -1084,6 +1084,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     check_complex(reduced_port.I_RLC[i], full_port.I_RLC[i]);
   }
   check_complex(reduced_port.S, full_port.S);
+  // Pin the physical convention independently of the shared implementation.
+  const auto &port = space_op.GetLumpedPortOp().GetPort(1);
+  check_complex(full_port.S,
+                full_port.V / std::sqrt(2.0 * port.GetExcitationRefResistance()) - 1.0);
+  CHECK(close(full_port.capacitor_energy, 0.25 * port.C * std::norm(full_port.V)));
+  CHECK(close(full_port.inductor_energy, 0.25 * port.L * std::norm(full_port.I_RLC[1])));
   CHECK(close(reduced_port.inductor_energy, full_port.inductor_energy));
   CHECK(close(reduced_port.capacitor_energy, full_port.capacitor_energy));
   CHECK(close(reduced.lumped_port_inductor_energy, full.lumped_port_inductor_energy));
@@ -1251,6 +1257,17 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CAPTURE(norm_ref, norm_diff);
     REQUIRE(norm_ref > 0.0);
     CHECK(norm_diff <= 1.0e-8 * norm_ref);
+    GridFunction E(space_op.GetNDSpace(), true), E_ref(space_op.GetNDSpace(), true);
+    E.Real().SetFromTrueDofs(u.Real());
+    E.Imag().SetFromTrueDofs(u.Imag());
+    E_ref.Real().SetFromTrueDofs(u_ref.Real());
+    E_ref.Imag().SetFromTrueDofs(u_ref.Imag());
+    for (const auto &[idx, port] : space_op.GetWavePortOp())
+    {
+      const auto s_ref = port.GetSParameter(E_ref);
+      const auto s = port.GetSParameter(E);
+      CHECK(std::abs(s - s_ref) <= 1.0e-8 * std::max(1.0, std::abs(s_ref)));
+    }
   };
 
   // Port-space pairing path (self-checked against the assembled vectors on first use, and

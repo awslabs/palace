@@ -17,6 +17,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -250,7 +251,10 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
     break;
   }
 
-  // (i·k_n·M + W)·e should equal −iω·s_full = RHS₂/2 for the excited port.
+  // (i·k_n·M + W)·e should equal −iω·s_full for the excited port. The excitation vector
+  // RHS₂ = −2iω·√2·s_full is that of the incident wave, which is √2 times the unit-overlap
+  // mode so that it carries unit time-averaged power (see
+  // WavePortOperator::AddExcitationBdrCoefficients).
   ComplexVector We(n), rhs(n), expected(n), diff(n);
   We.UseDevice(true);
   rhs.UseDevice(true);
@@ -263,7 +267,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   bool nnz = space_op.GetExcitationVector2(exc_idx, omega, rhs);
   REQUIRE(nnz);
   expected = 0.0;
-  linalg::AXPY(std::complex<double>(0.5, 0.0), rhs, expected);
+  linalg::AXPY(std::complex<double>(0.5 / electromagnetics::UnitPowerAmplitude(true), 0.0),
+               rhs, expected);
 
   diff = We;
   linalg::AXPY(std::complex<double>(-1.0, 0.0), expected, diff);
@@ -276,6 +281,24 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   // sparse local-mass modal action against the −W_scalar term (assembled via different code
   // paths), and (iv) MPI reductions.
   CHECK(rel_err < 1.0e-8);
+
+  // The stored mode has unit overlap, not 1 W. Construct the 1-W incident wave
+  // explicitly and test the assembled source's work, without using the amplitude helper.
+  ComplexVector incident(e);
+  incident *= std::numbers::sqrt2;
+  const double source_power = std::abs(linalg::Dot(comm, incident, rhs)) / (4.0 * omega);
+  CHECK_THAT(iodata.units.Dimensionalize<Units::ValueType::POWER>(source_power),
+             WithinRel(1.0, 1.0e-8));
+  GridFunction incident_gf(nd_fespace, true);
+  incident_gf.Real().SetFromTrueDofs(incident.Real());
+  incident_gf.Imag().SetFromTrueDofs(incident.Imag());
+  for (const auto &[idx, port] : wp_op)
+  {
+    if (port.excitation == exc_idx)
+    {
+      CHECK_THAT(std::abs(port.GetSParameter(incident_gf)), WithinRel(1.0, 1.0e-8));
+    }
+  }
 }
 
 // The complex-ω (eigenmode) correction reconstructs n×H with full complex kₙ; the real-ω
@@ -847,4 +870,47 @@ TEST_CASE("WavePortOperator-InteriorPECOnNonconformingPorts",
   CHECK(counts[0] > 0);
   CHECK(counts[1] > 0);
   CHECK(counts[2] > 0);
+}
+
+TEST_CASE("Floquet incident wave has one watt time-averaged power",
+          "[floquetport][timeaverage][Serial][Parallel]")
+{
+  const auto dir = fs::path(PALACE_TEST_DATA_DIR) / "regression/input/floquet_lumped";
+  std::ifstream input(dir / "floquet_lumped.json");
+  auto setup = json::parse(input, nullptr, true, true);
+  setup["Model"]["Mesh"] = (dir / setup["Model"]["Mesh"].get<std::string>()).string();
+  setup["Problem"]["Output"] = "";
+  IoData iodata(setup, false);
+  const auto comm = Mpi::World();
+  auto meshes = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, meshes);
+  const double omega = iodata.solver.driven.sample_f.front();
+  space_op.GetFloquetPortOp().Initialize(omega);
+  const auto &port = space_op.GetFloquetPortOp().GetPort(1);
+  const auto &mesh = space_op.GetNDSpace().GetParMesh();
+  auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), port.GetAttrList());
+  const double length = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  const double area = mesh::GetSurfaceArea(mesh, marker) * length * length;
+  // A normal-incidence vacuum plane wave: P = A |E_peak|² / (2 Z0) = 1 W.
+  const double amplitude = iodata.units.Nondimensionalize<Units::ValueType::FIELD_E>(
+      std::sqrt(2.0 * electromagnetics::Z0_ / area));
+  const auto order = std::find_if(port.GetOrders().begin(), port.GetOrders().end(),
+                                  [](const auto &o) { return o.m == 0 && o.n == 0; });
+  REQUIRE(order != port.GetOrders().end());
+  mfem::Vector field(order->e_pol[1]);  // TM at normal incidence.
+  field *= amplitude;
+  mfem::VectorConstantCoefficient coeff(field);
+  GridFunction E(space_op.GetNDSpace(), true);
+  E.Real().ProjectCoefficient(coeff);
+  E.Imag() = 0.0;
+  const auto S = port.GetAllSParameters(E, false).at({0, 0, false});
+  CHECK_THAT(S.real(), WithinRel(1.0, 1.0e-10));
+  CHECK_THAT(S.imag(), WithinAbs(0.0, 1.0e-10));
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize()), rhs;
+  E.Real().GetTrueDofs(e.Real());
+  e.Imag() = 0.0;
+  REQUIRE(space_op.GetExcitationVector2(1, omega, rhs));
+  CHECK_THAT(iodata.units.Dimensionalize<Units::ValueType::POWER>(
+                 std::abs(linalg::Dot(comm, e, rhs)) / (4.0 * omega)),
+             WithinRel(1.0, 1.0e-10));
 }

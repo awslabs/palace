@@ -9,11 +9,13 @@
 // long-tests CI workflow.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numbers>
 #include <string>
 #include <vector>
@@ -23,6 +25,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/constants.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace
@@ -65,6 +68,50 @@ palace::test::CustomCheck TestFarfield(double rtol)
       const double thresh = rtol * std::max(m_a, m_r);
       CHECK(std::abs(m_a - m_r) <= thresh);
     }
+  };
+}
+
+// The half-wave dipole fixture samples 11 rings uniformly in cos(theta), with
+// NSample=100 plus an extra off-grid direction. Integrate ring-averaged intensity
+// with Simpson's rule and compare radiation to accepted power, independently of refs.
+palace::test::CustomCheck TestDipolePowerBalance(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &path)
+  {
+    TestFarfield(rtol)(actual, reference, path);
+    REQUIRE(actual.n_cols() == 10);
+    std::array<double, 11> intensity{};
+    std::array<int, 11> count{};
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      const double u = std::cos(actual[2].data[row] * std::numbers::pi / 180.0);
+      const int ring = static_cast<int>(std::lround(5.0 * (u + 1.0)));
+      if (std::abs(u - (0.2 * ring - 1.0)) > 1.0e-8)
+      {
+        continue;  // The extra ThetaPhis sample is not part of the quadrature.
+      }
+      double field_sq = 0.0;
+      for (int col = 4; col < 10; col++)
+      {
+        field_sq += actual[col].data[row] * actual[col].data[row];
+      }
+      intensity[ring] += field_sq / (2.0 * palace::electromagnetics::Z0_);
+      count[ring]++;
+    }
+    double radiated = 0.0;
+    for (int ring = 0; ring <= 10; ring++)
+    {
+      REQUIRE(count[ring] > 0);
+      const int weight = (ring == 0 || ring == 10) ? 1 : ((ring % 2) ? 4 : 2);
+      radiated += weight * intensity[ring] / count[ring];
+    }
+    radiated *= 2.0 * std::numbers::pi * 0.2 / 3.0;
+    palace::TableWithCSVFile scattering((path.parent_path() / "port-S.csv").string(), true);
+    REQUIRE(scattering.table.n_rows() == 1);
+    REQUIRE(scattering.table[1].header_text == "|S[1][1]| (dB)");
+    const double accepted = 1.0 - std::pow(10.0, scattering.table[1].data[0] / 10.0);
+    CHECK_THAT(radiated, Catch::Matchers::WithinRel(accepted, rtol));
   };
 }
 
@@ -226,11 +273,12 @@ constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceD
 
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
 // (phase isn't reproducible). NaN entries (evanescent modes) and signals below
-// -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
+// -200 dB (negligible) count as matches. These fixtures are lossless and include
+// all propagating channels; include the sibling lumped/wave CSV in power closure.
 palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
 {
   return [rtol, atol](palace::Table &actual, palace::Table &reference,
-                      const std::filesystem::path &)
+                      const std::filesystem::path &path)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -252,6 +300,50 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
         INFO("row " << r + 1 << " column '" << hdr << "'");
         CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
                               Catch::Matchers::WithinAbs(v_ref, atol));
+      }
+    }
+
+    std::unique_ptr<palace::TableWithCSVFile> other_ports;
+    const auto other_path = path.parent_path() / "port-S.csv";
+    if (std::filesystem::is_regular_file(other_path))
+    {
+      other_ports = std::make_unique<palace::TableWithCSVFile>(other_path.string(), true);
+      REQUIRE(other_ports->table.n_rows() == actual.n_rows());
+    }
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      std::map<std::string, double> power;
+      auto accumulate = [&](palace::Table &table)
+      {
+        for (const auto &column : table)
+        {
+          const auto &header = column.header_text;
+          if (header.rfind("|S[", 0) != 0 || header.find("(dB)") == std::string::npos)
+          {
+            continue;
+          }
+          const auto start = header.rfind('[');
+          const auto end = header.find(']', start);
+          REQUIRE(start != std::string::npos);
+          REQUIRE(end != std::string::npos);
+          const double value = column.data[row];
+          if (!std::isnan(value))  // Evanescent orders carry no real power.
+          {
+            power[header.substr(start + 1, end - start - 1)] +=
+                std::pow(10.0, value / 10.0);
+          }
+        }
+      };
+      accumulate(actual);
+      if (other_ports)
+      {
+        accumulate(other_ports->table);
+      }
+      REQUIRE_FALSE(power.empty());
+      for (const auto &[excitation, sum] : power)
+      {
+        INFO("row " << row << ", excitation " << excitation);
+        CHECK_THAT(sum, Catch::Matchers::WithinAbs(1.0, rtol));
       }
     }
   };
@@ -325,7 +417,7 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
 }
 
 // Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
-// port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
+// port's own excitation, Z[i][i] = |V|^2 / (2 conj(P)) must agree with the input impedance
 // implied by the reflection coefficient in the sibling port-S.csv,
 //   Z_PV (1 + S_ii) / (1 - S_ii).
 // V and P are integrals of the total field while S_ii is a modal overlap, so the two
@@ -1326,10 +1418,10 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
-// Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
-// normalization bridge for cross-type observations. Use custom checks to verify power
-// balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
-// entries handled as in dielectric_grating.
+// Mixed Floquet + lumped/wave port S-parameter tests: all port families share the unit
+// time-averaged incident power normalization, so cross-type S needs no bridge factor. Use
+// custom checks to verify power balance (sum |S|^2 = 1 for the lossless structure). Floquet
+// NaN and negligible entries handled as in dielectric_grating.
 TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1361,6 +1453,7 @@ TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 5.0e-9;
+  opts.custom_checks["farfield-rE.csv"] = TestDipolePowerBalance(opts.rtol);
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole.json",
                                   "antenna_halfwave_dipole", opts);
 }

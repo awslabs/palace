@@ -292,7 +292,8 @@ Setting $\bm{E}_1 = \bm{e}_j$ fixes the port-mode normalization:
 *Palace* scales ``\bm{e}_j`` so that ``\int_{\Gamma_j} |\bm{e}_j|^2 \, dS = |Z_R| \sum_e W_e / L_e``,
 summed over the port's lumped elements with widths ``W_e`` and lengths ``L_e``. For a single
 rectangular element this corresponds to a port voltage ``V_j = \sqrt{|Z_R|}``, i.e. a mode carrying
-unit power referenced to ``Z_R``.
+unit raw power overlap (0.5 W time-averaged) referenced to ``Z_R``. The driven incident wave
+is ``\sqrt{2}`` times this mode.
 
 The [reference](../reference.md) discusses the relationship between physical surface impedance on a
 port ``Z_s`` and the circuit characteristic impedance ``Z``. For ports that are not purely resistive
@@ -317,11 +318,10 @@ reference frequency taken as the center of the sweep band. This field is general
 unlike a lumped port — it contributes up to two columns to the basis (its real and imaginary parts,
 each retained only if it survives the orthogonalization tolerance).
 
-Second, the unit-power normalization is imposed slightly differently. The cross-section eigensolve
-already normalizes ``\bm{w}_p`` to carry unit power (``|\bm{E}\times\bm{H}^*|`` integrated over the
-port), so the wave-port boundary enters the weight matrix with a flat weight at the same nominal
-reference impedance ``Z_R``. The end state is the same — each included port mode carries unit
-power referenced to ``Z_R`` — but for wave ports the normalization comes from the eigenproblem rather
+Second, the unit-overlap normalization is imposed slightly differently. The cross-section eigensolve
+already normalizes ``\bm{w}_p`` to unit raw power overlap (``|\int (\bm{E}\times\bm{H}^*)\cdot\bm{n}\,dS|=1``), so the wave-port boundary enters the weight matrix with a flat weight at the same nominal
+reference impedance ``Z_R``. The end state is the same — each included port mode has unit
+reference overlap, not a 1 W time-averaged physical excitation — but for wave ports the normalization comes from the eigenproblem rather
 than from a geometric factor.
 
 Note that this orthogonalization fixes the wave-port mode *shape* at the single reference frequency.

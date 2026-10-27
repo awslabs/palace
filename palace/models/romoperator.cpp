@@ -27,6 +27,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/aaa.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -1539,8 +1540,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   RHSr.setZero();
   if (has_RHS2 && wp_pairing_ok && space_op.GetFloquetPortOp().Empty())
   {
-    // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
-    // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), projected
+    // Wave-port excitation RHS2(ω) = −2iω sqrt(2) Σ_p s_full,p over the ports excited by
+    // this excitation index (see WavePortOperator::AddExcitationBdrCoefficients), projected
     // from the cached port-space pairings Vᵀs_full,p at this frequency. Pairings are cached
     // for active ports only, so an excitation that also drives an inactive port uses the
     // assembled excitation vector instead.
@@ -1560,7 +1561,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
         break;
       }
-      RHSr += std::complex<double>(0.0, -2.0 * omega) * it->second;
+      RHSr += std::complex<double>(0.0, -2.0 * omega *
+                                            electromagnetics::UnitPowerAmplitude(true)) *
+              it->second;
     }
   }
   else if (has_RHS2)
