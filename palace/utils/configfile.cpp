@@ -443,6 +443,62 @@ int ParsePortExcitation(const json &port, int index)
   }
 }
 
+// Group the excited sources (excitation != 0) of the given index-keyed source maps by
+// excitation index.
+template <typename... Sources>
+std::map<int, std::vector<int>> GroupByExcitation(const Sources &...sources)
+{
+  std::map<int, std::vector<int>> groups;
+  auto add = [&groups](const auto &map)
+  {
+    for (const auto &[idx, data] : map)
+    {
+      if (data.excitation != 0)
+      {
+        groups[data.excitation].emplace_back(idx);
+      }
+    }
+  };
+  (add(sources), ...);
+  return groups;
+}
+
+// Whether every excitation drives a single source (the S-parameter or inductance-matrix
+// case).
+bool SingleSourceExcitations(const std::map<int, std::vector<int>> &groups)
+{
+  return !groups.empty() &&
+         std::ranges::all_of(groups, [](const auto &x) { return x.second.size() == 1; });
+}
+
+// For single-source excitations the excitation index must equal the source index so a
+// matrix column is unambiguous; a lone "Excitation": true (1) is also accepted and upgraded
+// to the source index.
+bool SingleSourceExcitationsMatchIndices(const std::map<int, std::vector<int>> &groups)
+{
+  const auto &ext1 = *groups.begin();
+  return (groups.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+         std::ranges::all_of(groups, [](const auto &x) { return x.first == x.second[0]; });
+}
+
+// Upgrade excitation = 1 to the source index, once the excitations are known to be single
+// and consistent.
+template <typename... Sources>
+void UpgradeUnitExcitation(Sources &...sources)
+{
+  auto upgrade = [](auto &map)
+  {
+    for (auto &[idx, data] : map)
+    {
+      if (data.excitation == 1)
+      {
+        data.excitation = idx;
+      }
+    }
+  };
+  (upgrade(sources), ...);
+}
+
 RationalImpedanceData::RationalImpedanceData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
@@ -914,6 +970,7 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 }
 FluxLoopData::FluxLoopData(const json &fluxloop)
 {
+  int index = fluxloop.at("Index");  // Required
   MFEM_VERIFY(fluxloop.contains("FilmAttributes"),
               "Missing \"FilmAttributes\" for \"FluxLoop\" boundary!");
   film_attributes = fluxloop.at("FilmAttributes").get<std::vector<int>>();
@@ -933,6 +990,15 @@ FluxLoopData::FluxLoopData(const json &fluxloop)
   pec_lperp = fluxloop.value("PecPenetrationDepth", pec_lperp);
   MFEM_VERIFY(pec_lperp > 0.0,
               "\"PecPenetrationDepth\" for \"FluxLoop\" boundary must be positive!");
+
+  // Each loop is its own excitation unless told otherwise. The drive is normalized to the
+  // loop's fluxoid, so an excited loop with a zero fluxoid would be a zero right-hand side.
+  excitation =
+      fluxloop.contains("Excitation") ? ParsePortExcitation(fluxloop, index) : index;
+  MFEM_VERIFY(excitation == 0 ||
+                  std::ranges::any_of(flux_amounts, [](double phi) { return phi != 0.0; }),
+              "\"FluxLoop\" boundary " << index
+                                       << " is excited but has zero \"FluxAmounts\"!");
 
   auto direction_it = fluxloop.find("Direction");
   if (direction_it != fluxloop.end())
@@ -1036,56 +1102,17 @@ BoundaryData::BoundaryData(const json &boundaries)
 
   // Normalize excitation indices: upgrade excitation=1 to excitation=port_idx when
   // calculating S-parameters (each port has a single excitation) and indices are valid.
+  // Flux loops (magnetostatic) form their own excitation space, normalized the same way for
+  // the inductance matrix.
+  if (auto groups = GroupByExcitation(lumpedport, waveport, floquetport);
+      SingleSourceExcitations(groups) && SingleSourceExcitationsMatchIndices(groups))
   {
-    std::map<int, std::vector<int>> excitation_map;
-    for (const auto &[idx, data] : lumpedport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    for (const auto &[idx, data] : waveport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    for (const auto &[idx, data] : floquetport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    excitation_map.erase(0);  // zeroth index is unexcited.
-    bool calc_s_params = std::ranges::all_of(excitation_map, [](const auto &x)
-                                             { return x.second.size() == 1; });
-    if (calc_s_params && !excitation_map.empty())
-    {
-      // Only normalize if excitation indices are valid (match port indices or are 1).
-      const auto &ext1 = *excitation_map.begin();
-      bool valid = (excitation_map.size() == 1 &&
-                    (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-                   std::ranges::all_of(excitation_map, [](const auto &x)
-                                       { return x.first == x.second[0]; });
-      if (valid)
-      {
-        for (auto &[port_idx, lp] : lumpedport)
-        {
-          if (lp.excitation == 1)
-          {
-            lp.excitation = port_idx;
-          }
-        }
-        for (auto &[port_idx, wp] : waveport)
-        {
-          if (wp.excitation == 1)
-          {
-            wp.excitation = port_idx;
-          }
-        }
-        for (auto &[port_idx, fp] : floquetport)
-        {
-          if (fp.excitation == 1)
-          {
-            fp.excitation = port_idx;
-          }
-        }
-      }
-    }
+    UpgradeUnitExcitation(lumpedport, waveport, floquetport);
+  }
+  if (auto groups = GroupByExcitation(fluxloop);
+      SingleSourceExcitations(groups) && SingleSourceExcitationsMatchIndices(groups))
+  {
+    UpgradeUnitExcitation(fluxloop);
   }
 
   // Store all unique boundary attributes.
@@ -1627,33 +1654,31 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     }
   }
 
-  // Check excitation indices match port indices for S-parameter calculation.
-  std::map<int, std::vector<int>> excitation_map;
-  for (const auto &[idx, data] : boundaries.lumpedport)
+  // Check excitation indices match port indices for S-parameter calculation, and flux loop
+  // indices for the inductance matrix.
+  if (auto groups = GroupByExcitation(boundaries.lumpedport, boundaries.waveport,
+                                      boundaries.floquetport);
+      SingleSourceExcitations(groups) && !SingleSourceExcitationsMatchIndices(groups))
   {
-    excitation_map[data.excitation].emplace_back(idx);
+    errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
   }
-  for (const auto &[idx, data] : boundaries.waveport)
+  if (auto groups = GroupByExcitation(boundaries.fluxloop);
+      SingleSourceExcitations(groups) && !SingleSourceExcitationsMatchIndices(groups))
   {
-    excitation_map[data.excitation].emplace_back(idx);
+    errors << "\"Excitation\" must match \"Index\" for single flux loops to avoid "
+              "ambiguity\n";
   }
-  for (const auto &[idx, data] : boundaries.floquetport)
+  else
   {
-    excitation_map[data.excitation].emplace_back(idx);
-  }
-  excitation_map.erase(0);
-  bool calc_s_params = std::ranges::all_of(excitation_map, [](const auto &x)
-                                           { return x.second.size() == 1; });
-  if (calc_s_params && !excitation_map.empty())
-  {
-    const auto &ext1 = *excitation_map.begin();
-    bool valid =
-        (excitation_map.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-        std::ranges::all_of(excitation_map,
-                            [](const auto &x) { return x.first == x.second[0]; });
-    if (!valid)
+    // A flux loop excitation is a magnetostatic source under its own index, next to the
+    // surface current sources, so the two must not collide in the outputs.
+    for (const auto &[excitation, loops] : groups)
     {
-      errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
+      if (boundaries.current.contains(excitation))
+      {
+        errors << "FluxLoop \"Excitation\" " << excitation
+               << " collides with SurfaceCurrent \"Index\" " << excitation << "\n";
+      }
     }
   }
 

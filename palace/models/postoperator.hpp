@@ -190,6 +190,9 @@ protected:
   std::optional<CeedParaViewDataCollection> paraview;
   std::optional<CeedParaViewDataCollection> paraview_bdr;
 
+  // Largest cycle written, so the final save never overwrites a step written out of order.
+  int paraview_max_cycle = -1;
+
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
   const std::size_t pad_digits_default = 6;

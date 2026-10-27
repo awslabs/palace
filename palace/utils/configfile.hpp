@@ -798,6 +798,12 @@ public:
   // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet).
   double pec_lperp = 1.0e-4;
 
+  // Excitation index, as for ports: loops sharing a positive index are driven together
+  // (each at its own flux_amounts) in one magnetostatic solve, 0 holds the loop at zero
+  // fluxoid in every excitation. Defaults to the loop index, so each loop is its own
+  // excitation and the inductance matrix is extracted.
+  int excitation = 0;
+
   FluxLoopData() = default;
   FluxLoopData(const json &fluxloop);
 };

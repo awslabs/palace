@@ -26,8 +26,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the total inductance is read from the field energy.
     [PR 929](https://github.com/awslabs/palace/pull/929).
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
-    London magnetostatic solve SPD-solvable by AMS.
-    [PR 929](https://github.com/awslabs/palace/pull/929).
+    London magnetostatic solve SPD-solvable by AMS. Magnetostatic simulations with
+    `Superconductor` or `FluxLoop` boundaries also enable
+    `Solver.Linear.MGAuxiliarySmoother` by default. SchemaVer 3-0-1
+    [PR 929](https://github.com/awslabs/palace/pull/929),
+    [PR 1051](https://github.com/awslabs/palace/pull/1051).
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
@@ -41,6 +44,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     differentiation tool, enabled with a new `PALACE_WITH_ENZYME=ON` build option or the
     `+enzyme` Spack variant (used only to build the unit tests).
     [PR 901](https://github.com/awslabs/palace/pull/901).
+  - Added `Boundaries.FluxLoop[].Excitation`, the port excitation convention for flux
+    loops: loops sharing a positive excitation index are driven together in one
+    magnetostatic solve, each at its own `FluxAmounts`, and `0` holds a loop at zero
+    fluxoid. With grouped excitations `terminal-Phi.csv` reports the stored energy and loop
+    fluxoids of each excitation instead of the inductance matrix, and the ParaView fields
+    are saved per excitation. The default, each loop its own excitation, is unchanged.
+    SchemaVer 3-1-0.
+    [PR 979](https://github.com/awslabs/palace/pull/979).
 
 #### Interface Changes
 
@@ -80,6 +91,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     total-field impedance was computed as `|V|² / P` instead of `|V|² / conj(P)`, giving
     `conj(Z)`. `Re{Z}` and `Z_PV` are unchanged.
     [PR 1066](https://github.com/awslabs/palace/pull/1066).
+  - Fixed the final ParaView save (mesh partition and error indicator) overwriting a saved
+    field when sources are written out of index order, for example a magnetostatic
+    `SurfaceCurrent` index above a `FluxLoop` index.
+    [PR 979](https://github.com/awslabs/palace/pull/979).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
