@@ -92,10 +92,13 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
 !!! warning "Finite element considerations"
 
     Changing mesh units requires additional rescaling for fields defined on
-    H(curl) and H(div) spaces to convert them to proper physical units. This is a
-    function of the length scales inherent to the reference element transformations
-    for Nédélec and Raviart Thomas spaces, used for H(curl) and H(div) respectively.
-    See the `ScaleGridFunctions` function in `PostOperator` for details.
+    H(curl), H(div), and L2 spaces with `INTEGRAL` map type (such as the out-of-plane
+    magnetic flux density in 2D) to convert them to proper physical units. Scaling the
+    mesh by ``L`` scales the values of these fields mapped from the reference element by
+    ``L^{-p}``, with ``p = 1`` for H(curl) (Nédélec), ``p = d - 1`` for H(div)
+    (Raviart-Thomas), and ``p = d`` for L2 with `INTEGRAL` map type, for a mesh of
+    dimension ``d``. See `ScaleGridFunction` in `palace/models/postoperator.cpp` for
+    details.
 
 ## Style guide
 

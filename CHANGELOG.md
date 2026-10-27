@@ -148,10 +148,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `SurfaceCurrent` index above a `FluxLoop` index.
     [PR 979](https://github.com/awslabs/palace/pull/979).
   - Fixed the ParaView and grid function output of the out-of-plane magnetic flux density
-    `B` of 2D simulations and boundary modes, and of the fields computed from it (`U_m`,
-    `S`, `J_s`), which were scaled by `L0 / Lc`, the mesh length unit over the reference
-    length: off by orders of magnitude for meshes in micrometers with the default `Lc`. The
-    CSV postprocessing was not affected.
+    `B` of 2D simulations and boundary modes, which was scaled by `L0 / Lc`, the mesh length
+    unit over the reference length, along with the surface current `J_s` (and the Poynting
+    vector `S` of 2D simulations), while the magnetic energy density `U_m` was scaled by
+    `(L0 / Lc)^2`. This put them off by orders of magnitude for meshes in micrometers with
+    the default `Lc`. The CSV postprocessing was not affected.
     [PR 1098](https://github.com/awslabs/palace/pull/1098).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
