@@ -2173,6 +2173,61 @@ TEST_CASE("cavity2d_eigenmode_slp", "[Serial][Parallel][Regression]")
   palace::test::RunRegressionCase("cavity2d", "eigenmode_slp.json", "eigenmode_slp", opts);
 }
 
+// More modes requested than converge in a single iteration of the eigenvalue solver
+// ("MaxIts": 1): the converged modes are postprocessed, with a warning, rather than
+// aborting. Their leading modes are those of cavity2d_eigenmode.
+TEST_CASE("cavity2d_eigenmode_partial", "[Serial][Parallel][Regression]")
+{
+  constexpr std::size_t num_requested = 20;  // config["Solver"]["Eigenmode"]["N"]
+  constexpr std::size_t num_compared = 5;
+  constexpr double rtol = 1.0e-4;
+  palace::test::RegressionOptions opts;
+  opts.rtol = rtol;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.max_rows = num_compared;
+  opts.min_rows = num_compared;
+  // The error indicators accumulate over the converged modes, whose number depends on the
+  // eigenvalue solver.
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.linear_solver_policy = force_default_solver;
+  opts.custom_checks["eig.csv"] =
+      [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    // Fewer modes than requested converged, and all of them are written.
+    CHECK(actual.n_rows() >= num_compared);
+    CHECK(actual.n_rows() < num_requested);
+    auto col = [](palace::Table &t, const std::string &key)
+    {
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    const std::size_t n_rows =
+        std::min({actual.n_rows(), reference.n_rows(), num_compared});
+    for (const std::string key : {"Re{f}", "Im{f}", "Q"})
+    {
+      const int a = col(actual, key), r = col(reference, key);
+      REQUIRE(a >= 0);
+      REQUIRE(r >= 0);
+      for (std::size_t i = 0; i < n_rows; i++)
+      {
+        INFO("column '" << key << "', row " << i + 1);
+        CHECK_THAT(actual[a].data[i],
+                   Catch::Matchers::WithinRel(reference[r].data[i], rtol));
+      }
+    }
+  };
+  palace::test::RunRegressionCase("cavity2d", "eigenmode_partial.json", "eigenmode_partial",
+                                  opts);
+}
+
 // Coarse 2D driven tolerances (partition- and platform-sensitive).
 TEST_CASE("cavity2d_driven", "[Serial][Parallel][GPU][Regression]")
 {

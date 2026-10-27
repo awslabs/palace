@@ -169,9 +169,10 @@ regions, the fraction of the field energy of each mode in the PML regions is wri
 problem. Clusters of such modes near the target slow down the convergence of the eigenvalue
 solver, so that it is best to request few modes
 ([`config["Solver"]["Eigenmode"]["N"]`](../config/reference.md#config-solver-eigenmode-n))
-with a `"Target"` close to the modes of interest and a moderate `"Tol"`, and to increase
-the dimension `"MaxSize"` of the subspace of the eigenvalue solver when more modes are
-needed.
+with a `"Target"` close to the modes of interest and a moderate `"Tol"`. When more modes are
+needed, the maximum number of iterations of the eigenvalue solver (`"MaxIts"`) must allow for
+the many restarts which such clusters require: if fewer than `"N"` modes converge within
+`"MaxIts"` iterations, the converged modes are written, with a warning.
 
 The total field energies written to `domain-E.csv` exclude the PML regions. In the PML
 regions, the field energies of the domains of

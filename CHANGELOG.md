@@ -138,6 +138,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     longer cracked gives the average of the fluxes on the two sides, instead of the sum of
     the fluxes of the two faces of the cracked mesh.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
+    `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
+    instead of aborting without output.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Bug Fixes
 

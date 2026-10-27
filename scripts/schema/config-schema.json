@@ -2606,7 +2606,7 @@
         },
         "N": {
           "type": "integer",
-          "description": "Number of eigenvalues to compute.",
+          "description": "Number of eigenvalues to compute. If fewer modes converge within `\"MaxIts\"` iterations, the converged modes are postprocessed, with a warning.",
           "exclusiveMinimum": 0,
           "default": 1
         },
