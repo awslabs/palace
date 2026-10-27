@@ -428,25 +428,35 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
   }
 
   // Gradient-space operator GᵀK̃G for the distributive-relaxation smoother: the shift and
-  // sheet terms lift the gradients off the curl-curl kernel, so they must be smoothed.
+  // sheet terms lift the gradients off the curl-curl kernel, so they must be smoothed. On
+  // spaces broken across two-sided films, the sheet terms are GᵀSG with the broken sheet
+  // matrix S, which carries both the one-sided and the two-sided sheets.
   if (mg_smooth_aux_)
   {
-    BilinearForm a_aux(GetH1Space());
+    const auto &h1_fespaces_aux = GetSolutionH1Spaces();
+    BilinearForm a_aux(h1_fespaces_aux.GetFinestFESpace());
     a_aux.AddDomainIntegrator<DiffusionIntegrator>(mass_func);
-    if (!fbr.empty())
+    if (!fbr.empty() && !IsBroken())
     {
       a_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fbr);
     }
-    auto a_aux_vec = a_aux.Assemble(GetH1Spaces(), skip_zeros);
+    auto a_aux_vec = a_aux.Assemble(h1_fespaces_aux, skip_zeros);
     const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
     auto marker = mesh::BdrAttrToMarker(pmesh, pc_dbc_attr, true);
-    h1_dbc_tdof_lists.resize(GetH1Spaces().GetNumLevels());
-    for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
+    h1_dbc_tdof_lists.resize(h1_fespaces_aux.GetNumLevels());
+    for (std::size_t l = 0; l < h1_fespaces_aux.GetNumLevels(); l++)
     {
-      const auto &h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);
-      h1_fespace_l.Get().GetEssentialTrueDofs(marker, h1_dbc_tdof_lists[l]);
+      const auto &h1_fespace_l = h1_fespaces_aux.GetFESpaceAtLevel(l);
+      h1_fespace_l.GetEssentialTrueDofs(marker, h1_dbc_tdof_lists[l]);
       auto A_l = std::make_unique<ParOperator>(std::move(a_aux_vec[l]), h1_fespace_l);
       A_l->SetEssentialTrueDofs(h1_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      if (IsBroken())
+      {
+        const auto &G = dynamic_cast<const mfem::HypreParMatrix &>(
+            GetSolutionNDSpaces().GetDiscreteInterpolatorAtLevel(l, h1_fespace_l));
+        std::unique_ptr<mfem::HypreParMatrix> GtSG(mfem::RAP(&GetBrokenSheetMatrix(l), &G));
+        A_l->AddParallelMatrix(*GtSG);
+      }
       K->AddAuxiliaryOperator(std::move(A_l));
     }
   }
