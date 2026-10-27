@@ -3833,7 +3833,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(fit.header ==
         std::vector<std::string>{"source", "evaluation", "m", "exc", "max loop share",
                                  "response-weighted loop share", "remainder patches",
-                                 "fallback patches", "weighted claim length (m)"});
+                                 "fallback patches", "weighted claim length (m)",
+                                 "withheld domain correction (J)"});
   REQUIRE(fit.rows.size() == 6);
   std::map<int, std::array<int, 2>> fit_counts;  // mode -> (remainder, fallback)
   std::map<int, double> fit_max_share;

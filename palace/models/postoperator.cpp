@@ -2501,7 +2501,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
   // evaluation (0 fixed trace / 1 fixed flux on the raw field; 2 self-consistent on the
   // corrected field), the Maxwell key "f (GHz)" / "m" and "exc", max loop share,
   // response-weighted loop share, remainder patches, fallback patches, weighted claim
-  // length (m) (sum over the remainder patches of rho_p x the raw-claim length).
+  // length (m) (sum over the remainder patches of rho_p x the raw-claim length), withheld
+  // domain correction (J) (the fallback patches' domain defects of that closure).
   // surface-response-loop-remainder-energy.csv rows = source, evaluation, model row
   // ("m<idx>" / "Total"), patches, weighted claim length (m), the remainder's raw energy
   // per target interface (J), then the keys; a clean window writes the Total row with 0.
@@ -2546,7 +2547,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
   {
     fit << "source,evaluation," << key_header
         << ",max loop share,response-weighted loop share,remainder patches,fallback "
-           "patches,weighted claim length (m)\n";
+           "patches,weighted claim length (m),withheld domain correction (J)\n";
     remainder << "source,evaluation,model,patches,weighted claim length (m)";
     for (const int interface : target_interfaces)
     {
@@ -2568,10 +2569,13 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
       total.weighted_length += row.weighted_length;
     }
     fit << fmt::format(
-        "{},{},{},{:+.12e},{:+.12e},{},{},{:+.12e}\n", source, evaluation, Keys(),
+        "{},{},{},{:+.12e},{:+.12e},{},{},{:+.12e},{:+.12e}\n", source, evaluation, Keys(),
         response.maximum_loop_fit_share, response.response_weighted_loop_fit_share,
         response.loop_remainder_patch_count, response.loop_fallback_patch_count,
-        units.Dimensionalize<VT::LENGTH>(total.weighted_length));
+        units.Dimensionalize<VT::LENGTH>(total.weighted_length),
+        units.Dimensionalize<VT::ENERGY>(
+            evaluation == 1 ? response.loop_fallback_domain_correction_fixed_flux
+                            : response.loop_fallback_domain_correction));
     auto Line = [&](const std::string &label,
                     const SurfaceResponseOperator::LoopRemainderPortions::Row &row)
     {

@@ -27079,13 +27079,21 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
       }
       else if (path.return_line >= 0 || closing_count > 0)
       {
-        // A free arc: the step onto the PEC knot (ground) and the return line (ground to
-        // ground: a pure circulation term; none when the knot sits on the anchor).
-        AddClosing(path.trace_indices.back(), -1, closing_begin, closing_count);
+        // A free arc: the step onto the PEC knot and the return line from that knot to the
+        // anchor form ONE loop from the last free knot to ground. The PEC knot is a point
+        // of the loop, not a node: the coupon calls its trace zero, but on the fabricated
+        // slab top it lies in the thin device's air (decision 818 R1), so the device field
+        // integrates to a nonzero value between it and the anchor while the whole loop
+        // closes. (The return line is appended right after the step's legs.)
+        int closing_lines = closing_count;
         if (path.return_line >= 0)
         {
-          AddClosing(-1, -1, path.return_line, 1);
+          MFEM_VERIFY(path.return_line == closing_begin + closing_count,
+                      "Maxwell loop fit: a free arc's return line is not contiguous with "
+                      "its closing step!");
+          closing_lines++;
         }
+        AddClosing(path.trace_indices.back(), -1, closing_begin, closing_lines);
       }
       else
       {
@@ -27210,12 +27218,24 @@ double SurfaceResponseOperator::AddMaxwellLoopFitCorrection(std::size_t patch_in
   double *current = residual + cycle_count;
   double *increment = current + cycle_count;
   double *delta = increment + fit.tree.size();
-  // The closing residuals r_c = L_c + phi_T(to) - phi_T(from) of the chain values.
+  // The closing residuals r_c = L_c + phi_T(to) - phi_T(from) of the chain values; a
+  // residual at the roundoff of its own terms is a closed loop (the chain's exact zeros and
+  // its roundoff-level closures stay as they are).
   for (int c = 0; c < cycle_count; c++)
   {
     const auto &closing = fit.closing[c];
+    double scale = std::abs(Value(closing.to)) + std::abs(Value(closing.from));
+    for (int line = closing.line_begin; line < closing.line_begin + closing.line_count;
+         line++)
+    {
+      scale += std::abs(line_values[line]);
+    }
     residual[c] = LineSum(closing.line_begin, closing.line_count) + Value(closing.to) -
                   Value(closing.from);
+    if (std::abs(residual[c]) <= kLoopFitResidualRoundoff * scale)
+    {
+      residual[c] = 0.0;
+    }
   }
   // The loop currents I = G^-1 r and the circulating norm r^T G^-1 r.
   double circulation = 0.0;
@@ -28518,6 +28538,13 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     result.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
     contribution.domain_correction += domain_weight * domain_defect_form;
     contribution.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
+    if (fallback)
+    {
+      const double withheld_weight = 0.5 * patch.weight * patch.domain_weight;
+      result.loop_fallback_domain_correction += withheld_weight * domain_defect_form;
+      result.loop_fallback_domain_correction_fixed_flux +=
+          withheld_weight * fixed_flux_defect_form;
+    }
     if (include_patches)
     {
       local_patch_records.insert(
@@ -28598,7 +28625,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     }
   }
   std::vector<double> reduction;
-  reduction.reserve(14 + 2 * result.fabricated_surface_energy.size() +
+  reduction.reserve(16 + 2 * result.fabricated_surface_energy.size() +
                     result.model_contributions.size() *
                         (4 + 2 * result.fabricated_surface_energy.size()));
   reduction.push_back(result.domain_correction);
@@ -28615,6 +28642,8 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   reduction.push_back(loop_fit_share_weight);
   reduction.push_back(loop_remainder_patch_count);
   reduction.push_back(loop_fallback_patch_count);
+  reduction.push_back(result.loop_fallback_domain_correction);
+  reduction.push_back(result.loop_fallback_domain_correction_fixed_flux);
   for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     reduction.push_back(fixed_trace);
@@ -28650,6 +28679,8 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   loop_fit_share_weight = reduction[i++];
   result.loop_remainder_patch_count = static_cast<int>(std::llround(reduction[i++]));
   result.loop_fallback_patch_count = static_cast<int>(std::llround(reduction[i++]));
+  result.loop_fallback_domain_correction = reduction[i++];
+  result.loop_fallback_domain_correction_fixed_flux = reduction[i++];
   if (loop_response_weight > 0.0)
   {
     result.response_weighted_loop_residual =

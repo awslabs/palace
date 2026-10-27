@@ -5368,8 +5368,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell is
   const auto random_island_response =
       convex_maxwell_island_response.GetMaxwellResponse(island_field, 0.0);
   convex_maxwell_island_response.Mult(island_true, island_correction);
+  // The operator applies the least-squares lift without the fallback (decision 955 D6): on
+  // this random (circulating) field the postprocessed domain correction withholds the
+  // fallback patches' defects, which the response reports beside it.
+  CHECK(random_island_response.loop_fallback_patch_count > 0);
   CHECK_THAT(0.5 * linalg::Dot(Mpi::World(), island_true, island_correction),
-             WithinRel(random_island_response.domain_correction, 1.0e-10));
+             WithinRel(random_island_response.domain_correction +
+                           random_island_response.loop_fallback_domain_correction,
+                       1.0e-10));
   island_probe.SetSize(island_true.Size());
   auto *island_probe_data = island_probe.HostWrite();
   for (int i = 0; i < island_probe.Size(); i++)
@@ -7749,15 +7755,19 @@ double CurlFieldLegIntegral(const std::array<double, 3> &c, const std::array<dou
 
 // The curl-field reading of one corner patch's Maxwell traces (code review d836 MINOR-2:
 // on a curl-free field the trace identity holds for ANY slave position, so it cannot see a
-// misplaced slave). On E = c x r the trace difference between consecutive free knots of a
-// ring is minus the sum of CurlFieldLegIntegral over the legs of that step along the ring
-// polyline (knot -> the edge's slave box corners in their order along the edge -> knot,
-// mapped into the device frame by `device`), which a chord across the corner or a slave
-// off its box corner does not give. A PEC-free ring's chain starts at the knot nearest the
-// anchor and runs around the ring once, so exactly one consecutive pair (its closing step)
-// differs by the circulation of the routed ring polygon, 2 c . A; a free arc of a ring
-// with PEC knots has no closing step (the PEC knots' traces are exact zeros and are not
-// part of the chain). `coefficients` are the patch's traces in basis order.
+// misplaced slave). On E = c x r the line integral of every step along the ring polyline
+// (knot -> the edge's slave box corners in their order along the edge -> knot, mapped into
+// the device frame by `device`) is the sum of CurlFieldLegIntegral over its legs, which a
+// chord across the corner or a slave off its box corner does not give. The least-squares
+// lift (decision 955) distributes every loop's circulation over the loop's steps in
+// proportion to their lengths: for every step of a PEC-free ring the residual
+// coefficient[to] - coefficient[from] + step equals (step length / ring length) x the ring
+// circulation (2 c . A of the routed polygon); for every step between the free knots of a
+// free arc of a ring with PEC knots the residual equals (step length / loop length) x the
+// circulation of the arc's loop (the anchor line from the patch's conductor anchor = the
+// corner vertex to the first free knot, the steps, the step onto the next PEC knot and the
+// return line to the anchor), and so does the first free knot's value plus the anchor
+// line's integral. `coefficients` are the patch's traces in basis order.
 void CheckCornerPatchCurlFieldTraces(
     const ConstructedCornerTraceBasis &basis,
     const std::function<std::array<double, 3>(const std::array<double, 3> &)> &device,
@@ -7766,9 +7776,16 @@ void CheckCornerPatchCurlFieldTraces(
 {
   REQUIRE(coefficients.size() >= basis.knots.size());
   REQUIRE(basis.zero.size() == basis.knots.size());
+  const auto anchor = device({0.0, 0.0, 0.0});
+  auto Length = [](const std::array<double, 3> &p, const std::array<double, 3> &q)
+  {
+    return std::sqrt((q[0] - p[0]) * (q[0] - p[0]) + (q[1] - p[1]) * (q[1] - p[1]) +
+                     (q[2] - p[2]) * (q[2] - p[2]));
+  };
   int offset = 0;
   for (const int size : basis.contour_groups)
   {
+    // The step from knot `from` to knot `to` along the ring polyline: (integral, length).
     auto Step = [&](int from, int to)
     {
       std::vector<std::pair<double, std::array<double, 3>>> via;
@@ -7789,52 +7806,90 @@ void CheckCornerPatchCurlFieldTraces(
       }
       std::sort(via.begin(), via.end(),
                 [](const auto &a, const auto &b) { return a.first < b.first; });
-      double integral = 0.0;
+      double integral = 0.0, length = 0.0;
       auto previous = device(basis.knots[from]);
       for (const auto &[fraction, point] : via)
       {
         const auto slave = device(point);
         integral += CurlFieldLegIntegral(c, previous, slave);
+        length += Length(previous, slave);
         previous = slave;
       }
-      return integral + CurlFieldLegIntegral(c, previous, device(basis.knots[to]));
+      const auto last = device(basis.knots[to]);
+      return std::make_pair(integral + CurlFieldLegIntegral(c, previous, last),
+                            length + Length(previous, last));
     };
+    auto Next = [&](int i) { return offset + (i - offset + 1) % size; };
     bool any_pec = false;
-    double circulation = 0.0;
-    std::vector<double> residuals;
     for (int i = 0; i < size; i++)
     {
-      const int from = offset + i, to = offset + (i + 1) % size;
-      const double step = Step(from, to);
-      circulation += step;
-      any_pec = any_pec || basis.zero[from];
-      if (basis.zero[from] || basis.zero[to])
+      any_pec = any_pec || basis.zero[offset + i];
+    }
+    if (!any_pec)
+    {
+      double circulation = 0.0, ring_length = 0.0;
+      std::vector<std::pair<double, double>> steps;  // (residual, length) per step
+      for (int i = 0; i < size; i++)
+      {
+        const int from = offset + i, to = Next(from);
+        const auto [integral, length] = Step(from, to);
+        circulation += integral;
+        ring_length += length;
+        steps.emplace_back(coefficients[to] - coefficients[from] + integral, length);
+      }
+      REQUIRE(ring_length > 0.0);
+      for (const auto &[residual, length] : steps)
+      {
+        CHECK_THAT(residual, WithinAbs(length / ring_length * circulation, tolerance));
+      }
+      offset += size;
+      continue;
+    }
+    // Every free arc: from the PEC knot before its first free knot to the PEC knot after
+    // its last one.
+    for (int i = 0; i < size; i++)
+    {
+      const int before = offset + i;
+      if (!basis.zero[before] || !(!basis.zero[Next(before)]))
       {
         continue;
       }
-      residuals.push_back(coefficients[to] - coefficients[from] + step);
-    }
-    if (any_pec)
-    {
-      for (const double residual : residuals)
+      std::vector<int> arc;
+      int knot = Next(before);
+      while (!basis.zero[knot])
       {
-        CHECK_THAT(residual, WithinAbs(0.0, tolerance));
+        arc.push_back(knot);
+        knot = Next(knot);
       }
-    }
-    else
-    {
-      REQUIRE(static_cast<int>(residuals.size()) == size);
-      const auto closing =
-          std::max_element(residuals.begin(), residuals.end(),
-                           [](double a, double b) { return std::abs(a) < std::abs(b); });
-      for (auto residual = residuals.begin(); residual != residuals.end(); residual++)
+      const int after = knot;
+      const auto first = device(basis.knots[arc.front()]);
+      const auto pec = device(basis.knots[after]);
+      double circulation = CurlFieldLegIntegral(c, anchor, first);
+      double loop_length = Length(anchor, first);
+      const double anchor_integral = circulation, anchor_length = loop_length;
+      std::vector<std::pair<double, double>> steps;
+      for (std::size_t k = 0; k + 1 < arc.size(); k++)
       {
-        if (residual != closing)
-        {
-          CHECK_THAT(*residual, WithinAbs(0.0, tolerance));
-        }
+        const auto [integral, length] = Step(arc[k], arc[k + 1]);
+        circulation += integral;
+        loop_length += length;
+        steps.emplace_back(coefficients[arc[k + 1]] - coefficients[arc[k]] + integral,
+                           length);
       }
-      CHECK_THAT(*closing, WithinAbs(circulation, tolerance));
+      {
+        const auto [integral, length] = Step(arc.back(), after);
+        circulation += integral;
+        loop_length += length;
+      }
+      circulation += CurlFieldLegIntegral(c, pec, anchor);
+      loop_length += Length(pec, anchor);
+      REQUIRE(loop_length > 0.0);
+      CHECK_THAT(coefficients[arc.front()] + anchor_integral,
+                 WithinAbs(anchor_length / loop_length * circulation, tolerance));
+      for (const auto &[residual, length] : steps)
+      {
+        CHECK_THAT(residual, WithinAbs(length / loop_length * circulation, tolerance));
+      }
     }
     offset += size;
   }

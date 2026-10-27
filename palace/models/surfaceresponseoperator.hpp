@@ -853,6 +853,11 @@ public:
     double response_weighted_loop_fit_share = 0.0;
     int loop_remainder_patch_count = 0;
     int loop_fallback_patch_count = 0;
+    // The domain defects the fallback patches would have added (both closures; 0 without
+    // a fallback): domain_correction + this is the self-consistent operator's energy
+    // 0.5 <x, Mult x>, which applies the fit without the fallback.
+    double loop_fallback_domain_correction = 0.0;
+    double loop_fallback_domain_correction_fixed_flux = 0.0;
   };
   // OI-MX-LOOPGATE (decision 955 D5 / D6, pre-registered): a patch whose circulating share
   // is at most the floor contributes no remainder (the uncounted part is at most the floor
@@ -860,6 +865,10 @@ public:
   // correcting and the whole patch is served raw.
   static constexpr double kLoopFitShareFloor = 1.0e-4;
   static constexpr double kLoopFitFallbackShare = 0.25;
+  // A closing residual at most this fraction of its loop's scale (the sum of the magnitudes
+  // of its terms) is roundoff: the loop is closed and the chain's values stand (six orders
+  // below the smallest loop residual of interest, the 1e-6 of a clean window).
+  static constexpr double kLoopFitResidualRoundoff = 1.0e-12;
   // The raw claims of the patches of `remainders` as perimeter portions labelled
   // "m<model>" with the per-portion weight rho_p (the surface postoperator's weighted
   // partitioned integral), and per label the patch count and the rho-weighted claim length

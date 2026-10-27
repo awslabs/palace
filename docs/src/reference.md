@@ -2213,7 +2213,8 @@ potential worth correcting and is served raw: its fabricated energies and domain
 are not added and its whole raw claim is kept. Every Maxwell run writes
 `surface-response-loop-fit.csv` (per source and evaluation the `max loop share`, the
 `response-weighted loop share` with the loop-residual weights, the `remainder patches` and
-`fallback patches` counts and the share-weighted claim length) and
+`fallback patches` counts, the share-weighted claim length and the `withheld domain
+correction (J)` of the fallback patches) and
 `surface-response-loop-remainder-energy.csv` (per model row `m<idx>` with a remainder and
 `Total`: `patches`, `weighted claim length (m)`, `remainder energy[k] (J)` per target
 interface; a window without a remainder writes the `Total` row with zeros), and records
