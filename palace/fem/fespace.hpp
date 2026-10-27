@@ -233,16 +233,11 @@ public:
   std::unique_ptr<mfem::HypreParMatrix> BuildVersionMap(VersionMap type) const;
 
   // Build the interpolator between two spaces broken with the same sides from the assembled
-  // interpolator G between the underlying spaces (on their true DOFs): for every entry
-  // G(t, s) and every version v of the range DOF t, G_b((t, v), (s, w)) = G(t, s), where w
-  // is the version of s read by the elements reading version v of t (the elements around an
-  // entity on one side of the interior boundaries are connected through faces containing
-  // the entity, so they all read the same version of each DOF of its closure, which are the
-  // only DOFs an interpolated DOF depends on). This is exact also for the copies read only
-  // through the constraints of hanging entities, whose values are those of a trace in the
-  // master's trace space. On two meshes (the h-prolongation of a hierarchy), the side
-  // labels of the fine mesh must be those of the coarse mesh (Mesh::InheritCrackSides).
-  // Collective.
+  // true-DOF interpolator G between the underlying spaces: G_b((t, v), (s, w)) = G(t, s),
+  // where w is the version of s read by the elements reading version v of t. This is exact,
+  // also through the constraints of hanging entities, since those elements read the same
+  // version of every DOF in the closure of t. Across two meshes, the fine side labels must
+  // be inherited from the coarse mesh (Mesh::InheritCrackSides). Collective.
   static std::unique_ptr<mfem::HypreParMatrix>
   BuildBrokenInterpolator(const mfem::HypreParMatrix &G,
                           const FiniteElementSpace &trial_fespace,

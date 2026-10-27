@@ -93,19 +93,12 @@ public:
   // AssembleBrokenSheetMatrix instead).
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb) const;
 
-  // Assemble the terms of all sheets as a matrix on the true DOFs of the broken space
-  // broken_nd_fespace, a view of nd_fespace broken across GetTwoSidedAttributes() with the
-  // given sides. On each two-sided film face with the fields u⁺, u⁻ of its two sides, the
-  // bilinear form a (u⁺·v⁺ + u⁻·v⁻) − b (u⁺·v⁻ + u⁻·v⁺), with a = coth(d/λ)/λ and b =
-  // 1/(λ·sinh(d/λ)), is assembled as
-  //          (a + b) (u⁺·v⁺ + u⁻·v⁻) − b (u⁺ + u⁻)·(v⁺ + v⁻).
-  // The first term is integrated by each element over its own film faces, with its own
-  // DOFs. The second one only depends on u⁺ + u⁻, the field of nd_fespace whose true DOFs
-  // sum the versions read by the two sides, so it is the film boundary mass of nd_fespace
-  // between these sums. Neither term needs to identify the two sides of a face. The
-  // one-sided sheets (1/L_ksq) u·v are integrated by the element adjacent to each of their
-  // boundary elements with its own DOFs, so that a sheet standing on one side of a
-  // two-sided film reads the versions of that side.
+  // Assemble all sheet terms as a matrix on the true DOFs of broken_nd_fespace. A two-sided
+  // face form a(u⁺·v⁺ + u⁻·v⁻) − b(u⁺·v⁻ + u⁻·v⁺), a = coth(d/λ)/λ, b = 1/(λ sinh(d/λ)), is
+  // assembled as (a + b)(u⁺·v⁺ + u⁻·v⁻) − b(u⁺ + u⁻)·(v⁺ + v⁻): the first term per element
+  // with its own DOFs, the second as the film mass of nd_fespace on the summed versions.
+  // One-sided sheets are integrated by the element adjacent to each boundary element, so a
+  // sheet on one side of a film reads that side's versions.
   std::unique_ptr<mfem::HypreParMatrix>
   AssembleBrokenSheetMatrix(const FiniteElementSpace &nd_fespace,
                             const FiniteElementSpace &broken_nd_fespace,

@@ -99,14 +99,10 @@ private:
   //     boundary elements.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
 
-  // Interior boundary sides of the local elements used to construct finite element spaces
-  // which are broken across interior boundaries (see fem/brokenspace.hpp), cached for each
-  // sorted list of boundary attributes forming the interior boundaries in use (those of the
-  // error estimator, and those across which a solution space is broken). The sides are
-  // valid for the mesh object and sequence number they were computed for. On a
-  // nonconforming mesh with hanging entities, where they cannot be discovered, they are
-  // inherited from those of the root elements of the mesh, which are computed once for the
-  // mesh object and each list.
+  // Interior boundary sides for broken spaces (see fem/brokenspace.hpp), cached per sorted
+  // attribute list (error estimator, broken solution space) and valid for the mesh object
+  // and sequence they were computed for. On a mesh with hanging entities they are inherited
+  // from the sides of the root elements, computed once per list.
   struct CrackSidesEntry
   {
     CrackSides sides;
@@ -203,13 +199,9 @@ public:
   // mesh object, and its sides are updated in place. Collective.
   const CrackSides &GetCrackSides(const std::vector<int> &attr_list) const;
 
-  // Set the interior boundary sides for the given attributes from those of the coarse mesh
-  // this mesh was refined from (its last operation, with the coarse-to-fine transformations
-  // of mfem::Mesh::GetRefinementTransforms), instead of computing them: the side labels of
-  // the two meshes then agree (those of the coarse elements), which the interpolators
-  // between spaces broken on the two meshes (the h-prolongation of a multigrid hierarchy)
-  // need to find the version of a DOF read by the elements with a given label on both
-  // meshes. Collective.
+  // Set the interior boundary sides from those of the coarse mesh this mesh was refined
+  // from (its last operation), so the side labels of the two meshes agree, as the
+  // h-prolongation between broken spaces requires. Collective.
   void InheritCrackSides(const std::vector<int> &attr_list, const Mesh &coarse_mesh) const;
 
   auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }

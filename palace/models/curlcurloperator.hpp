@@ -91,15 +91,10 @@ private:
   FiniteElementSpace rt_fespace;
   std::unique_ptr<FiniteElementSpace> l2_curl_fespace;
 
-  // With two-sided superconductor films, the solution spaces are views of the ND, H1, and
-  // RT spaces broken across the films (see fem/brokenspace.hpp), on every level of the
-  // hierarchy: the two versions of the DOFs of a film face are the fields of its two
-  // sides. The unbroken spaces remain for postprocessing and error estimation, and
-  // dbc_tdof_lists holds the essential true DOFs of the broken levels (the versions read
-  // by the elements adjacent to the essential boundaries, so that a PEC standing on one
-  // side of a film leaves the other side free). The sheet terms on each broken level (the
-  // one-sided sheets in the versions of their side, and the two-sided ones) are assembled
-  // matrices, built on first use.
+  // With two-sided films, the solution spaces on every level are the ND, H1, and RT spaces
+  // broken across the films (see fem/brokenspace.hpp); the unbroken ones remain for
+  // postprocessing and error estimation. dbc_tdof_lists then holds the broken essential
+  // DOFs, and the sheet terms of each level are assembled matrices built on first use.
   std::vector<int> two_sided_attr;
   FiniteElementSpaceHierarchy nd_broken_fespaces, h1_broken_fespaces;
   std::unique_ptr<FiniteElementSpace> rt_broken_fespace;

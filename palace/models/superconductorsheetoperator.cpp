@@ -209,12 +209,9 @@ std::vector<int> SuperconductorSheetOperator::GetTwoSidedAttributes() const
 namespace
 {
 
-// The boundary attribute of each face of the mesh carrying one of the given attributes (0
-// for the others), also for the faces whose boundary element is on another process or is a
-// slave face of a nonconforming master face. Carried by the lowest order H(div) space,
-// which has one DOF per face and follows the parallel and nonconforming face constraints
-// of the mesh: the attribute of a face is the ratio of the sums of attr·|c| and |c| over
-// the boundary elements reading its true DOF with coefficient c.
+// Boundary attribute of each mesh face carrying one of attrs (0 otherwise), also for faces
+// whose boundary element is on another process or is a slave of a nonconforming master,
+// propagated through the true DOFs of the lowest-order H(div) space.
 std::vector<int> GetFaceAttributes(const mfem::ParMesh &cmesh, const std::set<int> &attrs)
 {
   auto &mesh = const_cast<mfem::ParMesh &>(cmesh);

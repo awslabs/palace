@@ -1042,15 +1042,10 @@ const Operator &FiniteElementSpace::BuildDiscreteInterpolator() const
 namespace
 {
 
-// Transfer from the true DOFs of a space on a coarse mesh to those of the same space on the
-// mesh refined from it (its last operation), as the assembled matrix R_f T P_c. The L-level
-// refinement matrix T is assembled element by element from the local interpolation of each
-// fine element from its parent (the coarse-to-fine point matrices of the mesh), with the
-// DOF transformations of both elements, as mfem::TransferOperator applies it. MFEM's
-// assembled refinement matrix (FiniteElementSpace::GetTransferOperator with
-// Operator::MFEM_SPARSEMAT, RefinementMatrix_main) is not used: for ND spaces of order 2 on
-// tetrahedra it does not commute with the discrete gradient, while the matrix-free operator
-// does.
+// Transfer between the true DOFs of a space on a coarse mesh and on the mesh refined from
+// it, as R_f T P_c with T assembled element by element from the coarse-to-fine
+// interpolation, including the DOF transformations. MFEM's assembled refinement matrix is
+// not used: for ND order 2 on tetrahedra it does not commute with the discrete gradient.
 std::unique_ptr<mfem::HypreParMatrix>
 BuildTrueTransferMatrix(const FiniteElementSpace &coarse, const FiniteElementSpace &fine)
 {
