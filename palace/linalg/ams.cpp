@@ -57,52 +57,47 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
   // pattern of the parallel G^T A G matrix (computed by Hypre).
   const bool skip_zeros_interp = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   {
-    const auto *PtGP =
-        dynamic_cast<const ParOperator *>(&nd_fespace.GetDiscreteInterpolator(h1_fespace));
-    MFEM_VERIFY(
-        PtGP,
-        "HypreAmsSolver requires the discrete gradient matrix as a ParOperator operator!");
-    G = &PtGP->ParallelAssemble(skip_zeros_interp);
+    const auto &gradient = nd_fespace.GetDiscreteInterpolator(h1_fespace);
+    if (const auto *PtGP = dynamic_cast<const ParOperator *>(&gradient))
+    {
+      G = &PtGP->ParallelAssemble(skip_zeros_interp);
+    }
+    else
+    {
+      G = dynamic_cast<const mfem::HypreParMatrix *>(&gradient);
+      MFEM_VERIFY(G, "AMS requires an assembled gradient or a ParOperator!");
+    }
   }
 
   // Vertex coordinates for the lowest order case, or Nedelec interpolation matrix or
   // matrices for order > 1. Expects that Mesh::SetVerticesFromNodes has been called at some
   // point to avoid calling GridFunction::GetNodalValues here.
-  mfem::ParMesh &mesh = h1_fespace.GetParMesh();
   if (h1_fespace.GetMaxElementOrder() == 1)
   {
-    mfem::ParGridFunction x_coord(&h1_fespace.Get()), y_coord(&h1_fespace.Get()),
-        z_coord(&h1_fespace.Get());
-    MFEM_VERIFY(x_coord.Size() == mesh.GetNV(),
-                "Unexpected size for vertex coordinates in AMS setup!");
-    PalacePragmaOmp(parallel for schedule(static))
-    for (int i = 0; i < mesh.GetNV(); i++)
+    auto Coordinates = [&](int component)
     {
-      x_coord(i) = mesh.GetVertex(i)[0];
-      if (space_dim > 1)
-      {
-        y_coord(i) = mesh.GetVertex(i)[1];
-      }
-      if (space_dim > 2)
-      {
-        z_coord(i) = mesh.GetVertex(i)[2];
-      }
-    }
-    x.reset(x_coord.ParallelProject());
-    x->HypreReadWrite();
+      auto result = std::make_unique<mfem::HypreParVector>(h1_fespace.GetComm(),
+                                                           h1_fespace.GlobalTrueVSize(),
+                                                           h1_fespace.GetTrueDofOffsets());
+      Vector coordinates;
+      h1_fespace.GetTrueDofCoordinates(component, coordinates);
+      static_cast<Vector &>(*result) = coordinates;
+      result->HypreReadWrite();
+      return result;
+    };
+    x = Coordinates(0);
     if (space_dim > 1)
     {
-      y.reset(y_coord.ParallelProject());
-      y->HypreReadWrite();
+      y = Coordinates(1);
     }
     if (space_dim > 2)
     {
-      z.reset(z_coord.ParallelProject());
-      z->HypreReadWrite();
+      z = Coordinates(2);
     }
   }
   else
   {
+    MFEM_VERIFY(!h1_fespace.IsBroken(), "Broken AMS requires an order-1 coarse H1 space!");
     // Fall back to MFEM legacy assembly for identity interpolator.
     FiniteElementSpace h1d_fespace(h1_fespace.GetMesh(), &h1_fespace.GetFEColl(), space_dim,
                                    mfem::Ordering::byVDIM);

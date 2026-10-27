@@ -1235,7 +1235,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(pmesh.Nonconforming());
   REQUIRE(pmesh.GetGlobalNE() == 4 * ne);
   CHECK(CountPEC(pmesh, nullptr) == std::array<int, 2>{2 * nbe_pec[0], 2 * nbe_pec[1]});
-  CHECK(mesh.back()->GetCrackSides(iodata.boundaries.GetSheetAttributes()).Any());
+  mfem::H1_FECollection recovery_fec(2, pmesh.Dimension());
+  FiniteElementSpace recovery(*mesh.back(), &recovery_fec,
+                              iodata.boundaries.GetSheetAttributes());
+  FiniteElementSpace continuous(*mesh.back(), &recovery_fec);
+  CHECK(recovery.GlobalTrueVSize() > continuous.GlobalTrueVSize());
   MaterialOperator mat_op(iodata, *mesh.back());
   BoundaryModeOperator mode_op(iodata, mesh, mat_op);
 

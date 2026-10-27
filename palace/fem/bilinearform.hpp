@@ -17,6 +17,15 @@ namespace palace
 class FiniteElementSpace;
 class FiniteElementSpaceHierarchy;
 
+namespace fem
+{
+// Boundary load on the incident element's copies. No numerical state is read through
+// the coordinate MFEM space of a broken field.
+Vector AssembleBoundaryLinearForm(const FiniteElementSpace &space,
+                                  mfem::LinearFormIntegrator &integrator,
+                                  const mfem::Array<int> *marker = nullptr);
+}  // namespace fem
+
 //
 // This class implements bilinear and mixed bilinear forms based on integrators assembled
 // using the libCEED library. Assembly in the form of a partially assembled operator or

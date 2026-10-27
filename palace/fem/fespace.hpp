@@ -4,7 +4,7 @@
 #ifndef PALACE_FEM_FESPACE_HPP
 #define PALACE_FEM_FESPACE_HPP
 
-#include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -17,205 +17,174 @@
 namespace palace
 {
 
-//
-// Wrapper for MFEM's ParFiniteElementSpace class, with extensions for Palace.
-//
+// One owner for the FE metadata, actual element/trace maps, and parallel constraints.
+// An MFEM space is deliberately not an access path to a broken field.
 class FiniteElementSpace
 {
 private:
-  // Underlying MFEM object, owned unless this is a broken view of another space.
-  std::unique_ptr<mfem::ParFiniteElementSpace> owned_fespace;
-  mfem::ParFiniteElementSpace &fespace;
-
-  // Reference to the underlying mesh object (not owned).
+  friend class FiniteElementSpaceHierarchy;
+  mfem::ParFiniteElementSpace fespace;
   Mesh &mesh;
-
-  // Members for constructing libCEED operators. active_restr caches the single shared
-  // lossy-domain or active-boundary subset for each geometry type.
+  std::vector<int> break_attributes;
+  std::unique_ptr<fem::BrokenDofLayout> broken;
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, active_restr, interp_restr,
       interp_range_restr;
-
-  // Temporary storage for operator applications.
   mutable ComplexVector tx, lx, ly;
-
-  // Members for discrete interpolators from an auxiliary space to a primal space.
-  mutable const FiniteElementSpace *aux_fespace;
+  mutable const FiniteElementSpace *aux_fespace = nullptr;
   mutable std::unique_ptr<Operator> G;
 
-  // Data for a space which is broken (discontinuous) across interior boundaries, see
-  // fem/brokenspace.hpp: element DOF overrides for the element restriction (for local
-  // element e, entries [override_offsets[e], override_offsets[e + 1]) give native local
-  // DOF indices and their L-vector indices in the copy block), sizes, and the broken
-  // prolongation matrix.
-  struct BrokenData
-  {
-    std::vector<int> override_offsets, override_local, override_ldof;
-    int vsize = 0, tsize = 0;
-    HYPRE_BigInt global_vsize = 0, global_tsize = 0;
-    fem::BrokenProlongationMatrix P;
-  };
-  std::unique_ptr<BrokenData> broken;
-
-  void InitBroken(const CrackSides &sides);
-
+  void InitBroken();
+  void RemapDofs(int e, mfem::Array<int> &dofs) const;
+  CeedElemRestriction BuildSpaceRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                            const std::vector<int> &indices,
+                                            bool interp = false, bool range = false) const;
+  const Operator &BuildDiscreteInterpolator() const;
+  static std::unique_ptr<mfem::HypreParMatrix>
+  AssembleInterpolator(const FiniteElementSpace &trial, const FiniteElementSpace &test,
+                       mfem::DiscreteInterpolator *interpolator, bool refinement = false);
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
-    // For interpolation operators and tensor-product elements, we need native (not
-    // lexicographic) ordering.
-    const mfem::TensorBasisElement *tfe =
-        dynamic_cast<const mfem::TensorBasisElement *>(&fe);
-    return (tfe && tfe->GetDofMap().Size() > 0 &&
-            fe.GetRangeType() != mfem::FiniteElement::VECTOR);
+    const auto *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
+    return tfe && tfe->GetDofMap().Size() &&
+           fe.GetRangeType() != mfem::FiniteElement::VECTOR;
   }
-
   bool HasUniqueInterpRangeRestriction(const mfem::FiniteElement &fe) const
   {
-    // The range restriction for interpolation operators needs to use a special
-    // DofTransformation (not equal to the transpose of the domain restriction).
-    if (mesh.Dimension() < 3)
-    {
-      return false;
-    }
-    const auto geom = fe.GetGeomType();
-    const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
-    return (dof_trans && !dof_trans->IsIdentity());
+    const auto *dt = fespace.FEColl()->DofTransformationForGeometry(fe.GetGeomType());
+    return mesh.Dimension() == 3 && dt && !dt->IsIdentity();
   }
-
-  const Operator &BuildDiscreteInterpolator() const;
 
 public:
-  template <typename... T>
-  FiniteElementSpace(Mesh &mesh, T &&...args)
-    : owned_fespace(std::make_unique<mfem::ParFiniteElementSpace>(
-          &mesh.Get(), std::forward<T>(args)...)),
-      fespace(*owned_fespace), mesh(mesh), aux_fespace(nullptr)
+  FiniteElementSpace(Mesh &mesh, const mfem::FiniteElementCollection *fec, int vdim = 1,
+                     int ordering = mfem::Ordering::byNODES);
+  // Missing attributes are ignored. Empty list is the ordinary conforming path.
+  // Nonempty lists require uniform order and vdim=1. Construction is collective.
+  FiniteElementSpace(Mesh &mesh, const mfem::FiniteElementCollection *fec,
+                     const std::vector<int> &break_attributes);
+  FiniteElementSpace(Mesh &mesh, const mfem::FiniteElementCollection *fec,
+                     std::initializer_list<int> attributes)
+    : FiniteElementSpace(mesh, fec, std::vector<int>(attributes))
   {
-    ResetCeedObjects();
-    tx.UseDevice(true);
-    lx.UseDevice(true);
-    ly.UseDevice(true);
   }
-
-  // Construct a view of the given space which is broken (discontinuous) across interior
-  // boundaries, given the interior boundary sides of each local element (see
-  // fem/brokenspace.hpp). The L-vector of the view is the L-vector of the given space
-  // extended with a block of copied L-DOFs, one for each version of the true DOFs of its
-  // row read by the elements on the sides of split entities other than the first, and the
-  // true DOF vector is extended with the copies of the true DOFs of split entities (one per
-  // side other than the first). The view shares the underlying MFEM space with the given
-  // space, which must outlive the view and cannot be updated while the view exists. Only
-  // element (domain) restrictions and the prolongation (a HypreParMatrix, with the global
-  // offsets of the L-DOFs and true DOFs) are available for a broken space, which cannot be
-  // used with MFEM assembly or for MFEM grid functions. Collective.
-  FiniteElementSpace(FiniteElementSpace &fespace, const CrackSides &sides);
-
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
 
-  const auto &Get() const { return fespace; }
-  auto &Get() { return fespace; }
-
+  const auto &Get() const
+  {
+    MFEM_VERIFY(!broken, "A broken space is not an MFEM space; use its DOF API!");
+    return fespace;
+  }
+  auto &Get()
+  {
+    MFEM_VERIFY(!broken, "A broken space is not an MFEM space; use its DOF API!");
+    return fespace;
+  }
   operator const mfem::ParFiniteElementSpace &() const { return Get(); }
   operator mfem::ParFiniteElementSpace &() { return Get(); }
 
-  const auto &GetFEColl() const { return *Get().FEColl(); }
-  auto &GetFEColl() { return *Get().FEColl(); }
-
+  const auto &GetFEColl() const { return *fespace.FEColl(); }
+  auto &GetFEColl() { return *fespace.FEColl(); }
+  const auto *GetFE(int e) const { return fespace.GetFE(e); }
+  const auto *GetBE(int be) const { return fespace.GetBE(be); }
+  const auto &GetBreakAttributes() const { return break_attributes; }
+  bool IsBroken() const { return broken != nullptr; }
   const auto &GetMesh() const { return mesh; }
   auto &GetMesh() { return mesh; }
-
   const auto &GetParMesh() const { return mesh.Get(); }
   auto &GetParMesh() { return mesh.Get(); }
-
-  auto GetVDim() const { return Get().GetVDim(); }
-  auto GetVSize() const { return broken ? broken->vsize : Get().GetVSize(); }
-  auto GlobalVSize() const { return broken ? broken->global_vsize : Get().GlobalVSize(); }
-  auto GetTrueVSize() const { return broken ? broken->tsize : Get().GetTrueVSize(); }
+  int Dimension() const { return mesh.Dimension(); }
+  int SpaceDimension() const { return mesh.SpaceDimension(); }
+  int GetVDim() const { return fespace.GetVDim(); }
+  int GetVectorDim() const { return fespace.GetVectorDim(); }
+  int GetMaxElementOrder() const { return fespace.GetMaxElementOrder(); }
+  int GetVSize() const { return broken ? broken->P->Height() : fespace.GetVSize(); }
+  int GetTrueVSize() const { return broken ? broken->P->Width() : fespace.GetTrueVSize(); }
+  auto GlobalVSize() const
+  {
+    return broken ? broken->P->GetGlobalNumRows() : fespace.GlobalVSize();
+  }
   auto GlobalTrueVSize() const
   {
-    return broken ? broken->global_tsize : Get().GlobalTrueVSize();
+    return broken ? broken->P->GetGlobalNumCols() : fespace.GlobalTrueVSize();
   }
-  auto Dimension() const { return mesh.Get().Dimension(); }
-  auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
-  auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
-
+  MPI_Comm GetComm() const { return fespace.GetComm(); }
   const Operator *GetProlongationMatrix() const
   {
-    return broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+    return broken ? broken->P.get() : fespace.GetProlongationMatrix();
   }
-
-  // The prolongation as a HypreParMatrix, and the global offsets of the L-DOFs and of the
-  // true DOFs, as for mfem::ParFiniteElementSpace (for the parallel assembly of operators).
   const mfem::HypreParMatrix *Dof_TrueDof_Matrix() const
   {
-    return broken ? broken->P.P.get() : Get().Dof_TrueDof_Matrix();
+    return broken ? broken->P.get() : fespace.Dof_TrueDof_Matrix();
   }
   HYPRE_BigInt *GetDofOffsets() const
   {
-    return broken ? broken->P.row_offsets.GetData() : Get().GetDofOffsets();
+    return broken ? broken->row_offsets.GetData() : fespace.GetDofOffsets();
   }
   HYPRE_BigInt *GetTrueDofOffsets() const
   {
-    return broken ? broken->P.col_offsets.GetData() : Get().GetTrueDofOffsets();
+    return broken ? broken->col_offsets.GetData() : fespace.GetTrueDofOffsets();
   }
   const mfem::SparseMatrix *GetRestrictionMatrix() const
   {
-    MFEM_VERIFY(!broken, "Restriction matrix is not available for a broken space!");
-    return Get().GetRestrictionMatrix();
+    return broken ? broken->R.get() : fespace.GetRestrictionMatrix();
   }
 
-  bool IsBroken() const { return broken != nullptr; }
-
-  // Return the discrete gradient, curl, or divergence matrix interpolating from the
-  // auxiliary to the primal space, constructing it on the fly as necessary.
-  const auto &GetDiscreteInterpolator(const FiniteElementSpace &aux_fespace_) const
+  void GetElementDofs(int e, mfem::Array<int> &dofs, mfem::DofTransformation &dt) const;
+  void GetElementVDofs(int e, mfem::Array<int> &dofs, mfem::DofTransformation &dt) const
   {
-    if (&aux_fespace_ != aux_fespace)
+    if (broken)
+    {
+      GetElementDofs(e, dofs, dt);
+    }
+    else
+    {
+      fespace.GetElementVDofs(e, dofs, dt);
+    }
+  }
+  void GetBdrElementDofs(int be, mfem::Array<int> &dofs, mfem::DofTransformation &dt) const;
+  // DOFs in an entity's closure, in the copies read by this incident element.
+  void GetElementEntityDofs(int e, int dimension, int local_entity,
+                            mfem::Array<int> &dofs) const;
+  // Element 0 is local; element 1 may be a face neighbour. Both return volume DOFs
+  // in their native chart; the face transformations supply the common/subface chart.
+  void GetInteriorFaceDofs(int face, mfem::Array<int> &first, mfem::DofTransformation &dt1,
+                           mfem::Array<int> &second, mfem::DofTransformation &dt2) const;
+  const mfem::FiniteElement *GetFaceNbrFE(int e) const { return fespace.GetFaceNbrFE(e); }
+  // Collective: each selected physical interior patch is returned on exactly one
+  // rank holding its boundary representation, including master/slave and shared faces.
+  std::vector<int> GetInteriorBoundaryFaces(const std::vector<int> &attributes) const;
+  void GetEssentialTrueDofs(const mfem::Array<int> &marker, mfem::Array<int> &dofs) const;
+  void CopyFromConforming(const Vector &x, Vector &y) const;
+  void GetTrueDofCoordinates(int component, Vector &coordinates) const;
+
+  const auto &GetDiscreteInterpolator(const FiniteElementSpace &aux) const
+  {
+    if (&aux != aux_fespace)
     {
       G.reset();
-      aux_fespace = &aux_fespace_;
+      aux_fespace = &aux;
     }
     return G ? *G : BuildDiscreteInterpolator();
   }
-
-  // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
-
-  // Return the element restriction object for the full element index list or the shared
-  // active subset of the given geometry factor data.
   CeedElemRestriction GetCeedElemRestriction(
       Ceed ceed, mfem::Geometry::Type geom, const ceed::CeedGeomFactorData &data,
       ceed::CeedElementSubset subset = ceed::CeedElementSubset::Full) const;
-
-  // If the space has a special element restriction for discrete interpolators, return that.
-  // Otherwise return the same restriction as given by GetCeedElemRestriction.
   CeedElemRestriction
   GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                const ceed::CeedGeomFactorData &data) const;
-
-  // If the space has a special element restriction for the range space of discrete
-  // interpolators, return that. Otherwise return the same restriction as given by
-  // GetCeedElemRestriction.
   CeedElemRestriction
   GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                     const ceed::CeedGeomFactorData &data) const;
-
-  // Clear the cached basis and element restriction objects owned by the finite element
-  // space.
   void ResetCeedObjects();
-
-  void Update()
-  {
-    MFEM_VERIFY(!broken, "Broken finite element spaces cannot be updated!");
-    ResetCeedObjects();
-  }
-
+  // Recompute the representation after a mesh update. Old vectors/operators are invalid.
+  void Update();
   static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                                   mfem::Geometry::Type geom);
   static CeedElemRestriction
   BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                            mfem::Geometry::Type geom, const std::vector<int> &indices,
-                           bool is_interp = false, bool is_interp_range = false);
+                           bool interp = false, bool range = false);
 
   template <typename VecType>
   auto &GetTVector() const
@@ -230,7 +199,6 @@ public:
       return tx.Real();
     }
   }
-
   template <typename VecType>
   auto &GetLVector() const
   {
@@ -244,7 +212,6 @@ public:
       return lx.Real();
     }
   }
-
   template <typename VecType>
   auto &GetLVector2() const
   {
@@ -258,103 +225,72 @@ public:
       return ly.Real();
     }
   }
-
-  // Get the associated MPI communicator.
-  MPI_Comm GetComm() const { return fespace.GetComm(); }
 };
 
-//
-// A collection of FiniteElementSpace objects constructed on the same mesh with the ability
-// to construct the prolongation operators between them as needed.
-//
 class FiniteElementSpaceHierarchy
 {
 protected:
   std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
-
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
 
 public:
   FiniteElementSpaceHierarchy() = default;
-  FiniteElementSpaceHierarchy(std::unique_ptr<FiniteElementSpace> &&fespace)
+  FiniteElementSpaceHierarchy(std::unique_ptr<FiniteElementSpace> &&space)
   {
-    AddLevel(std::move(fespace));
+    AddLevel(std::move(space));
   }
-
   auto GetNumLevels() const { return fespaces.size(); }
-
-  void AddLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
+  void AddLevel(std::unique_ptr<FiniteElementSpace> &&space)
   {
-    fespaces.push_back(std::move(fespace));
+    MFEM_VERIFY(fespaces.empty() ||
+                    fespaces.back()->GetBreakAttributes() == space->GetBreakAttributes(),
+                "Hierarchy levels must have the same break attributes!");
+    fespaces.push_back(std::move(space));
     P.push_back(nullptr);
   }
-
   auto &GetFESpaceAtLevel(std::size_t l)
   {
-    MFEM_ASSERT(l < GetNumLevels(),
-                "Out of bounds request for finite element space at level " << l << "!");
+    MFEM_ASSERT(l < GetNumLevels(), "Invalid finite element space level!");
     return *fespaces[l];
   }
   const auto &GetFESpaceAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l < GetNumLevels(),
-                "Out of bounds request for finite element space at level " << l << "!");
+    MFEM_ASSERT(l < GetNumLevels(), "Invalid finite element space level!");
     return *fespaces[l];
   }
-
-  auto &GetFinestFESpace()
-  {
-    MFEM_ASSERT(GetNumLevels() > 0,
-                "Out of bounds request for finite element space at level 0!");
-    return *fespaces.back();
-  }
-  const auto &GetFinestFESpace() const
-  {
-    MFEM_ASSERT(GetNumLevels() > 0,
-                "Out of bounds request for finite element space at level 0!");
-    return *fespaces.back();
-  }
-
+  auto &GetFinestFESpace() { return GetFESpaceAtLevel(GetNumLevels() - 1); }
+  const auto &GetFinestFESpace() const { return GetFESpaceAtLevel(GetNumLevels() - 1); }
   const auto &GetProlongationAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l + 1 < GetNumLevels(),
-                "Out of bounds request for finite element space prolongation at level "
-                    << l << "!");
+    MFEM_ASSERT(l + 1 < GetNumLevels(), "Invalid prolongation level!");
     return P[l] ? *P[l] : BuildProlongationAtLevel(l);
   }
-
   std::vector<const Operator *> GetProlongationOperators() const
   {
-    MFEM_ASSERT(GetNumLevels() > 1,
-                "Out of bounds request for finite element space prolongation at level 0!");
-    std::vector<const Operator *> P_(GetNumLevels() - 1);
-    for (std::size_t l = 0; l < P_.size(); l++)
+    std::vector<const Operator *> result(GetNumLevels() - 1);
+    for (std::size_t l = 0; l < result.size(); l++)
     {
-      P_[l] = &GetProlongationAtLevel(l);
+      result[l] = &GetProlongationAtLevel(l);
     }
-    return P_;
+    return result;
   }
-
   const auto &GetDiscreteInterpolatorAtLevel(std::size_t l,
-                                             const FiniteElementSpace &aux_fespace) const
+                                             const FiniteElementSpace &aux) const
   {
-    return GetFESpaceAtLevel(l).GetDiscreteInterpolator(aux_fespace);
+    return GetFESpaceAtLevel(l).GetDiscreteInterpolator(aux);
   }
-
   std::vector<const Operator *>
-  GetDiscreteInterpolators(const FiniteElementSpaceHierarchy &aux_fespaces) const
+  GetDiscreteInterpolators(const FiniteElementSpaceHierarchy &aux) const
   {
-    std::vector<const Operator *> G_(GetNumLevels());
-    G_[0] = nullptr;  // No discrete interpolator for coarsest level
-    for (std::size_t l = 1; l < G_.size(); l++)
+    std::vector<const Operator *> result(GetNumLevels(), nullptr);
+    for (std::size_t l = 1; l < result.size(); l++)
     {
-      G_[l] = &GetDiscreteInterpolatorAtLevel(l, aux_fespaces.GetFESpaceAtLevel(l));
+      result[l] = &GetDiscreteInterpolatorAtLevel(l, aux.GetFESpaceAtLevel(l));
     }
-    return G_;
+    return result;
   }
 };
 
 }  // namespace palace
-
 #endif  // PALACE_FEM_FESPACE_HPP

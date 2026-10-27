@@ -19,6 +19,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Broken finite element spaces now own per-space break attributes and support element,
+    boundary and interior trace reads, incident-side essential DOFs, discrete derivatives,
+    multilevel transfer and one-way DG output. Sides are recomputed on the current mesh,
+    including hanging entities, without root-side caches or refinement transport.
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
@@ -59,6 +63,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - `FiniteElementSpace::Get()` refuses a broken space. MFEM consumers must use an explicit
+    DG snapshot with the source finite elements and Piola map; snapshots are not a restart
+    or a DG-to-source import format.
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
     `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations

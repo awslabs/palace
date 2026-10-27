@@ -111,16 +111,12 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
 };
 
 // Apply an optional element DOF remap (broken spaces) to the signed DOFs of element e.
-inline void RemapElementDofs(const ElementDofRemap *remap, int e, mfem::Array<int> &dofs)
+inline void RemapElementDofs(const ElementDofRemap *remap, int e, bool boundary,
+                             mfem::Array<int> &dofs)
 {
-  if (!remap)
+  if (remap)
   {
-    return;
-  }
-  for (int k = remap->offsets[e]; k < remap->offsets[e + 1]; k++)
-  {
-    const int j = remap->local[k];
-    dofs[j] = (dofs[j] >= 0) ? remap->ldof[k] : -1 - remap->ldof[k];
+    remap->apply(e, boundary, dofs);
   }
 }
 
@@ -145,9 +141,7 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
     }
   }
   const int P = fe->GetDof();
-  MFEM_VERIFY(!remap || (!use_bdr && fespace.GetVDim() == 1),
-              "Element DOF remapping is only supported for domain restrictions of "
-              "spaces with vdim = 1!");
+  MFEM_VERIFY(!remap || fespace.GetVDim() == 1, "DOF remapping requires vdim = 1!");
   const CeedSize l_size =
       remap ? remap->l_size : CeedSize(fespace.GetVDim()) * fespace.GetNDofs();
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(fe);
@@ -188,8 +182,8 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
       else
       {
         fespace.GetElementDofs(e, dofs, dof_trans);
-        RemapElementDofs(remap, e, dofs);
       }
+      RemapElementDofs(remap, e, use_bdr, dofs);
       MFEM_VERIFY(!dof_trans.GetDofTransformation(),
                   "Unexpected DofTransformation for lexicographic element "
                   "restriction.");
@@ -243,9 +237,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
     }
   }
   const int P = fe->GetDof();
-  MFEM_VERIFY(!remap || (!use_bdr && fespace.GetVDim() == 1),
-              "Element DOF remapping is only supported for domain restrictions of "
-              "spaces with vdim = 1!");
+  MFEM_VERIFY(!remap || fespace.GetVDim() == 1, "DOF remapping requires vdim = 1!");
   const CeedSize l_size =
       remap ? remap->l_size : CeedSize(fespace.GetVDim()) * fespace.GetNDofs();
   const CeedInt comp_stride =
@@ -307,8 +299,8 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
       else
       {
         fespace.GetElementDofs(e, dofs, dof_trans);
-        RemapElementDofs(remap, e, dofs);
       }
+      RemapElementDofs(remap, e, use_bdr, dofs);
       if (!has_dof_trans)
       {
         for (int j = 0; j < P; j++)

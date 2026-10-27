@@ -95,11 +95,16 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   std::unique_ptr<hypre::HypreCSRMatrix> data_sA;
   if (!sA)
   {
-    const auto *cA = dynamic_cast<const ceed::Operator *>(A);
-    MFEM_VERIFY(cA,
-                "ParOperator::ParallelAssemble requires A as an hypre::HypreCSRMatrix or "
-                "ceed::Operator!");
-    data_sA = BilinearForm::FullAssemble(*cA, skip_zeros, use_R);
+    if (const auto *local = dynamic_cast<const mfem::SparseMatrix *>(A))
+    {
+      data_sA = std::make_unique<hypre::HypreCSRMatrix>(*local);
+    }
+    else
+    {
+      const auto *cA = dynamic_cast<const ceed::Operator *>(A);
+      MFEM_VERIFY(cA, "Unsupported local operator for parallel assembly!");
+      data_sA = BilinearForm::FullAssemble(*cA, skip_zeros, use_R);
+    }
     sA = data_sA.get();
   }
 

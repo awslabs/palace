@@ -16,7 +16,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
-#include "fem/brokenspace.hpp"
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
@@ -25,6 +25,7 @@
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -627,6 +628,15 @@ double GlobalMax(MPI_Comm comm, const Vector &v)
   return max;
 }
 
+bool HasHangingEntities(const mfem::ParMesh &mesh)
+{
+  int hanging = mesh.Nonconforming() &&
+                (mesh.ncmesh->GetEdgeList().slaves.Size() ||
+                 (mesh.Dimension() == 3 && mesh.ncmesh->GetFaceList().slaves.Size()));
+  Mpi::GlobalMax(1, &hanging, mesh.GetComm());
+  return hanging;
+}
+
 // Refine the elements selected by the predicate on their center, nonconformingly, as in an
 // adaptive loop (without the final mesh update, to allow for rebalancing first).
 template <typename Predicate>
@@ -648,352 +658,52 @@ void RefineWhere(Mesh &mesh, Predicate &&pred)
 
 }  // namespace
 
-TEST_CASE("Interior boundary sides", "[brokenspace][Serial][Parallel]")
+TEST_CASE("Broken space ignores absent boundary attributes",
+          "[brokenspace][Serial][Parallel]")
 {
   const auto comm = MPI_COMM_WORLD;
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
-                             mfem::Element::WEDGE, mfem::Element::PYRAMID,
-                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const bool has_break = GENERATE(false, true);
   auto smesh = MakeCrackedCubeMesh(4, type);
   auto part = Partition(smesh, Mpi::Size(comm));
   auto mesh = MakeParMesh(comm, smesh, part);
-  const auto &pmesh = mesh.Get();
+  // Test absent attributes both below and above the largest present attribute.
+  REQUIRE(mesh.Get().bdr_attributes.Find(6) < 0);
+  REQUIRE(mesh.Get().bdr_attributes.Find(9) < 0);
+  mfem::H1_FECollection fec(2, 2);
+  const std::vector<int> attributes =
+      has_break ? std::vector<int>{crack_attr} : std::vector<int>{};
+  FiniteElementSpace reference(mesh, &fec, attributes);
+  auto extra_attributes = attributes;
+  extra_attributes.insert(extra_attributes.end(), {6, 9});
+  FiniteElementSpace extra(mesh, &fec, extra_attributes);
+  CHECK(extra.GetVSize() == reference.GetVSize());
+  CHECK(extra.GetTrueVSize() == reference.GetTrueVSize());
+  CHECK(extra.GlobalTrueVSize() == reference.GlobalTrueVSize());
 
-  const std::vector<int> attr_list = {crack_attr};
-  const auto &sides = mesh.GetCrackSides(attr_list);
-  REQUIRE(sides.split.size() == static_cast<std::size_t>(pmesh.GetNE()));
-  REQUIRE(sides.version.size() == static_cast<std::size_t>(pmesh.GetNE()));
-  REQUIRE(sides.side.size() == static_cast<std::size_t>(pmesh.GetNE()));
-
-  // For a plane spanning the domain, exactly one side of every interior boundary entity
-  // reads the copy: all elements on one side of the plane touching an entity of the plane
-  // read version 1 and those on the other side version 0. The side reading the original
-  // DOFs of an entity is the one with the smallest global element number, which depends on
-  // the partitioning.
-  mfem::Array<int> ev, ee, eo, ef, efo;
-  mfem::Vector c(3);
-  int num_bad = 0, num_set = 0;
-  for (int e = 0; e < pmesh.GetNE(); e++)
+  mfem::Array<int> dofs, reference_dofs;
+  mfem::DofTransformation dt;
+  int wrong = 0;
+  for (int e = 0; e < mesh.GetNE(); e++)
   {
-    const auto geom = pmesh.GetElementGeometry(e);
-    const int nv_e = mfem::Geometry::NumVerts[geom], ne_e = mfem::Geometry::NumEdges[geom];
-    pmesh.GetElementVertices(e, ev);
-    pmesh.GetElementEdges(e, ee, eo);
-    if (pmesh.Dimension() == 3)
-    {
-      pmesh.GetElementFaces(e, ef, efo);
-    }
-    else
-    {
-      ef.SetSize(0);
-    }
-    std::uint32_t on_plane = 0;
-    for (int i = 0; i < ev.Size(); i++)
-    {
-      if (std::abs(pmesh.GetVertex(ev[i])[0] - x_crack) < 1.0e-12)
-      {
-        on_plane |= (1u << i);
-      }
-    }
-    mfem::Array<int> verts;
-    for (int i = 0; i < ee.Size(); i++)
-    {
-      pmesh.GetEdgeVertices(ee[i], verts);
-      if (std::abs(pmesh.GetVertex(verts[0])[0] - x_crack) < 1.0e-12 &&
-          std::abs(pmesh.GetVertex(verts[1])[0] - x_crack) < 1.0e-12)
-      {
-        on_plane |= (1u << (nv_e + i));
-      }
-    }
-    for (int i = 0; i < ef.Size(); i++)
-    {
-      pmesh.GetFaceVertices(ef[i], verts);
-      bool face_on_plane = true;
-      for (auto v : verts)
-      {
-        face_on_plane =
-            face_on_plane && (std::abs(pmesh.GetVertex(v)[0] - x_crack) < 1.0e-12);
-      }
-      if (face_on_plane)
-      {
-        on_plane |= (1u << (nv_e + ne_e + i));
-      }
-    }
-    // Only entities on the plane are split, with versions 0 and 1.
-    const auto copy = sides.CopyBits(e);
-    num_bad += ((copy & ~on_plane) != 0) + (sides.split[e] != on_plane);
-    for (int b = 0; b < 32; b++)
-    {
-      num_bad += (((sides.split[e] >> b) & 1u) && sides.GetVersion(e, b) > 1);
-    }
-    num_set += (copy != 0);
+    extra.GetElementDofs(e, dofs, dt);
+    reference.GetElementDofs(e, reference_dofs, dt);
+    wrong +=
+        !std::equal(dofs.begin(), dofs.end(), reference_dofs.begin(), reference_dofs.end());
   }
-  Mpi::GlobalSum(1, &num_bad, comm);
-  Mpi::GlobalSum(1, &num_set, comm);
-  CHECK(num_bad == 0);
-  CHECK(num_set > 0);
+  Mpi::GlobalSum(1, &wrong, comm);
+  CHECK(wrong == 0);
 
-  // No interior boundary: no sides.
-  const std::vector<int> other_list = {1};
-  const auto &no_sides = mesh.GetCrackSides(other_list);
-  int num_nonzero = 0;
-  for (std::size_t e = 0; e < no_sides.split.size(); e++)
+  Vector x(reference.GetTrueVSize()), expected(reference.GetVSize()),
+      actual(extra.GetVSize());
+  for (int t = 0; t < x.Size(); t++)
   {
-    num_nonzero += (no_sides.split[e] != 0) + (no_sides.CopyBits(static_cast<int>(e)) != 0);
+    x(t) = 1.0 + Mpi::Rank(comm) + 0.01 * t;
   }
-  Mpi::GlobalSum(1, &num_nonzero, comm);
-  CHECK(num_nonzero == 0);
-}
-
-TEST_CASE("Interior boundary sides of an air bridge", "[brokenspace][Serial][Parallel]")
-{
-  // The edges of the footprints of the legs of the bridge on the ground plane have three
-  // sides (below the ground plane, under and above the bridge), each reading its own
-  // version of their DOFs, and the other split entities two.
-  const auto comm = MPI_COMM_WORLD;
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
-  auto smesh = MakeAirBridgeMesh(8, type);
-  auto part = Partition(smesh, Mpi::Size(comm));
-  auto mesh = MakeParMesh(comm, smesh, part);
-  const auto &sides = mesh.GetCrackSides({crack_attr});
-  const auto &pmesh = mesh.Get();
-  int counts[4] = {0, 0, 0, 0};  // Versions 0, 1, 2 of footprint edges, other versions
-  mfem::Array<int> ee, eo, verts;
-  for (int e = 0; e < pmesh.GetNE(); e++)
-  {
-    const auto geom = pmesh.GetElementGeometry(e);
-    const int nv_e = mfem::Geometry::NumVerts[geom];
-    pmesh.GetElementEdges(e, ee, eo);
-    for (int i = 0; i < ee.Size(); i++)
-    {
-      const int b = nv_e + i;
-      if (!((sides.split[e] >> b) & 1u))
-      {
-        continue;
-      }
-      pmesh.GetEdgeVertices(ee[i], verts);
-      bool footprint = true;
-      for (auto v : verts)
-      {
-        const double *x = pmesh.GetVertex(v);
-        footprint = footprint && std::abs(x[2] - 0.25) < 1.0e-12 &&
-                    (std::abs(x[0] - 0.25) < 1.0e-12 || std::abs(x[0] - 0.75) < 1.0e-12) &&
-                    x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12;
-      }
-      const int v = sides.GetVersion(e, b);
-      if (footprint && v <= 2)
-      {
-        counts[v]++;
-      }
-      else if (!footprint && v > 1)
-      {
-        counts[3]++;
-      }
-    }
-  }
-  Mpi::GlobalSum(4, counts, comm);
-  CAPTURE(type, counts[0], counts[1], counts[2], counts[3]);
-  CHECK(counts[0] > 0);
-  CHECK(counts[1] > 0);
-  CHECK(counts[2] > 0);
-  CHECK(counts[3] == 0);
-}
-
-TEST_CASE("Hanging entities", "[brokenspace][Serial][Parallel]")
-{
-  const auto comm = MPI_COMM_WORLD;
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
-                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
-  auto smesh = MakeCrackedCubeMesh(4, type);
-  smesh.EnsureNCMesh(true);
-  auto part = Partition(smesh, Mpi::Size(comm));
-  mfem::ParMesh pmesh(comm, smesh, part.data());
-  CHECK(!mesh::HasHangingEntities(pmesh));
-
-  // Uniform refinement leaves no hanging entities, local refinement does.
-  mfem::Array<int> all(pmesh.GetNE());
-  std::iota(all.begin(), all.end(), 0);
-  pmesh.GeneralRefinement(all, 1, 0);
-  CHECK(!mesh::HasHangingEntities(pmesh));
-  mfem::Array<int> first;
-  if (Mpi::Root(comm))
-  {
-    first.Append(0);
-  }
-  pmesh.GeneralRefinement(first, 1, 0);
-  CHECK(mesh::HasHangingEntities(pmesh));
-}
-
-TEST_CASE("Interior boundary sides through refinement", "[brokenspace][Serial][Parallel]")
-{
-  // After a uniform nonconforming refinement, which leaves no hanging entities, the sides
-  // inherited through the refinement are those computed on the refined mesh (up to the
-  // choice of the base side). The mesh has no nodes, since MFEM does not support the
-  // refinement of the nodes of a mesh with pyramids.
-  const auto comm = MPI_COMM_WORLD;
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
-                             mfem::Element::WEDGE, mfem::Element::PYRAMID,
-                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
-  const double y_max = GENERATE(1.0, 0.5);
-  auto smesh = MakeCrackedCubeMesh(4, type, y_max);
-  smesh.EnsureNCMesh(true);
-  auto part = Partition(smesh, Mpi::Size(comm));
-  mfem::ParMesh pmesh(comm, smesh, part.data());
-  mfem::Array<int> marker(crack_attr);
-  marker = 0;
-  marker[crack_attr - 1] = 1;
-  const auto coarse_sides = mesh::ComputeCrackSides(pmesh, marker);
-  mfem::Array<int> all(pmesh.GetNE());
-  std::iota(all.begin(), all.end(), 0);
-  pmesh.GeneralRefinement(all, 1, 0);
-  REQUIRE(!mesh::HasHangingEntities(pmesh));
-  const auto inherited =
-      mesh::InheritCrackSides(pmesh, pmesh.GetRefinementTransforms(), coarse_sides);
-  const auto computed = mesh::ComputeCrackSides(pmesh, marker);
-
-  // The split entities agree, and so do the copies of split entities, on every element or
-  // on none (the base side is the other one), and the side labels are those of the parents.
-  int num_split = 0, num_diff_split = 0, num_same_copy = 0, num_flipped_copy = 0,
-      num_diff_side = 0;
-  const auto &cf = pmesh.GetRefinementTransforms();
-  for (int e = 0; e < pmesh.GetNE(); e++)
-  {
-    const auto split = computed.split[e];
-    num_split += (split != 0);
-    num_diff_split += (inherited.split[e] != split);
-    num_diff_side += (inherited.side[e] != coarse_sides.side[cf.embeddings[e].parent]);
-    if (split)
-    {
-      const auto copy = inherited.CopyBits(e);
-      num_same_copy += (copy == computed.CopyBits(e));
-      num_flipped_copy += (copy == (split & ~computed.CopyBits(e)));
-    }
-  }
-  Mpi::GlobalSum(1, &num_diff_side, comm);
-  CHECK(num_diff_side == 0);
-  Mpi::GlobalSum(1, &num_split, comm);
-  Mpi::GlobalSum(1, &num_diff_split, comm);
-  Mpi::GlobalSum(1, &num_same_copy, comm);
-  Mpi::GlobalSum(1, &num_flipped_copy, comm);
-  INFO("type " << type << ", y_max " << y_max << ": split " << num_split << ", diff. split "
-               << num_diff_split << ", same copy " << num_same_copy << ", flipped copy "
-               << num_flipped_copy);
-  CHECK(num_split > 0);
-  CHECK(num_diff_split == 0);
-  CHECK((num_same_copy == num_split || num_flipped_copy == num_split));
-}
-
-TEST_CASE("Interior boundary sides of root elements", "[brokenspace][Serial][Parallel]")
-{
-  // After nonconforming refinements next to the interior boundary, which leave hanging
-  // entities, the sides inherited from the root elements are those inherited through each
-  // refinement (up to the numbering of the copies of each split entity), also for the
-  // tetrahedral children of pyramids and for anisotropic refinements.
-  const auto comm = MPI_COMM_WORLD;
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
-                             mfem::Element::WEDGE, mfem::Element::PYRAMID,
-                             mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
-  const double y_max = GENERATE(1.0, 0.5);
-  const bool aniso = (type == mfem::Element::HEXAHEDRON && y_max < 1.0);
-  CAPTURE(type, y_max);
-  auto smesh = MakeCrackedCubeMesh(4, type, y_max);
-  smesh.EnsureNCMesh(true);
-  auto part = Partition(smesh, Mpi::Size(comm));
-  mfem::ParMesh pmesh(comm, smesh, part.data());
-  mfem::Array<int> marker(crack_attr);
-  marker = 0;
-  marker[crack_attr - 1] = 1;
-  auto sides = mesh::ComputeCrackSides(pmesh, marker);
-  for (int level = 0; level < 2; level++)
-  {
-    mfem::Array<mfem::Refinement> refs;
-    mfem::Vector c;
-    for (int e = 0; e < pmesh.GetNE(); e++)
-    {
-      pmesh.GetElementCenter(e, c);
-      if (std::abs(c(0) - x_crack) < 0.3 && c(1) < 0.5)
-      {
-        refs.Append(aniso ? mfem::Refinement(e, (level == 0) ? mfem::Refinement::X
-                                                             : mfem::Refinement::YZ)
-                          : mfem::Refinement(e));
-      }
-    }
-    pmesh.GeneralRefinement(refs, 1, 0);
-    sides = mesh::InheritCrackSides(pmesh, pmesh.GetRefinementTransforms(), sides);
-  }
-  REQUIRE(mesh::HasHangingEntities(pmesh));
-  RootCrackSides root_sides;
-  REQUIRE(mesh::ComputeRootCrackSides(pmesh, marker, root_sides));
-  const auto inherited = mesh::InheritRootCrackSides(pmesh, root_sides);
-
-  // The split entities and their carriers agree, and the versions of each split entity
-  // correspond one to one.
-  int num_split = 0, num_diff_split = 0, num_diff_carrier = 0, num_diff_version = 0;
-  std::map<std::pair<int, int>, std::map<int, int>> to_inherited, to_sides;
-  mfem::Array<int> verts, edges, faces, ori;
-  for (int e = 0; e < pmesh.GetNE(); e++)
-  {
-    const auto split = sides.split[e];
-    num_split += (split != 0);
-    num_diff_split += (inherited.split[e] != split);
-    pmesh.GetElementVertices(e, verts);
-    pmesh.GetElementEdges(e, edges, ori);
-    if (pmesh.Dimension() == 3)
-    {
-      pmesh.GetElementFaces(e, faces, ori);
-    }
-    for (int b = 0; b < 32; b++)
-    {
-      if (!((split >> b) & 1u))
-      {
-        continue;
-      }
-      num_diff_carrier += (inherited.GetCarrier(e, b) != sides.GetCarrier(e, b));
-      const std::pair<int, int> entity =
-          (b < verts.Size()) ? std::pair{0, verts[b]}
-          : (b < verts.Size() + edges.Size())
-              ? std::pair{1, edges[b - verts.Size()]}
-              : std::pair{2, faces[b - verts.Size() - edges.Size()]};
-      const int v = sides.GetVersion(e, b), w = inherited.GetVersion(e, b);
-      num_diff_version += (to_inherited[entity].try_emplace(v, w).first->second != w);
-      num_diff_version += (to_sides[entity].try_emplace(w, v).first->second != v);
-    }
-  }
-  Mpi::GlobalSum(1, &num_split, comm);
-  Mpi::GlobalSum(1, &num_diff_split, comm);
-  Mpi::GlobalSum(1, &num_diff_carrier, comm);
-  Mpi::GlobalSum(1, &num_diff_version, comm);
-  INFO("split " << num_split << ", diff. split " << num_diff_split << ", diff. carrier "
-                << num_diff_carrier << ", diff. version " << num_diff_version);
-  CHECK(num_split > 0);
-  CHECK(num_diff_split == 0);
-  CHECK(num_diff_carrier == 0);
-  CHECK(num_diff_version == 0);
-
-  // The interior boundary must be a union of faces of the root elements: not when part of
-  // a refined root element face is removed from it.
-  int num_removed = 0;
-  for (int be = 0; be < pmesh.GetNBE(); be++)
-  {
-    pmesh.GetBdrElementVertices(be, verts);
-    double c[3] = {0.0, 0.0, 0.0};
-    for (auto v : verts)
-    {
-      for (int d = 0; d < pmesh.SpaceDimension(); d++)
-      {
-        c[d] += pmesh.GetVertex(v)[d] / verts.Size();
-      }
-    }
-    if (pmesh.GetBdrAttribute(be) == crack_attr && c[1] < 0.1 &&
-        (pmesh.Dimension() < 3 || c[2] < 0.1))
-    {
-      pmesh.SetBdrAttribute(be, crack_attr + 1);
-      num_removed++;
-    }
-  }
-  Mpi::GlobalSum(1, &num_removed, comm);
-  REQUIRE(num_removed > 0);
-  CHECK_FALSE(mesh::ComputeRootCrackSides(pmesh, marker, root_sides));
+  reference.GetProlongationMatrix()->Mult(x, expected);
+  extra.GetProlongationMatrix()->Mult(x, actual);
+  actual -= expected;
+  CHECK(GlobalMax(comm, actual) == 0.0);
 }
 
 TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
@@ -1001,7 +711,9 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
   const auto comm = MPI_COMM_WORLD;
   const int order = GENERATE(1, 2);
   const bool nonconforming = GENERATE(false, true);
-  auto smesh = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON);
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto smesh = MakeCrackedCubeMesh(4, type);
   if (nonconforming)
   {
     smesh.EnsureNCMesh(true);
@@ -1014,11 +726,10 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
     // Refinement ending on the interior boundary, with hanging entities on it, for which
     // the prolongation is a HypreParMatrix (the sides are computed before the refinement,
     // as by an estimator in an adaptive loop).
-    mesh.GetCrackSides(attr_list);
     RefineWhere(mesh, [](const mfem::Vector &c)
-                { return std::abs(c(0) - x_crack) < 0.25 && c(1) < 0.5; });
+                { return c(0) > x_crack && c(0) < x_crack + 0.25 && c(1) < 0.5; });
     mesh.Update();
-    REQUIRE(mesh::HasHangingEntities(mesh.Get()));
+    REQUIRE(HasHangingEntities(mesh.Get()));
   }
   mfem::ND_FECollection nd_fec(order, 3);
   mfem::RT_FECollection rt_fec(order - 1, 3);
@@ -1026,14 +737,15 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
   for (const mfem::FiniteElementCollection *fec :
        std::vector<const mfem::FiniteElementCollection *>{&nd_fec, &rt_fec, &h1_fec})
   {
+    INFO(fec->Name() << ", hanging " << nonconforming << ", type " << type);
     FiniteElementSpace base_fespace(mesh, fec);
     const auto tsize0 = base_fespace.GlobalTrueVSize();
-    FiniteElementSpace fespace(base_fespace, mesh.GetCrackSides(attr_list));
+    FiniteElementSpace fespace(mesh, fec, attr_list);
     REQUIRE(fespace.IsBroken());
     CHECK(fespace.GlobalTrueVSize() > tsize0);
 
-    // The broken view shares the MFEM space, and leaves the given space unchanged.
-    CHECK(&fespace.Get() == &base_fespace.Get());
+    // An independently owned broken space cannot silently expose its coordinate space.
+    CHECK_THROWS_AS(fespace.Get(), mfem::ErrorException);
     CHECK(!base_fespace.IsBroken());
     CHECK(base_fespace.GlobalTrueVSize() == tsize0);
     CHECK(base_fespace.GetProlongationMatrix() != fespace.GetProlongationMatrix());
@@ -1130,8 +842,7 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
     Mpi::GlobalSum(2, dots, comm);
     CHECK_THAT(dots[0], WithinRel(dots[1], 1.0e-12));
 
-    // Each true DOF, including the copies, has an L-DOF with a unit prolongation entry, so
-    // |P|ᵀ 1 >= 1 (a positive diagonal for Jacobi smoothing).
+    // Accumulated column weight is positive for Jacobi; individual rows need not be unit.
     double min = 1.0, max = 0.0;
     {
       const auto *D = absPt1[0].HostRead();
@@ -1149,6 +860,777 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
     bP->AbsMultTranspose(2.0, ones, 0.5, absPt1[1]);
     absPt1[0] *= 2.5;
     CHECK(MaxDiff(absPt1[0], absPt1[1]) <= 2.5e-12 * max);
+
+    // Both restriction and DG reverse-copy must recover arbitrary broken fields, not
+    // just fields equal on both sides. Includes copies owned only through remote rows.
+    Vector recovered(P.Width());
+    const auto &R = *fespace.GetRestrictionMatrix();
+    R.Mult(Px[0], recovered);
+    CHECK(MaxDiff(x, recovered) < 1.0e-12);
+    // R A P must use the same local sparse restriction in apply and full assembly.
+    auto identity = std::make_unique<mfem::SparseMatrix>(P.Height());
+    for (int l = 0; l < P.Height(); l++)
+    {
+      identity->Set(l, l, 1.0);
+    }
+    identity->Finalize();
+    ParOperator identity_true(std::move(identity), fespace, fespace, true);
+    identity_true.Mult(x, recovered);
+    CHECK(MaxDiff(x, recovered) < 1.0e-12);
+    identity_true.ParallelAssemble().Mult(x, recovered);
+    CHECK(MaxDiff(x, recovered) < 1.0e-12);
+    Vector Ry(P.Width()), Rtx(P.Height());
+    R.Mult(y, Ry);
+    R.MultTranspose(x, Rtx);
+    double rdots[2] = {Dot(y, Rtx), Dot(Ry, x)};
+    Mpi::GlobalSum(2, rdots, comm);
+    CHECK_THAT(rdots[0], WithinRel(rdots[1], 1.0e-12) || WithinAbs(rdots[1], 1.0e-12));
+    CHECK_THROWS_AS(GridFunction(fespace), mfem::ErrorException);
+    GridFunction dg(fespace, GridFunction::Storage::DG);
+    dg.SetFromTrueDofs(x);
+    dg.GetTrueDofs(recovered);
+    CHECK(MaxDiff(x, recovered) < 1.0e-12);
+    ComplexVector cx(x.Size()), cy(x.Size());
+    cx.Real() = x;
+    cx.Imag() = x;
+    cx.Imag() *= -0.7;
+    GridFunction complex_dg(fespace, GridFunction::Storage::DG, true);
+    complex_dg.SetFromTrueDofs(cx);
+    complex_dg.GetTrueDofs(cy);
+    CHECK(MaxDiff(cx.Real(), cy.Real()) < 1.0e-12);
+    CHECK(MaxDiff(cx.Imag(), cy.Imag()) < 1.0e-12);
+
+    // A round trip alone could cancel a missing DOF transformation in both directions.
+    // Check physical values against the source element's native shapes as well.
+    mfem::Array<int> dofs;
+    mfem::DofTransformation dt;
+    Vector native, actual, expected;
+    mfem::DenseMatrix shape;
+    double error = 0.0;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      const auto *fe = fespace.GetFE(e);
+      const auto &ip = mfem::Geometries.GetCenter(fe->GetGeomType());
+      auto *T = mesh.Get().GetElementTransformation(e);
+      T->SetIntPoint(&ip);
+      fespace.GetElementDofs(e, dofs, dt);
+      Px[0].GetSubVector(dofs, native);
+      if (!dt.IsIdentity())
+      {
+        dt.InvTransformPrimal(native);
+      }
+      if (fe->GetRangeType() == mfem::FiniteElement::VECTOR)
+      {
+        shape.SetSize(fe->GetDof(), mesh.SpaceDimension());
+        fe->CalcVShape(*T, shape);
+        expected.SetSize(mesh.SpaceDimension());
+        shape.MultTranspose(native, expected);
+        dg.Real().GetVectorValue(e, ip, actual);
+        actual -= expected;
+        error = std::max(error, actual.Normlinf());
+      }
+      else
+      {
+        Vector scalar_shape(fe->GetDof());
+        fe->CalcPhysShape(*T, scalar_shape);
+        error =
+            std::max(error, std::abs(dg.Real().GetValue(e, ip) - (scalar_shape * native)));
+      }
+    }
+    Mpi::GlobalMax(1, &error, comm);
+    CHECK(error < 1.0e-12);
+
+    // A mutable MFEM consumer must not become a DG-to-source import path.
+    dg.Real() = 42.0;
+    dg.GetTrueDofs(recovered);
+    CHECK(MaxDiff(x, recovered) == 0.0);
+    recovered.SetSize(fespace.GetTrueVSize());
+    fespace.GetRestrictionMatrix()->Mult(dg.GetLVector(), recovered);
+    CHECK(MaxDiff(x, recovered) < 1.0e-12);
+
+    // Exercise native tensor interpolation restrictions and the ND tetrahedral range
+    // transformation directly; assembling interpolators through the coordinate space
+    // would not exercise these public restrictions.
+    for (auto ceed : ceed::internal::GetCeedObjects())
+    {
+      for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
+      {
+        if (mfem::Geometry::Dimension[geom] != mesh.Dimension())
+        {
+          continue;
+        }
+        const int n = fespace.GetFEColl().FiniteElementForGeometry(geom)->GetDof();
+        for (bool range : {false, true})
+        {
+          auto restriction =
+              range ? fespace.GetInterpRangeCeedElemRestriction(ceed, geom, data)
+                    : fespace.GetInterpCeedElemRestriction(ceed, geom, data);
+          CeedVector lv, ev;
+          PalaceCeedCall(ceed, CeedElemRestrictionCreateVector(restriction, &lv, &ev));
+          // This is a new vector, not an existing borrowed array to repoint.
+          PalaceCeedCall(ceed,
+                         CeedVectorSetArray(lv, CEED_MEM_HOST, CEED_COPY_VALUES,
+                                            const_cast<CeedScalar *>(Px[0].HostRead())));
+          PalaceCeedCall(ceed, CeedElemRestrictionApply(restriction, CEED_NOTRANSPOSE, lv,
+                                                        ev, CEED_REQUEST_IMMEDIATE));
+          const CeedScalar *values;
+          PalaceCeedCall(ceed, CeedVectorGetArrayRead(ev, CEED_MEM_HOST, &values));
+          double restriction_error = 0.0;
+          for (std::size_t i = 0; i < data.indices.size(); i++)
+          {
+            fespace.GetElementDofs(data.indices[i], dofs, dt);
+            Px[0].GetSubVector(dofs, native);
+            if (!dt.IsIdentity())
+            {
+              if (range)
+              {
+                dt.InvTransformDual(native);
+              }
+              else
+              {
+                dt.InvTransformPrimal(native);
+              }
+            }
+            for (int j = 0; j < n; j++)
+            {
+              restriction_error =
+                  std::max(restriction_error, std::abs(values[i * n + j] - native(j)));
+            }
+          }
+          PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(ev, &values));
+          PalaceCeedCall(ceed, CeedVectorDestroy(&lv));
+          PalaceCeedCall(ceed, CeedVectorDestroy(&ev));
+          CHECK(restriction_error < 1.0e-12);
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("Broken space interior traces", "[brokenspace][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE(1, 2);
+  const bool hanging = GENERATE(false, true);
+  auto smesh = MakeCrackedCubeMesh(2, type);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  if (hanging)
+  {
+    RefineWhere(mesh, [](const mfem::Vector &c) { return c(0) > x_crack; });
+    mesh.Update();
+  }
+  mfem::ND_FECollection fec(order, 3);
+  FiniteElementSpace space(mesh, &fec, {crack_attr});
+  Vector local(space.GetVSize()), true_values(space.GetTrueVSize()), native, center,
+      value(3);
+  local = 0.0;
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dt;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.Get().GetElementCenter(e, center);
+    const double side = center(0) < x_crack ? 1.0 : -2.0;
+    value = 0.0;
+    value(1) = side;
+    value(2) = 0.2 * side;
+    mfem::VectorConstantCoefficient coeff(value);
+    native.SetSize(space.GetFE(e)->GetDof());
+    space.GetFE(e)->Project(coeff, *mesh.Get().GetElementTransformation(e), native);
+    space.GetElementDofs(e, dofs, dt);
+    if (!dt.IsIdentity())
+    {
+      dt.TransformPrimal(native);
+    }
+    local.SetSubVector(dofs, native);
+  }
+  space.GetRestrictionMatrix()->Mult(local, true_values);
+  space.GetProlongationMatrix()->Mult(true_values, local);
+  const auto faces = space.GetInteriorBoundaryFaces({9999, crack_attr, crack_attr});
+  double error = 0.0, area = 0.0;
+  for (auto f : faces)
+  {
+    const auto info = mesh.Get().GetFaceInformation(f);
+    auto *T = info.IsShared() ? mesh.Get().GetSharedFaceTransformationsByLocalIndex(f)
+                              : mesh.Get().GetFaceElementTransformations(f);
+    mfem::Array<int> first, second;
+    mfem::DofTransformation dt1, dt2;
+    space.GetInteriorFaceDofs(f, first, dt1, second, dt2);
+    const auto *fe1 = space.GetFE(info.element[0].index);
+    const auto *fe2 = info.IsShared() ? space.GetFaceNbrFE(info.element[1].index)
+                                      : space.GetFE(info.element[1].index);
+    const auto &ir = mfem::IntRules.Get(T->GetGeometryType(), 2 * order + 3);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      T->SetAllIntPoints(&ir.IntPoint(q));
+      area += ir.IntPoint(q).weight * T->Weight();
+      auto Check = [&](const mfem::FiniteElement &fe, mfem::ElementTransformation &element,
+                       const mfem::Array<int> &read, mfem::DofTransformation &transform)
+      {
+        local.GetSubVector(read, native);
+        if (!transform.IsIdentity())
+        {
+          transform.InvTransformPrimal(native);
+        }
+        mfem::DenseMatrix shape(fe.GetDof(), 3);
+        fe.CalcVShape(element, shape);
+        shape.MultTranspose(native, value);
+        element.Transform(mfem::Geometries.GetCenter(fe.GetGeomType()), center);
+        const double expected = center(0) < x_crack ? 1.0 : -2.0;
+        error = std::max({error, std::abs(value(0)), std::abs(value(1) - expected),
+                          std::abs(value(2) - 0.2 * expected)});
+      };
+      Check(*fe1, *T->Elem1, first, dt1);
+      Check(*fe2, *T->Elem2, second, dt2);
+    }
+  }
+  Mpi::GlobalMax(1, &error, comm);
+  Mpi::GlobalSum(1, &area, comm);
+  CHECK(error < 1.0e-11);
+  CHECK_THAT(area, WithinAbs(1.0, 1.0e-12));
+}
+
+TEST_CASE("Broken space hanging sheet version counts", "[brokenspace][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE(1, 2);
+  auto smesh = MakeCrackedCubeMesh(2, type);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  mfem::H1_FECollection h1(order, 3);
+  mfem::ND_FECollection nd(order, 3);
+  mfem::RT_FECollection rt(order - 1, 3);
+  std::vector<const mfem::FiniteElementCollection *> collections = {&h1, &nd, &rt};
+  std::vector<HYPRE_BigInt> copies;
+  for (auto *fec : collections)
+  {
+    FiniteElementSpace ordinary(mesh, fec), broken(mesh, fec, {crack_attr});
+    copies.push_back(broken.GlobalTrueVSize() - ordinary.GlobalTrueVSize());
+    REQUIRE(copies.back() > 0);
+  }
+  for (int level = 0; level < 2; level++)
+  {
+    RefineWhere(mesh, [](const mfem::Vector &c) { return c(0) > x_crack; });
+    mesh.Get().Rebalance();
+    mesh.Update();
+    REQUIRE(HasHangingEntities(mesh.Get()));
+    for (std::size_t i = 0; i < collections.size(); i++)
+    {
+      INFO(collections[i]->Name() << ", level " << level << ", type " << type);
+      // Both traces retain the master's trace space. In particular its copies on
+      // the fine side are NOT independent copies for each child face.
+      FiniteElementSpace ordinary(mesh, collections[i]);
+      FiniteElementSpace broken(mesh, collections[i], {crack_attr});
+      CHECK(broken.GlobalTrueVSize() - ordinary.GlobalTrueVSize() == copies[i]);
+    }
+  }
+}
+
+TEST_CASE("Broken space boundary DOFs", "[brokenspace][Serial][Parallel]")
+{
+  // A boundary standing on one side of the interior boundary (the sheet y = 0.5 for
+  // x > x_crack, attribute 9, which meets the interior boundary along an edge) reads and
+  // makes essential the versions of that side only: each of its DOFs in the underlying
+  // space is essential in exactly one version of the broken space.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  constexpr int sheet_attr = 9;
+  auto base = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[1] - 0.5) < 1.0e-12 &&
+                 base.GetVertex(v)[0] > x_crack - 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(!sheet_faces.empty());
+  mfem::Mesh smesh(3, base.GetNV(), base.GetNE(),
+                   base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    smesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    smesh.AddElement(base.GetElement(e)->Duplicate(&smesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    smesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&smesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&smesh);
+    el->SetAttribute(sheet_attr);
+    smesh.AddBdrElement(el);
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  FiniteElementSpace nd_broken(mesh, &nd_fec, {crack_attr});
+  REQUIRE(nd_broken.IsBroken());
+  CHECK(nd_broken.GetVDim() == 1);
+  mfem::Array<int> marker(mesh.Get().bdr_attributes.Max());
+  marker = 0;
+  marker[sheet_attr - 1] = 1;
+
+  // The boundary element DOFs are those read by the adjacent element.
+  mfem::Array<int> bdofs, edofs;
+  mfem::DofTransformation dof_trans;
+  int num_bdr = 0;
+  for (int be = 0; be < mesh.Get().GetNBE(); be++)
+  {
+    if (mesh.Get().GetBdrAttribute(be) != sheet_attr)
+    {
+      continue;
+    }
+    int e, info;
+    mesh.Get().GetBdrElementAdjacentElement(be, e, info);
+    nd_broken.GetBdrElementDofs(be, bdofs, dof_trans);
+    nd_broken.GetElementDofs(e, edofs, dof_trans);
+    for (auto d : bdofs)
+    {
+      const int l = (d >= 0) ? d : -1 - d;
+      bool found = false;
+      for (auto ed : edofs)
+      {
+        found = found || ((ed >= 0) ? ed : -1 - ed) == l;
+      }
+      CHECK(found);
+    }
+    num_bdr++;
+  }
+  Mpi::GlobalSum(1, &num_bdr, comm);
+  CHECK(num_bdr == static_cast<int>(sheet_faces.size()));
+
+  // One version per essential DOF of the underlying space, and only the versions of the
+  // sheet side: the elements on the other side read no essential L-DOF (the sheet's DOFs on
+  // the interior boundary are split, since the interior boundary spans the domain there).
+  auto CheckEssential = [&]()
+  {
+    mfem::Array<int> ess_u, ess_b;
+    nd_fespace.GetEssentialTrueDofs(marker, ess_u);
+    nd_broken.GetEssentialTrueDofs(marker, ess_b);
+    int sizes[2] = {ess_u.Size(), ess_b.Size()};
+    Mpi::GlobalSum(2, sizes, comm);
+    CHECK(sizes[0] == sizes[1]);
+    CHECK(nd_broken.GlobalTrueVSize() > nd_fespace.GlobalTrueVSize());
+    Vector ess_t(nd_broken.GetTrueVSize()), ess_l(nd_broken.GetVSize());
+    ess_t.UseDevice(false);
+    ess_l.UseDevice(false);
+    ess_t = 0.0;
+    for (auto t : ess_b)
+    {
+      ess_t(t) = 1.0;
+    }
+    nd_broken.GetProlongationMatrix()->Mult(ess_t, ess_l);
+    int num_wrong = 0;
+    for (int e = 0; e < mesh.Get().GetNE(); e++)
+    {
+      mfem::Vector c;
+      mesh.Get().GetElementCenter(e, c);
+      if (c(0) > x_crack)
+      {
+        continue;
+      }
+      nd_broken.GetElementDofs(e, edofs, dof_trans);
+      for (auto d : edofs)
+      {
+        num_wrong += (ess_l((d >= 0) ? d : -1 - d) != 0.0);
+      }
+    }
+    Mpi::GlobalSum(1, &num_wrong, comm);
+    CHECK(num_wrong == 0);
+  };
+  CheckEssential();
+
+  // The actual libCEED boundary operator, not only the DOF accessor, must read that
+  // side. Compare with independently assembled MFEM element matrices on the L-vector.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto CheckBoundary = [&]()
+  {
+    BilinearForm boundary(nd_broken);
+    boundary.AddBoundaryIntegrator<VectorFEMassIntegrator>();
+    auto op = boundary.PartialAssemble();
+    Vector local(nd_broken.GetVSize()), result(local.Size()), reference(local.Size());
+    for (int i = 0; i < local.Size(); i++)
+    {
+      local(i) = std::sin(1.7 * (i + 1 + Mpi::Rank(comm)));
+    }
+    reference = 0.0;
+    mfem::VectorFEMassIntegrator mass;
+    mfem::DenseMatrix matrix;
+    Vector element;
+    for (int be = 0; be < mesh.Get().GetNBE(); be++)
+    {
+      auto *T = mesh.Get().GetBdrElementTransformation(be);
+      const auto &ir =
+          mfem::IntRules.Get(T->GetGeometryType(), fem::DefaultIntegrationOrder::Get(*T));
+      mass.SetIntRule(&ir);
+      mass.AssembleElementMatrix(*nd_broken.GetBE(be), *T, matrix);
+      nd_broken.GetBdrElementDofs(be, bdofs, dof_trans);
+      local.GetSubVector(bdofs, element);
+      if (!dof_trans.IsIdentity())
+      {
+        dof_trans.InvTransformPrimal(element);
+      }
+      Vector value(element.Size());
+      matrix.Mult(element, value);
+      if (!dof_trans.IsIdentity())
+      {
+        dof_trans.TransformDual(value);
+      }
+      reference.AddElementVector(bdofs, value);
+    }
+    op->Mult(local, result);
+    result -= reference;
+    double error = result.Normlinf();
+    Mpi::GlobalMax(1, &error, comm);
+    CHECK(error < 1.0e-12);
+  };
+  CheckBoundary();
+
+  // Both independent break lists are recomputed on the current mesh after each update.
+  // Adding the standing sheet gives a three-sided junction, allowed for a general space.
+  FiniteElementSpace more_breaks(mesh, &nd_fec, std::vector<int>{sheet_attr, crack_attr});
+  CHECK(more_breaks.GlobalTrueVSize() > nd_broken.GlobalTrueVSize());
+  auto CheckTwoLists = [&]()
+  {
+    FiniteElementSpace rebuilt(mesh, &nd_fec, std::vector<int>{crack_attr});
+    FiniteElementSpace rebuilt_more(mesh, &nd_fec,
+                                    std::vector<int>{crack_attr, sheet_attr, sheet_attr});
+    CHECK(rebuilt.GlobalTrueVSize() == nd_broken.GlobalTrueVSize());
+    CHECK(rebuilt_more.GlobalTrueVSize() == more_breaks.GlobalTrueVSize());
+    CHECK(more_breaks.GetBreakAttributes() == rebuilt_more.GetBreakAttributes());
+  };
+  CheckTwoLists();
+  mfem::H1_FECollection h1_fec(order, 3);
+  FiniteElementSpace wrong_aux(mesh, &h1_fec, std::vector<int>{sheet_attr, crack_attr});
+  CHECK_THROWS_AS(nd_broken.GetDiscreteInterpolator(wrong_aux), mfem::ErrorException);
+  RefineWhere(mesh, [](const mfem::Vector &c) { return c(0) > x_crack && c(1) < 0.5; });
+  mesh.Update();
+  nd_fespace.Update();
+  nd_broken.Update();
+  more_breaks.Update();
+  REQUIRE(HasHangingEntities(mesh.Get()));
+  CheckEssential();
+  CheckTwoLists();
+  CheckBoundary();
+  mesh.Get().Rebalance();
+  mesh.Update();
+  nd_fespace.Update();
+  nd_broken.Update();
+  more_breaks.Update();
+  CheckEssential();
+  CheckTwoLists();
+  CheckBoundary();
+}
+
+TEST_CASE("Broken space interpolators", "[brokenspace][Serial][Parallel]")
+{
+  // The discrete gradient, curl, and p-prolongation between spaces broken with the same
+  // sides, which are assembled from the interpolators between the underlying spaces (see
+  // FiniteElementSpace::BuildBrokenInterpolator), including on a mesh with hanging
+  // entities on the interior boundary, where some copies are read only through the
+  // constraints.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  const bool nonconforming = GENERATE(false, true);
+  const bool free_edge = GENERATE(false, true);
+  CAPTURE(order, nonconforming, free_edge);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto smesh = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON, free_edge ? 0.5 : 1.0);
+  if (nonconforming)
+  {
+    smesh.EnsureNCMesh(true);
+  }
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const std::vector<int> attr_list = {crack_attr};
+  if (nonconforming)
+  {
+    RefineWhere(mesh, [](const mfem::Vector &c)
+                { return c(0) > x_crack && c(0) < x_crack + 0.25 && c(1) < 0.5; });
+    mesh.Update();
+    REQUIRE(HasHangingEntities(mesh.Get()));
+  }
+  mfem::H1_FECollection h1_fec(order, 3);
+  mfem::ND_FECollection nd_fec(order, 3), nd_fec_coarse(std::max(order - 1, 1), 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3), rt_fec_coarse(std::max(order - 2, 0), 3);
+  FiniteElementSpace h1_fespace(mesh, &h1_fec), nd_fespace(mesh, &nd_fec),
+      rt_fespace(mesh, &rt_fec);
+  FiniteElementSpace h1_broken(mesh, &h1_fec, attr_list),
+      nd_broken(mesh, &nd_fec, attr_list), rt_broken(mesh, &rt_fec, attr_list);
+  FiniteElementSpaceHierarchy nd_hierarchy, rt_hierarchy;
+  nd_hierarchy.AddLevel(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec_coarse, attr_list));
+  nd_hierarchy.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec, attr_list));
+  rt_hierarchy.AddLevel(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec_coarse, attr_list));
+  rt_hierarchy.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &rt_fec, attr_list));
+  const Operator &G = nd_broken.GetDiscreteInterpolator(h1_broken);
+  const Operator &C = rt_broken.GetDiscreteInterpolator(nd_broken);
+  const Operator &P_nd = nd_hierarchy.GetProlongationAtLevel(0);
+  const Operator &P_rt = rt_hierarchy.GetProlongationAtLevel(0);
+  const Operator &C_coarse = rt_hierarchy.GetFESpaceAtLevel(0).GetDiscreteInterpolator(
+      nd_hierarchy.GetFESpaceAtLevel(0));
+  CHECK(dynamic_cast<const mfem::HypreParMatrix *>(&G));
+  CHECK(G.Height() == nd_broken.GetTrueVSize());
+  CHECK(G.Width() == h1_broken.GetTrueVSize());
+
+  std::mt19937 gen(Mpi::Rank(comm) + 1);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  auto Random = [&](int n)
+  {
+    Vector v(n);
+    for (int i = 0; i < n; i++)
+    {
+      v(i) = dist(gen);
+    }
+    return v;
+  };
+  auto MaxAbs = [&](const Vector &v)
+  {
+    double max = v.Normlinf();
+    Mpi::GlobalMax(1, &max, comm);
+    return max;
+  };
+
+  // A field of the underlying space, copied to all versions, is interpolated as by the
+  // interpolator of the underlying spaces.
+  FiniteElementSpaceHierarchy nd_hierarchy_u;
+  nd_hierarchy_u.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec_coarse));
+  nd_hierarchy_u.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+  auto CheckCopies = [&](const FiniteElementSpace &trial, const FiniteElementSpace &test,
+                         const Operator &G_u, const Operator &G_b)
+  {
+    Vector x = Random(G_u.Width()), y(G_u.Height()), xb(G_b.Width()), yb(G_b.Height()),
+           zb(G_b.Height());
+    G_u.Mult(x, y);
+    trial.CopyFromConforming(x, xb);
+    G_b.Mult(xb, yb);
+    test.CopyFromConforming(y, zb);
+    zb -= yb;
+    CHECK(MaxAbs(zb) <= 1.0e-12 * MaxAbs(yb));
+  };
+  CheckCopies(h1_broken, nd_broken, nd_fespace.GetDiscreteInterpolator(h1_fespace), G);
+  CheckCopies(nd_broken, rt_broken, rt_fespace.GetDiscreteInterpolator(nd_fespace), C);
+  CheckCopies(nd_hierarchy.GetFESpaceAtLevel(0), nd_broken,
+              nd_hierarchy_u.GetProlongationAtLevel(0), P_nd);
+
+  // The de Rham complex of the broken spaces: the curl of a gradient of any broken field
+  // (with different values on the two sides) is zero, and the curl of the p-prolongation
+  // of a broken field is the p-prolongation of its curl.
+  {
+    Vector x = Random(G.Width()), g(G.Height()), c(C.Height());
+    G.Mult(x, g);
+    C.Mult(g, c);
+    CHECK(MaxAbs(c) <= 1.0e-12 * MaxAbs(g));
+  }
+  {
+    Vector x = Random(P_nd.Width()), px(P_nd.Height()), cpx(C.Height()),
+           cx(C_coarse.Height()), pcx(P_rt.Height());
+    P_nd.Mult(x, px);
+    C.Mult(px, cpx);
+    C_coarse.Mult(x, cx);
+    P_rt.Mult(cx, pcx);
+    pcx -= cpx;
+    CHECK(MaxAbs(pcx) <= 1.0e-12 * MaxAbs(cpx));
+  }
+
+  // Two mesh levels: the fine mesh is a uniform refinement of the mesh, with the sides
+  // inherited from it, and the h-prolongations of broken hierarchies are assembled from
+  // MFEM's transfer operators. The curl of the h-prolongation of a broken field is the
+  // h-prolongation of its curl.
+  if (!nonconforming)
+  {
+    Mesh fine_mesh(std::make_unique<mfem::ParMesh>(mesh.Get()));
+    fine_mesh.Get().UniformRefinement();
+    FiniteElementSpace nd_fine(fine_mesh, &nd_fec), rt_fine(fine_mesh, &rt_fec);
+    FiniteElementSpaceHierarchy nd_h, rt_h, nd_h_u;
+    nd_h.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec, attr_list));
+    nd_h.AddLevel(std::make_unique<FiniteElementSpace>(fine_mesh, &nd_fec, attr_list));
+    rt_h.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &rt_fec, attr_list));
+    rt_h.AddLevel(std::make_unique<FiniteElementSpace>(fine_mesh, &rt_fec, attr_list));
+    nd_h_u.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+    nd_h_u.AddLevel(std::make_unique<FiniteElementSpace>(fine_mesh, &nd_fec));
+    CHECK(nd_h.GetFESpaceAtLevel(1).GlobalTrueVSize() > nd_fine.GlobalTrueVSize());
+    const Operator &Ph_nd = nd_h.GetProlongationAtLevel(0);
+    const Operator &Ph_rt = rt_h.GetProlongationAtLevel(0);
+    CHECK(dynamic_cast<const mfem::HypreParMatrix *>(&Ph_nd));
+    CheckCopies(nd_h.GetFESpaceAtLevel(0), nd_h.GetFESpaceAtLevel(1),
+                nd_h_u.GetProlongationAtLevel(0), Ph_nd);
+    const Operator &C_fine =
+        rt_h.GetFESpaceAtLevel(1).GetDiscreteInterpolator(nd_h.GetFESpaceAtLevel(1));
+    const Operator &C_c =
+        rt_h.GetFESpaceAtLevel(0).GetDiscreteInterpolator(nd_h.GetFESpaceAtLevel(0));
+    Vector x = Random(Ph_nd.Width()), px(Ph_nd.Height()), cpx(C_fine.Height()),
+           cx(C_c.Height()), pcx(Ph_rt.Height());
+    Ph_nd.Mult(x, px);
+    C_fine.Mult(px, cpx);
+    C_c.Mult(x, cx);
+    Ph_rt.Mult(cx, pcx);
+    pcx -= cpx;
+    CHECK(MaxAbs(pcx) <= 1.0e-12 * MaxAbs(cpx));
+  }
+}
+
+TEST_CASE("Broken space scalar curl", "[brokenspace][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const bool hanging = GENERATE(false, true);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto smesh = MakeCrackedCubeMesh(4, type);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const std::vector<int> attributes = {crack_attr};
+  if (hanging)
+  {
+    RefineWhere(mesh, [](const mfem::Vector &c) { return c(0) > x_crack && c(1) < 0.5; });
+    mesh.Update();
+    REQUIRE(HasHangingEntities(mesh.Get()));
+  }
+  mfem::H1_FECollection h1_fec(order, 2);
+  mfem::ND_FECollection nd_fec(order, 2);
+  mfem::L2_FECollection l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace h1(mesh, &h1_fec, attributes), nd(mesh, &nd_fec, attributes),
+      l2(mesh, &l2_fec, attributes);
+  const auto &gradient = nd.GetDiscreteInterpolator(h1);
+  const auto &curl = l2.GetDiscreteInterpolator(nd);
+  CHECK(h1.GlobalTrueVSize() > FiniteElementSpace(mesh, &h1_fec).GlobalTrueVSize());
+  Vector x(h1.GetTrueVSize()), g(nd.GetTrueVSize()), cg(l2.GetTrueVSize());
+  for (int i = 0; i < x.Size(); i++)
+  {
+    x(i) = std::sin(1.3 * (i + 1 + Mpi::Rank(comm)));
+  }
+  gradient.Mult(x, g);
+  curl.Mult(g, cg);
+  double error = cg.Normlinf(), scale = g.Normlinf();
+  Mpi::GlobalMax(1, &error, comm);
+  Mpi::GlobalMax(1, &scale, comm);
+  CHECK(error < 1.0e-12 * scale);
+
+  FiniteElementSpace nd_u(mesh, &nd_fec), l2_u(mesh, &l2_fec);
+  Vector xu(nd_u.GetTrueVSize()), xb(nd.GetTrueVSize()), yu(l2_u.GetTrueVSize()),
+      yb(l2.GetTrueVSize()), expected(l2.GetTrueVSize());
+  for (int i = 0; i < xu.Size(); i++)
+  {
+    xu(i) = std::cos(0.7 * (i + 2 + Mpi::Rank(comm)));
+  }
+  nd.CopyFromConforming(xu, xb);
+  curl.Mult(xb, yb);
+  l2_u.GetDiscreteInterpolator(nd_u).Mult(xu, yu);
+  l2.CopyFromConforming(yu, expected);
+  scale = expected.Normlinf();
+  yb -= expected;
+  error = yb.Normlinf();
+  Mpi::GlobalMax(1, &error, comm);
+  Mpi::GlobalMax(1, &scale, comm);
+  CHECK(scale > 1.0e-6);
+  CHECK(error < 1.0e-12 * scale);
+}
+
+TEST_CASE("Broken hanging traces need more than row selection",
+          "[brokenspace][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const bool nonconforming = GENERATE(false, true);
+  auto smesh = MakeCrackedCubeMesh(2, type);
+  smesh.EnsureNCMesh(true);
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  if (nonconforming)
+  {
+    RefineWhere(mesh, [](const mfem::Vector &c) { return c(0) > x_crack; });
+    mesh.Update();
+    REQUIRE(HasHangingEntities(mesh.Get()));
+  }
+  mfem::ND_FECollection nd_fec(2, 3);
+  mfem::RT_FECollection rt_fec(1, 3);
+  for (const mfem::FiniteElementCollection *fec :
+       std::vector<const mfem::FiniteElementCollection *>{&nd_fec, &rt_fec})
+  {
+    FiniteElementSpace base(mesh, fec);
+    FiniteElementSpace broken(mesh, fec, {crack_attr});
+    const auto &P = *broken.Dof_TrueDof_Matrix();
+    REQUIRE(P.GetGlobalNumCols() > base.GlobalTrueVSize());
+    P.HostRead();
+    mfem::SparseMatrix diag, offd;
+    HYPRE_BigInt *cmap;
+    P.GetDiag(diag);
+    P.GetOffd(offd, cmap);
+
+    // A selection left inverse can recover t only if a row of P is e_t^T.
+    // Test the weaker necessary condition: a row with ANY nonzero multiple
+    // of e_t^T, on ANY rank, even including rows not read by an element.
+    // If this fails, changing ownership or allowing signed/scaled selection
+    // cannot help. Include off-rank columns when counting row support.
+    Vector singleton(P.Height()), available(P.Width());
+    auto *mask = singleton.HostWrite();
+    for (int l = 0; l < P.Height(); l++)
+    {
+      int nnz = 0;
+      for (int k = diag.GetI()[l]; k < diag.GetI()[l + 1]; k++)
+      {
+        nnz += (std::abs(diag.GetData()[k]) > 1.0e-13);
+      }
+      for (int k = offd.GetI()[l]; k < offd.GetI()[l + 1]; k++)
+      {
+        nnz += (std::abs(offd.GetData()[k]) > 1.0e-13);
+      }
+      mask[l] = (nnz == 1);
+    }
+    P.AbsMultTranspose(1.0, singleton, 0.0, available);
+    int counts[2] = {0, P.Width()};
+    const auto *values = available.HostRead();
+    for (int t = 0; t < P.Width(); t++)
+    {
+      counts[0] += (values[t] < 1.0e-13);
+    }
+    Mpi::GlobalSum(2, counts, comm);
+    REQUIRE(counts[1] > 0);
+    INFO(fec->Name() << ", type " << type << ", NC " << nonconforming << ": " << counts[0]
+                     << " of " << counts[1]
+                     << " true coefficients have no singleton row on any rank");
+    if (nonconforming)
+    {
+      CHECK(counts[0] > 0);
+    }
+    else if (Mpi::Size(comm) == 1 || type == mfem::Element::HEXAHEDRON || fec == &rt_fec)
+    {
+      CHECK(counts[0] == 0);
+    }
+    else
+    {
+      // Parallel ND face transformations can already remove singleton rows
+      // on a conforming sheet. Their count depends on the partition/orientation.
+      CHECK(counts[0] <= counts[1]);
+    }
   }
 }
 
@@ -1305,7 +1787,6 @@ TEST_CASE("Broken space error estimators (nonconforming)",
   const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
 
   // Sides are computed before the refinement (as by an estimator in an adaptive loop).
-  uncut_setup.mesh.GetCrackSides(attr_list);
 
   SECTION("Equivalence with a cut mesh")
   {
@@ -1317,7 +1798,7 @@ TEST_CASE("Broken space error estimators (nonconforming)",
                   { return std::abs(c(0) - x_crack) < 0.25 && c(1) < 0.5; });
       UpdateSetup(setup->mesh, setup->nd_fespaces, setup->rt_fespaces);
     }
-    REQUIRE(mesh::HasHangingEntities(uncut_setup.mesh.Get()));
+    REQUIRE(HasHangingEntities(uncut_setup.mesh.Get()));
     const auto [grad_broken, curl_broken] =
         uncut_setup.Estimate(SmoothE, SmoothB, attr_list);
     const auto [grad_cut, curl_cut] = cut_setup.Estimate(SmoothE, SmoothB, no_attr_list);
@@ -1354,11 +1835,10 @@ TEST_CASE("Broken space error estimators (nonconforming)",
     RefineWhere(uncut_setup.mesh, [](const mfem::Vector &c)
                 { return c(0) < x_crack && c(0) > 0.25 && c(2) < 0.75; });
     UpdateSetup(uncut_setup.mesh, uncut_setup.nd_fespaces, uncut_setup.rt_fespaces);
-    uncut_setup.mesh.GetCrackSides(attr_list);
     RefineWhere(uncut_setup.mesh, [](const mfem::Vector &c)
                 { return c(0) > x_crack && c(0) < 0.75 && c(1) < 0.4; });
     UpdateSetup(uncut_setup.mesh, uncut_setup.nd_fespaces, uncut_setup.rt_fespaces);
-    REQUIRE(mesh::HasHangingEntities(uncut_setup.mesh.Get()));
+    REQUIRE(HasHangingEntities(uncut_setup.mesh.Get()));
     const auto [grad_broken, curl_broken] = uncut_setup.Estimate(JumpE, JumpB, attr_list);
     const auto [grad_cont, curl_cont] = uncut_setup.Estimate(JumpE, JumpB, no_attr_list);
     const double grad_max = GlobalMax(comm, grad_cont),
@@ -1375,13 +1855,11 @@ TEST_CASE("Broken space error estimators (nonconforming)",
     if (Mpi::Size(comm) > 1)
     {
       EstimatorSetup other_setup(comm, smesh, part, order, material, periodic);
-      other_setup.mesh.GetCrackSides(attr_list);
       for (auto *setup : {&uncut_setup, &other_setup})
       {
         RefineWhere(setup->mesh, [](const mfem::Vector &c)
                     { return c(0) < x_crack && c(0) > 0.25 && c(2) < 0.75; });
         UpdateSetup(setup->mesh, setup->nd_fespaces, setup->rt_fespaces);
-        setup->mesh.GetCrackSides(attr_list);
         RefineWhere(setup->mesh, [](const mfem::Vector &c)
                     { return c(0) > x_crack && c(0) < 0.75 && c(1) < 0.4; });
         if (setup == &uncut_setup)
@@ -1459,11 +1937,12 @@ TEST_CASE("Broken space error estimators (nonconforming input mesh)",
   auto cut_part = Partition(cut, Mpi::Size(comm));
   EstimatorSetup uncut_setup(comm, smesh, part, order, material, periodic);
   EstimatorSetup cut_setup(comm, cut, cut_part, order, material, periodic);
-  REQUIRE(mesh::HasHangingEntities(uncut_setup.mesh.Get()));
+  REQUIRE(HasHangingEntities(uncut_setup.mesh.Get()));
   const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
-  int any_split = uncut_setup.mesh.GetCrackSides(attr_list).Any();
-  Mpi::GlobalMax(1, &any_split, comm);
-  REQUIRE(any_split);
+  mfem::ND_FECollection nd(1, 3);
+  FiniteElementSpace broken(uncut_setup.mesh, &nd, attr_list),
+      continuous(uncut_setup.mesh, &nd);
+  REQUIRE(broken.GlobalTrueVSize() > continuous.GlobalTrueVSize());
 
   const auto [grad_broken, curl_broken] = uncut_setup.Estimate(SmoothE, SmoothB, attr_list);
   const auto [grad_cut, curl_cut] = cut_setup.Estimate(SmoothE, SmoothB, no_attr_list);
@@ -1510,17 +1989,15 @@ TEST_CASE("Broken space error estimators (saved nonconforming mesh)",
   auto part = Partition(smesh, Mpi::Size(comm));
   EstimatorSetup setup(comm, smesh, part, order, material, periodic);
   const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
-  setup.mesh.GetCrackSides(attr_list);
 
   // Two levels of refinement: of one side, then across the interior boundary.
   RefineWhere(setup.mesh, [](const mfem::Vector &c)
               { return c(0) < x_crack && c(0) > 0.25 && c(2) < 0.75; });
   UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
-  setup.mesh.GetCrackSides(attr_list);
   RefineWhere(setup.mesh, [](const mfem::Vector &c)
               { return std::abs(c(0) - x_crack) < 0.2 && c(1) < 0.4; });
   UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
-  REQUIRE(mesh::HasHangingEntities(setup.mesh.Get()));
+  REQUIRE(HasHangingEntities(setup.mesh.Get()));
 
   // Save the mesh as for config["Model"]["Refinement"]["SaveAdaptMesh"], and load it on all
   // processes.
@@ -1547,7 +2024,7 @@ TEST_CASE("Broken space error estimators (saved nonconforming mesh)",
   REQUIRE(loaded.Nonconforming());
   auto loaded_part = Partition(loaded, Mpi::Size(comm));
   EstimatorSetup loaded_setup(comm, loaded, loaded_part, order, material, periodic);
-  REQUIRE(mesh::HasHangingEntities(loaded_setup.mesh.Get()));
+  REQUIRE(HasHangingEntities(loaded_setup.mesh.Get()));
 
   // The partitioning keeps the elements of the loaded mesh on the processes of the refined
   // one, so that the estimates can be compared locally.
@@ -1623,13 +2100,12 @@ TEST_CASE("Broken space error estimators (two interior boundaries)",
   }
   EstimatorSetup setup(comm, smesh, part, order, material, periodic);
   const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
-  setup.mesh.GetCrackSides(attr_list);
   if (nonconforming)
   {
     RefineWhere(setup.mesh,
                 [&](const mfem::Vector &c) { return InLayer(c) && c(1) < 0.5; });
     UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
-    REQUIRE(mesh::HasHangingEntities(setup.mesh.Get()));
+    REQUIRE(HasHangingEntities(setup.mesh.Get()));
   }
   const auto [grad_broken, curl_broken] = setup.Estimate(JumpE2, JumpB2, attr_list);
   const auto [grad_cont, curl_cont] = setup.Estimate(JumpE2, JumpB2, no_attr_list);
@@ -1668,14 +2144,13 @@ TEST_CASE("Broken space error estimators (junctions)",
   auto part = Partition(smesh, Mpi::Size(comm));
   EstimatorSetup setup(comm, smesh, part, order, material, periodic);
   const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
-  setup.mesh.GetCrackSides(attr_list);
   if (nonconforming)
   {
     // The elements in the tunnel next to the junction x = 0.25, z = 0.25.
     RefineWhere(setup.mesh, [](const mfem::Vector &c)
                 { return c(0) > 0.25 && c(0) < 0.5 && c(2) > 0.25 && c(2) < 0.5; });
     UpdateSetup(setup.mesh, setup.nd_fespaces, setup.rt_fespaces);
-    REQUIRE(mesh::HasHangingEntities(setup.mesh.Get()));
+    REQUIRE(HasHangingEntities(setup.mesh.Get()));
   }
   const auto [grad_broken, curl_broken] =
       setup.Estimate(JumpETunnel, JumpBTunnel, attr_list);
@@ -1733,7 +2208,6 @@ TEST_CASE("Broken space error estimators (partial interior boundary)",
   const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
   if (nonconforming)
   {
-    uncut_setup.mesh.GetCrackSides(attr_list);
     auto pred = [](const mfem::Vector &c) { return c(0) < 0.75 && c(1) < 0.75; };
     RefineWhere(uncut_setup.mesh, pred);
     UpdateSetup(uncut_setup.mesh, uncut_setup.nd_fespaces, uncut_setup.rt_fespaces);
@@ -1862,7 +2336,7 @@ TEST_CASE("Broken space error estimators (2D nonconforming mesh without history)
   auto cut_part = Partition(cut, Mpi::Size(comm));
   EstimatorSetup2D uncut_setup(comm, smesh, part, order, material, periodic);
   EstimatorSetup2D cut_setup(comm, cut, cut_part, order, material, periodic);
-  REQUIRE(mesh::HasHangingEntities(uncut_setup.mesh.Get()));
+  REQUIRE(HasHangingEntities(uncut_setup.mesh.Get()));
   const std::vector<int> attr_list = {crack_attr}, no_attr_list = {};
   const auto [grad_broken, curl_broken] =
       uncut_setup.Estimate(SmoothE2D, SmoothB2D, attr_list);

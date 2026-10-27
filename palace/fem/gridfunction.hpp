@@ -4,7 +4,9 @@
 #ifndef PALACE_FEM_GRIDFUNCTION_HPP
 #define PALACE_FEM_GRIDFUNCTION_HPP
 
+#include <memory>
 #include <mfem.hpp>
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -19,11 +21,28 @@ class FiniteElementSpace;
 class GridFunction
 {
 private:
+  struct DGData;
+  std::unique_ptr<DGData> dg;
   mfem::ParGridFunction gfr, gfi;
+  void CopyToDG(const Vector &x, mfem::ParGridFunction &snapshot, Vector &local) const;
 
 public:
   GridFunction(mfem::ParFiniteElementSpace &fespace, bool complex = false);
   GridFunction(FiniteElementSpace &fespace, bool complex = false);
+  enum class Storage
+  {
+    DG
+  };
+  GridFunction(FiniteElementSpace &fespace, Storage, bool complex = false);
+  ~GridFunction();
+  static std::unique_ptr<GridFunction> MakeOutput(FiniteElementSpace &fespace,
+                                                  bool complex = false);
+  void SetFromTrueDofs(const Vector &x);
+  void SetFromTrueDofs(const ComplexVector &x);
+  // These read the stored source state, never the mutable DG snapshot.
+  void GetTrueDofs(Vector &y) const;
+  void GetTrueDofs(ComplexVector &y) const;
+  const Vector &GetLVector(bool imaginary = false) const;
 
   // Get access to the real and imaginary grid function parts.
   const mfem::ParGridFunction &Real() const { return gfr; }

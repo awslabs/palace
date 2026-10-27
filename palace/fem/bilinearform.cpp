@@ -13,6 +13,35 @@
 namespace palace
 {
 
+Vector fem::AssembleBoundaryLinearForm(const FiniteElementSpace &space,
+                                       mfem::LinearFormIntegrator &integrator,
+                                       const mfem::Array<int> *marker)
+{
+  Vector result(space.GetVSize()), element;
+  result = 0.0;
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dt;
+  for (int be = 0; be < space.GetParMesh().GetNBE(); be++)
+  {
+    const int attr = space.GetParMesh().GetBdrAttribute(be);
+    if (marker && (attr > marker->Size() || !(*marker)[attr - 1]))
+    {
+      continue;
+    }
+    integrator.AssembleRHSElementVect(
+        *space.GetBE(be),
+        *const_cast<mfem::ParMesh &>(space.GetParMesh()).GetBdrElementTransformation(be),
+        element);
+    space.GetBdrElementDofs(be, dofs, dt);
+    if (!dt.IsIdentity())
+    {
+      dt.TransformDual(element);
+    }
+    result.AddElementVector(dofs, element);
+  }
+  return result;
+}
+
 void BilinearForm::AssembleQuadratureData()
 {
   for (auto &integ : domain_integs)
@@ -209,8 +238,9 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
   pa_ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
-    if (l > l0 && &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
-                      &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
+    if (l > l0 && !fespaces.GetFESpaceAtLevel(l).IsBroken() &&
+        &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
+            &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
     {
       pa_ops.push_back(
           ceed::CeedOperatorCoarsen(*pa_ops.back(), fespaces.GetFESpaceAtLevel(l)));
@@ -308,7 +338,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
     PalacePragmaOmp(for schedule(static))
     for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
     {
-      test_fespace.Get().GetElementVDofs(i, dofs, dof_trans);
+      test_fespace.GetElementVDofs(i, dofs, dof_trans);
       for (int j = 0; j < dofs.Size(); j++)
       {
         const int k = dofs[j];
@@ -317,8 +347,12 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
       }
     }
   }
+  for (int i = 0; i < test_multiplicity.Size(); i++)
+  {
+    // Trace-only/dormant rows are not interpolation writes; never multiply zero by inf.
+    h_mult[i] = h_mult[i] > 0.0 ? 1.0 / h_mult[i] : 0.0;
+  }
   test_multiplicity.UseDevice(true);
-  test_multiplicity.Reciprocal();
   op->SetDofMultiplicity(std::move(test_multiplicity));
 
   return op;

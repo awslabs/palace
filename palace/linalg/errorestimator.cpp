@@ -104,7 +104,7 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
 }
 
-// Construct a single-level view of the finest space of the hierarchy, which is broken
+// Construct a single-level owned recovery space, which is broken
 // (discontinuous) across the interior boundaries formed by the given boundary attributes.
 // Returns nullptr when the mesh has no such interior boundaries. Without the coarser
 // levels, the projection on a broken space uses Jacobi preconditioning also when multigrid
@@ -119,15 +119,13 @@ BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
   }
   auto &fespace = fespaces.GetFinestFESpace();
   auto &mesh = fespace.GetMesh();
-  const auto &sides = mesh.GetCrackSides(crack_attr_list);
-  int broken = sides.Any();
-  Mpi::GlobalMax(1, &broken, fespace.GetComm());
-  if (!broken)
+  auto recovery =
+      std::make_unique<FiniteElementSpace>(mesh, &fespace.GetFEColl(), crack_attr_list);
+  if (recovery->GlobalTrueVSize() == fespace.GlobalTrueVSize())
   {
     return nullptr;
   }
-  return std::make_unique<FiniteElementSpaceHierarchy>(
-      std::make_unique<FiniteElementSpace>(fespace, sides));
+  return std::make_unique<FiniteElementSpaceHierarchy>(std::move(recovery));
 }
 
 }  // namespace
