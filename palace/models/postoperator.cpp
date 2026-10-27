@@ -1867,7 +1867,6 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         // patches' raw within-R energy, kept raw like the uncovered class.
         const auto remainder_portions = surface_response_op->GetLoopRemainderPortions(
             result.confidence.loop_remainders);
-        result.loop_remainder_rows = remainder_portions.rows;
         result.loop_remainder = surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
             target_interfaces, *E, D_recovered.get(),
             RemainderPerimeter(remainder_portions), remainder_portions.weights);

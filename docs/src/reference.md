@@ -2219,7 +2219,10 @@ correction (J)` of the fallback patches) and
 `Total`: `patches`, `weighted claim length (m)`, `remainder energy[k] (J)` per target
 interface; a window without a remainder writes the `Total` row with zeros), and records
 the bounds under `SurfaceResponse.Diagnostics.LoopFit` in `palace.json`. The
-self-consistent correction applies the least-squares lift without the fallback. The route
+self-consistent correction applies the least-squares lift without the fallback. On a
+two-dimensional mesh there are no raw claims to put a remainder back with, so the lift is
+applied with no remainder and no fallback for every patch (the shares are still reported;
+`Diagnostics.LoopFit.RemainderMeasured` is `false`). The route
 share stands in for the circulating part's share of the surface energy and the cross term
 between the two parts on the surfaces is neglected. The weighted RMS and failed-response fraction gate whether nonconservative
 paths carry a material fraction of the modeled response. The remaining columns test

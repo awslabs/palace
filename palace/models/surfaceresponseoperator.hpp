@@ -552,6 +552,10 @@ private:
   std::vector<MaxwellLoopFit> maxwell_loop_fits;
   std::vector<double> maxwell_line_lengths;
   std::map<int, ExcludedPatchPortions> maxwell_patch_raw_claims;
+  // The raw claims exist on three-dimensional meshes only (the claim collection runs on
+  // 3D devices); a two-dimensional Maxwell response applies the fit with rho_p = 0 for
+  // every patch (no remainder record, no fallback) and reports the shares (decision 962).
+  bool maxwell_loop_remainder_measured = false;
   long long int maxwell_loop_fit_cycle_count = 0;
   long long int maxwell_loop_fit_unconstrained_count = 0;
 

@@ -902,6 +902,42 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
     CHECK_THROWS_WITH(SurfaceResponseOperator(patch_energy_iodata, boundary_mode_op),
                       ContainsSubstring("three-dimensional export"));
   }
+  // OI-MX-LOOPGATE on a two-dimensional mesh (decision 962): a circulating field (a
+  // rotation about the sheet's left end (0.25, 0.5): every closed ring carries a loop EMF
+  // and the ring around that end is almost purely circulating) gets the least-squares lift
+  // and reports its circulating share, but there are no raw claims to put a remainder back
+  // with, so rho_p = 0 for every patch: no remainder record, no fallback (the share is
+  // above the fallback bound), the fabricated energies added, and the diagnostics say so.
+  {
+    GridFunction circulating_field(boundary_mode_op.GetNDSpace(), true);
+    mfem::VectorFunctionCoefficient circulating_coefficient(
+        2,
+        [](const mfem::Vector &x, mfem::Vector &E)
+        {
+          E.SetSize(2);
+          E[0] = -0.5 * (x[1] - 0.5);
+          E[1] = 0.5 * (x[0] - 0.25);
+        });
+    circulating_field.Real().ProjectCoefficient(circulating_coefficient);
+    circulating_field.Imag() = 0.0;
+    const auto circulating_result =
+        boundary_mode_response.GetMaxwellResponse(circulating_field, 0.0);
+    CHECK(circulating_result.loop_residual > 0.05);
+    CHECK(circulating_result.maximum_loop_fit_share >
+          SurfaceResponseOperator::kLoopFitFallbackShare);
+    CHECK(circulating_result.loop_remainders.empty());
+    CHECK(circulating_result.loop_remainder_patch_count == 0);
+    CHECK(circulating_result.loop_fallback_patch_count == 0);
+    CHECK(circulating_result.loop_fallback_domain_correction == 0.0);
+    CHECK(circulating_result.fabricated_surface_energy.at(4) > 0.0);
+    CHECK(
+        boundary_mode_response.GetLoopRemainderPortions(circulating_result.loop_remainders)
+            .rows.empty());
+    const auto loop_fit_diagnostics =
+        boundary_mode_response.GetStatistics()["Diagnostics"]["LoopFit"];
+    CHECK(loop_fit_diagnostics["RemainderMeasured"] == false);
+    CHECK(loop_fit_diagnostics["Cycles"].get<long long int>() > 0);
+  }
 
   // Finite-impedance boundary-mode edges use the local metal surface as their voltage
   // reference. For a conservative field normal to the sheet this is gauge-equivalent to

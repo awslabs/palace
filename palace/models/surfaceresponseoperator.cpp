@@ -25121,6 +25121,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
+  maxwell_loop_remainder_measured = dimension == 3;
   AutomaticResponseDiagnostics local_diagnostics;
   AutomaticResponseStatistics local_statistics;
   std::optional<ResponseCorrectionData> local_config;
@@ -25854,15 +25855,21 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                matched_fraction, corner_neighborhood_fraction_by_interface.at(interface));
   }
   Mpi::Print(" Loop fit (OI-MX-LOOPGATE): {:d} fundamental cycles over the patches, {:d} "
-             "unconstrained knots; share floor {:.1e}, fallback share {:.2f}\n",
+             "unconstrained knots; share floor {:.1e}, fallback share {:.2f}; remainder "
+             "{}\n",
              maxwell_loop_fit_cycle_count, maxwell_loop_fit_unconstrained_count,
-             kLoopFitShareFloor, kLoopFitFallbackShare);
+             kLoopFitShareFloor, kLoopFitFallbackShare,
+             maxwell_loop_remainder_measured
+                 ? "measured on the patches' raw claims"
+                 : "not measured (a two-dimensional mesh has no raw claims: the fit is "
+                   "applied, no patch falls back)");
   ownership_diagnostics["LoopFit"] = {
       {"ShareFloor", kLoopFitShareFloor},
       {"FallbackShare", kLoopFitFallbackShare},
       {"Weights", "1/length"},
       {"UnconstrainedKnots", maxwell_loop_fit_unconstrained_count},
-      {"Cycles", maxwell_loop_fit_cycle_count}};
+      {"Cycles", maxwell_loop_fit_cycle_count},
+      {"RemainderMeasured", maxwell_loop_remainder_measured}};
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -26987,18 +26994,22 @@ void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
       grounded[index] = true;
     }
     auto Local = [&](int trace) { return trace - patch.trace_offset; };
+    // Ground is the root of every tree (-1); a PEC knot named as a parent or a closing end
+    // (a hat's rim knot on a PEC side) is ground: it has no tree step and its value is 0.
+    auto Node = [&](int trace)
+    { return (trace >= 0 && grounded[Local(trace)]) ? -1 : trace; };
     auto AddTree = [&](int parent, int child, int line_begin, int line_count)
     {
       MFEM_VERIFY(child >= 0 && parent_step[Local(child)] < 0 && !grounded[Local(child)],
                   "Maxwell loop fit: a trace coefficient is set by two routes!");
       parent_step[Local(child)] = static_cast<int>(fit.tree.size());
-      fit.tree.push_back({parent, child, line_begin, line_count,
+      fit.tree.push_back({Node(parent), child, line_begin, line_count,
                           line_count > 0 ? RangeLength(line_begin, line_count) : 0.0});
     };
     auto AddClosing = [&](int from, int to, int line_begin, int line_count)
     {
-      fit.closing.push_back({from,
-                             to,
+      fit.closing.push_back({Node(from),
+                             Node(to),
                              line_begin,
                              line_count,
                              line_count > 0 ? RangeLength(line_begin, line_count) : 0.0,
@@ -28376,9 +28387,15 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
                               MaxwellLoopFitRouteNorm(patch_index, line_imag);
     const double loop_share =
         route_norm > 0.0 ? std::clamp(circulation / route_norm, 0.0, 1.0) : 0.0;
-    const bool fallback = loop_share > kLoopFitFallbackShare;
+    // Without raw claims (a two-dimensional mesh, decision 962) nothing can be put back:
+    // rho_p = 0 for every patch, the fit applied, no fallback; the share still reports.
+    const bool fallback =
+        maxwell_loop_remainder_measured && loop_share > kLoopFitFallbackShare;
     const double rho =
-        fallback ? 1.0 : (loop_share > kLoopFitShareFloor ? loop_share : 0.0);
+        fallback ? 1.0
+                 : (maxwell_loop_remainder_measured && loop_share > kLoopFitShareFloor
+                        ? loop_share
+                        : 0.0);
     result.maximum_loop_fit_share = std::max(result.maximum_loop_fit_share, loop_share);
     if (rho > 0.0)
     {
@@ -28555,7 +28572,6 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
            domain_weight * domain_defect_form, domain_weight * fixed_flux_defect_form,
            static_cast<double>(model.fabricated_surfaces.size())});
     }
-    double patch_response_energy = 0.0;
     const double surface_weight = fallback ? 0.0 : patch.weight;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
@@ -28575,7 +28591,6 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       }
       const double weight =
           std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
-      patch_response_energy += weight;
       if (weight > 0.0)
       {
         const double spread = std::abs(fixed_trace_energy - fixed_flux_energy) / weight;

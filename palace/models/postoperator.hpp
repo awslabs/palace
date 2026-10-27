@@ -320,12 +320,10 @@ protected:
     // OI-MX-LOOPGATE (decision 955): per target interface, the circulating remainders' raw
     // within-R energy per model row ("m<idx>": rho_p x the raw energy on the patch's
     // claims; the Total is their sum), of the raw field (both closures) and of the
-    // corrected field (self-consistent); the rows' patch counts and rho-weighted claim
-    // lengths for surface-response-loop-remainder-energy.csv.
+    // corrected field (self-consistent). The rows' patch counts and rho-weighted claim
+    // lengths are recomputed by the printer (PrintSurfaceResponseLoopFit).
     std::map<int, std::map<std::string, double>> loop_remainder;
     std::map<int, std::map<std::string, double>> self_consistent_loop_remainder;
-    std::map<std::string, SurfaceResponseOperator::LoopRemainderPortions::Row>
-        loop_remainder_rows;
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;

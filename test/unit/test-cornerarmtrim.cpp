@@ -3591,6 +3591,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(response);
   const int patch_count = response->GetPatchCount();
   REQUIRE(patch_count > 0);
+  // Diagnostics.LoopFit (A1.4; decision 962): the remainder is measured on the 3D patches'
+  // raw claims (the two-dimensional path reports false and measures none).
+  {
+    const auto loop_fit_diagnostics = response->GetStatistics()["Diagnostics"]["LoopFit"];
+    CHECK(loop_fit_diagnostics["RemainderMeasured"] == true);
+    CHECK(loop_fit_diagnostics["Cycles"].get<long long int>() == patch_count);
+    CHECK(loop_fit_diagnostics["UnconstrainedKnots"].get<long long int>() == 0);
+  }
 
   // Per patch (root: the patch table), the analytic line integrals of the five legs the
   // path evaluates (the anchor line A -> the start knot and the four ring sides in cyclic
