@@ -224,14 +224,10 @@ void DimensionalizeForPostOperatorOutput(const Units &units, GridFunction &E,
 
   const double e_scale = L * units.GetScaleFactor<Units::ValueType::FIELD_E>();
   E *= e_scale;
-  E.Real().FaceNbrData() *= e_scale;
-  E.Imag().FaceNbrData() *= e_scale;
 
   const double b_scale =
       std::pow(L, mesh.Dimension() - 1) * units.GetScaleFactor<Units::ValueType::FIELD_B>();
   B *= b_scale;
-  B.Real().FaceNbrData() *= b_scale;
-  B.Imag().FaceNbrData() *= b_scale;
 }
 
 struct ErrorStats
