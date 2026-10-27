@@ -232,24 +232,13 @@ std::vector<int> GetFaceAttributes(const mfem::ParMesh &cmesh, const std::set<in
       den(d) = 1.0;
     }
   }
-  mfem::HypreParMatrix P(*fespace.Dof_TrueDof_Matrix());
-  P.HostReadWrite();
-  {
-    hypre_ParCSRMatrix *hP = P;
-    for (auto *b : {hypre_ParCSRMatrixDiag(hP), hypre_ParCSRMatrixOffd(hP)})
-    {
-      auto *data = hypre_CSRMatrixData(b);
-      for (int k = 0; data && k < hypre_CSRMatrixNumNonzeros(b); k++)
-      {
-        data[k] = std::abs(data[k]);
-      }
-    }
-  }
+  // |P| on the host, which keeps P in hypre's memory space and the results on the host.
+  const auto &P = *fespace.Dof_TrueDof_Matrix();
   mfem::Vector t(P.Width());
-  P.MultTranspose(num, t);
-  P.Mult(t, num);
-  P.MultTranspose(den, t);
-  P.Mult(t, den);
+  P.AbsMultTranspose(1.0, num, 0.0, t);
+  P.AbsMult(1.0, t, 0.0, num);
+  P.AbsMultTranspose(1.0, den, 0.0, t);
+  P.AbsMult(1.0, t, 0.0, den);
   std::vector<int> face_attr(mesh.GetNumFaces(), 0);
   for (int f = 0; f < mesh.GetNumFaces(); f++)
   {

@@ -899,6 +899,7 @@ FiniteElementSpace::BuildBrokenInterpolator(const mfem::HypreParMatrix &G,
                    });
     }
   }
+  G.HypreRead();  // Return G to hypre's memory space after reading it on the host
   std::vector<int> I(test.tsize + 1, 0);
   std::vector<HYPRE_BigInt> J;
   std::vector<double> data;
