@@ -519,9 +519,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
   const int num_requested = iodata.solver.eigenmode.n;
   const int num_report = num_conv;
-  MFEM_VERIFY(num_report >= num_requested, "Eigenmode solve only found "
-                                               << num_report << " modes when "
-                                               << num_requested << " were requested!");
+  MFEM_VERIFY(num_report > 0, "Eigenmode solve found no converged modes when "
+                                  << num_requested << " were requested!");
+  if (num_report < num_requested)
+  {
+    // Postprocess the converged modes rather than abort, for example when clusters of modes
+    // (such as the modes of a PML) keep the eigenvalue solver from converging all of the
+    // requested modes within the maximum number of iterations.
+    Mpi::Warning(space_op.GetComm(),
+                 "Eigenmode solve only found {:d} converged mode{} when {:d} were "
+                 "requested, postprocessing the converged modes (increase "
+                 "config[\"Solver\"][\"Eigenmode\"][\"MaxIts\"] to converge more modes)!\n",
+                 num_report, (num_report > 1) ? "s" : "", num_requested);
+  }
   if (!KM)
   {
     // Normalize every converged eigenvector with respect to the mass matrix (unit electric

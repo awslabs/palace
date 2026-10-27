@@ -47,6 +47,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
+    `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
+    instead of aborting without output.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Performance Improvements
 
