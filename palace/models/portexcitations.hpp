@@ -129,9 +129,9 @@ public:
     return std::make_tuple(false, 0, PortType::Undefined, 0);
   }
 
-  // Scattering requires one power-normalized port source per excitation, not an
-  // impressed current or a coherent combination of sources. Shared by measurement
-  // and CSV setup so rejected sources cannot leak unnormalized overlaps as S.
+  // S-parameters need one power-normalized port source per excitation, not an impressed
+  // current or a combination of sources. Measurement and CSV setup both use this check, so
+  // an excitation without S-parameters writes none.
   [[nodiscard]] bool HasSParameters() const
   {
     return !Empty() && std::all_of(excitations.begin(), excitations.end(),

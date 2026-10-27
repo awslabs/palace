@@ -209,11 +209,10 @@ P^{inc} = \frac{1}{2} V^{inc} [I^{inc}]^*  = \frac{1}{2} \sum_e \int_{\Gamma_e} 
 normalization applies to lumped ports, wave ports, and Floquet ports, so that mixed-port
 S-parameters need no additional scaling. For a lumped port with reference resistance
 ``R = 50~\Omega``, the incident wave has ``V^{inc} = 10~\mathrm{V}`` and ``I^{inc} = 0.2~\mathrm{A}``
-(peak). In the time domain, the excitation instead carries unit instantaneous incident power at
-unit pulse amplitude. For a wave port whose cross section contains lossy material, the mode
-power is complex and the normalization above fixes its magnitude, so the transported (real)
-incident power and the conjugate-mode S-parameter projection are exact only to leading order in
-the loss tangent of the port cross section.
+(peak). In the time domain, the excitation carries unit instantaneous incident power at unit
+pulse amplitude. When a wave port's cross section contains lossy material, the mode power is
+complex and this normalization fixes its magnitude. The transported (real) incident power and
+the S-parameter projection are then exact only to first order in the loss tangent.
 
 Here we have allowed for the possibility that a port can be made of disjoint surface elements ``e``,
 which separately contribute to the Poynting vector.
@@ -688,11 +687,11 @@ Finally, the total time-averaged electric energy in mode ``m`` is
 
 where ``\bm{D}_m = \varepsilon_r\bm{E}_m`` is the electric flux density for mode ``m`` and
 the second term on the right-hand side accounts for any lumped capacitive boundaries with
-nonzero circuit capacitance ``C_j``. For a lossless eigenmode with complete, consistent nondispersive storage,
-equipartition gives ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``. The port-Q estimate below
-retains this weak-loss approximation. It need not equal total energy for strongly damped,
-open or dispersive modes. Lumped circuit L/C storage also need not equal the distributed
-sheet storage used by the boundary operator when the port field differs from its circuit mode.
+nonzero circuit capacitance ``C_j``. For a lossless mode with nondispersive storage,
+equipartition gives the total energy ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``, and the
+port-Q estimate below uses it. This holds for weak loss. It can fail for strongly damped,
+open or dispersive modes, and when the port field is not uniform, since the lumped L/C energy
+then differs from the energy stored in the boundary sheet.
 
 The EPR can also be used to estimate mode quality factors due to input-output (I-O) line
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
@@ -723,9 +722,7 @@ present in domain ``j`` with associated loss tangent ``\tan{\delta}_j`` is given
 ```
 
 where, as above, ``\mathcal{E}^{elec}`` is the total time-averaged electric field energy in
-the domain, including the contributions due to capacitive lumped elements (the participation
-ratio ``p_j`` is independent of whether the peak or time-averaged energies are used, as long
-as numerator and denominator use the same convention).
+the domain, including the contributions due to capacitive lumped elements.
 
 Likewise, the quality factor due to surface interface dielectric loss for interface ``j`` is
 given by

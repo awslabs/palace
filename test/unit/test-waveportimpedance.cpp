@@ -196,9 +196,9 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial][Parallel]")
 
   CHECK_THAT(Z_PV_ohm, WithinRel(Z_PV_analytical, 1.0e-3));
 
-  // #1049's line integral must remain linear under the sqrt(2) change in driven
-  // amplitude. Use an exactly representable uniform field instead of interpolating
-  // the modal coefficient, which need not reproduce the stored NC submesh mode.
+  // The port voltage line integral is linear in the field, so it scales with the sqrt(2)
+  // driven amplitude. Check it with an exactly representable uniform field, since an
+  // interpolated modal coefficient need not reproduce the stored NC submesh mode.
   const auto &port = wave_port_op.GetPort(1);
   GridFunction field(nd_fespace_palace, true);
   mfem::Vector value(3);
@@ -315,7 +315,7 @@ TEST_CASE("WavePort port power", "[waveportimpedance][Serial][GPU]")
   B.Imag().ProjectCoefficient(fbi);
 
   // GetPower returns the time-averaged complex power 1/2 ∫ (E x H⋆) ⋅ n dS of the complex
-  // peak phasors; the legacy reference evaluates the raw overlap ∫ (E x H⋆) ⋅ n dS.
+  // peak phasors; RefWavePortPower evaluates the raw overlap ∫ (E x H⋆) ⋅ n dS.
   auto ref = 0.5 * RefWavePortPower(mat_op, wave_port_op.GetPort(1).GetAttrList(), E, B);
   auto val = wave_port_op.GetPort(1).GetPower(E, B);
   CAPTURE(ref, val);

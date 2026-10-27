@@ -43,11 +43,6 @@ have unit raw overlap ``\vert\int (\bm{E}\times\bm{H}^*)\cdot\bm{n}\,dS\vert=1``
 times the stored mode. With a lossy cross section, this normalizes the magnitude of
 complex power, not its transported real part (see issue #960).
 
-The change to 1 W time-averaged lumped/wave excitation is a SchemaVer MODEL change
-(`4-0-0`): the same `Excitation` value now produces a different physical drive amplitude.
-Input syntax is unchanged, but this is not merely an annotation or validation change.
-The compatibility table is updated when the next release is cut, not in this PR.
-
 The convention is defined in exactly one place, `electromagnetics::TimeAverageWeight` and
 `electromagnetics::UnitPowerAmplitude` in `palace/utils/constants.hpp`, and is applied by the
 *owners* of the physical quantities — `DomainPostOperator` (field energies),

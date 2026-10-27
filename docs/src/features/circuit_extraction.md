@@ -292,9 +292,8 @@ Setting $\bm{E}_1 = \bm{e}_j$ fixes the port-mode normalization:
 *Palace* scales ``\bm{e}_j`` so that ``\int_{\Gamma_j} |\bm{e}_j|^2 \, dS = |Z_R| \sum_e W_e / L_e``,
 summed over the port's lumped elements with widths ``W_e`` and lengths ``L_e``. For a single
 rectangular element this corresponds to a port voltage ``V_j = \sqrt{|Z_R|}``, i.e. a mode carrying
-unit raw power overlap (0.5 W time-averaged) referenced to ``Z_R``. This basis
-normalization is unchanged; the physical driven incident wave has an additional ``\sqrt{2}``
-amplitude factor.
+unit raw power overlap (0.5 W time-averaged) referenced to ``Z_R``. The driven incident wave
+is ``\sqrt{2}`` times this mode.
 
 The [reference](../reference.md) discusses the relationship between physical surface impedance on a
 port ``Z_s`` and the circuit characteristic impedance ``Z``. For ports that are not purely resistive

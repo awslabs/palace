@@ -63,8 +63,8 @@ Additionally, when surface current excitations are present, the excitations are 
 
 For frequency domain problems, the values output are the complex-valued peak voltages and
 currents, computed from the field phasors. Quadratic quantities (powers, energies, Poynting
-vectors) are reported as time averages over one period, so that a matched port excited with the
-default normalization delivers a time-averaged incident power of 1 W.
+vectors) are time averages over one period, and each excited port delivers 1 W of
+time-averaged incident power.
 
 ## Domain postprocessing
 
@@ -267,10 +267,9 @@ hexahedral, prism, and pyramid cells) each contribute a different per-order coun
 
 ### Limits of stored-energy accounting
 
-The phasor convention does not change which storage terms are measured. Boundary-mode
-energy outputs currently contain the transverse electric and longitudinal magnetic
-components, not the full modal energy. Lumped L/C outputs use the circuit voltage and
-branch current; they need not equal the distributed boundary-sheet storage for a
-non-modal port field. Surface-impedance, dispersive and London storage require their own
-accounting. Do not infer complete energy balance or exact equipartition from these
-columns alone. Port coupling rates retain their existing signed convention.
+Boundary-mode energies contain only the transverse electric and longitudinal magnetic
+components, not the full modal energy. Lumped L/C energies use the circuit voltage and
+branch current, which can differ from the energy stored in the boundary sheet when the port
+field is not uniform. Surface-impedance, dispersive and London storage are not included.
+These columns therefore do not give a complete energy balance. Port coupling rates ``\kappa``
+carry the sign of the real part of the port current.
