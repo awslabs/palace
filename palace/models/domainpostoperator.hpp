@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <utility>
+#include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -41,6 +42,16 @@ public:
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
+  // Unit mass forms of each frequency-dependent material (by material index), over the
+  // entire domain and over each postprocessing domain. With M_elec weighted by ε∞, the
+  // electric field energy adds that of the polarization of each material, its unit mass
+  // energy times the stored-energy susceptibility wₘ(ω) of its model.
+  using FrequencyDependentForms =
+      std::vector<std::pair<std::size_t, std::unique_ptr<Operator>>>;
+  FrequencyDependentForms M_elec_fd;
+  std::map<int, FrequencyDependentForms> M_elec_fd_i;
+  const MaterialOperator *mat_op = nullptr;
+
   DomainPostOperator() = default;
   DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,
@@ -58,15 +69,40 @@ public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace, bool electric_energy_only);
 
+  // The electric energy of a frequency-dependent material at the real angular frequency ω
+  // (unused without one): STORED is that of its model, the field and the polarization;
+  // MATERIAL is the field energy at its permittivity Re ε(ω), which for a lossless mode
+  // equals the magnetic energy. They coincide for a constant material.
+  enum class ElectricEnergy
+  {
+    STORED,
+    MATERIAL
+  };
+
   // Get volume integrals computing the electric or magnetic field energy in the entire
   // domain.
-  double GetElectricFieldEnergy(const GridFunction &E) const;
+  double GetElectricFieldEnergy(const GridFunction &E, double omega,
+                                ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetMagneticFieldEnergy(const GridFunction &B) const;
 
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.
-  double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
+  double GetDomainElectricFieldEnergy(int idx, const GridFunction &E, double omega,
+                                      ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
+
+  // The susceptibility weighting the unit mass form of material m: wₘ(ω) for STORED and
+  // Re χₘ(iω) for MATERIAL.
+  double GetFrequencyDependentEnergyWeight(std::size_t material_idx, double omega,
+                                           ElectricEnergy type) const;
+
+private:
+  void SetUpFrequencyDependentForms(const config::DomainPostData &postpro,
+                                    const MaterialOperator &mat_op,
+                                    const FiniteElementSpace &nd_fespace);
+  double ElectricFieldEnergy(const Operator &M, const FrequencyDependentForms &M_fd,
+                             const GridFunction &E, double omega,
+                             ElectricEnergy type) const;
 };
 
 }  // namespace palace

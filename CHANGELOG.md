@@ -52,6 +52,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     are saved per excitation. The default, each loop its own excitation, is unchanged.
     SchemaVer 3-1-0.
     [PR 979](https://github.com/awslabs/palace/pull/979).
+  - Added scalar frequency-dependent `Permittivity` objects with additive Drude, Debye,
+    Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Frequency-domain operators,
+    ports, postprocessing, energy/error estimates, adaptive sweeps, and circuit synthesis
+    use the material model at the solution frequency. Compatible static limits are supported;
+    transient problems are not. General PoleResidue models remain usable with gain and
+    negative-energy warnings. Existing constant-permittivity inputs are unchanged.
+    SchemaVer 3-2-0
+    [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
 
@@ -203,6 +211,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the discrete field on affine elements, and the wave port voltage no longer needs GSLIB
     or a point search over the full 3D mesh.
     [PR 1049](https://github.com/awslabs/palace/pull/1049).
+  - Fixed wave port frequency sweeps selecting the wrong port mode for `Mode` above a
+    degenerate pair: starting each mode solve from the previous frequency's mode could miss
+    one mode of the pair, so a lower mode took the requested index for the rest of the sweep.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
 
 #### Performance Improvements
 

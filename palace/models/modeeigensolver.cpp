@@ -305,40 +305,59 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
-  if (real_frequency && warm_start.Size() > 0)
-  {
-    eigen->SetInitialSpace(warm_start);
-  }
-  else if (initial_space)
-  {
-    eigen->SetInitialSpace(*initial_space);
-  }
-
-  int num_conv = eigen->Solve();
-  if (real_frequency)
-  {
-    reduced_model->RecordExactSolve();
-  }
-
-  // Build a permutation sorted by proximity to the shift target so that mode ordering is
-  // consistent across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently).
-  // The shift sigma = -kn_target^2, so kn_target = sqrt(-sigma). Sorting by ascending
-  // complex distance |kn - kn_target| (mode_assembly::TargetDistance, shared with the
-  // reduced wave-port solve) puts the mode closest to the target first. Ranking on
-  // |Re{kn} - kn_target| alone would let a strongly evanescent mode of a lossy
-  // cross-section outrank the propagating mode. The stable sort keeps the backend order for
-  // exact ties.
+  // Solve from the given start and rank the converged modes by proximity to the shift
+  // target, so that mode ordering is consistent across eigensolver backends (ARPACK vs
+  // SLEPc sort eigenvalues differently). The shift sigma = -kn_target^2, so kn_target =
+  // sqrt(-sigma). Sorting by ascending complex distance |kn - kn_target|
+  // (mode_assembly::TargetDistance, shared with the reduced wave-port solve) puts the mode
+  // closest to the target first. Ranking on |Re{kn} - kn_target| alone would let a strongly
+  // evanescent mode of a lossy cross-section outrank the propagating mode. The stable sort
+  // keeps the backend order for exact ties.
   const double kn_target = std::sqrt(-sigma);
-  std::vector<double> distance(num_conv);
-  for (int i = 0; i < num_conv; i++)
+  auto solve_and_rank = [&](const ComplexVector *start)
   {
-    distance[i] = mode_assembly::TargetDistance(
-        std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(i)), kn_target);
+    if (start)
+    {
+      eigen->SetInitialSpace(*start);
+    }
+    const int n = eigen->Solve();
+    if (real_frequency)
+    {
+      reduced_model->RecordExactSolve();
+    }
+    std::vector<double> distance(n);
+    for (int i = 0; i < n; i++)
+    {
+      distance[i] = mode_assembly::TargetDistance(
+          std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(i)), kn_target);
+    }
+    mode_perm.resize(n);
+    std::iota(mode_perm.begin(), mode_perm.end(), 0);
+    std::ranges::stable_sort(mode_perm, [&distance](int a, int b)
+                             { return distance[a] < distance[b]; });
+    return n;
+  };
+
+  // Start from the mode selected at the previous frequency, which keeps following one mode,
+  // including the polarization of a degenerate pair, between nearby frequencies. From that
+  // single vector the eigensolver can converge only one mode of a degenerate pair (TE11 of
+  // a circular guide) and fill the requested count with the next mode, so the requested
+  // index selects a different mode. Then the selected mode no longer resembles the start,
+  // and the solve is repeated from the fixed initial space.
+  const bool warm = real_frequency && warm_start.Size() > 0;
+  int num_conv = solve_and_rank(warm ? &warm_start : initial_space);
+  if (warm && num_conv > 0)
+  {
+    ComplexVector v(nd_size + h1_size);
+    v.UseDevice(true);
+    eigen->GetEigenvector(mode_perm[std::min(num_modes - 1, num_conv - 1)], v);
+    const double overlap =
+        std::abs(linalg::Dot(solver_comm, v, warm_start)) / linalg::Norml2(solver_comm, v);
+    if (overlap < 0.5)
+    {
+      num_conv = solve_and_rank(initial_space);
+    }
   }
-  mode_perm.resize(num_conv);
-  std::iota(mode_perm.begin(), mode_perm.end(), 0);
-  std::ranges::stable_sort(mode_perm,
-                           [&distance](int a, int b) { return distance[a] < distance[b]; });
 
   if (real_frequency && num_conv > 0)
   {
@@ -743,6 +762,21 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
     eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),
                                   mat_op.GetInvLondonDepth(), 1.0);
   }
+  // Frequency-dependent permittivity beyond ε∞: -ω² Re χ = Re g, shifted like the ε∞ mass.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const double g =
+          mat_op
+              .EvaluateFrequencyDependentPermittivityA2(i, std::complex<double>(0.0, omega))
+              .real();
+      eps_shifted_pc.AddMaterialProperty(
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i)),
+          shifted ? std::abs(g) : g);
+    }
+  }
 
   // Boundary coefficients for preconditioner (real part only, matching SpaceOperator).
   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
@@ -751,6 +785,11 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surf_z_op.AddMassBdrCoefficients(shifted ? std::abs(omega * omega) : (-omega * omega),
                                    fbr);
   farfield_op.AddDampingBdrCoefficients(omega, fbr);
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    farfield_op.AddDispersiveDampingBdrCoefficients(
+        k, omega * std::abs(farfield_op.GetDispersiveScale(k, omega)), fbr);
+  }
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
 
@@ -822,6 +861,20 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),
                                   mat_op.GetInvLondonDepthScalar(), -1.0);
+  }
+  // Frequency-dependent permittivity beyond ε∞: ω² Re χ = -Re g.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      poseps_h1_func.AddMaterialProperty(
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i)),
+          -mat_op
+               .EvaluateFrequencyDependentPermittivityA2(i,
+                                                         std::complex<double>(0.0, omega))
+               .real());
+    }
   }
 
   // Boundary coefficients (real part only).

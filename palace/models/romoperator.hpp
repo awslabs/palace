@@ -186,20 +186,17 @@ protected:
   // Mp_r.imag() to recover the real symmetric M_proj used for SVD-based augmentation.
   std::map<int, std::unique_ptr<ComplexOperator>> Mwp_p;
   std::map<int, Eigen::MatrixXcd> Mwp_p_r;
-  // True iff GetExtraSystemMatrix has any non-wave-port contributors (currently
-  // second-order farfield, surface conductivity, or Floquet Robin terms). Set in the
-  // ctor; controls the slow SolvePROM A2 fallback path. NOTE: the farfield and surface
-  // conductivity contributors are now ALSO folded into the circuit synthesis (see M_ff_,
-  // Asig_g_ below); has_other_A2 still gates the online SolvePROM fallback, which is
-  // independent of synthesis.
+  // Whether GetExtraSystemMatrix has any non-wave-port contribution (frequency-dependent
+  // boundaries or dispersive volumes). Frequency-dependent permittivity always assembles
+  // both A2 slots, so the probe detects it even where its scalar cancels.
   bool has_other_A2 = false;
   // One-time self-check state for the factored online A2_other path (SolvePROM). On the
   // first factored online solve we verify that the factored sum (0.5/ω·M_ff_r +
-  // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r) reproduces the full HDM projection of A2_other(ω)
-  // to round-off. This guards against a future ω-dependent non-wave-port BC being added to
-  // GetExtraSystemMatrix without a matching factored operator (which would otherwise be
-  // silently dropped). On failure we set other_A2_factored_ok = false and permanently use
-  // the slow per-ω HDM fallback.
+  // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r + ... + Σ_m f_m(ω)·Avol_m_r) reproduces the full
+  // HDM projection of A2_other(ω) to round-off. This guards against a future ω-dependent
+  // non-wave-port BC being added to GetExtraSystemMatrix without a matching factored
+  // operator (which would otherwise be silently dropped). On failure we set
+  // other_A2_factored_ok = false and permanently use the slow per-ω HDM fallback.
   mutable bool other_A2_self_checked = false;
   mutable bool other_A2_factored_ok = true;
 
@@ -245,6 +242,17 @@ protected:
   std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
   std::vector<std::unique_ptr<ComplexOperator>> Arz_b_;
   std::vector<Eigen::MatrixXcd> Arz_b_r;
+  // Frequency-dependent permittivity volume mass, one entry per dispersive material m
+  // (borrowed from SpaceOperator, imaginary slot, matching the convention above):
+  // f_m(ω) = g_m(iω)/i with g_m(s) = s²χ_m(s) for the nonlinear part of the material's
+  // susceptibility (EvaluateFrequencyDependentPermittivityA2). Closed form online.
+  std::vector<std::unique_ptr<ComplexOperator>> Avol_m_;
+  std::vector<Eigen::MatrixXcd> Avol_m_r;
+  // Absorbing boundaries next to each frequency-dependent material k of the farfield
+  // operator: first-order damping mass and second-order curl-curl matrix (imaginary slot),
+  // with online scalars ω·r_k(ω) and (0.5/ω)/r_k(ω).
+  std::vector<std::unique_ptr<ComplexOperator>> Aff_k_, Aff2_k_;
+  std::vector<Eigen::MatrixXcd> Aff_k_r, Aff2_k_r;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
@@ -355,6 +363,10 @@ protected:
     std::vector<Eigen::VectorXd> u_dirs;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
+    // If true, poles and residues are p_k, r_k in s = iω of r_k s²/(s - p_k) M_proj,
+    // realized with frequency-linear couplings (see BuildAugmentedPencil); otherwise they
+    // are in ω, as for the fitted boundary terms.
+    bool frequency_coupled = false;
   };
 
   // Result of fitting k_n,p(omega) on the sweep band for a single port. Polynomial regime
@@ -459,6 +471,24 @@ protected:
   WavePortDispersionFit FitRationalImpedanceDispersion(const std::string &label,
                                                        const Eigen::MatrixXcd &Mp_r,
                                                        int idx) const;
+
+  // Synthesis of frequency-dependent permittivity material `material_idx`, with `Mp_r` its
+  // projected volume mass on the imaginary slot: adds polynomial corrections to the pencil
+  // and appends aux blocks. Pole terms are realized exactly, without sampling; a
+  // Djordjevic-Sarkar term is fit by poly+AAA (see the definition).
+  void AddFrequencyDependentPermittivitySynthesis(
+      const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t material_idx,
+      Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+      std::vector<WavePortAuxBlock> &aux) const;
+
+  // Synthesis of the absorbing boundary next to frequency-dependent material k of the
+  // farfield operator, with `Mp_r` its projected damping mass (or, if `curl_curl`, its
+  // curl-curl matrix) on the imaginary slot: the scalar ω·r_k(ω) (or (0.5/ω)/r_k(ω))
+  // involves √ε(iω), so it is fit by poly+AAA like surface conductivity.
+  void AddFarfieldFrequencyDependentPermittivitySynthesis(
+      const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t k, bool curl_curl,
+      Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+      std::vector<WavePortAuxBlock> &aux) const;
 
   // Complex-coefficient variant of ApplyPolynomialFitCorrections for the other BCs: folds
   // α₀·Mp_r into Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with COMPLEX α (the wave-port

@@ -564,13 +564,12 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       Mwp_p.emplace(port_idx, std::move(Mp));
     }
   }
-  // Detect whether GetExtraSystemMatrix has any non-wave-port contributions (e.g.
-  // second-order farfield, surface conductivity, or Floquet Robin terms).
+  // Detect non-wave-port contributions from dispersive volumes or frequency-dependent
+  // boundaries. Dispersive volumes always assemble both A2 slots, so they are detected even
+  // when their scalar cancels at this probe frequency.
   {
     auto A2_other_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
         1.0, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
-    // The probe stamps every non-wave-port frequency-dependent term, including the
-    // Floquet Robin BC, so a non-null probe is the complete condition.
     has_other_A2 = (A2_other_probe != nullptr);
   }
 
@@ -619,6 +618,37 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     {
       Arz_b_[b] = space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
           b, Operator::DIAG_ZERO, /*imag_slot=*/true);
+    }
+  }
+
+  // Per-material frequency-dependent permittivity volume mass (imaginary slot, matching the
+  // convention), borrowed from the SpaceOperator A2 cache. The online scalar is
+  // f_m(ω) = g_m(iω)/i, evaluated in closed form.
+  {
+    const auto &mat_op = space_op.GetMaterialOp();
+    Avol_m_.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
+    Avol_m_r.resize(Avol_m_.size());
+    for (std::size_t m = 0; m < Avol_m_.size(); m++)
+    {
+      Avol_m_[m] =
+          space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO);
+    }
+  }
+
+  // Absorbing boundaries next to frequency-dependent materials (imaginary slot). The online
+  // scalars are ω·r_k(ω) and (0.5/ω)/r_k(ω), with r_k = √(ε_w,k(iω)/ε∞,k) (with the user
+  // conductivity), in closed form.
+  {
+    const auto &farfield_op = space_op.GetFarfieldOp();
+    const auto n = farfield_op.NumDispersiveMaterials();
+    Aff_k_.resize(n);
+    Aff2_k_.resize(n);
+    Aff_k_r.resize(n);
+    Aff2_k_r.resize(n);
+    for (std::size_t k = 0; k < n; k++)
+    {
+      Aff_k_[k] = space_op.GetFarfieldDispersiveDampingMatrix(k, Operator::DIAG_ZERO);
+      Aff2_k_[k] = space_op.GetFarfieldDispersiveCurlCurlMatrix(k, Operator::DIAG_ZERO);
     }
   }
 
@@ -1202,6 +1232,27 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       ProjectMatInternal(comm, V, *Arz_b_[b], Arz_b_r[b], r, dim_V_old, true);
     }
   }
+  for (std::size_t m = 0; m < Avol_m_.size(); m++)
+  {
+    if (Avol_m_[m])
+    {
+      Avol_m_r[m].conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *Avol_m_[m], Avol_m_r[m], r, dim_V_old, true);
+    }
+  }
+  for (std::size_t k = 0; k < Aff_k_.size(); k++)
+  {
+    if (Aff_k_[k])
+    {
+      Aff_k_r[k].conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *Aff_k_[k], Aff_k_r[k], r, dim_V_old, true);
+    }
+    if (Aff2_k_[k])
+    {
+      Aff2_k_r[k].conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *Aff2_k_[k], Aff2_k_r[k], r, dim_V_old, true);
+    }
+  }
   // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
   for (auto &[port_idx, Mp_r] : M_floquet_p_r)
   {
@@ -1284,8 +1335,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
-  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
-  // only nonzero on boundaries, will be empty if not needed.
+  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) may contain dispersive-domain and boundary terms; RHS2
+  // is assembled only if required and is boundary-supported.
 
   // No basis states ill-defined: return zero vector to match current behaviour.
   if (V.empty())
@@ -1307,13 +1358,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       space_op.GetFloquetPortOp().Initialize(omega);
     }
 
-    // Other ω-nonlinear A2 contributors (second-order farfield ABC and surface
-    // conductivity). These are applied in factored form: their ω-independent boundary
-    // masses (M_ff_r, Asig_g_r) were projected onto the basis once in UpdatePROM, exactly
-    // like the wave-port masses, so the online cost is a per-ω scalar times an n×n matrix
-    // add — no per-ω HDM- scale assembly or reprojection. This is algebraically identical
-    // to projecting the full A2(ω) here (the scalar is uniform per boundary group, so it
-    // commutes with the projection) and matches the HDM stamping to round-off.
+    // Other ω-nonlinear A2 contributors (second-order farfield ABC, surface conductivity,
+    // rational impedance, Floquet Robin, and frequency-dependent permittivity terms) are
+    // applied in factored form. Their ω-independent masses were projected once in
+    // UpdatePROM, so online assembly is a scalar times an n×n matrix add.
     //
     // Robustness: the structural check below requires every factored operator we hold to be
     // sized to the current basis, but it cannot know whether the factored set is COMPLETE
@@ -1366,14 +1414,43 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       }
       // Factored Floquet port Robin BC: A2_floquet,p(ω) = i·γ₀,p(ω)·M_floquet_p.
       // M_floquet_p_r carries the µ⁻¹ boundary mass on the imaginary slot (the i), so
-      // the scalar multiplier is γ₀ (real, refreshed by the Initialize(omega) at the top
-      // of SolvePROM).
+      // the scalar multiplier is γ₀ (refreshed by the Initialize(omega) at the top of
+      // SolvePROM; complex in a lossy frequency-dependent port medium).
       for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
       {
         if (Mp_r.rows() == static_cast<long>(V.size()))
         {
-          const double gamma0 = space_op.GetFloquetPortOp().GetPort(port_idx).GetGamma0();
-          Ar += std::complex<double>(gamma0, 0.0) * Mp_r;
+          const auto gamma0 = space_op.GetFloquetPortOp().GetPort(port_idx).GetGamma0();
+          Ar += gamma0 * Mp_r;
+        }
+      }
+      // Factored frequency-dependent permittivity, per material: A2_vol,m(ω) = g_m(iω)·B_m
+      // = i·(g_m(iω)/i)·B_m. Avol_m_r[m] carries B_m on the imaginary slot, so the scalar
+      // here is g_m(iω)/i. Closed form (a few pole or logarithm terms per material).
+      const auto &mat_op = space_op.GetMaterialOp();
+      for (std::size_t m = 0; m < Avol_m_.size(); m++)
+      {
+        if (Avol_m_[m] && Avol_m_r[m].rows() == static_cast<long>(V.size()))
+        {
+          const std::complex<double> s = mat_op.EvaluateFrequencyDependentPermittivityA2(
+                                             m, std::complex<double>(0.0, omega)) /
+                                         std::complex<double>(0.0, 1.0);
+          Ar += s * Avol_m_r[m];
+        }
+      }
+      // Factored absorbing boundaries next to frequency-dependent materials: iω·r_k·C_k and
+      // i·(0.5/ω)/r_k·M_k, with the i carried by the imaginary slot.
+      const auto &farfield_op = space_op.GetFarfieldOp();
+      for (std::size_t k = 0; k < Aff_k_.size(); k++)
+      {
+        const auto r_k = farfield_op.GetDispersiveScale(k, omega);
+        if (Aff_k_[k] && Aff_k_r[k].rows() == static_cast<long>(V.size()))
+        {
+          Ar += (omega * r_k) * Aff_k_r[k];
+        }
+        if (Aff2_k_[k] && Aff2_k_r[k].rows() == static_cast<long>(V.size()))
+        {
+          Ar += (0.5 / (omega * r_k)) * Aff2_k_r[k];
         }
       }
     };
@@ -1407,6 +1484,24 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
       {
         (Mp_r.rows() == n) ? (any_factored = true) : (all_present = false);
+      }
+      for (std::size_t m = 0; m < Avol_m_.size(); m++)
+      {
+        if (Avol_m_[m])
+        {
+          (Avol_m_r[m].rows() == n) ? (any_factored = true) : (all_present = false);
+        }
+      }
+      for (std::size_t k = 0; k < Aff_k_.size(); k++)
+      {
+        if (Aff_k_[k])
+        {
+          (Aff_k_r[k].rows() == n) ? (any_factored = true) : (all_present = false);
+        }
+        if (Aff2_k_[k])
+        {
+          (Aff2_k_r[k].rows() == n) ? (any_factored = true) : (all_present = false);
+        }
       }
       other_A2_factored = any_factored && all_present;
     }
@@ -1446,11 +1541,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
             Ar = Ar_hdm;  // Use the trusted HDM projection for this solve.
             Mpi::Warning(
                 "Factored online A2 (farfield ABC, surface conductivity, rational "
-                "impedance, Floquet Robin) disagrees with the full operator "
-                "(rel. err {:.3e})!\n"
+                "impedance, Floquet Robin, frequency-dependent permittivity) disagrees "
+                "with the full operator (rel. err {:.3e})!\n"
                 "Reverting to the per-frequency assembled A2 for the remaining sweep. "
-                "This indicates an ω-dependent boundary condition not covered by the "
-                "factored path.\n",
+                "This indicates an ω-dependent term not covered by the factored path.\n",
                 err / ref);
           }
         }
@@ -2028,6 +2122,87 @@ RomOperator::FitRationalImpedanceDispersion(const std::string &label,
   return fit;
 }
 
+void RomOperator::AddFarfieldFrequencyDependentPermittivitySynthesis(
+    const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t k, bool curl_curl,
+    Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+    std::vector<WavePortAuxBlock> &aux) const
+{
+  // The full terms are i·f(ω)·M, with the i on the imaginary slot of Mp_r.
+  const auto &farfield_op = space_op.GetFarfieldOp();
+  auto f = [&farfield_op, k, curl_curl](std::complex<double> omega) -> std::complex<double>
+  {
+    const auto r_k = farfield_op.GetDispersiveScale(k, omega);
+    return curl_curl ? 0.5 / (omega * r_k) : omega * r_k;
+  };
+  auto fit = FitScalarDispersion(label, Mp_r, f, /*allow_augment=*/true);
+  ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_r, Kr_corr,
+                                       Cr_corr, Mr_corr);
+  if (fit.aux)
+  {
+    aux.push_back(*fit.aux);
+  }
+}
+
+void RomOperator::AddFrequencyDependentPermittivitySynthesis(
+    const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t material_idx,
+    Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+    std::vector<WavePortAuxBlock> &aux) const
+{
+  // The full term is g(iω)·B with g(s) = s²χ(s) and Mp_r = i·VᵀBV = i·Σ_j λ_j u_j u_jᵀ.
+  // Each pole term r·s²/(s - p) is realized exactly by one aux state per direction j, with
+  // s - p on its diagonal and couplings s·q_j·u_j, q_j² = -r·λ_j (BuildAugmentedPencil).
+  // Splitting it instead into r·(s + p) + r·p²/(s - p) cancels catastrophically for a pole
+  // far from the band, and the truncation of weak directions would then remove only the
+  // proper part. A Djordjevic-Sarkar term is fit, with its polynomial part restricted to
+  // the directions of its aux block for the same reason.
+  const auto &mat_op = space_op.GetMaterialOp();
+  constexpr std::complex<double> i(0.0, 1.0);
+  WavePortAuxBlock exact;
+  exact.port_idx = -1;
+  exact.label = label;
+  exact.frequency_coupled = true;
+  for (const auto &term : mat_op.GetPermittivityPoleTerms(material_idx))
+  {
+    exact.poles.push_back(term.pole);
+    exact.residues.push_back(term.residue);
+  }
+  if (mat_op.HasDjordjevicSarkarPermittivity(material_idx))
+  {
+    MFEM_VERIFY(sweep_omega_max > sweep_omega_min,
+                "Circuit synthesis of a DjordjevicSarkar permittivity requires a nonzero "
+                "frequency band!");
+    auto f = [&mat_op, material_idx, i](std::complex<double> omega)
+    { return mat_op.EvaluateDjordjevicSarkarPermittivityA2(material_idx, i * omega) / i; };
+    const auto ds = FitScalarDispersion(label + "_djordjevic_sarkar", Mp_r, f,
+                                        /*allow_augment=*/true);
+    Eigen::MatrixXcd Mp_kept = Mp_r;
+    if (ds.aux)
+    {
+      Mp_kept.setZero();
+      for (std::size_t j = 0; j < ds.aux->weights.size(); j++)
+      {
+        Mp_kept +=
+            (i * ds.aux->weights[j]) * (ds.aux->u_dirs[j] * ds.aux->u_dirs[j].transpose())
+                                           .cast<std::complex<double>>();
+      }
+      exact.weights = ds.aux->weights;
+      exact.u_dirs = ds.aux->u_dirs;
+      aux.push_back(*ds.aux);
+    }
+    ApplyComplexPolynomialFitCorrections(ds.alpha0c, ds.alpha1c, ds.alpha2c, Mp_kept,
+                                         Kr_corr, Cr_corr, Mr_corr);
+  }
+  if (!exact.poles.empty() &&
+      (!exact.weights.empty() ||
+       AddAuxBlockDirections(exact, Mp_r, waveport_synthesis_rank_tol)))
+  {
+    Mpi::Print(" {}: {:d} pole{} realized exactly in {:d} direction{}\n", label,
+               exact.poles.size(), exact.poles.size() == 1 ? "" : "s", exact.weights.size(),
+               exact.weights.size() == 1 ? "" : "s");
+    aux.push_back(std::move(exact));
+  }
+}
+
 RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
     const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
     const Eigen::MatrixXcd &Mr_total, const std::vector<WavePortAuxBlock> &aux_blocks,
@@ -2071,14 +2246,31 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
       auto rk = blk.residues[k];
       for (std::size_t j = 0; j < blk.weights.size(); j++)
       {
-        std::complex<double> coupling =
-            std::sqrt(std::complex<double>(0.0, -1.0) * rk * blk.weights[j]);
-        aug.Kr(aux_row, aux_row) = -pk;
-        aug.Cr(aux_row, aux_row) = std::complex<double>(0.0, -1.0);
-        for (long i = 0; i < n_v; i++)
+        if (blk.frequency_coupled)
         {
-          aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
-          aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
+          // Aux diagonal s - pₖ (K_aa = -pₖ, C_aa = 1) and couplings s·q·uⱼ (C_va = C_av =
+          // q·uⱼ): eliminating the aux state gives -q²·s²/(s - pₖ)·uⱼuⱼᵀ, which is the term
+          // rₖ·λⱼ·s²/(s - pₖ)·uⱼuⱼᵀ for q² = -rₖ·λⱼ.
+          const std::complex<double> q = std::sqrt(-rk * blk.weights[j]);
+          aug.Kr(aux_row, aux_row) = -pk;
+          aug.Cr(aux_row, aux_row) = 1.0;
+          for (long i = 0; i < n_v; i++)
+          {
+            aug.Cr(i, aux_row) = q * blk.u_dirs[j](i);
+            aug.Cr(aux_row, i) = q * blk.u_dirs[j](i);
+          }
+        }
+        else
+        {
+          std::complex<double> coupling =
+              std::sqrt(std::complex<double>(0.0, -1.0) * rk * blk.weights[j]);
+          aug.Kr(aux_row, aux_row) = -pk;
+          aug.Cr(aux_row, aux_row) = std::complex<double>(0.0, -1.0);
+          for (long i = 0; i < n_v; i++)
+          {
+            aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
+            aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
+          }
         }
         const std::string prefix =
             blk.label.empty() ? fmt::format("waveport_{:d}", blk.port_idx) : blk.label;
@@ -2602,6 +2794,40 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
         aux_blocks_total.push_back(*fit.aux);
       }
     }
+  }
+
+  // Absorbing boundaries next to frequency-dependent materials, one material at a time.
+  if (sweep_omega_max > sweep_omega_min)
+  {
+    for (std::size_t k = 0; k < Aff_k_.size(); k++)
+    {
+      if (Aff_k_[k] && Aff_k_r[k].rows() == Kr.rows())
+      {
+        AddFarfieldFrequencyDependentPermittivitySynthesis(
+            fmt::format("farfield_permittivity_{:d}", k), Aff_k_r[k], k, false,
+            Kr_total_corr, Cr_total_corr, Mr_total_corr, aux_blocks_total);
+      }
+      if (Aff2_k_[k] && Aff2_k_r[k].rows() == Kr.rows())
+      {
+        AddFarfieldFrequencyDependentPermittivitySynthesis(
+            fmt::format("farfield_permittivity_curlcurl_{:d}", k), Aff2_k_r[k], k, true,
+            Kr_total_corr, Cr_total_corr, Mr_total_corr, aux_blocks_total);
+      }
+    }
+  }
+
+  // Frequency-dependent permittivity, one material at a time. Outside the band guard: the
+  // pole terms are realized exactly without sampling, and a Djordjevic-Sarkar term without
+  // a band is an error rather than silently omitted.
+  for (std::size_t m = 0; m < Avol_m_.size(); m++)
+  {
+    if (!Avol_m_[m] || Avol_m_r[m].rows() != Kr.rows())
+    {
+      continue;
+    }
+    AddFrequencyDependentPermittivitySynthesis(fmt::format("permittivity_{:d}", m),
+                                               Avol_m_r[m], m, Kr_total_corr, Cr_total_corr,
+                                               Mr_total_corr, aux_blocks_total);
   }
 
   // Polynomial-only matrices (basis dim n × n). The legacy matrices are loaded by the

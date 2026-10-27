@@ -809,8 +809,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // epsilon_r) is not a safe bound; use max(mu_r) * max(epsilon_r) instead. The bound does
   // not hold for the slow-wave modes of superconducting lines (kinetic inductance), so the
   // modes are sought on both sides of the shift (LARGEST_MAGNITUDE).
-  n_target_sq = (data.target > 0.0) ? data.target * data.target
-                                    : port_mat_op->GetMaxMuEpsilon() * 1.1;
+  has_target = (data.target > 0.0);
+  n_target_sq =
+      has_target ? data.target * data.target : port_mat_op->GetMaxMuEpsilon() * 1.1;
 
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();
@@ -984,6 +985,18 @@ void WavePortData::SetUpExcitationVoltagePath(const std::vector<mfem::Vector> &v
   }
 }
 
+double WavePortData::ModeShift(double omega) const
+{
+  // A dispersive material on the port exceeds its high-frequency permittivity below its
+  // resonances, so the default bound on k_n²/ω² is taken at ω. A given Target is kept.
+  if (has_target)
+  {
+    return -omega * omega * n_target_sq;
+  }
+  return -omega * omega *
+         std::max(n_target_sq, 1.1 * port_mat_op->GetFrequencyDependentMaxMuEpsilon(omega));
+}
+
 void WavePortData::Initialize(double omega)
 {
   if (omega == omega0)
@@ -993,7 +1006,7 @@ void WavePortData::Initialize(double omega)
 
   // Solve the generalized eigenvalue problem for the desired wave port mode using the
   // ModeEigenSolver. Frequency-independent matrices were assembled in the constructor.
-  const double sigma = -omega * omega * n_target_sq;
+  const double sigma = ModeShift(omega);
   std::complex<double> lambda;
   {
     BlockTimer bt(Timer::WAVE_PORT_SOLVE);
@@ -1196,7 +1209,7 @@ const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<dou
     return mode_cache;
   }
   const double omega_ref = omega.real();
-  const double sigma = -omega_ref * omega_ref * n_target_sq;
+  const double sigma = ModeShift(omega_ref);
   const bool has_solver = (port_comm != MPI_COMM_NULL);
   std::complex<double> lambda;
   ComplexVector e_tmp;

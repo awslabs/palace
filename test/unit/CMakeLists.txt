@@ -38,6 +38,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-frequencydependentpostpro.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-iterative.cpp
@@ -49,9 +50,11 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-permittivitymodel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp

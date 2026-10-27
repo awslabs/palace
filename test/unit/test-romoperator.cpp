@@ -10,6 +10,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/drivensolver.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
 #include "models/materialoperator.hpp"
@@ -17,6 +18,7 @@
 #include "models/postoperatorcsv.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
@@ -58,6 +60,8 @@ class RomOperatorTest : public RomOperator
 {
 public:
   using RomOperator::AddAuxBlockDirections;
+  using RomOperator::AddFarfieldFrequencyDependentPermittivitySynthesis;
+  using RomOperator::AddFrequencyDependentPermittivitySynthesis;
   using RomOperator::ApplyComplexPolynomialFitCorrections;
   using RomOperator::ApplyPolynomialFitCorrections;
   using RomOperator::AugmentedPencil;
@@ -80,6 +84,20 @@ public:
     wp_pairing_ok = !assembled;
     Ar_omega = std::numeric_limits<double>::quiet_NaN();
   }
+  auto &GetAr() const { return Ar; }
+  bool HasOtherA2() const { return has_other_A2; }
+  bool OtherA2SelfChecked() const { return other_A2_self_checked; }
+  bool OtherA2FactoredOk() const { return other_A2_factored_ok; }
+  auto &GetFrequencyDependentPermittivityMassR(std::size_t m) const
+  {
+    return Avol_m_r.at(m);
+  }
+  auto &GetFarfieldDispersiveMatrixR(std::size_t k, bool curl_curl) const
+  {
+    return curl_curl ? Aff2_k_r.at(k) : Aff_k_r.at(k);
+  }
+  auto GetSweepBand() const { return std::make_pair(sweep_omega_min, sweep_omega_max); }
+  void ReserveBasis(std::size_t n) { V.reserve(n); }
 };
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
@@ -175,9 +193,338 @@ TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
 }
 
 // TODO: Do some more basic RomOperator Ctor Checks
+TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]")
+{
+  // With a conductivity boundary, the first-frequency self-check sees only the boundary
+  // term (the volume scalar cancels there), so a missing factored volume term would go
+  // undetected and only the comparison at omega = 2 catches it. Without it, the volume
+  // term is the only factored contributor. An absorbing boundary next to the material
+  // depends on ε(iω), which is ε∞ at omega = 1, through its first- and second-order terms.
+  enum class Boundary
+  {
+    None,
+    Conductivity,
+    Absorbing1,
+    Absorbing2
+  };
+  const auto boundary = GENERATE(Boundary::None, Boundary::Conductivity,
+                                 Boundary::Absorbing1, Boundary::Absorbing2);
+  CAPTURE(static_cast<int>(boundary));
+  const bool with_boundary = boundary == Boundary::Conductivity;
+  json config;
+  config["Problem"] = {{"Type", "Driven"}, {"Output", "test_output"}};
+  config["Model"] = {{"Mesh", "test.msh"}};
+  // The full volume A2 cancels at s = i but not s = 2i.
+  const json terms = {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 4.0}},
+                      {{"Type", "PoleResidue"}, {"Pole", -2.0}, {"Residue", -20.0}},
+                      {{"Type", "PoleResidue"}, {"Pole", -3.0}, {"Residue", 20.0}}};
+  config["Domains"]["Materials"] = {
+      {{"Attributes", {1}}, {"Permittivity", {{"HighFrequency", 1.0}, {"Terms", terms}}}}};
+  config["Boundaries"] = json::object();
+  if (with_boundary)
+  {
+    config["Boundaries"]["Conductivity"] = {{{"Attributes", {1}}, {"Conductivity", 5.8e7}}};
+  }
+  if (boundary == Boundary::Absorbing1 || boundary == Boundary::Absorbing2)
+  {
+    config["Boundaries"]["Absorbing"] = {
+        {"Attributes", {1}}, {"Order", boundary == Boundary::Absorbing1 ? 1 : 2}};
+  }
+  config["Solver"] = {
+      {"Order", 1},
+      {"Driven", {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}}};
+  IoData iodata(config, false);
+  test::IntegrationSettingsGuard settings_guard(iodata.solver);
 
-// Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
-// inner-product weight and port overlap. Works with a simple 1x1x1 Cube. This is a serial
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  SpaceOperator space_op(iodata.solver, iodata.domains, iodata.boundaries,
+                         iodata.problem.type, iodata.units, mesh);
+
+  // The constructor probes at omega = 1, where the volume term vanishes. It must still be
+  // detected.
+  RomOperatorTest prom_op(iodata, space_op, 1);
+  CHECK(prom_op.HasOtherA2());
+  CHECK(space_op.GetSurfaceConductivityOp().Size() == (with_boundary ? 1 : 0));
+  CHECK(space_op.GetFarfieldOp().NumDispersiveMaterials() ==
+        (boundary == Boundary::Absorbing1 || boundary == Boundary::Absorbing2 ? 1 : 0));
+  auto A2_cancelled =
+      space_op.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO, false);
+  REQUIRE(A2_cancelled);
+
+  prom_op.ReserveBasis(1);
+  ComplexVector v(space_op.GlobalTrueVSize());
+  v.UseDevice(true);
+  v = 0.0;
+  linalg::SetRandom(Mpi::World(), v.Real());
+  prom_op.UpdatePROM(v, "test");
+  REQUIRE(prom_op.GetReducedDimension() == 1);
+
+  ComplexVector u;
+  prom_op.SolvePROM(1, 1.0, u);  // Exercise the cancelling first-frequency path first.
+  constexpr double omega = 2.0;
+  prom_op.SolvePROM(1, omega, u);
+  auto A2 =
+      space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO, false);
+  REQUIRE(A2);
+  ComplexVector basis(v.Size()), A2v(v.Size());
+  basis.UseDevice(true);
+  A2v.UseDevice(true);
+  basis = 0.0;
+  basis.Real() = prom_op.GetVectors()[0];
+  A2->Mult(basis, A2v);
+  double a2_reduced_real = prom_op.GetVectors()[0] * A2v.Real();
+  double a2_reduced_imag = prom_op.GetVectors()[0] * A2v.Imag();
+  Mpi::GlobalSum(1, &a2_reduced_real, Mpi::World());
+  Mpi::GlobalSum(1, &a2_reduced_imag, Mpi::World());
+  const std::complex<double> a2_reduced{a2_reduced_real, a2_reduced_imag};
+  std::complex<double> recovered =
+      prom_op.GetAr()(0, 0) - prom_op.GetKr()(0, 0) + omega * omega * prom_op.GetMr()(0, 0);
+  if (prom_op.GetCr().size() > 0)
+  {
+    recovered -= std::complex<double>(0.0, omega) * prom_op.GetCr()(0, 0);
+  }
+  CHECK_THAT(std::abs(recovered - a2_reduced),
+             Catch::Matchers::WithinAbsMatcher(0.0, 1e-10));
+  // The factored path ran its self-check and did not fall back to per-frequency assembly.
+  CHECK(prom_op.OtherA2SelfChecked());
+  CHECK(prom_op.OtherA2FactoredOk());
+}
+
+// Circuit synthesis must realize the factored dispersive volume term: the polynomial
+// corrections plus the aux states of the augmented pencil must reproduce g(iω)·VᵀBV after
+// eliminating the aux states. Pole terms are exact, also for a pole far from the band,
+// where splitting r s²/(s - p) into a polynomial and a proper part cancels
+// catastrophically, and for a projected mass with a direction weaker than the aux rank
+// truncation, which must drop that direction's whole contribution rather than leave its
+// polynomial part. A Djordjevic-Sarkar term is fit.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator synthesis realizes the dispersive volume A2",
+                 "[romoperator][Serial]")
+{
+  enum class Case
+  {
+    Moderate,
+    DjordjevicSarkar,
+    DistantPole,
+    WeakDirection
+  };
+  const auto test_case = GENERATE(Case::Moderate, Case::DjordjevicSarkar, Case::DistantPole,
+                                  Case::WeakDirection);
+  CAPTURE(static_cast<int>(test_case));
+
+  // Relaxation times in ns, against the nondimensional time scale Lc / c₀ ≈ 2.3e-5 ns.
+  const double tau = (test_case == Case::DistantPole)     ? 1.0e-12
+                     : (test_case == Case::WeakDirection) ? 1.0e-4
+                                                          : 0.01;
+  json terms = {{{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", tau}},
+                {{"Type", "Lorentz"},
+                 {"DeltaPermittivity", 0.5},
+                 {"ResonanceFrequency", 20.0},
+                 {"DampingFrequency", 2.0}}};
+  if (test_case == Case::DjordjevicSarkar)
+  {
+    terms.push_back({{"Type", "DjordjevicSarkar"},
+                     {"Strength", 0.2},
+                     {"LowerFrequency", 1.0},
+                     {"UpperFrequency", 100.0}});
+  }
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"L0", 1.0e-6},
+      {"Lc", 7.0},
+      {"Refinement", json::object({})},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       {{{"Attributes", {1}},
+         {"Permittivity", {{"HighFrequency", 2.0}, {"Terms", terms}}}}}}};
+  setup_json["Boundaries"] = {{"LumpedPort",
+                               {{{"Index", 1},
+                                 {"R", 50.0},
+                                 {"Excitation", 1},
+                                 {"Attributes", {100}},
+                                 {"Direction", "+X"}}}}};
+  setup_json["Solver"] = {{"Order", 2},
+                          {"Device", "CPU"},
+                          {"Driven",
+                           {{"AdaptiveTol", 1.0e-6},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  prom_op.AddLumpedPortModesForSynthesis();
+  ComplexVector v(space_op.GlobalTrueVSize());
+  v.UseDevice(true);
+  v = 0.0;
+  linalg::SetRandom(Mpi::World(), v.Real());
+  prom_op.UpdatePROM(v, "random");
+  const long n = prom_op.GetReducedDimension();
+  REQUIRE(n == 2);
+
+  // B_r = i·VᵀBV by the imaginary-slot convention. The weak-direction case replaces the
+  // projection by a rotated diag(1, 1e-7), below the aux rank truncation of 1e-6.
+  Eigen::MatrixXcd B_r = prom_op.GetFrequencyDependentPermittivityMassR(0);
+  REQUIRE(B_r.rows() == n);
+  if (test_case == Case::WeakDirection)
+  {
+    const double c = std::cos(0.3), s = std::sin(0.3);
+    Eigen::Matrix2d R, D = Eigen::Vector2d(1.0, 1.0e-7).asDiagonal();
+    R << c, -s, s, c;
+    B_r = std::complex<double>(0.0, 1.0) *
+          (R * D * R.transpose()).cast<std::complex<double>>();
+  }
+
+  Eigen::MatrixXcd Kc = Eigen::MatrixXcd::Zero(n, n), Cc = Kc, Mc = Kc;
+  std::vector<RomOperatorTest::WavePortAuxBlock> blocks;
+  prom_op.AddFrequencyDependentPermittivitySynthesis("permittivity_0", B_r, 0, Kc, Cc, Mc,
+                                                     blocks);
+  std::vector<std::string> aux_labels;
+  auto aug = RomOperatorTest::BuildAugmentedPencil(Kc, Cc, Mc, blocks, aux_labels);
+  const long n_aux = aug.Kr.rows() - n;
+  REQUIRE(n_aux > 0);
+
+  const Eigen::MatrixXcd VtBV = B_r / std::complex<double>(0.0, 1.0);
+  const auto &mat_op = space_op.GetMaterialOp();
+  const auto [w_min, w_max] = prom_op.GetSweepBand();
+  REQUIRE(w_max > w_min);
+  double max_err = 0.0, max_ref = 0.0;
+  for (double t : {0.0, 0.3, 0.55, 1.0})
+  {
+    const double w = w_min + t * (w_max - w_min);
+    const Eigen::MatrixXcd A =
+        aug.Kr + std::complex<double>(0.0, w) * aug.Cr - w * w * aug.Mr;
+    const Eigen::MatrixXcd schur =
+        A.topLeftCorner(n, n) -
+        A.topRightCorner(n, n_aux) * A.bottomRightCorner(n_aux, n_aux)
+                                         .fullPivLu()
+                                         .solve(A.bottomLeftCorner(n_aux, n));
+    const Eigen::MatrixXcd want =
+        mat_op.EvaluateFrequencyDependentPermittivityA2(0, std::complex<double>(0.0, w)) *
+        VtBV;
+    max_err = std::max(max_err, (schur - want).cwiseAbs().maxCoeff());
+    max_ref = std::max(max_ref, want.cwiseAbs().maxCoeff());
+  }
+  const double tol = (test_case == Case::DjordjevicSarkar) ? 1.0e-5
+                     : (test_case == Case::WeakDirection)  ? 1.0e-6
+                                                           : 1.0e-10;
+  CHECK(max_err <= tol * max_ref);
+
+  // The synthesized circuit carries exactly these aux states.
+  if (test_case != Case::WeakDirection)
+  {
+    const auto norm = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+    const auto n_permittivity_aux =
+        std::ranges::count_if(norm.aux_labels, [](const std::string &l)
+                              { return l.starts_with("permittivity_0"); });
+    CHECK(n_permittivity_aux == n_aux);
+  }
+}
+
+// Circuit synthesis must realize the absorbing boundary next to a frequency-dependent
+// material: after eliminating the aux states, the fit of each of its terms reproduces
+// f(ω)·VᵀMV over the band, with f = ω·r(ω) for the damping and (0.5/ω)/r(ω) for the
+// curl-curl matrix, r = √(ε(iω)/ε∞).
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator synthesis realizes the dispersive absorbing boundary",
+                 "[romoperator][Serial]")
+{
+  const json terms = {
+      {{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.01}},
+      {{"Type", "Lorentz"},
+       {"DeltaPermittivity", 0.5},
+       {"ResonanceFrequency", 20.0},
+       {"DampingFrequency", 2.0}}};
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"L0", 1.0e-6},
+      {"Lc", 7.0},
+      {"Refinement", json::object({})},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       {{{"Attributes", {1}},
+         {"Permittivity", {{"HighFrequency", 2.0}, {"Terms", terms}}}}}}};
+  setup_json["Boundaries"] = {{"LumpedPort",
+                               {{{"Index", 1},
+                                 {"R", 50.0},
+                                 {"Excitation", 1},
+                                 {"Attributes", {100}},
+                                 {"Direction", "+X"}}}},
+                              {"Absorbing", {{"Attributes", {101}}, {"Order", 2}}}};
+  setup_json["Solver"] = {{"Order", 2},
+                          {"Device", "CPU"},
+                          {"Driven",
+                           {{"AdaptiveTol", 1.0e-6},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &farfield_op = space_op.GetFarfieldOp();
+  REQUIRE(farfield_op.NumDispersiveMaterials() == 1);
+
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  prom_op.AddLumpedPortModesForSynthesis();
+  ComplexVector v(space_op.GlobalTrueVSize());
+  v.UseDevice(true);
+  v = 0.0;
+  linalg::SetRandom(Mpi::World(), v.Real());
+  prom_op.UpdatePROM(v, "random");
+  const long n = prom_op.GetReducedDimension();
+  REQUIRE(n == 2);
+  const auto [w_min, w_max] = prom_op.GetSweepBand();
+  REQUIRE(w_max > w_min);
+
+  for (const bool curl_curl : {false, true})
+  {
+    CAPTURE(curl_curl);
+    const Eigen::MatrixXcd &M_r = prom_op.GetFarfieldDispersiveMatrixR(0, curl_curl);
+    REQUIRE(M_r.rows() == n);
+    REQUIRE(M_r.cwiseAbs().maxCoeff() > 0.0);
+    Eigen::MatrixXcd Kc = Eigen::MatrixXcd::Zero(n, n), Cc = Kc, Mc = Kc;
+    std::vector<RomOperatorTest::WavePortAuxBlock> blocks;
+    prom_op.AddFarfieldFrequencyDependentPermittivitySynthesis(
+        "farfield", M_r, 0, curl_curl, Kc, Cc, Mc, blocks);
+    std::vector<std::string> aux_labels;
+    auto aug = RomOperatorTest::BuildAugmentedPencil(Kc, Cc, Mc, blocks, aux_labels);
+    const long n_aux = aug.Kr.rows() - n;
+    double max_err = 0.0, max_ref = 0.0;
+    for (double t : {0.0, 0.3, 0.55, 1.0})
+    {
+      const double w = w_min + t * (w_max - w_min);
+      const Eigen::MatrixXcd A =
+          aug.Kr + std::complex<double>(0.0, w) * aug.Cr - w * w * aug.Mr;
+      Eigen::MatrixXcd schur = A.topLeftCorner(n, n);
+      if (n_aux > 0)
+      {
+        schur -= A.topRightCorner(n, n_aux) * A.bottomRightCorner(n_aux, n_aux)
+                                                  .fullPivLu()
+                                                  .solve(A.bottomLeftCorner(n_aux, n));
+      }
+      const auto r = farfield_op.GetDispersiveScale(0, w);
+      const Eigen::MatrixXcd want = (curl_curl ? 0.5 / (w * r) : w * r) * M_r;
+      max_err = std::max(max_err, (schur - want).cwiseAbs().maxCoeff());
+      max_ref = std::max(max_ref, want.cwiseAbs().maxCoeff());
+    }
+    CHECK(max_err <= 1.0e-5 * max_ref);
+  }
+}
+
 // test as hex mesh only has a single element.
 TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube111",
                  "[romoperator][Serial]")

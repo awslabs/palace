@@ -267,7 +267,11 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    const double mu_eps_max = mode_op.GetMaterialOp().GetMaxMuEpsilon();
+    // A frequency-dependent permittivity exceeds its high-frequency value below its
+    // resonances, so the bound is taken at the solve frequency.
+    const double mu_eps_max =
+        std::max(mode_op.GetMaterialOp().GetMaxMuEpsilon(),
+                 mode_op.GetMaterialOp().GetFrequencyDependentMaxMuEpsilon(omega));
     kn_target = omega * std::sqrt(1.1 * mu_eps_max);
     Mpi::Print(" Auto kn_target = {:.6e} (from max(mu_r) * max(epsilon_r) = {:.6e})\n",
                kn_target, mu_eps_max);
@@ -341,7 +345,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bz.Real() *= 1.0 / omega;
       bz.Imag() = curl_etr;
       bz.Imag() *= -1.0 / omega;
-      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(et, bz, total_domain_energy, omega, indicator);
     }
   }
   Mpi::Print("\n");

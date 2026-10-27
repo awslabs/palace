@@ -3,6 +3,7 @@
 
 #include "domainpostoperator.hpp"
 
+#include <algorithm>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
@@ -108,6 +109,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     }
     M_i.emplace(idx, std::make_pair(std::move(M_elec_i), std::move(M_mag_i)));
   }
+  SetUpFrequencyDependentForms(postpro, mat_op, nd_fespace);
 }
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
@@ -225,25 +227,98 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     }
     M_i.emplace(idx, std::make_pair(std::move(M_elec_i), nullptr));
   }
+  SetUpFrequencyDependentForms(iodata.domains.postpro, mat_op, nd_fespace);
 }
 
-double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
+void DomainPostOperator::SetUpFrequencyDependentForms(const config::DomainPostData &postpro,
+                                                      const MaterialOperator &mat_op,
+                                                      const FiniteElementSpace &nd_fespace)
 {
-  if (M_elec)
+  // Every rank builds the same forms for the globally supported materials, empty where a
+  // rank has none of their elements.
+  this->mat_op = &mat_op;
+  auto MakeForms = [&](const std::vector<int> *domain_attributes)
   {
-    M_elec->Mult(E.Real(), D);
-    double dot = linalg::LocalDot(E.Real(), D);
+    FrequencyDependentForms forms;
+    for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      if (!mat_op.HasFrequencyDependentPermittivityModel(m))
+      {
+        continue;
+      }
+      std::vector<int> attributes = mat_op.GetFrequencyDependentPermittivityAttributes(m);
+      if (domain_attributes)
+      {
+        std::erase_if(attributes,
+                      [domain_attributes](int attr)
+                      {
+                        return std::ranges::find(*domain_attributes, attr) ==
+                               domain_attributes->end();
+                      });
+      }
+      MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
+      if (!attributes.empty())
+      {
+        f.AddMaterialProperty(mat_op.GetCeedAttributes(attributes), 1.0);
+      }
+      BilinearForm a(nd_fespace);
+      if (!f.empty())
+      {
+        a.AddDomainIntegrator<VectorFEMassIntegrator>(f);
+      }
+      forms.emplace_back(m, a.PartialAssemble());
+    }
+    return forms;
+  };
+  M_elec_fd = MakeForms(nullptr);
+  for (const auto &[idx, data] : postpro.energy)
+  {
+    M_elec_fd_i.emplace(idx, MakeForms(&data.attributes));
+  }
+}
+
+double DomainPostOperator::GetFrequencyDependentEnergyWeight(std::size_t material_idx,
+                                                             double omega,
+                                                             ElectricEnergy type) const
+{
+  MFEM_VERIFY(omega > 0.0, "The electric energy of a frequency-dependent material requires "
+                           "a positive frequency!");
+  return (type == ElectricEnergy::STORED)
+             ? mat_op->GetFrequencyDependentStoredEnergySusceptibility(material_idx, omega)
+             : mat_op->GetFrequencyDependentSusceptibilityReal(material_idx, omega);
+}
+
+double DomainPostOperator::ElectricFieldEnergy(const Operator &M,
+                                               const FrequencyDependentForms &M_fd,
+                                               const GridFunction &E, double omega,
+                                               ElectricEnergy type) const
+{
+  auto dot = [&](const Operator &op)
+  {
+    op.Mult(E.Real(), D);
+    double d = linalg::LocalDot(E.Real(), D);
     if (E.HasImag())
     {
-      M_elec->Mult(E.Imag(), D);
-      dot += linalg::LocalDot(E.Imag(), D);
+      op.Mult(E.Imag(), D);
+      d += linalg::LocalDot(E.Imag(), D);
     }
-    Mpi::GlobalSum(1, &dot, E.GetComm());
-    return 0.5 * dot;
+    return d;
+  };
+  double energy = dot(M);
+  for (const auto &[m, op] : M_fd)
+  {
+    energy += GetFrequencyDependentEnergyWeight(m, omega, type) * dot(*op);
   }
-  MFEM_ABORT(
-      "Domain postprocessing is not configured for electric field energy calculation!");
-  return 0.0;
+  Mpi::GlobalSum(1, &energy, E.GetComm());
+  return 0.5 * energy;
+}
+
+double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E, double omega,
+                                                  ElectricEnergy type) const
+{
+  MFEM_VERIFY(M_elec, "Domain postprocessing is not configured for electric field energy "
+                      "calculation!");
+  return ElectricFieldEnergy(*M_elec, M_elec_fd, E, omega, type);
 }
 
 double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
@@ -263,8 +338,9 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
   return 0.0;
 }
 
-double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
-                                                        const GridFunction &E) const
+double DomainPostOperator::GetDomainElectricFieldEnergy(int idx, const GridFunction &E,
+                                                        double omega,
+                                                        ElectricEnergy type) const
 {
   // Compute the electric field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -274,15 +350,10 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
   {
     return 0.0;
   }
-  it->second.first->Mult(E.Real(), D);
-  double dot = linalg::LocalDot(E.Real(), D);
-  if (E.HasImag())
-  {
-    it->second.first->Mult(E.Imag(), D);
-    dot += linalg::LocalDot(E.Imag(), D);
-  }
-  Mpi::GlobalSum(1, &dot, E.GetComm());
-  return 0.5 * dot;
+  static const FrequencyDependentForms none;
+  auto fd = M_elec_fd_i.find(idx);
+  return ElectricFieldEnergy(*it->second.first,
+                             (fd != M_elec_fd_i.end()) ? fd->second : none, E, omega, type);
 }
 
 double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
