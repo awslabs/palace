@@ -84,11 +84,6 @@ public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &fespace);
 
-  // Mode analysis: ND space for electric field energy only (no B-field).
-  // Uses VectorFEMassIntegrator with ε (not CurlCurlIntegrator).
-  DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                     const FiniteElementSpace &nd_fespace, bool electric_energy_only);
-
   // The electric energy of a frequency-dependent material at the real angular frequency ω
   // (unused without one): STORED is that of its model, the field and the polarization;
   // MATERIAL is the field energy at its permittivity Re ε(ω), which for a lossless mode
