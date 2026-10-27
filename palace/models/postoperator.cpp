@@ -1818,8 +1818,8 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
   {
     auto freq_re = measurement_cache.freq.real();
     // Time-averaged electric energy of the mode, in the domain and in capacitive lumped
-    // elements. Preserve the weak-loss equipartition approximation E_total = 2 E_electric.
-    // This is not a complete storage model for dispersive or distributed sheet elements.
+    // elements. The total energy uses the weak-loss equipartition E_total = 2 E_electric,
+    // which leaves out dispersive and distributed sheet storage.
     auto energy_electric_all = measurement_cache.domain_E_field_energy_all +
                                measurement_cache.lumped_port_capacitor_energy;
     auto energy_total = 2.0 * energy_electric_all;

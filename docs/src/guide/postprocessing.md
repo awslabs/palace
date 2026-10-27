@@ -68,9 +68,10 @@ Additionally, when surface current excitations are present, the excitations are 
 `surface-I.csv`.
 
 For frequency domain problems, the values output are the complex-valued peak voltages and
-currents, computed from the field phasors. Quadratic quantities (powers, energies, Poynting
-vectors) are reported as time averages over one period, so that a matched port excited with the
-default normalization delivers a time-averaged incident power of 1 W.
+currents, computed from the field phasors. The current of a lumped port is ``V/Z``, the current
+through its own `"R"`, `"L"`, and `"C"`, and not the current delivered to the model. Quadratic
+quantities (powers, energies, Poynting vectors) are time averages over one period, and each
+excited port delivers 1 W of time-averaged incident power.
 
 ## Domain postprocessing
 
@@ -94,13 +95,11 @@ These include:
 
 ### Limits of stored-energy accounting
 
-The phasor convention does not change which storage terms are measured. Boundary-mode
-energy outputs currently contain the transverse electric and longitudinal magnetic
-components, not the full modal energy. Lumped L/C outputs use the circuit voltage and
-branch current; they need not equal the distributed boundary-sheet storage for a
-non-modal port field. Surface-impedance, dispersive and London storage require their own
-accounting. Do not infer complete energy balance or exact equipartition from these
-columns alone. Port coupling rates retain their existing signed convention.
+Boundary-mode energies contain only the transverse electric and longitudinal magnetic
+components, not the full modal energy. Lumped L/C energies use the circuit voltage and
+branch current, which can differ from the energy stored in the boundary sheet when the port
+field is not uniform. Surface-impedance, dispersive and London storage are not included.
+These columns therefore do not give a complete energy balance.
 
 ## Boundary postprocessing
 
@@ -242,7 +241,9 @@ well as:
 
   - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (C/m²)
   - Surface current density: `J_s`, `J_s_real`, `J_s_imag` (A/m)
-  - Wave port boundary mode electric field: `E0_real`, `E0_imag` (V/m)
+  - Wave port boundary mode electric field: `E0_<i>_real`, `E0_<i>_imag` for wave port `i`
+    (V/m), the port mode normalized to 1 W of time-averaged power, which is the incident
+    field of an excitation of the port
 
 ## Adaptive mesh refinement
 

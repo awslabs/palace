@@ -31,7 +31,9 @@ follows:
 (``\mathbf{E}`` itself goes to zero at infinity as 1/r). You can also think of
 this as the electric field measured at a distance of one unit of length. With
 this output, you can immediately compute various quantities of interest. For
-instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
+instance, ``|r\mathbf{E}|^2/(2Z_0)``, with ``Z_0`` the impedance of free space, is the
+time-averaged power radiated per unit solid angle (W/sr), and its integral over all
+directions is the radiated power.
 
 !!! warning "Limitations"
 
