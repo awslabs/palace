@@ -23666,6 +23666,25 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                  uncovered_spatial_support_clipping,
                                  conductor_consistency_claim_tolerance);
       }
+      // OI-MX-LOOPGATE (decision 955): on the Maxwell path every applied patch's raw claim
+      // by the same rule, keyed by the placed index on every rank, for the circulating
+      // remainder's raw energy (GetLoopRemainderPortions). The electrostatic path has no
+      // lift and builds none.
+      if (maxwell)
+      {
+        for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
+        {
+          if (spatially_owned_patches.count(patch_idx) ||
+              placed_patches[patch_idx].weight <= 0.0)
+          {
+            continue;
+          }
+          AppendExcludedPatchClaim(maxwell_patch_raw_claims[static_cast<int>(patch_idx)],
+                                   patch_idx, placed_patches, config, ownership,
+                                   uncovered_spatial_support_clipping,
+                                   conductor_consistency_claim_tolerance);
+        }
+      }
       // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
       // patch's raw claim by model set, for the per-model raw energy partition of
       // surface-response-model-raw-energy.csv; off by default (the list stays empty).
@@ -25102,6 +25121,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
+  maxwell_loop_remainder_measured = dimension == 3;
   AutomaticResponseDiagnostics local_diagnostics;
   AutomaticResponseStatistics local_statistics;
   std::optional<ResponseCorrectionData> local_config;
@@ -25798,6 +25818,19 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
     ConfigureMaxwellLines(line_geometry);
   }
+  // OI-MX-LOOPGATE (decision 955): the step lengths weight the least-squares lift.
+  maxwell_line_lengths.resize(line_geometry.size());
+  for (std::size_t line = 0; line < line_geometry.size(); line++)
+  {
+    double length2 = 0.0;
+    for (int d = 0; d < dimension; d++)
+    {
+      const double delta = line_geometry[line].end[d] - line_geometry[line].begin[d];
+      length2 += delta * delta;
+    }
+    maxwell_line_lengths[line] = std::sqrt(length2);
+  }
+  ConfigureMaxwellLoopFit();
   dbc_tdof_list = essential_tdofs;
   contour_line_count = maxwell_lines.size();
   int global_line_count = static_cast<int>(maxwell_lines.size());
@@ -25821,6 +25854,22 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     Mpi::Print("  {:d}: matched = {:.6f}, unmodeled corner = {:.6f}\n", interface,
                matched_fraction, corner_neighborhood_fraction_by_interface.at(interface));
   }
+  Mpi::Print(" Loop fit (OI-MX-LOOPGATE): {:d} fundamental cycles over the patches, {:d} "
+             "unconstrained knots; share floor {:.1e}, fallback share {:.2f}; remainder "
+             "{}\n",
+             maxwell_loop_fit_cycle_count, maxwell_loop_fit_unconstrained_count,
+             kLoopFitShareFloor, kLoopFitFallbackShare,
+             maxwell_loop_remainder_measured
+                 ? "measured on the patches' raw claims"
+                 : "not measured (a two-dimensional mesh has no raw claims: the fit is "
+                   "applied, no patch falls back)");
+  ownership_diagnostics["LoopFit"] = {
+      {"ShareFloor", kLoopFitShareFloor},
+      {"FallbackShare", kLoopFitFallbackShare},
+      {"Weights", "1/length"},
+      {"UnconstrainedKnots", maxwell_loop_fit_unconstrained_count},
+      {"Cycles", maxwell_loop_fit_cycle_count},
+      {"RemainderMeasured", maxwell_loop_remainder_measured}};
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -26764,8 +26813,8 @@ void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values,
   AddPointValuesTranspose(maxwell_point_values, y);
 }
 
-void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
-                                                Vector &values) const
+void SurfaceResponseOperator::BuildMaxwellChainTrace(const Vector &line_values,
+                                                     Vector &values) const
 {
   MFEM_ASSERT(line_values.Size() == static_cast<int>(maxwell_lines.size()),
               "Inconsistent Maxwell contour-path data!");
@@ -26826,8 +26875,8 @@ void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
   }
 }
 
-void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
-                                                         Vector &line_values) const
+void SurfaceResponseOperator::BuildMaxwellChainTraceTranspose(const Vector &values,
+                                                              Vector &line_values) const
 {
   MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
   line_values.SetSize(static_cast<int>(maxwell_lines.size()));
@@ -26898,6 +26947,480 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
       maxwell_trace_adjoint[path->parent_trace_offset] += value;
     }
   }
+}
+
+void SurfaceResponseOperator::ConfigureMaxwellLoopFit()
+{
+  // OI-MX-LOOPGATE (decision 955): per local patch, the equation graph of the lines the
+  // paths evaluate, split into the TREE steps the chain uses (BuildMaxwellChainTrace sets
+  // every knot and conductor state once, by exactly these lines, so the chain is the tree
+  // solve) and the CLOSING steps it ignores, each with its fundamental cycle, and the
+  // inverse of the cycle matrix G = D_C + K D_T K^T.
+  maxwell_loop_fits.clear();
+  maxwell_loop_fits.resize(patches.size());
+  maxwell_loop_fit_cycle_count = 0;
+  maxwell_loop_fit_unconstrained_count = 0;
+  auto StepLineRange = [&](const MaxwellContourPath &path, std::size_t step)
+  {
+    int begin = path.contour_line_offset;
+    for (std::size_t k = 0; k < step; k++)
+    {
+      begin += path.step_line_counts[k];
+    }
+    return std::make_pair(begin, path.step_line_counts[step]);
+  };
+  auto RangeLength = [&](int begin, int count)
+  {
+    double length = 0.0;
+    for (int line = begin; line < begin + count; line++)
+    {
+      length += maxwell_line_lengths[line];
+    }
+    return length;
+  };
+  std::size_t conductor_cursor = 0;
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    auto &fit = maxwell_loop_fits[patch_index];
+    const auto &patch = patches[patch_index];
+    const auto &model = models[patch.model];
+    const auto [path_begin, path_count] = maxwell_patch_paths[patch_index];
+    // Per trace coefficient of the patch: the tree step that sets it (-1: ground = a PEC
+    // knot, or an unconstrained knot).
+    std::vector<int> parent_step(model.basis_size, -1);
+    std::vector<bool> grounded(model.basis_size, false);
+    for (const int index : model.zero_trace_indices)
+    {
+      grounded[index] = true;
+    }
+    auto Local = [&](int trace) { return trace - patch.trace_offset; };
+    // Ground is the root of every tree (-1); a PEC knot named as a parent or a closing end
+    // (a hat's rim knot on a PEC side) is ground: it has no tree step and its value is 0.
+    auto Node = [&](int trace)
+    { return (trace >= 0 && grounded[Local(trace)]) ? -1 : trace; };
+    auto AddTree = [&](int parent, int child, int line_begin, int line_count)
+    {
+      MFEM_VERIFY(child >= 0 && parent_step[Local(child)] < 0 && !grounded[Local(child)],
+                  "Maxwell loop fit: a trace coefficient is set by two routes!");
+      parent_step[Local(child)] = static_cast<int>(fit.tree.size());
+      fit.tree.push_back({Node(parent), child, line_begin, line_count,
+                          line_count > 0 ? RangeLength(line_begin, line_count) : 0.0});
+    };
+    auto AddClosing = [&](int from, int to, int line_begin, int line_count)
+    {
+      fit.closing.push_back({Node(from),
+                             Node(to),
+                             line_begin,
+                             line_count,
+                             line_count > 0 ? RangeLength(line_begin, line_count) : 0.0,
+                             {}});
+    };
+    // (1) The conductor spanning tree (the chain's first loop): the whole open path's
+    // equations are tree steps, walked from the parent conductor.
+    std::set<int> conductor_tree_paths;
+    while (conductor_cursor < maxwell_conductor_paths.size() &&
+           maxwell_conductor_paths[conductor_cursor].contour_path < path_begin + path_count)
+    {
+      const auto &conductor_path = maxwell_conductor_paths[conductor_cursor++];
+      MFEM_VERIFY(conductor_path.contour_path >= path_begin,
+                  "Maxwell loop fit: conductor paths out of patch order!");
+      const auto &path = maxwell_paths[conductor_path.contour_path];
+      conductor_tree_paths.insert(conductor_path.contour_path);
+      const int start_node = path.start_trace;
+      const int end_node = path.end_conductor_trace;
+      const auto size = path.trace_indices.size();
+      if (conductor_path.integral_sign < 0)
+      {
+        // parent = the start conductor: start -> knots -> end.
+        AddTree(start_node, path.trace_indices.front(), path.anchor_line,
+                path.anchor_line >= 0 ? 1 : 0);
+        for (std::size_t i = 1; i < size; i++)
+        {
+          const auto [begin, count] = StepLineRange(path, i - 1);
+          AddTree(path.trace_indices[i - 1], path.trace_indices[i], begin, count);
+        }
+        AddTree(path.trace_indices.back(), end_node, path.end_line,
+                path.end_line >= 0 ? 1 : 0);
+      }
+      else
+      {
+        // parent = the end conductor: end -> knots (reversed) -> start.
+        AddTree(end_node, path.trace_indices.back(), path.end_line,
+                path.end_line >= 0 ? 1 : 0);
+        for (std::size_t i = size - 1; i >= 1; i--)
+        {
+          const auto [begin, count] = StepLineRange(path, i - 1);
+          AddTree(path.trace_indices[i], path.trace_indices[i - 1], begin, count);
+        }
+        AddTree(path.trace_indices.front(), start_node, path.anchor_line,
+                path.anchor_line >= 0 ? 1 : 0);
+      }
+    }
+    // (2) Every path in construction order (the chain's second loop).
+    for (int path_index = path_begin; path_index < path_begin + path_count; path_index++)
+    {
+      if (conductor_tree_paths.count(path_index))
+      {
+        continue;
+      }
+      const auto &path = maxwell_paths[path_index];
+      const auto size = path.trace_indices.size();
+      const int start_node =
+          (!path.closed && path.start_trace >= 0) ? path.start_trace : -1;
+      AddTree(start_node, path.trace_indices.front(), path.anchor_line,
+              path.anchor_line >= 0 ? 1 : 0);
+      if (path.hat_check_line >= 0)
+      {
+        continue;  // a hat: one tree step; the check line is information only (818 R2)
+      }
+      int used_lines = 0;
+      for (std::size_t i = 1; i < size; i++)
+      {
+        const auto [begin, count] = StepLineRange(path, i - 1);
+        AddTree(path.trace_indices[i - 1], path.trace_indices[i], begin, count);
+        used_lines += count;
+      }
+      const int closing_begin = path.contour_line_offset + used_lines;
+      const int closing_count = path.contour_line_count - used_lines;
+      if (path.closed)
+      {
+        // The ring's last step back to its start knot.
+        AddClosing(path.trace_indices.back(), path.trace_indices.front(), closing_begin,
+                   closing_count);
+      }
+      else if (path.return_line >= 0 || closing_count > 0)
+      {
+        // A free arc: the step onto the PEC knot and the return line from that knot to the
+        // anchor form ONE loop from the last free knot to ground. The PEC knot is a point
+        // of the loop, not a node: the coupon calls its trace zero, but on the fabricated
+        // slab top it lies in the thin device's air (decision 818 R1), so the device field
+        // integrates to a nonzero value between it and the anchor while the whole loop
+        // closes. (The return line is appended right after the step's legs.)
+        int closing_lines = closing_count;
+        if (path.return_line >= 0)
+        {
+          MFEM_VERIFY(path.return_line == closing_begin + closing_count,
+                      "Maxwell loop fit: a free arc's return line is not contiguous with "
+                      "its closing step!");
+          closing_lines++;
+        }
+        AddClosing(path.trace_indices.back(), -1, closing_begin, closing_lines);
+      }
+      else
+      {
+        // A non-tree open path: its end line closes onto the end conductor (a coincident
+        // end line is a zero-length identification, a hard constraint in the cycle space).
+        AddClosing(path.trace_indices.back(),
+                   path.end_conductor_trace >= 0 ? path.end_conductor_trace : -1,
+                   path.end_line, path.end_line >= 0 ? 1 : 0);
+      }
+    }
+    for (int i = 0; i < model.basis_size; i++)
+    {
+      if (!grounded[i] && parent_step[i] < 0)
+      {
+        maxwell_loop_fit_unconstrained_count++;
+      }
+    }
+    // The fundamental cycles: the tree path from `from` to `to` through the lowest common
+    // ancestor (ground is the root of every tree).
+    std::vector<int> depth(model.basis_size, 0);
+    for (const auto &step : fit.tree)
+    {
+      depth[Local(step.child)] = step.parent >= 0 ? depth[Local(step.parent)] + 1 : 1;
+    }
+    auto Depth = [&](int node) { return node >= 0 ? depth[Local(node)] : 0; };
+    auto Up = [&](int node) { return fit.tree[parent_step[Local(node)]].parent; };
+    for (auto &closing : fit.closing)
+    {
+      int a = closing.from, b = closing.to;
+      std::vector<std::pair<int, double>> a_side, b_side;
+      while (Depth(a) > Depth(b))
+      {
+        a_side.emplace_back(parent_step[Local(a)], -1.0);  // against the tree direction
+        a = Up(a);
+      }
+      while (Depth(b) > Depth(a))
+      {
+        b_side.emplace_back(parent_step[Local(b)], 1.0);  // along the tree direction
+        b = Up(b);
+      }
+      while (a != b)
+      {
+        a_side.emplace_back(parent_step[Local(a)], -1.0);
+        b_side.emplace_back(parent_step[Local(b)], 1.0);
+        a = Up(a);
+        b = Up(b);
+      }
+      closing.cycle = std::move(a_side);
+      closing.cycle.insert(closing.cycle.end(), b_side.begin(), b_side.end());
+    }
+    const int cycle_count = static_cast<int>(fit.closing.size());
+    maxwell_loop_fit_cycle_count += cycle_count;
+    fit.cycle_inverse.SetSize(cycle_count);
+    if (cycle_count > 0)
+    {
+      // G = D_C + K D_T K^T, symmetric positive definite when every cycle has a positive
+      // length (a zero-length identification between two routes of positive length keeps
+      // it so).
+      mfem::DenseMatrix cycle_matrix(cycle_count);
+      cycle_matrix = 0.0;
+      std::map<int, std::vector<std::pair<int, double>>> step_cycles;
+      for (int c = 0; c < cycle_count; c++)
+      {
+        cycle_matrix(c, c) += fit.closing[c].length;
+        for (const auto &[step, sign] : fit.closing[c].cycle)
+        {
+          step_cycles[step].emplace_back(c, sign);
+        }
+      }
+      for (const auto &[step, members] : step_cycles)
+      {
+        const double length = fit.tree[step].length;
+        for (const auto &[c, sign_c] : members)
+        {
+          for (const auto &[d, sign_d] : members)
+          {
+            cycle_matrix(c, d) += sign_c * sign_d * length;
+          }
+        }
+      }
+      for (int c = 0; c < cycle_count; c++)
+      {
+        MFEM_VERIFY(cycle_matrix(c, c) > 0.0,
+                    "Maxwell loop fit: a closing equation of patch "
+                        << patch.global_index + 1 << " has a zero-length cycle!");
+      }
+      mfem::DenseMatrixInverse inverse(cycle_matrix);
+      inverse.GetInverseMatrix(fit.cycle_inverse);
+    }
+  }
+  MFEM_VERIFY(conductor_cursor == maxwell_conductor_paths.size(),
+              "Maxwell loop fit: conductor paths not attributed to a patch!");
+  Mpi::GlobalSum(1, &maxwell_loop_fit_cycle_count, fespace.GetComm());
+  Mpi::GlobalSum(1, &maxwell_loop_fit_unconstrained_count, fespace.GetComm());
+}
+
+double SurfaceResponseOperator::AddMaxwellLoopFitCorrection(std::size_t patch_index,
+                                                            const Vector &line_values,
+                                                            Vector &values) const
+{
+  const auto &fit = maxwell_loop_fits[patch_index];
+  const int cycle_count = static_cast<int>(fit.closing.size());
+  if (cycle_count == 0)
+  {
+    return 0.0;
+  }
+  const auto &patch = patches[patch_index];
+  const int basis = models[patch.model].basis_size;
+  auto Value = [&](int node) { return node >= 0 ? values[node] : 0.0; };
+  auto LineSum = [&](int begin, int count)
+  {
+    double sum = 0.0;
+    for (int line = begin; line < begin + count; line++)
+    {
+      sum += line_values[line];
+    }
+    return sum;
+  };
+  auto &workspace = maxwell_loop_workspace;
+  workspace.assign(2 * cycle_count + fit.tree.size() + basis, 0.0);
+  double *residual = workspace.data();
+  double *current = residual + cycle_count;
+  double *increment = current + cycle_count;
+  double *delta = increment + fit.tree.size();
+  // The closing residuals r_c = L_c + phi_T(to) - phi_T(from) of the chain values; a
+  // residual at the roundoff of its own terms is a closed loop (the chain's exact zeros and
+  // its roundoff-level closures stay as they are).
+  for (int c = 0; c < cycle_count; c++)
+  {
+    const auto &closing = fit.closing[c];
+    double scale = std::abs(Value(closing.to)) + std::abs(Value(closing.from));
+    for (int line = closing.line_begin; line < closing.line_begin + closing.line_count;
+         line++)
+    {
+      scale += std::abs(line_values[line]);
+    }
+    residual[c] = LineSum(closing.line_begin, closing.line_count) + Value(closing.to) -
+                  Value(closing.from);
+    if (std::abs(residual[c]) <= kLoopFitResidualRoundoff * scale)
+    {
+      residual[c] = 0.0;
+    }
+  }
+  // The loop currents I = G^-1 r and the circulating norm r^T G^-1 r.
+  double circulation = 0.0;
+  for (int c = 0; c < cycle_count; c++)
+  {
+    for (int d = 0; d < cycle_count; d++)
+    {
+      current[c] += fit.cycle_inverse(c, d) * residual[d];
+    }
+    circulation += residual[c] * current[c];
+  }
+  // The tree-step increments u_j = -l_j sum_c K_cj I_c and delta(child) = delta(parent) +
+  // u_j in topological order; the fit is the chain plus delta.
+  for (int c = 0; c < cycle_count; c++)
+  {
+    for (const auto &[step, sign] : fit.closing[c].cycle)
+    {
+      increment[step] -= fit.tree[step].length * sign * current[c];
+    }
+  }
+  for (std::size_t j = 0; j < fit.tree.size(); j++)
+  {
+    const auto &step = fit.tree[j];
+    const int child = step.child - patch.trace_offset;
+    delta[child] =
+        (step.parent >= 0 ? delta[step.parent - patch.trace_offset] : 0.0) + increment[j];
+    values[step.child] += delta[child];
+  }
+  return circulation;
+}
+
+double SurfaceResponseOperator::MaxwellLoopFitRouteNorm(std::size_t patch_index,
+                                                        const Vector &line_values) const
+{
+  const auto &fit = maxwell_loop_fits[patch_index];
+  double norm = 0.0;
+  auto Add = [&](int begin, int count, double length)
+  {
+    if (count <= 0 || length <= 0.0)
+    {
+      return;
+    }
+    double sum = 0.0;
+    for (int line = begin; line < begin + count; line++)
+    {
+      sum += line_values[line];
+    }
+    norm += sum * sum / length;
+  };
+  for (const auto &step : fit.tree)
+  {
+    Add(step.line_begin, step.line_count, step.length);
+  }
+  for (const auto &closing : fit.closing)
+  {
+    Add(closing.line_begin, closing.line_count, closing.length);
+  }
+  return norm;
+}
+
+void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
+                                                Vector &values) const
+{
+  BuildMaxwellChainTrace(line_values, values);
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    AddMaxwellLoopFitCorrection(patch_index, line_values, values);
+  }
+}
+
+void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
+                                                         Vector &line_values) const
+{
+  // phi = C L + A u with u = -D_T K^T G^-1 (S_C L + E_C C L): C the chain, S_C the closing
+  // legs' sums, E_C the closing difference (to minus from), A the tree accumulation. The
+  // adjoint: w = A^T v (the subtree sums of v below every tree step), y = -G^-1 K D_T w,
+  // then the closing legs receive y, the chain adjoint v' = v + E_C^T y, and the chain
+  // transpose of v' is added.
+  MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
+  maxwell_fit_adjoint.SetSize(basis_size);
+  maxwell_fit_adjoint = values;
+  maxwell_fit_line_adjoint.SetSize(static_cast<int>(maxwell_lines.size()));
+  maxwell_fit_line_adjoint = 0.0;
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    const auto &fit = maxwell_loop_fits[patch_index];
+    const int cycle_count = static_cast<int>(fit.closing.size());
+    if (cycle_count == 0)
+    {
+      continue;
+    }
+    const auto &patch = patches[patch_index];
+    const int basis = models[patch.model].basis_size;
+    auto &workspace = maxwell_loop_workspace;
+    workspace.assign(2 * cycle_count + fit.tree.size() + basis, 0.0);
+    double *transposed = workspace.data();
+    double *current = transposed + cycle_count;
+    double *subtree = current + cycle_count;
+    double *accumulated = subtree + fit.tree.size();
+    for (int i = 0; i < basis; i++)
+    {
+      accumulated[i] = values[patch.trace_offset + i];
+    }
+    // w_j = the sum of v over the child and its descendants (reverse topological order).
+    for (std::size_t j = fit.tree.size(); j-- > 0;)
+    {
+      const auto &step = fit.tree[j];
+      subtree[j] = accumulated[step.child - patch.trace_offset];
+      if (step.parent >= 0)
+      {
+        accumulated[step.parent - patch.trace_offset] += subtree[j];
+      }
+    }
+    // t = K D_T w, y = -G^-1 t.
+    for (int c = 0; c < cycle_count; c++)
+    {
+      for (const auto &[step, sign] : fit.closing[c].cycle)
+      {
+        transposed[c] += sign * fit.tree[step].length * subtree[step];
+      }
+    }
+    for (int c = 0; c < cycle_count; c++)
+    {
+      for (int d = 0; d < cycle_count; d++)
+      {
+        current[c] -= fit.cycle_inverse(c, d) * transposed[d];
+      }
+    }
+    for (int c = 0; c < cycle_count; c++)
+    {
+      const auto &closing = fit.closing[c];
+      for (int line = closing.line_begin; line < closing.line_begin + closing.line_count;
+           line++)
+      {
+        maxwell_fit_line_adjoint[line] += current[c];
+      }
+      if (closing.to >= 0)
+      {
+        maxwell_fit_adjoint[closing.to] += current[c];
+      }
+      if (closing.from >= 0)
+      {
+        maxwell_fit_adjoint[closing.from] -= current[c];
+      }
+    }
+  }
+  BuildMaxwellChainTraceTranspose(maxwell_fit_adjoint, line_values);
+  line_values += maxwell_fit_line_adjoint;
+}
+
+SurfaceResponseOperator::LoopRemainderPortions
+SurfaceResponseOperator::GetLoopRemainderPortions(
+    const std::vector<MaxwellResponse::LoopRemainder> &remainders) const
+{
+  LoopRemainderPortions result;
+  for (const auto &remainder : remainders)
+  {
+    const auto claim = maxwell_patch_raw_claims.find(remainder.patch);
+    MFEM_VERIFY(claim != maxwell_patch_raw_claims.end(),
+                "Maxwell loop remainder of patch " << remainder.patch + 1
+                                                   << " has no recorded raw claim!");
+    const double rho = remainder.fallback ? 1.0 : remainder.share;
+    const std::string label = fmt::format("m{}", remainder.model);
+    auto &row = result.rows[label];
+    row.patches++;
+    for (auto portion : claim->second.portions)
+    {
+      portion.topology = label;
+      row.weighted_length += rho * Norm(Subtract(portion.p1, portion.p0));
+      result.portions.push_back(std::move(portion));
+      result.weights.push_back(rho);
+    }
+  }
+  return result;
 }
 
 void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
@@ -27817,13 +28340,24 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   E.Real().GetTrueDofs(field_real);
   E.Imag().GetTrueDofs(field_imag);
   EvaluateMaxwellLines(field_real, field_imag, line_real, line_imag);
-  BuildMaxwellTrace(line_real, trace_real);
-  BuildMaxwellTrace(line_imag, trace_imag);
+  // OI-MX-LOOPGATE (decision 955): the CHAIN trace is the loop-residual detector's (D3: the
+  // per-path residuals, their response weights and the hat residuals read it, so the
+  // records are a property of the field and its routes); the FIT trace (the chain plus each
+  // patch's cycle-space correction, added patch by patch below) feeds the energies.
+  Vector chain_real, chain_imag;
+  BuildMaxwellChainTrace(line_real, chain_real);
+  BuildMaxwellChainTrace(line_imag, chain_imag);
+  trace_real = chain_real;
+  trace_imag = chain_imag;
 
   constexpr double maximum_path_loop_residual = 0.05;
   double weighted_loop_residual_squared = 0.0;
   double loop_response_weight = 0.0;
   double failed_loop_response_weight = 0.0;
+  double weighted_loop_fit_share = 0.0;
+  double loop_fit_share_weight = 0.0;
+  double loop_remainder_patch_count = 0.0;
+  double loop_fallback_patch_count = 0.0;
   double weighted_hat_residual_squared = 0.0;
   double hat_response_weight = 0.0;
   double weighted_trace_closure_spread_squared = 0.0;
@@ -27836,6 +28370,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   // model, contour size, basis size, real..., imag...], gathered below. The totals'
   // arithmetic is untouched: the records read the values the loop computes anyway.
   std::vector<double> local_patch_records, local_loop_records, local_trace_records;
+  std::vector<double> local_share_records, local_remainder_records;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
     const auto &patch = patches[patch_index];
@@ -27843,8 +28378,37 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     auto &contribution = result.model_contributions[patch.model];
     contribution.patch_count += 1.0;
     contribution.patch_weight += patch.weight;
+    // The patch's circulating share (decision 955): the fit's correction is added to its
+    // trace here; r^T G^-1 r over the route norm of both parts.
+    const double circulation =
+        AddMaxwellLoopFitCorrection(patch_index, line_real, trace_real) +
+        AddMaxwellLoopFitCorrection(patch_index, line_imag, trace_imag);
+    const double route_norm = MaxwellLoopFitRouteNorm(patch_index, line_real) +
+                              MaxwellLoopFitRouteNorm(patch_index, line_imag);
+    const double loop_share =
+        route_norm > 0.0 ? std::clamp(circulation / route_norm, 0.0, 1.0) : 0.0;
+    // Without raw claims (a two-dimensional mesh, decision 962) nothing can be put back:
+    // rho_p = 0 for every patch, the fit applied, no fallback; the share still reports.
+    const bool fallback =
+        maxwell_loop_remainder_measured && loop_share > kLoopFitFallbackShare;
+    const double rho =
+        fallback ? 1.0
+                 : (maxwell_loop_remainder_measured && loop_share > kLoopFitShareFloor
+                        ? loop_share
+                        : 0.0);
+    result.maximum_loop_fit_share = std::max(result.maximum_loop_fit_share, loop_share);
+    if (rho > 0.0)
+    {
+      (fallback ? loop_fallback_patch_count : loop_remainder_patch_count) += 1.0;
+      local_remainder_records.insert(local_remainder_records.end(),
+                                     {static_cast<double>(patch.global_index),
+                                      static_cast<double>(model.idx), loop_share,
+                                      circulation, route_norm, fallback ? 1.0 : 0.0});
+    }
     Vector patch_trace_real(trace_real.GetData() + patch.trace_offset, model.basis_size);
     Vector patch_trace_imag(trace_imag.GetData() + patch.trace_offset, model.basis_size);
+    Vector patch_chain_real(chain_real.GetData() + patch.trace_offset, model.basis_size);
+    Vector patch_chain_imag(chain_imag.GetData() + patch.trace_offset, model.basis_size);
     fixed_flux_real.SetSize(model.basis_size);
     fixed_flux_imag.SetSize(model.basis_size);
     if (include_patches && model.spatial_basis)
@@ -27888,8 +28452,8 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
         {
           return;
         }
-        const std::complex<double> value = {trace_real[trace_index],
-                                            trace_imag[trace_index]};
+        const std::complex<double> value = {chain_real[trace_index],
+                                            chain_imag[trace_index]};
         loop_integral += scale * value;
         loop_scale += std::abs(value);
       };
@@ -27946,18 +28510,42 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       }
     }
 
-    model.fixed_flux_transform.Mult(patch_trace_real, fixed_flux_real);
-    model.fixed_flux_transform.Mult(patch_trace_imag, fixed_flux_imag);
     auto HermitianForm =
         [&](const mfem::DenseMatrix &matrix, const Vector &real, const Vector &imag)
     {
       return QuadraticForm(matrix, real, workspace) +
              QuadraticForm(matrix, imag, workspace);
     };
+    // The detector weight (decision 955 D3): the patch's response energy on the CHAIN
+    // trace, the weight of the loop / hat statistics as before the fit (bitwise records).
+    double detector_response_energy = 0.0;
+    {
+      model.fixed_flux_transform.Mult(patch_chain_real, fixed_flux_real);
+      model.fixed_flux_transform.Mult(patch_chain_imag, fixed_flux_imag);
+      for (const auto &[interface, matrix] : model.fabricated_surfaces)
+      {
+        detector_response_energy +=
+            std::max(std::abs(patch.weight *
+                              HermitianForm(matrix, patch_chain_real, patch_chain_imag)),
+                     std::abs(patch.weight *
+                              HermitianForm(matrix, fixed_flux_real, fixed_flux_imag)));
+      }
+    }
+    weighted_loop_fit_share += detector_response_energy * loop_share;
+    loop_fit_share_weight += detector_response_energy;
+    if (include_patches)
+    {
+      local_share_records.insert(local_share_records.end(),
+                                 {static_cast<double>(patch.global_index), loop_share,
+                                  detector_response_energy, fallback ? 1.0 : 0.0});
+    }
+    model.fixed_flux_transform.Mult(patch_trace_real, fixed_flux_real);
+    model.fixed_flux_transform.Mult(patch_trace_imag, fixed_flux_imag);
     // The patch's domain defects, evaluated once and added to the totals and to the model's
     // own entry (M-5) by the same `+= domain_weight * form` statement, so that the totals'
     // floating-point result is unchanged and the per-model sums are the totals to roundoff.
-    const double domain_weight = 0.5 * patch.weight * patch.domain_weight;
+    // A fallback patch (decision 955 D6) adds nothing: it is served raw.
+    const double domain_weight = fallback ? 0.0 : 0.5 * patch.weight * patch.domain_weight;
     const double domain_defect_form =
         HermitianForm(model.domain_defect, patch_trace_real, patch_trace_imag);
     const double fixed_flux_defect_form =
@@ -27967,6 +28555,13 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     result.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
     contribution.domain_correction += domain_weight * domain_defect_form;
     contribution.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
+    if (fallback)
+    {
+      const double withheld_weight = 0.5 * patch.weight * patch.domain_weight;
+      result.loop_fallback_domain_correction += withheld_weight * domain_defect_form;
+      result.loop_fallback_domain_correction_fixed_flux +=
+          withheld_weight * fixed_flux_defect_form;
+    }
     if (include_patches)
     {
       local_patch_records.insert(
@@ -27977,13 +28572,13 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
            domain_weight * domain_defect_form, domain_weight * fixed_flux_defect_form,
            static_cast<double>(model.fabricated_surfaces.size())});
     }
-    double patch_response_energy = 0.0;
+    const double surface_weight = fallback ? 0.0 : patch.weight;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
-          patch.weight * HermitianForm(matrix, patch_trace_real, patch_trace_imag);
+          surface_weight * HermitianForm(matrix, patch_trace_real, patch_trace_imag);
       const double fixed_flux_energy =
-          patch.weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
+          surface_weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
@@ -27996,7 +28591,6 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       }
       const double weight =
           std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
-      patch_response_energy += weight;
       if (weight > 0.0)
       {
         const double spread = std::abs(fixed_trace_energy - fixed_flux_energy) / weight;
@@ -28014,11 +28608,11 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       (void)residual;
       path_scale_squared += scale_squared;
     }
-    if (patch_response_energy > 0.0 && path_scale_squared > 0.0)
+    if (detector_response_energy > 0.0 && path_scale_squared > 0.0)
     {
       for (const auto &[residual, scale_squared] : path_diagnostics)
       {
-        const double weight = patch_response_energy * scale_squared / path_scale_squared;
+        const double weight = detector_response_energy * scale_squared / path_scale_squared;
         weighted_loop_residual_squared += weight * residual * residual;
         loop_response_weight += weight;
         if (residual > maximum_path_loop_residual)
@@ -28035,18 +28629,18 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       (void)residual;
       hat_scale_squared += scale_squared;
     }
-    if (patch_response_energy > 0.0 && hat_scale_squared > 0.0)
+    if (detector_response_energy > 0.0 && hat_scale_squared > 0.0)
     {
       for (const auto &[residual, scale_squared] : hat_diagnostics)
       {
-        const double weight = patch_response_energy * scale_squared / hat_scale_squared;
+        const double weight = detector_response_energy * scale_squared / hat_scale_squared;
         weighted_hat_residual_squared += weight * residual * residual;
         hat_response_weight += weight;
       }
     }
   }
   std::vector<double> reduction;
-  reduction.reserve(10 + 2 * result.fabricated_surface_energy.size() +
+  reduction.reserve(16 + 2 * result.fabricated_surface_energy.size() +
                     result.model_contributions.size() *
                         (4 + 2 * result.fabricated_surface_energy.size()));
   reduction.push_back(result.domain_correction);
@@ -28059,6 +28653,12 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   reduction.push_back(weighted_trace_closure_spread_squared);
   reduction.push_back(trace_closure_response_weight);
   reduction.push_back(failed_trace_closure_response_weight);
+  reduction.push_back(weighted_loop_fit_share);
+  reduction.push_back(loop_fit_share_weight);
+  reduction.push_back(loop_remainder_patch_count);
+  reduction.push_back(loop_fallback_patch_count);
+  reduction.push_back(result.loop_fallback_domain_correction);
+  reduction.push_back(result.loop_fallback_domain_correction_fixed_flux);
   for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     reduction.push_back(fixed_trace);
@@ -28090,12 +28690,23 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   weighted_trace_closure_spread_squared = reduction[i++];
   trace_closure_response_weight = reduction[i++];
   failed_trace_closure_response_weight = reduction[i++];
+  weighted_loop_fit_share = reduction[i++];
+  loop_fit_share_weight = reduction[i++];
+  result.loop_remainder_patch_count = static_cast<int>(std::llround(reduction[i++]));
+  result.loop_fallback_patch_count = static_cast<int>(std::llround(reduction[i++]));
+  result.loop_fallback_domain_correction = reduction[i++];
+  result.loop_fallback_domain_correction_fixed_flux = reduction[i++];
   if (loop_response_weight > 0.0)
   {
     result.response_weighted_loop_residual =
         std::sqrt(weighted_loop_residual_squared / loop_response_weight);
     result.loop_response_failure_fraction =
         failed_loop_response_weight / loop_response_weight;
+  }
+  if (loop_fit_share_weight > 0.0)
+  {
+    result.response_weighted_loop_fit_share =
+        weighted_loop_fit_share / loop_fit_share_weight;
   }
   if (trace_closure_response_weight > 0.0)
   {
@@ -28111,6 +28722,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   }
   Mpi::GlobalMax(1, &result.loop_residual, fespace.GetComm());
   Mpi::GlobalMax(1, &result.hat_residual, fespace.GetComm());
+  Mpi::GlobalMax(1, &result.maximum_loop_fit_share, fespace.GetComm());
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     auto &fixed_flux = result.fabricated_surface_energy_fixed_flux.at(interface);
@@ -28130,9 +28742,36 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     }
   }
   MFEM_ASSERT(i == reduction.size(), "Incorrect batched Maxwell response reduction!");
+  {
+    // The circulating remainders (decision 955): every patch with rho_p > 0, replicated.
+    const std::vector<double> remainders = AllgatherRecords(local_remainder_records);
+    MFEM_VERIFY(remainders.size() % 6 == 0, "Truncated loop-remainder record!");
+    for (std::size_t offset = 0; offset < remainders.size(); offset += 6)
+    {
+      result.loop_remainders.push_back(
+          {static_cast<int>(std::llround(remainders[offset])),
+           static_cast<int>(std::llround(remainders[offset + 1])), remainders[offset + 2],
+           remainders[offset + 3], remainders[offset + 4],
+           static_cast<int>(std::llround(remainders[offset + 5]))});
+    }
+    std::sort(result.loop_remainders.begin(), result.loop_remainders.end(),
+              [](const auto &first, const auto &second)
+              { return first.patch < second.patch; });
+  }
   if (include_patches)
   {
     result.patch_contributions = GatherPatchContributions(local_patch_records);
+    const std::vector<double> shares = AllgatherRecords(local_share_records);
+    MFEM_VERIFY(shares.size() % 4 == 0, "Truncated per-patch loop-share record!");
+    for (std::size_t offset = 0; offset < shares.size(); offset += 4)
+    {
+      result.patch_loop_shares.push_back(
+          {static_cast<int>(std::llround(shares[offset])), shares[offset + 1],
+           shares[offset + 2], static_cast<int>(std::llround(shares[offset + 3]))});
+    }
+    std::sort(result.patch_loop_shares.begin(), result.patch_loop_shares.end(),
+              [](const auto &first, const auto &second)
+              { return first.patch < second.patch; });
     const std::vector<double> loops = AllgatherRecords(local_loop_records);
     MFEM_VERIFY(loops.size() % 6 == 0, "Truncated per-path loop-residual record!");
     for (std::size_t offset = 0; offset < loops.size(); offset += 6)

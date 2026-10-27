@@ -317,6 +317,13 @@ protected:
     // PatchEnergy (decision 922 B-1): per target interface, the raw field's within-R energy
     // per model-set label (+ "unclaimed").
     std::map<int, std::map<std::string, double>> model_raw_partition;
+    // OI-MX-LOOPGATE (decision 955): per target interface, the circulating remainders' raw
+    // within-R energy per model row ("m<idx>": rho_p x the raw energy on the patch's
+    // claims; the Total is their sum), of the raw field (both closures) and of the
+    // corrected field (self-consistent). The rows' patch counts and rho-weighted claim
+    // lengths are recomputed by the printer (PrintSurfaceResponseLoopFit).
+    std::map<int, std::map<std::string, double>> loop_remainder;
+    std::map<int, std::map<std::string, double>> self_consistent_loop_remainder;
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;
@@ -373,6 +380,14 @@ protected:
   // plain text tables appended per print, root only.
   void PrintSurfaceResponseModelRawEnergies(double output_index, int excitation) const;
   mutable bool surface_response_model_raw_started = false;
+  // OI-MX-LOOPGATE (decision 955): surface-response-loop-fit.csv (per evaluation the
+  // maximum and response-weighted circulating share, the remainder / fallback patch counts
+  // and the rho-weighted claim length) and surface-response-loop-remainder-energy.csv (per
+  // model row with a remainder + Total: patches, weighted claim length, the remainder's raw
+  // energy per target interface), plain text tables appended per print, root only; both
+  // removed at the first print before the writes (decision 473 MAJOR-3).
+  void PrintSurfaceResponseLoopFit(double output_index, int excitation) const;
+  mutable bool surface_response_loop_fit_started = false;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
