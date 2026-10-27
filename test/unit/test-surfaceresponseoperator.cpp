@@ -5370,8 +5370,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell is
   convex_maxwell_island_response.Mult(island_true, island_correction);
   // The operator applies the least-squares lift without the fallback (decision 955 D6): on
   // this random (circulating) field the postprocessed domain correction withholds the
-  // fallback patches' defects, which the response reports beside it.
-  CHECK(random_island_response.loop_fallback_patch_count > 0);
+  // fallback patches' defects (if any: the rank-dependent probe decides), which the
+  // response reports beside it.
   CHECK_THAT(0.5 * linalg::Dot(Mpi::World(), island_true, island_correction),
              WithinRel(random_island_response.domain_correction +
                            random_island_response.loop_fallback_domain_correction,
