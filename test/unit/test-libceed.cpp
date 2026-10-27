@@ -27,6 +27,7 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/omp.hpp"
@@ -1935,8 +1936,7 @@ TEMPLATE_TEST_CASE_SIG("2D libCEED Operators", "[libCEED][Serial][Parallel]",
 {
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + Mesh,
-                         0, amr, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(Mesh), 0, amr, order);
 }
 
 TEMPLATE_TEST_CASE_SIG("3D libCEED Operators", "[libCEED][Serial][Parallel]",
@@ -1944,8 +1944,7 @@ TEMPLATE_TEST_CASE_SIG("3D libCEED Operators", "[libCEED][Serial][Parallel]",
 {
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + Mesh,
-                         0, amr, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(Mesh), 0, amr, order);
 }
 
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
@@ -1953,8 +1952,7 @@ TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedInterpolatorTests(
-      MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh, 0, amr, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
 }
 
 TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
@@ -1962,8 +1960,7 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedInterpolatorTests(
-      MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh, 0, amr, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
 }
 
 // Test the 31 (SpaceDim=3, Dim=1) libCEED qfunctions for boundary integrators on a 2D
@@ -1973,8 +1970,7 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh");
   auto order = GENERATE(1, 2, 3);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
-                         0, false, order, true);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, false, order, true);
 }
 
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
@@ -1988,8 +1984,7 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
       GENERATE("star-quad.mesh", "star-tri.mesh", "fichera-hex.mesh", "fichera-tet.mesh");
   auto order = GENERATE(1, 2);
   const auto comm = MPI_COMM_WORLD;
-  auto mesh =
-      Initialize(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
   const int dim = mesh.Dimension();
 
   // Match MFEM's default integration orders.
@@ -2335,8 +2330,7 @@ TEST_CASE("libCEED packed complex QData application",
   {
     if (mesh_file)
     {
-      return Initialize(Mpi::World(),
-                        std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+      return Initialize(Mpi::World(), TestMeshPath(mesh_file), 0, false);
     }
     // The mixed Fichera mesh has no pyramids. Use low-order elements on a small
     // generated mesh, with enough elements for every MPI rank and no AMR.
@@ -2624,8 +2618,8 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
            {"Real-only input", true, false, false, false, true}}));
   CAPTURE(name);
   PackedIntegrationSettings settings(3);
-  const char *file = tensor ? "/mesh/fichera-hex.mesh" : "/mesh/fichera-tet.mesh";
-  auto mesh = Initialize(Mpi::World(), std::string(PALACE_TEST_DATA_DIR) + file, 0, false);
+  const char *file = tensor ? "fichera-hex.mesh" : "fichera-tet.mesh";
+  auto mesh = Initialize(Mpi::World(), TestMeshPath(file), 0, false);
   mfem::ND_FECollection nd(3, 3);
   mfem::H1_FECollection h1(3, 3);
   FiniteElementSpace fespace(mesh, h1_space
@@ -2808,8 +2802,7 @@ TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parall
 {
   auto mesh_file = GENERATE("star-tri.mesh", "fichera-mixed-p2.mesh");
   const auto comm = MPI_COMM_WORLD;
-  auto mesh =
-      Initialize(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
   const int dim = mesh.Dimension();
   constexpr int order = 2;
 
@@ -2957,8 +2950,8 @@ TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parall
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
-  RunCeedBenchmarks(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
-                    benchmark_ref_levels, false, benchmark_order);
+  RunCeedBenchmarks(MPI_COMM_WORLD, TestMeshPath(mesh), benchmark_ref_levels, false,
+                    benchmark_order);
 }
 
 }  // namespace palace

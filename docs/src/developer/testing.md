@@ -311,6 +311,10 @@ auto path_to_banana = fs::path(PALACE_TEST_DATA_DIR) / "banana.txt"
 Accessing files without using `PALACE_TEST_DATA_DIR` will likely result in
 failing tests on Spack builds (unless you know what you are doing).
 
+For meshes in `test/data/mesh`, use `TestMeshPath("<name>")` from
+`test/unit/test-helpers.hpp`. It also returns a path for the meshes the tests generate
+from stored ones, such as `star-tri.mesh`.
+
 #### Test configuration
 
 The `CMakeLists.txt` in
@@ -319,9 +323,11 @@ important settings:
 
   - The list of files compiled as part of the tests
   - The list of files that need to be compiled with a GPU compiler (`TARGET_SOURCES_DEVICE`)
-  - Path variables used in tests, such as `MFEM_DATA_PATH`
-    `MFEM_DATA_PATH` contains 2D and 3D sample meshes for testing (these meshes come
-    from the [MFEM repository](https://github.com/mfem/mfem/tree/master/data)).
+  - Path variables used in tests, such as `PALACE_TEST_DATA_DIR` (see
+    [Accessing files](#Accessing-files)). Most of the sample meshes in `test/data/mesh`
+    come from the [MFEM repository](https://github.com/mfem/mfem/tree/master/data);
+    [`test/data/mesh/README.md`](https://github.com/awslabs/palace/blob/main/test/data/mesh/README.md)
+    gives the MFEM version and the source of each mesh.
 
 ### Unit test coverage
 

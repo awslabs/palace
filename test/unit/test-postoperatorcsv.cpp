@@ -7,6 +7,7 @@
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
@@ -37,7 +38,7 @@ IoData load_iodata(std::string_view relative_path)
 
 std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &iodata_)
 {
-  iodata_.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/fichera-tet.mesh";
+  iodata_.model.mesh = TestMeshPath("fichera-tet.mesh");
 
   // Load Mesh — copy from main.cpp
   std::vector<std::unique_ptr<Mesh>> mesh_;
