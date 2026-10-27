@@ -61,7 +61,7 @@
         "FilmAttributes": [8],
         "HoleAttributes": [9],
         "FluxAmounts": [1.0],
-        "Direction": "+Z"
+        "Direction": [0.001, 0.0, 1.0]  // tilted so the cut lies along y, across hanging film edges
       }
     ]
   },

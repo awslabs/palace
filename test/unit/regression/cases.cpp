@@ -1035,7 +1035,8 @@ TEST_CASE("circular_hole_london_two_sided", "[Serial][Parallel][GPU][Regression]
 }
 
 // Two-sided film under nonconformal AMR. Locks the broken space on hanging and shared DOFs
-// (film faces refined on one side only). Omits [GPU] like the other adaptive cases.
+// (film faces refined on one side only) and the generator projection (the cut meets hanging
+// film edges). Omits [GPU] like the other adaptive cases.
 TEST_CASE("circular_hole_london_two_sided_nc_amr", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
