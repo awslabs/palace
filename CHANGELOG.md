@@ -208,6 +208,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - Fixed the sign in the denominators of the finite-thickness surface impedance formula in
+    the reference docs, which now match the implementation.
+    [PR 1074](https://github.com/awslabs/palace/pull/1074).
   - Documented in the developer notes that schema validation tightenings which only
     reject configurations that never produced valid solver output are bug fixes
     (ADDITION), not breaking (MODEL) changes.
