@@ -195,7 +195,7 @@ protected:
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
-  const std::size_t pad_digits_default = 6;
+  static constexpr std::size_t pad_digits_default = 6;
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
@@ -544,7 +544,7 @@ public:
   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
 
   // Access to number of padding digits.
-  constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }
+  static constexpr auto GetPadDigitsDefault() { return pad_digits_default; }
 
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).
