@@ -92,6 +92,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+
   - Removed the `"NSamples"` option of the wave port `"VoltagePath"` and of the
     `"Impedance"` and `"Voltage"` boundary postprocessing paths. Coordinate-path line
     integrals are now exact for the discrete field, so the number of samples no longer has

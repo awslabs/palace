@@ -580,8 +580,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
   if (E && Bt_inplane && use_ceed_domain_fields)
   {
-    // Boundary mode longitudinal power density Sn = Re{Et · (ẑ × Ht⋆)}, time-averaged for
-    // the complex mode fields.
+    // Boundary mode longitudinal power density Sn = 1/2 Re{Et · (ẑ × Ht⋆)} for
+    // complex peak phasors; also convert the dimensional B input to H.
     MakeFieldEvaluator(
         PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(), Bt_inplane->ParFESpace(),
         quadratic_weight * units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
@@ -741,7 +741,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         MakeBdrPoyntingEvaluator(*E->ParFESpace(), *B->ParFESpace(), scaling, S_bdr_eval);
       }
     }
-    // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} uses the in-plane B field and is
+    // For boundary mode, Sn = 1/2 Re{Et · (ẑ × Ht*)} uses the in-plane B field and is
     // registered below through a domain point evaluator.
   }
 }

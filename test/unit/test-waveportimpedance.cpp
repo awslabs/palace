@@ -195,6 +195,26 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial][Parallel]")
   CAPTURE(Z_PV_ohm, Z_PV_analytical);
 
   CHECK_THAT(Z_PV_ohm, WithinRel(Z_PV_analytical, 1.0e-3));
+
+  // #1049's line integral must remain linear under the sqrt(2) change in driven
+  // amplitude. Use an exactly representable uniform field instead of interpolating
+  // the modal coefficient, which need not reproduce the stored NC submesh mode.
+  const auto &port = wave_port_op.GetPort(1);
+  GridFunction field(nd_fespace_palace, true);
+  mfem::Vector value(3);
+  value = 0.0;
+  value(2) = 1.0;
+  mfem::VectorConstantCoefficient coeff(value);
+  field.Real().ProjectCoefficient(coeff);
+  field.Imag().ProjectCoefficient(coeff);
+  const std::complex<double> voltage(b_m, b_m);  // Integral of (1+i) along the z path.
+  CHECK_THAT(std::abs(port.GetVoltage(field) - voltage), WithinAbs(0.0, 1.0e-10 * b_m));
+  field.Real() *= std::numbers::sqrt2;
+  field.Imag() *= std::numbers::sqrt2;
+  CHECK_THAT(std::abs(port.GetVoltage(field) - std::numbers::sqrt2 * voltage),
+             WithinAbs(0.0, 1.0e-10 * b_m));
+  CHECK_THAT(Z_PV_nondim.real(),
+             WithinRel(std::norm(port.GetExcitationVoltage()), 1.0e-12));
 }
 
 // Validate WavePortData::GetModePolaritySign returns the expected sign for the TE10

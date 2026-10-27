@@ -417,7 +417,7 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
 }
 
 // Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
-// port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
+// port's own excitation, Z[i][i] = |V|^2 / (2 conj(P)) must agree with the input impedance
 // implied by the reflection coefficient in the sibling port-S.csv,
 //   Z_PV (1 + S_ii) / (1 - S_ii).
 // V and P are integrals of the total field while S_ii is a modal overlap, so the two
