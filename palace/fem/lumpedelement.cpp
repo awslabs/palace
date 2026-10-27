@@ -15,7 +15,7 @@ namespace palace
 
 UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
-                                       const mfem::ParMesh &mesh)
+                                       const mfem::ParMesh &mesh, double length_override)
   : LumpedElementData(attr_list)
 {
   const int sdim = mesh.SpaceDimension();
@@ -99,10 +99,23 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
     }
   }
   l = lengths(l_component);
-  // Cross-check the bounding box length against the projected length. In 2D, the
-  // direction may be perpendicular to a collinear boundary (e.g., +Y for a horizontal
-  // edge), in which case the projected length is near zero and the check does not apply.
+  if (length_override > 0.0)
   {
+    // Decision 929: a ragged planar element (mitred corner nodes skew the lexicographic
+    // bounding box) takes the configured length along the direction instead of the box
+    // length; the projected-length check is skipped for this element only, and recorded.
+    Mpi::Warning(
+        "Lumped element length override (\"Length\"): bounding box length {:.6e} "
+        "replaced by the configured {:.6e} along direction {}; the projected-length "
+        "check is skipped for this element!\n",
+        l, length_override, input_dir);
+    l = length_override;
+  }
+  else
+  {
+    // Cross-check the bounding box length against the projected length. In 2D, the
+    // direction may be perpendicular to a collinear boundary (e.g., +Y for a horizontal
+    // edge), in which case the projected length is near zero and the check does not apply.
     double proj_l = mesh::GetProjectedLength(mesh, attr_marker, true, dir_vec);
     MFEM_VERIFY(proj_l < rel_tol * l || std::abs(l - proj_l) < rel_tol * l,
                 "Bounding box discovered length ("

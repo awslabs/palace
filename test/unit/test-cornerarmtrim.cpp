@@ -9,12 +9,14 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <fmt/format.h>
 #include <mfem.hpp>
@@ -2690,6 +2692,1834 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // outside and the uncovered raw energy.
   CHECK_THAT(std::stod(table.rows[0][table.Column("fabricated surface energy[4] (J)")]),
              WithinRel(csv_ft - Joule(outside + uncovered), 1.0e-9));
+#endif
+}
+
+// PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B; the 851 (C) per-model RAW
+// partition formalised). On the lead fixture of the case above with "PatchEnergy": true:
+// (1) the applied patches' raw claims (GetModelRawClaimPortions) carry one label "m<idx>"
+// for the isolated-edge model on both the electrostatic and the Maxwell operator, with the
+// model's patch count; the surface postoperator partitions the within-R energy of any
+// field EXACTLY over the labels plus the unclaimed remainder: Σ labels + unclaimed = E_raw
+// − E_out to 1e-9 on both postoperators (the two operators' portions give the same
+// partition); the unclaimed remainder equals the uncovered requirements' energy (the two
+// Missing corners' portions); the Maxwell path writes surface-response-model-raw-energy.csv
+// / -groups.csv with those values. (2) The Maxwell per-patch export: the patch table at
+// construction, surface-response-patch-energy.csv (the electrostatic columns as a strict
+// prefix, then "m" / "exc" / "max loop residual") whose per-model sums are the
+// surface-response-model-energy.csv rows, and surface-response-patch-loops.csv (920) whose
+// contour-loop maximum is the confidence table's "loop residual" (the 0.05-gate quantity)
+// and whose response-weighted RMS, recomputed from the per-path rows and the per-patch
+// response energies, is its "response-weighted loop residual". (3) Without PatchEnergy
+// (the default) none of the files exists, the claims are empty and
+// surface-response-model-energy.csv is byte-identical. On main the Maxwell configuration
+// refuses "PatchEnergy" (configfile.cpp) and the operator has no per-patch records.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell per-patch export and per-model raw partition (decision 922 B)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "model-raw-lead.mesh";
+  const auto basis_path = temp.temp_dir / "model-raw-basis-points.csv";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-model-raw-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-model-raw-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    REQUIRE(models.size() == 1);
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = edge_library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["DomainBoundary"] = {{"Mirror", "Off"}};
+  correction["PatchEnergy"] = true;
+  const fs::path electrostatic_output_dir = temp.temp_dir / "model-raw-electrostatic";
+  config["Problem"]["Output"] = electrostatic_output_dir.string();
+  IoData electrostatic_iodata(config, false);
+  electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(electrostatic_iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> electrostatic_meshes;
+  electrostatic_meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  LaplaceOperator laplace_op(electrostatic_iodata, electrostatic_meshes);
+  SurfaceResponseOperator electrostatic_response(electrostatic_iodata, laplace_op);
+  PostOperator<ProblemType::ELECTROSTATIC> electrostatic_post_op(electrostatic_iodata,
+                                                                 laplace_op);
+
+  const fs::path output_dir = temp.temp_dir / "model-raw-maxwell";
+  json maxwell_config = config;
+  maxwell_config["Problem"]["Type"] = "Eigenmode";
+  maxwell_config["Problem"]["Output"] = output_dir.string();
+  maxwell_config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  maxwell_config["Boundaries"].erase("Terminal");
+  maxwell_config["Solver"] = {{"Order", 1},
+                              {"Eigenmode", {{"Target", 1.0}}},
+                              {"SurfaceResponseCorrection",
+                               {{"Library", edge_library_path.string()},
+                                {"TargetInterfaces", {4}},
+                                {"UnmatchedPolicy", "Warn"},
+                                {"CorrectionMode", "PostprocessOnly"},
+                                {"PatchEnergy", true}}}};
+  IoData iodata(maxwell_config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->GetPatchCount() == electrostatic_response.GetPatchCount());
+
+  // The claims: one label for the one applied model on both operators, every applied patch
+  // of the model on it, the same portion count (the same placed patches).
+  const auto &electrostatic_claims = electrostatic_response.GetModelRawClaimPortions();
+  const auto &maxwell_claims = response->GetModelRawClaimPortions();
+  REQUIRE(!electrostatic_claims.portions.empty());
+  REQUIRE(electrostatic_claims.portions.size() == maxwell_claims.portions.size());
+  REQUIRE(electrostatic_claims.members.size() == 1);
+  REQUIRE(maxwell_claims.members.size() == 1);
+  const auto &member = electrostatic_claims.members.front();
+  const std::string label = fmt::format("m{}", member.model);
+  CHECK(member.label == label);
+  CHECK(maxwell_claims.members.front().label == label);
+  CHECK(maxwell_claims.members.front().model == member.model);
+  CHECK(maxwell_claims.members.front().patches == member.patches);
+  CHECK_THAT(maxwell_claims.members.front().weight_length,
+             WithinRel(member.weight_length, 1.0e-12));
+  CHECK_THAT(maxwell_claims.length, WithinRel(electrostatic_claims.length, 1.0e-12));
+  for (const auto &portion : electrostatic_claims.portions)
+  {
+    CHECK(portion.topology == label);
+  }
+  auto Perimeter = [](const auto &portions)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+    for (const auto &portion : portions)
+    {
+      perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    return perimeter;
+  };
+
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
+  auto Gradient = [&](auto &h1_fespace, auto &nd_fespace)
+  {
+    mfem::ParGridFunction potential(&h1_fespace.Get());
+    potential.ProjectCoefficient(potential_coefficient);
+    mfem::ParDiscreteLinearOperator gradient(&h1_fespace.Get(), &nd_fespace.Get());
+    gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+    gradient.Assemble();
+    auto field = std::make_unique<GridFunction>(nd_fespace, false);
+    gradient.Mult(potential, field->Real());
+    field->Real() *= -1.0;
+    Vector e(nd_fespace.GetTrueVSize());
+    field->Real().GetTrueDofs(e);
+    field->Real().SetFromTrueDofs(e);
+    field->Real().ExchangeFaceNbrData();
+    return field;
+  };
+  // The exact partition identity on both postoperators with both operators' claims:
+  // Σ labels + unclaimed = E_raw − E_out to 1e-9; the two claim sets partition alike.
+  auto CheckPartition = [&](const SurfacePostOperator &surf_post_op,
+                            const GridFunction &field, const char *path)
+  {
+    INFO(path);
+    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+    const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(4, field);
+    REQUIRE(edge_energies.size() == 1);
+    const double within = raw - edge_energies[0].energy_outside;
+    REQUIRE(within > 0.0);
+    const auto uncovered = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+        {4}, field, nullptr, Perimeter(response->GetUncoveredPortions()));
+    std::map<std::string, double> reference;
+    for (const auto *claims : {&electrostatic_claims, &maxwell_claims})
+    {
+      const auto partition = surf_post_op.GetInterfacePartitionedEdgeEnergies(
+          {4}, field, nullptr, Perimeter(claims->portions));
+      REQUIRE(partition.size() == 1);
+      const auto &by_label = partition.at(4);
+      REQUIRE(by_label.size() == 2);
+      REQUIRE(by_label.count(label) == 1);
+      REQUIRE(by_label.count("unclaimed") == 1);
+      CHECK(by_label.at(label) > 0.0);
+      double sum = 0.0;
+      for (const auto &[key, energy] : by_label)
+      {
+        (void)key;
+        sum += energy;
+      }
+      CHECK_THAT(sum, WithinRel(within, 1.0e-9));
+      // The unclaimed remainder is the uncovered requirements' energy (the claims and the
+      // uncovered portions tile the perimeter within R).
+      CHECK_THAT(by_label.at("unclaimed"), WithinRel(uncovered.at(4).energy, 1.0e-9));
+      if (reference.empty())
+      {
+        reference = by_label;
+      }
+      else
+      {
+        for (const auto &[key, energy] : by_label)
+        {
+          CHECK_THAT(energy, WithinRel(reference.at(key), 1.0e-12));
+        }
+      }
+    }
+    return reference.at(label);
+  };
+  const auto electrostatic_field =
+      Gradient(laplace_op.GetH1Space(), laplace_op.GetNDSpace());
+  CheckPartition(electrostatic_post_op.GetSurfacePostOp(), *electrostatic_field,
+                 "electrostatic");
+  const auto maxwell_field = Gradient(space_op.GetH1Space(), space_op.GetNDSpace());
+  const double model_raw =
+      CheckPartition(post_op.GetSurfacePostOp(), *maxwell_field, "maxwell");
+
+  // The Maxwell path's tables of the same field.
+  GridFunction field(space_op.GetNDSpace(), true);
+  field.Real() = maxwell_field->Real();
+  field.Imag() = 0.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  e.Imag() = 0.0;
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+  // A second print (mode 2) with a ROTATIONAL field: the line-integral trace lift of a
+  // non-conservative field closes its loops with O(1) residuals, so that the per-path
+  // records (decision 920) are read on a non-trivial case (the gradient field above
+  // closes every loop to roundoff).
+  {
+    mfem::VectorFunctionCoefficient rotational(3,
+                                               [](const mfem::Vector &x, mfem::Vector &v)
+                                               {
+                                                 v.SetSize(3);
+                                                 v(0) = 0.4 * (x[1] - 0.5) + 0.1 * x[2];
+                                                 v(1) = -0.4 * (x[0] - 0.5) + 0.3;
+                                                 v(2) = 0.2 * x[0] * (x[1] - 0.5);
+                                               });
+    GridFunction rotational_field(space_op.GetNDSpace(), true);
+    rotational_field.Real().ProjectCoefficient(rotational);
+    rotational_field.Imag() = 0.0;
+    ComplexVector e2(space_op.GetNDSpace().GetTrueVSize());
+    rotational_field.Real().GetTrueDofs(e2.Real());
+    e2.Imag() = 0.0;
+    post_op.MeasureAndPrintAll(1, e2, b, omega, 0.0, 0.0, 2);
+  }
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Joule = [&](double energy)
+  { return iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy); };
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  // The integer columns print in the tables' numeric form ("1.60e+01"): read as numbers.
+  auto Int = [](const std::string &field)
+  { return static_cast<int>(std::lround(std::stod(field))); };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-model-raw-energy.csv"));
+  const TextCsv table =
+      ReadTrimmedCsv(output_dir / "surface-response-model-raw-energy.csv");
+  const std::vector<std::string> expected_header = {
+      "source", "evaluation", "label", "raw energy[4] (J)", "m", "exc"};
+  CHECK(table.header == expected_header);
+  REQUIRE(table.rows.size() == 4);  // 2 labels x 2 modes
+  std::map<std::string, std::vector<std::string>> by_label;
+  for (const auto &row : table.rows)
+  {
+    CHECK(Int(row[table.Column("evaluation")]) == 0);
+    CHECK(Int(row[table.Column("exc")]) == 0);
+    CHECK(Int(row[table.Column("source")]) == Int(row[table.Column("m")]));
+    if (Int(row[table.Column("m")]) == 1)
+    {
+      by_label[row[table.Column("label")]] = row;
+    }
+  }
+  REQUIRE(by_label.count(label) == 1);
+  REQUIRE(by_label.count("unclaimed") == 1);
+  CHECK_THAT(std::stod(by_label.at(label)[table.Column("raw energy[4] (J)")]),
+             WithinRel(Joule(model_raw), 1.0e-10));
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-model-raw-groups.csv"));
+  const TextCsv groups =
+      ReadTrimmedCsv(output_dir / "surface-response-model-raw-groups.csv");
+  CHECK(groups.header ==
+        std::vector<std::string>{"label", "model", "patches", "weight length (m)"});
+  REQUIRE(groups.rows.size() == 1);
+  CHECK(groups.rows[0][groups.Column("label")] == label);
+  CHECK(Int(groups.rows[0][groups.Column("model")]) == member.model);
+  CHECK(Int(groups.rows[0][groups.Column("patches")]) == member.patches);
+
+  // (2) The per-patch export of the same print.
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patches.csv"));
+  const TextCsv patch_table = ReadTrimmedCsv(output_dir / "surface-response-patches.csv");
+  CHECK(patch_table.header ==
+        std::vector<std::string>{"model", "origin x (m)", "origin y (m)", "origin z (m)",
+                                 "axis u x", "axis u y", "axis u z", "axis v x", "axis v y",
+                                 "axis v z", "axis w x", "axis w y", "axis w z", "weight"});
+  CHECK(patch_table.rows.size() == static_cast<std::size_t>(response->GetPatchCount()));
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patch-energy.csv"));
+  const TextCsv patch_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-patch-energy.csv");
+  CHECK(patch_energy.header ==
+        std::vector<std::string>{"source", "evaluation", "patch", "model", "feature",
+                                 "weight", "cell begin (m)", "cell end (m)", "origin x (m)",
+                                 "origin y (m)", "origin z (m)", "domain correction (J)",
+                                 "fabricated surface energy[4] (J)", "m", "exc",
+                                 "max loop residual"});
+  // Evaluation 0 and 1 for every applied patch and mode (PostprocessOnly: no evaluation 2).
+  REQUIRE(patch_energy.rows.size() ==
+          4 * static_cast<std::size_t>(response->GetPatchCount()));
+  const TextCsv model_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-model-energy.csv");
+  std::map<std::tuple<int, int, int>, std::array<double, 4>> model_sums;  // (m, model, ev)
+  double max_patch_loop = 0.0;                                            // mode 2
+  std::map<int, double> patch_response_energy;  // mode 2: the weight of the loop RMS
+  for (const auto &row : patch_energy.rows)
+  {
+    const int mode = Int(row[patch_energy.Column("m")]);
+    CHECK(Int(row[patch_energy.Column("source")]) == mode);
+    CHECK(Int(row[patch_energy.Column("exc")]) == 0);
+    const int ev = Int(row[patch_energy.Column("evaluation")]);
+    const int model = Int(row[patch_energy.Column("model")]);
+    const int patch = Int(row[patch_energy.Column("patch")]);
+    auto &sums = model_sums[{mode, model, ev}];
+    sums[0] += 1.0;
+    sums[1] += std::stod(row[patch_energy.Column("weight")]);
+    sums[2] += std::stod(row[patch_energy.Column("domain correction (J)")]);
+    const double energy =
+        std::stod(row[patch_energy.Column("fabricated surface energy[4] (J)")]);
+    sums[3] += energy;
+    if (mode == 2)
+    {
+      patch_response_energy[patch] =
+          std::max(patch_response_energy[patch], std::abs(energy));
+      max_patch_loop = std::max(max_patch_loop,
+                                std::stod(row[patch_energy.Column("max loop residual")]));
+    }
+  }
+  REQUIRE(model_energy.rows.size() == 4);
+  for (const auto &row : model_energy.rows)
+  {
+    const int mode = Int(row[model_energy.Column("m")]);
+    const int ev = Int(row[model_energy.Column("evaluation")]);
+    const int model = Int(row[model_energy.Column("model")]);
+    REQUIRE(model_sums.count({mode, model, ev}) == 1);
+    const auto &sums = model_sums.at({mode, model, ev});
+    CHECK_THAT(sums[0],
+               WithinRel(std::stod(row[model_energy.Column("patch count")]), 1.0e-12));
+    CHECK_THAT(sums[1],
+               WithinRel(std::stod(row[model_energy.Column("patch weight")]), 1.0e-9));
+    CHECK_THAT(
+        sums[2],
+        WithinRel(std::stod(row[model_energy.Column("domain correction (J)")]), 1.0e-9));
+    CHECK_THAT(
+        sums[3],
+        WithinRel(std::stod(row[model_energy.Column("fabricated surface energy[4] (J)")]),
+                  1.0e-9));
+  }
+  // No spatial patch on this fixture: no traces file.
+  CHECK(!fs::exists(output_dir / "surface-response-traces.csv"));
+  // (920) The per-path loop residuals: every row a contour loop or a hat of an applied
+  // patch; the contour-loop maximum = the gate quantity; the response-weighted RMS
+  // recomputed with the operator's weights (a patch's response energy split over its paths
+  // by the squared loop scale) = the confidence table's.
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patch-loops.csv"));
+  const TextCsv loops = ReadTrimmedCsv(output_dir / "surface-response-patch-loops.csv");
+  CHECK(loops.header == std::vector<std::string>{"source", "patch", "model", "path", "kind",
+                                                 "loop residual", "loop scale (V)", "m",
+                                                 "exc"});
+  REQUIRE(!loops.rows.empty());
+  const TextCsv confidence = ReadTrimmedCsv(output_dir / "surface-response-confidence.csv");
+  REQUIRE(confidence.rows.size() == 2);
+  REQUIRE(Int(confidence.rows[1][confidence.Column("m")]) == 2);
+  const double gate_loop_residual =
+      std::stod(confidence.rows[1][confidence.Column("loop residual")]);
+  const double gate_weighted =
+      std::stod(confidence.rows[1][confidence.Column("response-weighted loop residual")]);
+  REQUIRE(gate_loop_residual > 1.0e-3);  // the rotational field: a real residual
+  double max_loop = 0.0;
+  std::map<int, std::vector<std::pair<double, double>>> paths_by_patch;
+  for (const auto &row : loops.rows)
+  {
+    CHECK(Int(row[loops.Column("source")]) == Int(row[loops.Column("m")]));
+    if (Int(row[loops.Column("m")]) != 2)
+    {
+      continue;
+    }
+    const int patch = Int(row[loops.Column("patch")]);
+    const int kind = Int(row[loops.Column("kind")]);
+    CHECK((kind == 0 || kind == 1));
+    CHECK(patch_response_energy.count(patch) == 1);
+    const double residual = std::stod(row[loops.Column("loop residual")]);
+    const double scale = std::stod(row[loops.Column("loop scale (V)")]);
+    CHECK(scale > 0.0);
+    if (kind == 0)
+    {
+      max_loop = std::max(max_loop, residual);
+      paths_by_patch[patch].emplace_back(residual, scale * scale);
+    }
+  }
+  CHECK(max_loop > 0.0);
+  CHECK_THAT(max_loop, WithinRel(gate_loop_residual, 1.0e-9));
+  CHECK_THAT(max_patch_loop, WithinRel(gate_loop_residual, 1.0e-9));
+  double weighted_squared = 0.0, weight_sum = 0.0;
+  for (const auto &[patch, paths] : paths_by_patch)
+  {
+    double scale_squared = 0.0;
+    for (const auto &[residual, s2] : paths)
+    {
+      (void)residual;
+      scale_squared += s2;
+    }
+    for (const auto &[residual, s2] : paths)
+    {
+      const double weight = patch_response_energy.at(patch) * s2 / scale_squared;
+      weighted_squared += weight * residual * residual;
+      weight_sum += weight;
+    }
+  }
+  REQUIRE(weight_sum > 0.0);
+  {
+    double a2 = 0.0, an = 0.0, b2 = 0.0, bn = 0.0;
+    for (const auto &[patch, paths] : paths_by_patch)
+    {
+      for (const auto &[residual, s2] : paths)
+      {
+        a2 += residual * residual;
+        an += 1.0;
+        b2 += s2 * residual * residual;
+        bn += s2;
+      }
+    }
+    UNSCOPED_INFO("unweighted RMS " << std::sqrt(a2 / an) << " scale2-weighted RMS "
+                                    << std::sqrt(b2 / bn) << " patches "
+                                    << paths_by_patch.size() << " energies "
+                                    << patch_response_energy.size());
+  }
+  CHECK_THAT(std::sqrt(weighted_squared / weight_sum), WithinRel(gate_weighted, 1.0e-7));
+#endif
+}
+
+// The default (no "PatchEnergy"): the same fixture writes none of the per-patch files, the
+// operator collects no claims, and surface-response-model-energy.csv is byte-identical to
+// the PatchEnergy run's (the export reads values the totals compute anyway).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell per-patch export is off by default (decision 922 B)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "patch-off-lead.mesh";
+  const auto basis_path = temp.temp_dir / "patch-off-basis-points.csv";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-patch-off-edges.json";
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-patch-off-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  auto Run = [&](bool patch_energy, const char *stem)
+  {
+    json run = config;
+    const fs::path output_dir = temp.temp_dir / stem;
+    run["Problem"]["Output"] = output_dir.string();
+    run["Solver"] = {{"Order", 1},
+                     {"Eigenmode", {{"Target", 1.0}}},
+                     {"SurfaceResponseCorrection",
+                      {{"Library", edge_library_path.string()},
+                       {"TargetInterfaces", {4}},
+                       {"UnmatchedPolicy", "Warn"},
+                       {"CorrectionMode", "PostprocessOnly"}}}};
+    if (patch_energy)
+    {
+      run["Solver"]["SurfaceResponseCorrection"]["PatchEnergy"] = true;
+    }
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    MakeOutputFolder(iodata, comm);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+    SpaceOperator space_op(iodata, meshes);
+    PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+    auto *response = post_op.GetSurfaceResponseOperator();
+    REQUIRE(response);
+    CHECK(response->GetModelRawClaimPortions().portions.empty() == !patch_energy);
+    mfem::FunctionCoefficient potential_coefficient(
+        [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
+    mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+    potential.ProjectCoefficient(potential_coefficient);
+    mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                             &space_op.GetNDSpace().Get());
+    gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+    gradient.Assemble();
+    GridFunction field(space_op.GetNDSpace(), true);
+    gradient.Mult(potential, field.Real());
+    field.Real() *= -1.0;
+    ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+    field.Real().GetTrueDofs(e.Real());
+    e.Imag() = 0.0;
+    ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+    b = 0.0;
+    post_op.MeasureAndPrintAll(0, e, b, std::complex<double>(1.0, 0.0), 0.0, 0.0, 1);
+    Mpi::Barrier(comm);
+    return output_dir;
+  };
+  const fs::path on_dir = Run(true, "patch-on");
+  const fs::path off_dir = Run(false, "patch-off");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  for (const char *name :
+       {"surface-response-patches.csv", "surface-response-patch-energy.csv",
+        "surface-response-patch-loops.csv", "surface-response-model-raw-energy.csv",
+        "surface-response-model-raw-groups.csv"})
+  {
+    CHECK(fs::is_regular_file(on_dir / name));
+    CHECK(!fs::exists(off_dir / name));
+  }
+  for (const char *name : {"surface-response-model-energy.csv", "surface-Q-corrected.csv",
+                           "surface-response-confidence.csv"})
+  {
+    INFO(name);
+    CHECK(ReadFile(on_dir / name) == ReadFile(off_dir / name));
+  }
+#endif
+}
+
+// PatchEnergy's spatial-trace export on the Maxwell path (decision 922 B-3; the d919 review
+// MAJOR-3): the Legacy spatial-cluster fixture (the offset corner pair: one spatial
+// edge-cluster patch, six corner patches, the isolated-edge cells) under an Eigenmode
+// PostOperator with "PatchEnergy" on a complex field: surface-response-traces.csv carries
+// one row per coefficient of every spatial trace of GetMaxwellResponse(E, omega, true): the
+// 1-based placed patch index, the model, the 1-based coefficient, the conductor-state flag
+// (a coefficient past the contour size), the real and imaginary values in volts, the mode
+// and excitation keys, and nothing else; the patch-energy table carries the patch set twice
+// (evaluations 0 / 1).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell spatial-trace export of a spatial cluster (decision 922 B-3)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][spatial][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path output_dir = temp.temp_dir / "spatial-traces-maxwell";
+  json config = ConvexMaxwellIslandConfig();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction["Library"] = spatial_cluster_library_3d_path.string();
+  correction["CorrectionMode"] = "PostprocessOnly";
+  correction["PatchEnergy"] = true;
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  iodata.boundaries.cracked_attributes.insert(10);
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->GetPatchCount() > 0);
+
+  GridFunction field(space_op.GetNDSpace(), true);
+  mfem::VectorConstantCoefficient real_coefficient = ConstantFieldCoefficient();
+  mfem::Vector imaginary_value(3);
+  imaginary_value[0] = -0.3;
+  imaginary_value[1] = 0.5;
+  imaginary_value[2] = 0.2;
+  mfem::VectorConstantCoefficient imaginary_coefficient(imaginary_value);
+  field.Real().ProjectCoefficient(real_coefficient);
+  field.Imag().ProjectCoefficient(imaginary_coefficient);
+  const std::complex<double> omega(1.0, 0.0);
+  const auto result = response->GetMaxwellResponse(field, omega, true);
+  REQUIRE(!result.spatial_traces.empty());
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  field.Imag().GetTrueDofs(e.Imag());
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto Int = [](const std::string &text)
+  { return static_cast<int>(std::lround(std::stod(text))); };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  auto Volt = [&](double value)
+  { return iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(value); };
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-traces.csv"));
+  const TextCsv traces = ReadTrimmedCsv(output_dir / "surface-response-traces.csv");
+  CHECK(traces.header == std::vector<std::string>{"i", "patch", "model", "coefficient",
+                                                  "conductor state", "value (V)",
+                                                  "value imag (V)", "m", "exc"});
+  std::size_t expected_rows = 0;
+  for (const auto &trace : result.spatial_traces)
+  {
+    expected_rows += trace.coefficients.size();
+  }
+  REQUIRE(traces.rows.size() == expected_rows);
+  std::size_t row = 0;
+  for (const auto &trace : result.spatial_traces)
+  {
+    for (std::size_t k = 0; k < trace.coefficients.size(); k++, row++)
+    {
+      const auto &cells = traces.rows[row];
+      CHECK(Int(cells[traces.Column("i")]) == 1);
+      CHECK(Int(cells[traces.Column("patch")]) == trace.patch + 1);
+      CHECK(Int(cells[traces.Column("model")]) == trace.model);
+      CHECK(Int(cells[traces.Column("coefficient")]) == static_cast<int>(k) + 1);
+      CHECK(Int(cells[traces.Column("conductor state")]) ==
+            (static_cast<int>(k) >= trace.contour_size ? 1 : 0));
+      CHECK_THAT(
+          std::stod(cells[traces.Column("value (V)")]),
+          WithinAbs(Volt(trace.coefficients[k].real()),
+                    1.0e-10 * std::max(1.0, std::abs(Volt(trace.coefficients[k].real())))));
+      CHECK_THAT(
+          std::stod(cells[traces.Column("value imag (V)")]),
+          WithinAbs(Volt(trace.coefficients[k].imag()),
+                    1.0e-10 * std::max(1.0, std::abs(Volt(trace.coefficients[k].imag())))));
+      CHECK(Int(cells[traces.Column("m")]) == 1);
+      CHECK(Int(cells[traces.Column("exc")]) == 0);
+    }
+  }
+  // A spatial trace per spatial patch, fewer than the applied patches (the translational
+  // cells carry none), and the imaginary part is a genuine column (the field is complex).
+  CHECK(result.spatial_traces.size() < static_cast<std::size_t>(response->GetPatchCount()));
+  bool imaginary_nonzero = false;
+  for (const auto &trace : result.spatial_traces)
+  {
+    for (const auto &coefficient : trace.coefficients)
+    {
+      imaginary_nonzero = imaginary_nonzero || std::abs(coefficient.imag()) > 1.0e-12;
+    }
+  }
+  CHECK(imaginary_nonzero);
+  REQUIRE(fs::is_regular_file(output_dir / "surface-response-patch-energy.csv"));
+  const TextCsv patch_energy =
+      ReadTrimmedCsv(output_dir / "surface-response-patch-energy.csv");
+  CHECK(patch_energy.rows.size() ==
+        2 * static_cast<std::size_t>(response->GetPatchCount()));
+#endif
+}
+
+// OI-ZERO-IFACE-NAN (decisions 891 / 922 C): a postprocessing Dielectric interface that is
+// NOT a response target (S6's L2 ground attr 126, no EdgeDistances) read NaN in every
+// corrected column of the Maxwell surface-Q-corrected.csv on main (the measurement
+// initialised every interface to NaN and filled the targets), where the electrostatic
+// driver carries such an interface's RAW energy forward. With the fix the untargeted row
+// reads corrected = fixed-flux = raw, spread 0, matched / corner fractions 0 / 0 and the
+// "response target" flag 0 (the column exists only when such an interface exists); the
+// target row's values are those of the same fixture without the extra interface, column by
+// column by name (the self-consistent columns, NaN when the mode is PostprocessOnly on both
+// paths, are the one "not computed" class left as is).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell untargeted postprocessing interface carries its raw energy "
+                 "(decision 922 C)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[untargeted][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "untargeted-lead.mesh";
+  const auto basis_path = temp.temp_dir / "untargeted-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-untargeted-edges.json";
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-untargeted-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  config["Solver"] = {{"Order", 1},
+                      {"Eigenmode", {{"Target", 1.0}}},
+                      {"SurfaceResponseCorrection",
+                       {{"Library", edge_library_path.string()},
+                        {"TargetInterfaces", {4}},
+                        {"UnmatchedPolicy", "Warn"},
+                        {"CorrectionMode", "PostprocessOnly"}}}};
+  auto Run = [&](bool extra_interface, const char *stem)
+  {
+    json run = config;
+    const fs::path output_dir = temp.temp_dir / stem;
+    run["Problem"]["Output"] = output_dir.string();
+    if (extra_interface)
+    {
+      // The sheet (attribute 9) once more as an untargeted SA interface (S6's [2] / [3]
+      // share their attributes the same way): no EdgeDistances, not in TargetInterfaces, a
+      // non-zero raw energy (an MS entry of this fixture's sheet reads 0: the zero-energy
+      // class, handled the same way).
+      run["Boundaries"]["Postprocessing"]["Dielectric"].push_back({{"Index", 5},
+                                                                   {"Attributes", {9}},
+                                                                   {"Type", "SA"},
+                                                                   {"Thickness", 0.002},
+                                                                   {"Permittivity", 4.0},
+                                                                   {"LossTan", 0.002}});
+    }
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    MakeOutputFolder(iodata, comm);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+    SpaceOperator space_op(iodata, meshes);
+    PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+    REQUIRE(post_op.GetSurfaceResponseOperator());
+    mfem::VectorFunctionCoefficient rotational(3,
+                                               [](const mfem::Vector &x, mfem::Vector &v)
+                                               {
+                                                 v.SetSize(3);
+                                                 v(0) = 0.4 * (x[1] - 0.5) + 0.1 * x[2];
+                                                 v(1) = -0.4 * (x[0] - 0.5) + 0.3;
+                                                 v(2) = 0.2 * x[0] * (x[1] - 0.5);
+                                               });
+    GridFunction field(space_op.GetNDSpace(), true);
+    field.Real().ProjectCoefficient(rotational);
+    field.Imag() = 0.0;
+    ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+    field.Real().GetTrueDofs(e.Real());
+    e.Imag() = 0.0;
+    ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+    b = 0.0;
+    post_op.MeasureAndPrintAll(0, e, b, std::complex<double>(1.0, 0.0), 0.0, 0.0, 1);
+    Mpi::Barrier(comm);
+    return output_dir;
+  };
+  const fs::path with_dir = Run(true, "untargeted-with");
+  const fs::path without_dir = Run(false, "untargeted-without");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  const TextCsv with = ReadTrimmedCsv(with_dir / "surface-Q-corrected.csv");
+  const TextCsv without = ReadTrimmedCsv(without_dir / "surface-Q-corrected.csv");
+  // The flag column exists only with the untargeted interface; the other columns are the
+  // same set in the same order.
+  REQUIRE(with.header.size() == without.header.size() + 1);
+  CHECK(with.header.back() == "response target");
+  CHECK(std::vector<std::string>(with.header.begin(), with.header.end() - 1) ==
+        without.header);
+  REQUIRE(without.rows.size() == 1);
+  REQUIRE(with.rows.size() == 2);
+  auto Row = [&](const TextCsv &csv, int interface) -> const std::vector<std::string> &
+  {
+    for (const auto &row : csv.rows)
+    {
+      if (std::lround(std::stod(row[csv.Column("interface")])) == interface)
+      {
+        return row;
+      }
+    }
+    FAIL("interface " << interface << " row missing");
+    return csv.rows.front();
+  };
+  const auto &target_with = Row(with, 4);
+  const auto &target_without = Row(without, 4);
+  const auto &untargeted = Row(with, 5);
+  // The target row: every shared column equal as text (the extra interface changes nothing
+  // of the target's measurement); flag 1.
+  for (const auto &name : without.header)
+  {
+    INFO(name);
+    CHECK(target_with[with.Column(name)] == target_without[without.Column(name)]);
+  }
+  CHECK(std::lround(std::stod(target_with[with.Column("response target")])) == 1);
+  // The untargeted row: raw carried into the corrected columns, spread 0, fractions 0 / 0,
+  // flag 0, no NaN outside the self-consistent columns (PostprocessOnly).
+  CHECK(std::lround(std::stod(untargeted[with.Column("response target")])) == 0);
+  const double raw = std::stod(untargeted[with.Column("E_surf raw (J)")]);
+  CHECK(raw > 0.0);
+  CHECK_THAT(std::stod(untargeted[with.Column("E_surf corrected (J)")]),
+             WithinRel(raw, 1.0e-12));
+  CHECK_THAT(std::stod(untargeted[with.Column("E_surf corrected fixed-flux (J)")]),
+             WithinRel(raw, 1.0e-12));
+  CHECK(std::stod(untargeted[with.Column("trace closure spread")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column("matched edge fraction")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column("unmodeled corner neighborhood fraction")]) ==
+        0.0);
+  // p_surf corrected = raw / E_norm corrected (the corrected normalisation of the run).
+  CHECK_THAT(
+      std::stod(untargeted[with.Column("p_surf corrected")]),
+      WithinRel(raw / std::stod(untargeted[with.Column("E_norm corrected (J)")]), 1.0e-9));
+  for (const auto &name : with.header)
+  {
+    if (name.find("self-consistent") != std::string::npos)
+    {
+      continue;
+    }
+    INFO(name);
+    CHECK(!std::isnan(std::stod(untargeted[with.Column(name)])));
+  }
+#endif
+}
+
+// OI-SCP-HOLE through the operator, the preflight and both postoperators (DESIGN A.4 /
+// A-U2; decisions 922 / 934 / 939; the d919 review MAJOR-2). The offset-corner-pair mesh in
+// the identification-based construction (the devices' form; a Legacy corner patch carries
+// no feature and no raw footprint) with a Signature-keyed copy of the spatial-cluster
+// library built from the mesh's own identification (one model per feature hash: the
+// fixture model of that topology with the feature's Signature). The SpatialClusterPriority
+// rule tests the placed BASIS-POINT boxes (CollectSpatialSupports), so the straddling
+// fixture moves ONE of the synthetic cluster coupon's four basis knots to the device point
+// (1.12, 0.52, 1.70): the signature, edges, frame, claims and weight are the control's
+// (asserted), the cluster's basis box now reaches the basis box of island 2's top-left
+// convex corner (1.125, 0.5, 1.75), and the rule drops that corner and no other (decision
+// 939: the deviation from "the same basis" is named; the SCP arithmetic does not depend on
+// the response values). Its window = the two arms' R windows (0.4): the +x arm (z = 1.75,
+// above the box) lies wholly outside, the -z arm outside on [1.70, 1.75]: OutsideLength
+// 0.25 = R + 0.05, the kept portions tiling exactly those pieces. Asserted: the operator's
+// Diagnostics record and portions (Maxwell and electrostatic constructors alike), the
+// preflight's record equal to the operator's with the dry-run patch table unchanged by the
+// pass (form (i)), the kept pieces' energies (kept = the direct pieces, kept + the inside
+// piece = the whole window: the uncovered machinery's exact partition), the Maxwell
+// PostOperator's add-back (corrected = outside + models + the SpatialClusterPriority raw
+// energy on both closures; the 4th table written with the operator's energy), the
+// electrostatic driver's add-back (the same identity per source on surface-Q-corrected.csv;
+// the palace.json record); a two-knot variant whose box holds the whole window: Count 1,
+// OutsideLength 0, no portion, no table; the control (the fixture's knots): no record, no
+// table — there the B4 vertex rule owns the free corners whole (this small device lies
+// inside the cluster's Signature box; the known B4 hole), where the SpatialClusterPriority
+// pass, which runs first, takes precedence in the straddling fixture.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SpatialClusterPriority raw remainder through the operator / the preflight "
+    "/ both postoperators (decisions 922 / 934)",
+    "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][scphole]"
+    "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  // The identification of this mesh clusters the two facing corners WITH the two short
+  // edges' far corners (six edges), so the free convex corners are the two left corners of
+  // island 1 and the two top corners of island 2. The dropped corner is island 2's top-left
+  // corner (1.125, 0.5, 1.75) in (x, y, z): its +x arm along the top edge z = 1.75 and its
+  // -z arm along the left edge x = 1.125. The cluster's first basis knot is moved to the
+  // device point (1.12, 0.52, 1.70): the cluster's basis-point box then spans x in [1.12,
+  // ~1.215], z up to 1.70, inside the corner's basis-point box (x in [1.145, 1.205], z in
+  // [1.67, 1.73]: the points lie 0.02-0.08 into the metal quadrant); the +x arm (z = 1.75,
+  // above the box) is wholly outside, the -z arm outside on [1.70, 1.75].
+  const std::array<double, 3> corner = {1.125, 0.5, 1.75};
+  const std::array<double, 3> first_arm_end = {1.325, 0.5, 1.75};
+  const std::array<double, 3> second_arm_end = {1.125, 0.5, 1.55};
+  const std::vector<std::array<double, 3>> straddling_knots = {{1.12, 0.52, 1.70}};
+  // Two knots whose box contains the whole window (x in [1.125, 1.325], z in [1.55, 1.75]).
+  const std::vector<std::array<double, 3>> inside_knots = {{1.12, 0.52, 1.76},
+                                                           {1.33, 0.52, 1.76}};
+  const double box_face = straddling_knots[0][2];
+  const std::array<double, 3> box_face_point = {corner[0], corner[1], box_face};
+  const double outside_length = R + (corner[2] - box_face);
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "scp-offset-corner-pair.mesh";
+  const fs::path control_library = temp.temp_dir / "surface-process-scp-control.json";
+  const fs::path straddling_library = temp.temp_dir / "surface-process-scp-straddling.json";
+  const fs::path inside_library = temp.temp_dir / "surface-process-scp-inside.json";
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  // The Maxwell configuration of the spatial-cluster case in the identification-based
+  // construction (the devices' form: a Legacy corner patch carries no feature and no raw
+  // footprint).
+  auto MaxwellConfig = [&](const fs::path &library, const fs::path &output)
+  {
+    json config = ConvexMaxwellIslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;
+    config["Problem"]["Output"] = output.string();
+    config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+    auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+    correction["Library"] = library.string();
+    correction["CorrectionMode"] = "PostprocessOnly";
+    correction.erase("PatchConstruction");
+    return config;
+  };
+  auto MaxwellIoData = [&](json config)
+  {
+    IoData iodata(std::move(config), false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    return iodata;
+  };
+  // The identification of the mesh (every feature Missing against the fixture's Edges-keyed
+  // library): the Signature-keyed libraries below are built from its features.
+  const fs::path identification_dir = temp.temp_dir / "scp-identification";
+  {
+    auto config = MaxwellConfig(spatial_cluster_library_3d_path, identification_dir);
+    config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
+    IoData iodata = MaxwellIoData(config);
+    MakeOutputFolder(iodata, comm);
+    WriteSurfaceResponseRequirements(
+        iodata, *meshes.back(),
+        (identification_dir / "surface-response-requirements.json").string());
+  }
+  Mpi::Barrier(comm);
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialOffsetCornerPairMesh();
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    std::ifstream manifest_input(identification_dir / "surface-response-requirements.json");
+    REQUIRE(manifest_input);
+    const json manifest = json::parse(manifest_input);
+    const auto &features = manifest["Identification"]["Features"];
+    std::ifstream library_input(spatial_cluster_library_3d_path);
+    REQUIRE(library_input);
+    const json fixture_library = json::parse(library_input);
+    REQUIRE(fixture_library["Models"].size() == 3);
+    REQUIRE(fixture_library["Models"][0]["Topology"] == "IsolatedEdge");
+    REQUIRE(fixture_library["Models"][1]["Topology"] == "ConvexCorner");
+    REQUIRE(fixture_library["Models"][2]["Name"] == "offset-corner-pair");
+    // The cluster feature's canonical frame: a Signature-keyed model's BasisPoints are
+    // local coordinates of this frame (origin + sum_k local[k] axes[k]).
+    const auto cluster_feature =
+        std::find_if(features.begin(), features.end(), [](const auto &feature)
+                     { return feature["Type"] == "SpatialEdgeCluster"; });
+    REQUIRE(cluster_feature != features.end());
+    const auto frame_origin =
+        (*cluster_feature)["Frame"]["Origin"].get<std::array<double, 3>>();
+    const auto frame_axes =
+        (*cluster_feature)["Frame"]["Axes"].get<std::array<std::array<double, 3>, 3>>();
+    auto Local = [&](const std::array<double, 3> &device)
+    {
+      std::array<double, 3> local{};
+      for (int k = 0; k < 3; k++)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          local[k] += (device[d] - frame_origin[d]) * frame_axes[k][d];
+        }
+      }
+      return local;
+    };
+    // A Signature-keyed copy of the fixture library: one model per distinct feature hash,
+    // the fixture model of the feature's topology with the feature's Signature (the
+    // corner's angle from it); the cluster model keyed by its Signature instead of its
+    // Edges, its first basis knots replaced by `knots` (device coordinates; empty = the
+    // fixture's).
+    auto WriteLibrary = [&](const std::vector<std::array<double, 3>> &knots,
+                            const fs::path &path, const char *suffix)
+    {
+      json library = fixture_library;
+      library["Name"] = std::string("unit-test-process-spatial-cluster-scp-") + suffix;
+      library["Models"] = json::array();
+      std::set<std::string> hashes;
+      for (const auto &feature : features)
+      {
+        if (!hashes.insert(feature["Hash"].get<std::string>()).second)
+        {
+          continue;
+        }
+        const std::string type = feature["Type"];
+        REQUIRE((type == "IsolatedEdge" || type == "ConvexCorner" ||
+                 type == "SpatialEdgeCluster"));
+        json model = fixture_library["Models"][type == "IsolatedEdge"   ? 0
+                                               : type == "ConvexCorner" ? 1
+                                                                        : 2];
+        model["Signature"] = feature["Signature"];
+        if (type == "ConvexCorner")
+        {
+          model["Angle"] = feature["Signature"]["AngleDegrees"];
+          model["Name"] = "convex-corner-90";
+        }
+        else if (type == "SpatialEdgeCluster")
+        {
+          model.erase("Edges");
+          model["Name"] = std::string("offset-corner-pair-scp-") + suffix;
+          if (!knots.empty())
+          {
+            const std::vector<std::array<double, 3>> fixture_knots = {
+                {0.025, -0.025, 0.02},
+                {0.050, -0.050, 0.02},
+                {0.075, -0.075, -0.02},
+                {0.100, -0.100, -0.02}};
+            REQUIRE(knots.size() < fixture_knots.size());
+            const fs::path points_path =
+                temp.temp_dir /
+                (std::string("spatial-cluster-scp-") + suffix + "-points.csv");
+            std::ofstream output(points_path);
+            output << "x,y,z\n";
+            for (std::size_t k = 0; k < fixture_knots.size(); k++)
+            {
+              const auto local = k < knots.size() ? Local(knots[k]) : fixture_knots[k];
+              output << std::setprecision(17) << local[0] << "," << local[1] << ","
+                     << local[2] << "\n";
+            }
+            model["BasisPoints"] = points_path.string();
+          }
+          // The SupportPoints keep containing every knot (they are not the box the
+          // ownership rules read: that is the placed basis points' box).
+          json support = json::array();
+          for (const double x : {-1.2, 1.2})
+          {
+            for (const double y : {-1.2, 1.2})
+            {
+              for (const double z : {-0.05, 0.05})
+              {
+                support.push_back({x, y, z});
+              }
+            }
+          }
+          model["SupportPoints"] = support;
+        }
+        library["Models"].push_back(std::move(model));
+      }
+      std::ofstream output(path);
+      output << library.dump(2) << "\n";
+    };
+    WriteLibrary({}, control_library, "control");
+    WriteLibrary(straddling_knots, straddling_library, "straddling");
+    WriteLibrary(inside_knots, inside_library, "inside");
+  }
+  Mpi::Barrier(comm);
+
+  auto Near = [](const std::array<double, 3> &a, const std::array<double, 3> &b)
+  {
+    return std::abs(a[0] - b[0]) < 1.0e-9 && std::abs(a[1] - b[1]) < 1.0e-9 &&
+           std::abs(a[2] - b[2]) < 1.0e-9;
+  };
+  auto Perimeter = [](const auto &portions)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+    for (const auto &portion : portions)
+    {
+      perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    return perimeter;
+  };
+  // The record of a placement (the operator's Diagnostics or the preflight's manifest
+  // entry) against the analytic exclusion.
+  auto CheckRecord = [&](const json &record, double expected_outside)
+  {
+    REQUIRE(record["Count"].get<int>() == 1);
+    CHECK_THAT(record["WindowLength"].get<double>(), WithinAbs(2.0 * R, 1.0e-9));
+    CHECK_THAT(record["OutsideLength"].get<double>(), WithinAbs(expected_outside, 1.0e-9));
+    REQUIRE(record["Patches"].size() == 1);
+    const auto &entry = record["Patches"][0];
+    CHECK(entry["Model"] == "convex-corner-90");
+    CHECK(entry["Topology"] == "convex corner");
+    CHECK_THAT(entry["Origin"][0].get<double>(), WithinAbs(corner[0], 1.0e-9));
+    CHECK_THAT(entry["Origin"][1].get<double>(), WithinAbs(corner[1], 1.0e-9));
+    CHECK_THAT(entry["Origin"][2].get<double>(), WithinAbs(corner[2], 1.0e-9));
+    CHECK_THAT(entry["OutsideLength"].get<double>(), WithinAbs(expected_outside, 1.0e-9));
+    CHECK(entry["Owner"]["Model"].get<std::string>().rfind("offset-corner-pair-scp-", 0) ==
+          0);
+    if (expected_outside > 0.0)
+    {
+      CHECK(record["RawPortions"]["Count"].get<int>() >= 2);
+      CHECK_THAT(record["RawPortions"]["Length"].get<double>(),
+                 WithinAbs(expected_outside, 1.0e-9));
+    }
+    else
+    {
+      CHECK(record["RawPortions"]["Count"].get<int>() == 0);
+    }
+  };
+  // The operator's portions tile the kept pieces exactly: the whole +x arm (as the
+  // identification cut it, over its perimeter segments) and the -z arm from the vertex to
+  // the box face; nothing else.
+  auto OnArm = [&](const std::array<double, 3> &p, const std::array<double, 3> &end)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      const double lo = std::min(corner[d], end[d]) - 1.0e-9;
+      const double hi = std::max(corner[d], end[d]) + 1.0e-9;
+      if (p[d] < lo || p[d] > hi)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto CheckPortions = [&](const SurfaceResponseOperator &response)
+  {
+    const auto &portions = response.GetSpatialClusterPriorityPortions();
+    REQUIRE(portions.size() >= 2);
+    double first_arm_length = 0.0, second_arm_length = 0.0;
+    for (const auto &portion : portions)
+    {
+      CHECK(portion.topology == "convex corner");
+      CHECK(portion.feature == portions.front().feature);
+      double length = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        length += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+      }
+      length = std::sqrt(length);
+      if (OnArm(portion.p0, first_arm_end) && OnArm(portion.p1, first_arm_end))
+      {
+        first_arm_length += length;
+      }
+      else if (OnArm(portion.p0, box_face_point) && OnArm(portion.p1, box_face_point))
+      {
+        second_arm_length += length;
+      }
+      else
+      {
+        FAIL("a SpatialClusterPriority portion off the kept pieces");
+      }
+    }
+    CHECK_THAT(first_arm_length, WithinAbs(R, 1.0e-9));
+    CHECK_THAT(second_arm_length, WithinAbs(corner[2] - box_face, 1.0e-9));
+    const auto &exclusions = response.GetSpatialClusterPriorityExclusions();
+    REQUIRE(exclusions.entries.size() == 1);
+    CHECK_THAT(exclusions.entries[0].window_length, WithinAbs(2.0 * R, 1.0e-9));
+    CHECK_THAT(exclusions.entries[0].outside_length, WithinAbs(outside_length, 1.0e-9));
+    CHECK_THAT(exclusions.portions.length, WithinAbs(outside_length, 1.0e-9));
+    CHECK(exclusions.portions.portions.size() == portions.size());
+  };
+  auto AppliedAtCorner = [&](const SurfaceResponseOperator &response)
+  {
+    int count = 0;
+    for (const auto &assignment : response.GetPatchAssignments())
+    {
+      count += Near(assignment.origin, corner) ? 1 : 0;
+    }
+    Mpi::GlobalSum(1, &count, Mpi::World());
+    return count;
+  };
+
+  // (1) The Maxwell constructor and its postoperator.
+  const fs::path straddling_dir = temp.temp_dir / "scp-maxwell-straddling";
+  const fs::path fixture_dir = temp.temp_dir / "scp-maxwell-control";
+  const fs::path inside_dir = temp.temp_dir / "scp-maxwell-inside";
+  IoData straddling_iodata =
+      MaxwellIoData(MaxwellConfig(straddling_library, straddling_dir));
+  IoData fixture_iodata = MaxwellIoData(MaxwellConfig(control_library, fixture_dir));
+  IoData inside_iodata = MaxwellIoData(MaxwellConfig(inside_library, inside_dir));
+  MakeOutputFolder(straddling_iodata, comm);
+  MakeOutputFolder(fixture_iodata, comm);
+  MakeOutputFolder(inside_iodata, comm);
+  SpaceOperator space_op(straddling_iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(straddling_iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  const json statistics = response->GetStatistics();
+  REQUIRE(statistics["Diagnostics"].contains("SpatialClusterPriority"));
+  CheckRecord(statistics["Diagnostics"]["SpatialClusterPriority"], outside_length);
+  CheckPortions(*response);
+  CHECK(AppliedAtCorner(*response) == 0);
+  const auto &cluster_record =
+      statistics["Diagnostics"]["SpatialClusterPriority"]["Patches"][0]["Owner"]["Box"];
+  CHECK_THAT(cluster_record["Max"][2].get<double>(), WithinAbs(box_face, 1.0e-9));
+  CHECK_THAT(cluster_record["Min"][0].get<double>(),
+             WithinAbs(straddling_knots[0][0], 1.0e-9));
+  CHECK(cluster_record["Max"][0].get<double>() > corner[0]);
+
+  std::vector<std::unique_ptr<Mesh>> fixture_meshes;
+  fixture_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator fixture_space_op(fixture_iodata, fixture_meshes);
+  PostOperator<ProblemType::EIGENMODE> fixture_post_op(fixture_iodata, fixture_space_op);
+  auto *fixture_response = fixture_post_op.GetSurfaceResponseOperator();
+  REQUIRE(fixture_response);
+  const json fixture_statistics = fixture_response->GetStatistics();
+  CHECK(!fixture_statistics["Diagnostics"].contains("SpatialClusterPriority"));
+  CHECK(fixture_response->GetSpatialClusterPriorityPortions().empty());
+  // In the control the corner is not applied either: this small device lies inside the
+  // cluster's Signature box, so the continuation ownership's vertex rule (B4) owns every
+  // free corner whole (no raw remainder: the owner coupon models its window). The
+  // SpatialClusterPriority pass runs before it and takes precedence where its basis-point
+  // boxes overlap (the straddling case above: the corner is in the SpatialClusterPriority
+  // record, its outside window kept raw).
+  CHECK(AppliedAtCorner(*fixture_response) == 0);
+  {
+    const auto &vertices =
+        fixture_statistics["Diagnostics"]["ContinuationOwnership"]["Vertices"];
+    int owned_corner = 0;
+    for (const auto &vertex : vertices["Records"])
+    {
+      const auto origin = vertex["Origin"].get<std::array<double, 3>>();
+      owned_corner += Near(origin, corner) ? 1 : 0;
+    }
+    CHECK(owned_corner == 1);
+  }
+  // The same cluster patch (one spatial edge-cluster, the same frame and weight) in both:
+  // the owning rank's entry, replicated by the sum (zero elsewhere).
+  auto ClusterAssignment = [&](const SurfaceResponseOperator &r, const std::string &model)
+  {
+    const auto names = r.GetModelNames();
+    std::array<double, 10> values{};
+    int count = 0;
+    for (const auto &assignment : r.GetPatchAssignments())
+    {
+      if (names.at(assignment.model).rfind(model, 0) == 0)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          values[d] = assignment.origin[d];
+          values[3 + d] = assignment.axis_u[d];
+          values[6 + d] = assignment.axis_v[d];
+        }
+        values[9] = assignment.weight;
+        count++;
+      }
+    }
+    Mpi::GlobalSum(1, &count, Mpi::World());
+    Mpi::GlobalSum(static_cast<int>(values.size()), values.data(), Mpi::World());
+    REQUIRE(count == 1);
+    return values;
+  };
+  {
+    const auto wide = ClusterAssignment(*response, "offset-corner-pair-scp-straddling");
+    const auto fixture =
+        ClusterAssignment(*fixture_response, "offset-corner-pair-scp-control");
+    for (std::size_t i = 0; i < wide.size(); i++)
+    {
+      CHECK_THAT(wide[i], WithinAbs(fixture[i], 1.0e-12));
+    }
+  }
+
+  std::vector<std::unique_ptr<Mesh>> inside_meshes;
+  inside_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator inside_space_op(inside_iodata, inside_meshes);
+  PostOperator<ProblemType::EIGENMODE> inside_post_op(inside_iodata, inside_space_op);
+  auto *inside_response = inside_post_op.GetSurfaceResponseOperator();
+  REQUIRE(inside_response);
+  const json inside_statistics = inside_response->GetStatistics();
+  REQUIRE(inside_statistics["Diagnostics"].contains("SpatialClusterPriority"));
+  CheckRecord(inside_statistics["Diagnostics"]["SpatialClusterPriority"], 0.0);
+  CHECK(inside_response->GetSpatialClusterPriorityPortions().empty());
+  CHECK(AppliedAtCorner(*inside_response) == 0);
+
+  // (2) The preflight (A-U2): the same record on the dry run; the dry-run patch table is
+  // not changed by the pass (form (i)): it lists the dropped corner as it lists every built
+  // patch, its row identical to the control's (where the B4 vertex rule owns it).
+  auto DryRunCornerRow = [&](const fs::path &dir)
+  {
+    const TextCsv table = ReadTextCsv(dir / "surface-response-patches.csv");
+    std::vector<std::string> corner_row;
+    int corner_rows = 0;
+    for (const auto &row : table.rows)
+    {
+      const std::array<double, 3> origin = {std::stod(row[table.Column("OriginX")]),
+                                            std::stod(row[table.Column("OriginY")]),
+                                            std::stod(row[table.Column("OriginZ")])};
+      if (Near(origin, corner) && row[table.Column("Topology")] == "convex corner")
+      {
+        corner_rows++;
+        corner_row = row;
+      }
+    }
+    CHECK(corner_rows == 1);
+    return std::make_pair(table.rows.size(), corner_row);
+  };
+  {
+    const fs::path manifest_path = straddling_dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(straddling_iodata, *meshes.back(),
+                                     manifest_path.string());
+    const fs::path fixture_manifest_path =
+        fixture_dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(fixture_iodata, *fixture_meshes.back(),
+                                     fixture_manifest_path.string());
+    Mpi::Barrier(comm);
+    if (Mpi::Root(comm))
+    {
+      std::ifstream input(manifest_path);
+      REQUIRE(input);
+      const json manifest = json::parse(input);
+      REQUIRE(manifest["Identification"]["Diagnostics"].contains("SpatialClusterPriority"));
+      const auto &record =
+          manifest["Identification"]["Diagnostics"]["SpatialClusterPriority"];
+      CheckRecord(record, outside_length);
+      const auto &operator_record = statistics["Diagnostics"]["SpatialClusterPriority"];
+      CHECK_THAT(record["OutsideLength"].get<double>(),
+                 WithinAbs(operator_record["OutsideLength"].get<double>(), 1.0e-12));
+      CHECK_THAT(record["WindowLength"].get<double>(),
+                 WithinAbs(operator_record["WindowLength"].get<double>(), 1.0e-12));
+      CHECK(record["Patches"][0]["Feature"] == operator_record["Patches"][0]["Feature"]);
+      CHECK(record["Patches"][0]["Owner"]["Box"] ==
+            operator_record["Patches"][0]["Owner"]["Box"]);
+      CHECK(record["RawPortions"]["Count"] == operator_record["RawPortions"]["Count"]);
+      CHECK_THAT(
+          manifest["Summary"]["SpatialClusterPriority"]["OutsideLength"].get<double>(),
+          WithinAbs(outside_length, 1.0e-9));
+      CHECK(manifest["Summary"]["SpatialClusterPriority"]["Patches"].get<int>() == 1);
+      std::ifstream fixture_input(fixture_manifest_path);
+      REQUIRE(fixture_input);
+      const json fixture_manifest = json::parse(fixture_input);
+      CHECK(!fixture_manifest["Identification"]["Diagnostics"].contains(
+          "SpatialClusterPriority"));
+      CHECK(!fixture_manifest["Summary"].contains("SpatialClusterPriority"));
+      const auto [straddling_rows, straddling_corner] = DryRunCornerRow(straddling_dir);
+      const auto [control_rows, control_corner] = DryRunCornerRow(fixture_dir);
+      CHECK(straddling_rows == control_rows);
+      CHECK(straddling_corner == control_corner);
+    }
+  }
+
+  // (3) The energies of a prescribed gradient field: the kept pieces' raw within-R energy
+  // (the uncovered machinery), its exact partition and the Maxwell PostOperator's add-back.
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x) { return std::sinh(0.7 * (x[0] - 1.0)) + 0.3 * x[2]; });
+  auto Gradient = [&](auto &h1_fespace, auto &nd_fespace)
+  {
+    mfem::ParGridFunction potential(&h1_fespace.Get());
+    potential.ProjectCoefficient(potential_coefficient);
+    mfem::ParDiscreteLinearOperator gradient(&h1_fespace.Get(), &nd_fespace.Get());
+    gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+    gradient.Assemble();
+    auto field = std::make_unique<GridFunction>(nd_fespace, false);
+    gradient.Mult(potential, field->Real());
+    field->Real() *= -1.0;
+    Vector e(nd_fespace.GetTrueVSize());
+    field->Real().GetTrueDofs(e);
+    field->Real().SetFromTrueDofs(e);
+    field->Real().ExchangeFaceNbrData();
+    return field;
+  };
+  const auto field = Gradient(space_op.GetH1Space(), space_op.GetNDSpace());
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto PieceEnergy =
+      [&](const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &perimeter)
+  {
+    return surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, *field, nullptr, perimeter)
+        .at(4)
+        .energy;
+  };
+  const double kept = PieceEnergy(Perimeter(response->GetSpatialClusterPriorityPortions()));
+  // The direct pieces, one per perimeter segment (the mesh edges of 0.125 along the island
+  // edges; the uncovered machinery assigns a portion to the tree segment of its midpoint):
+  // the +x arm [1.125, 1.25] + [1.25, 1.325] at z = 1.75, the -z arm's outside piece
+  // [1.70, 1.75] and its inside pieces [1.625, 1.70] + [1.55, 1.625] at x = 1.125.
+  const std::array<double, 3> first_arm_node = {1.25, 0.5, 1.75};
+  const std::array<double, 3> second_arm_node = {1.125, 0.5, 1.625};
+  auto Pieces =
+      [&](std::initializer_list<std::pair<std::array<double, 3>, std::array<double, 3>>>
+              ends)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+    for (const auto &[p0, p1] : ends)
+    {
+      perimeter.push_back({p0, p1, "convex corner", 0});
+    }
+    return perimeter;
+  };
+  const double first_arm_a = PieceEnergy(Pieces({{corner, first_arm_node}}));
+  const double first_arm_b = PieceEnergy(Pieces({{first_arm_node, first_arm_end}}));
+  const double second_arm_outside = PieceEnergy(Pieces({{corner, box_face_point}}));
+  const double second_arm_inside = PieceEnergy(
+      Pieces({{box_face_point, second_arm_node}, {second_arm_node, second_arm_end}}));
+  const double whole_window = PieceEnergy(Pieces({{corner, first_arm_node},
+                                                  {first_arm_node, first_arm_end},
+                                                  {corner, second_arm_node},
+                                                  {second_arm_node, second_arm_end}}));
+  CHECK(kept > 0.0);
+  CHECK(first_arm_a > 0.0);
+  CHECK(first_arm_b > 0.0);
+  CHECK(second_arm_inside > 0.0);
+  CHECK(second_arm_outside >= 0.0);
+  INFO("kept " << kept << " = " << first_arm_a << " + " << first_arm_b << " + "
+               << second_arm_outside << "; inside " << second_arm_inside << "; window "
+               << whole_window);
+  CHECK_THAT(kept, WithinRel(first_arm_a + first_arm_b + second_arm_outside, 1.0e-9));
+  CHECK_THAT(kept + second_arm_inside, WithinRel(whole_window, 1.0e-9));
+  // The electrostatic postoperator's reading of the same pieces (the same surface
+  // quadrature on the same mesh) equals the Maxwell one.
+  {
+    json config = IslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;
+    config["Problem"]["Output"] = (temp.temp_dir / "scp-es-postop").string();
+    config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9}}},
+                                        {{"Index", 2}, {"Attributes", {10}}}};
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+    config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        straddling_library.string();
+    config["Solver"]["Electrostatic"]["ResponseCorrection"].erase("PatchConstruction");
+    IoData electrostatic_iodata(config, false);
+    electrostatic_iodata.boundaries.cracked_attributes.insert(9);
+    electrostatic_iodata.boundaries.cracked_attributes.insert(10);
+    MakeOutputFolder(electrostatic_iodata, comm);
+    std::vector<std::unique_ptr<Mesh>> electrostatic_meshes;
+    electrostatic_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+    LaplaceOperator laplace_op(electrostatic_iodata, electrostatic_meshes);
+    SurfaceResponseOperator electrostatic_response(electrostatic_iodata, laplace_op);
+    PostOperator<ProblemType::ELECTROSTATIC> electrostatic_post_op(electrostatic_iodata,
+                                                                   laplace_op);
+    const json electrostatic_statistics = electrostatic_response.GetStatistics();
+    REQUIRE(electrostatic_statistics["Diagnostics"].contains("SpatialClusterPriority"));
+    CheckRecord(electrostatic_statistics["Diagnostics"]["SpatialClusterPriority"],
+                outside_length);
+    CheckPortions(electrostatic_response);
+    CHECK(AppliedAtCorner(electrostatic_response) == 0);
+    const auto electrostatic_field =
+        Gradient(laplace_op.GetH1Space(), laplace_op.GetNDSpace());
+    const double electrostatic_kept =
+        electrostatic_post_op.GetSurfacePostOp()
+            .GetInterfaceUncoveredEdgeEnergies(
+                {4}, *electrostatic_field, nullptr,
+                Perimeter(electrostatic_response.GetSpatialClusterPriorityPortions()))
+            .at(4)
+            .energy;
+    CHECK_THAT(electrostatic_kept, WithinRel(kept, 1.0e-9));
+  }
+
+  // The Maxwell PostOperator's tables on the same field: corrected = outside + models + the
+  // SpatialClusterPriority raw energy on both closures (the fixture: outside + models, no
+  // table).
+  auto Measure = [&](PostOperator<ProblemType::EIGENMODE> &p, SpaceOperator &s,
+                     const GridFunction &real_field)
+  {
+    GridFunction complex_field(s.GetNDSpace(), true);
+    complex_field.Real() = real_field.Real();
+    complex_field.Imag() = 0.0;
+    ComplexVector e(s.GetNDSpace().GetTrueVSize());
+    complex_field.Real().GetTrueDofs(e.Real());
+    e.Imag() = 0.0;
+    ComplexVector b(s.GetRTSpace().GetTrueVSize());
+    b = 0.0;
+    p.MeasureAndPrintAll(0, e, b, std::complex<double>(1.0, 0.0), 0.0, 0.0, 1);
+  };
+  Measure(post_op, space_op, *field);
+  const auto fixture_field =
+      Gradient(fixture_space_op.GetH1Space(), fixture_space_op.GetNDSpace());
+  Measure(fixture_post_op, fixture_space_op, *fixture_field);
+  const auto inside_field =
+      Gradient(inside_space_op.GetH1Space(), inside_space_op.GetNDSpace());
+  Measure(inside_post_op, inside_space_op, *inside_field);
+  const double kept_joule =
+      straddling_iodata.units.Dimensionalize<Units::ValueType::ENERGY>(kept);
+  Mpi::Barrier(comm);
+
+  // (4) The electrostatic driver on the same mesh and libraries (its add-back and record).
+  const fs::path es_straddling_dir = temp.temp_dir / "scp-es-straddling";
+  const fs::path es_fixture_dir = temp.temp_dir / "scp-es-control";
+  {
+    json config = IslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;
+    config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9}}},
+                                        {{"Index", 2}, {"Attributes", {10}}}};
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["CorrectionMode"] = "PostprocessOnly";
+    correction.erase("PatchConstruction");
+    config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+    config["Problem"]["Output"] = es_straddling_dir.string();
+    correction["Library"] = straddling_library.string();
+    RunElectrostatic(config);
+    config["Problem"]["Output"] = es_fixture_dir.string();
+    correction["Library"] = control_library.string();
+    RunElectrostatic(config);
+  }
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  // The one row of a one-interface, one-print table.
+  auto Single = [&](const fs::path &path, const std::string &column)
+  {
+    const TextCsv table = ReadTrimmedCsv(path);
+    REQUIRE(table.rows.size() == 1);
+    return std::stod(table.rows[0][table.Column(column)]);
+  };
+  auto ModelEnergySum = [&](const fs::path &dir, int evaluation)
+  {
+    const TextCsv models = ReadTrimmedCsv(dir / "surface-response-model-energy.csv");
+    double sum = 0.0;
+    for (const auto &row : models.rows)
+    {
+      if (std::lround(std::stod(row[models.Column("evaluation")])) == evaluation)
+      {
+        sum += std::stod(row[models.Column("fabricated surface energy[4] (J)")]);
+      }
+    }
+    return sum;
+  };
+  const char *scp_table = "surface-response-spatial-cluster-priority-energy.csv";
+  auto PortionTableTotal = [&](const fs::path &path, int evaluation)
+  {
+    const TextCsv table = ReadTrimmedCsv(path);
+    std::size_t energy_column = 0;
+    for (std::size_t c = 0; c < table.header.size(); c++)
+    {
+      if (table.header[c].find("raw energy[4]") != std::string::npos)
+      {
+        energy_column = c;
+      }
+    }
+    for (const auto &row : table.rows)
+    {
+      if (std::lround(std::stod(row[table.Column("evaluation")])) == evaluation &&
+          row[table.Column("type")] == "Total")
+      {
+        return std::stod(row[energy_column]);
+      }
+    }
+    FAIL("no Total row in " << path.string());
+    return 0.0;
+  };
+  {
+    REQUIRE(fs::is_regular_file(straddling_dir / scp_table));
+    const double scp_ft = PortionTableTotal(straddling_dir / scp_table, 0);
+    const double scp_ff = PortionTableTotal(straddling_dir / scp_table, 1);
+    CHECK_THAT(scp_ft, WithinRel(kept_joule, 1.0e-10));
+    CHECK_THAT(scp_ff, WithinRel(kept_joule, 1.0e-10));
+    const TextCsv table = ReadTrimmedCsv(straddling_dir / scp_table);
+    int corner_rows = 0;
+    for (const auto &row : table.rows)
+    {
+      if (row[table.Column("type")] == "convex corner" &&
+          std::lround(std::stod(row[table.Column("evaluation")])) == 0)
+      {
+        corner_rows++;
+        CHECK(std::lround(std::stod(row[table.Column("portions")])) ==
+              static_cast<long>(response->GetSpatialClusterPriorityPortions().size()));
+        CHECK_THAT(std::stod(row[table.Column("length (m)")]),
+                   WithinAbs(outside_length, 1.0e-9));
+      }
+    }
+    CHECK(corner_rows == 1);
+    const double outside = Single(straddling_dir / "surface-Q-edge.csv", "E_out (J)");
+    const double corrected =
+        Single(straddling_dir / "surface-Q-corrected.csv", "E_surf corrected (J)");
+    const double corrected_fixed_flux = Single(straddling_dir / "surface-Q-corrected.csv",
+                                               "E_surf corrected fixed-flux (J)");
+    CHECK_THAT(corrected,
+               WithinRel(outside + ModelEnergySum(straddling_dir, 0) + scp_ft, 1.0e-10));
+    CHECK_THAT(corrected_fixed_flux,
+               WithinRel(outside + ModelEnergySum(straddling_dir, 1) + scp_ff, 1.0e-10));
+    CHECK(!fs::exists(fixture_dir / scp_table));
+    CHECK_THAT(Single(fixture_dir / "surface-Q-corrected.csv", "E_surf corrected (J)"),
+               WithinRel(Single(fixture_dir / "surface-Q-edge.csv", "E_out (J)") +
+                             ModelEnergySum(fixture_dir, 0),
+                         1.0e-10));
+    CHECK(!fs::exists(inside_dir / scp_table));
+    CHECK_THAT(Single(inside_dir / "surface-Q-corrected.csv", "E_surf corrected (J)"),
+               WithinRel(Single(inside_dir / "surface-Q-edge.csv", "E_out (J)") +
+                             ModelEnergySum(inside_dir, 0),
+                         1.0e-10));
+  }
+  // The electrostatic driver: the same identity on its fixed-trace / fixed-flux columns for
+  // both terminal sources and the record in palace.json; the control library writes no
+  // table and no record.
+  // The value of the row of `source` in a per-source table (the "i" / "source" key).
+  auto SourceValue =
+      [&](const fs::path &path, const char *key, int source, const std::string &column)
+  {
+    const TextCsv table = ReadTrimmedCsv(path);
+    for (const auto &row : table.rows)
+    {
+      if (std::lround(std::stod(row[table.Column(key)])) == source)
+      {
+        return std::stod(row[table.Column(column)]);
+      }
+    }
+    FAIL("no row of source " << source << " in " << path.string());
+    return 0.0;
+  };
+  auto SourceModelEnergySum = [&](const fs::path &dir, int source, int evaluation)
+  {
+    const TextCsv models = ReadTrimmedCsv(dir / "surface-response-model-energy.csv");
+    double sum = 0.0;
+    for (const auto &row : models.rows)
+    {
+      if (std::lround(std::stod(row[models.Column("source")])) == source &&
+          std::lround(std::stod(row[models.Column("evaluation")])) == evaluation)
+      {
+        sum += std::stod(row[models.Column("fabricated surface energy[4] (J)")]);
+      }
+    }
+    return sum;
+  };
+  auto SourcePortionTotal = [&](const fs::path &path, int source, int evaluation)
+  {
+    if (!fs::exists(path))
+    {
+      return 0.0;
+    }
+    const TextCsv table = ReadTrimmedCsv(path);
+    std::size_t energy_column = 0;
+    for (std::size_t c = 0; c < table.header.size(); c++)
+    {
+      if (table.header[c].find("raw energy[4]") != std::string::npos)
+      {
+        energy_column = c;
+      }
+    }
+    for (const auto &row : table.rows)
+    {
+      if (std::lround(std::stod(row[table.Column("source")])) == source &&
+          std::lround(std::stod(row[table.Column("evaluation")])) == evaluation &&
+          row[table.Column("type")] == "Total")
+      {
+        return std::stod(row[energy_column]);
+      }
+    }
+    FAIL("no Total row of source " << source << " in " << path.string());
+    return 0.0;
+  };
+  {
+    REQUIRE(fs::is_regular_file(es_straddling_dir / scp_table));
+    for (const int source : {1, 2})
+    {
+      INFO("source " << source);
+      const double scp_ft = SourcePortionTotal(es_straddling_dir / scp_table, source, 0);
+      const double scp_ff = SourcePortionTotal(es_straddling_dir / scp_table, source, 1);
+      CHECK(scp_ft > 0.0);
+      const double outside =
+          SourceValue(es_straddling_dir / "surface-Q-edge.csv", "i", source, "E_out (J)");
+      // The other kept-raw classes of the identity, if the run wrote them.
+      const double other_kept =
+          SourcePortionTotal(es_straddling_dir /
+                                 "surface-response-domain-boundary-energy.csv",
+                             source, 0) +
+          SourcePortionTotal(es_straddling_dir / "surface-response-uncovered-energy.csv",
+                             source, 0);
+      CHECK_THAT(SourceValue(es_straddling_dir / "surface-Q-corrected.csv", "i", source,
+                             "E_surf postprocessed fixed-trace[4] (J)"),
+                 WithinRel(outside + SourceModelEnergySum(es_straddling_dir, source, 0) +
+                               other_kept + scp_ft,
+                           1.0e-10));
+      CHECK_THAT(SourceValue(es_straddling_dir / "surface-Q-corrected.csv", "i", source,
+                             "E_surf postprocessed fixed-flux[4] (J)"),
+                 WithinRel(outside + SourceModelEnergySum(es_straddling_dir, source, 1) +
+                               other_kept + scp_ff,
+                           1.0e-10));
+      CHECK_THAT(
+          SourceValue(es_fixture_dir / "surface-Q-corrected.csv", "i", source,
+                      "E_surf postprocessed fixed-trace[4] (J)"),
+          WithinRel(
+              SourceValue(es_fixture_dir / "surface-Q-edge.csv", "i", source, "E_out (J)") +
+                  SourceModelEnergySum(es_fixture_dir, source, 0) +
+                  SourcePortionTotal(es_fixture_dir /
+                                         "surface-response-domain-boundary-energy.csv",
+                                     source, 0) +
+                  SourcePortionTotal(
+                      es_fixture_dir / "surface-response-uncovered-energy.csv", source, 0),
+              1.0e-10));
+    }
+    std::ifstream metadata_input(es_straddling_dir / "palace.json");
+    REQUIRE(metadata_input);
+    const json metadata = json::parse(metadata_input);
+    const auto &diagnostics = metadata.at("SurfaceResponse").at("Diagnostics");
+    REQUIRE(diagnostics.contains("SpatialClusterPriority"));
+    CheckRecord(diagnostics.at("SpatialClusterPriority"), outside_length);
+    CHECK(!fs::exists(es_fixture_dir / scp_table));
+    std::ifstream fixture_metadata_input(es_fixture_dir / "palace.json");
+    REQUIRE(fixture_metadata_input);
+    const json fixture_metadata = json::parse(fixture_metadata_input);
+    CHECK(!fixture_metadata.at("SurfaceResponse")
+               .at("Diagnostics")
+               .contains("SpatialClusterPriority"));
+    // The raw solves are the same (the libraries differ only in the cluster's support).
+    for (const char *file :
+         {"terminal-C.csv", "domain-E.csv", "surface-Q.csv", "surface-Q-edge.csv"})
+    {
+      INFO(file);
+      CHECK(ReadFile(es_straddling_dir / file) == ReadFile(es_fixture_dir / file));
+    }
+  }
 #endif
 }
 

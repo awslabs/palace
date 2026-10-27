@@ -1081,6 +1081,11 @@
           "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
           "default": "Cartesian"
         },
+        "Length": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional geometry override for a ragged planar element (decision 929): the element length in mesh units measured along `\"Direction\"`. When present, the lumped element uses this length and width = area / length (the area exact from the port faces), the discovered bounding-box length is reported beside it and the projected-length consistency check is skipped for this element only; when absent, the bounding-box length and the check apply. Cartesian (uniform) elements only; the circuit totals R / L / C are unchanged. No automatic fallback."
+        },
         "R": {
           "type": "number",
           "description": "Circuit resistance, \u03a9. Use with `\"L\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
@@ -1154,7 +1159,7 @@
           "description": "Sub-elements for a multielement lumped port. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.",
           "additionalItems": false,
           "items": {
-            "$ref": "#/$defs/Element"
+            "$ref": "#/$defs/LumpedPortElement"
           }
         },
         "Direction": {
@@ -1225,6 +1230,41 @@
           "description": "Controls whether this lumped port contributes a port-mode basis vector to the reduced-order model when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)). The boundary condition itself (the `R`/`L`/`C` or `Rs`/`Ls`/`Cs` termination) is always enforced; only the inclusion of the port mode in the synthesized circuit matrices is affected. Set to `false` on passive terminations whose row/column in the synthesized ``L^{-1}``, ``C``, ``R^{-1}`` matrices is not needed \u2014 for example, peripheral 50 Ohm launcher pads kept in the simulation for correct physics but not measured. Setting this to `false` reduces the size of the PROM basis by one vector per excluded port. Excited ports must always be included; the configuration parser will reject a port with `\"Excitation\" > 0` and `\"IncludeInSynthesis\": false`.",
           "default": true,
           "x-palace-advanced": true
+        }
+      }
+    },
+    "LumpedPortElement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes",
+        "Direction"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this element applies to."
+        },
+        "Direction": {
+          "description": "Excitation direction of this element. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "CoordinateSystem": {
+          "$ref": "#/$defs/CoordinateSystem",
+          "description": "Coordinate system for this element's `\"Direction\"` vector.",
+          "default": "Cartesian"
+        },
+        "Length": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional geometry override for a ragged planar element (decision 929): this element's length in mesh units along its `\"Direction\"`; see `/LumpedPort/Length`."
         }
       }
     },
@@ -3403,7 +3443,7 @@
             },
             "PatchEnergy": {
               "type": "boolean",
-              "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`. Electrostatic only; every other output is unchanged.",
+              "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`; and `surface-response-model-raw-energy.csv` / `-groups.csv`, the raw field's within-R energy partitioned exactly over the applied patches' claims by model set plus the unclaimed remainder. Electrostatic, driven and eigenmode (per frequency / per mode, with the `f (GHz)` / `m` and `exc` keys after the electrostatic columns; the Maxwell path also writes `surface-response-patches.csv`, `surface-response-traces.csv` with the complex spatial traces and `surface-response-patch-loops.csv`, the per-path loop residuals of the line-integral trace lift); a three-dimensional export: not supported by boundary mode or on a two-dimensional mesh. Every other output is unchanged.",
               "default": false
             },
             "DomainBoundary": {

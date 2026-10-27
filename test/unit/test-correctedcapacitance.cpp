@@ -449,9 +449,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   RunElectrostatic(config);
   Mpi::Barrier(Mpi::World());
 
-  // The Maxwell surface response has no per-patch export.
+  // The Maxwell per-patch export (decision 922 B) is a driven / eigenmode option: a
+  // boundary-mode configuration still refuses "PatchEnergy".
   {
     json maxwell = config;
+    maxwell["Problem"]["Type"] = "BoundaryMode";
     maxwell["Solver"]["SurfaceResponseCorrection"] =
         maxwell["Solver"]["Electrostatic"]["ResponseCorrection"];
     maxwell["Solver"].erase("Electrostatic");

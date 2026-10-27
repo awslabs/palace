@@ -557,6 +557,52 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config LumpedPort Length override", "[config][Serial]")
+{
+  // Decision 929: the optional "Length" geometry override of a ragged planar element (mesh
+  // units, along the element's Direction): parsed on the single-element and the Elements
+  // forms, 0 (absent) by default, refused when not positive or on a coaxial element.
+  json without = {
+      {"LumpedPort",
+       {{{"Attributes", {5}}, {"Index", 1}, {"R", 50.0}, {"Direction", "+Y"}}}}};
+  config::BoundaryData data_without(without);
+  CHECK(data_without.lumpedport.at(1).elements.size() == 1);
+  CHECK(data_without.lumpedport.at(1).elements[0].length == 0.0);
+
+  json with = {{"LumpedPort",
+                {{{"Attributes", {5}},
+                  {"Index", 1},
+                  {"R", 50.0},
+                  {"Direction", "+Y"},
+                  {"Length", 0.745}},
+                 {{"Index", 2},
+                  {"L", 1.0e-9},
+                  {"Elements",
+                   {{{"Attributes", {27}}, {"Direction", "+X"}, {"Length", 0.5}},
+                    {{"Attributes", {38}}, {"Direction", "-X"}}}}}}}};
+  config::BoundaryData data_with(with);
+  CHECK(data_with.lumpedport.at(1).elements[0].length == 0.745);
+  CHECK(data_with.lumpedport.at(1).R == 50.0);
+  REQUIRE(data_with.lumpedport.at(2).elements.size() == 2);
+  CHECK(data_with.lumpedport.at(2).elements[0].length == 0.5);
+  CHECK(data_with.lumpedport.at(2).elements[1].length == 0.0);
+  CHECK(data_with.lumpedport.at(2).L == 1.0e-9);
+
+  json zero = without;
+  zero["LumpedPort"][0]["Length"] = 0.0;
+  CHECK_THROWS_WITH(config::BoundaryData(zero),
+                    Catch::Matchers::ContainsSubstring("\"Length\" must be positive"));
+  json negative = without;
+  negative["LumpedPort"][0]["Length"] = -1.0;
+  CHECK_THROWS_WITH(config::BoundaryData(negative),
+                    Catch::Matchers::ContainsSubstring("\"Length\" must be positive"));
+  json coaxial = without;
+  coaxial["LumpedPort"][0]["Direction"] = "+R";
+  coaxial["LumpedPort"][0]["Length"] = 0.745;
+  CHECK_THROWS_WITH(config::BoundaryData(coaxial),
+                    Catch::Matchers::ContainsSubstring("Cartesian (uniform) element only"));
+}
+
 TEST_CASE("Config interface dielectric flux recovery", "[config][Serial]")
 {
   json dielectric = {{"Attributes", {1}},
@@ -893,8 +939,9 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   oversampled_mortar["MortarOversampling"] = 0;
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", oversampled_mortar}}));
-  // Decision 352 follow-up (1): the per-patch energy export, off by default; electrostatic
-  // only (the Maxwell SurfaceResponseCorrection refuses it).
+  // Decision 352 follow-up (1): the per-patch energy export, off by default; since decision
+  // 922 B the Maxwell SurfaceResponseCorrection parses it too (the driven / eigenmode
+  // per-patch export; the boundary-mode refusal is IoData's).
   CHECK_FALSE(oversampled_data.response_correction->patch_energy);
   auto patch_energy = automatic_correction;
   patch_energy["PatchEnergy"] = true;
@@ -904,8 +951,10 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(patch_energy_data.response_correction->patch_energy);
   CHECK_NOTHROW(
       config::SolverData(json{{"SurfaceResponseCorrection", automatic_correction}}));
-  CHECK_THROWS_WITH(config::SolverData(json{{"SurfaceResponseCorrection", patch_energy}}),
-                    Catch::Matchers::ContainsSubstring("PatchEnergy"));
+  const config::SolverData maxwell_patch_energy(
+      json{{"SurfaceResponseCorrection", patch_energy}});
+  REQUIRE(maxwell_patch_energy.surface_response_correction);
+  CHECK(maxwell_patch_energy.surface_response_correction->patch_energy);
 
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;
@@ -2107,10 +2156,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(rz_gaps.empty());
 
     // LumpedPort: Direction/CoordinateSystem/Elements are opt-in alternatives to
-    // Attributes for declaring the port geometry; concretize does not synthesize them.
+    // Attributes for declaring the port geometry, and Length (decision 929) an opt-in
+    // geometry override without a default; concretize does not synthesize them.
     auto lp_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/LumpedPort/items",
                                       config["Boundaries"]["LumpedPort"][0],
-                                      /*skip=*/{"CoordinateSystem", "Elements"});
+                                      /*skip=*/{"CoordinateSystem", "Elements", "Length"});
     INFO("Boundaries.LumpedPort[] missing keys: " << json(lp_gaps).dump());
     CHECK(lp_gaps.empty());
 

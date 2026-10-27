@@ -327,6 +327,11 @@ struct SurfaceResponseFiles
                  bool neighboring_island = false, bool second_layer = false,
                  bool high_order_rounded = false, int normal_elements = 4);
   static std::unique_ptr<mfem::ParMesh> MakeTouchingIslandMesh();
+  // Two disconnected rectangular islands (attributes 9 / 10) on the plane y = 0.5 of a
+  // 2 x 1 x 2 box whose facing corners (1.0, 0.75) and (1.125, 0.875) in (x, z) form the
+  // offset-corner-pair spatial cluster; MakeSerialOffsetCornerPairMesh is the serial mesh
+  // MakeOffsetCornerPairMesh distributes (written to a file by the driver cases).
+  static mfem::Mesh MakeSerialOffsetCornerPairMesh();
   static std::unique_ptr<mfem::ParMesh> MakeOffsetCornerPairMesh();
   // The SA edge segments of interface `interface` (with their length and vertex types).
   static InterfaceEdgeSummary

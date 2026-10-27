@@ -1484,7 +1484,21 @@ cells`, then per target interface `conductorconsistency raw energy[k] (J)` and
 `conductorconsistency share[k]`; written only when a patch was excluded, an excitation
 evaluated before the exclusion reads zero), with the portions under
 `Diagnostics.ConductorConsistency.RawPortions`. A solve with no exclusion writes nothing
-new. Only the plane row is gated (the metal-top rows of a thin device read a few
+new. On the Maxwell path a postprocessing interface that is not a response target carries
+its raw energy in the corrected and fixed-flux columns of `surface-Q-corrected.csv` (the
+electrostatic driver's convention; trace closure spread 0, matched edge fraction and
+unmodeled corner neighborhood fraction 0 / 0), and a run with such an interface adds the
+column `response target` (1 / 0) to that table; the self-consistent columns stay NaN when
+no self-consistent solve was requested. A corner / vertex coupon that an exact spatial cluster drops whole (its basis-point
+box overlaps the cluster's: the `SpatialClusterPriority` rule) keeps the part of its arm
+windows OUTSIDE every matched cluster's box raw the same way (the part inside is the
+cluster coupon's; the corner's own correction outside the box stays missing until the
+cluster coupon's box is grown), reported in
+`surface-response-spatial-cluster-priority-energy.csv` (the same columns, prefix
+`spatialclusterpriority`) with the dropped coupons, their owners and the raw portions under
+`Diagnostics.SpatialClusterPriority` of `palace.json` and of the preflight manifest
+(written only when a coupon is dropped; the dry run's patch table still lists every built
+patch). Only the plane row is gated (the metal-top rows of a thin device read a few
 percent of the amplitude and are recorded only), so a coupon frame whose process plane did
 not coincide with the device's metal sheet would be excluded wholesale and recorded. A
 conductor without a vertex on the process plane aborts at construction naming the model; a
@@ -1769,7 +1783,24 @@ patch index of `surface-response-traces.csv` (the preflight dry run's 0-based `P
 plus one). The rows of one source, evaluation and model sum to that model's row of
 `surface-response-model-energy.csv` to roundoff, and their count and weight sum to its
 `patch count` and `patch weight`; a patch excluded by the conductor-consistency gate
-keeps its row with weight 0.
+keeps its row with weight 0. The same option on a three-dimensional driven or eigenmode
+run (not boundary mode, not a two-dimensional mesh) writes the Maxwell path's
+`surface-response-patches.csv` (at construction),
+`surface-response-patch-energy.csv` (the electrostatic columns as a strict prefix, `source`
+= the excitation on a driven solve / the mode on an eigenmode solve, then `f (GHz)` / `m`
+and `exc`, then the patch's `max loop residual`), `surface-response-traces.csv` (the
+spatial patches' complex trace coefficients: the electrostatic columns with `value (V)` the
+real part, then `value imag (V)`, `f (GHz)` / `m`, `exc`) and
+`surface-response-patch-loops.csv` (`source`, `patch`, `model`, `path`, `kind` 0 = a contour
+loop / 1 = a cap-interior hat loop, `loop residual` = |sum of the loop's line integrals and
+traces| / sum of their magnitudes, `loop scale (V)`, the keys; the maximum over the contour
+loops is the `max path loop residual` of the confidence gate). On both paths the option
+also writes `surface-response-model-raw-energy.csv` (`source`, `evaluation` 0, `label` = a
+`+`-joined `m<idx>` set of the models whose applied patches claim a perimeter piece, or
+`unclaimed`, then `raw energy[k] (J)` per postprocessing interface: the raw field's
+within-`R` energy partitioned exactly over the applied patches' claims, the labels and
+`unclaimed` summing to the within-`R` energy) and `surface-response-model-raw-groups.csv`
+(`label`, `model`, `patches`, `weight length (m)`).
 
 Two placement rules of the corner class (decision 394; `SURFACE-RESPONSE-IDENTIFICATION.md`
 section (e)): at a matched corner whose arms are not perpendicular, the second arm's

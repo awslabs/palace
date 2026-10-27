@@ -6350,6 +6350,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   result.translational_domain_correction = request.translational_domain_correction;
   result.trace_coupling = request.trace_coupling;
   result.mortar_oversampling = request.mortar_oversampling;
+  result.patch_energy = request.patch_energy;
   int next_model_index = 1;
   int matched_clusters = 0;
   int matched_edges = 0;
@@ -11766,6 +11767,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.translational_domain_correction = request.translational_domain_correction;
   result.trace_coupling = request.trace_coupling;
   result.mortar_oversampling = request.mortar_oversampling;
+  result.patch_energy = request.patch_energy;
   result.matching_radius = library.matching_radius;
   int next_model_index = 1;
   int next_interpolation_group = 1;
@@ -18392,6 +18394,19 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         kSignatureParameterToleranceOverRadius * patches.matching_radius;
     const auto records = FindTranslationalStretchInsideSpatialSupport(
         patches.patches, boxes, 3, continuation_tolerance);
+    // The SpatialClusterPriority pass of the placement (decision 922) on the dry run, read
+    // BEFORE the continuation ownership as the operator reads it (the owned set = the
+    // arm-trimmed weight-0 cells): the corner / vertex coupons an exact cluster drops.
+    std::set<std::size_t> spatial_cluster_priority_owned;
+    for (std::size_t patch_idx = 0; patch_idx < patches.patches.size(); patch_idx++)
+    {
+      if (patches.patches[patch_idx].weight <= 0.0)
+      {
+        spatial_cluster_priority_owned.insert(patch_idx);
+      }
+    }
+    const auto spatial_cluster_priority_pairs = FindSpatialClusterPriorityExclusions(
+        boxes, patches, spatial_cluster_priority_owned, 3);
     // The placement's continuation ownership (decision 236 (2)) on the dry run: the
     // written patches are the placed ones (clipped cells, weight 0 inside the boxes).
     const auto ownership = ApplyContinuationOwnership(
@@ -18529,11 +18544,42 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         CollectDomainBoundaryPortions(exclusions, patches.patches, patches, ownership,
                                       uncovered_clipping, patches.matching_radius),
         coordinate_scale);
+    // OI-SCP-HOLE (decision 922): the dropped coupons with the raw remainder of their
+    // windows outside every cluster box, recorded only when one exists (a window without
+    // one keeps its manifest bytes; the dry-run patch table is unchanged: it lists every
+    // built patch, form (i) of the ruling).
+    if (!spatial_cluster_priority_pairs.empty())
+    {
+      const auto spatial_cluster_priority = CollectSpatialClusterPriorityPortions(
+          spatial_cluster_priority_pairs, patches.patches, patches, boxes, 3,
+          patches.matching_radius);
+      diagnostics["SpatialClusterPriority"] = DescribeSpatialClusterPriorityExclusions(
+          spatial_cluster_priority, patches.patches, patches, boxes, coordinate_scale);
+      manifest["Summary"]["SpatialClusterPriority"] = {
+          {"Patches", diagnostics["SpatialClusterPriority"]["Count"]},
+          {"WindowLength", diagnostics["SpatialClusterPriority"]["WindowLength"]},
+          {"OutsideLength", diagnostics["SpatialClusterPriority"]["OutsideLength"]}};
+      Mpi::Warning(
+          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
+          "window lie outside every cluster box and keep their raw within-R surface "
+          "energy in the corrected interface energies; the corners' own correction there "
+          "stays missing!\n",
+          diagnostics["SpatialClusterPriority"]["Count"].get<int>(),
+          diagnostics["SpatialClusterPriority"]["OutsideLength"].get<double>(),
+          diagnostics["SpatialClusterPriority"]["WindowLength"].get<double>());
+    }
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
     diagnostics["CornerArmTrim"]["ExcludedCoupons"] = DescribeCornerArmTrimExcludedCoupons(
         patches.corner_arm_trims, patches,
         [&](std::size_t patch_idx) -> std::optional<std::string>
         {
+          if (std::any_of(spatial_cluster_priority_pairs.begin(),
+                          spatial_cluster_priority_pairs.end(),
+                          [&](const auto &pair) { return pair.first == patch_idx; }))
+          {
+            return "SpatialClusterPriority";
+          }
           if (std::any_of(exclusions.patches.begin(), exclusions.patches.end(),
                           [&](const auto &exclusion)
                           { return exclusion.patch == patch_idx; }))
@@ -22311,6 +22357,251 @@ ExcludedPatchPortions CollectDomainBoundaryPortions(
   return result;
 }
 
+std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
+    const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
+    const std::set<std::size_t> &owned_patches, int dimension)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  auto IsCluster = [&](std::size_t patch)
+  {
+    const auto model = models.find(config.patches[patch].model);
+    MFEM_VERIFY(model != models.end(), "Unknown response model!");
+    return model->second->topology == "spatial edge cluster";
+  };
+  auto BoxOf = [&](const SpatialSupportBounds &support)
+  {
+    ElementBox box;
+    for (int d = 0; d < dimension; d++)
+    {
+      box.min[d] = support.min[d];
+      box.max[d] = support.max[d];
+    }
+    return box;
+  };
+  std::vector<std::pair<std::size_t, std::size_t>> exclusions;
+  std::set<std::size_t> owned = owned_patches;
+  for (std::size_t i = 0; i < supports.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < supports.size(); j++)
+    {
+      if (supports[i].from_signature_box || supports[j].from_signature_box)
+      {
+        continue;
+      }
+      const auto first = supports[i].patch;
+      const auto second = supports[j].patch;
+      if (owned.count(first) || owned.count(second))
+      {
+        continue;
+      }
+      const int interpolation_group = config.patches[first].interpolation_group;
+      if (interpolation_group > 0 &&
+          interpolation_group == config.patches[second].interpolation_group)
+      {
+        continue;
+      }
+      if (!BoxOf(supports[i]).InteriorOverlaps(BoxOf(supports[j]), dimension))
+      {
+        continue;
+      }
+      const bool first_cluster = IsCluster(first);
+      const bool second_cluster = IsCluster(second);
+      if (first_cluster == second_cluster)
+      {
+        continue;
+      }
+      const auto subordinate = first_cluster ? second : first;
+      exclusions.emplace_back(subordinate, first_cluster ? first : second);
+      owned.insert(subordinate);
+    }
+  }
+  return exclusions;
+}
+
+SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
+    const std::vector<std::pair<std::size_t, std::size_t>> &exclusions,
+    const std::vector<ResponsePatchData> &patches, const ResponseCorrectionData &config,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double matching_radius)
+{
+  SpatialClusterPriorityExclusions result;
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  for (const auto &[patch_idx, owner] : exclusions)
+  {
+    const auto &patch = patches[patch_idx];
+    const auto model =
+        std::find_if(config.models.begin(), config.models.end(),
+                     [&](const auto &entry) { return entry.idx == patch.model; });
+    MFEM_VERIFY(model != config.models.end(),
+                "SpatialClusterPriority-dropped patch refers to an unknown model index!");
+    SpatialClusterPriorityExclusions::Entry entry;
+    entry.patch = patch_idx;
+    entry.owner = owner;
+    // The dropped coupon's window = its raw claims (the arms' R windows), as portions.
+    std::vector<ResponseCorrectionData::UncoveredPortionData> window;
+    for (const auto &claim : patch.provenance.raw_claims)
+    {
+      window.push_back(
+          {patch.provenance.feature, model->topology, claim.segment, claim.p0, claim.p1});
+      entry.window_length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    // The parts inside any matched cluster's box are the owner coupons'; the kept pieces
+    // outside every box are the RAW remainder.
+    ClipUncoveredPortionsBySpatialSupport(window, supports, dimension);
+    for (const auto &portion : window)
+    {
+      entry.outside_length += Norm(Subtract(portion.p1, portion.p0));
+      AppendExcludedPatchPortion(result.portions, patch_idx, portion, false, tolerance);
+    }
+    result.entries.push_back(entry);
+  }
+  return result;
+}
+
+// PatchEnergy (decision 922 B-1; the 851 (C) diagnosis export formalised): the raw claims
+// of every applied patch (weight > 0 and not in `excluded`), by the DomainBoundary rule,
+// labelled by the ascending set of the models whose patches share the claim ("m<idx>"
+// joined by '+').
+ModelRawClaimPortions CollectModelRawClaimPortions(
+    const std::set<std::size_t> &excluded, const std::vector<ResponsePatchData> &patches,
+    const ResponseCorrectionData &config, const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius)
+{
+  ExcludedPatchPortions claims;
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    if (excluded.count(patch_idx) || patches[patch_idx].weight <= 0.0)
+    {
+      continue;
+    }
+    AppendExcludedPatchClaim(claims, patch_idx, patches, config, ownership,
+                             uncovered_clipping, tolerance);
+  }
+  ModelRawClaimPortions result;
+  result.length = claims.length;
+  std::map<std::pair<std::string, int>, ModelRawClaimPortions::GroupMember> members;
+  for (std::size_t i = 0; i < claims.portions.size(); i++)
+  {
+    auto portion = claims.portions[i];
+    std::map<int, std::pair<int, double>> by_model;  // model -> (patches, weight sum)
+    for (const std::size_t patch_idx : claims.patches[i])
+    {
+      auto &entry = by_model[patches[patch_idx].model];
+      entry.first++;
+      entry.second += patches[patch_idx].weight;
+    }
+    std::string label;
+    for (const auto &[model, entry] : by_model)
+    {
+      (void)entry;
+      label += fmt::format("{}m{}", label.empty() ? "" : "+", model);
+    }
+    const double length = Norm(Subtract(portion.p1, portion.p0));
+    for (const auto &[model, entry] : by_model)
+    {
+      auto &member = members[{label, model}];
+      member.label = label;
+      member.model = model;
+      member.patches += entry.first;
+      member.weight_length += entry.second * length;
+    }
+    portion.topology = label;
+    result.portions.push_back(std::move(portion));
+  }
+  for (auto &[key, member] : members)
+  {
+    (void)key;
+    result.members.push_back(std::move(member));
+  }
+  return result;
+}
+
+nlohmann::json DescribeSpatialClusterPriorityExclusions(
+    const SpatialClusterPriorityExclusions &exclusions,
+    const std::vector<ResponsePatchData> &patches, const ResponseCorrectionData &config,
+    const std::vector<SpatialSupportBounds> &supports, double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  auto Box = [&](std::size_t patch) -> nlohmann::json
+  {
+    const auto support = std::find_if(supports.begin(), supports.end(),
+                                      [&](const auto &s) { return s.patch == patch; });
+    if (support == supports.end())
+    {
+      return nullptr;
+    }
+    return {{"Min",
+             {support->min[0] * coordinate_scale, support->min[1] * coordinate_scale,
+              support->min[2] * coordinate_scale}},
+            {"Max",
+             {support->max[0] * coordinate_scale, support->max[1] * coordinate_scale,
+              support->max[2] * coordinate_scale}}};
+  };
+  auto Name = [&](std::size_t patch)
+  {
+    const auto model = models.find(patches[patch].model);
+    return model == models.end() ? std::string() : model->second->name;
+  };
+  nlohmann::json entries = nlohmann::json::array();
+  double window_length = 0.0, outside_length = 0.0;
+  for (const auto &entry : exclusions.entries)
+  {
+    const auto &patch = patches[entry.patch];
+    const auto model = models.find(patch.model);
+    window_length += entry.window_length;
+    outside_length += entry.outside_length;
+    entries.push_back(
+        {{"Patch", entry.patch},
+         {"Feature", patch.provenance.feature},
+         {"Model", Name(entry.patch)},
+         {"Topology", model == models.end() ? std::string() : model->second->topology},
+         {"Origin",
+          {patch.origin[0] * coordinate_scale, patch.origin[1] * coordinate_scale,
+           patch.origin[2] * coordinate_scale}},
+         {"Weight", patch.weight},
+         {"Box", Box(entry.patch)},
+         {"Owner",
+          {{"Patch", entry.owner},
+           {"Feature", patches[entry.owner].provenance.feature},
+           {"Model", Name(entry.owner)},
+           {"Box", Box(entry.owner)}}},
+         {"WindowLength", entry.window_length * coordinate_scale},
+         {"OutsideLength", entry.outside_length * coordinate_scale}});
+  }
+  return {
+      {"Count", static_cast<int>(exclusions.entries.size())},
+      {"WindowLength", window_length * coordinate_scale},
+      {"OutsideLength", outside_length * coordinate_scale},
+      {"Patches", std::move(entries)},
+      {"RawPortions",
+       DescribeExcludedPatchPortions(
+           exclusions.portions, coordinate_scale,
+           "OI-SCP-HOLE (decisions 915 / 918 / 922): the part of a dropped coupon's "
+           "raw claims (the arms' R windows) outside every matched cluster's box "
+           "keeps the device's raw within-R energy in every corrected interface "
+           "energy (fixed trace / fixed flux on the raw field, self-consistent on "
+           "the corrected field), reported per type in "
+           "surface-response-spatial-cluster-priority-energy.csv; the part inside a "
+           "box is the owner coupon's. Lengths in mesh units")},
+      {"Rule",
+       "SpatialClusterPriority (ApplyPlacementOwnership): an exact spatial cluster owns "
+       "its complete local interaction neighborhood, so a corner / vertex coupon whose "
+       "basis-point box interior-overlaps the cluster's is not applied (clipping the "
+       "dense coupon operator is not supported). Decision 922: the dropped coupon's "
+       "window outside the box is kept RAW (counted, uncorrected; RawPortions); its "
+       "own correction there stays missing until the cluster coupon's box is grown "
+       "(a library item). Lengths in mesh units"}};
+}
+
 nlohmann::json DescribeExcludedPatchPortions(const ExcludedPatchPortions &portions,
                                              double coordinate_scale,
                                              const std::string &rule)
@@ -22941,6 +23232,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   std::set<std::size_t> spatially_owned_patches;
   // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
   std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
+  // The SpatialClusterPriority exclusions (subordinate patch, owner patch) of this
+  // placement, read after the domain-boundary pass for the raw remainder (decision 922).
+  std::vector<std::pair<std::size_t, std::size_t>> spatial_cluster_priority_pairs;
   // The placed patches: the configured ones with the continuation ownership applied (3D).
   std::vector<ResponsePatchData> placed_patches = config.patches;
   // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
@@ -23039,6 +23333,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           spatially_owned_patches.insert(spatial_supports[subordinate].patch);
           vertex_coupon_exclusion_reasons.emplace(spatial_supports[subordinate].patch,
                                                   "SpatialClusterPriority");
+          spatial_cluster_priority_pairs.emplace_back(
+              spatial_supports[subordinate].patch,
+              spatial_supports[first_cluster ? i : j].patch);
           continue;
         }
         // Two clusters (decision 244): a margins-only overlap (no claim of either inside
@@ -23369,6 +23666,15 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                  uncovered_spatial_support_clipping,
                                  conductor_consistency_claim_tolerance);
       }
+      // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
+      // patch's raw claim by model set, for the per-model raw energy partition of
+      // surface-response-model-raw-energy.csv; off by default (the list stays empty).
+      if (config.patch_energy)
+      {
+        model_raw_claim_portions = CollectModelRawClaimPortions(
+            spatially_owned_patches, placed_patches, config, ownership,
+            uncovered_spatial_support_clipping, config.matching_radius);
+      }
       if (!config.mirror_band.empty())
       {
         ownership_diagnostics["MirrorBand"] = nlohmann::json::parse(config.mirror_band);
@@ -23419,6 +23725,30 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                      domain_boundary_portions.duplicate_patches,
                      domain_boundary_portions.length * coordinate_scale);
       }
+    }
+    // OI-SCP-HOLE (decisions 915 / 918 / 922): the coupons the SpatialClusterPriority rule
+    // dropped keep the part of their raw claims OUTSIDE every matched cluster's box as the
+    // drivers' fourth raw class (GetSpatialClusterPriorityPortions); the record is written
+    // only when a coupon was dropped (a placement without one keeps its Diagnostics bytes).
+    spatial_cluster_priority = CollectSpatialClusterPriorityPortions(
+        spatial_cluster_priority_pairs, placed_patches, config, boxes, dimension,
+        config.matching_radius);
+    if (!spatial_cluster_priority.entries.empty())
+    {
+      ownership_diagnostics["SpatialClusterPriority"] =
+          DescribeSpatialClusterPriorityExclusions(spatial_cluster_priority, placed_patches,
+                                                   config, boxes, coordinate_scale);
+      Mpi::Warning(
+          fespace.GetComm(),
+          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
+          "window lie outside every cluster box and keep their raw within-R surface "
+          "energy in the corrected interface energies (reported per type in "
+          "surface-response-spatial-cluster-priority-energy.csv); the corners' own "
+          "correction there stays missing!\n",
+          static_cast<int>(spatial_cluster_priority.entries.size()),
+          ownership_diagnostics["SpatialClusterPriority"]["OutsideLength"].get<double>(),
+          ownership_diagnostics["SpatialClusterPriority"]["WindowLength"].get<double>());
     }
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
     ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
@@ -24763,6 +25093,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   MFEM_VERIFY((dimension == 2 || dimension == 3) && fespace.SpaceDimension() == dimension,
               "Maxwell surface response correction requires a two- or three-dimensional "
               "mesh!");
+  // PatchEnergy (decision 934, DESIGN B.2): the per-patch export and the per-model raw
+  // partition are three-dimensional (the claim collection and the edge-energy partition
+  // run on 3D devices only); a two-dimensional Maxwell response refuses the flag.
+  MFEM_VERIFY(dimension == 3 || !request->patch_energy,
+              "\"PatchEnergy\" is a three-dimensional export: the Maxwell surface response "
+              "of a two-dimensional mesh does not support it!");
 
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
@@ -27304,9 +27640,8 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
   return result;
 }
 
-std::vector<SurfaceResponseOperator::PatchContribution>
-SurfaceResponseOperator::GatherPatchContributions(
-    const std::vector<double> &local_records) const
+std::vector<double>
+SurfaceResponseOperator::AllgatherRecords(const std::vector<double> &local_records) const
 {
   MFEM_VERIFY(local_records.size() <=
                   static_cast<std::size_t>(std::numeric_limits<int>::max()),
@@ -27326,7 +27661,14 @@ SurfaceResponseOperator::GatherPatchContributions(
   std::vector<double> records(total_values);
   Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
                   value_counts.data(), value_offsets.data(), fespace.GetComm());
+  return records;
+}
 
+std::vector<SurfaceResponseOperator::PatchContribution>
+SurfaceResponseOperator::GatherPatchContributions(
+    const std::vector<double> &local_records) const
+{
+  const std::vector<double> records = AllgatherRecords(local_records);
   std::vector<PatchContribution> contributions;
   std::size_t offset = 0;
   while (offset < records.size())
@@ -27437,9 +27779,8 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) c
   return traces;
 }
 
-SurfaceResponseOperator::MaxwellResponse
-SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
-                                            std::complex<double> omega) const
+SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResponse(
+    const GridFunction &E, std::complex<double> omega, bool include_patches) const
 {
   MFEM_VERIFY(maxwell && maxwell_contours.size() == patches.size(),
               "Maxwell surface response was not configured!");
@@ -27489,6 +27830,12 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
   Vector fixed_flux_real, fixed_flux_imag, workspace;
+  // PatchEnergy (decision 922 B; include_patches): the per-patch records in the
+  // electrostatic form (GatherPatchContributions), the per-path loop residuals [patch,
+  // model, path, kind, residual, scale] (decision 920) and the spatial traces [patch,
+  // model, contour size, basis size, real..., imag...], gathered below. The totals'
+  // arithmetic is untouched: the records read the values the loop computes anyway.
+  std::vector<double> local_patch_records, local_loop_records, local_trace_records;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
     const auto &patch = patches[patch_index];
@@ -27500,6 +27847,21 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     Vector patch_trace_imag(trace_imag.GetData() + patch.trace_offset, model.basis_size);
     fixed_flux_real.SetSize(model.basis_size);
     fixed_flux_imag.SetSize(model.basis_size);
+    if (include_patches && model.spatial_basis)
+    {
+      local_trace_records.insert(
+          local_trace_records.end(),
+          {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+           static_cast<double>(model.contour_size), static_cast<double>(model.basis_size)});
+      for (int i = 0; i < model.basis_size; i++)
+      {
+        local_trace_records.push_back(patch_trace_real(i));
+      }
+      for (int i = 0; i < model.basis_size; i++)
+      {
+        local_trace_records.push_back(patch_trace_imag(i));
+      }
+    }
 
     std::vector<std::pair<double, double>> path_diagnostics;
     std::vector<std::pair<double, double>> hat_diagnostics;
@@ -27544,6 +27906,13 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
           const double residual = std::abs(loop_integral) / loop_scale;
           result.hat_residual = std::max(result.hat_residual, residual);
           hat_diagnostics.emplace_back(residual, loop_scale * loop_scale);
+          if (include_patches)
+          {
+            local_loop_records.insert(
+                local_loop_records.end(),
+                {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+                 static_cast<double>(path_index - path_begin), 1.0, residual, loop_scale});
+          }
         }
         continue;
       }
@@ -27567,6 +27936,13 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
         const double residual = std::abs(loop_integral) / loop_scale;
         result.loop_residual = std::max(result.loop_residual, residual);
         path_diagnostics.emplace_back(residual, loop_scale * loop_scale);
+        if (include_patches)
+        {
+          local_loop_records.insert(
+              local_loop_records.end(),
+              {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+               static_cast<double>(path_index - path_begin), 0.0, residual, loop_scale});
+        }
       }
     }
 
@@ -27591,6 +27967,16 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     result.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
     contribution.domain_correction += domain_weight * domain_defect_form;
     contribution.domain_correction_fixed_flux += domain_weight * fixed_flux_defect_form;
+    if (include_patches)
+    {
+      local_patch_records.insert(
+          local_patch_records.end(),
+          {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+           static_cast<double>(patch.feature), patch.weight,
+           patch.mortar_longitudinal_strip[0], patch.mortar_longitudinal_strip[1],
+           domain_weight * domain_defect_form, domain_weight * fixed_flux_defect_form,
+           static_cast<double>(model.fabricated_surfaces.size())});
+    }
     double patch_response_energy = 0.0;
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
@@ -27602,6 +27988,12 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
       contribution.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
+      if (include_patches)
+      {
+        local_patch_records.insert(
+            local_patch_records.end(),
+            {static_cast<double>(interface), fixed_trace_energy, fixed_flux_energy});
+      }
       const double weight =
           std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
       patch_response_energy += weight;
@@ -27738,6 +28130,49 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     }
   }
   MFEM_ASSERT(i == reduction.size(), "Incorrect batched Maxwell response reduction!");
+  if (include_patches)
+  {
+    result.patch_contributions = GatherPatchContributions(local_patch_records);
+    const std::vector<double> loops = AllgatherRecords(local_loop_records);
+    MFEM_VERIFY(loops.size() % 6 == 0, "Truncated per-path loop-residual record!");
+    for (std::size_t offset = 0; offset < loops.size(); offset += 6)
+    {
+      result.path_loop_residuals.push_back(
+          {static_cast<int>(std::llround(loops[offset])),
+           static_cast<int>(std::llround(loops[offset + 1])),
+           static_cast<int>(std::llround(loops[offset + 2])),
+           static_cast<int>(std::llround(loops[offset + 3])), loops[offset + 4],
+           loops[offset + 5]});
+    }
+    std::stable_sort(result.path_loop_residuals.begin(), result.path_loop_residuals.end(),
+                     [](const auto &first, const auto &second)
+                     {
+                       return std::tie(first.patch, first.kind, first.path) <
+                              std::tie(second.patch, second.kind, second.path);
+                     });
+    const std::vector<double> traces = AllgatherRecords(local_trace_records);
+    std::size_t offset = 0;
+    while (offset < traces.size())
+    {
+      MFEM_VERIFY(traces.size() - offset >= 4, "Truncated spatial patch-trace record!");
+      MaxwellResponse::SpatialTrace entry;
+      entry.patch = static_cast<int>(std::llround(traces[offset++]));
+      entry.model = static_cast<int>(std::llround(traces[offset++]));
+      entry.contour_size = static_cast<int>(std::llround(traces[offset++]));
+      const auto basis = static_cast<std::size_t>(std::llround(traces[offset++]));
+      MFEM_VERIFY(2 * basis <= traces.size() - offset,
+                  "Invalid gathered spatial patch-trace record!");
+      for (std::size_t k = 0; k < basis; k++)
+      {
+        entry.coefficients.emplace_back(traces[offset + k], traces[offset + basis + k]);
+      }
+      offset += 2 * basis;
+      result.spatial_traces.push_back(std::move(entry));
+    }
+    std::sort(result.spatial_traces.begin(), result.spatial_traces.end(),
+              [](const auto &first, const auto &second)
+              { return first.patch < second.patch; });
+  }
 
   constexpr double maximum_kR = 0.1;
   constexpr double maximum_weighted_loop_residual = 0.05;

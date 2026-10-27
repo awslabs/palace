@@ -892,6 +892,16 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
   CHECK(boundary_mode_result.fabricated_surface_energy_fixed_flux.at(4) > 0.0);
   CHECK(boundary_mode_result.loop_residual < 1.0e-10);
   CHECK_THAT(boundary_mode_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+  // PatchEnergy is a three-dimensional export (decision 934; DESIGN B.2 "the 2D paths keep
+  // the refusal"): the configuration refuses it under BoundaryMode (IoData), and the
+  // Maxwell operator itself refuses it on a two-dimensional mesh, tested here with the flag
+  // set on the built IoData (past the configuration check).
+  {
+    auto patch_energy_iodata = boundary_mode_iodata;
+    patch_energy_iodata.solver.surface_response_correction->patch_energy = true;
+    CHECK_THROWS_WITH(SurfaceResponseOperator(patch_energy_iodata, boundary_mode_op),
+                      ContainsSubstring("three-dimensional export"));
+  }
 
   // Finite-impedance boundary-mode edges use the local metal surface as their voltage
   // reference. For a conservative field normal to the sheet this is gauge-equivalent to
@@ -5701,6 +5711,123 @@ TEST_CASE_METHOD(
   CHECK(spatial_cluster_result.loop_residual < 1.0e-10);
   CHECK_THAT(spatial_cluster_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
   CHECK(spatial_cluster_result.corner_neighborhood_fraction == 0.0);
+
+  // PatchEnergy on the Maxwell path (decision 922 B; d919 review MAJOR-3): the records of
+  // include_patches on a complex field. The totals are the include_patches = false result's
+  // bitwise (the records read values the loop computes anyway); the spatial traces are the
+  // spatial patches' (count, patch, model, contour size) with the real and imaginary
+  // coefficients equal to GetSpatialPatchTraces of the field's real and imaginary parts
+  // (the same line-integral trace of each part); the per-patch records sum to the model
+  // rows and the per-path contour-loop maximum is the gate quantity.
+  {
+    GridFunction complex_field(spatial_cluster_space.GetNDSpace(), true);
+    complex_field.Real().ProjectCoefficient(field_coefficient);
+    mfem::Vector imaginary_value(3);
+    imaginary_value[0] = -0.3;
+    imaginary_value[1] = 0.5;
+    imaginary_value[2] = 0.2;
+    mfem::VectorConstantCoefficient imaginary_coefficient(imaginary_value);
+    complex_field.Imag().ProjectCoefficient(imaginary_coefficient);
+    const auto without = spatial_cluster_response.GetMaxwellResponse(complex_field, 0.0);
+    const auto with = spatial_cluster_response.GetMaxwellResponse(complex_field, 0.0, true);
+    CHECK(without.patch_contributions.empty());
+    CHECK(without.spatial_traces.empty());
+    CHECK(without.path_loop_residuals.empty());
+    CHECK(with.domain_correction == without.domain_correction);
+    CHECK(with.domain_correction_fixed_flux == without.domain_correction_fixed_flux);
+    CHECK(with.fabricated_surface_energy == without.fabricated_surface_energy);
+    CHECK(with.fabricated_surface_energy_fixed_flux ==
+          without.fabricated_surface_energy_fixed_flux);
+    CHECK(with.loop_residual == without.loop_residual);
+    CHECK(with.response_weighted_loop_residual == without.response_weighted_loop_residual);
+    CHECK(with.maximum_trace_closure_spread == without.maximum_trace_closure_spread);
+    REQUIRE(with.model_contributions.size() == without.model_contributions.size());
+    for (std::size_t m = 0; m < with.model_contributions.size(); m++)
+    {
+      CHECK(with.model_contributions[m].domain_correction ==
+            without.model_contributions[m].domain_correction);
+      CHECK(with.model_contributions[m].fabricated_surface_energy ==
+            without.model_contributions[m].fabricated_surface_energy);
+    }
+    // The spatial traces (B-3: the spatial patches only) against GetSpatialPatchTraces.
+    Vector real_true, imaginary_true;
+    complex_field.Real().GetTrueDofs(real_true);
+    complex_field.Imag().GetTrueDofs(imaginary_true);
+    const auto real_traces = spatial_cluster_response.GetSpatialPatchTraces(real_true);
+    const auto imaginary_traces =
+        spatial_cluster_response.GetSpatialPatchTraces(imaginary_true);
+    REQUIRE(!with.spatial_traces.empty());
+    REQUIRE(with.spatial_traces.size() == real_traces.size());
+    REQUIRE(with.spatial_traces.size() == imaginary_traces.size());
+    CHECK(with.spatial_traces.size() <
+          static_cast<std::size_t>(spatial_cluster_response.GetPatchCount()));
+    for (std::size_t i = 0; i < with.spatial_traces.size(); i++)
+    {
+      const auto &trace = with.spatial_traces[i];
+      CHECK(trace.patch == real_traces[i].patch);
+      CHECK(trace.model == real_traces[i].model);
+      CHECK(trace.contour_size == real_traces[i].contour_size);
+      CHECK(trace.patch == imaginary_traces[i].patch);
+      REQUIRE(trace.coefficients.size() == real_traces[i].coefficients.size());
+      REQUIRE(trace.coefficients.size() == imaginary_traces[i].coefficients.size());
+      CHECK(trace.coefficients.size() >= static_cast<std::size_t>(trace.contour_size));
+      for (std::size_t k = 0; k < trace.coefficients.size(); k++)
+      {
+        CHECK_THAT(trace.coefficients[k].real(),
+                   WithinAbs(real_traces[i].coefficients[k], 1.0e-12));
+        CHECK_THAT(trace.coefficients[k].imag(),
+                   WithinAbs(imaginary_traces[i].coefficients[k], 1.0e-12));
+      }
+    }
+    // The per-patch records: every applied patch once, the sums the model rows.
+    CHECK(with.patch_contributions.size() ==
+          static_cast<std::size_t>(spatial_cluster_response.GetPatchCount()));
+    std::map<int, SurfaceResponseOperator::ModelContribution> sums;
+    for (const auto &contribution : with.patch_contributions)
+    {
+      auto &sum = sums[contribution.model];
+      sum.patch_count += 1.0;
+      sum.patch_weight += contribution.weight;
+      sum.domain_correction += contribution.domain_correction;
+      sum.domain_correction_fixed_flux += contribution.domain_correction_fixed_flux;
+      for (const auto &[interface, energy] : contribution.fabricated_surface_energy)
+      {
+        sum.fabricated_surface_energy[interface] += energy;
+      }
+    }
+    for (const auto &model : with.model_contributions)
+    {
+      if (model.patch_count == 0.0)
+      {
+        CHECK(sums.count(model.model) == 0);
+        continue;
+      }
+      const auto &sum = sums.at(model.model);
+      CHECK(sum.patch_count == model.patch_count);
+      CHECK_THAT(sum.patch_weight, WithinRel(model.patch_weight, 1.0e-12));
+      CHECK_THAT(sum.domain_correction, WithinRel(model.domain_correction, 1.0e-10));
+      CHECK_THAT(sum.domain_correction_fixed_flux,
+                 WithinRel(model.domain_correction_fixed_flux, 1.0e-10));
+      for (const auto &[interface, energy] : model.fabricated_surface_energy)
+      {
+        CHECK_THAT(sum.fabricated_surface_energy.at(interface), WithinRel(energy, 1.0e-10));
+      }
+    }
+    // The per-path loop residuals (decision 920): the contour-loop maximum is the gate.
+    REQUIRE(!with.path_loop_residuals.empty());
+    double maximum_contour_loop = 0.0;
+    for (const auto &record : with.path_loop_residuals)
+    {
+      CHECK((record.kind == 0 || record.kind == 1));
+      CHECK(record.scale > 0.0);
+      CHECK(record.residual >= 0.0);
+      if (record.kind == 0)
+      {
+        maximum_contour_loop = std::max(maximum_contour_loop, record.residual);
+      }
+    }
+    CHECK_THAT(maximum_contour_loop, WithinAbs(with.loop_residual, 1.0e-12));
+  }
 
   // U1 (decision 818 R2; DESIGN 5.1): the cap-interior hats (InteriorTraceCount) are
   // Maxwell trace coefficients too: each hat hangs from the nearest contour knot of its own
@@ -10601,6 +10728,148 @@ TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
     corner.claims.clear();
     CHECK(FindSpatialSupportMarginOverlaps({a, corner}, 3, tolerance).empty());
   }
+}
+
+TEST_CASE("SurfaceResponseOperatorSpatialClusterPriorityRawRemainder",
+          "[surfaceresponseoperator][scphole][Serial][Parallel]")
+{
+  // OI-SCP-HOLE (decisions 915 / 918 / 922): the transmon's junction-lead cluster (box
+  // x in [-10.9, 10.9], y in [-5.7, 17.7], R = 1.9) drops the convex corner at (12, 12)
+  // whole (the corner's window x in [10.1, 13.9] overlaps the box over 0.8); its two arms
+  // (R along -x on the island edge y = 12, R along +y) are 3.8 of window of which 3.0 lies
+  // OUTSIDE the box ([10.9, 12] of the first arm, the whole second arm): that remainder is
+  // the fourth raw class; the arm part inside the box is the cluster coupon's. A corner
+  // wholly inside the box (the claw corners at (+-50, 541)) is dropped with no remainder; a
+  // corner whose window clears the box is not dropped; an already-owned corner and a
+  // Missing key's placeholder support are skipped as the operator skips them.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.9;
+  config::ElectrostaticSolverData::ResponseCorrectionData data;
+  data.matching_radius = R;
+  data.models.emplace_back().idx = 1;
+  data.models.back().name = "spatialedgecluster_edgecount-10";
+  data.models.back().topology = "spatial edge cluster";
+  data.models.back().spatial_basis = true;
+  data.models.emplace_back().idx = 2;
+  data.models.back().name = "convex-corner-90deg";
+  data.models.back().topology = "convex corner";
+  data.models.back().spatial_basis = true;
+  auto AddPatch = [&](int model, int feature, std::array<double, 3> origin)
+  {
+    auto &patch = data.patches.emplace_back();
+    patch.model = model;
+    patch.weight = 1.0;
+    patch.origin = origin;
+    patch.axis_u = {1.0, 0.0, 0.0};
+    patch.axis_v = {0.0, 1.0, 0.0};
+    patch.axis_w = {0.0, 0.0, 1.0};
+    patch.provenance.feature = feature;
+    return data.patches.size() - 1;
+  };
+  auto CornerArms = [&](std::size_t patch, std::array<double, 3> first_arm,
+                        std::array<double, 3> second_arm)
+  {
+    const auto &v = data.patches[patch].origin;
+    data.patches[patch].provenance.raw_claims = {
+        Claim{7, v, {v[0] + R * first_arm[0], v[1] + R * first_arm[1], v[2]}},
+        Claim{8, v, {v[0] + R * second_arm[0], v[1] + R * second_arm[1], v[2]}}};
+  };
+  auto CornerSupport = [&](std::size_t patch)
+  {
+    SpatialSupportBounds support;
+    support.patch = patch;
+    const auto &v = data.patches[patch].origin;
+    support.SetMeshAlignedBox({v[0] - R, v[1] - R, -R}, {v[0] + R, v[1] + R, R});
+    return support;
+  };
+  // The cluster (patch 0): its claims are the two lead edges inside its box.
+  const auto cluster_patch = AddPatch(1, 11, {0.0, 6.0, 0.0});
+  data.patches[cluster_patch].provenance.claims = {
+      Claim{1, {-10.9, 12.0, 0.0}, {10.9, 12.0, 0.0}},
+      Claim{2, {-10.9, 0.0, 0.0}, {10.9, 0.0, 0.0}}};
+  SpatialSupportBounds cluster;
+  cluster.patch = cluster_patch;
+  cluster.SetMeshAlignedBox({-10.9, -5.7, -1.95}, {10.9, 17.7, 2.0});
+  cluster.claims = data.patches[cluster_patch].provenance.claims;
+  cluster.matching_radius = R;
+  // The straddling corner (patch 1) at (12, 12): the island edge arm along -x, the other
+  // arm along +y.
+  const auto straddling = AddPatch(2, 34, {12.0, 12.0, 0.0});
+  CornerArms(straddling, {-1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  // The corner wholly inside the box (patch 2) at (0, 12) is dropped with no remainder.
+  const auto inside = AddPatch(2, 35, {0.0, 12.0, 0.0});
+  CornerArms(inside, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
+  // The corner clear of the box (patch 3) at (20, 12) keeps its coupon.
+  const auto clear = AddPatch(2, 36, {20.0, 12.0, 0.0});
+  CornerArms(clear, {-1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  // An already-owned straddling corner (patch 4: a trimmed cell's weight 0) is skipped.
+  const auto owned = AddPatch(2, 37, {-12.0, 12.0, 0.0});
+  CornerArms(owned, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  data.patches[owned].weight = 0.0;
+  std::vector<SpatialSupportBounds> supports = {cluster, CornerSupport(straddling),
+                                                CornerSupport(inside), CornerSupport(clear),
+                                                CornerSupport(owned)};
+
+  const auto exclusions = FindSpatialClusterPriorityExclusions(supports, data, {owned}, 3);
+  REQUIRE(exclusions.size() == 2);
+  CHECK(exclusions[0].first == straddling);
+  CHECK(exclusions[0].second == cluster_patch);
+  CHECK(exclusions[1].first == inside);
+  CHECK(exclusions[1].second == cluster_patch);
+
+  const auto record =
+      CollectSpatialClusterPriorityPortions(exclusions, data.patches, data, supports, 3, R);
+  REQUIRE(record.entries.size() == 2);
+  CHECK(record.entries[0].patch == straddling);
+  CHECK(record.entries[0].owner == cluster_patch);
+  CHECK_THAT(record.entries[0].window_length, WithinAbs(2.0 * R, 1.0e-12));
+  CHECK_THAT(record.entries[0].outside_length, WithinAbs(1.1 + R, 1.0e-9));
+  CHECK(record.entries[1].patch == inside);
+  CHECK_THAT(record.entries[1].window_length, WithinAbs(2.0 * R, 1.0e-12));
+  CHECK_THAT(record.entries[1].outside_length, WithinAbs(0.0, 1.0e-12));
+  // The raw remainder: the first arm's [10.9, 12] and the whole second arm, in arm order.
+  REQUIRE(record.portions.portions.size() == 2);
+  CHECK(record.portions.patches[0] == std::vector<std::size_t>{straddling});
+  CHECK(record.portions.portions[0].feature == 34);
+  CHECK(record.portions.portions[0].topology == "convex corner");
+  CHECK(record.portions.portions[0].segment == 7);
+  CHECK_THAT(record.portions.portions[0].p0[0], WithinAbs(12.0, 1.0e-12));
+  CHECK_THAT(record.portions.portions[0].p1[0], WithinAbs(10.9, 1.0e-9));
+  CHECK_THAT(record.portions.portions[0].p1[1], WithinAbs(12.0, 1.0e-12));
+  CHECK(record.portions.portions[1].segment == 8);
+  CHECK_THAT(record.portions.portions[1].p1[1], WithinAbs(12.0 + R, 1.0e-12));
+  CHECK(record.portions.translational == std::vector<bool>{false, false});
+  CHECK_THAT(record.portions.length, WithinAbs(1.1 + R, 1.0e-9));
+
+  const auto description =
+      DescribeSpatialClusterPriorityExclusions(record, data.patches, data, supports, 1.0);
+  CHECK(description["Count"] == 2);
+  CHECK_THAT(description["WindowLength"].get<double>(), WithinAbs(4.0 * R, 1.0e-12));
+  CHECK_THAT(description["OutsideLength"].get<double>(), WithinAbs(1.1 + R, 1.0e-9));
+  REQUIRE(description["Patches"].size() == 2);
+  CHECK(description["Patches"][0]["Patch"] == straddling);
+  CHECK(description["Patches"][0]["Feature"] == 34);
+  CHECK(description["Patches"][0]["Model"] == "convex-corner-90deg");
+  CHECK(description["Patches"][0]["Owner"]["Patch"] == cluster_patch);
+  CHECK(description["Patches"][0]["Owner"]["Model"] == "spatialedgecluster_edgecount-10");
+  CHECK_THAT(description["Patches"][0]["Owner"]["Box"]["Max"][0].get<double>(),
+             WithinAbs(10.9, 1.0e-12));
+  CHECK_THAT(description["Patches"][0]["Box"]["Min"][0].get<double>(),
+             WithinAbs(12.0 - R, 1.0e-12));
+  CHECK(description["RawPortions"]["Count"] == 2);
+  CHECK(description["RawPortions"]["ByType"]["convex corner"]["Portions"] == 2);
+
+  // A Missing key's placeholder support (from_signature_box) drops nothing.
+  auto placeholder = cluster;
+  placeholder.from_signature_box = true;
+  CHECK(FindSpatialClusterPriorityExclusions(
+            {placeholder, CornerSupport(straddling), CornerSupport(inside)}, data, {}, 3)
+            .empty());
+  // Two clusters are not this rule's (the margin-overlap record / the abort).
+  auto cluster_b = cluster;
+  cluster_b.patch = AddPatch(1, 12, {5.0, 6.0, 0.0});
+  CHECK(FindSpatialClusterPriorityExclusions({cluster, cluster_b}, data, {}, 3).empty());
 }
 
 }  // namespace palace
