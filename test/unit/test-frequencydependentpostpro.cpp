@@ -1612,4 +1612,77 @@ TEST_CASE("Frequency-dependent material without a stored electric energy",
   }
 }
 
+TEST_CASE("Electric energies at an exact lossless resonance",
+          "[frequencydependent][Serial][Parallel]")
+{
+  // At the resonance ω₀ = 1 of a lossless Lorentz, typed or as a RAW conjugate pair, the
+  // stored energy and Re χ are not finite: the material weights and the full and regional
+  // energies (and the weights of the reduced energies) are an error, not inf or NaN. Near
+  // the resonance they are finite, the stored energy positive, and typed and RAW agree.
+  test::IntegrationSettingsGuard guard;
+  fem::DefaultIntegrationOrder::p_trial = 1;
+  auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
+  config::PeriodicBoundaryData periodic;
+  EnergyConsumers c(mesh);
+  using ElectricEnergy = DomainPostOperator::ElectricEnergy;
+  const std::vector<config::PermittivityTermData> typed = {
+      config::LorentzData{1.5, 1.0, 0.0}};
+  std::vector<std::unique_ptr<MaterialOperator>> ops;
+  std::vector<std::unique_ptr<DomainPostOperator>> posts;
+  for (const auto &terms : {typed, RawTerms(typed)})
+  {
+    ops.push_back(std::make_unique<MaterialOperator>(
+        std::vector<config::MaterialData>{MakeMaterial({1, 2}, terms)}, periodic,
+        ProblemType::DRIVEN, mesh));
+    REQUIRE(ops.back()->HasStoredElectricEnergy(0));
+    posts.push_back(std::make_unique<DomainPostOperator>(c.postpro, *ops.back(),
+                                                         c.nd_fespace, c.rt_fespace));
+  }
+  for (std::size_t i = 0; i < ops.size(); i++)
+  {
+    CAPTURE(i);
+    const auto &mat_op = *ops[i];
+    const auto &post = *posts[i];
+    const double omega = 1.0;
+    CHECK_THROWS_WITH(mat_op.GetFrequencyDependentStoredEnergySusceptibility(0, omega),
+                      ContainsSubstring("singular"));
+    CHECK_THROWS_WITH(mat_op.GetFrequencyDependentStoredEnergyPermittivity(0, omega),
+                      ContainsSubstring("singular"));
+    CHECK_THROWS_WITH(mat_op.GetFrequencyDependentSusceptibilityReal(0, omega),
+                      ContainsSubstring("singular"));
+    for (auto type : {ElectricEnergy::STORED, ElectricEnergy::MATERIAL})
+    {
+      CAPTURE(static_cast<int>(type));
+      CHECK_THROWS_WITH(post.GetFrequencyDependentEnergyWeight(0, omega, type),
+                        ContainsSubstring("singular"));
+      CHECK_THROWS_WITH(post.GetElectricFieldEnergy(c.E, omega, type),
+                        ContainsSubstring("singular"));
+      for (int idx : {1, 2})
+      {
+        CHECK_THROWS_WITH(post.GetDomainElectricFieldEnergy(idx, c.E, omega, type),
+                          ContainsSubstring("singular"));
+      }
+    }
+  }
+  const double near = 1.01;
+  for (auto type : {ElectricEnergy::STORED, ElectricEnergy::MATERIAL})
+  {
+    CAPTURE(static_cast<int>(type));
+    const double energy = posts[0]->GetElectricFieldEnergy(c.E, near, type);
+    REQUIRE(std::isfinite(energy));
+    if (type == ElectricEnergy::STORED)
+    {
+      CHECK(energy > 0.0);
+    }
+    CHECK_THAT(posts[1]->GetElectricFieldEnergy(c.E, near, type),
+               WithinRel(energy, 1.0e-10));
+    for (int idx : {1, 2})
+    {
+      CHECK_THAT(
+          posts[1]->GetDomainElectricFieldEnergy(idx, c.E, near, type),
+          WithinRel(posts[0]->GetDomainElectricFieldEnergy(idx, c.E, near, type), 1.0e-10));
+    }
+  }
+}
+
 }  // namespace palace

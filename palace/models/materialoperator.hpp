@@ -349,11 +349,13 @@ public:
   // The time-averaged stored electric energy of the polarization of a frequency-dependent
   // material at real ω > 0, as a susceptibility (permittivity::PreparedStorage): the stored
   // energy is that of a constant permittivity ε∞ plus this value. Requires
-  // HasStoredElectricEnergy(material_idx).
+  // HasStoredElectricEnergy(material_idx). Errors at a singularity (an exact lossless
+  // resonance), where the energy is not finite.
   double GetFrequencyDependentStoredEnergySusceptibility(std::size_t material_idx,
                                                          double omega) const;
   // Re χ(iω) of the nonlinear terms of a frequency-dependent material, the field energy at
-  // its permittivity ε(iω) less that at ε∞ (a zero pole contributes none).
+  // its permittivity ε(iω) less that at ε∞ (a zero pole contributes none). Errors at a
+  // singularity (an exact lossless resonance).
   double GetFrequencyDependentSusceptibilityReal(std::size_t material_idx,
                                                  double omega) const;
   // The frequency-dependent material with a nonlinear term on the given domain attribute,

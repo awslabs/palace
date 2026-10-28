@@ -103,6 +103,8 @@ public:
 
   // The susceptibility weighting the unit mass form of material m: wₘ(ω) for STORED (which
   // requires MaterialOperator::HasStoredElectricEnergy(m)) and Re χₘ(iω) for MATERIAL.
+  // Errors at a singularity of the material (an exact lossless resonance), as do the
+  // energies with it: they are not finite there.
   double GetFrequencyDependentEnergyWeight(std::size_t material_idx, double omega,
                                            ElectricEnergy type) const;
 

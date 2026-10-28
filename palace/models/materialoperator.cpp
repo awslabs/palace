@@ -814,15 +814,23 @@ MaterialOperator::GetFrequencyDependentStoredEnergySusceptibility(std::size_t ma
   MFEM_VERIFY(w, "Material " << material_idx << " has no available stored electric energy ("
                              << storage->Reason()
                              << "); check HasStoredElectricEnergy before using it!");
+  // Checked here, before any consumer weights an energy by it (0 · ∞ is NaN).
+  MFEM_VERIFY(std::isfinite(*w), "Stored-energy susceptibility of material "
+                                     << material_idx << " is singular at ω = " << omega
+                                     << "!");
   return *w;
 }
 
 double MaterialOperator::GetFrequencyDependentSusceptibilityReal(std::size_t material_idx,
                                                                  double omega) const
 {
-  return permittivity::Susceptibility(permittivity_terms.at(material_idx),
-                                      std::complex<double>(0.0, omega))
-      .real();
+  const double chi = permittivity::Susceptibility(permittivity_terms.at(material_idx),
+                                                  std::complex<double>(0.0, omega))
+                         .real();
+  MFEM_VERIFY(std::isfinite(chi), "Susceptibility of material "
+                                      << material_idx << " is singular at ω = " << omega
+                                      << "!");
+  return chi;
 }
 
 int MaterialOperator::GetFrequencyDependentPermittivityMaterial(int attr) const
