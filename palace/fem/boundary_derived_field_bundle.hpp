@@ -139,6 +139,10 @@ private:
   // stored energy) in the retained route contexts, and the current real angular frequency
   // (0 before SetFrequency).
   bool material_frequency_dependent = false;
+  // Whether the electric energy slice is physical
+  // (MaterialOperator::HasStoredElectricEnergy); otherwise its stored-energy table is a
+  // placeholder and the slice is never registered.
+  bool stored_electric_energy = true;
   std::array<std::size_t, 3> material_ctx_offsets = {0, 0, 0};
   double material_omega = 0.0;
   // Kept opaque in the header to avoid exposing libCEED implementation details at every

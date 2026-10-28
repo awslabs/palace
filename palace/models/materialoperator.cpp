@@ -143,6 +143,7 @@ void MaterialOperator::SetUpMaterialProperties(
   permittivity_pole_terms.resize(materials.size());
   djordjevic_sarkar_terms.resize(materials.size());
   permittivity_terms.resize(materials.size());
+  permittivity_storage.resize(materials.size());
   frequency_dependent_permittivity_support.assign(materials.size(), false);
   frequency_dependent_permittivity_mu_max.assign(materials.size(), 0.0);
   frequency_dependent_permittivity_eps_inf.assign(materials.size(), 0.0);
@@ -184,6 +185,7 @@ void MaterialOperator::SetUpMaterialProperties(
     }
     permittivity::CheckTerms(data.epsilon_r.s[0], data.permittivity_terms);
     permittivity_terms[i] = data.permittivity_terms;
+    permittivity_storage[i].emplace(data.permittivity_terms);
     for (const auto &term : permittivity::PoleTerms(data.permittivity_terms))
     {
       if (term.pole == std::complex<double>{0.0, 0.0})
@@ -673,6 +675,10 @@ mfem::DenseTensor MaterialOperator::EvaluatePermittivityImag(double omega) const
 
 mfem::DenseTensor MaterialOperator::EvaluateStoredEnergyPermittivity(double omega) const
 {
+  MFEM_VERIFY(
+      HasStoredElectricEnergy(),
+      "The stored-energy permittivity requires the stored electric energy of every "
+      "frequency-dependent material; check HasStoredElectricEnergy before using it!");
   return MapFrequencyDependentMaterials(
       mat_epsilon, [this, omega](std::size_t m, mfem::DenseMatrix &eps)
       { SetIsotropic(GetFrequencyDependentStoredEnergyPermittivity(m, omega), eps); });
@@ -727,12 +733,66 @@ MaterialOperator::EvaluateFrequencyDependentWavePermittivity(std::size_t materia
          frequency_dependent_permittivity_sigma[material_idx] / s;
 }
 
+bool MaterialOperator::HasStoredElectricEnergy(std::size_t material_idx) const
+{
+  const auto &storage = permittivity_storage.at(material_idx);
+  return !storage || storage->Status() == permittivity::RawStorageStatus::CheckedAvailable;
+}
+
+permittivity::RawStorageStatus
+MaterialOperator::GetStoredElectricEnergyStatus(std::size_t material_idx) const
+{
+  const auto &storage = permittivity_storage.at(material_idx);
+  return storage ? storage->Status() : permittivity::RawStorageStatus::CheckedAvailable;
+}
+
+const std::string &
+MaterialOperator::GetStoredElectricEnergyReason(std::size_t material_idx) const
+{
+  static const std::string none = "no frequency-dependent permittivity model";
+  const auto &storage = permittivity_storage.at(material_idx);
+  return storage ? storage->Reason() : none;
+}
+
+bool MaterialOperator::HasStoredElectricEnergy() const
+{
+  for (std::size_t m = 0; m < permittivity_storage.size(); m++)
+  {
+    if (HasFrequencyDependentPermittivityModel(m) && !HasStoredElectricEnergy(m))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MaterialOperator::HasStoredElectricEnergy(const std::vector<int> &attributes) const
+{
+  // The attributes of each material are global, so this is the same on every process.
+  for (std::size_t m = 0; m < permittivity_storage.size(); m++)
+  {
+    if (!HasFrequencyDependentPermittivityModel(m) || HasStoredElectricEnergy(m))
+    {
+      continue;
+    }
+    const auto &material_attributes = frequency_dependent_permittivity_attributes[m];
+    if (std::ranges::any_of(attributes,
+                            [&](int attr)
+                            {
+                              return std::ranges::find(material_attributes, attr) !=
+                                     material_attributes.end();
+                            }))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 double
 MaterialOperator::GetFrequencyDependentStoredEnergyPermittivity(std::size_t material_idx,
                                                                 double omega) const
 {
-  MFEM_VERIFY(omega > 0.0, "The stored energy of a frequency-dependent material requires "
-                           "a positive frequency!");
   const double w = frequency_dependent_permittivity_eps_inf.at(material_idx) +
                    GetFrequencyDependentStoredEnergySusceptibility(material_idx, omega);
   MFEM_VERIFY(std::isfinite(w), "Stored-energy permittivity of material "
@@ -745,8 +805,16 @@ double
 MaterialOperator::GetFrequencyDependentStoredEnergySusceptibility(std::size_t material_idx,
                                                                   double omega) const
 {
-  return permittivity::StoredEnergySusceptibility(permittivity_terms.at(material_idx),
-                                                  omega);
+  MFEM_VERIFY(omega > 0.0, "The stored energy of a frequency-dependent material requires "
+                           "a positive frequency!");
+  const auto &storage = permittivity_storage.at(material_idx);
+  MFEM_VERIFY(storage, "Material " << material_idx
+                                   << " has no frequency-dependent permittivity model!");
+  const auto w = storage->StoredEnergySusceptibility(omega);
+  MFEM_VERIFY(w, "Material " << material_idx << " has no available stored electric energy ("
+                             << storage->Reason()
+                             << "); check HasStoredElectricEnergy before using it!");
+  return *w;
 }
 
 double MaterialOperator::GetFrequencyDependentSusceptibilityReal(std::size_t material_idx,

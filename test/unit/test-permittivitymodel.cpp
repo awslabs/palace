@@ -99,16 +99,13 @@ TEST_CASE("Permittivity model stored energy is that of each term's model",
     // Drude ω_p²/(s² + γs), with the kinetic energy of the carriers.
     Check(config::DrudeData{3.0, 0.2}, {true, 0.0, 0.2, 9.0, 0.0});
   }
-  SECTION("PoleResidue terms")
+  SECTION("PoleResidue terms have no termwise energy")
   {
-    // A real pole r/(s - p) is a relaxation, and a conjugate pair r/(s - p) + conj an
-    // oscillator with a₁ = -2 Re p, a₀ = |p|², b₁ = 2 Re r, and b₀ = -2 Re(r p̄).
-    Check(config::PermittivityPoleData{{-0.7, 0.0}, {2.0, 0.0}},
-          {false, 0.7, 0.0, 2.0, 0.0});
-    const std::complex<double> p(-0.4, 2.2), r(0.3, -1.1);
-    Check(config::PermittivityPoleData{p, r},
-          {true, std::norm(p), -2.0 * p.real(), -2.0 * (r * std::conj(p)).real(),
-           2.0 * r.real()});
+    // The RAW block of a material stores its available storage as a whole
+    // (test-permittivitystorage.cpp); a termwise energy would depend on the split.
+    const std::vector<config::PermittivityTermData> terms = {
+        config::DebyeData{1.5, 0.4}, config::PermittivityPoleData{{-0.7, 0.0}, {2.0, 0.0}}};
+    CHECK_THROWS(permittivity::StoredEnergySusceptibility(terms, omega));
   }
   SECTION("Djordjevic-Sarkar terms are a continuum of relaxations")
   {
@@ -179,7 +176,6 @@ TEST_CASE("Permittivity model defects", "[permittivitymodel][Serial]")
     CHECK(permittivity::IsPassiveByConstruction(terms));
     const auto defects = permittivity::FindDefects(1.0, terms);
     CHECK(defects.gain.empty());
-    CHECK(defects.negative_energy.empty());
   }
 
   SECTION("A negative relaxation has gain at every frequency")
@@ -190,23 +186,34 @@ TEST_CASE("Permittivity model defects", "[permittivitymodel][Serial]")
     REQUIRE(defects.gain.size() == 1);
     CHECK(defects.gain[0].lower == 0.0);
     CHECK(std::isinf(defects.gain[0].upper));
-    CHECK(defects.negative_energy.empty());  // ε∞ = 1 exceeds -Δε = 0.5
+  }
+
+  SECTION("Gain is that of the whole response")
+  {
+    // A negative raw relaxation is compensated by a typed Debye term with the same rate:
+    // the RAW block alone is not passive, but the material has no gain.
+    const std::vector<config::PermittivityTermData> terms = {
+        config::DebyeData{1.0, 1.0},
+        config::PermittivityPoleData{{-1.0, 0.0}, {-0.5, 0.0}}};
+    CHECK(permittivity::FindDefects(1.0, terms).gain.empty());
+    // A Drude written as two raw poles has a negative residue and no gain.
+    const std::vector<config::PermittivityTermData> drude = {
+        config::PermittivityPoleData{{0.0, 0.0}, {10.0, 0.0}},
+        config::PermittivityPoleData{{-0.1, 0.0}, {-10.0, 0.0}}};
+    CHECK(permittivity::FindDefects(1.0, drude).gain.empty());
   }
 
   SECTION("Intervals match dense sampling")
   {
     // Passive Lorentz terms with a narrow negative pair, whose gain is not compensated near
-    // its resonance, and a negative relaxation, which drives the stored energy negative at
-    // low frequencies for a small ε∞.
+    // its resonance, and a negative relaxation.
     const std::vector<config::PermittivityTermData> terms = {
         config::LorentzData{0.8, 2.5, 0.3},
         config::PermittivityPoleData{{-1.0e-3, 4.0}, {0.0, 1.0e-3}},
         config::PermittivityPoleData{{-0.05, 0.0}, {-0.1, 0.0}},
         config::DjordjevicSarkarData{0.05, 0.01, 100.0}};
-    const double eps_inf = 0.5;
-    const auto defects = permittivity::FindDefects(eps_inf, terms);
+    const auto defects = permittivity::FindDefects(0.5, terms);
     REQUIRE_FALSE(defects.gain.empty());
-    REQUIRE_FALSE(defects.negative_energy.empty());
 
     auto Inside = [](const std::vector<permittivity::FrequencyInterval> &intervals,
                      double omega, double margin)
@@ -230,19 +237,12 @@ TEST_CASE("Permittivity model defects", "[permittivitymodel][Serial]")
     {
       const double omega = 1.0e-6 * std::pow(10.0, 12.0 * k / n);
       const double d = permittivity::DissipationSusceptibility(terms, omega);
-      const double w = eps_inf + permittivity::StoredEnergySusceptibility(terms, omega);
       const int in_gain = Inside(defects.gain, omega, 1.0e-6);
-      const int in_energy = Inside(defects.negative_energy, omega, 1.0e-6);
       if (in_gain != 0)
       {
         CAPTURE(omega, d);
         CHECK((d < 0.0) == (in_gain == 1));
         checked++;
-      }
-      if (in_energy != 0)
-      {
-        CAPTURE(omega, w);
-        CHECK((w < 0.0) == (in_energy == 1));
       }
     }
     CHECK(checked > n / 2);

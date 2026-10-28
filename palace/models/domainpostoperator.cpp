@@ -255,6 +255,12 @@ void DomainPostOperator::SetUpFrequencyDependentForms(const config::DomainPostDa
                         return std::ranges::find(*domain_attributes, attr) ==
                                domain_attributes->end();
                       });
+        // A material outside the postprocessing domain (on every process: the attributes
+        // are global) does not enter its energy, nor whether that energy is available.
+        if (attributes.empty())
+        {
+          continue;
+        }
       }
       MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute());
       if (!attributes.empty())
@@ -275,6 +281,25 @@ void DomainPostOperator::SetUpFrequencyDependentForms(const config::DomainPostDa
   {
     M_elec_fd_i.emplace(idx, MakeForms(&data.attributes));
   }
+}
+
+bool DomainPostOperator::HasStoredEnergy(const FrequencyDependentForms &M_fd) const
+{
+  return std::ranges::all_of(M_fd, [this](const auto &form)
+                             { return mat_op->HasStoredElectricEnergy(form.first); });
+}
+
+bool DomainPostOperator::HasStoredElectricFieldEnergy() const
+{
+  return HasStoredEnergy(M_elec_fd);
+}
+
+bool DomainPostOperator::HasStoredDomainElectricFieldEnergy(int idx) const
+{
+  MFEM_VERIFY(M_i.contains(idx),
+              "Invalid domain index when postprocessing domain electric field energy!");
+  auto fd = M_elec_fd_i.find(idx);
+  return fd == M_elec_fd_i.end() || HasStoredEnergy(fd->second);
 }
 
 double DomainPostOperator::GetFrequencyDependentEnergyWeight(std::size_t material_idx,

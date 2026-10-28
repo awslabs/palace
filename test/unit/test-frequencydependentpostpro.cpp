@@ -12,6 +12,7 @@
 #include <fstream>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
@@ -33,6 +34,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/domainpostoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -45,6 +47,7 @@
 #include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -172,6 +175,8 @@ TEST_CASE("Complete frequency-dependent permittivity and stored energy",
                             ProblemType::DRIVEN, mesh);
     REQUIRE(mat_op.HasFrequencyDependentPermittivityModel(0));
     CHECK_FALSE(mat_op.HasFrequencyDependentPermittivityModel(1));
+    // Typed terms, and the RAW zero pole (a current, which stores no energy alone).
+    CHECK(mat_op.HasStoredElectricEnergy());
     // The pure zero pole has no nonlinear term, but its model is still configured.
     CHECK(mat_op.HasFrequencyDependentPermittivitySupport(0) ==
           (std::string(model.name) != "ZeroPole"));
@@ -940,20 +945,60 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
     }
   }
 
-  // A general PoleResidue model with W(ω) ≤ 0 keeps a positive indicator with ε∞ in place
-  // of W (and warns). A relaxation with a negative residue has W = ε∞ + a b / (ω² + a²).
-  MaterialOperator general_op(
-      {MakeMaterial({1, 2}, {config::PermittivityPoleData{-1.0, -10.0}})}, periodic,
-      ProblemType::DRIVEN, mesh);
-  GradFluxErrorEstimator<ComplexVector> general(general_op, nd_fespace, rt_fespaces, tol,
-                                                max_it, 0, false);
-  const double omega = 0.5;
-  REQUIRE(general_op.GetFrequencyDependentStoredEnergyPermittivity(0, omega) < 0.0);
-  ErrorIndicator ind;
-  general.AddErrorIndicator(E, 1.0, omega, ind);
-  const std::complex<double> eps =
-      eps_inf - 10.0 / (std::complex<double>(0.0, omega) + 1.0);
-  Check(ind, std::norm(eps) / eps_inf);
+  // A material without a stored electric energy, a RAW −0.5/(s + 1) compensated by a
+  // typed Debye 1/(1 + s) (passive, but the RAW block alone is not), weights its indicator
+  // by ε∞, a numerical weight, and not by a termwise W (here Re ε). Next to a constant
+  // lossy material with the same complex ε(iω), the medium is homogeneous in ε, and every
+  // element has η² = c |ε|² / weight η²_vacuum with one c > 0: the normalization is the
+  // numerical recovered-flux norm, as no total energy is passed.
+  {
+    const double omega = 0.5;
+    const std::complex<double> s(0.0, omega);
+    const std::complex<double> eps = eps_inf + 1.0 / (1.0 + s) - 0.5 / (s + 1.0);
+    config::MaterialData lossy;
+    lossy.attributes = {1};
+    lossy.epsilon_r.s = {eps.real(), eps.real(), eps.real()};
+    const double tandelta = -eps.imag() / eps.real();
+    lossy.tandelta.s = {tandelta, tandelta, tandelta};
+    MaterialOperator compensated_op(
+        {lossy, MakeMaterial({2}, {config::DebyeData{1.0, 1.0},
+                                   config::PermittivityPoleData{-1.0, -0.5}})},
+        periodic, ProblemType::DRIVEN, mesh);
+    REQUIRE_FALSE(compensated_op.HasStoredElectricEnergy(1));
+    REQUIRE_FALSE(compensated_op.HasStoredElectricEnergy());
+    GradFluxErrorEstimator<ComplexVector> compensated(compensated_op, nd_fespace,
+                                                      rt_fespaces, tol, max_it, 0, false);
+    ErrorIndicator ind;
+    compensated.AddErrorIndicator(E, std::nullopt, omega, ind);
+    // A total energy is not accepted without one.
+    {
+      ErrorIndicator unused;
+      CHECK_THROWS(compensated.AddErrorIndicator(E, 1.0, omega, unused));
+    }
+    const auto *h = ind.Local().HostRead();
+    const auto *h_ref = ref.Local().HostRead();
+    REQUIRE(ind.Local().Size() == mesh.GetNE());
+    double c_min = mfem::infinity(), c_max = 0.0;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      REQUIRE(std::isfinite(h[e]));
+      REQUIRE(h[e] > 0.0);
+      const double weight = (mesh.Get().GetAttribute(e) == 1) ? eps.real() : eps_inf;
+      const double c = (h[e] * h[e]) / (h_ref[e] * h_ref[e]) * weight / std::norm(eps);
+      c_min = std::min(c_min, c);
+      c_max = std::max(c_max, c);
+    }
+    Mpi::GlobalMin(1, &c_min, Mpi::World());
+    Mpi::GlobalMax(1, &c_max, Mpi::World());
+    CHECK_THAT(c_max, WithinRel(c_min, 1.0e-8));
+    // An available material does not accept a missing total energy.
+    MaterialOperator lorentz_op({MakeMaterial({1, 2}, Models()[1].terms)}, periodic,
+                                ProblemType::DRIVEN, mesh);
+    GradFluxErrorEstimator<ComplexVector> lorentz_est(lorentz_op, nd_fespace, rt_fespaces,
+                                                      tol, max_it, 0, false);
+    ErrorIndicator unused;
+    CHECK_THROWS(lorentz_est.AddErrorIndicator(E, std::nullopt, omega, unused));
+  }
 
   // A frequency-dependent material (attribute 2) next to a constant lossy one (attribute 1)
   // with the same complex ε at ω (Re ε, tan δ = −Im ε / Re ε): the medium is homogeneous
@@ -1083,20 +1128,24 @@ TEST_CASE("Gradient flux estimator of a layered medium with continuous normal D"
   CHECK(Estimate(true) < 1.0e-8 * jump);
 }
 
-TEST_CASE("Flux error estimator with a nonpositive energy normalization",
+TEST_CASE("Flux error estimator without a total energy normalization",
           "[frequencydependent][errorestimator][Serial][Parallel][GPU]")
 {
-  // A general model can make the total stored energy nonpositive. The indicator then uses
-  // the energy norm of the recovered fluxes, 1/2 Σ (D*ᴴ W⁻¹ D* + H*ᴴ μ H*), not 1, NaN, or
-  // a rejection: it equals the indicator normalized by that energy passed explicitly.
+  // Without a stored electric energy (a RAW block not passive alone, compensated by a
+  // typed Debye term) there is no total energy. The indicator then uses the energy norm of
+  // the recovered fluxes, 1/2 Σ (D*ᴴ W⁻¹ D* + H*ᴴ μ H*), a numerical norm, not 1, NaN, or a
+  // rejection: positive, finite, and invariant to the scale of the fields, unlike a fixed
+  // normalization.
   test::IntegrationSettingsGuard guard;
   constexpr int order = 1;
   fem::DefaultIntegrationOrder::p_trial = order;
   auto mesh = MakeBoxMesh(3, 2, mfem::Element::TETRAHEDRON);
   config::PeriodicBoundaryData periodic;
-  MaterialOperator mat_op(
-      {MakeMaterial({1}, Models()[0].terms), MakeMaterial({2}, Models()[2].terms)},
-      periodic, ProblemType::DRIVEN, mesh);
+  MaterialOperator mat_op({MakeMaterial({1}, {config::DebyeData{1.0, 1.0},
+                                              config::PermittivityPoleData{-1.0, -0.5}}),
+                           MakeMaterial({2}, Models()[2].terms)},
+                          periodic, ProblemType::DRIVEN, mesh);
+  REQUIRE_FALSE(mat_op.HasStoredElectricEnergy());
   mfem::ND_FECollection nd_fec(order, 3);
   mfem::RT_FECollection rt_fec(order - 1, 3);
   FiniteElementSpaceHierarchy nd_fespaces(
@@ -1112,24 +1161,25 @@ TEST_CASE("Flux error estimator with a nonpositive energy normalization",
   linalg::SetRandom(Mpi::World(), E);
   linalg::SetRandom(Mpi::World(), B);
   const double omega = 1.7;
-  ErrorIndicator fallback, unit;
-  estimator.AddErrorIndicator(E, B, -1.0, omega, fallback);
-  estimator.AddErrorIndicator(E, B, 0.5, omega, unit);  // Scale 1: η² unnormalized
+  ErrorIndicator fallback, scaled;
+  estimator.AddErrorIndicator(E, B, std::nullopt, omega, fallback);
+  {
+    ComplexVector E2(E), B2(B);
+    E2 *= 2.0;
+    B2 *= 2.0;
+    estimator.AddErrorIndicator(E2, B2, std::nullopt, omega, scaled);
+  }
   const auto *h = fallback.Local().HostRead();
-  const auto *h_unit = unit.Local().HostRead();
-  // η_fallback² = η² · 0.5 / E_r, so Σ η_fallback² / Σ η² = 0.5 / E_r is constant, and
-  // positive and finite.
-  double ratio = -1.0;
+  const auto *h_scaled = scaled.Local().HostRead();
   for (int i = 0; i < fallback.Local().Size(); i++)
   {
     REQUIRE(std::isfinite(h[i]));
     REQUIRE(h[i] > 0.0);
-    const double r = (h[i] * h[i]) / (h_unit[i] * h_unit[i]);
-    if (ratio < 0.0)
-    {
-      ratio = r;
-    }
-    CHECK_THAT(r, WithinRel(ratio, 1.0e-10));
+    CHECK_THAT(h_scaled[i], WithinRel(h[i], 1.0e-8));
+  }
+  {
+    ErrorIndicator unused;
+    CHECK_THROWS(estimator.AddErrorIndicator(E, B, -1.0, omega, unused));
   }
 
   // Without a frequency-dependent material, the normalization is that of the constant
@@ -1326,6 +1376,239 @@ TEST_CASE("2D magnetic flux recovery uses the physical B of the INTEGRAL map",
     }
     Mpi::GlobalMax(1, &max_ref, pmesh.GetComm());
     CHECK(max_ref > 1.0e-4);  // Not vacuous
+  }
+}
+
+namespace
+{
+
+// The terms as RAW PoleResidue terms with the same susceptibility.
+std::vector<config::PermittivityTermData>
+RawTerms(const std::vector<config::PermittivityTermData> &terms)
+{
+  std::vector<config::PermittivityTermData> raw;
+  for (const auto &t : permittivity::PoleTerms(terms))
+  {
+    raw.push_back(t);
+  }
+  return raw;
+}
+
+// The energies of a field over the entire domain and the postprocessing domains, and the
+// gradient flux indicator, for comparison between materials.
+struct EnergyConsumers
+{
+  Mesh &mesh;
+  mfem::ND_FECollection nd_fec;
+  mfem::RT_FECollection rt_fec;
+  FiniteElementSpace nd_fespace, rt_fespace;
+  FiniteElementSpaceHierarchy rt_fespaces;
+  config::DomainPostData postpro;
+  GridFunction E;
+  ComplexVector e;
+
+  explicit EnergyConsumers(Mesh &mesh)
+    : mesh(mesh), nd_fec(1, 3), rt_fec(0, 3), nd_fespace(mesh, &nd_fec),
+      rt_fespace(mesh, &rt_fec),
+      rt_fespaces(std::make_unique<FiniteElementSpace>(mesh, &rt_fec)), E(nd_fespace, true),
+      e(nd_fespace.GetTrueVSize())
+  {
+    postpro.energy[1].attributes = {2};
+    postpro.energy[2].attributes = {1, 2};
+    e.UseDevice(true);
+    linalg::SetRandom(Mpi::World(), e);
+    E.Real().SetFromTrueDofs(e.Real());
+    E.Imag().SetFromTrueDofs(e.Imag());
+  }
+};
+
+}  // namespace
+
+TEST_CASE("Stored energy of single sections as typed or RAW terms",
+          "[frequencydependent][Serial][Parallel]")
+{
+  // A single Debye, Drude, or under- or overdamped Lorentz section has the same response
+  // and the same positive stored energy as typed terms and as RAW PoleResidue terms, also
+  // with the RAW terms reversed and split: the material, the domain energies (and so the
+  // total energy normalization (E_stored + E_Reε)/2), and the error indicator. A Drude
+  // and an overdamped Lorentz are RAW fits with a negative residue.
+  test::IntegrationSettingsGuard guard;
+  fem::DefaultIntegrationOrder::p_trial = 1;
+  auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
+  config::PeriodicBoundaryData periodic;
+  EnergyConsumers c(mesh);
+  using ElectricEnergy = DomainPostOperator::ElectricEnergy;
+  const std::vector<config::PermittivityTermData> sections = {
+      config::DebyeData{3.0, 0.7}, config::DrudeData{3.0, 0.5},
+      config::LorentzData{1.5, 1.0, 0.2}, config::LorentzData{1.5, 1.0, 5.0}};
+  for (std::size_t k = 0; k < sections.size(); k++)
+  {
+    CAPTURE(k);
+    const std::vector<config::PermittivityTermData> typed = {sections[k]};
+    const auto raw = RawTerms(typed);
+    std::vector<config::PermittivityTermData> split;
+    for (auto it = raw.rbegin(); it != raw.rend(); ++it)
+    {
+      auto half = std::get<config::PermittivityPoleData>(*it);
+      half.residue *= 0.5;
+      split.push_back(half);
+      split.push_back(half);
+    }
+    std::vector<std::unique_ptr<MaterialOperator>> ops;
+    std::vector<std::unique_ptr<DomainPostOperator>> posts;
+    std::vector<std::unique_ptr<GradFluxErrorEstimator<ComplexVector>>> estimators;
+    for (const auto *terms : {&typed, &raw, &split})
+    {
+      ops.push_back(std::make_unique<MaterialOperator>(
+          std::vector<config::MaterialData>{MakeMaterial({1}, *terms),
+                                            MakeMaterial({2}, *terms)},
+          periodic, ProblemType::DRIVEN, mesh));
+      REQUIRE(ops.back()->HasStoredElectricEnergy());
+      REQUIRE(ops.back()->GetStoredElectricEnergyStatus(0) ==
+              permittivity::RawStorageStatus::CheckedAvailable);
+      posts.push_back(std::make_unique<DomainPostOperator>(c.postpro, *ops.back(),
+                                                           c.nd_fespace, c.rt_fespace));
+      REQUIRE(posts.back()->HasStoredElectricFieldEnergy());
+      estimators.push_back(std::make_unique<GradFluxErrorEstimator<ComplexVector>>(
+          *ops.back(), c.nd_fespace, c.rt_fespaces, 1.0e-14, 1000, 0, false));
+    }
+    for (double omega : {0.3, 1.1, 4.0})
+    {
+      CAPTURE(omega);
+      const auto eps = ops[0]->EvaluateFrequencyDependentPermittivity(0, {0.0, omega});
+      const double W = ops[0]->GetFrequencyDependentStoredEnergyPermittivity(0, omega);
+      CHECK(W > eps_inf);
+      ErrorIndicator ref;
+      estimators[0]->AddErrorIndicator(c.e, 1.0, omega, ref);
+      for (std::size_t i = 1; i < ops.size(); i++)
+      {
+        CAPTURE(i);
+        const auto eps_i = ops[i]->EvaluateFrequencyDependentPermittivity(0, {0.0, omega});
+        CHECK(std::abs(eps_i - eps) <= 1.0e-12 * std::abs(eps));
+        CHECK_THAT(ops[i]->GetFrequencyDependentStoredEnergyPermittivity(0, omega),
+                   WithinRel(W, 1.0e-10));
+        for (auto type : {ElectricEnergy::STORED, ElectricEnergy::MATERIAL})
+        {
+          CHECK_THAT(
+              posts[i]->GetElectricFieldEnergy(c.E, omega, type),
+              WithinRel(posts[0]->GetElectricFieldEnergy(c.E, omega, type), 1.0e-10));
+          for (int idx : {1, 2})
+          {
+            CHECK_THAT(
+                posts[i]->GetDomainElectricFieldEnergy(idx, c.E, omega, type),
+                WithinRel(posts[0]->GetDomainElectricFieldEnergy(idx, c.E, omega, type),
+                          1.0e-10));
+          }
+        }
+        ErrorIndicator ind;
+        estimators[i]->AddErrorIndicator(c.e, 1.0, omega, ind);
+        const auto *h = ind.Local().HostRead();
+        const auto *h_ref = ref.Local().HostRead();
+        for (int e = 0; e < ind.Local().Size(); e++)
+        {
+          CHECK_THAT(h[e], WithinRel(h_ref[e], 1.0e-8));
+        }
+      }
+    }
+  }
+
+  // Two Debye terms 1/(s + 1) + 1/(s + 2) store 1/2 + 2/5 = 0.9 at ω = 1 as typed terms,
+  // and their available storage 0.8675444679663243 as a RAW block: the same χ need not
+  // store the same energy.
+  const std::vector<config::PermittivityTermData> debyes = {config::DebyeData{1.0, 1.0},
+                                                            config::DebyeData{0.5, 0.5}};
+  MaterialOperator typed_op({MakeMaterial({1, 2}, debyes)}, periodic, ProblemType::DRIVEN,
+                            mesh);
+  MaterialOperator raw_op({MakeMaterial({1, 2}, RawTerms(debyes))}, periodic,
+                          ProblemType::DRIVEN, mesh);
+  CHECK_THAT(typed_op.GetFrequencyDependentStoredEnergyPermittivity(0, 1.0) - eps_inf,
+             WithinRel(0.9, 1.0e-12));
+  CHECK_THAT(raw_op.GetFrequencyDependentStoredEnergyPermittivity(0, 1.0) - eps_inf,
+             WithinRel(0.8675444679663243, 1.0e-10));
+}
+
+TEST_CASE("Frequency-dependent material without a stored electric energy",
+          "[frequencydependent][Serial][Parallel]")
+{
+  // A RAW −0.5/(s + 1) compensated by a typed Debye 1/(1 + s) or a native
+  // Djordjevic-Sarkar 2 log((s + 2)/(s + 1)) is passive, but its RAW block alone is not,
+  // and nearly coincident passive poles are not certified. Neither has gain, and neither
+  // has a stored electric energy: the material reports its status, the stored energy is
+  // not evaluated (an error, not a value), and so neither are the energies of the regions
+  // with it. Its response, the field energy at Re ε, and the regions without it are
+  // unaffected. The status is that of the configured model, the same on every process,
+  // also where the material (attribute 1, one element) has no elements.
+  test::IntegrationSettingsGuard guard;
+  fem::DefaultIntegrationOrder::p_trial = 1;
+  auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
+  config::PeriodicBoundaryData periodic;
+  EnergyConsumers c(mesh);
+  using ElectricEnergy = DomainPostOperator::ElectricEnergy;
+  using Status = permittivity::RawStorageStatus;
+  const double delta = 1.0e-9;
+  std::vector<config::PermittivityTermData> close;
+  for (int k = 0; k < 4; k++)
+  {
+    close.push_back(config::PermittivityPoleData{-1.0 - k * delta, 1.0});
+  }
+  const std::vector<std::pair<std::vector<config::PermittivityTermData>, Status>> cases = {
+      {{config::DebyeData{1.0, 1.0}, config::PermittivityPoleData{-1.0, -0.5}},
+       Status::NonpassiveRaw},
+      {{config::DjordjevicSarkarData{2.0, 1.0, 2.0},
+        config::PermittivityPoleData{-1.0, -0.5}},
+       Status::NonpassiveRaw},
+      {close, Status::NumericalUnresolved}};
+  config::MaterialData constant;
+  constant.attributes = {2};
+  constant.epsilon_r.s = {3.0, 3.0, 3.0};
+  // The compensated Debye has the response of a typed Debye 0.5/(1 + s), and the regions
+  // without the material, those of any other material on attribute 1.
+  MaterialOperator reference_op(
+      {MakeMaterial({1}, {config::DebyeData{0.5, 1.0}}), constant}, periodic,
+      ProblemType::DRIVEN, mesh);
+  DomainPostOperator reference_post(c.postpro, reference_op, c.nd_fespace, c.rt_fespace);
+  for (std::size_t k = 0; k < cases.size(); k++)
+  {
+    CAPTURE(k);
+    const auto &[terms, status] = cases[k];
+    CHECK(permittivity::FindDefects(eps_inf, terms).gain.empty());
+    MaterialOperator mat_op({MakeMaterial({1}, terms), constant}, periodic,
+                            ProblemType::DRIVEN, mesh);
+    CAPTURE(mat_op.GetStoredElectricEnergyReason(0));
+    CHECK(mat_op.GetStoredElectricEnergyStatus(0) == status);
+    CHECK_FALSE(mat_op.HasStoredElectricEnergy(0));
+    CHECK(mat_op.HasStoredElectricEnergy(1));
+    CHECK_FALSE(mat_op.HasStoredElectricEnergy());
+    CHECK(mat_op.HasStoredElectricEnergy(std::vector<int>{2}));
+    CHECK_FALSE(mat_op.HasStoredElectricEnergy(std::vector<int>{1, 2}));
+    DomainPostOperator post(c.postpro, mat_op, c.nd_fespace, c.rt_fespace);
+    CHECK_FALSE(post.HasStoredElectricFieldEnergy());
+    CHECK(post.HasStoredDomainElectricFieldEnergy(1));
+    CHECK_FALSE(post.HasStoredDomainElectricFieldEnergy(2));
+    for (double omega : {0.3, 1.1})
+    {
+      CAPTURE(omega);
+      const std::complex<double> s(0.0, omega);
+      const auto eps = mat_op.EvaluateFrequencyDependentPermittivity(0, s);
+      CHECK(std::abs(eps - (eps_inf + permittivity::Susceptibility(terms, s))) <=
+            1.0e-12 * std::abs(eps));
+      CHECK_THROWS(mat_op.GetFrequencyDependentStoredEnergyPermittivity(0, omega));
+      CHECK_THROWS(mat_op.EvaluateStoredEnergyPermittivity(omega));
+      CHECK_THROWS(post.GetElectricFieldEnergy(c.E, omega));
+      CHECK_THROWS(post.GetDomainElectricFieldEnergy(2, c.E, omega));
+      CHECK_THAT(
+          post.GetDomainElectricFieldEnergy(1, c.E, omega),
+          WithinRel(reference_post.GetDomainElectricFieldEnergy(1, c.E, omega), 1.0e-12));
+      const double material =
+          post.GetElectricFieldEnergy(c.E, omega, ElectricEnergy::MATERIAL);
+      CHECK(std::isfinite(material));
+      if (k == 0)
+      {
+        CHECK_THAT(material, WithinRel(reference_post.GetElectricFieldEnergy(
+                                           c.E, omega, ElectricEnergy::MATERIAL),
+                                       1.0e-12));
+      }
+    }
   }
 }
 

@@ -5,10 +5,13 @@
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
 #include <complex>
+#include <optional>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
 #include "utils/configfile.hpp"
+#include "utils/permittivitymodel.hpp"
 
 namespace palace
 {
@@ -65,8 +68,12 @@ private:
   std::vector<std::vector<int>> frequency_dependent_permittivity_attributes;
   std::vector<std::vector<PermittivityPoleTerm>> permittivity_pole_terms;
   std::vector<std::vector<config::DjordjevicSarkarData>> djordjevic_sarkar_terms;
-  // The terms as configured, for the stored energy of their models.
+  // The terms as configured, for the complete susceptibility.
   std::vector<std::vector<config::PermittivityTermData>> permittivity_terms;
+  // The stored energy of each frequency-dependent material, prepared once from its
+  // nondimensional terms on every process (so its status is the same on every process),
+  // and empty for a material without a model.
+  std::vector<std::optional<permittivity::PreparedStorage>> permittivity_storage;
   // Global support of the nonlinear terms (A2) of each material, and of its configured
   // model (any frequency-dependent material, including one with only exact zero poles).
   std::vector<bool> frequency_dependent_permittivity_support,
@@ -257,9 +264,28 @@ public:
   std::complex<double>
   EvaluateFrequencyDependentWavePermittivity(std::size_t material_idx,
                                              std::complex<double> s) const;
-  // ε∞ + StoredEnergySusceptibility at real ω > 0: the constant permittivity with the same
-  // time-averaged stored electric energy as the model, possibly ≤ 0 for a general
-  // PoleResidue model. Errors at a singularity.
+  // Whether the stored electric energy of a material is available
+  // (permittivity::PreparedStorage): always for a constant material and for typed and
+  // Djordjevic-Sarkar terms, and for the RAW block of its PoleResidue terms when its
+  // available storage is checked (permittivity::RawStorageStatus::CheckedAvailable).
+  // Otherwise the material has no physical stored energy, which is a property of the
+  // configured model, fixed for the run and the same on every process; its field solve is
+  // unaffected. The status and its reason are those of the RAW block.
+  bool HasStoredElectricEnergy(std::size_t material_idx) const;
+  permittivity::RawStorageStatus
+  GetStoredElectricEnergyStatus(std::size_t material_idx) const;
+  const std::string &GetStoredElectricEnergyReason(std::size_t material_idx) const;
+  // Whether every frequency-dependent material with mesh support
+  // (HasFrequencyDependentPermittivityModel) has a stored electric energy, or every one
+  // with one of the given domain attributes: the stored electric energy of the mesh, or of
+  // the region, is then available.
+  bool HasStoredElectricEnergy() const;
+  bool HasStoredElectricEnergy(const std::vector<int> &attributes) const;
+
+  // ε∞ + the stored-energy susceptibility (permittivity::PreparedStorage) at real ω > 0:
+  // the constant permittivity with the same time-averaged stored electric energy as the
+  // model, at least ε∞ > 0. Requires HasStoredElectricEnergy(material_idx). Errors at a
+  // singularity (an exact lossless resonance).
   double GetFrequencyDependentStoredEnergyPermittivity(std::size_t material_idx,
                                                        double omega) const;
 
@@ -268,7 +294,8 @@ public:
   // MaterialPropertyCoefficient). Constant materials keep their entries, Re{ε}, Im{ε} =
   // −Re{ε} tan δ, and Re{ε} for the stored energy; a frequency-dependent material has
   // Re ε(iω), Im ε(iω), or GetFrequencyDependentStoredEnergyPermittivity. These are values,
-  // not state: the getters above always return the high-frequency permittivity ε∞.
+  // not state: the getters above always return the high-frequency permittivity ε∞. The
+  // stored-energy tensor requires HasStoredElectricEnergy().
   mfem::DenseTensor EvaluatePermittivityReal(double omega) const;
   mfem::DenseTensor EvaluatePermittivityImag(double omega) const;
   mfem::DenseTensor EvaluateStoredEnergyPermittivity(double omega) const;
@@ -320,9 +347,9 @@ public:
     return Wrap(data, attr);
   }
   // The time-averaged stored electric energy of the polarization of a frequency-dependent
-  // material at real ω > 0, as a susceptibility (permittivity::StoredEnergySusceptibility):
-  // the stored energy is that of a constant permittivity ε∞ plus this value. It includes
-  // exact zero poles, which store none.
+  // material at real ω > 0, as a susceptibility (permittivity::PreparedStorage): the stored
+  // energy is that of a constant permittivity ε∞ plus this value. Requires
+  // HasStoredElectricEnergy(material_idx).
   double GetFrequencyDependentStoredEnergySusceptibility(std::size_t material_idx,
                                                          double omega) const;
   // Re χ(iω) of the nonlinear terms of a frequency-dependent material, the field energy at

@@ -43,9 +43,10 @@ public:
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
   // Unit mass forms of each frequency-dependent material (by material index), over the
-  // entire domain and over each postprocessing domain. With M_elec weighted by ε∞, the
-  // electric field energy adds that of the polarization of each material, its unit mass
-  // energy times the stored-energy susceptibility wₘ(ω) of its model.
+  // entire domain and over each postprocessing domain (only the materials in it). With
+  // M_elec weighted by ε∞, the electric field energy adds that of the polarization of each
+  // material, its unit mass energy times the stored-energy susceptibility wₘ(ω) of its
+  // model.
   using FrequencyDependentForms =
       std::vector<std::pair<std::size_t, std::unique_ptr<Operator>>>;
   FrequencyDependentForms M_elec_fd;
@@ -79,8 +80,17 @@ public:
     MATERIAL
   };
 
+  // Whether the STORED electric energy is available in the entire domain, or in the
+  // postprocessing domain idx: whether every frequency-dependent material in it has a
+  // stored electric energy (MaterialOperator::HasStoredElectricEnergy). This is fixed for
+  // the run and the same on every process. The MATERIAL energy, the magnetic energy, and
+  // the energies of static problems are always available.
+  bool HasStoredElectricFieldEnergy() const;
+  bool HasStoredDomainElectricFieldEnergy(int idx) const;
+
   // Get volume integrals computing the electric or magnetic field energy in the entire
-  // domain.
+  // domain. The STORED electric energy requires HasStoredElectricFieldEnergy() (or
+  // HasStoredDomainElectricFieldEnergy(idx) for a portion of the domain).
   double GetElectricFieldEnergy(const GridFunction &E, double omega,
                                 ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetMagneticFieldEnergy(const GridFunction &B) const;
@@ -91,8 +101,8 @@ public:
                                       ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
 
-  // The susceptibility weighting the unit mass form of material m: wₘ(ω) for STORED and
-  // Re χₘ(iω) for MATERIAL.
+  // The susceptibility weighting the unit mass form of material m: wₘ(ω) for STORED (which
+  // requires MaterialOperator::HasStoredElectricEnergy(m)) and Re χₘ(iω) for MATERIAL.
   double GetFrequencyDependentEnergyWeight(std::size_t material_idx, double omega,
                                            ElectricEnergy type) const;
 
@@ -100,6 +110,7 @@ private:
   void SetUpFrequencyDependentForms(const config::DomainPostData &postpro,
                                     const MaterialOperator &mat_op,
                                     const FiniteElementSpace &nd_fespace);
+  bool HasStoredEnergy(const FrequencyDependentForms &M_fd) const;
   double ElectricFieldEnergy(const Operator &M, const FrequencyDependentForms &M_fd,
                              const GridFunction &E, double omega,
                              ElectricEnergy type) const;

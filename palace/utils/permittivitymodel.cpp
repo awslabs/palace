@@ -52,42 +52,38 @@ std::complex<double> TermSusceptibility(const config::PermittivityTermData &term
       term);
 }
 
-// Time-averaged stored energy of a term as a susceptibility (see the header): a relaxation
-// b₀/(s + a₀) stores a₀b₀/(ω² + a₀²) = Re χ, and an oscillator (b₀ + b₁s)/(s² + a₁s + a₀)
-// stores ((b₀ + a₁b₁)ω² + a₀b₀)/((a₀ − ω²)² + a₁²ω²), the averages of W with ⟨x ẋ⟩ = 0.
+// Time-averaged stored energy of a typed or Djordjevic-Sarkar term as a susceptibility
+// (see the header): a relaxation b₀/(s + a₀) stores a₀b₀/(ω² + a₀²) = Re χ, and an
+// oscillator b₀/(s² + a₁s + a₀) stores (b₀ω² + a₀b₀)/((a₀ − ω²)² + a₁²ω²), the averages
+// of W with ⟨x ẋ⟩ = 0. A PoleResidue term has no energy of its own: its stored energy is
+// that of the whole RAW block of the material (PreparedStorage).
 double TermStoredEnergy(const config::PermittivityTermData &term, double omega)
 {
   const double w2 = omega * omega;
-  auto oscillator = [w2](double a0, double a1, double b0, double b1)
-  { return ((b0 + a1 * b1) * w2 + a0 * b0) / ((a0 - w2) * (a0 - w2) + a1 * a1 * w2); };
-  return std::visit(Overloaded{[w2](const config::DrudeData &t)
-                               { return t.omega_p * t.omega_p / (w2 + t.gamma * t.gamma); },
-                               [w2](const config::DebyeData &t)
-                               { return t.delta / (1.0 + w2 * t.tau * t.tau); },
-                               [&](const config::LorentzData &t)
-                               {
-                                 const double w0_2 = t.omega_0 * t.omega_0;
-                                 return oscillator(w0_2, t.gamma, t.delta * w0_2, 0.0);
-                               },
-                               [&](const config::PermittivityPoleData &t)
-                               {
-                                 if (t.pole.imag() > 0.0)
-                                 {
-                                   return oscillator(
-                                       std::norm(t.pole), -2.0 * t.pole.real(),
-                                       -2.0 * (t.residue * std::conj(t.pole)).real(),
-                                       2.0 * t.residue.real());
-                                 }
-                                 const double a0 = -t.pole.real(), b0 = t.residue.real();
-                                 return (a0 == 0.0) ? 0.0 : a0 * b0 / (w2 + a0 * a0);
-                               },
-                               [w2](const config::DjordjevicSarkarData &t)
-                               {
-                                 return 0.5 * t.strength *
-                                        std::log((w2 + t.omega_upper * t.omega_upper) /
-                                                 (w2 + t.omega_lower * t.omega_lower));
-                               }},
-                    term);
+  return std::visit(
+      Overloaded{[w2](const config::DrudeData &t)
+                 { return t.omega_p * t.omega_p / (w2 + t.gamma * t.gamma); },
+                 [w2](const config::DebyeData &t)
+                 { return t.delta / (1.0 + w2 * t.tau * t.tau); },
+                 [w2](const config::LorentzData &t)
+                 {
+                   const double w0_2 = t.omega_0 * t.omega_0;
+                   return t.delta * w0_2 * (w2 + w0_2) /
+                          ((w0_2 - w2) * (w0_2 - w2) + t.gamma * t.gamma * w2);
+                 },
+                 [](const config::PermittivityPoleData &) -> double
+                 {
+                   MFEM_ABORT("A PoleResidue term has no stored energy of its own; use "
+                              "PreparedStorage for the RAW block of the material!");
+                   return 0.0;
+                 },
+                 [w2](const config::DjordjevicSarkarData &t)
+                 {
+                   return 0.5 * t.strength *
+                          std::log((w2 + t.omega_upper * t.omega_upper) /
+                                   (w2 + t.omega_lower * t.omega_lower));
+                 }},
+      term);
 }
 
 void AppendPole(std::complex<double> pole, std::complex<double> residue,
@@ -461,22 +457,7 @@ ModelDefects FindDefects(double eps_inf,
     }
     return d < -tol * scale;
   };
-  auto negative_energy = [&](double omega) -> std::optional<bool>
-  {
-    double w = eps_inf, scale = eps_inf;
-    for (const auto &term : terms)
-    {
-      const double wk = TermStoredEnergy(term, omega);
-      w += wk;
-      scale += std::abs(wk);
-    }
-    if (!std::isfinite(w))
-    {
-      return std::nullopt;
-    }
-    return w < -tol * scale;
-  };
-  return {FindIntervals(grid, gain), FindIntervals(grid, negative_energy)};
+  return {FindIntervals(grid, gain)};
 }
 
 }  // namespace palace::permittivity

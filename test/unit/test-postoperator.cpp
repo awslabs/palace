@@ -70,24 +70,25 @@ auto randd(int n)
 auto RandomMeasurement(int ndomain = 5)
 {
   Measurement cache;
-  cache.domain_E_field_energy_all = 0.0;
+  double E_all = 0.0;
   cache.domain_H_field_energy_all = 0.0;
   for (int i = 0; i < ndomain; i++)
   {
     cache.domain_H_field_energy_i.emplace_back(
         Measurement::DomainData{i, 1 + randd(100), 0});
-    cache.domain_H_field_energy_all += cache.domain_H_field_energy_i.back().energy;
+    cache.domain_H_field_energy_all += *cache.domain_H_field_energy_i.back().energy;
     cache.domain_E_field_energy_i.emplace_back(
         Measurement::DomainData{i, 1 + randd(100), 0});
-    cache.domain_E_field_energy_all += cache.domain_H_field_energy_i.back().energy;
+    E_all += *cache.domain_H_field_energy_i.back().energy;
   }
+  cache.domain_E_field_energy_all = E_all;
   for (auto &H : cache.domain_H_field_energy_i)
   {
-    H.participation_ratio = H.energy / cache.domain_H_field_energy_all;
+    H.participation_ratio = *H.energy / cache.domain_H_field_energy_all;
   }
   for (auto &E : cache.domain_E_field_energy_i)
   {
-    E.participation_ratio = E.energy / cache.domain_E_field_energy_all;
+    E.participation_ratio = *E.energy / E_all;
   }
 
   cache.domain_E_field_energy_material = 1 + randd(100);
@@ -213,10 +214,10 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   Units units(1e-6, 152 * 1e-6);  // μm, 152μm
   auto dim_cache = Measurement::Dimensionalize(units, cache);
   auto non_dim_cache = Measurement::Nondimensionalize(units, dim_cache);
-  CHECK_THAT(cache.domain_E_field_energy_all,
-             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all));
-  CHECK_THAT(cache.domain_E_field_energy_all,
-             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_all.value(),
+             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all.value()));
+  CHECK_THAT(cache.domain_E_field_energy_all.value(),
+             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_all.value()));
   CHECK_THAT(cache.domain_H_field_energy_all,
              Catch::Matchers::WithinRel(non_dim_cache.domain_H_field_energy_all));
   CHECK_THAT(cache.domain_H_field_energy_all,
@@ -232,27 +233,50 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
       const auto &c = cache.domain_E_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
-      CHECK_THAT(c.participation_ratio,
-                 Catch::Matchers::WithinRel(ndc.participation_ratio));
+      CHECK_THAT(c.energy.value(), Catch::Matchers::WithinRel(ndc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(ndc.participation_ratio.value()));
 
       const auto &dc = dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
-      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
+      CHECK_THAT(c.energy.value(), !Catch::Matchers::WithinRel(dc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(dc.participation_ratio.value()));
     }
     {
       const auto &c = cache.domain_H_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
-      CHECK_THAT(c.participation_ratio,
-                 Catch::Matchers::WithinRel(ndc.participation_ratio));
+      CHECK_THAT(c.energy.value(), Catch::Matchers::WithinRel(ndc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(ndc.participation_ratio.value()));
 
       const auto &dc = dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
-      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
+      CHECK_THAT(c.energy.value(), !Catch::Matchers::WithinRel(dc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(dc.participation_ratio.value()));
+    }
+  }
+  // Omitted electric energies (no stored electric energy) stay omitted through the unit
+  // conversions, and so do the energies normalized by them.
+  {
+    Measurement omitted;
+    omitted.domain_E_field_energy_material = 1.0;
+    omitted.domain_E_field_energy_i.push_back({0, std::nullopt, std::nullopt});
+    omitted.lumped_port_vi[1];
+    const auto dim = Measurement::Dimensionalize(units, omitted);
+    const auto back = Measurement::Nondimensionalize(units, dim);
+    for (const auto *m : {&dim, &back})
+    {
+      CHECK_FALSE(m->domain_E_field_energy_all);
+      CHECK_FALSE(m->TotalEnergyNormalization());
+      CHECK_FALSE(m->TotalFieldEnergy());
+      CHECK_FALSE(m->domain_E_field_energy_i.at(0).energy);
+      CHECK_FALSE(m->domain_E_field_energy_i.at(0).participation_ratio);
+      CHECK_FALSE(m->lumped_port_vi.at(1).mode_port_kappa);
+      CHECK_FALSE(m->lumped_port_vi.at(1).quality_factor);
+      CHECK_FALSE(m->lumped_port_vi.at(1).inductive_energy_participation);
     }
   }
   auto check_port_data = [&](const auto &c, const auto &dc, const auto &ndc)
@@ -282,9 +306,18 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
 
     CHECK_THAT(c.inductor_energy, Catch::Matchers::WithinRel(ndc.inductor_energy));
     CHECK_THAT(c.capacitor_energy, Catch::Matchers::WithinRel(ndc.capacitor_energy));
-    CHECK_THAT(c.mode_port_kappa, Catch::Matchers::WithinRel(ndc.mode_port_kappa));
-    CHECK_THAT(c.inductive_energy_participation,
-               Catch::Matchers::WithinRel(ndc.inductive_energy_participation));
+    // The energy-normalized port data are present together, in both unit systems.
+    REQUIRE(c.mode_port_kappa.has_value() == ndc.mode_port_kappa.has_value());
+    REQUIRE(c.mode_port_kappa.has_value() == dc.mode_port_kappa.has_value());
+    REQUIRE(c.quality_factor.has_value() == dc.quality_factor.has_value());
+    REQUIRE(c.inductive_energy_participation.has_value() ==
+            dc.inductive_energy_participation.has_value());
+    if (c.mode_port_kappa)
+    {
+      CHECK_THAT(*c.mode_port_kappa, Catch::Matchers::WithinRel(*ndc.mode_port_kappa));
+      CHECK_THAT(*c.inductive_energy_participation,
+                 Catch::Matchers::WithinRel(*ndc.inductive_energy_participation));
+    }
 
     // Dimensional
     REQUIRE_THAT(units.GetScaleFactor<Units::ValueType::POWER>(),
@@ -325,9 +358,9 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
 
       CHECK_THAT(c.inductor_energy, !Catch::Matchers::WithinRel(dc.inductor_energy));
       CHECK_THAT(c.capacitor_energy, !Catch::Matchers::WithinRel(dc.capacitor_energy));
-      CHECK_THAT(c.mode_port_kappa, !Catch::Matchers::WithinRel(dc.mode_port_kappa));
-      CHECK_THAT(c.inductive_energy_participation,
-                 Catch::Matchers::WithinRel(dc.inductive_energy_participation));
+      CHECK_THAT(*c.mode_port_kappa, !Catch::Matchers::WithinRel(*dc.mode_port_kappa));
+      CHECK_THAT(*c.inductive_energy_participation,
+                 Catch::Matchers::WithinRel(*dc.inductive_energy_participation));
     }
   };
   for (const auto &[k, v] : cache.lumped_port_vi)

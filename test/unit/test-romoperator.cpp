@@ -1432,6 +1432,40 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator reduced postprocessing matches full evaluation",
                  "[postoperator][romoperator][Serial][Parallel]")
 {
+  // The reduced energies are the full ones, also with the stored energy of a RAW Drude
+  // (a PoleResidue fit with a negative residue). Without a stored electric energy (a RAW
+  // relaxation compensated by a typed Debye), both omit the electric energies alike.
+  enum class Model
+  {
+    CONSTANT,
+    RAW_DRUDE,
+    COMPENSATED
+  };
+  const auto model = GENERATE(Model::CONSTANT, Model::RAW_DRUDE, Model::COMPENSATED);
+  CAPTURE(static_cast<int>(model));
+  const bool stored = (model != Model::COMPENSATED);
+  json permittivity = 1.0;
+  if (model == Model::RAW_DRUDE)
+  {
+    // ω_p = 2π 10 GHz, γ = 2π 5 GHz: ω_p² / (s (s + γ)) = r/s − r/(s + γ), r = ω_p² / γ.
+    const double wp = 2.0 * std::numbers::pi * 1.0e10, gamma = 0.5 * wp,
+                 r = wp * wp / gamma;
+    permittivity = {
+        {"HighFrequency", 1.0},
+        {"Terms",
+         json::array({{{"Type", "PoleResidue"}, {"Pole", 0.0}, {"Residue", r}},
+                      {{"Type", "PoleResidue"}, {"Pole", -gamma}, {"Residue", -r}}})}};
+  }
+  else if (model == Model::COMPENSATED)
+  {
+    // Debye 1/(1 + sτ) and RAW −0.5/(s + 1/τ), τ = 10 ps.
+    permittivity = {
+        {"HighFrequency", 1.0},
+        {"Terms",
+         json::array(
+             {{{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 0.01}},
+              {{"Type", "PoleResidue"}, {"Pole", -1.0e11}, {"Residue", -0.5e11}}})}};
+  }
   MPI_Comm comm = Mpi::World();
   const auto mesh_path =
       fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
@@ -1445,7 +1479,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       {"Materials",
        json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
                                   {"Permeability", 1.0},
-                                  {"Permittivity", 1.0},
+                                  {"Permittivity", permittivity},
                                   {"LossTan", 0.0}})})},
       {"Postprocessing",
        {{"Energy",
@@ -1532,11 +1566,18 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK((scale == 0.0 || std::abs(x - y) <= 1.0e-10 * scale));
   };
 
-  CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
-          reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
-  REQUIRE(full.domain_E_field_energy_all > 0.0);
+  REQUIRE(space_op.GetMaterialOp().HasStoredElectricEnergy() == stored);
+  CHECK(full.domain_E_field_energy_all.has_value() == stored);
+  CHECK(reduced.domain_E_field_energy_all.has_value() == stored);
+  CAPTURE(reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
+  if (stored)
+  {
+    CAPTURE(*reduced.domain_E_field_energy_all, *full.domain_E_field_energy_all);
+    REQUIRE(*full.domain_E_field_energy_all > 0.0);
+    CHECK(close(*reduced.domain_E_field_energy_all, *full.domain_E_field_energy_all));
+  }
+  CHECK(close(reduced.domain_E_field_energy_material, full.domain_E_field_energy_material));
   REQUIRE(full.domain_H_field_energy_all > 0.0);
-  CHECK(close(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all));
   CHECK(close(reduced.domain_H_field_energy_all, full.domain_H_field_energy_all));
   REQUIRE(full.domain_E_field_energy_i.size() == 1);
   REQUIRE(full.domain_H_field_energy_i.size() == 1);
@@ -1544,16 +1585,24 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(reduced.domain_H_field_energy_i.size() == full.domain_H_field_energy_i.size());
   for (std::size_t i = 0; i < full.domain_E_field_energy_i.size(); i++)
   {
-    CHECK(reduced.domain_E_field_energy_i[i].idx == full.domain_E_field_energy_i[i].idx);
-    CHECK(close(reduced.domain_E_field_energy_i[i].energy,
-                full.domain_E_field_energy_i[i].energy));
-    CHECK(close(reduced.domain_E_field_energy_i[i].participation_ratio,
-                full.domain_E_field_energy_i[i].participation_ratio));
+    const auto &r = reduced.domain_E_field_energy_i[i],
+               &f = full.domain_E_field_energy_i[i];
+    CHECK(r.idx == f.idx);
+    // The postprocessing domain contains the material.
+    CHECK(f.energy.has_value() == stored);
+    CHECK(r.energy.has_value() == stored);
+    CHECK(f.participation_ratio.has_value() == stored);
+    CHECK(r.participation_ratio.has_value() == stored);
+    if (stored)
+    {
+      CHECK(close(r.energy.value(), f.energy.value()));
+      CHECK(close(r.participation_ratio.value(), f.participation_ratio.value()));
+    }
     CHECK(reduced.domain_H_field_energy_i[i].idx == full.domain_H_field_energy_i[i].idx);
-    CHECK(close(reduced.domain_H_field_energy_i[i].energy,
-                full.domain_H_field_energy_i[i].energy));
-    CHECK(close(reduced.domain_H_field_energy_i[i].participation_ratio,
-                full.domain_H_field_energy_i[i].participation_ratio));
+    CHECK(close(reduced.domain_H_field_energy_i[i].energy.value(),
+                full.domain_H_field_energy_i[i].energy.value()));
+    CHECK(close(reduced.domain_H_field_energy_i[i].participation_ratio.value(),
+                full.domain_H_field_energy_i[i].participation_ratio.value()));
   }
 
   const auto &full_port = full.lumped_port_vi.at(1);

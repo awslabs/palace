@@ -1630,6 +1630,55 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
       CHECK((Output(config).find(warning) != std::string::npos) ==
             (std::string(type) == "Electrostatic"));
     }
+
+    // Gain of the whole material is diagnosed apart from the stored energy of its RAW block
+    // (all PoleResidue terms). A RAW −0.5/(s + 1) compensated by a typed Debye 1/(1 + s)
+    // (τ = 1 s) is passive, so not gain, but has no available storage. Nearly coincident
+    // passive poles are not certified, which is neither gain nor nonpassivity. Neither is
+    // diagnosed for electrostatics, which uses the static permittivity.
+    const std::string gain = "has gain", nonpassive = "not passive on their own",
+                      uncertified = "could not be certified";
+    auto WithTerms = [&](const json &terms, const char *type)
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      config["Domains"]["Materials"][0]["Permittivity"]["Terms"] = terms;
+      return Output(config);
+    };
+    const json compensated = {
+        {{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 1.0e9}},
+        {{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", -0.5}}};
+    {
+      const auto out = WithTerms(compensated, "Driven");
+      CAPTURE(out);
+      CHECK(out.find(nonpassive) != std::string::npos);
+      CHECK(out.find("does not show gain") != std::string::npos);
+      CHECK(out.find(gain) == std::string::npos);
+      CHECK(out.find(uncertified) == std::string::npos);
+      CHECK(WithTerms(compensated, "Electrostatic").find(nonpassive) == std::string::npos);
+    }
+    {
+      json close = json::array();
+      for (int k = 0; k < 4; k++)
+      {
+        close.push_back(
+            {{"Type", "PoleResidue"}, {"Pole", -1.0 - k * 1.0e-9}, {"Residue", 1.0}});
+      }
+      const auto out = WithTerms(close, "Driven");
+      CAPTURE(out);
+      CHECK(out.find(uncertified) != std::string::npos);
+      CHECK(out.find("not a statement of gain") != std::string::npos);
+      CHECK(out.find(gain) == std::string::npos);
+      CHECK(out.find(nonpassive) == std::string::npos);
+    }
+    {
+      // Gain is reported as such, without a claim that the field solution is invalid.
+      const auto out = WithTerms(
+          {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", -1.0}}}, "Driven");
+      CAPTURE(out);
+      CHECK(out.find(gain) != std::string::npos);
+      CHECK(out.find("not physical") == std::string::npos);
+    }
   }
   SECTION("Adaptive circuit synthesis is accepted")
   {

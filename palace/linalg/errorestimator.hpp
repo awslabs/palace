@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -117,9 +118,9 @@ class BoundaryModeFluxErrorEstimator;
 // stored-energy permittivity W(ω) of each model (Re{ε} for a constant material): a
 // positive, energy-scaled recovery indicator, not a stored-energy error bound. W E is not a
 // displacement (εE, not WE, has a continuous normal component), so it is not recovered.
-// For a general PoleResidue model with W(ω) ≤ 0, the indicator falls back to ε∞ with a
-// warning. Without a frequency-dependent material, the established indicator above with
-// Re{ε} is unchanged.
+// A material without a stored electric energy (MaterialOperator::HasStoredElectricEnergy)
+// uses ε∞ instead, a numerical weight, with a warning. Without a frequency-dependent
+// material, the established indicator above with Re{ε} is unchanged.
 template <typename VecType = Vector>
 class GradFluxErrorEstimator
 {
@@ -149,7 +150,6 @@ private:
   ceed::Operator integ_op;
   CeedContextList integ_ctx;
   mutable double fd_omega = 0.0;
-  mutable std::vector<bool> fd_warned;
 
   // Temporary vectors for error estimation.
   mutable VecType E_gf, D, D_gf;
@@ -180,12 +180,11 @@ public:
   void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const
     requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same for complex fields at their real angular frequency ω, which is required: a
-  // frequency-dependent material uses ε(iω), and a constant one does not depend on ω. On
-  // the frequency-dependent route, a nonpositive or nonfinite Et (a general model with a
-  // negative stored energy) uses the energy norm of the recovered flux instead, with a
-  // warning.
-  void AddErrorIndicator(const VecType &E, double Et, double omega,
+  // The same for complex fields at their required real angular frequency ω. A constant
+  // material does not depend on ω. Et is empty exactly when the total field energy is not
+  // available (MaterialOperator::HasStoredElectricEnergy); the indicators are then
+  // normalized by the energy norm of the recovered flux, a numerical norm.
+  void AddErrorIndicator(const VecType &E, std::optional<double> Et, double omega,
                          ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
 };
@@ -255,10 +254,10 @@ public:
                          ErrorIndicator &indicator) const
     requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same for complex fields at their real angular frequency ω, which is required (see
-  // GradFluxErrorEstimator).
-  void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
-                         ErrorIndicator &indicator) const
+  // The same for complex fields at their required real angular frequency ω, with Et empty
+  // without a total field energy (see GradFluxErrorEstimator).
+  void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
+                         double omega, ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
 };
 
@@ -286,10 +285,10 @@ public:
                          ErrorIndicator &indicator) const
     requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same for complex fields at their real angular frequency ω, which is required (see
-  // GradFluxErrorEstimator).
-  void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
-                         ErrorIndicator &indicator) const
+  // The same for complex fields at their required real angular frequency ω, with Et empty
+  // without a total field energy (see GradFluxErrorEstimator).
+  void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
+                         double omega, ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
 };
 

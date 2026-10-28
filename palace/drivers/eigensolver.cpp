@@ -529,20 +529,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     for (int i = 0; i < num_report; i++)
     {
       const double omega = eigenvalues[i].imag();
-      const bool gain = permittivity::Contains(defects.gain, omega),
-                 negative_energy = permittivity::Contains(defects.negative_energy, omega);
-      if (gain || negative_energy)
+      if (permittivity::Contains(defects.gain, omega))
       {
-        Mpi::Warning(
-            "Eigenmode {:d} at {:.6g} GHz lies where the frequency-dependent "
-            "Permittivity of material {:d} has {}!\nIts PoleResidue terms are not "
-            "physical there, and neither is this mode.\n",
-            i + 1,
-            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
-                (2.0 * std::numbers::pi),
-            m + 1,
-            gain ? (negative_energy ? "gain and a negative stored electric energy" : "gain")
-                 : "a negative stored electric energy");
+        Mpi::Warning("Eigenmode {:d} at {:.6g} GHz lies where the frequency-dependent "
+                     "Permittivity of material {:d} has gain, a negative dissipated "
+                     "power!\nThe mode solves the model as given; a fit may only be meant "
+                     "for some frequencies.\n",
+                     i + 1,
+                     iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                         (2.0 * std::numbers::pi),
+                     m + 1);
       }
     }
   }

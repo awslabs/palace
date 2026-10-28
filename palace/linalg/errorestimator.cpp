@@ -7,6 +7,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -422,29 +423,23 @@ Vector RecoveredNorms(const Mesh &mesh, const ceed::Operator &integ_op, VecType 
   return IntegrateRealErrors(mesh, integ_op, F_gf, G_gf);
 }
 
-// The scale of the squared indicators normalized by the total energy, with the factor of
-// 1/2 in the energy. On the frequency-dependent route, a nonpositive or nonfinite energy
-// (possible for a general PoleResidue model with a negative stored energy) is replaced by
-// the energy norm of the recovered fluxes, so that the indicators stay positive and
-// comparable across samples. Without a frequency-dependent material, the scale is that of
-// the constant-material estimators, including for a zero field.
-double IndicatorScale(double Et, bool frequency_dependent,
-                      const std::function<double()> &recovered_energy, MPI_Comm comm)
+// The scale of the squared indicators normalized by the total energy Et, with the factor
+// of 1/2 in the energy, or 1 for a zero field. Without a physical total energy (a
+// frequency-dependent material without a stored electric energy,
+// MaterialOperator::HasStoredElectricEnergy), the indicators are normalized by the energy
+// norm of the recovered fluxes instead: a numerical norm, not a physical energy, which
+// keeps them positive and comparable across samples.
+double IndicatorScale(const std::optional<double> &Et, const MaterialOperator &mat_op,
+                      const std::function<double()> &recovered_energy)
 {
-  if (!frequency_dependent)
+  MFEM_VERIFY(Et.has_value() == mat_op.HasStoredElectricEnergy(),
+              "The error indicator normalization requires the total field energy exactly "
+              "when it is available (MaterialOperator::HasStoredElectricEnergy)!");
+  if (Et)
   {
-    return (Et > 0.0) ? 0.5 / Et : 1.0;
-  }
-  if (Et > 0.0 && std::isfinite(Et))
-  {
-    return 0.5 / Et;
+    return (*Et > 0.0) ? 0.5 / *Et : 1.0;
   }
   const double Er = recovered_energy();
-  Mpi::Warning(comm,
-               "Error indicator normalization: total field energy {:.3e} is not positive "
-               "(a frequency-dependent material with a negative stored energy?); using the "
-               "energy norm of the recovered fluxes, {:.3e}, instead!\n",
-               Et, Er);
   return (Er > 0.0) ? 0.5 / Er : 1.0;
 }
 
@@ -509,7 +504,6 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
                 return coeff_k;
               }()),
     integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
-    fd_warned(mat_op.NumFrequencyDependentPermittivityMaterials(), false),
     E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
 {
   E_gf.UseDevice(true);
@@ -520,6 +514,20 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
   {
     MFEM_VERIFY(!complex_route, "Real-valued flux error estimation does not support "
                                 "frequency-dependent permittivity!");
+  }
+  for (auto m : fd_materials)
+  {
+    if (!mat_op.HasStoredElectricEnergy(m))
+    {
+      // The same on every process: the status is that of the configured model.
+      Mpi::Warning(nd_fespace.GetComm(),
+                   "Material {:d} has no available stored electric energy ({}); its error "
+                   "indicator weight is ε∞ = {:.3e}, and the indicators are normalized by "
+                   "the energy norm of the recovered fluxes. These are numerical norms, "
+                   "not physical energies!\n",
+                   m + 1, mat_op.GetStoredElectricEnergyReason(m),
+                   mat_op.GetFrequencyDependentPermittivityHighFrequency(m));
+    }
   }
 
   // Construct the libCEED operator used for integrating the element-wise error. The
@@ -675,28 +683,15 @@ void GradFluxErrorEstimator<VecType>::SetFrequency(double omega) const
   }
   MFEM_VERIFY(omega > 0.0, "Error estimation for a frequency-dependent material requires "
                            "a positive frequency!");
-  // The positive stored-energy permittivity of each model weights the indicator. A
-  // general model with W(ω) ≤ 0 keeps the solve and its reported (signed) energy, and the
-  // indicator alone uses ε∞ > 0.
+  // The positive stored-energy permittivity W(ω) ≥ ε∞ > 0 of each model weights the
+  // indicator. A material without a stored electric energy uses ε∞ > 0 instead, a
+  // numerical weight (warned at construction).
   std::vector<double> W(mat_op.NumFrequencyDependentPermittivityMaterials(), 0.0);
   for (auto m : fd_materials)
   {
-    W[m] = mat_op.GetFrequencyDependentStoredEnergyPermittivity(m, omega);
-    if (W[m] <= 0.0)
-    {
-      const double eps_inf = mat_op.GetFrequencyDependentPermittivityHighFrequency(m);
-      if (!fd_warned[m])
-      {
-        Mpi::Warning(mat_op.GetMesh().GetComm(),
-                     "Material {:d} has a nonpositive stored-energy permittivity {:.3e} at "
-                     "ω = {:.3e} (a general PoleResidue model with a negative stored "
-                     "energy); the error indicator uses ε∞ = {:.3e} for it at this and any "
-                     "later such frequency!\n",
-                     m, W[m], omega, eps_inf);
-        fd_warned[m] = true;
-      }
-      W[m] = eps_inf;
-    }
+    W[m] = mat_op.HasStoredElectricEnergy(m)
+               ? mat_op.GetFrequencyDependentStoredEnergyPermittivity(m, omega)
+               : mat_op.GetFrequencyDependentPermittivityHighFrequency(m);
   }
   auto winv = mat_op.MapFrequencyDependentMaterials(
       linalg::MatrixPow(mat_op.GetPermittivityReal(), -1.0),
@@ -800,7 +795,8 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
 }
 
 template <typename VecType>
-void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double Et,
+void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E,
+                                                        std::optional<double> Et,
                                                         double omega,
                                                         ErrorIndicator &indicator) const
   requires std::is_same_v<VecType, ComplexVector>
@@ -808,9 +804,8 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
   auto estimates = ComputeEstimates(E, omega);
   const auto comm = nd_fespace.GetComm();
   linalg::Sqrt(estimates,
-               IndicatorScale(
-                   Et, !fd_materials.empty(),
-                   [&]() { return 0.5 * GlobalSum(RecoveredFluxNorms(), comm); }, comm));
+               IndicatorScale(Et, mat_op, [&]()
+                              { return 0.5 * GlobalSum(RecoveredFluxNorms(), comm); }));
   indicator.AddIndicator(estimates);
 }
 
@@ -1001,21 +996,20 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
 
 template <typename VecType>
 void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
-    const VecType &E, const VecType &B, double Et, double omega,
+    const VecType &E, const VecType &B, std::optional<double> Et, double omega,
     ErrorIndicator &indicator) const
   requires std::is_same_v<VecType, ComplexVector>
 {
   auto grad_estimates = grad_estimator.ComputeEstimates(E, omega);
   auto curl_estimates = curl_estimator.ComputeEstimates(B);
   const auto comm = grad_estimator.nd_fespace.GetComm();
-  const double scale = IndicatorScale(
-      Et, !grad_estimator.fd_materials.empty(),
-      [&]()
-      {
-        return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +
-                      GlobalSum(curl_estimator.RecoveredFluxNorms(), comm));
-      },
-      comm);
+  const double scale =
+      IndicatorScale(Et, grad_estimator.mat_op,
+                     [&]()
+                     {
+                       return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +
+                                     GlobalSum(curl_estimator.RecoveredFluxNorms(), comm));
+                     });
   AddFluxErrorIndicator(std::move(grad_estimates), curl_estimates, scale, indicator);
 }
 
@@ -1044,21 +1038,20 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
 
 template <typename VecType>
 void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
-    const VecType &E, const VecType &B, double Et, double omega,
+    const VecType &E, const VecType &B, std::optional<double> Et, double omega,
     ErrorIndicator &indicator) const
   requires std::is_same_v<VecType, ComplexVector>
 {
   auto grad_estimates = grad_estimator.ComputeEstimates(E, omega);
   auto curl_estimates = curl_estimator.ComputeEstimates(B);
   const auto comm = grad_estimator.nd_fespace.GetComm();
-  const double scale = IndicatorScale(
-      Et, !grad_estimator.fd_materials.empty(),
-      [&]()
-      {
-        return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +
-                      GlobalSum(curl_estimator.RecoveredFluxNorms(), comm));
-      },
-      comm);
+  const double scale =
+      IndicatorScale(Et, grad_estimator.mat_op,
+                     [&]()
+                     {
+                       return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +
+                                     GlobalSum(curl_estimator.RecoveredFluxNorms(), comm));
+                     });
   AddFluxErrorIndicator(std::move(grad_estimates), curl_estimates, scale, indicator);
 }
 

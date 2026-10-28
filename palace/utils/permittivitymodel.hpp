@@ -29,10 +29,15 @@ namespace palace::permittivity
 // Debye is a relaxation and Djordjevic-Sarkar a positive continuum of them; Lorentz and
 // Drude (a₀ = 0) are oscillators with b₁ = 0. For these, W is the only quadratic form of
 // the state for which the identity holds for every E, so the stored energy is that of the
-// physical model, and positive parameters make W and D nonnegative. A PoleResidue term is a
-// relaxation for a real pole and an oscillator for a conjugate pair. With b₁ ≠ 0 the stored
-// energy of a passive term is not unique: W + ½δẋ², with |δ| ≤ 2√(b₁(a₁b₀ − a₀b₁)), keeps D
-// nonnegative for the same χ. The W above is the midpoint of this interval.
+// physical model, and positive parameters make W and D nonnegative.
+//
+// PoleResidue terms are not given energies one at a time: the sum of termwise energies
+// depends on how a susceptibility is split into poles, and a negative residue alone does
+// not show gain. All PoleResidue terms of a material form one RAW block, whose stored
+// energy is its available storage (PreparedStorage, below). Within it, an exact zero pole
+// r/s is a current that stores no energy by itself, but it is not removed: in a coupled
+// fit, such as a Drude written as two raw poles, the block stores the kinetic energy of
+// the carriers.
 //
 
 // Pole-residue form of the terms other than Djordjevic-Sarkar, for the solver: real poles
@@ -51,10 +56,12 @@ std::complex<double> Susceptibility(const std::vector<config::PermittivityTermDa
 // χ(0), infinite for free carriers (Drude, or a PoleResidue pole at zero).
 double StaticSusceptibility(const std::vector<config::PermittivityTermData> &terms);
 
-// The stored electric energy of the polarization at real ω > 0, as a susceptibility: the
-// time-averaged stored energy of a field E e^{iωt} in a material with these terms is that
-// of a constant permittivity ε∞ + StoredEnergySusceptibility(terms, ω). For a relaxation
-// this is Re χ; an oscillator adds the kinetic energy of its motion.
+// The stored electric energy of the polarization of typed and Djordjevic-Sarkar terms at
+// real ω > 0, as a susceptibility: the time-averaged stored energy of a field E e^{iωt} in
+// a material with these terms is that of a constant permittivity ε∞ +
+// StoredEnergySusceptibility(terms, ω). For a relaxation this is Re χ; an oscillator adds
+// the kinetic energy of its motion. Errors for a PoleResidue term, which has no energy of
+// its own: use PreparedStorage for a material with one.
 double StoredEnergySusceptibility(const std::vector<config::PermittivityTermData> &terms,
                                   double omega);
 
@@ -240,16 +247,19 @@ void CheckTerms(double eps_inf, const std::vector<config::PermittivityTermData> 
 bool IsPassiveByConstruction(const std::vector<config::PermittivityTermData> &terms);
 
 // Frequency ranges ω ∈ [lower, upper] (upper possibly infinite, lower possibly zero) where
-// the model has gain, a negative dissipated power, or a negative stored electric energy
-// ε∞ + StoredEnergySusceptibility. Sampled on a logarithmic grid spanning the model's
+// the whole response of the material, all its terms together, has gain: a negative
+// dissipated power −Im χ(iω) < 0. Sampled on a logarithmic grid spanning the model's
 // rates, refined at every resonance on the scale of its linewidth, with bisected endpoints.
+// This does not depend on the stored energy, nor on the status of the RAW block: a RAW
+// block which is not passive alone can be compensated by the other terms. ε∞ > 0 does not
+// enter the dissipated power.
 struct FrequencyInterval
 {
   double lower, upper;
 };
 struct ModelDefects
 {
-  std::vector<FrequencyInterval> gain, negative_energy;
+  std::vector<FrequencyInterval> gain;
 };
 ModelDefects FindDefects(double eps_inf,
                          const std::vector<config::PermittivityTermData> &terms);

@@ -88,10 +88,13 @@ namespace
 
 // Surface charge Re{ε} and Im{ε} and stored-energy permittivity tables at the real angular
 // frequency ω > 0, or the constant tables (ε∞ for a frequency-dependent material) at ω = 0.
+// Without a stored electric energy (MaterialOperator::HasStoredElectricEnergy), the
+// stored-energy table keeps ε∞ and the electric energy slice is never registered.
 std::array<std::vector<CeedIntScalar>, 3> MaterialTables(const MaterialOperator &mat_op,
                                                          double omega)
 {
   const bool fd = (omega > 0.0) && mat_op.HasFrequencyDependentPermittivity();
+  const bool fd_w = fd && mat_op.HasStoredElectricEnergy();
   MaterialPropertyCoefficient eps_r(mat_op.GetAttributeToMaterial(),
                                     fd ? mat_op.EvaluatePermittivityReal(omega)
                                        : mat_op.GetPermittivityReal());
@@ -99,8 +102,8 @@ std::array<std::vector<CeedIntScalar>, 3> MaterialTables(const MaterialOperator 
                                     fd ? mat_op.EvaluatePermittivityImag(omega)
                                        : mat_op.GetPermittivityImag());
   MaterialPropertyCoefficient eps_w(mat_op.GetAttributeToMaterial(),
-                                    fd ? mat_op.EvaluateStoredEnergyPermittivity(omega)
-                                       : mat_op.GetPermittivityReal());
+                                    fd_w ? mat_op.EvaluateStoredEnergyPermittivity(omega)
+                                         : mat_op.GetPermittivityReal());
   return {ceed::PopulateCoefficientContext(3, &eps_r),
           ceed::PopulateCoefficientContext(3, &eps_i),
           ceed::PopulateCoefficientContext(3, &eps_w)};
@@ -207,6 +210,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
   const auto invmu_ctx = ceed::PopulateCoefficientContext(3, &invmu);
   const auto tables = MaterialTables(*mat_op, 0.0);
   material_frequency_dependent = mat_op->HasFrequencyDependentPermittivity();
+  stored_electric_energy = mat_op->HasStoredElectricEnergy();
 
   for (const auto &item : routes)
   {
@@ -455,6 +459,10 @@ BoundaryDerivedFieldBundle::RegisteredSlice(PointFieldKind kind, bool imaginary_
                                    slice != Slice::POYNTING),
               "Quadratic boundary-derived fields have one combined complex slice, not "
               "an imaginary-phase slice!");
+  MFEM_VERIFY(
+      slice != Slice::ENERGY_E || stored_electric_energy,
+      "The boundary electric energy density requires the stored electric energy of "
+      "every frequency-dependent material (MaterialOperator::HasStoredElectricEnergy)!");
   const int points = trace_cache->NumPoints();
   return {SliceOffset(slice, points, batched_complex, imaginary_phase),
           SliceNumComp(slice) * points, SliceNumComp(slice)};
