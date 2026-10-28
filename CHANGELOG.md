@@ -354,6 +354,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`NCMesh::GetRootTransforms`), used to identify the interior boundary sides of
     nonconforming meshes.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Added an MFEM patch for [mfem/mfem#5610](https://github.com/mfem/mfem/pull/5610),
+    which keeps host hypre matrix products from reading a device-resident row cache.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
 
 ## [0.18.1] - 2026-09-21
 
