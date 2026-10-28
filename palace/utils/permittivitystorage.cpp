@@ -1158,35 +1158,38 @@ std::optional<double> PreparedStorage::RawStoredEnergySusceptibility(double omeg
   {
     return 0.0;
   }
-  // Evaluated in the unscaled variables, without forming v = ω/Ω (which can overflow for
-  // finite ω) or a product that can overflow or underflow before the final result. With
-  // p = Ωλ (exact, from the checked scaling), the states are z = (iv − A)⁻¹B = Ωζ: ζ =
-  // 1/(iω − p) for a real pole, and ζ = ((iω − Re p), Im p)/((iω − p)(iω − p̄)) for a pair,
-  // divided by one factor at a time. With ζ̃ = 2ᵉζ, 2ᵉ ~ max(ω, Ω), every ζ̃ is of the size
-  // of the normalized states, and the energy κ‖Hᵀz‖² = 2ᴱ‖Hᵀζ̃‖², E = log₂(κΩ²) − 2e. The
-  // factor 2ᴱ is applied before squaring (as 2^⌊E/2⌋, and the remaining 2^(E mod 2) after),
-  // so that the energy is finite (possibly underflowing to zero) for any finite ω, and
-  // infinite only at an exact lossless resonance or if the energy itself overflows.
+  // Evaluated in variables scaled by the frequency, without forming v = ω/Ω (which can
+  // overflow for finite ω), a sum such as ω + Im p (which can overflow), or a product that
+  // can overflow or underflow before the final result. With 2ᵉ ~ max(ω, Ω), the scaled
+  // frequency w = ω/2ᵉ < 2 and poles p/2ᵉ = (Ω/2ᵉ)λ = ã + ib̃ are exact powers-of-two
+  // rescalings, at most of order one. The states are z = (iv − A)⁻¹B = (Ω/2ᵉ)ζ̃, with ζ̃ =
+  // 1/(iw − ã) for a real pole, and ζ̃ = ((iw − ã), b̃)/((iw − ã − ib̃)(iw − ã + ib̃)) for a
+  // pair, divided by one factor at a time. Then the energy κ‖Hᵀz‖² = 2ᴱ‖Hᵀζ̃‖², E =
+  // log₂(κΩ²) − 2e, with the factor 2ᴱ applied before squaring (as 2^⌊E/2⌋, and the
+  // remaining 2^(E mod 2) after). The energy is thus finite (possibly underflowing to zero)
+  // for any finite ω, and infinite only at an exact lossless resonance or if the energy
+  // itself overflows.
   const int ek = std::ilogb(certificate.amplitude_scale),
             em = std::ilogb(certificate.rate_scale),
             e = std::ilogb(std::max(omega, certificate.rate_scale)),
             E = ek + 2 * em - 2 * e, h = (E >= 0) ? E / 2 : -((1 - E) / 2), rem = E - 2 * h;
-  const double sigma = std::ldexp(1.0, e);
+  const double w = std::ldexp(omega, -e);
   const int n = certificate.states;
   std::vector<Complex> zeta(n);
   for (std::size_t b = 0, i = 0; b < blocks.size(); b++)
   {
-    const double pr = std::ldexp(blocks[b].re, em), pi = std::ldexp(blocks[b].im, em);
-    if (pi > 0.0)
+    const double re = std::ldexp(blocks[b].re, em - e),
+                 im = std::ldexp(blocks[b].im, em - e);
+    if (blocks[b].im > 0.0)
     {
-      const Complex lo(-pr, omega - pi), hi(-pr, omega + pi), last = sigma / hi;
-      zeta[i] = (Complex(-pr, omega) / lo) * last;
-      zeta[i + 1] = (pi / lo) * last;
+      const Complex lo(-re, w - im), hi(-re, w + im);
+      zeta[i] = (Complex(-re, w) / lo) / hi;
+      zeta[i + 1] = (im / lo) / hi;
       i += 2;
     }
     else
     {
-      zeta[i] = sigma / Complex(-pr, omega);
+      zeta[i] = 1.0 / Complex(-re, w);
       i += 1;
     }
   }
@@ -1205,9 +1208,9 @@ std::optional<double> PreparedStorage::RawStoredEnergySusceptibility(double omeg
   for (const auto &[beta, strength] : lossless)
   {
     // Normalized ½ s (1/(β − v)² + 1/(β + v)²) = (v² + β²)/((β − v)²(β + v)²) s, with
-    // 1/(β ∓ v) = Ω 2⁻ᵉ (2ᵉ/(B ∓ ω)), B = Ωβ.
-    const double B = std::ldexp(beta, em), m = std::ldexp(sigma / (B - omega), h),
-                 p = std::ldexp(sigma / (B + omega), h);
+    // 1/(β ∓ v) = (Ω/2ᵉ)/(b̃ ∓ w), b̃ = (Ω/2ᵉ)β.
+    const double bt = std::ldexp(beta, em - e), m = std::ldexp(1.0 / (bt - w), h),
+                 p = std::ldexp(1.0 / (bt + w), h);
     energy += 0.5 * strength * (m * m + p * p);
   }
   return std::ldexp(energy, rem);

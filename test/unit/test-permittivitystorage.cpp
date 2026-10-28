@@ -589,6 +589,25 @@ TEST_CASE("RAW storage is finite at extreme frequencies", "[permittivitystorage]
   // Subnormal: 2⁻¹⁰³⁶ has 38 significant bits.
   CHECK_THAT(Finite(Pair(big), std::ldexp(1.0, 330)),
              Catch::Matchers::WithinRel(std::ldexp(1.0, -1036), 1.0e-10));
+
+  // The same models at the largest rate Ω = 2¹⁰²³, where ω + Ω overflows for ω ≥ Ω: the
+  // Lorentz pair stores 1.2 at v = 1, and the lossless pole p = iΩ, r = −iΩ/2 stores
+  // (v² + 1)/(1 − v²)².
+  const double top = std::ldexp(1.0, 1023);
+  const auto pair = Poles({{C(-top, top), C(0.0, -top)}});
+  const auto oscillator = Poles({{C(0.0, top), C(0.0, -0.5 * top)}});
+  for (const double v : {0.0, 0.3, 1.0, 1.5, std::numeric_limits<double>::max() / top})
+  {
+    CAPTURE(v);
+    CHECK_THAT(Finite(pair, v * top), Catch::Matchers::WithinRel(Exact(1.0, v), 1.0e-12));
+    if (v != 1.0)
+    {
+      CHECK_THAT(Finite(oscillator, v * top),
+                 Catch::Matchers::WithinRel((v * v + 1.0) / ((1.0 - v * v) * (1.0 - v * v)),
+                                            1.0e-12));
+    }
+  }
+  CHECK_THAT(Finite(pair, top), Catch::Matchers::WithinRel(1.2, 1.0e-14));
 }
 
 TEST_CASE("A RAW block compensated by other terms is not material gain",
