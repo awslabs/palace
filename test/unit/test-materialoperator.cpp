@@ -6,6 +6,7 @@
 #include <complex>
 #include <initializer_list>
 #include <limits>
+#include <list>
 #include <numbers>
 #include <utility>
 #include <vector>
@@ -17,6 +18,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fem/bilinearform.hpp"
+#include "linalg/nleps.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
@@ -1262,6 +1264,132 @@ TEST_CASE("Absorbing boundaries next to dispersive materials",
     const double norm = linalg::Norml2(Mpi::World(), y_constant);
     y_dispersive -= y_constant;
     CHECK(linalg::Norml2(Mpi::World(), y_dispersive) <= 1.0e-12 * norm);
+  }
+}
+
+TEST_CASE("Second-order absorbing boundary pole terms",
+          "[materialoperator][Serial][Parallel]")
+{
+  // The pole terms g(λ)·M which the NLEPS HYBRID seed freezes must be the whole
+  // second-order absorbing boundary term of A2(λ), next to a damped Lorentz medium (face
+  // x = 0) and next to vacuum (face x = 2): A2 with the second-order condition, less A2
+  // with the first-order one, at complex ω. Dropping the terms next to the medium, or
+  // using the law -0.5/λ of a constant material there, fails.
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
+  config::MaterialData dispersive, vacuum;
+  dispersive.attributes = {1};
+  dispersive.epsilon_r.s = {2.0, 2.0, 2.0};
+  dispersive.permittivity_terms.push_back(config::LorentzData{0.7, 3.0, 0.4});
+  vacuum.attributes = {2};
+  config::DomainData domains;
+  domains.materials = {dispersive, vacuum};
+
+  const std::complex<double> omega(1.3, 0.2),
+      lambda = std::complex<double>(0.0, 1.0) * omega;
+  std::list<std::vector<std::unique_ptr<Mesh>>> meshes;
+  auto Operators = [&](int order)
+  {
+    config::BoundaryData boundaries;
+    boundaries.farfield.attributes = {3, 5};
+    boundaries.farfield.order = order;
+    // The operator references the mesh, which must outlive it.
+    auto &mesh = meshes.emplace_back(MakeMesh());
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries,
+                                           ProblemType::EIGENMODE, units, mesh);
+  };
+  auto first = Operators(1), second = Operators(2);
+  CHECK(first->GetFarfieldPoleTerms(Operator::DIAG_ZERO).empty());
+  auto terms = second->GetFarfieldPoleTerms(Operator::DIAG_ZERO);
+  REQUIRE(terms.size() == 2);
+
+  ComplexVector x(second->GetNDSpace().GetTrueVSize()), y(x.Size()), z(x.Size()),
+      t(x.Size());
+  for (auto *v : {&x, &y, &z, &t})
+  {
+    v->UseDevice(true);
+  }
+  linalg::SetRandom(Mpi::World(), x);
+  second->GetExtraSystemMatrix(omega, Operator::DIAG_ZERO)->Mult(x, y);
+  first->GetExtraSystemMatrix(omega, Operator::DIAG_ZERO)->AddMult(x, y, -1.0);
+  z = 0.0;
+  for (const auto &[M, g] : terms)
+  {
+    M->Mult(x, t);
+    z.Add(g(lambda), t);
+  }
+  const double norm = linalg::Norml2(Mpi::World(), y);
+  REQUIRE(norm > 0.0);
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+
+  // The HYBRID seed pencil with the terms frozen at the target, as the eigenmode solver
+  // builds it: away from the interpolation nodes, it is the interpolant of A2 with the
+  // first-order condition plus the pole terms at the target, at any λ.
+  const double target = 1.0, target_max = 2.0;
+  auto Seed = [&](SpaceOperator &space_op, bool freeze)
+  {
+    auto interp = std::make_unique<NewtonInterpolationOperator>(
+        [&space_op](std::complex<double> l)
+        {
+          return space_op.GetExtraSystemMatrix(l / std::complex<double>(0.0, 1.0),
+                                               Operator::DIAG_ZERO);
+        },
+        static_cast<int>(x.Size()));
+    interp->Interpolate(std::complex<double>(0.0, target),
+                        std::complex<double>(0.0, target_max));
+    for (auto &[M, g] : freeze ? space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO)
+                               : std::vector<SpaceOperator::FarfieldPoleTerm>{})
+    {
+      interp->AddFrozenPole(std::move(M), g, std::complex<double>(0.0, target));
+    }
+    return interp;
+  };
+  auto ApplySeed = [&](const NewtonInterpolationOperator &interp, std::complex<double> l,
+                       ComplexVector &out)
+  {
+    out = 0.0;
+    std::complex<double> lk = 1.0;
+    for (int order = 0; order < 3; order++, lk *= l)
+    {
+      interp.AddMult(order, x, out, lk);
+    }
+  };
+  const auto seed1 = Seed(*first, false), seed2 = Seed(*second, true);
+  for (const std::complex<double> l :
+       {std::complex<double>(0.05, 1.37), std::complex<double>(-0.1, 2.6)})
+  {
+    CAPTURE(l);
+    ApplySeed(*seed2, l, y);
+    ApplySeed(*seed1, l, z);
+    for (const auto &[M, g] : terms)
+    {
+      M->Mult(x, t);
+      z.Add(g(std::complex<double>(0.0, target)), t);
+    }
+    const double seed_norm = linalg::Norml2(Mpi::World(), y);
+    REQUIRE(seed_norm > 0.0);
+    z -= y;
+    CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-10 * seed_norm);
   }
 }
 

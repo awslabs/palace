@@ -119,22 +119,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
     interp->Interpolate(1i * target, 1i * target_max);
     // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield
-    // ABC contributes a pole term f(λ)·M_ff to A2(λ), with f(λ) = -0.5/λ, that a
-    // polynomial (K' + λC' + λ²M') seed cannot fit accurately. AddFrozenPole removes the
-    // pole's interpolated contribution and re-adds it frozen at the target into the
-    // K-block. The freeze is deliberately unconditional (no DetermineFrozen): the fit's
-    // pointwise window error is small (the pole at λ = 0 sits outside the window), but its
-    // curvature term injects a fictitious rank-deficient λ² contribution into the seed's
-    // M-block that displaces spurious roots into the unphysical half-plane — the failure
-    // mode is structural, not a pointwise approximation error, so the pointwise metric
-    // must not be allowed to choose the fit here.
-    auto M_ff =
-        space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    if (M_ff)
+    // ABC contributes pole terms g(λ)·M to A2(λ), with g(λ) = -0.5/λ next to constant
+    // materials and 0.5i/(λ r_k(-iλ)) next to frequency-dependent material k, that a
+    // polynomial (K' + λC' + λ²M') seed cannot fit accurately. AddFrozenPole removes each
+    // term's interpolated contribution and re-adds it frozen at the target into the
+    // K-block: next to a frequency-dependent material, the material factor 1/r_k is frozen
+    // with the pole, as the seed has no separate representation of it. The freeze is
+    // deliberately unconditional (no DetermineFrozen): the fit's pointwise window error is
+    // small (the pole at λ = 0 sits outside the window), but its curvature term injects a
+    // fictitious rank-deficient λ² contribution into the seed's M-block that displaces
+    // spurious roots into the unphysical half-plane — the failure mode is structural, not a
+    // pointwise approximation error, so the pointwise metric must not be allowed to choose
+    // the fit here.
+    for (auto &[M_ff, g] : space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO))
     {
-      interp->AddFrozenPole(
-          std::move(M_ff), [](std::complex<double> lambda) { return -0.5 / lambda; },
-          1i * target);
+      interp->AddFrozenPole(std::move(M_ff), g, 1i * target);
     }
     // Fit-or-freeze seed for rational impedance boundaries. Each boundary contributes
     // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ). The polynomial part

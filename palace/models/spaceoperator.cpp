@@ -1050,6 +1050,32 @@ SpaceOperator::GetFarfieldDispersiveCurlCurlMatrix(std::size_t k,
   return M_op;
 }
 
+std::vector<SpaceOperator::FarfieldPoleTerm>
+SpaceOperator::GetFarfieldPoleTerms(Operator::DiagonalPolicy diag_policy)
+{
+  // A2(ω) holds i·(0.5/ω)·M_ff (real slot) and i·(0.5/ω)/r_k(ω)·M_k, with M_k stored as
+  // i·M_k (imaginary slot), so with ω = -iλ the scalars are -0.5/λ and 0.5/(ω r_k(ω)).
+  std::vector<FarfieldPoleTerm> terms;
+  if (auto M_ff = GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(diag_policy))
+  {
+    terms.push_back(
+        {std::move(M_ff), [](std::complex<double> lambda) { return -0.5 / lambda; }});
+  }
+  for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+  {
+    if (auto M_k = GetFarfieldDispersiveCurlCurlMatrix(k, diag_policy))
+    {
+      terms.push_back({std::move(M_k), [this, k](std::complex<double> lambda)
+                       {
+                         const std::complex<double> omega =
+                             lambda / std::complex<double>(0.0, 1.0);
+                         return 0.5 / (omega * farfield_op.GetDispersiveScale(k, omega));
+                       }});
+    }
+  }
+  return terms;
+}
+
 template <OperatorType OperType>
 std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
     int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)

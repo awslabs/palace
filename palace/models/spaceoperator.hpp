@@ -6,6 +6,7 @@
 
 #include <array>
 #include <complex>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -349,6 +350,20 @@ public:
   GetFarfieldDispersiveDampingMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
   std::unique_ptr<ComplexOperator>
   GetFarfieldDispersiveCurlCurlMatrix(std::size_t k, Operator::DiagonalPolicy diag_policy);
+
+  // The terms g(λ)·M of A2(λ), λ = iω, of the second-order absorbing boundaries, which have
+  // a pole at λ = 0: g(λ) = -0.5/λ on the real slot for the boundaries next to no
+  // frequency-dependent material, and g(λ) = 0.5i/(λ r_k(-iλ)) on the imaginary slot for
+  // those next to frequency-dependent material k (see GetFarfieldDispersiveCurlCurlMatrix).
+  // Together they are the whole second-order term, and none for a first-order boundary
+  // condition. Used by the NLEPS HYBRID seed, whose polynomial pencil cannot represent the
+  // pole.
+  struct FarfieldPoleTerm
+  {
+    std::unique_ptr<ComplexOperator> M;
+    std::function<std::complex<double>(std::complex<double>)> g;
+  };
+  std::vector<FarfieldPoleTerm> GetFarfieldPoleTerms(Operator::DiagonalPolicy diag_policy);
   const auto &GetFarfieldOp() const { return farfield_op; }
 
   // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
