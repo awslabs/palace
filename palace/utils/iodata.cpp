@@ -297,6 +297,11 @@ void IoData::WarnPermittivityModelDefects() const
 {
   // Typed permittivity terms are passive by construction. A PoleResidue term may not be,
   // which is allowed (a fit may only be meant for the requested frequencies), but warned.
+  // Magnetostatics does not use the permittivity, so there is nothing to warn about.
+  if (problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    return;
+  }
   std::optional<std::pair<double, double>> band;  // GHz
   switch (problem.type)
   {
@@ -315,7 +320,6 @@ void IoData::WarnPermittivityModelDefects() const
       band = {solver.boundary_mode.freq, solver.boundary_mode.freq};
       break;
     case ProblemType::ELECTROSTATIC:
-    case ProblemType::MAGNETOSTATIC:
       band = {0.0, 0.0};
       break;
     default:

@@ -5,12 +5,14 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <iterator>
 #include <numbers>
 #include <set>
 #include <string>
 #include <variant>
 #include <vector>
+#include <unistd.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -1592,6 +1594,41 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
       auto config = MakeConfig();
       config["Problem"]["Type"] = type;
       CHECK_NOTHROW(IoData(config, false));
+    }
+  }
+  SECTION("Only problems which use the permittivity warn about its defects")
+  {
+    // A PoleResidue term with gain. Electrostatics uses its static limit and warns;
+    // magnetostatics does not use the permittivity and does not warn.
+    auto Output = [](const json &config)
+    {
+      std::fflush(stdout);
+      std::FILE *tmp = std::tmpfile();
+      REQUIRE(tmp);
+      const int saved = dup(fileno(stdout));
+      dup2(fileno(tmp), fileno(stdout));
+      IoData iodata(config, false);
+      std::fflush(stdout);
+      dup2(saved, fileno(stdout));
+      close(saved);
+      std::rewind(tmp);
+      std::string out;
+      for (int c; (c = std::fgetc(tmp)) != EOF;)
+      {
+        out.push_back(static_cast<char>(c));
+      }
+      std::fclose(tmp);
+      return out;
+    };
+    const std::string warning = "frequency-dependent Permittivity of material 1";
+    for (const auto *type : {"Electrostatic", "Magnetostatic"})
+    {
+      CAPTURE(type);
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      config["Domains"]["Materials"][0]["Permittivity"]["Terms"][0]["Residue"] = -1.0;
+      CHECK((Output(config).find(warning) != std::string::npos) ==
+            (std::string(type) == "Electrostatic"));
     }
   }
   SECTION("Adaptive circuit synthesis is accepted")
