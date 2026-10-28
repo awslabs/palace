@@ -376,12 +376,15 @@ void IoData::WarnPermittivityModelDefects() const
       continue;
     }
     // The status of the RAW block is a property of the configured model. The solver
-    // prepares its own in nondimensional units, which decides the omitted outputs.
+    // prepares its own in nondimensional units, for the materials on its mesh, which
+    // decides the omitted outputs and lists them; this diagnosis can only state the
+    // condition.
     const permittivity::PreparedStorage storage(material.permittivity_terms);
     const auto consequence =
-        "It has no available stored electric energy: the electric energy of regions with "
-        "this material, and the outputs normalized by it, are not reported. The field "
-        "solve and other outputs are unaffected.";
+        "If this material is on the mesh and its storage is also unavailable after "
+        "nondimensionalization, Palace does not report the electric energy of the regions "
+        "with it, nor the outputs normalized by it; the runtime warning lists the actual "
+        "omissions. The field solve is unaffected.";
     switch (storage.Status())
     {
       case permittivity::RawStorageStatus::CheckedAvailable:
@@ -397,7 +400,8 @@ void IoData::WarnPermittivityModelDefects() const
         Mpi::Warning("The available stored energy of the PoleResidue terms of the "
                      "frequency-dependent Permittivity of material {:d} (attributes {}) "
                      "could not be certified in double precision: {}.\nThis is not a "
-                     "statement of gain or of nonpassivity. {}\n",
+                     "statement of gain, of nonpassivity, or that the material stores no "
+                     "energy. {}\n",
                      i + 1, material.attributes, storage.Reason(), consequence);
         break;
     }

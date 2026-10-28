@@ -1653,6 +1653,9 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
       CAPTURE(out);
       CHECK(out.find(nonpassive) != std::string::npos);
       CHECK(out.find("does not show gain") != std::string::npos);
+      // The runtime owns the actual omissions: the configuration can only state them as
+      // conditional on the material being on the mesh.
+      CHECK(out.find("If this material is on the mesh") != std::string::npos);
       CHECK(out.find(gain) == std::string::npos);
       CHECK(out.find(uncertified) == std::string::npos);
       CHECK(WithTerms(compensated, "Electrostatic").find(nonpassive) == std::string::npos);
@@ -1668,6 +1671,7 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
       CAPTURE(out);
       CHECK(out.find(uncertified) != std::string::npos);
       CHECK(out.find("not a statement of gain") != std::string::npos);
+      CHECK(out.find("If this material is on the mesh") != std::string::npos);
       CHECK(out.find(gain) == std::string::npos);
       CHECK(out.find(nonpassive) == std::string::npos);
     }

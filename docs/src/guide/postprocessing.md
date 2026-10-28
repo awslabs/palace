@@ -173,8 +173,8 @@ U_m = \frac{1}{2} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
 
 Here ``\bm{W}=\operatorname{Re}\bm{\epsilon}`` for constant materials, while a
 frequency-dependent model supplies its stored-energy weight, which includes polarization.
-Without a stored electric energy of a frequency-dependent material, ``U_e`` is not written
-(see [the model guide](model.md)).
+When *Palace* cannot report the stored electric energy of a frequency-dependent material
+on the mesh, ``U_e`` is not written (see [the model guide](model.md)).
 Electric flux and charge still use the complete complex ``\bm{\epsilon}(i\omega)``,
 not ``\bm{W}``.
 

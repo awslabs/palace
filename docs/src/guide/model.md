@@ -135,13 +135,16 @@ energies of their models. An exact zero pole ``r/s`` alone is a current and stor
 energy, but in a fit together with other poles, such as a Drude written as two
 `PoleResidue` terms, the block stores the kinetic energy of the carriers.
 
-The available storage exists only for a block which is passive by itself, and is computed
-once per material in double precision, with a numerical check of its defining equations.
-If the block alone is shown not to be passive (it may still be compensated by the typed
-terms of the material, which is not gain), or if the check fails in double precision (for
-example for nearly coincident poles), the material has no stored electric energy. *Palace*
-warns about each case separately; neither is a statement that the material has gain, and
-neither changes the field solve.
+The available storage is defined only for a block which is passive by itself. *Palace*
+computes it once per material in double precision, as a checked numerical approximation:
+residual checks of its defining equations accept it, but they do not bound the error of
+the energy itself, nor prove that it is the exact minimum for the given fit. If the block
+alone is shown not to be passive (it may still be compensated by the typed terms of the
+material, which is not gain), or if the check fails in double precision (for example for
+nearly coincident poles), *Palace* cannot report a stored electric energy for the
+material under this convention. A failed check does not mean that the material stores no
+energy. *Palace* warns about each case separately when it reads the configuration; neither
+is a statement that the material has gain, and neither changes the field solve.
 
 The object form requires scalar permittivity and cannot be combined with `LossTan`;
 ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
@@ -176,8 +179,9 @@ slower convergence of magnetic-field reconstruction and reduces to
 an approximation evaluated at the real frequency, not an exact complex-frequency energy
 identity.
 
-For a material without a stored electric energy (see above), *Palace* does not report a
-value in its place. It omits, for the whole simulation and with a warning: the total
+For a material on the mesh whose stored electric energy *Palace* cannot report (see
+above), it does not report a value in its place. It omits, for the whole simulation and
+with a warning that lists the actual omissions: the total
 electric energy ``E_\mathrm{elec}`` and the electric participations in `domain-E.csv`, the
 electric energy of each postprocessing domain that contains the material, the ``U_e``
 field, and the outputs normalized by ``U``: `surface-Q.csv`, `port-Q.csv`, and
@@ -203,8 +207,8 @@ materials. The wave number retains the mode's complex frequency.
 
 With frequency-dependent materials, the electric flux estimator recovers the complex
 physical displacement ``\mathbf{D}=\epsilon(i\omega)\mathbf{E}`` and weights its
-residual by the inverse stored-energy tensor ``W^{-1}(\omega)``. For a material without a
-stored electric energy, the indicator uses ``\epsilon_\infty`` in place of ``W`` and is
+residual by the inverse stored-energy tensor ``W^{-1}(\omega)``. For a material whose
+stored electric energy *Palace* cannot report, the indicator uses ``\epsilon_\infty`` in place of ``W`` and is
 normalized by the energy norm of the recovered fluxes in place of the total field energy,
 with a warning. These are numerical norms, which keep adaptive refinement usable; they are
 not physical energies and do not validate the physics of a fit outside its useful band.
