@@ -78,12 +78,27 @@ double DissipationSusceptibility(const std::vector<config::PermittivityTermData>
 // 0.8675444679663243 as a RAW block. For a single Drude, Debye, or Lorentz section the two
 // agree.
 //
-// The available storage is evaluated as κ‖Hᵀ(iω/Ω − A)⁻¹B‖² (plus the fixed energies of
-// exact lossless resonances), with X = HHᵀ the minimal solution of the positive-real
-// (Kalman-Yakubovich-Popov) equations of a minimal realization (A, B, C, D) of Y(Ωu)/(κΩ),
-// from the outer spectral factor of Y(u) + Y(−u). It is nonnegative by construction. The
-// realization, factor, and its certificate are computed once; each frequency costs O(n²)
-// for n states. Ordinary conductivity and ε∞ are not part of the RAW block.
+// The storage is evaluated as κ‖Hᵀ(iω/Ω − A)⁻¹B‖² (plus the fixed energies of exact
+// lossless resonances), for a minimal realization (A, B, C, D) of Y(Ωu)/(κΩ) and X = HHᵀ
+// computed from the outer spectral factor of Y(u) + Y(−u) by the Lyapunov equation of its
+// residues. What holds when:
+//
+// * Unconditionally, every finite evaluated value is a squared norm, so nonnegative.
+// * If the computed identities (the positive-real or Kalman-Yakubovich-Popov equations, and
+//   the outer allocation of the spectral zeros) held exactly, X would be a passive storage
+//   of Y and the minimal one, the available storage.
+// * CheckedAvailable says that this outer-factor storage approximation passed the
+//   numerical checks of RawStorageCertificate, each at most PreparedStorage::tolerance.
+//   They are scaled residuals of the identities, not one perturbation of (A, B, C, D) that
+//   makes them all exact; they do not bound the error of the energy itself, nor prove
+//   passivity or minimality for the given χ_raw. The available storage is ill-conditioned
+//   near a spectral zero on the imaginary axis (a double zero, whose computed split pair is
+//   projected onto the axis) and for a nearly singular X (nearly coincident poles, whose
+//   trailing pivots within rounding are dropped), where an energy error well above the
+//   residuals is possible.
+//
+// The realization, factor, and checks are computed once; each frequency costs O(n²) for n
+// states. Ordinary conductivity and ε∞ are not part of the RAW block.
 //
 // Status of the RAW block. The whole material may be passive even when the RAW block alone
 // is not (it is compensated by typed or Djordjevic-Sarkar terms): NonpassiveRaw is not a
@@ -91,7 +106,8 @@ double DissipationSusceptibility(const std::vector<config::PermittivityTermData>
 // all. In both cases the RAW block has no stored energy under this convention.
 enum class RawStorageStatus
 {
-  // No PoleResidue terms, or the available storage of the RAW block passed its checks.
+  // No PoleResidue terms, or the outer-factor storage of the RAW block passed its numerical
+  // checks.
   CheckedAvailable,
 
   // The RAW block alone is demonstrably not passive, beyond the resolution
@@ -99,16 +115,18 @@ enum class RawStorageStatus
   // conductance, an invalid lossless residue, or a sampled frequency of negative Re Y(iω).
   NonpassiveRaw,
 
-  // The certificate failed in double precision, for example for nearly coincident poles,
+  // The checks failed in double precision (for example for nearly coincident poles), or the
+  // block is outside the range of exact power-of-two scaling or overflows when aggregated,
   // and the RAW block was not demonstrated to be nonpassive either.
   NumericalUnresolved
 };
 
 // Diagnostics of the preparation of the RAW block, in the scaled variables u = s/Ω and
-// χ/κ. Residuals are componentwise backward errors, relative to the rounding scale of each
-// entry (|A|ᵀ|H||H|ᵀ + |H||H|ᵀ|A| + |L|ᵀ|L| and similar), so that a large fast state
-// cannot hide an inaccurate slow state. They are the relative perturbations of the data for
-// which X = HHᵀ is an exact storage; they are numerical evidence, not interval proofs.
+// χ/κ. The matrix residuals are blockwise: for each pair of state blocks (a real pole, or a
+// conjugate pair as one mode), the largest residual entry relative to the largest entry of
+// its rounding scale (|A|ᵀ|H||H|ᵀ + |H||H|ᵀ|A| + |L|ᵀ|L| and similar), so that a large fast
+// state cannot hide an inaccurate slow state. They are numerical evidence that the
+// identities hold to rounding, not a backward error of the data or an interval proof.
 struct RawStorageCertificate
 {
   // Stable real states n, exact lossless (Re p = 0) oscillators, and finite zeros of the
@@ -130,8 +148,9 @@ struct RawStorageCertificate
   // Smallest pivot of the diagonally pivoted Cholesky factorization of the diagonally
   // equilibrated storage matrix (one is perfectly conditioned), and the number of trailing
   // pivots within the rounding of the factorization, 64nε, whose remainder (bounded by
-  // that) was dropped: a bounded perturbation, after which every residual is of the actual
-  // factor. Positive definite when zeroed_pivots = 0 (min_pivot is then positive).
+  // that) was dropped: a bounded perturbation of X, after which every residual is of the
+  // actual factor, but whose result is then not the exact minimum. Positive definite when
+  // zeroed_pivots = 0 (min_pivot is then positive).
   double min_pivot = 0.0;
   int zeroed_pivots = 0;
 
@@ -157,9 +176,10 @@ struct RawStorageRealization
 class PreparedStorage
 {
 public:
-  // The resolution of the RAW checks: the largest accepted componentwise backward error of
-  // the storage, and the smallest relative violation that demonstrates nonpassivity. It is
-  // the tolerance FindDefects uses for the sign of the dissipated power.
+  // The resolution of the RAW checks: the largest accepted scaled residual of
+  // RawStorageCertificate, and the smallest violation, relative to the rounding scale of
+  // its terms, that demonstrates nonpassivity. It is the tolerance FindDefects uses for the
+  // sign of the dissipated power.
   static constexpr double tolerance = 1.0e-10;
 
   explicit PreparedStorage(const std::vector<config::PermittivityTermData> &terms);
@@ -171,12 +191,12 @@ public:
   const std::string &Reason() const { return reason; }
   const RawStorageCertificate &Certificate() const { return certificate; }
 
-  // StoredEnergySusceptibility of the typed and Djordjevic-Sarkar terms plus the available
-  // storage of the RAW block, at real ω ≥ 0. Empty unless Status() is CheckedAvailable.
-  // Infinite at an exact lossless resonance.
+  // StoredEnergySusceptibility of the typed and Djordjevic-Sarkar terms plus the
+  // outer-factor storage of the RAW block, at real ω ≥ 0. Empty unless Status() is
+  // CheckedAvailable. Infinite at an exact lossless resonance.
   std::optional<double> StoredEnergySusceptibility(double omega) const;
 
-  // The available storage of the RAW block alone, empty unless Status() is
+  // The outer-factor storage of the RAW block alone, empty unless Status() is
   // CheckedAvailable (zero without PoleResidue terms).
   std::optional<double> RawStoredEnergySusceptibility(double omega) const;
 

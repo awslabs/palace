@@ -16,7 +16,8 @@
 //
 //   F(u) = 2ρ₀ + z Σⱼ 2ρⱼ/(z − βⱼ) = 2D + Σⱼ 2λⱼqⱼ/(z − βⱼ).
 //
-// The outer spectral factor G(u) = W + L(uI − A)⁻¹B, G(u)G(−u) = F(u), has the stable poles
+// In exact arithmetic: the outer spectral factor G(u) = W + L(uI − A)⁻¹B, G(u)G(−u) = F(u),
+// has the stable poles
 // λⱼ, zeros μ = −√ζ in the closed left half-plane for the zeros ζ of N(z) = F(u)∏(z − βⱼ),
 // and W = √(2D) (zero for D = 0, with a zero of G at infinity). For ρ₀ = 0, N(0) = 0
 // exactly and G(0) = 0 is imposed analytically. The available storage of Y is ½xᵀXx with X
@@ -24,7 +25,9 @@
 // the minimal solution of the positive-real equations, because G is outer. Any other
 // storage, for example that of a non-outer factor with a zero reflected into the right
 // half-plane, is larger. Without division by D, a Riccati equation, or an artificial
-// feedthrough.
+// feedthrough. In floating point the result is an approximation of this storage that passes
+// numerical checks of these identities; see the header for what that does and does not
+// guarantee.
 
 #include "permittivitymodel.hpp"
 
@@ -48,12 +51,19 @@ constexpr double eps = std::numeric_limits<double>::epsilon();
 
 // The correctly rounded sum of the values, independent of their order (Shewchuk's
 // nonoverlapping partials, rounded as Python's math.fsum). Repeated-pole aggregation with
-// it gives the same result for any order or split of the residues of a pole.
+// it gives the same result for any order or split of the residues of a pole. NaN if an
+// intermediate sum overflows (the error-free transformation then fails), even when the
+// exact sum is finite: a caller treats a nonfinite sum as a numerical failure.
 double ExactSum(const std::vector<double> &xs)
 {
+  constexpr double nan = std::numeric_limits<double>::quiet_NaN();
   std::vector<double> partials;
   for (double x : xs)
   {
+    if (!std::isfinite(x))
+    {
+      return nan;
+    }
     std::size_t i = 0;
     for (std::size_t k = 0; k < partials.size(); k++)
     {
@@ -63,6 +73,10 @@ double ExactSum(const std::vector<double> &xs)
         std::swap(x, y);
       }
       const double hi = x + y, lo = y - (hi - x);
+      if (!std::isfinite(hi))
+      {
+        return nan;
+      }
       if (lo != 0.0)
       {
         partials[i++] = lo;
@@ -82,6 +96,10 @@ double ExactSum(const std::vector<double> &xs)
   {
     const double x = hi, y = partials[--n];
     hi = x + y;
+    if (!std::isfinite(hi))
+    {
+      return nan;
+    }
     lo = y - (hi - x);
     if (lo != 0.0)
     {
@@ -92,7 +110,7 @@ double ExactSum(const std::vector<double> &xs)
   if (n > 0 && ((lo < 0.0 && partials[n - 1] < 0.0) || (lo > 0.0 && partials[n - 1] > 0.0)))
   {
     const double y = 2.0 * lo, x = hi + y;
-    if (y == x - hi)
+    if (std::isfinite(x) && y == x - hi)
     {
       hi = x;
     }
@@ -140,21 +158,53 @@ std::pair<double, double> ModalSum(const std::vector<Mode> &modes,
   return {ExactSum(parts), scale};
 }
 
-// The term c/(z − β) of a real pole, or c/(z − β) + c̄/(z − β̄) of a conjugate pair, and
-// its first two derivatives. A pair is evaluated in its real form (n₁z + n₀)/((z − β)(z −
-// β̄)), n₁ = 2 Re c, n₀ = −2 Re(c β̄): for a weakly damped pair the two complex terms cancel
-// to a value proportional to the damping, which the real form keeps to relative accuracy
-// (exactly so for Re c = 0, the residue of a typed Lorentz).
-std::array<Complex, 3> PairTerm(Complex c, Complex beta, Complex z, bool pair)
+// A pole's term in z = u² of a rational function Σ c/(z − β) (conjugate implied for a
+// pair), β = λ², with c = 2ρ (for (F − 2ρ₀)/z) or c = 2βρ = 2λq (for F − 2D). A pair is
+// also kept in its real form (n₁z + n₀)/((z − β)(z − β̄)), n₁ = 2 Re c, n₀ = −2 Re(cβ̄), with
+// the coefficients from λ = a + ib, ρ = x + iy without cancellation: for a weakly damped
+// pair the two complex terms cancel to a value proportional to the damping, and n₀ =
+// −4|β|²x is exactly zero for the imaginary residue of a Lorentz term, where Re(cβ̄)
+// computed from c would be rounding noise.
+struct SpectralTerm
+{
+  Complex beta, c;
+  double n1 = 0.0, n0 = 0.0;
+};
+
+SpectralTerm MakeSpectralTerm(const Mode &mode, bool shifted)
+{
+  const double a = mode.lambda.real(), b = mode.lambda.imag(), x = mode.rho.real(),
+               y = mode.rho.imag();
+  SpectralTerm t;
+  t.beta = Complex((a - b) * (a + b), 2.0 * a * b);
+  const double br = t.beta.real(), bi = t.beta.imag(),
+               b2 = (a * a + b * b) * (a * a + b * b);
+  if (!shifted)
+  {
+    t.c = 2.0 * mode.rho;
+    t.n1 = 4.0 * x;
+    t.n0 = -4.0 * (x * br + y * bi);
+  }
+  else
+  {
+    t.c = Complex(2.0 * (br * x - bi * y), 2.0 * (br * y + bi * x));
+    t.n1 = 2.0 * t.c.real();
+    t.n0 = -4.0 * b2 * x;
+  }
+  return t;
+}
+
+// The term at z and its first two derivatives.
+std::array<Complex, 3> PairTerm(const SpectralTerm &term, Complex z, bool pair)
 {
   if (!pair)
   {
-    const Complex t = 1.0 / (z - beta);
-    return {c * t, -c * t * t, 2.0 * c * t * t * t};
+    const Complex t = 1.0 / (z - term.beta);
+    return {term.c * t, -term.c * t * t, 2.0 * term.c * t * t * t};
   }
-  const double n1 = 2.0 * c.real(), n0 = -2.0 * (c * std::conj(beta)).real();
-  const Complex Q = (z - beta) * (z - std::conj(beta)), dQ = 2.0 * (z - beta.real());
-  const Complex T = (n1 * z + n0) / Q, dT = (n1 - T * dQ) / Q,
+  const Complex Q = (z - term.beta) * (z - std::conj(term.beta)),
+                dQ = 2.0 * (z - term.beta.real());
+  const Complex T = (term.n1 * z + term.n0) / Q, dT = (term.n1 - T * dQ) / Q,
                 ddT = (-2.0 * dT * dQ - 2.0 * T) / Q;
   return {T, dT, ddT};
 }
@@ -182,9 +232,15 @@ struct Zeros
   std::string failure;
 };
 
-Zeros RationalZeros(const std::vector<Mode> &modes, const std::vector<Complex> &beta,
-                    const std::vector<Complex> &c, double d, int count)
+Zeros RationalZeros(const std::vector<Mode> &modes, const std::vector<SpectralTerm> &terms,
+                    double d, int count)
 {
+  std::vector<Complex> beta, c;
+  for (const auto &t : terms)
+  {
+    beta.push_back(t.beta);
+    c.push_back(t.c);
+  }
   Zeros out;
   if (count == 0)
   {
@@ -346,7 +402,7 @@ Zeros RationalZeros(const std::vector<Mode> &modes, const std::vector<Complex> &
     std::array<Complex, 3> r = {d, 0.0, 0.0};
     for (std::size_t j = 0; j < modes.size(); j++)
     {
-      const auto t = PairTerm(c[j], beta[j], z, modes[j].Pair());
+      const auto t = PairTerm(terms[j], z, modes[j].Pair());
       for (int i = 0; i < 3; i++)
       {
         r[i] += t[i];
@@ -405,7 +461,7 @@ Zeros RationalZeros(const std::vector<Mode> &modes, const std::vector<Complex> &
   return out;
 }
 
-// Blockwise backward error max |R_IJ|/|S_IJ| over the state blocks I, J (a real pole, or a
+// Blockwise scaled residual max |R_IJ|/|S_IJ| over the state blocks I, J (a real pole, or a
 // conjugate pair whose two real coordinates are one mode: the error must not depend on the
 // arbitrary orientation of x = (Re ξ, Im ξ) in its plane), with max norms, and R = 0
 // required where S = 0. A one-column (or one-row) residual has a single block there. The
@@ -503,6 +559,12 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
       im.push_back(raw[j].residue.imag());
     }
     const Complex residue(ExactSum(re), ExactSum(im));
+    if (!std::isfinite(residue.real()) || !std::isfinite(residue.imag()))
+    {
+      return Finish(RawStorageStatus::NumericalUnresolved,
+                    fmt::format("the sum of the residues at the pole {} {}i overflows",
+                                Sci(raw[i].pole.real()), Sci(raw[i].pole.imag())));
+    }
     if (residue != 0.0)
     {
       poles.emplace_back(raw[i].pole, residue);
@@ -510,23 +572,49 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
     i = j;
   }
 
-  // Exact power-of-two rate and amplitude scales.
+  // Power-of-two rate and amplitude scales. The scaling must be EXACT for every pole and
+  // residue (no overflow, and no underflow of a nonzero component, which would for example
+  // turn a weakly damped pole into an exact lossless one): otherwise the block is outside
+  // the range this kernel represents, and unresolved.
+  auto Unrepresentable = [&](const char *what)
+  {
+    return Finish(RawStorageStatus::NumericalUnresolved,
+                  fmt::format("the {} of the PoleResidue terms are outside the range of "
+                              "exact power-of-two scaling",
+                              what));
+  };
   double pole_max = 0.0, residue_max = 0.0;
   for (const auto &[p, r] : poles)
   {
     pole_max = std::max(pole_max, std::abs(p));
+  }
+  if (!std::isfinite(pole_max))
+  {
+    return Unrepresentable("poles");
   }
   const double rate = (pole_max > 0.0) ? PowerOfTwo(pole_max) : 1.0;
   for (const auto &[p, r] : poles)
   {
     residue_max = std::max(residue_max, std::abs(r) / rate);
   }
+  if (!std::isfinite(residue_max))
+  {
+    return Unrepresentable("residues");
+  }
   const double amplitude = (residue_max > 0.0) ? PowerOfTwo(residue_max) : 1.0;
+  const double unit = rate * amplitude;  // Of the residues
+  if (!std::isnormal(rate) || !std::isnormal(amplitude) || !std::isnormal(unit))
+  {
+    return Unrepresentable("scales");
+  }
   certificate.rate_scale = rate;
   certificate.amplitude_scale = amplitude;
+  auto Exact = [](Complex x, double a, Complex y)
+  { return std::isfinite(y.real()) && std::isfinite(y.imag()) && y * a == x; };
 
-  // The zero pole contributes only to D. An exact lossless pole iβ with ρ = iy is the
-  // oscillator Y = 2q u/(u² + β²), q = −βy, positive-real only for q > 0 (Re ρ = 0).
+  // Classes from the ORIGINAL pole. The zero pole contributes only to D. An exact lossless
+  // pole iβ with ρ = iy is the oscillator Y = 2q u/(u² + β²), q = −βy, positive-real only
+  // for q > 0 (Re ρ = 0).
   double rho0 = 0.0;
   std::vector<Mode> modes;
   // D is the exact sum of the INPUT residues (2 Re r for a pair): aggregation rounds, for
@@ -534,17 +622,29 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
   std::vector<double> feedthrough;
   for (const auto &t : input)
   {
-    feedthrough.push_back(((t.pole.imag() > 0.0) ? 2.0 : 1.0) * t.residue.real() /
-                          (rate * amplitude));
+    const double r = t.residue.real() / unit;
+    if (!Exact(t.residue.real(), unit, r))
+    {
+      return Unrepresentable("residues");
+    }
+    feedthrough.push_back(((t.pole.imag() > 0.0) ? 2.0 : 1.0) * r);
   }
   for (const auto &[p, r] : poles)
   {
-    const Complex lambda = p / rate, rho = r / (rate * amplitude);
-    if (lambda == 0.0)
+    const Complex lambda = p / rate, rho = r / unit;
+    if (!Exact(p, rate, lambda))
+    {
+      return Unrepresentable("poles");
+    }
+    if (!Exact(r, unit, rho))
+    {
+      return Unrepresentable("residues");
+    }
+    if (p == 0.0)
     {
       rho0 = rho.real();
     }
-    else if (lambda.real() == 0.0)
+    else if (p.real() == 0.0)
     {
       const double beta = lambda.imag(), q = -beta * rho.imag();
       if (rho.real() != 0.0)
@@ -563,6 +663,10 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
                                   "within the resolution (relative {})",
                                   Sci(p.imag()), Sci(rel)));
       }
+      if (!std::isfinite(2.0 * q))
+      {
+        return Unrepresentable("residues");
+      }
       if (q < 0.0)
       {
         return Finish(RawStorageStatus::NonpassiveRaw,
@@ -578,6 +682,11 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
     }
   }
   D = ExactSum(feedthrough);
+  if (!std::isfinite(D))
+  {
+    return Finish(RawStorageStatus::NumericalUnresolved,
+                  "the sum of the residues overflows");
+  }
   certificate.feedthrough = D;
   certificate.lossless = static_cast<int>(lossless.size());
   if (rho0 < 0.0)
@@ -647,36 +756,42 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
       {
         continue;
       }
-      // Re Y(iv) = D + Σ Re of each pole's term, a pair's in its real form
-      // Re((n₀ + in₁v)/Q), Q = (iv − λ)(iv − λ̄), n₁ = 2 Re q, n₀ = −2 Re(qλ̄): the two
-      // complex terms of a weakly damped pair cancel to a value proportional to its
-      // damping, which this keeps to the rounding scale of its own two products.
+      // Re Y(iv) = D + Σ Re of each pole's term, from cancellation-free coefficients. With
+      // λ = a + ib, ρ = x + iy, a pair is Re((n₀ + in₁v)/Q), Q = (iv − λ)(iv − λ̄), with
+      // n₁ = 2 Re(λρ) = 2(ax − by), n₀ = −2 Re(λρλ̄) = −2|λ|²x (exactly zero for the
+      // imaginary residue of a Lorentz term), Re Q = a² + (b − v)(b + v), Im Q = −2av, and
+      // |Q|² = (a² + (v − b)²)(a² + (v + b)²). The sign counts only beyond the rounding
+      // scale of these products, not of their already cancelled values.
       std::vector<double> parts = {D};
       double scale = std::abs(D);
       for (const auto &mode : modes)
       {
-        const Complex q = mode.lambda * mode.rho;
+        const double a = mode.lambda.real(), b = mode.lambda.imag(), x = mode.rho.real(),
+                     y = mode.rho.imag();
         if (mode.Pair())
         {
-          const double n1 = 2.0 * q.real(), n0 = -2.0 * (q * std::conj(mode.lambda)).real();
-          const Complex Q = Complex(-mode.lambda.real(), v - mode.lambda.imag()) *
-                            Complex(-mode.lambda.real(), v + mode.lambda.imag());
-          const double a = n0 * Q.real() / std::norm(Q),
-                       b = n1 * v * Q.imag() / std::norm(Q);
-          parts.push_back(a);
-          parts.push_back(b);
-          scale += std::abs(a) + std::abs(b);
+          const double n1 = 2.0 * (a * x - b * y),
+                       s1 = 2.0 * (std::abs(a * x) + std::abs(b * y)),
+                       n0 = -2.0 * (a * a + b * b) * x, re_q = a * a + (b - v) * (b + v),
+                       s_q = a * a + std::abs((b - v) * (b + v)), im_q = -2.0 * a * v,
+                       q2 = (a * a + (v - b) * (v - b)) * (a * a + (v + b) * (v + b));
+          parts.push_back(n0 * re_q / q2);
+          parts.push_back(n1 * v * im_q / q2);
+          scale += (std::abs(n0) * s_q + s1 * v * std::abs(im_q)) / q2;
         }
         else
         {
-          const double part = -q.real() * mode.lambda.real() /
-                              (v * v + mode.lambda.real() * mode.lambda.real());
+          const double part = -a * a * x / (v * v + a * a);
           parts.push_back(part);
           scale += std::abs(part);
         }
       }
+      if (!std::isfinite(scale))
+      {
+        continue;
+      }
       const double re_y = ExactSum(parts);
-      if (re_y < -tolerance * scale)
+      if (std::isfinite(re_y) && re_y < -tolerance * scale)
       {
         return Finish(RawStorageStatus::NonpassiveRaw,
                       fmt::format("{}; the RAW block has gain: Re Y(iω) = {} (relative {}) "
@@ -703,10 +818,12 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
   // Zeros ζ of N(z), with their count from the leading coefficient of N.
   const bool dc_zero = (rho0 == 0.0);
   std::vector<Complex> beta, c;
+  std::vector<SpectralTerm> terms;
   for (const auto &mode : modes)
   {
-    beta.push_back(mode.lambda * mode.lambda);
-    c.push_back(dc_zero ? 2.0 * mode.rho : 2.0 * beta.back() * mode.rho);
+    terms.push_back(MakeSpectralTerm(mode, !dc_zero));
+    beta.push_back(terms.back().beta);
+    c.push_back(terms.back().c);
   }
   const double d = dc_zero ? 0.0 : 2.0 * D;
   int count = n;
@@ -714,8 +831,9 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
   if (d == 0.0)
   {
     // The leading coefficient of H(z)R(z) is the first nonzero moment Σ cⱼβⱼᵏ, of degree
-    // n − k − 1. A moment below the rounding of its terms is taken as zero; a wrong
-    // decision fails the certificate rather than passing it.
+    // n − k − 1. A moment below the rounding of its terms is taken as zero. A wrong degree
+    // is not detected by itself: it gives the wrong W or zero count, and the result is
+    // accepted only if the feedthrough, cross, and factor residuals still pass.
     int degree = 0;
     std::vector<Complex> moment_terms = c;
     for (int k = 0; k < n && degree == 0; k++)
@@ -744,7 +862,7 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
   {
     return Unresolved("the spectral density is negative at high frequency");
   }
-  const auto zeros = RationalZeros(modes, beta, c, d, count);
+  const auto zeros = RationalZeros(modes, terms, d, count);
   certificate.zero_backward_error = zeros.backward_error;
   certificate.infinite_separation = zeros.separation;
   // Boundary frequencies and their geometric midpoints for the search for gain.
@@ -891,9 +1009,10 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
   // diagonal pivoting. For nearly coincident poles X is nearly singular in exact
   // arithmetic, and rounding can leave a tiny negative Schur complement. The factorization
   // stops when the largest remaining pivot is within its rounding, 64nε: the remainder,
-  // bounded by that in magnitude, is dropped, a bounded backward perturbation of X. A
-  // remainder beyond it, or a negative pivot, leaves the block unresolved (no eigenvalue
-  // clipping). Every check below is of the ACTUAL X = HHᵀ.
+  // bounded by that in magnitude, is dropped: a perturbation of X bounded by it, after
+  // which the result is not the exact minimum. A remainder beyond it, or a negative pivot,
+  // leaves the block unresolved (no eigenvalue clipping). Every check below is of the
+  // ACTUAL X = HHᵀ.
   const Eigen::VectorXd diag = X0.diagonal();
   if (!(diag.minCoeff() > 0.0) || !diag.allFinite())
   {
@@ -962,6 +1081,11 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
   certificate.feedthrough_residual =
       (D > 0.0) ? std::abs(W * W - 2.0 * D) / (2.0 * D)
                 : ((W == 0.0) ? 0.0 : std::numeric_limits<double>::infinity());
+  std::vector<SpectralTerm> shifted;  // F − 2D = Σ 2λq/(z − β)
+  for (const auto &mode : modes)
+  {
+    shifted.push_back(MakeSpectralTerm(mode, true));
+  }
   // F at probes from the real form of each pole's term in z = u² (as for the zeros), so
   // that the check is relative to F itself even where weakly damped terms cancel; G from
   // its poles.
@@ -972,8 +1096,7 @@ void PreparedStorage::PrepareRaw(const std::vector<config::PermittivityPoleData>
     double scale = 2.0 * D, gp = std::abs(W), gm = std::abs(W);
     for (std::size_t j = 0; j < modes.size(); j++)
     {
-      const Complex f = 2.0 * beta[j] * modes[j].rho;
-      const Complex t = PairTerm(f, beta[j], u * u, modes[j].Pair())[0];
+      const Complex t = PairTerm(shifted[j], u * u, modes[j].Pair())[0];
       F += t;
       scale += std::abs(t);
     }

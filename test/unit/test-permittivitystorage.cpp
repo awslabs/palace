@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <random>
 #include <vector>
 #include <Eigen/Dense>
@@ -473,6 +474,26 @@ TEST_CASE("RAW storage status of nonpassive and unresolved blocks",
   // A narrow negative resonance on a Debye: D > 0 but gain near ω = 4, found by sampling.
   CHECK(Status(Poles({{-1.0, 1.0}, {C(-1.0e-3, 4.0), C(0.0, 1.0e-3)}})) ==
         RawStorageStatus::NonpassiveRaw);
+
+  // A passive Debye plus a passive weakly damped Lorentz pair whose spectral density has no
+  // resolved leading coefficient: unresolved, and the search for gain must not mistake the
+  // rounding of an exactly zero coefficient (n₀ of a Lorentz pair) at ω = 1e-23 for gain.
+  CHECK(Status(Poles({{-1.0e-20, 1.0e-60}, {C(-1.0e-18, 1.1), C(0.0, -0.7)}})) ==
+        RawStorageStatus::NumericalUnresolved);
+
+  // Outside the range of exact scaling: the damping of −2⁻¹⁰⁷⁴ + 2i would underflow to an
+  // exact lossless pole when scaled, and the residues −1e308, −1e308, 1e308 of one lossless
+  // pole have a finite sum but an overflowing intermediate one. Neither is checked, nor
+  // reclassified as lossless, nor evaluated to NaN.
+  for (const auto &raw :
+       {Poles({{C(-std::numeric_limits<double>::denorm_min(), 2.0), C(0.0, -1.0)}}),
+        Poles({{C(0.0, 1.0), C(0.0, -1.0e308)},
+               {C(0.0, 1.0), C(0.0, -1.0e308)},
+               {C(0.0, 1.0), C(0.0, 1.0e308)}})})
+  {
+    CHECK(Status(raw) == RawStorageStatus::NumericalUnresolved);
+    CHECK(PreparedStorage(raw).Certificate().lossless == 0);
+  }
 
   // Nearly coincident passive poles −(1 + kδ), residues 1, k = 0..3: passive, so never
   // NonpassiveRaw. Their storage tends to that of the merged Debye 4/(s + a) at the mean
