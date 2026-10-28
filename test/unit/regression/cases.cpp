@@ -817,7 +817,12 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
 // to the real modal reference y_ref via a Kurokawa power-wave transform, and checks the
 // resulting |S| against Palace's field-derived port-S. Agreement validates that the
 // exported circuit reproduces the solver's own S-parameters. Frequencies and per-port
-// y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
+// y_ref are read from the sibling rom-port-reference.csv (same sweep grid). It assumes
+// that each terminal coordinate is the port's modal amplitude and that the load on its
+// diagonal is y_ref. That does not hold for a lumped port: in the exported matrices its
+// terminal coordinate carries a voltage of α² and a load of α²/R, α = orth_R(row, row),
+// not 1 and 1/R. Use it for wave-port networks only; TestWavePortCoupledRoundTrip covers
+// lumped ports.
 palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
 {
   return [atol_lin](palace::Table &actual, palace::Table &,
