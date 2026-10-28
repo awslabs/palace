@@ -1,15 +1,18 @@
 diff --git a/repos/spack_repo/builtin/packages/enzyme/package.py b/repos/spack_repo/builtin/packages/enzyme/package.py
-index 733bd00e8e0..23aa7a7a1d1 100644
+index 001ffcadff31ce8a2144275651bfd78b34822aa0..860b5c8d0a6f713a0d4e98a7ce7bdf1499543e54 100644
 --- a/repos/spack_repo/builtin/packages/enzyme/package.py
 +++ b/repos/spack_repo/builtin/packages/enzyme/package.py
-@@ -58,22 +58,35 @@ class Enzyme(CMakePackage):
+@@ -61,7 +61,7 @@ class Enzyme(CMakePackage):
      depends_on("cmake@3.13:", type="build")
  
      def cmake_args(self):
--        args = ["-DLLVM_DIR=" + self.llvm_prefix + "/lib/cmake/llvm"]
--        return args
-+        llvm_dir = self.llvm_config("--cmakedir", output=str).strip()
-+        return [self.define("LLVM_DIR", llvm_dir)]
+-        args = ["-DLLVM_DIR=" + self.llvm_cmakedir]
++        args = [self.define("LLVM_DIR", self.llvm_cmakedir)]
+         for lit in ["llvm-lit", "lit"]:
+             lit_path = f"{self.llvm_prefix}/bin/{lit}"
+             if os.access(lit_path, os.R_OK):
+@@ -72,23 +72,35 @@ class Enzyme(CMakePackage):
+         return args
  
      @property
 -    def llvm_prefix(self):
@@ -42,6 +45,12 @@ index 733bd00e8e0..23aa7a7a1d1 100644
 -        llvm_config = Executable(self.llvm_prefix + "/bin/llvm-config")
 -        return Version(llvm_config("--version", output=str))
 +        return Version(self.llvm_config("--version", output=str).strip())
+ 
+     @property
+     def llvm_cmakedir(self):
+-        llvm_config = Executable(self.llvm_prefix + "/bin/llvm-config")
+-        return llvm_config("--cmakedir", output=str).strip()
++        return self.llvm_config("--cmakedir", output=str).strip()
  
      @property
      def libs(self):
