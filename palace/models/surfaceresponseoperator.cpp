@@ -22614,6 +22614,14 @@ SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
           {patch.provenance.feature, model->topology, claim.segment, claim.p0, claim.p1});
       entry.window_length += Norm(Subtract(claim.p1, claim.p0));
     }
+    // The (ii-a) diagnostic's per-patch labelled copies (decisions 958 (b) / 969): the
+    // whole window as given, and the outside remainder after the clip below.
+    const std::string label = SpatialClusterPriorityExclusions::PatchLabel(patch_idx);
+    for (auto portion : window)
+    {
+      portion.topology = label;
+      entry.window_portions.push_back(std::move(portion));
+    }
     // The parts inside any matched cluster's box are the owner coupons'; the kept pieces
     // outside every box are the RAW remainder.
     ClipUncoveredPortionsBySpatialSupport(window, supports, dimension);
@@ -22621,6 +22629,9 @@ SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
     {
       entry.outside_length += Norm(Subtract(portion.p1, portion.p0));
       AppendExcludedPatchPortion(result.portions, patch_idx, portion, false, tolerance);
+      auto labelled = portion;
+      labelled.topology = label;
+      entry.outside_portions.push_back(std::move(labelled));
     }
     result.entries.push_back(entry);
   }
@@ -24674,6 +24685,45 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
     basis_size += model.basis_size;
   }
+  // The (ii-a) DIAGNOSTIC-ONLY patches (OI-SCP-BOXGROW, decisions 958 (b) / 969 Q1 (i)):
+  // the SpatialClusterPriority-dropped coupons, appended AFTER every applied patch so that
+  // the point / mortar-resolution construction below serves them in the applied patches'
+  // own order (the applied patches' point offsets, values and plans are unchanged), then
+  // MOVED out of `patches` into diagnostic_patches once the point communication is
+  // configured (before any consumer runs). Their trace offsets count in
+  // diagnostic_basis_size, never in basis_size; the weight is the coupon's model (blend)
+  // weight, the one it would carry if applied.
+  const std::size_t applied_patch_count = patches.size();
+  const int applied_basis_size = basis_size;
+  diagnostic_entry_models.clear();
+  diagnostic_entry_features.clear();
+  for (std::size_t k = 0; k < spatial_cluster_priority.entries.size(); k++)
+  {
+    const std::size_t patch_idx = spatial_cluster_priority.entries[k].patch;
+    const auto &patch_config = placed_patches[patch_idx];
+    const auto model_it = model_indices.find(patch_config.model);
+    MFEM_VERIFY(model_it != model_indices.end(),
+                "SpatialClusterPriority-dropped patch refers to an unknown model index!");
+    diagnostic_entry_models.push_back(model_it->second);
+    diagnostic_entry_features.push_back(patch_config.provenance.feature);
+    if (static_cast<int>(k % size) != rank)
+    {
+      continue;
+    }
+    const auto &model = models[model_it->second];
+    local_patch_indices.push_back(patch_idx);
+    // The weight the coupon would carry if APPLIED: its model (blend) weight, never the
+    // ownership zeroing (a corner the B4 vertex rule owns reads 0 in `weight`; its own
+    // correction is the whole coupon).
+    patches.push_back(Patch{static_cast<int>(patch_idx), model_it->second, 0,
+                            diagnostic_basis_size, 0, patch_config.longitudinal_cell, 1,
+                            0.0, patch_config.provenance.model_weight,
+                            patch_config.domain_weight});
+    patches.back().feature = patch_config.provenance.feature;
+    diagnostic_basis_size += model.basis_size;
+  }
+  global_diagnostic_patch_count = static_cast<int>(patches.size() - applied_patch_count);
+  Mpi::GlobalSum(1, &global_diagnostic_patch_count, fespace.GetComm());
 
   // Surface-mortar quadrature follows the mesh resolution local to each matching surface,
   // not the smallest element anywhere in the distributed device. This keeps AMR in an
@@ -24796,14 +24846,19 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
     point_count += patch.point_count;
   }
-  global_patch_count = static_cast<int>(patches.size());
-  global_basis_size = basis_size;
-  long long int global_point_count = point_count;
+  diagnostic_point_count = 0;
+  for (std::size_t p = applied_patch_count; p < patches.size(); p++)
+  {
+    diagnostic_point_count += patches[p].point_count;
+  }
+  global_patch_count = static_cast<int>(applied_patch_count);
+  global_basis_size = applied_basis_size;
+  long long int global_point_count = point_count - diagnostic_point_count;
   Mpi::GlobalSum(1, &global_point_count, fespace.GetComm());
   long long int global_probe_count = 0;
-  for (const auto &patch : patches)
+  for (std::size_t p = 0; p < applied_patch_count; p++)
   {
-    global_probe_count += patch.probe_point_count;
+    global_probe_count += patches[p].probe_point_count;
   }
   Mpi::GlobalSum(1, &global_probe_count, fespace.GetComm());
   // Runaway guard, not a memory model: every point stores its element stencil on the
@@ -24825,10 +24880,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                   << ". Assemble and compress the mortar projection before continuing "
                      "this AMR level!");
   std::array<int, 3> domain_mode_patch_count{};
-  for (const auto &patch : patches)
+  for (std::size_t p = 0; p < applied_patch_count; p++)
   {
     domain_mode_patch_count[static_cast<std::size_t>(
-        models[patch.model].domain_correction_mode)]++;
+        models[patches[p].model].domain_correction_mode)]++;
   }
   Mpi::GlobalSum(1, &global_patch_count, fespace.GetComm());
   Mpi::GlobalSum(1, &global_basis_size, fespace.GetComm());
@@ -25214,6 +25269,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     ConfigurePointCommunication(point_locator, xyz, dimension, nullptr, &point_band);
   }
   SetupStamp("point communication");
+  // The diagnostic-only patches leave `patches` here: every consumer below and every
+  // Mult / energy / export loop sees the applied patches alone.
+  diagnostic_patches.assign(
+      patches.begin() + static_cast<std::ptrdiff_t>(applied_patch_count), patches.end());
+  patches.resize(applied_patch_count);
+  local_patch_indices.resize(applied_patch_count);
+  int global_diagnostic_point_count = diagnostic_point_count;
+  Mpi::GlobalSum(1, &global_diagnostic_point_count, fespace.GetComm());
 
   Mpi::Print(
       "\nConfigured surface response correction:\n"
@@ -25231,6 +25294,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   {
     Mpi::Print(" Conductor-consistency probe points (decision 277): {:d}\n",
                global_probe_count);
+  }
+  if (global_diagnostic_patch_count > 0)
+  {
+    Mpi::Print(" SpatialClusterPriority clipped-correction diagnostic (decisions 958 (b) / "
+               "969): {:d} dropped coupon(s) sampled on {:d} diagnostic-only trace points "
+               "(never applied; surface-response-spatial-cluster-priority-clipped-"
+               "correction.csv)\n",
+               global_diagnostic_patch_count, global_diagnostic_point_count);
   }
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
@@ -27599,8 +27670,17 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
   }
   EvaluatePoints(x, correction);
   values.SetSize(basis_size);
-  constexpr double gauss_offset = 0.5 / 1.7320508075688772935;
   for (const auto &patch : patches)
+  {
+    ExtractPatchTrace(patch, correction, values);
+  }
+}
+
+void SurfaceResponseOperator::ExtractPatchTrace(const Patch &patch,
+                                                const Vector &point_values,
+                                                Vector &values) const
+{
+  constexpr double gauss_offset = 0.5 / 1.7320508075688772935;
   {
     const auto &model = models[patch.model];
     if (model.surface_mortar)
@@ -27633,7 +27713,7 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
                                                              (1.0 - u) * (1.0 - v)};
                   const double quadrature_weight =
                       triangle.area * (1.0 - u) / (2.0 * subdivisions * subdivisions);
-                  const double value = correction(point++);
+                  const double value = point_values(point++);
                   for (int q = 0; q < 3; q++)
                   {
                     model.mortar_vertices[triangle.vertices[q]].ForEachBasis(
@@ -27650,7 +27730,7 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
         }
         for (double &reference : references)
         {
-          reference = correction(point++);
+          reference = point_values(point++);
         }
         for (int i = 0; i < model.contour_size; i++)
         {
@@ -27685,7 +27765,7 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
               {
                 const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
                                  transverse_subdivisions;
-                const double value = correction(point++);
+                const double value = point_values(point++);
                 if (segment.begin < model.contour_size)
                 {
                   mortar_load[segment.begin] += quadrature_weight * (1.0 - t) * value;
@@ -27699,7 +27779,7 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
           }
           for (double &reference : references)
           {
-            reference += longitudinal_weight * correction(point++);
+            reference += longitudinal_weight * point_values(point++);
           }
         }
         if (model.constrained_translational_mortar)
@@ -27735,12 +27815,12 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
         values(patch.trace_offset + model.contour_size + state) =
             references[state + 1] - references[0];
       }
-      continue;
+      return;
     }
-    const double reference = correction(patch.point_offset + model.contour_size);
+    const double reference = point_values(patch.point_offset + model.contour_size);
     for (int i = 0; i < model.contour_size; i++)
     {
-      values(patch.trace_offset + i) = correction(patch.point_offset + i) - reference;
+      values(patch.trace_offset + i) = point_values(patch.point_offset + i) - reference;
     }
     // A PEC-constrained knot (ZeroTraceIndices) carries a zero trace by the coupon's
     // semantics whatever the device potential at its point (a knot on the fabricated slab
@@ -27753,7 +27833,7 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
     for (int state = 0; state < model.conductor_state_count; state++)
     {
       values(patch.trace_offset + model.contour_size + state) =
-          correction(patch.point_offset + model.contour_size + 1 + state) - reference;
+          point_values(patch.point_offset + model.contour_size + 1 + state) - reference;
     }
   }
 }
@@ -28387,6 +28467,95 @@ SurfaceResponseOperator::GatherPatchContributions(
             [](const auto &first, const auto &second)
             { return first.patch < second.patch; });
   return contributions;
+}
+
+std::vector<SurfaceResponseOperator::ClippedCorrectionDiagnostic>
+SurfaceResponseOperator::GetSpatialClusterPriorityClippedCorrection(
+    const Vector &x, bool include_fixed_flux) const
+{
+  std::vector<ClippedCorrectionDiagnostic> result;
+  if (global_diagnostic_patch_count == 0 || maxwell)
+  {
+    return result;  // no dropped coupon: nothing sampled, nothing reduced
+  }
+  // The device trace at the dropped coupons' own points (the shared point evaluation; the
+  // applied patches' values are not read here) and each coupon's fixed-trace / fixed-flux
+  // fabricated surface energies, weight x t^T K t. One dense record per dropped patch in
+  // the order of spatial_cluster_priority.entries (the global order every rank holds):
+  // [weight, (fixed-trace energy, fixed-flux energy) per model interface], reduced once;
+  // every patch lives on one rank, the others contribute zeros.
+  EvaluatePoints(x, correction);
+  Vector diagnostic_trace(std::max(diagnostic_basis_size, 1));
+  diagnostic_trace = 0.0;
+  for (const auto &patch : diagnostic_patches)
+  {
+    ExtractPatchTrace(patch, correction, diagnostic_trace);
+  }
+  const std::size_t n = spatial_cluster_priority.entries.size();
+  MFEM_VERIFY(diagnostic_entry_models.size() == n && diagnostic_entry_features.size() == n,
+              "The SpatialClusterPriority diagnostic records do not match the entries!");
+  std::vector<int> record_offsets(n + 1, 0);
+  for (std::size_t k = 0; k < n; k++)
+  {
+    record_offsets[k + 1] =
+        record_offsets[k] + 1 +
+        2 * static_cast<int>(models[static_cast<std::size_t>(diagnostic_entry_models[k])]
+                                 .fabricated_surfaces.size());
+  }
+  std::vector<double> records(static_cast<std::size_t>(record_offsets[n]), 0.0);
+  Vector fixed_flux;
+  for (const auto &patch : diagnostic_patches)
+  {
+    const auto &model = models[patch.model];
+    std::size_t k = 0;
+    while (k < n && spatial_cluster_priority.entries[k].patch !=
+                        static_cast<std::size_t>(patch.global_index))
+    {
+      k++;
+    }
+    MFEM_VERIFY(k < n, "A diagnostic-only patch is not a SpatialClusterPriority entry!");
+    Vector patch_trace(diagnostic_trace.GetData() + patch.trace_offset, model.basis_size);
+    if (include_fixed_flux)
+    {
+      fixed_flux.SetSize(model.basis_size);
+      model.fixed_flux_transform.Mult(patch_trace, fixed_flux);
+    }
+    double *record = records.data() + record_offsets[k];
+    record[0] = patch.weight;
+    int i = 1;
+    for (const auto &[interface, matrix] : model.fabricated_surfaces)
+    {
+      (void)interface;
+      record[i++] = patch.weight * QuadraticForm(matrix, patch_trace, response);
+      record[i++] = include_fixed_flux
+                        ? patch.weight * QuadraticForm(matrix, fixed_flux, response)
+                        : 0.0;
+    }
+  }
+  if (!records.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(records.size()), records.data(), fespace.GetComm());
+  }
+  for (std::size_t k = 0; k < n; k++)
+  {
+    const auto &entry = spatial_cluster_priority.entries[k];
+    const auto &model = models[static_cast<std::size_t>(diagnostic_entry_models[k])];
+    ClippedCorrectionDiagnostic diagnostic;
+    diagnostic.patch = static_cast<int>(entry.patch);
+    diagnostic.model = model.idx;
+    diagnostic.feature = diagnostic_entry_features[k];
+    const double *record = records.data() + record_offsets[k];
+    diagnostic.weight = record[0];
+    int i = 1;
+    for (const auto &[interface, matrix] : model.fabricated_surfaces)
+    {
+      (void)matrix;
+      diagnostic.fabricated_surface_energy[interface] = record[i++];
+      diagnostic.fabricated_surface_energy_fixed_flux[interface] = record[i++];
+    }
+    result.push_back(std::move(diagnostic));
+  }
+  return result;
 }
 
 std::vector<SurfaceResponseOperator::PatchTrace>
@@ -29081,6 +29250,43 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
       result["Diagnostics"][key] = value;
     }
   }
+  if (global_diagnostic_patch_count > 0 &&
+      result["Diagnostics"].contains("SpatialClusterPriority"))
+  {
+    // The (ii-a) clipped-correction diagnostic's form record (decisions 958 (b) / 960 /
+    // 969): the DERIVED columns of the companion CSV and their parents; the values live in
+    // the CSV (per source and evaluation). Written on the solve path only (the preflight's
+    // SpatialClusterPriority record is unchanged).
+    result["Diagnostics"]["SpatialClusterPriority"]["ClippedCorrection"] = {
+        {"File", "surface-response-spatial-cluster-priority-clipped-correction.csv"},
+        {"Patches", global_diagnostic_patch_count},
+        {"DiagnosticPointQueries", Distribution(diagnostic_point_count)},
+        {"Columns",
+         {"fab energy[i] (J)", "raw whole energy[i] (J)", "raw outside energy[i] (J)",
+          "ratio[i]", "clipped correction[i] (J)"}},
+        {"Parents",
+         {{"FabEnergy", "the dropped coupon's response matrix K_type on the device trace "
+                        "sampled at its own basis points (diagnostic-only patches, never "
+                        "applied), times its model (blend) weight (never the ownership "
+                        "zeroing)"},
+          {"RawWholeEnergy", "the raw within-R energy of the dropped coupon's whole window "
+                             "(its raw claims), the uncovered-energy machinery per patch"},
+          {"RawOutsideEnergy",
+           "the raw within-R energy of the window outside every "
+           "matched cluster's box = the SpatialClusterPriority add-back "
+           "per patch (surface-response-spatial-cluster-priority-"
+           "energy.csv per type)"},
+          {"Ratio", "fab energy / raw whole energy (r of boxgrow DESIGN 7.3)"},
+          {"ClippedCorrection", "(ratio - weight) x raw outside energy: the proportional "
+                                "clip of the dropped corner's missing correction outside "
+                                "the box (= (r - 1) x RawOut for a whole-weight patch; the "
+                                "co-located patches of a first-order split sum to the "
+                                "window's)"}}},
+        {"Rule",
+         "OI-SCP-BOXGROW (ii-a), decisions 958 (b) / 960 / 969: a DIAGNOSTIC column "
+         "set, DERIVED, never in a total; the electrostatic path only (the Maxwell "
+         "path is OI-SCP-CLIPPED-MX)"}};
+  }
   result["Correction"] = {{"Models", Replicated(models.size(), "Models")},
                           {"Patches", global_patch_count},
                           {"TraceCoefficients", global_basis_size},
@@ -29089,11 +29295,21 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
                           {"ContourLines", Distribution(contour_line_count)}};
   const long long int stencil_rows =
       point_dof_offsets.empty() ? 0 : point_dof_offsets.size() - 1;
-  result["Interpolation"] = {{"PointQueries", Distribution(point_query_count)},
-                             {"StencilRows", Distribution(stencil_rows)},
-                             {"StencilNonzeros", Distribution(stencil_nonzero_count)},
-                             {"CandidateQueries", Distribution(candidate_query_count)},
-                             {"FallbackQueries", Distribution(fallback_query_count)}};
+  result["Interpolation"] = {
+      {"PointQueries", Distribution(point_query_count - diagnostic_point_count)},
+      {"StencilRows", Distribution(stencil_rows)},
+      {"StencilNonzeros", Distribution(stencil_nonzero_count)},
+      {"CandidateQueries", Distribution(candidate_query_count)},
+      {"FallbackQueries", Distribution(fallback_query_count)}};
+  if (global_diagnostic_patch_count > 0)
+  {
+    // The (ii-a) diagnostic-only points (decisions 958 (b) / 969): appended to the shared
+    // point set, counted apart from the applied patches' queries (the stencil and
+    // communication counters below include them).
+    result["Interpolation"]["DiagnosticPointQueries"] =
+        Distribution(diagnostic_point_count);
+    result["Interpolation"]["DiagnosticPatches"] = global_diagnostic_patch_count;
+  }
   auto send_items = Distribution(point_send_item_count);
   auto receive_items = Distribution(point_receive_item_count);
   MFEM_VERIFY(send_items["Total"] == receive_items["Total"],

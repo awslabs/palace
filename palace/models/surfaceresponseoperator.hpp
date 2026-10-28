@@ -101,9 +101,23 @@ struct SpatialClusterPriorityExclusions
     std::size_t owner = 0;        // the cluster patch owning the overlap
     double window_length = 0.0;   // the dropped patch's raw claims, mesh units
     double outside_length = 0.0;  // the part outside every matched cluster's box
+    // The (ii-a) clipped-correction diagnostic (OI-SCP-BOXGROW, decisions 958 (b) / 969):
+    // the dropped patch's WHOLE window (its raw claims as given) and the OUTSIDE remainder
+    // (clipped by every matched cluster's box), both as portions whose `topology` is the
+    // per-patch label "p<patch>" the surface postoperator partitions the raw within-R
+    // energy by (RawWhole / RawOut of the companion CSV).
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        window_portions;
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        outside_portions;
   };
   std::vector<Entry> entries;
   ExcludedPatchPortions portions;
+  // The per-patch raw-energy label of an entry (`topology` of its window_portions /
+  // outside_portions).
+  static std::string PatchLabel(std::size_t patch) { return "p" + std::to_string(patch); }
 };
 
 // PatchEnergy (decision 922 B-1; the 851 (C) diagnosis export formalised, scratch
@@ -517,6 +531,21 @@ private:
   mfem::Array<int> dbc_tdof_list;
   std::vector<ResponseModel> models;
   std::vector<Patch> patches;
+  // The (ii-a) DIAGNOSTIC-ONLY patches (OI-SCP-BOXGROW, decisions 958 (b) / 969 Q1 (i)):
+  // the corner / vertex coupons the SpatialClusterPriority rule dropped, in the order of
+  // spatial_cluster_priority.entries, distributed like the applied patches. They are
+  // invisible to every correction, total, model contribution, export and estimator input
+  // (never in `patches`; their point queries are appended AFTER every applied patch's in
+  // the shared point set, so the applied patches' values are unchanged; their trace lives
+  // in its own vector of diagnostic_basis_size): read only by
+  // GetSpatialClusterPriorityClippedCorrection (a separate reduction). Electrostatic only.
+  std::vector<Patch> diagnostic_patches;
+  // Per SpatialClusterPriority entry (every rank): the dropped patch's runtime model index
+  // and feature (the records of the separate reduction are decoded with them).
+  std::vector<int> diagnostic_entry_models, diagnostic_entry_features;
+  int diagnostic_basis_size = 0;
+  int diagnostic_point_count = 0;
+  int global_diagnostic_patch_count = 0;
   int basis_size;
   int global_basis_size = 0;
   int global_patch_count = 0;
@@ -668,6 +697,11 @@ private:
   // Builds maxwell_loop_fits from the paths (ConfigureMaxwellResponse, after the paths).
   void ConfigureMaxwellLoopFit();
   void ApplyTrace(const Vector &x, Vector &values) const;
+  // One patch's trace from the evaluated point values (ApplyTrace's per-patch step: the
+  // surface-mortar projection or the collocated values, the conductor references
+  // removed), written at patch.trace_offset of `values`.
+  void ExtractPatchTrace(const Patch &patch, const Vector &point_values,
+                         Vector &values) const;
   void ApplyTraceTranspose(const Vector &values, Vector &y) const;
   // The conductor-consistency probes of a spatial surface-mortar model (decision 277):
   // the conductor vertices on the process plane, off it, and the adjacent free knots; fails
@@ -935,6 +969,32 @@ public:
   ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
                                                  bool include_fixed_flux = true,
                                                  bool include_patches = false) const;
+
+  // The (ii-a) clipped-correction diagnostic of the SpatialClusterPriority-dropped coupons
+  // (OI-SCP-BOXGROW, decisions 958 (b) / 960 / 969 Q1): per dropped patch (the order of
+  // GetSpatialClusterPriorityExclusions().entries) the FABRICATED surface energy its coupon
+  // would add if applied, weight x t^T K_type t on the device trace sampled at its own
+  // basis points (the diagnostic-only patches; fixed trace, and with include_fixed_flux the
+  // fixed-flux closure), per target interface; weight = the coupon's model (blend) weight,
+  // never the ownership zeroing (a B4-owned corner's own correction is the whole coupon).
+  // DERIVED, never in a total: the driver pairs it with the raw within-R energy of the
+  // patch's whole window and of its outside remainder (RawWhole / RawOut) into Ratio = Fab
+  // / RawWhole and ClippedCorrection = (Ratio - weight) x RawOut (= (r - 1) RawOut for a
+  // whole-weight patch; the co-located patches of a first-order split sum to it). Empty
+  // when no coupon is dropped (0 cost); the dropped patches' point values are read from the
+  // shared point evaluation; one separate reduction. Electrostatic only.
+  struct ClippedCorrectionDiagnostic
+  {
+    int patch = 0;  // the dropped patch's global index
+    int model = 0;
+    int feature = -1;
+    double weight = 0.0;
+    std::map<int, double> fabricated_surface_energy;
+    std::map<int, double> fabricated_surface_energy_fixed_flux;
+  };
+  std::vector<ClippedCorrectionDiagnostic>
+  GetSpatialClusterPriorityClippedCorrection(const Vector &x,
+                                             bool include_fixed_flux) const;
 
   // Collect the actual local contour and conductor-state coefficients for every
   // three-dimensional spatial response patch. The result is ordered by global patch
