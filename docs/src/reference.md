@@ -1509,7 +1509,9 @@ trace sampled at its own basis points (`fab energy`, never applied), the raw wit
 of its whole window (`raw whole energy`) and of the window outside every cluster box (`raw
 outside energy`, the add-back per patch), `ratio` = fab / raw whole and `clipped correction` =
 (ratio - weight) x raw outside — the proportional estimate of the corner's missing correction
-outside the box; derived columns, listed with their parents in the table's header comment and
+outside the box (`weight` is the coupon's model blend weight, the weight it would carry if
+applied, never the ownership zeroing of the priority table's `Weight`); derived columns, listed
+with their parents in the table's header comment and
 under `Diagnostics.SpatialClusterPriority.ClippedCorrection`, never part of a total (the
 Maxwell path writes no such table). Only the plane row is gated (the metal-top rows of a thin device read a few
 percent of the amplitude and are recorded only), so a coupon frame whose process plane did

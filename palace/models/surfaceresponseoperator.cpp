@@ -29300,7 +29300,11 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
                                 "clip of the dropped corner's missing correction outside "
                                 "the box (= (r - 1) x RawOut for a whole-weight patch; the "
                                 "co-located patches of a first-order split sum to the "
-                                "window's)"}}},
+                                "window's)"},
+          {"Weight", "the dropped coupon's model BLEND weight (the weight it would carry "
+                     "if applied; 1 on a whole-weight coupon), never the ownership "
+                     "zeroing - not the SpatialClusterPriority energy table's Weight, "
+                     "which reads 0 on a corner the vertex rule owns"}}},
         {"Rule",
          "OI-SCP-BOXGROW (ii-a), decisions 958 (b) / 960 / 969: a DIAGNOSTIC column "
          "set, DERIVED, never in a total; the electrostatic path only (the Maxwell "

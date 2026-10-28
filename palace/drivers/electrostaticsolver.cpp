@@ -2268,10 +2268,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "its whole window (raw whole energy) and of the window outside every "
              "cluster box (raw outside energy = the SpatialClusterPriority add-back of "
              "surface-response-spatial-cluster-priority-energy.csv per patch); ratio = "
-             "fab / raw whole; clipped correction = (ratio - weight) x raw outside. "
-             "Evaluation 0 = fixed trace on the raw field, 1 = fixed flux on the raw "
-             "field, 2 = the self-consistent corrected field. Diagnostic only: no total "
-             "carries these columns.\n";
+             "fab / raw whole; clipped correction = (ratio - weight) x raw outside. The "
+             "weight column is the dropped coupon's model BLEND weight, the weight it "
+             "would carry if applied (1 on a whole-weight coupon), never the ownership "
+             "zeroing: the Weight column of "
+             "surface-response-spatial-cluster-priority-energy.csv reads 0 on a corner "
+             "the vertex rule owns and is not this column. Evaluation 0 = fixed trace on "
+             "the raw field, 1 = fixed flux on the raw field, 2 = the self-consistent "
+             "corrected field. Diagnostic only: no total carries these columns.\n";
       output << "source,evaluation,patch,model,feature,weight";
       for (const auto &[interface, data] : interfaces)
       {
