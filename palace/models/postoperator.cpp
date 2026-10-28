@@ -131,7 +131,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
-                 fem_op->GetH1Space(), fem_op->GetNDSpace()),
+                 fem_op->GetH1Space(), fem_op->GetNDSpace(),
+                 boundaries.GetSheetAttributes()),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -224,6 +225,32 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
 
+    // Coordinate-path line integrals are split at element boundaries and each piece is
+    // integrated with a Gauss rule exact for the field on affine elements, see
+    // fem::LineIntegrator.
+    const int field_order = fem_op->GetNDSpace().Get().GetMaxElementOrder();
+
+    // A path which misses the mesh would give zero, so reject it as for wave port voltage
+    // paths, and warn if only part of it lies on the mesh.
+    auto MakeLineIntegrator =
+        [&](const std::vector<mfem::Vector> &path, bool closed, const char *name, int idx)
+    {
+      auto integrator =
+          std::make_shared<fem::LineIntegrator>(pmesh, path, closed, field_order);
+      const double rel_uncovered =
+          integrator->GetUncoveredLength() / integrator->GetPathLength();
+      MFEM_VERIFY(rel_uncovered < 1.0 - 1.0e-12, name << " of postprocessing index " << idx
+                                                      << " does not intersect the mesh!");
+      if (rel_uncovered > 1.0e-9)
+      {
+        Mpi::Warning(pmesh.GetComm(),
+                     "{:.3e}% of the {} of postprocessing index {:d} lies outside the "
+                     "mesh and does not contribute!\n",
+                     100.0 * rel_uncovered, name, idx);
+      }
+      return integrator;
+    };
+
     // Impedance postprocessing setup (all configured entries).
     for (const auto &[idx, imp] : boundaries.postpro.impedance)
     {
@@ -237,17 +264,20 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
         cfg.current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
         cfg.has_current = true;
       }
-      cfg.n_samples = imp.n_samples;
       if (imp.voltage_path.size() >= 2)
       {
         cfg.has_voltage_coordinates = true;
         cfg.voltage_path = ParsePath(imp.voltage_path);
+        cfg.voltage_integrator =
+            MakeLineIntegrator(cfg.voltage_path, false, "Impedance \"VoltagePath\"", idx);
       }
       if (!imp.current_path.empty())
       {
         cfg.has_current_path = true;
         cfg.has_current = true;
         cfg.current_path = ParsePath(imp.current_path);
+        cfg.current_integrator =
+            MakeLineIntegrator(cfg.current_path, true, "Impedance \"CurrentPath\"", idx);
       }
     }
 
@@ -259,11 +289,12 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       {
         cfg.voltage_marker = mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
       }
-      cfg.n_samples = vol.n_samples;
       if (vol.voltage_path.size() >= 2)
       {
         cfg.has_coordinates = true;
         cfg.voltage_path = ParsePath(vol.voltage_path);
+        cfg.voltage_integrator =
+            MakeLineIntegrator(cfg.voltage_path, false, "Voltage \"VoltagePath\"", idx);
       }
     }
   }
@@ -754,6 +785,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
+  paraview_max_cycle = -1;
   paraview->SetDataFormat(format);
   MFEM_VERIFY(use_ceed_domain_paraview,
               "ParaView domain output requires the libCEED point-field path!");
@@ -1100,31 +1132,17 @@ void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
   if (E)
   {
     // Piola transform: J^-T
-    E->Real() *= L;
-    E->Real().FaceNbrData() *= L;
-    if (E->HasImag())
-    {
-      E->Imag() *= L;
-      E->Imag().FaceNbrData() *= L;
-    }
+    *E *= L;
   }
   if (B)
   {
     // Piola transform: J / |J|
-    const auto Ld = std::pow(L, dim - 1);
-    B->Real() *= Ld;
-    B->Real().FaceNbrData() *= Ld;
-    if (B->HasImag())
-    {
-      B->Imag() *= Ld;
-      B->Imag().FaceNbrData() *= Ld;
-    }
+    *B *= std::pow(L, dim - 1);
   }
   if (A)
   {
     // Piola transform: J^-T
-    A->Real() *= L;
-    A->Real().FaceNbrData() *= L;
+    *A *= L;
   }
 }
 
@@ -1143,11 +1161,11 @@ void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
   }
   if (A)
   {
-    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(*A);
   }
   if (V)
   {
-    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(*V);
   }
 }
 
@@ -1166,11 +1184,11 @@ void NondimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> 
   }
   if (A)
   {
-    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(*A);
   }
   if (V)
   {
-    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(*V);
   }
 }
 
@@ -1198,10 +1216,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   // H(curl) Piola transform scaling L applies to the DOFs, not H(div) scaling L^{dim-1}.
   if (Bt_inplane)
   {
-    Bt_inplane->Real() *= mesh_Lc0;
-    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
-    Bt_inplane->Imag() *= mesh_Lc0;
-    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // libCEED-evaluated derived domain fields are registered as lazy point evaluators;
@@ -1223,6 +1238,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
         units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
+  paraview_max_cycle = std::max(paraview_max_cycle, step);
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
@@ -1238,10 +1254,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }
@@ -1260,7 +1273,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // non-used value to make the step identifiable within the data collection.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  paraview->SetCycle(paraview->GetCycle() + 1);
+  paraview->SetCycle(paraview_max_cycle + 1);
   if (paraview->GetTime() < 1.0)
   {
     paraview->SetTime(99.0);
@@ -1341,10 +1354,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
   if (Bt_inplane)
   {
-    Bt_inplane->Real() *= mesh_Lc0;
-    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
-    Bt_inplane->Imag() *= mesh_Lc0;
-    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // Create grid function for vector coefficients.
@@ -1500,10 +1510,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }
@@ -2592,18 +2599,16 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   struct LineIntegralKey
   {
     bool has_coords = false;
-    int quad_order = 0;
     std::vector<double> path_data;
     std::vector<int> marker_data;
 
     auto operator<=>(const LineIntegralKey &) const = default;
   };
   auto MakeLineIntegralKey = [](const std::vector<mfem::Vector> &path, bool has_coords,
-                                const mfem::Array<int> &marker, int quad_order)
+                                const mfem::Array<int> &marker)
   {
     LineIntegralKey key;
     key.has_coords = has_coords;
-    key.quad_order = quad_order;
     if (has_coords)
     {
       for (const auto &pt : path)
@@ -2629,10 +2634,10 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
   auto ComputeVoltage = [this, &MakeLineIntegralKey, &voltage_cache](
                             const std::vector<mfem::Vector> &path, bool has_coords,
-                            mfem::Array<int> marker, int quad_order,
+                            mfem::Array<int> marker, const fem::LineIntegrator *integrator,
                             const GridFunction &field) -> std::complex<double>
   {
-    auto key = MakeLineIntegralKey(path, has_coords, marker, quad_order);
+    auto key = MakeLineIntegralKey(path, has_coords, marker);
     if (auto it = voltage_cache.find(key); it != voltage_cache.end())
     {
       return it->second;
@@ -2641,13 +2646,8 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     std::complex<double> V(0.0, 0.0);
     if (has_coords)
     {
-      for (std::size_t k = 0; k + 1 < path.size(); k++)
-      {
-        V.real(V.real() +
-               fem::ComputeLineIntegral(path[k], path[k + 1], field.Real(), quad_order));
-        V.imag(V.imag() +
-               fem::ComputeLineIntegral(path[k], path[k + 1], field.Imag(), quad_order));
-      }
+      MFEM_VERIFY(integrator, "Missing line integrator for coordinate voltage path!");
+      V = integrator->Integrate(field);
     }
     else if (marker.Size() > 0)
     {
@@ -2673,10 +2673,10 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   // Helper: compute current I = ∮ H · t dl via coordinate path or boundary attributes.
   auto ComputeCurrent = [this, &MakeLineIntegralKey, &current_cache](
                             const std::vector<mfem::Vector> &path, bool has_path,
-                            mfem::Array<int> marker, int quad_order,
+                            mfem::Array<int> marker, const fem::LineIntegrator *integrator,
                             const GridFunction &field) -> std::complex<double>
   {
-    auto key = MakeLineIntegralKey(path, has_path, marker, quad_order);
+    auto key = MakeLineIntegralKey(path, has_path, marker);
     if (auto it = current_cache.find(key); it != current_cache.end())
     {
       return it->second;
@@ -2685,13 +2685,8 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     std::complex<double> I(0.0, 0.0);
     if (has_path)
     {
-      for (std::size_t k = 0; k < path.size(); k++)
-      {
-        const auto &pk = path[k];
-        const auto &pk1 = path[(k + 1) % path.size()];
-        I.real(I.real() + fem::ComputeLineIntegral(pk, pk1, field.Real(), quad_order));
-        I.imag(I.imag() + fem::ComputeLineIntegral(pk, pk1, field.Imag(), quad_order));
-      }
+      MFEM_VERIFY(integrator, "Missing line integrator for coordinate current path!");
+      I = integrator->Integrate(field);
     }
     else if (marker.Size() > 0)
     {
@@ -2754,8 +2749,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   auto SameVoltageConfig =
       [&](const ImpedancePostproConfig &imp, const VoltagePostproConfig &vol)
   {
-    return imp.n_samples == vol.n_samples &&
-           imp.has_voltage_coordinates == vol.has_coordinates &&
+    return imp.has_voltage_coordinates == vol.has_coordinates &&
            (imp.has_voltage_coordinates
                 ? SamePath(imp.voltage_path, vol.voltage_path)
                 : SameMarker(imp.voltage_marker, vol.voltage_marker));
@@ -2767,7 +2761,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   for (const auto &[idx, cfg] : impedance_postpro)
   {
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_voltage_coordinates,
-                            cfg.voltage_marker, cfg.n_samples, *E);
+                            cfg.voltage_marker, cfg.voltage_integrator.get(), *E);
     auto &result = measurement_cache.mode_data.impedance[idx];
     if (auto vol_it = voltage_postpro.find(idx);
         vol_it != voltage_postpro.end() && SameVoltageConfig(cfg, vol_it->second))
@@ -2788,7 +2782,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     if (cfg.has_current)
     {
       auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
-                              cfg.n_samples, *Bt_inplane);
+                              cfg.current_integrator.get(), *Bt_inplane);
       if (std::abs(I) > 1e-30)
       {
         result.Z_VI = std::abs(V) / std::abs(I);
@@ -2805,7 +2799,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
       continue;
     }
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_coordinates, cfg.voltage_marker,
-                            cfg.n_samples, *E);
+                            cfg.voltage_integrator.get(), *E);
     measurement_cache.mode_data.voltage[idx] = {V};
   }
 

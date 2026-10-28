@@ -4,7 +4,10 @@
 #include "boundarymodesolver.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <complex>
+#include <map>
 #include <numbers>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
@@ -53,6 +56,166 @@ ExtractBoundary2DSubmesh(mfem::Mesh &parent, const mfem::Array<int> &surface_att
   mesh::RemapSubMeshBdrAttributes(*sub, surface_attrs);
   mesh::AddSubMeshInternalBoundaryElements(*sub, surface_attrs, internal_bdr_attrs);
   return sub;
+}
+
+// Area of an element or face, integrated exactly for the polynomial transformations of
+// elements in a plane, so that the faces of the 3D mesh and the elements of the 2D
+// cross-section (with the same geometry) give the same value.
+double GetArea(mfem::ElementTransformation &T)
+{
+  const auto &ir = mfem::IntRules.Get(T.GetGeometryType(), 2 * T.OrderJ());
+  double area = 0.0;
+  for (int q = 0; q < ir.GetNPoints(); q++)
+  {
+    const auto &ip = ir.IntPoint(q);
+    T.SetIntPoint(&ip);
+    area += ip.weight * T.Weight();
+  }
+  return area;
+}
+
+// Center and area of a face of the cross-section.
+struct CrossSectionFace
+{
+  mfem::Vector x;
+  double area;
+};
+
+// The faces of the cross-section of a 3D mesh: its boundary elements with the given
+// attributes.
+std::vector<CrossSectionFace> GetCrossSectionFaces(const mfem::Mesh &mesh,
+                                                   const mfem::Array<int> &surface_attrs)
+{
+  std::vector<CrossSectionFace> faces;
+  mfem::IsoparametricTransformation T;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    if (surface_attrs.Find(mesh.GetBdrAttribute(be)) < 0)
+    {
+      continue;
+    }
+    mesh.GetBdrElementTransformation(be, &T);
+    auto &face = faces.emplace_back();
+    T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), face.x);
+    face.area = GetArea(T);
+  }
+  return faces;
+}
+
+// Derefine a nonconforming 3D mesh until it has no hanging entities, one level of its
+// refinement hierarchy at a time, and return the number of levels derefined. The mesh is
+// not modified if its refinements cannot be derefined (pyramids, anisotropic refinements),
+// and only partially derefined if the coarsest mesh of the hierarchy has hanging entities.
+int DerefineToConforming(mfem::Mesh &mesh)
+{
+  auto Hanging = [&mesh]()
+  {
+    auto &ncmesh = *mesh.ncmesh;
+    return ncmesh.GetEdgeList().slaves.Size() > 0 || ncmesh.GetFaceList().slaves.Size() > 0;
+  };
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const int depth = mesh.ncmesh->GetElementDepth(e);
+    if (mesh.GetElementGeometry(e) == mfem::Geometry::PYRAMID || depth > 10 ||
+        mesh.ncmesh->GetElementSizeReduction(e) != (1 << (3 * depth)))
+    {
+      return 0;
+    }
+  }
+  int levels = 0;
+  while (Hanging())
+  {
+    mfem::Vector zero(mesh.GetNE());
+    zero = 0.0;
+    if (!mesh.DerefineByError(zero, 1.0))
+    {
+      break;
+    }
+    levels++;
+  }
+  return levels;
+}
+
+// Refine a 2D mesh, in at most the given number of levels, until its elements are the
+// given faces (with centers in the plane of the mesh), which must refine its elements
+// isotropically as the faces of the boundary of an isotropically refined 3D mesh do.
+// Returns false if the faces are not recovered, for example on a cross-section which is not
+// planar.
+bool RefineToFaces(mfem::Mesh &mesh, const std::vector<CrossSectionFace> &faces,
+                   int max_levels)
+{
+  if (faces.empty())
+  {
+    return false;
+  }
+  mesh.EnsureNCMesh(true);
+
+  // Look the faces up by the cell of their center in a grid with the size of the smallest
+  // face. Faces match an element with the same center and area (a refined triangle has the
+  // center of its middle child).
+  constexpr double tol = 1.0e-6;
+  double h = mfem::infinity();
+  for (const auto &face : faces)
+  {
+    h = std::min(h, std::sqrt(face.area));
+  }
+  auto Cell = [h](const mfem::Vector &x)
+  { return std::array<long long, 2>{std::llround(x(0) / h), std::llround(x(1) / h)}; };
+  std::map<std::array<long long, 2>, std::vector<int>> grid;
+  for (int i = 0; i < static_cast<int>(faces.size()); i++)
+  {
+    grid[Cell(faces[i].x)].push_back(i);
+  }
+  auto IsFace = [&](const mfem::Vector &x, double area)
+  {
+    const auto cell = Cell(x);
+    for (long long i = cell[0] - 1; i <= cell[0] + 1; i++)
+    {
+      for (long long j = cell[1] - 1; j <= cell[1] + 1; j++)
+      {
+        auto it = grid.find({i, j});
+        if (it == grid.end())
+        {
+          continue;
+        }
+        for (int f : it->second)
+        {
+          if (std::abs(area - faces[f].area) < tol * faces[f].area &&
+              x.DistanceTo(faces[f].x) < tol * std::sqrt(faces[f].area))
+          {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  mfem::IsoparametricTransformation T;
+  mfem::Vector x;
+  for (int level = 0;; level++)
+  {
+    mfem::Array<int> marked;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      mesh.GetElementTransformation(e, &T);
+      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), x);
+      if (!IsFace(x, GetArea(T)))
+      {
+        marked.Append(e);
+      }
+    }
+    if (marked.Size() == 0)
+    {
+      break;
+    }
+    if (level == max_levels)
+    {
+      return false;
+    }
+    mesh.GeneralRefinement(marked, 1, 0);
+  }
+  return mesh.GetNE() == static_cast<int>(faces.size());
 }
 
 // Project each 3D point in `path` onto the 2D local frame (centroid, e1, e2). Leaves
@@ -144,39 +307,72 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
       }
     }
 
-    auto extracted = ExtractBoundary2DSubmesh(*smesh, attr_list, internal_bdr_attrs, frame);
-
-    // Relabel other-waveport edges as PEC on this cross-section: for the
-    // BoundaryMode solve they act as conducting boundaries.
-    if (!other_waveport_attrs.empty())
+    // Extract the cross-section of a 3D mesh, relabelling the other-waveport edges as PEC:
+    // for the BoundaryMode solve they act as conducting boundaries. The boundary elements
+    // of the submesh of a nonconforming mesh, including those added or relabelled here, are
+    // not in its mfem::NCMesh, and would be lost when the mesh is distributed, so it is
+    // rebuilt from its elements and hanging vertices.
+    auto Extract = [&](mfem::Mesh &parent, SubmeshFrame &f, int &relabelled)
     {
-      MFEM_VERIFY(!bdr.pec.attributes.empty(),
-                  "BoundaryMode submesh extraction found other-waveport edges on the "
-                  "cross-section. Define at least one PEC boundary attribute to "
-                  "relabel them to.");
-      const int pec_attr = *std::ranges::min_element(bdr.pec.attributes);
-      int relabelled = 0;
-      for (int sbe = 0; sbe < extracted->GetNBE(); sbe++)
+      std::unique_ptr<mfem::Mesh> sub =
+          ExtractBoundary2DSubmesh(parent, attr_list, internal_bdr_attrs, f);
+      relabelled = 0;
+      if (!other_waveport_attrs.empty())
       {
-        if (other_waveport_attrs.count(extracted->GetBdrAttribute(sbe)))
+        MFEM_VERIFY(!bdr.pec.attributes.empty(),
+                    "BoundaryMode submesh extraction found other-waveport edges on the "
+                    "cross-section. Define at least one PEC boundary attribute to "
+                    "relabel them to.");
+        const int pec_attr = *std::ranges::min_element(bdr.pec.attributes);
+        for (int sbe = 0; sbe < sub->GetNBE(); sbe++)
         {
-          extracted->SetBdrAttribute(sbe, pec_attr);
-          relabelled++;
+          if (other_waveport_attrs.count(sub->GetBdrAttribute(sbe)))
+          {
+            sub->SetBdrAttribute(sbe, pec_attr);
+            relabelled++;
+          }
         }
       }
-      if (relabelled > 0)
+      if (sub->Nonconforming())
       {
-        Mpi::Print(" Relabelled {:d} other-waveport boundary edge(s) as PEC (attr {:d})\n",
-                   relabelled, pec_attr);
+        sub = mesh::RebuildNonconformingMesh(*sub);
       }
+      return sub;
+    };
+    int relabelled = 0;
+    auto extracted = Extract(*smesh, frame, relabelled);
+    if (relabelled > 0)
+    {
+      Mpi::Print(" Relabelled {:d} other-waveport boundary edge(s) as PEC (attr {:d})\n",
+                 relabelled, *std::ranges::min_element(bdr.pec.attributes));
     }
 
-    // The boundary elements of the submesh of a nonconforming mesh, including those added
-    // or relabelled above, are not in its mfem::NCMesh, and would be lost when the mesh is
-    // distributed.
+    // A rebuilt cross-section with hanging vertices has its leaf elements as root elements,
+    // so the sides of its interior boundaries cannot be identified for error estimation.
+    // Extract the cross-section instead from the coarsest conforming mesh of the refinement
+    // hierarchy of the 3D mesh, and refine it into the faces of the cross-section of the
+    // given mesh, as for the refined cross-section of a conforming mesh. The rebuilt
+    // cross-section is kept if the 3D mesh cannot be derefined or the faces are not
+    // recovered.
     if (extracted->Nonconforming())
     {
-      extracted = mesh::RebuildNonconformingMesh(*extracted);
+      auto faces = GetCrossSectionFaces(*smesh, attr_list);
+      if (const int levels = DerefineToConforming(*smesh); levels > 0)
+      {
+        SubmeshFrame coarse_frame;
+        int coarse_relabelled;
+        auto coarse = Extract(*smesh, coarse_frame, coarse_relabelled);
+        for (auto &face : faces)
+        {
+          face.x = mesh::Project3Dto2D(face.x, coarse_frame.centroid, coarse_frame.e1,
+                                       coarse_frame.e2);
+        }
+        if (RefineToFaces(*coarse, faces, levels))
+        {
+          extracted = std::move(coarse);
+          frame = coarse_frame;
+        }
+      }
     }
 
     smesh = std::move(extracted);
@@ -252,7 +448,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(), mode_op.GetRTSpaceHierarchy(),
       mode_op.GetCurlSpace(), mode_op.GetH1SpaceHierarchy(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
+      iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
 
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
 

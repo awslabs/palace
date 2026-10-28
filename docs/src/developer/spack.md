@@ -206,6 +206,24 @@ spack env activate .
 spack load palace
 ```
 
+!!! note "Building the Enzyme-backed tests"
+
+    The optional `+enzyme` variant requires upstream LLVM instead of the
+    default GCC C/C++ toolchain:
+
+    ```sh
+    brew install llvm@19
+    spack -e . compiler find "$(brew --prefix llvm@19)/bin"
+    ```
+
+    Add `+enzyme` to the Palace spec, require `llvm@19` for `c` and `cxx`, and
+    keep `gcc` for `fortran`. Then build with:
+
+    ```sh
+    spack -e . concretize -f --test root
+    spack -e . install --test root
+    ```
+
 ## Developing Palace's Package Recipe
 
 Beyond developing *Palace* itself, you might need to work on *Palace*'s Spack

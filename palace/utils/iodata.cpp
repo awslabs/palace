@@ -3,6 +3,7 @@
 
 #include "iodata.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <fstream>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include <stack>
 #include <string>
 #include <string_view>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
@@ -289,6 +291,62 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 
 void IoData::CheckConfiguration()
 {
+  // Mesh cracking of interior boundaries is no longer required for error estimation, and is
+  // selected per boundary with the "Crack" option of impedance, rational impedance, and
+  // conductivity boundaries.
+  if (model.crack_bdr_elements.has_value())
+  {
+    Mpi::Warning(
+        "config[\"Model\"][\"CrackInternalBoundaryElements\"] is deprecated and "
+        "will be removed in a future release! By default, the mesh is only cracked "
+        "along interior boundaries with PMC or absorbing boundary conditions, and "
+        "along impedance, rational impedance, and conductivity boundaries with "
+        "\"Crack\": true.\n");
+    // The global option overrides the per-boundary choice. The legacy behavior also cracks
+    // impedance, rational impedance, and conductivity boundaries with the default "Crack":
+    // false, while disabling mesh cracking contradicts the boundaries which request it.
+    if (*model.crack_bdr_elements)
+    {
+      auto NotCracked = [](const auto &data) { return !data.crack; };
+      if (std::any_of(boundaries.conductivity.begin(), boundaries.conductivity.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.impedance.begin(), boundaries.impedance.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.rational_impedance.begin(),
+                      boundaries.rational_impedance.end(), NotCracked))
+      {
+        Mpi::Warning(
+            "config[\"Model\"][\"CrackInternalBoundaryElements\"] = true overrides "
+            "\"Crack\": false of impedance, rational impedance, and conductivity "
+            "boundaries, which are then modeled as two independent surfaces (cracked)!\n");
+      }
+    }
+    else
+    {
+      std::set<int> crack_attrs;
+      auto Append = [&crack_attrs](const auto &boundary_data)
+      {
+        for (const auto &data : boundary_data)
+        {
+          if (data.crack)
+          {
+            crack_attrs.insert(data.attributes.begin(), data.attributes.end());
+          }
+        }
+      };
+      Append(boundaries.conductivity);
+      Append(boundaries.impedance);
+      Append(boundaries.rational_impedance);
+      MFEM_VERIFY(crack_attrs.empty(),
+                  "\"Crack\": true on the boundaries with attributes "
+                      << fmt::format("{}", fmt::join(crack_attrs, ", "))
+                      << " conflicts with "
+                         "config[\"Model\"][\"CrackInternalBoundaryElements\"] = false, "
+                         "which disables mesh cracking! Remove the deprecated option to "
+                         "crack these boundaries, or set \"Crack\": false.");
+    }
+  }
+
   // Mixed current/flux inductance extraction has one complete-matrix contract: every
   // parallel current element supplies its oriented aperture, and every current port remains
   // open during the flux excitations. Reject partial or silently overridden configurations
@@ -335,6 +393,13 @@ void IoData::CheckConfiguration()
                     solver.driven.adaptive_tol > 0.0,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "adaptive frequency sweep (AdaptiveTol > 0.0)!\n");
+    // DrivenSolver reverts an adaptive sweep with too few samples to a uniform sweep, but
+    // circuit synthesis has no such fallback: PROM initialization and the error indicator
+    // need two distinct samples (sample_f is deduplicated when parsed).
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    solver.driven.sample_f.size() >= 2,
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "at least two distinct frequency samples!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
@@ -581,8 +646,17 @@ void IoData::CheckConfiguration()
   // rather than stored on LinearSolverData.
   if (solver.linear.mg_smooth_aux < 0)
   {
-    if (problem.type == ProblemType::ELECTROSTATIC ||
-        problem.type == ProblemType::MAGNETOSTATIC)
+    // A London sheet's shifted preconditioner lifts the gradients off the curl-curl kernel,
+    // so they need the distributive relaxation that the pure curl-curl problem does not.
+    const bool london_pc =
+        problem.type == ProblemType::MAGNETOSTATIC && solver.linear.london_pc_shift > 0.0 &&
+        (!boundaries.superconductor.empty() || !boundaries.fluxloop.empty());
+    if (london_pc)
+    {
+      solver.linear.mg_smooth_aux = 1;
+    }
+    else if (problem.type == ProblemType::ELECTROSTATIC ||
+             problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Disable auxiliary space smoothing using distributive relaxation by default for
       // problems which don't need it.

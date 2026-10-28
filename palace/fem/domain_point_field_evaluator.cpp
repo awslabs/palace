@@ -252,17 +252,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
                                  ceed, indices.size(), 1, 1, indices.size(),
                                  CEED_STRIDES_BACKEND, &attr_restr));
-        {
-          // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-          Bt = 1.0;
-          Gt = 0.0;
-          qX = 0.0;
-          qW = 0.0;
-          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                                 Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                                 qW.GetData(), &attr_basis));
-        }
+        ceed::InitConstantLineBasis(ceed, 1, num_pts, &attr_basis);
         ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
         inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
@@ -357,16 +347,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
                                  ceed, indices.size(), 1, 1, indices.size(),
                                  CEED_STRIDES_BACKEND, &attr_restr));
-        {
-          mfem::Vector Bt(num_vtu_pts), Gt(num_vtu_pts), qX(num_vtu_pts), qW(num_vtu_pts);
-          Bt = 1.0;
-          Gt = 0.0;
-          qX = 0.0;
-          qW = 0.0;
-          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1,
-                                                 num_vtu_pts, Bt.GetData(), Gt.GetData(),
-                                                 qX.GetData(), qW.GetData(), &attr_basis));
-        }
+        ceed::InitConstantLineBasis(ceed, 1, num_vtu_pts, &attr_basis);
         ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
         buffer_inputs.push_back(
             {"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});

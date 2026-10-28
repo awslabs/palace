@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-2-0",
+  "$id": "urn:palace:schema:4-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -97,9 +97,9 @@
         },
         "CrackInternalBoundaryElements": {
           "type": "boolean",
-          "description": "Duplicate nodes along internal boundary elements to create a crack.",
-          "default": true,
-          "x-palace-advanced": true
+          "description": "Duplicate nodes along interior boundaries to decouple the elements on either side (\"crack\" the mesh). If not specified, the mesh is cracked along interior boundaries with boundary conditions which apply to each side separately, [PMC](@ref config-boundaries-pmc) (or [ZeroCharge](@ref config-boundaries-zerocharge)) and [Absorbing](@ref config-boundaries-absorbing) boundaries, and along [Impedance](@ref config-boundaries-impedance), [RationalImpedance](@ref config-boundaries-rationalimpedance), and [Conductivity](@ref config-boundaries-conductivity) boundaries with `\"Crack\": true`. If `true`, the mesh is cracked along all interior boundaries with boundary conditions except for lumped ports, with the surface impedance of impedance boundaries split between their two faces (the behavior of previous versions). If `false`, the mesh is never cracked, which is an error for boundaries with `\"Crack\": true`. Deprecated: the error estimate for adaptive mesh refinement no longer requires cracking the mesh, and cracking is a per-boundary modeling choice for impedance, rational impedance, and conductivity boundaries.",
+          "x-palace-advanced": true,
+          "x-palace-deprecated": true
         },
         "RefineCrackElements": {
           "type": "boolean",
@@ -931,6 +931,11 @@
           "type": "number",
           "description": "Surface capacitance for this impedance boundary, F/sq.",
           "default": 0.0
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent surfaces, each carrying its own current, with no coupling through the sheet: this models a conductor much thicker than its penetration depth, and each face has the given surface impedance, as on an exterior boundary. If `false`, the boundary is a thin sheet with a single tangential electric field on it, which couples the fields on its two sides: this models a film much thinner than its penetration depth, and the given surface impedance is that of the film. Only relevant for interior boundaries.",
+          "default": false
         }
       }
     },
@@ -988,6 +993,11 @@
           "minItems": 1,
           "contains": { "not": { "const": 0 } },
           "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. At least one coefficient must be nonzero. The roots of D are the poles of Zs."
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent surfaces, each carrying its own current, with no coupling through the sheet: this models a conductor much thicker than its penetration depth, and each face has the given surface impedance, as on an exterior boundary. If `false`, the boundary is a thin sheet with a single tangential electric field on it, which couples the fields on its two sides: this models a film much thinner than its penetration depth, and the given surface impedance is that of the film. Only relevant for interior boundaries.",
+          "default": false
         }
       }
     },
@@ -1042,7 +1052,12 @@
         },
         "External": {
           "type": "boolean",
-          "description": "Whether this boundary is on the exterior of the computational domain. Relevant for the thickness correction.",
+          "description": "Whether this boundary is on the exterior of the computational domain, with only one conductor surface. Relevant for the thickness correction, which otherwise assumes a conductor with a surface on either side (a cracked interior boundary, see `\"Crack\"`). Ignored for interior boundaries which are not cracked.",
+          "default": false
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent conductor surfaces, each carrying its own current with the surface impedance of the conductor, with no coupling through the sheet: this models a conductor much thicker than the skin depth. If `false`, the boundary is a thin sheet with a single tangential electric field on it and the admittance of both conductor surfaces, which couples the fields on its two sides: this models a film thinner than the skin depth. The two models give the same result when the currents on both faces are equal, and differ in the conductor loss (by up to a factor of two) when the current flows on one face only. Only relevant for interior boundaries.",
           "default": false
         }
       }
@@ -1335,7 +1350,7 @@
         },
         "Mode": {
           "type": "integer",
-          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked in order of decreasing wave number.",
+          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked by distance to the eigenvalue solver target: `\"Target\"` when given, otherwise just above the bulk propagation constants of the port materials (decreasing wave number for the modes below it).",
           "exclusiveMinimum": 0,
           "default": 1
         },
@@ -1344,6 +1359,11 @@
           "description": "Offset distance used for S-parameter de-embedding for this wave port, specified in mesh length units.",
           "minimum": 0.0,
           "default": 0.0
+        },
+        "Target": {
+          "type": "number",
+          "description": "Target effective index ``n_\\text{eff} = k_n / k_0`` for the boundary mode eigenvalue solver: the port modes are ranked by their distance to it, as for [`/Solver/BoundaryMode/Target`](@ref config-solver-boundarymode-target). If omitted, the target lies just above the bulk propagation constants of the port materials. Use it to select a mode far from that default, for example the slow-wave mode of a superconducting line on a cross-section with several modes.",
+          "exclusiveMinimum": 0.0
         },
         "SolverType": {
           "type": "string",
@@ -1427,7 +1447,7 @@
         },
         "VoltagePath": {
           "type": "array",
-          "description": "Open path of coordinate points across the port face, specified in mesh length units. Each entry is a floating point array of length equal to the spatial dimension. The path is **directed from the signal (high-potential) terminal to the ground (low-potential) terminal**, matching the lumped-port `\"Direction\"` convention. When specified, this: 1. Pins the wave-port mode polarity so that ``\\int E_{\\text{mode}} \\cdot dl`` along the path is real-positive (required for consistent S-parameter signs when mixing wave and lumped ports in a driven simulation; without it, cross-type S-parameters may be ``180^\\circ`` out of phase). 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port. For example, in a coaxial wave port the first point is on the inner conductor (signal) and the last point is on the outer conductor (ground); for a CPW port, the first point is on the center trace and the last point in the gap. Uses GSLIB interpolation.",
+          "description": "Open path of coordinate points across the port face, specified in mesh length units. Each entry is a floating point array of length equal to the spatial dimension. The path is **directed from the signal (high-potential) terminal to the ground (low-potential) terminal**, matching the lumped-port `\"Direction\"` convention. When specified, this: 1. Pins the wave-port mode polarity so that ``\\int E_{\\text{mode}} \\cdot dl`` along the path is real-positive (required for consistent S-parameter signs when mixing wave and lumped ports in a driven simulation; without it, cross-type S-parameters may be ``180^\\circ`` out of phase). 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port. For example, in a coaxial wave port the first point is on the inner conductor (signal) and the last point is on the outer conductor (ground); for a CPW port, the first point is on the center trace and the last point in the gap. The path is projected onto the port plane and split at the port mesh element boundaries, and each piece is integrated with a Gauss-Legendre rule exact for the finite element field on affine elements (triangles, parallelograms), so the voltage is the exact line integral of the discrete field however finely the mesh is refined along the path.",
           "items": {
             "type": "array",
             "minItems": 2,
@@ -1437,15 +1457,9 @@
             }
           }
         },
-        "NSamples": {
-          "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based voltage line integral.",
-          "minimum": 1,
-          "default": 100
-        },
         "PolarityAttributes": {
           "type": "array",
-          "description": "Pair of parent-mesh boundary attributes `[signal, ground]` (signal/high-potential terminal first, ground/low-potential terminal second). Same role as the polarity component of [VoltagePath](@ref config-boundaries-waveport-voltagepath): the mode is flipped so that the modal E-field points from the signal attribute toward the ground attribute. Ignored if `\"VoltagePath\"` is also specified. Lightweight alternative to `\"VoltagePath\"` when only polarity is needed (no ``Z_{PV}``, no GSLIB). Both attributes must be present as distinct boundary attributes in the input mesh, with edges that lie on the port face.",
+          "description": "Pair of parent-mesh boundary attributes `[signal, ground]` (signal/high-potential terminal first, ground/low-potential terminal second). Same role as the polarity component of [VoltagePath](@ref config-boundaries-waveport-voltagepath): the mode is flipped so that the modal E-field points from the signal attribute toward the ground attribute. Ignored if `\"VoltagePath\"` is also specified. Lightweight alternative to `\"VoltagePath\"` when only polarity is needed (no ``Z_{PV}``). Both attributes must be present as distinct boundary attributes in the input mesh, with edges that lie on the port face.",
           "minItems": 2,
           "maxItems": 2,
           "items": {
@@ -1635,6 +1649,17 @@
           "description": "Effective sheet penetration depth λ⊥ [mesh length units] used to model a FilmAttributes film that is not declared a \"Superconductor\" as the λ→0 perfect-screening limit. Smaller values approach an ideal perfect conductor.",
           "exclusiveMinimum": 0.0,
           "default": 1.0e-4
+        },
+        "Excitation": {
+          "description": "Excitation index of this flux loop, as for ports: can be a boolean or a non-negative integer. Flux loops sharing a positive index are driven together in one magnetostatic solve, each at its own FluxAmounts; 0 (false) holds the loop at zero fluxoid in every excitation. Defaults to the loop Index, so that each loop is its own excitation and the inductance matrix is extracted; when every excitation is a single loop the two indices must agree. See the [boundary conditions guide](../guide/boundaries.md#Flux-boundary) for details.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
         }
       }
     },
@@ -1781,17 +1806,11 @@
         },
         "VoltagePath": {
           "$ref": "#/$defs/CoordinatePath",
-          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units. Uses uniformly weighted GSLIB interpolation, which is less accurate than the attribute-based method but does not require modifying the mesh to include integration boundaries."
+          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units. The path is split at element boundaries and each piece is integrated exactly for affine elements (triangles, parallelograms), so this is as accurate as the attribute-based method without requiring integration boundaries in the mesh."
         },
         "CurrentPath": {
           "$ref": "#/$defs/CoordinatePath",
           "description": "Array of coordinate points defining a closed loop for computing the current line integral ``I = \\oint \\mathbf{H}_t \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. The last point connects back to the first. Specified in mesh length units."
-        },
-        "NSamples": {
-          "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based line integrals (using GSLIB interpolation).",
-          "minimum": 1,
-          "default": 100
         }
       }
     },
@@ -1813,12 +1832,6 @@
         "VoltagePath": {
           "$ref": "#/$defs/CoordinatePath",
           "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units."
-        },
-        "NSamples": {
-          "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based line integral (GSLIB interpolation).",
-          "minimum": 1,
-          "default": 100
         }
       }
     },
@@ -2613,7 +2626,28 @@
           "default": "Energy",
           "x-palace-advanced": true
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "MinFreq",
+              "MaxFreq",
+              "FreqStep"
+            ]
+          },
+          "then": {
+            "properties": {
+              "MinFreq": {
+                "exclusiveMinimum": 0.0
+              },
+              "FreqStep": {
+                "exclusiveMinimum": 0.0
+              }
+            }
+          }
+        }
+      ]
     },
     "SamplesPoint": {
       "type": "object",
@@ -2632,7 +2666,8 @@
           "type": "array",
           "description": "Explicit frequencies to sample, GHz.",
           "items": {
-            "type": "number"
+            "type": "number",
+            "exclusiveMinimum": 0.0
           }
         },
         "SaveStep": {
@@ -2664,12 +2699,12 @@
         "MinFreq": {
           "type": "number",
           "description": "Lower bound, GHz.",
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0
         },
         "MaxFreq": {
           "type": "number",
           "description": "Upper bound, GHz.",
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0
         },
         "FreqStep": {
           "type": "number",
@@ -2678,7 +2713,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples. Mutually exclusive with `\"FreqStep\"`.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`). Mutually exclusive with `\"FreqStep\"`.",
           "minimum": 0
         },
         "SaveStep": {
@@ -2721,7 +2756,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`).",
           "minimum": 1
         },
         "SaveStep": {
@@ -2883,7 +2918,7 @@
       "properties": {
         "Save": {
           "type": "integer",
-          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by excitation: the surface current sources in index order, then the flux loop excitations in excitation index order (the entries of the computed inductance matrix when each is a single source). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
         },
@@ -2954,7 +2989,7 @@
         },
         "MGAuxiliarySmoother": {
           "type": "boolean",
-          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this by default for electrostatic and magnetostatic simulations and enables it otherwise.",
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with `\"Superconductor\"` or `\"FluxLoop\"` boundaries enable it when `\"LondonPCShift\"` is positive.",
           "x-palace-advanced": true
         },
         "MGCycleIts": {
@@ -3112,7 +3147,7 @@
         },
         "EstimatorMG": {
           "type": "boolean",
-          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi.",
+          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi. The flux recovery on meshes with uncracked interior boundaries with boundary conditions, which is discontinuous across them, always uses Jacobi.",
           "default": false
         },
         "GSOrthogonalization": {
@@ -3144,7 +3179,31 @@
           "Solver": {
             "required": [
               "Driven"
-            ]
+            ],
+            "properties": {
+              "Driven": {
+                "if": {
+                  "properties": {
+                    "AdaptiveCircuitSynthesis": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "AdaptiveCircuitSynthesis"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "AdaptiveTol": {
+                      "exclusiveMinimum": 0.0
+                    }
+                  },
+                  "required": [
+                    "AdaptiveTol"
+                  ]
+                }
+              }
+            }
           }
         }
       }

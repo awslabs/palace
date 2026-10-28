@@ -12,7 +12,7 @@ namespace palace
 SurfaceFluxData::SurfaceFluxData(const config::FluxLoopData &data)
   : hole_attributes(data.hole_attributes), flux_amounts(data.flux_amounts),
     film_attributes(data.film_attributes),
-    direction(data.direction.begin(), data.direction.end())
+    direction(data.direction.begin(), data.direction.end()), excitation(data.excitation)
 {
 }
 
@@ -32,6 +32,10 @@ void SurfaceFluxOperator::SetUpBoundaryProperties(const IoData &iodata)
   for (const auto &[idx, data] : iodata.boundaries.fluxloop)
   {
     sources.try_emplace(idx, data);
+    if (data.excitation > 0)
+    {
+      excitations[data.excitation].push_back(idx);
+    }
   }
 }
 
@@ -44,7 +48,8 @@ void SurfaceFluxOperator::PrintBoundaryInfo(const IoData &iodata)
   Mpi::Print("\nConfiguring flux loop excitation sources:\n");
   for (const auto &[idx, data] : sources)
   {
-    Mpi::Print(" Index = {:d}, holes = [{}]\n", idx, fmt::join(data.hole_attributes, ","));
+    Mpi::Print(" Index = {:d}, holes = [{}], excitation = {:d}\n", idx,
+               fmt::join(data.hole_attributes, ","), data.excitation);
   }
 }
 
