@@ -1329,6 +1329,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   if (Mpi::Root(comm))
   {
     fs::remove_all(output);
+    fs::create_directories(output);
   }
   Mpi::Barrier(comm);
   auto result = MeasureResistorLoss(c, output, permittivity);
