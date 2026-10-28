@@ -175,12 +175,16 @@ public:
 
   // Compute elemental error indicators given the electric field as a vector of true dofs,
   // and fold into an existing indicator. The indicators are nondimensionalized using the
-  // total field energy. Not for a frequency-dependent material.
-  void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const;
+  // total field energy. For real (static or transient) fields only, which do not see a
+  // frequency-dependent material.
+  void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same at the real angular frequency ω of the field, for a frequency-dependent
-  // material. A nonpositive or nonfinite Et (a general model with a negative stored
-  // energy) uses the energy norm of the recovered flux instead, with a warning.
+  // The same for complex fields at their real angular frequency ω, which is required: a
+  // frequency-dependent material uses ε(iω), and a constant one does not depend on ω. On
+  // the frequency-dependent route, a nonpositive or nonfinite Et (a general model with a
+  // negative stored energy) uses the energy norm of the recovered flux instead, with a
+  // warning.
   void AddErrorIndicator(const VecType &E, double Et, double omega,
                          ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
@@ -246,11 +250,13 @@ public:
                                   int max_it, int print, bool use_mg,
                                   const std::vector<int> &crack_attr_list = {});
 
+  // Real fields only; complex fields require their frequency, below.
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
-                         ErrorIndicator &indicator) const;
+                         ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same at the real angular frequency ω of the fields, required with a
-  // frequency-dependent material (see GradFluxErrorEstimator).
+  // The same for complex fields at their real angular frequency ω, which is required (see
+  // GradFluxErrorEstimator).
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
                          ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
@@ -275,11 +281,13 @@ public:
                                  int max_it, int print, bool use_mg,
                                  const std::vector<int> &crack_attr_list = {});
 
+  // Real (transient) fields only; complex fields require their frequency, below.
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
-                         ErrorIndicator &indicator) const;
+                         ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same at the real angular frequency ω of the fields, required with a
-  // frequency-dependent material (see GradFluxErrorEstimator).
+  // The same for complex fields at their real angular frequency ω, which is required (see
+  // GradFluxErrorEstimator).
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
                          ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;

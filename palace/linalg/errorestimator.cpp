@@ -792,6 +792,7 @@ Vector GradFluxErrorEstimator<VecType>::RecoveredFluxNorms() const
 template <typename VecType>
 void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double Et,
                                                         ErrorIndicator &indicator) const
+  requires(!std::is_same_v<VecType, ComplexVector>)
 {
   auto estimates = ComputeEstimates(E);
   linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
@@ -991,6 +992,7 @@ TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
 template <typename VecType>
 void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
     const VecType &E, const VecType &B, double Et, ErrorIndicator &indicator) const
+  requires(!std::is_same_v<VecType, ComplexVector>)
 {
   AddFluxErrorIndicator(grad_estimator.ComputeEstimates(E),
                         curl_estimator.ComputeEstimates(B), (Et > 0.0) ? 0.5 / Et : 1.0,
@@ -1033,6 +1035,7 @@ BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
 template <typename VecType>
 void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
     const VecType &E, const VecType &B, double Et, ErrorIndicator &indicator) const
+  requires(!std::is_same_v<VecType, ComplexVector>)
 {
   AddFluxErrorIndicator(grad_estimator.ComputeEstimates(E),
                         curl_estimator.ComputeEstimates(B), (Et > 0.0) ? 0.5 / Et : 1.0,

@@ -149,7 +149,17 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
     {
       auto estimator = MakeEstimator(ComplexVector());
       ErrorIndicator ind_c;
-      estimator.AddErrorIndicator(X, 1.0, ind_c);
+      // Complex electric fields require their frequency; this constant material does not
+      // depend on it, so any fixture frequency gives the same estimate.
+      constexpr double omega = 1.0;
+      if constexpr (requires { estimator.AddErrorIndicator(X, 1.0, omega, ind_c); })
+      {
+        estimator.AddErrorIndicator(X, 1.0, omega, ind_c);
+      }
+      else
+      {
+        estimator.AddErrorIndicator(X, 1.0, ind_c);  // Magnetic flux: no frequency
+      }
       Vector expected(ref_re.Local().Size());
       {
         const auto *hre = ref_re.Local().HostRead();

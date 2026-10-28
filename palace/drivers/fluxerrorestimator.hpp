@@ -46,8 +46,10 @@ public:
     }
   }
 
+  // Real (transient) fields only; complex fields require their frequency, below.
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>)
   {
     if (estimator_2d)
     {
@@ -59,8 +61,8 @@ public:
     }
   }
 
-  // The same at the real angular frequency ω of the fields, required with a
-  // frequency-dependent material.
+  // The same for complex fields at their real angular frequency ω, which is required: a
+  // frequency-dependent material uses ε(iω).
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
                          ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>

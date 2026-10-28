@@ -655,6 +655,14 @@ concept CallableWithoutFrequency = requires(const Op &op, const GridFunction *E)
   op.GetInterfaceElectricFieldEnergy(1, E);
 };
 
+// Whether the gradient flux error indicator of fields of type V can be computed without
+// their frequency.
+template <typename Est, typename V = ComplexVector>
+concept IndicatorWithoutFrequency =
+    requires(const Est &est, const V &E, ErrorIndicator &ind) {
+      est.AddErrorIndicator(E, 1.0, ind);
+    };
+
 TEST_CASE("Electric surface flux of frequency-dependent materials",
           "[frequencydependent][Serial][Parallel][GPU]")
 {
@@ -893,8 +901,11 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
   MaterialOperator vacuum_op({vacuum}, periodic, ProblemType::DRIVEN, mesh);
   GradFluxErrorEstimator<ComplexVector> vacuum_est(vacuum_op, nd_fespace, rt_fespaces, tol,
                                                    max_it, 0, false);
+  // Complex fields require their frequency. The constant reference does not depend on it,
+  // so it is evaluated at one fixture frequency and used at every frequency below.
+  constexpr double omega_ref = 1.0;
   ErrorIndicator ref;
-  vacuum_est.AddErrorIndicator(E, 1.0, ref);
+  vacuum_est.AddErrorIndicator(E, 1.0, omega_ref, ref);
 
   auto Check = [&](const ErrorIndicator &ind, double ratio)
   {
@@ -914,12 +925,10 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
         ProblemType::DRIVEN, mesh);
     GradFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespace, rt_fespaces, tol,
                                                     max_it, 0, false);
-    // The frequency is required, and each change refreshes the retained contexts and
-    // projection weights.
-    {
-      ErrorIndicator ind;
-      CHECK_THROWS(estimator.AddErrorIndicator(E, 1.0, ind));
-    }
+    // The frequency is required (at compile time), and each change refreshes the retained
+    // contexts and projection weights.
+    static_assert(!IndicatorWithoutFrequency<GradFluxErrorEstimator<ComplexVector>> &&
+                  IndicatorWithoutFrequency<GradFluxErrorEstimator<Vector>, Vector>);
     for (double omega : {0.6, 2.5, 0.6})
     {
       CAPTURE(omega);
@@ -1124,20 +1133,22 @@ TEST_CASE("Flux error estimator with a nonpositive energy normalization",
   }
 
   // Without a frequency-dependent material, the normalization is that of the constant
-  // estimators also for a nonpositive energy (a zero field): the frequency overload gives
-  // the same indicator as the established one, with no fallback.
+  // estimators also for a nonpositive energy (a zero field): scale 1, with no fallback to
+  // the recovered fluxes.
   MaterialOperator constant_op({MakeMaterial({1}, {}), MakeMaterial({2}, {})}, periodic,
                                ProblemType::DRIVEN, mesh);
   TimeDependentFluxErrorEstimator<ComplexVector> constant_estimator(
       constant_op, nd_fespaces, rt_fespaces, 1.0e-14, 1000, 0, false);
+  // The established scale for Et ≤ 0 is 1, that of Et = 0.5.
+  ErrorIndicator established;
+  constant_estimator.AddErrorIndicator(E, B, 0.5, omega, established);
   for (double Et : {0.0, -1.0})
   {
     CAPTURE(Et);
-    ErrorIndicator with_omega, without_omega;
+    ErrorIndicator with_omega;
     constant_estimator.AddErrorIndicator(E, B, Et, omega, with_omega);
-    constant_estimator.AddErrorIndicator(E, B, Et, without_omega);
     const auto *a = with_omega.Local().HostRead();
-    const auto *b = without_omega.Local().HostRead();
+    const auto *b = established.Local().HostRead();
     for (int i = 0; i < with_omega.Local().Size(); i++)
     {
       CHECK(a[i] == b[i]);
