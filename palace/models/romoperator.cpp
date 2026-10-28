@@ -18,6 +18,7 @@
 #include <utility>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
@@ -3228,7 +3229,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   // Synthesized port realization Y_syn(ω) y = G(ω) a, b = H(ω) y - a, so
   // S(ω) = H(ω) Y_syn(ω)⁻¹ G(ω) - I. Each map column is √y_ref times the port's coupling
-  // vector (a wave port's projected n×H, or a lumped port's terminal selector), the
+  // vector (a wave port's projected n×H, or a lumped port's voltage functional), the
   // symmetric power-wave form that mixes lumped/wave references. rom-coupled-S is the
   // reconstructed S; rom-coupled-G/H export the maps for external reconstruction off the
   // pencil.
@@ -3280,6 +3281,29 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     const double unit_henry_inv =
         1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
     const double omega0 = unit_henry_inv / unit_ohm_inv;
+    // A lumped port couples through its voltage functional on the basis vectors: S + 1 is
+    // V/√R_ref, and its drive is 2/√R_ref times the same mode overlap. This is not a unit
+    // selector on the terminal row: the port basis vector is the L2 projection of the port
+    // mode, normalized in the W norm, so its voltage is orth_R(row, row), not 1, and the
+    // other basis vectors carry small voltages.
+    std::map<int, Eigen::VectorXd> lumped_voltage;
+    for (const auto &[is_wave, port_idx] : coupled_ports)
+    {
+      if (is_wave)
+      {
+        continue;
+      }
+      const auto &port = space_op.GetLumpedPortOp().GetPort(port_idx);
+      GridFunction E(space_op.GetNDSpace(), true);
+      E.Imag() = 0.0;
+      Eigen::VectorXd voltage(nr);
+      for (long j = 0; j < nr; j++)
+      {
+        E.Real().SetFromTrueDofs(V[j]);
+        voltage(j) = port.GetVoltage(E).real();  // A real basis vector has a real voltage
+      }
+      lumped_voltage.emplace(port_idx, std::move(voltage));
+    }
     const std::size_t n_freq = sweep_omega_samples.size();
     coupled_g.assign(n_freq, Eigen::MatrixXcd::Zero(na, n_ports));
     coupled_h.assign(n_freq, Eigen::MatrixXcd::Zero(n_ports, na));
@@ -3306,15 +3330,10 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
         }
         else
         {
-          // Lumped port: fixed selector at its terminal basis row, referenced to R_ref. The
-          // sign aligns the terminal current polarity with the wave-port n×H convention so
-          // mixed lumped↔wave cross-terms match Palace's port-S.
-          const long row =
-              LabelIndex(v_node_label, fmt::format("port_{:d}_re", coupled_ports[p].idx));
-          if (row >= 0 && row < nr)
-          {
-            cvec(row) = -1.0;
-          }
+          // Lumped port: its voltage on each basis vector, referenced to R_ref. The sign
+          // aligns the terminal current polarity with the wave-port n×H convention so mixed
+          // lumped↔wave cross-terms match Palace's port-S.
+          cvec = -lumped_voltage.at(coupled_ports[p].idx).cast<std::complex<double>>();
           y_ref = unit_ohm_inv / space_op.GetLumpedPortOp()
                                      .GetPort(coupled_ports[p].idx)
                                      .GetExcitationRefResistance();

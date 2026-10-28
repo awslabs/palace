@@ -97,7 +97,8 @@ of the driven solver as well as the following additional files:
     amplitudes at the mesh boundary plane, $\bm{Y}_{\mathrm{syn}}$ is the exported L/R/C pencil, and
     $\bm{G}$/$\bm{H}$ are the frequency-dependent source/observation maps. A wave port's columns are
     its projected $\bm{n}\times\bm{H}$ vector (which rotates with frequency for a hybrid mode); a
-    lumped port's columns are a fixed selector on its terminal node. Aux rows are zero. `rom-coupled-G.csv`
+    lumped port's columns are its voltage functional on the basis vectors, almost all of it on its
+    terminal node. Aux rows are zero. `rom-coupled-G.csv`
     and `rom-coupled-H.csv` tabulate $\bm{G}$ and $\bm{H}$ over the sweep grid (columns keyed by node
     label and port). To reconstruct the S-parameters at a swept frequency $\omega$: (1) assemble
     $\bm{Y}_{\mathrm{syn}}(\omega) = \widehat{\bm{L}}^{-1}/s + \widehat{\bm{R}}^{-1} + s\,\widehat{\bm{C}}$
