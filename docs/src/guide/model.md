@@ -114,17 +114,34 @@ and `DampingFrequency` give ``\gamma = 2\pi f``, so a damping specified as an in
 Each term is the polarization of a model driven by the field: Debye is a relaxation,
 `DjordjevicSarkar` a continuum of them, and Lorentz and Drude are oscillators. With the
 parameter bounds above, these typed terms store nonnegative energy and dissipate
-nonnegative power at every frequency. A `PoleResidue` term may describe gain or negative
-stored energy, for instance a fit that is only accurate over the frequencies of interest.
-It is allowed, with warnings identifying detected frequency intervals where the complete
-model has gain or negative stored energy, and whether they overlap the requested band.
-This interval search is sampled, not an all-frequency passivity certificate.
+nonnegative power at every frequency. A `PoleResidue` term may describe gain, for instance
+a fit that is only accurate over the frequencies of interest. It is allowed, with a
+warning identifying the detected frequency intervals where the complete model, all its
+terms together, has gain (a negative dissipated power), and whether they overlap the
+requested band. The field solve uses the model as given. This interval search is sampled,
+not an all-frequency passivity certificate.
 
-The stored energy of a `PoleResidue` term is that of a relaxation for a real pole, and of
-an oscillator ``\ddot{x} + a_1\dot{x} + a_0 x = E`` with polarization
-``b_0 x + b_1 \dot{x}`` for a conjugate pair. When ``b_1 \neq 0``, the constitutive
-response does not uniquely determine microscopic stored energy; *Palace* uses its canonical
-auxiliary-state midpoint convention.
+All `PoleResidue` terms of a material form one rational block, and their stored energy is
+that of the block as a whole: its *available storage*, the largest energy the polarization
+current ``s\chi(s)`` of the block can return to the field, which is the smallest stored
+energy of any passive realization of it. A negative residue alone does not mean gain or a
+negative energy, and the energy does not depend on how the block is split into terms or
+their order. For a single Debye, Drude, or Lorentz section written as `PoleResidue` terms
+it equals the energy of the typed term. For a composite response it need not: the same
+susceptibility does not determine a unique microscopic stored energy. For example,
+``1/(s+1) + 1/(s+2)`` stores ``0.9`` at ``\omega = 1`` as two typed Debye terms, and
+``0.8675444679663243`` as `PoleResidue` terms. Typed and `DjordjevicSarkar` terms keep the
+energies of their models. An exact zero pole ``r/s`` alone is a current and stores no
+energy, but in a fit together with other poles, such as a Drude written as two
+`PoleResidue` terms, the block stores the kinetic energy of the carriers.
+
+The available storage exists only for a block which is passive by itself, and is computed
+once per material in double precision, with a numerical check of its defining equations.
+If the block alone is shown not to be passive (it may still be compensated by the typed
+terms of the material, which is not gain), or if the check fails in double precision (for
+example for nearly coincident poles), the material has no stored electric energy. *Palace*
+warns about each case separately; neither is a statement that the material has gain, and
+neither changes the field solve.
 
 The object form requires scalar permittivity and cannot be combined with `LossTan`;
 ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
@@ -159,6 +176,15 @@ slower convergence of magnetic-field reconstruction and reduces to
 an approximation evaluated at the real frequency, not an exact complex-frequency energy
 identity.
 
+For a material without a stored electric energy (see above), *Palace* does not report a
+value in its place. It omits, for the whole simulation and with a warning: the total
+electric energy ``E_\mathrm{elec}`` and the electric participations in `domain-E.csv`, the
+electric energy of each postprocessing domain that contains the material, the ``U_e``
+field, and the outputs normalized by ``U``: `surface-Q.csv`, `port-Q.csv`, and
+`port-EPR.csv`. The field solution, S-parameters, port voltages, currents, and powers,
+fluxes, boundary charges, eigenvalues and their quality factors, magnetic energies, and the
+electric energy of postprocessing domains without the material are reported as usual.
+
 Electric `SurfaceFlux` and boundary charge ``Q_s`` use the complete complex
 ``\epsilon(i\omega)``, including zero-pole polarization. Ordinary `Conductivity` remains
 free current and is not included in displacement. Metal-substrate interface participation
@@ -177,9 +203,8 @@ materials. The wave number retains the mode's complex frequency.
 
 With frequency-dependent materials, the electric flux estimator recovers the complex
 physical displacement ``\mathbf{D}=\epsilon(i\omega)\mathbf{E}`` and weights its
-residual by the inverse stored-energy tensor ``W^{-1}(\omega)``. If a general model has
-nonpositive stored-energy weight at the requested frequency, the indicator alone falls
-back to ``\epsilon_\infty`` with a warning; signed reported energies are unchanged. A
-nonpositive total-energy normalizer similarly uses a positive recovered-flux norm with a
-warning. These fallbacks keep unusual fitted models usable, but do not validate their
-physics outside the fit's useful band.
+residual by the inverse stored-energy tensor ``W^{-1}(\omega)``. For a material without a
+stored electric energy, the indicator uses ``\epsilon_\infty`` in place of ``W`` and is
+normalized by the energy norm of the recovered fluxes in place of the total field energy,
+with a warning. These are numerical norms, which keep adaptive refinement usable; they are
+not physical energies and do not validate the physics of a fit outside its useful band.
