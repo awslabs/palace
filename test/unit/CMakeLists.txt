@@ -37,6 +37,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmodedriver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-frequencydependentpostpro.cpp
