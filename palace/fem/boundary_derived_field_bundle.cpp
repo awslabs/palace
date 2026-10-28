@@ -400,9 +400,11 @@ bool BoundaryDerivedFieldBundle::Supports(
   }
   switch (kind)
   {
+    case PointFieldKind::ENERGY_E:
+      // Not a physical electric energy without the stored energy of every material.
+      return stored_electric_energy && fespace_a == nd_fespace && !fespace_b;
     case PointFieldKind::FIELD_E:
     case PointFieldKind::FLUX_Q:
-    case PointFieldKind::ENERGY_E:
       return fespace_a == nd_fespace && !fespace_b;
     case PointFieldKind::FIELD_B:
     case PointFieldKind::CURRENT_J:
@@ -413,6 +415,14 @@ bool BoundaryDerivedFieldBundle::Supports(
     default:
       return false;
   }
+}
+
+void BoundaryDerivedFieldBundle::RequireSlice(Slice slice) const
+{
+  MFEM_VERIFY(
+      slice != Slice::ENERGY_E || stored_electric_energy,
+      "The boundary electric energy density requires the stored electric energy of "
+      "every frequency-dependent material (MaterialOperator::HasStoredElectricEnergy)!");
 }
 
 const FaceSamplingPlan *BoundaryDerivedFieldBundle::SamplingPlan() const
@@ -459,10 +469,7 @@ BoundaryDerivedFieldBundle::RegisteredSlice(PointFieldKind kind, bool imaginary_
                                    slice != Slice::POYNTING),
               "Quadratic boundary-derived fields have one combined complex slice, not "
               "an imaginary-phase slice!");
-  MFEM_VERIFY(
-      slice != Slice::ENERGY_E || stored_electric_energy,
-      "The boundary electric energy density requires the stored electric energy of "
-      "every frequency-dependent material (MaterialOperator::HasStoredElectricEnergy)!");
+  RequireSlice(slice);
   const int points = trace_cache->NumPoints();
   return {SliceOffset(slice, points, batched_complex, imaginary_phase),
           SliceNumComp(slice) * points, SliceNumComp(slice)};
@@ -722,9 +729,10 @@ void BoundaryDerivedFieldBundle::Copy(PointFieldKind kind, const Vector &E_sourc
                                       const Vector &B_source, Vector &buffer,
                                       bool zero) const
 {
+  const Slice slice_id = ToSlice(kind);
+  RequireSlice(slice_id);
   const auto &phase = Get(E_source, B_source);
   const int points = trace_cache->NumPoints();
-  const Slice slice_id = ToSlice(kind);
   const int size = SliceNumComp(slice_id) * points;
   MFEM_VERIFY(buffer.Size() == size,
               "Invalid output buffer size for boundary-derived field bundle!");

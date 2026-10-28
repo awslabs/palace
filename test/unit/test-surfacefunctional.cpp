@@ -3625,6 +3625,88 @@ TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
     fd.ue_bundle->EvalBuffer(E, actual);
     CHECK(BoundaryDerivedFieldBundle::QFunctionApplyCount() == applies);
   }
+  CHECK(fd.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace));
+
+  // A dielectric without a stored electric energy (a RAW −0.5/(s + 1) compensated by a
+  // typed Debye 1/(1 + s)): the bundle does not support U_e, and neither its direct copy
+  // nor its registered slice exposes the packed placeholder. A boundary U_e evaluator
+  // given the bundle falls back to the independent one, which errors for the stored
+  // energy. The surface charge, U_m, and S of the bundle are unaffected.
+  auto compensated = dielectric;
+  compensated.permittivity_terms = {config::DebyeData{1.0, 1.0},
+                                    config::PermittivityPoleData{-1.0, -0.5}};
+  MaterialOperator unavailable_op({vacuum, compensated}, periodic, ProblemType::DRIVEN,
+                                  *mesh);
+  REQUIRE_FALSE(unavailable_op.HasStoredElectricEnergy());
+  auto none = Make(unavailable_op);
+  CHECK_FALSE(none.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace));
+  CHECK(none.bundle->Supports(PointFieldKind::FLUX_Q, &nd_fespace));
+  CHECK(none.bundle->Supports(PointFieldKind::ENERGY_M, &rt_fespace));
+  CHECK(none.bundle->Supports(PointFieldKind::POYNTING, &nd_fespace, &rt_fespace));
+  PointFieldEvaluator um_bundle(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
+                                rt_fespace, unavailable_op, lod, scaling, plan, none.traces,
+                                none.bundle),
+      um(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker, rt_fespace, unavailable_op,
+         lod, scaling, plan, none.traces),
+      s_bundle(PointFieldEvaluator::Kind::POYNTING, *mesh, marker, nd_fespace, rt_fespace,
+               unavailable_op, lod, scaling, plan, none.traces, none.bundle),
+      s_eval(PointFieldEvaluator::Kind::POYNTING, *mesh, marker, nd_fespace, rt_fespace,
+             unavailable_op, lod, scaling, plan, none.traces);
+  const double omega = 0.4;
+  for (const auto *eval : {none.q_bundle.get(), none.q.get(), none.q_imag.get(), &um_bundle,
+                           &um, &s_bundle, &s_eval})
+  {
+    eval->SetFrequency(omega);
+  }
+  {
+    Vector buffer(none.bundle->BufferSize(PointFieldKind::ENERGY_E));
+    buffer.UseDevice(true);
+    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, E.Real(), buffer));
+    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, E.Real(), B.Real(), buffer));
+    CHECK_THROWS(none.bundle->RegisteredSlice(PointFieldKind::ENERGY_E));
+    // The fallback U_e evaluator requires the stored energy at the frequency, and has no
+    // value without it.
+    CHECK_THROWS(none.ue_bundle->SetFrequency(omega));
+    CHECK_THROWS(none.ue_bundle->EvalBuffer(E, buffer));
+    CHECK_THROWS(none.ue->SetFrequency(omega));
+  }
+  {
+    const std::complex<double> eps = eps_inf +
+                                     1.0 / (1.0 + std::complex<double>(0.0, omega)) -
+                                     0.5 / (std::complex<double>(0.0, omega) + 1.0);
+    auto charge_op = ConstantOp(eps.real(), -eps.imag() / eps.real());
+    auto charge = Make(*charge_op);
+    charge.q_bundle->SetFrequency(omega);
+    const int n = none.q_bundle->BufferSize();
+    Vector actual(n), expected(n);
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    for (bool imaginary_phase : {false, true})
+    {
+      const auto &e = imaginary_phase ? E.Imag() : E.Real();
+      charge.q_bundle->EvalBuffer(e, expected);
+      none.q_bundle->EvalBuffer(e, actual);
+      CHECK(Compare(actual, expected) > 0.0);
+      Charge(none, imaginary_phase, actual);
+      Compare(actual, expected);
+    }
+  }
+  {
+    Vector actual(um.BufferSize()), expected(um.BufferSize());
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    um.EvalBuffer(B, expected);
+    um_bundle.EvalBuffer(B, actual);
+    CHECK(Compare(actual, expected) > 0.0);
+  }
+  {
+    Vector actual(s_eval.BufferSize()), expected(s_eval.BufferSize());
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    s_eval.EvalBuffer(&E, &B, expected);
+    s_bundle.EvalBuffer(&E, &B, actual);
+    CHECK(Compare(actual, expected) > 0.0);
+  }
 }
 
 TEST_CASE("Far field of a frequency-dependent exterior medium",

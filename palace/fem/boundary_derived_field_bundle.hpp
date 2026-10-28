@@ -140,8 +140,9 @@ private:
   // (0 before SetFrequency).
   bool material_frequency_dependent = false;
   // Whether the electric energy slice is physical
-  // (MaterialOperator::HasStoredElectricEnergy); otherwise its stored-energy table is a
-  // placeholder and the slice is never registered.
+  // (MaterialOperator::HasStoredElectricEnergy). Otherwise its stored-energy table is a
+  // private placeholder: ENERGY_E is not supported, and it is neither registered nor copied
+  // (RequireSlice).
   bool stored_electric_energy = true;
   std::array<std::size_t, 3> material_ctx_offsets = {0, 0, 0};
   double material_omega = 0.0;
@@ -154,6 +155,8 @@ private:
   const CachedPhase &Get(const Vector &E_source, const Vector &B_source) const;
   std::pair<const Vector *, const Vector *> PartnerSources(const Vector &source) const;
   static Slice ToSlice(PointFieldKind kind);
+  // Errors for the electric energy slice without a stored electric energy.
+  void RequireSlice(Slice slice) const;
   static int SliceOffset(Slice slice, int num_points, bool batched_complex,
                          bool imaginary_phase = false);
   static int SliceNumComp(Slice slice);
