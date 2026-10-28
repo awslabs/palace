@@ -746,7 +746,7 @@
         "DampingFrequency": {
           "type": "number",
           "minimum": 0.0,
-          "description": "Damping frequency in GHz. The exactly critical case is not supported."
+          "description": "Damping frequency in GHz. Critical damping, within a relative 1e-6 of twice the resonance frequency, is not supported."
         }
       }
     },
