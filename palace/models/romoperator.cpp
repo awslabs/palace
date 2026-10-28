@@ -118,19 +118,32 @@ inline std::vector<double> SampleChebyshevGauss(double w_lo, double w_hi, int n)
 
 // Complex LSQ quadratic fit y(ω) ≈ c0 + c1·ω + c2·ω² on the given nodes (real inputs
 // come through with zero imaginary parts and produce real coefficients).
+// With weights, each row is divided by its weight (a weighted least-squares fit).
 inline Eigen::Vector3cd FitQuadratic(const std::vector<double> &omegas,
-                                     const Eigen::VectorXcd &y)
+                                     const Eigen::VectorXcd &y,
+                                     const std::vector<double> &weights = {})
 {
   const auto n = static_cast<long>(omegas.size());
   Eigen::MatrixXcd vandermonde(n, 3);
+  Eigen::VectorXcd rhs = y;
   for (long i = 0; i < n; i++)
   {
     const double w = omegas[static_cast<std::size_t>(i)];
-    vandermonde(i, 0) = 1.0;
-    vandermonde(i, 1) = w;
-    vandermonde(i, 2) = w * w;
+    const double s = weights.empty() ? 1.0 : weights[static_cast<std::size_t>(i)];
+    vandermonde(i, 0) = 1.0 / s;
+    vandermonde(i, 1) = w / s;
+    vandermonde(i, 2) = w * w / s;
+    rhs(i) /= s;
   }
-  return vandermonde.colPivHouseholderQr().solve(y);
+  return vandermonde.colPivHouseholderQr().solve(rhs);
+}
+
+// The pointwise scale of the fit residual of f at ω: |f(ω)|, floored at a fraction of
+// max |f| over the band so that a zero of f does not demand an exact fit there.
+constexpr double SCALAR_FIT_SCALE_FLOOR = 1.0e-8;
+inline double PointwiseScale(std::complex<double> f, double f_max)
+{
+  return std::max(std::abs(f), SCALAR_FIT_SCALE_FLOOR * f_max);
 }
 
 // AAA rational fit of a residual sampled on the fit grid, with the synthesis tolerance
@@ -1964,28 +1977,49 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
   auto fit_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
   auto dense_omegas = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_dense);
 
-  // Complex LSQ polynomial fit of f(ω) ≈ c0 + c1 ω + c2 ω² at order 2.
+  // The residuals are pointwise relative, |fit(ω) − f(ω)| / |f(ω)|, with the scale floored
+  // at SCALAR_FIT_SCALE_FLOOR max |f| (PointwiseScale). Over a wide band f varies by
+  // orders of magnitude (as ω² for a volume term, ω and 1/ω for an absorbing boundary), and
+  // a residual relative to max |f| would not bound the error where f is small.
   Eigen::VectorXcd y(n_fit);
   for (int i = 0; i < n_fit; i++)
   {
     y(i) = f(std::complex<double>(fit_omegas[i], 0.0));
   }
-  Eigen::Vector3cd c = FitQuadratic(fit_omegas, y);
+  std::vector<std::complex<double>> truth(n_dense);
+  double f_max = y.cwiseAbs().maxCoeff();
+  for (int i = 0; i < n_dense; i++)
+  {
+    truth[i] = f(std::complex<double>(dense_omegas[i], 0.0));
+    f_max = std::max(f_max, std::abs(truth[i]));
+  }
+  std::vector<double> fit_scale(n_fit);
+  double min_scale = f_max;
+  for (int i = 0; i < n_fit; i++)
+  {
+    fit_scale[i] = PointwiseScale(y(i), f_max);
+    min_scale = std::min(min_scale, fit_scale[i]);
+  }
+
+  // Weighted complex LSQ polynomial fit of f(ω) ≈ c0 + c1 ω + c2 ω² at order 2.
+  Eigen::Vector3cd c = FitQuadratic(fit_omegas, y, fit_scale);
   fit.alpha0c = c(0);
   fit.alpha1c = c(1);
   fit.alpha2c = c(2);
-
-  // Dense-grid residual (absolute, relative to max |f|).
-  double max_rel = 0.0, max_abs_truth = 0.0;
-  for (int i = 0; i < n_dense; i++)
+  auto PointwiseResidual = [&](auto &&model)
   {
-    const double w = dense_omegas[i];
-    const std::complex<double> truth = f(std::complex<double>(w, 0.0));
-    const std::complex<double> poly = c(0) + c(1) * w + c(2) * w * w;
-    max_abs_truth = std::max(max_abs_truth, std::abs(truth));
-    max_rel = std::max(max_rel, std::abs(poly - truth));
-  }
-  fit.rel_err_polynomial = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+    double max_rel = 0.0;
+    for (int i = 0; i < n_dense; i++)
+    {
+      max_rel = std::max(max_rel, std::abs(model(dense_omegas[i]) - truth[i]) /
+                                      PointwiseScale(truth[i], f_max));
+    }
+    return max_rel;
+  };
+  fit.rel_err_polynomial =
+      (f_max > 0.0)
+          ? PointwiseResidual([&](double w) { return c(0) + c(1) * w + c(2) * w * w; })
+          : 0.0;
   fit.rel_err_augmented = fit.rel_err_polynomial;
   const bool meets_tol = (fit.rel_err_polynomial <= waveport_synthesis_tol);
 
@@ -1994,30 +2028,28 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
     fit.regime = WavePortRegime::Polynomial;
     Mpi::Print(" {}: polynomial synthesis residual {:.3e} (tol {:.3e})\n", label,
                fit.rel_err_polynomial, waveport_synthesis_tol);
+    if (!meets_tol)
+    {
+      Mpi::Warning("{}: polynomial synthesis residual {:.3e} exceeds tolerance {:.3e}!\n",
+                   label, fit.rel_err_polynomial, waveport_synthesis_tol);
+    }
     return fit;
   }
 
-  // Augmented regime: AAA on the complex polynomial residual.
+  // Augmented regime: AAA on the complex polynomial residual, to the tolerance at the
+  // smallest pointwise scale of f.
   Eigen::VectorXcd F_aaa(n_fit);
   for (int i = 0; i < n_fit; i++)
   {
     const double w = fit_omegas[i];
     F_aaa(i) = y(i) - (c(0) + c(1) * w + c(2) * w * w);
   }
-  auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, max_abs_truth,
+  auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, min_scale,
                              waveport_synthesis_order_max);
   FoldAAAPolynomialIntoQuadratic(pr, fit.alpha0c, fit.alpha1c, fit.alpha2c);
-
-  max_rel = 0.0;
-  for (int i = 0; i < n_dense; i++)
-  {
-    const double w = dense_omegas[i];
-    const std::complex<double> truth = f(std::complex<double>(w, 0.0));
-    max_rel = std::max(max_rel, std::abs(EvaluatePolyPlusPoles(fit.alpha0c, fit.alpha1c,
-                                                               fit.alpha2c, pr, w) -
-                                         truth));
-  }
-  fit.rel_err_augmented = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+  fit.rel_err_augmented = PointwiseResidual(
+      [&](double w)
+      { return EvaluatePolyPlusPoles(fit.alpha0c, fit.alpha1c, fit.alpha2c, pr, w); });
 
   auto [poles, residues] = ToPoleResidueVectors(pr);
   fit.aux = MakeAuxBlock(label, Mp_r, poles, residues, waveport_synthesis_rank_tol);
@@ -2026,6 +2058,11 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
       " {}: augmented synthesis residual {:.3e} → {:.3e} (tol {:.3e}, {:d} pole{})\n",
       label, fit.rel_err_polynomial, fit.rel_err_augmented, waveport_synthesis_tol,
       pr.poles.size(), pr.poles.size() == 1 ? "" : "s");
+  if (fit.rel_err_augmented > waveport_synthesis_tol)
+  {
+    Mpi::Warning("{}: augmented synthesis residual {:.3e} exceeds tolerance {:.3e}!\n",
+                 label, fit.rel_err_augmented, waveport_synthesis_tol);
+  }
   return fit;
 }
 

@@ -67,10 +67,12 @@ public:
   using RomOperator::AugmentedPencil;
   using RomOperator::BuildAugmentedPencil;
   using RomOperator::CalculateNormalizedPROMMatrices;
+  using RomOperator::FitScalarDispersion;
   using RomOperator::NormalizedMatrices;
   using RomOperator::RomOperator;
   using RomOperator::WavePortAuxBlock;
   using RomOperator::WavePortDispersionFit;
+  using RomOperator::WavePortRegime;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
   auto &GetVectors() const { return V; }
@@ -97,6 +99,7 @@ public:
     return curl_curl ? Aff2_k_r.at(k) : Aff_k_r.at(k);
   }
   auto GetSweepBand() const { return std::make_pair(sweep_omega_min, sweep_omega_max); }
+  double GetSynthesisTol() const { return waveport_synthesis_tol; }
   void ReserveBasis(std::size_t n) { V.reserve(n); }
 };
 
@@ -522,6 +525,141 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
       max_ref = std::max(max_ref, want.cwiseAbs().maxCoeff());
     }
     CHECK(max_err <= 1.0e-5 * max_ref);
+  }
+}
+
+// Over a wide band (0.1 to 20 GHz), the fitted frequency-dependent terms of circuit
+// synthesis vary by orders of magnitude, a Djordjevic-Sarkar volume term g = s²χ(s) as ω²
+// and the absorbing boundary terms as ω and 1/ω. A fit residual normalized by the largest
+// value over the band does not bound the error at the frequencies where a term is small.
+// The reported fit residual must bound the realized error at every frequency, relative to
+// the term there, and a fit which misses the synthesis tolerance must report it.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator synthesis fit residuals hold pointwise over a wide band",
+                 "[romoperator][Serial]")
+{
+  const json terms = {{{"Type", "DjordjevicSarkar"},
+                       {"Strength", 0.2},
+                       {"LowerFrequency", 1.0},
+                       {"UpperFrequency", 100.0}}};
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"L0", 1.0e-6},
+      {"Lc", 7.0},
+      {"Refinement", json::object({})},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       {{{"Attributes", {1}},
+         {"Permittivity", {{"HighFrequency", 2.0}, {"Terms", terms}}}}}}};
+  setup_json["Boundaries"] = {{"LumpedPort",
+                               {{{"Index", 1},
+                                 {"R", 50.0},
+                                 {"Excitation", 1},
+                                 {"Attributes", {100}},
+                                 {"Direction", "+X"}}}},
+                              {"Absorbing", {{"Attributes", {101}}, {"Order", 2}}}};
+  setup_json["Solver"] = {{"Order", 2},
+                          {"Device", "CPU"},
+                          {"Driven",
+                           {{"AdaptiveTol", 1.0e-4},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 0.1},
+                            {"MaxFreq", 20.0},
+                            {"FreqStep", 0.1}}}};
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &mat_op = space_op.GetMaterialOp();
+  const auto &farfield_op = space_op.GetFarfieldOp();
+  REQUIRE(farfield_op.NumDispersiveMaterials() == 1);
+
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  prom_op.AddLumpedPortModesForSynthesis();
+  ComplexVector v(space_op.GlobalTrueVSize());
+  v.UseDevice(true);
+  v = 0.0;
+  linalg::SetRandom(Mpi::World(), v.Real());
+  prom_op.UpdatePROM(v, "random");
+  const long n = prom_op.GetReducedDimension();
+  REQUIRE(n == 2);
+  const auto [w_min, w_max] = prom_op.GetSweepBand();
+  REQUIRE(w_max > 100.0 * w_min);
+  const double tol = prom_op.GetSynthesisTol();
+
+  constexpr std::complex<double> i(0.0, 1.0);
+  enum class Term
+  {
+    VOLUME,
+    DAMPING,
+    CURL_CURL
+  };
+  for (const auto term : {Term::VOLUME, Term::DAMPING, Term::CURL_CURL})
+  {
+    CAPTURE(static_cast<int>(term));
+    const Eigen::MatrixXcd &M_r =
+        (term == Term::VOLUME)
+            ? prom_op.GetFrequencyDependentPermittivityMassR(0)
+            : prom_op.GetFarfieldDispersiveMatrixR(0, term == Term::CURL_CURL);
+    REQUIRE(M_r.rows() == n);
+    // The scalar f(ω) of the term i·f(ω)·M_r, as fit by the synthesis.
+    auto f = [&](std::complex<double> w) -> std::complex<double>
+    {
+      if (term == Term::VOLUME)
+      {
+        return mat_op.EvaluateDjordjevicSarkarPermittivityA2(0, i * w) / i;
+      }
+      const auto r = farfield_op.GetDispersiveScale(0, w);
+      return (term == Term::CURL_CURL) ? 0.5 / (w * r) : w * r;
+    };
+    Eigen::MatrixXcd Kc = Eigen::MatrixXcd::Zero(n, n), Cc = Kc, Mc = Kc;
+    std::vector<RomOperatorTest::WavePortAuxBlock> blocks;
+    if (term == Term::VOLUME)
+    {
+      prom_op.AddFrequencyDependentPermittivitySynthesis("permittivity_0", M_r, 0, Kc, Cc,
+                                                         Mc, blocks);
+    }
+    else
+    {
+      prom_op.AddFarfieldFrequencyDependentPermittivitySynthesis(
+          "farfield", M_r, 0, term == Term::CURL_CURL, Kc, Cc, Mc, blocks);
+    }
+    const auto fit = prom_op.FitScalarDispersion("check", M_r, f, true);
+    const double reported = (fit.regime == RomOperatorTest::WavePortRegime::Augmented)
+                                ? fit.rel_err_augmented
+                                : fit.rel_err_polynomial;
+    std::vector<std::string> aux_labels;
+    auto aug = RomOperatorTest::BuildAugmentedPencil(Kc, Cc, Mc, blocks, aux_labels);
+    const long n_aux = aug.Kr.rows() - n;
+    double max_rel = 0.0;
+    for (int k = 0; k <= 40; k++)
+    {
+      // Logarithmically spaced over the band, also between the fit nodes.
+      const double w = w_min * std::pow(w_max / w_min, k / 40.0);
+      const Eigen::MatrixXcd A =
+          aug.Kr + std::complex<double>(0.0, w) * aug.Cr - w * w * aug.Mr;
+      Eigen::MatrixXcd schur = A.topLeftCorner(n, n);
+      if (n_aux > 0)
+      {
+        schur -= A.topRightCorner(n, n_aux) * A.bottomRightCorner(n_aux, n_aux)
+                                                  .fullPivLu()
+                                                  .solve(A.bottomLeftCorner(n_aux, n));
+      }
+      Eigen::MatrixXcd want = f(w) * M_r;
+      if (term == Term::VOLUME)
+      {
+        want = mat_op.EvaluateFrequencyDependentPermittivityA2(0, i * w) * (M_r / i);
+      }
+      max_rel = std::max(max_rel,
+                         (schur - want).cwiseAbs().maxCoeff() / want.cwiseAbs().maxCoeff());
+    }
+    CAPTURE(tol, reported, max_rel);
+    // The realized error is bounded by the reported residual (up to the sampling of the
+    // validation grid), and the tolerance is met unless the residual reports otherwise.
+    CHECK(max_rel <= 2.0 * reported + 1.0e-12);
+    CHECK((max_rel <= 2.0 * tol || reported > tol));
   }
 }
 
