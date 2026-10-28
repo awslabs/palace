@@ -929,3 +929,113 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   CompareGridFunctions(gf_before, gf_after, std::vector<double>(gf_after.size(), 1.0),
                        rtol);
 }
+
+TEST_CASE("GridFunction scaling keeps face-neighbor data consistent",
+          "[postoperator][Parallel]")
+{
+  // In-place scaling of a GridFunction must scale its cached face-neighbor data together
+  // with the field, so the cache stays consistent with the field until the next
+  // ExchangeFaceNbrData. Check this for a real- and a complex-valued field, and for the
+  // Units in-place (non)dimensionalization round trip.
+  auto comm = Mpi::World();
+  Units units(1.0e-3, 2.0e-3);
+
+  // Mesh partitioned across ranks, so each rank caches face-neighbor data.
+  constexpr int resolution = 3;
+  auto serial_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+      resolution, resolution, resolution, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0));
+  mfem::ParMesh mesh(comm, *serial_mesh);
+  mfem::ND_FECollection nd_fec(1, mesh.Dimension());
+  mfem::ParFiniteElementSpace nd_fespace(&mesh, &nd_fec);
+
+  // Check that values = scale * baseline, component-wise within relative tolerance.
+  constexpr double rtol = 1.0e-13;
+  auto CheckScaled =
+      [](const Vector &baseline, const Vector &values, double scale, double tolerance)
+  {
+    REQUIRE(baseline.Size() == values.Size());
+    double max_diff = 0.0, max_val = 0.0;
+    for (int i = 0; i < baseline.Size(); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(scale * baseline(i) - values(i)));
+      max_val = std::max(max_val, std::abs(values(i)));
+    }
+    CHECK(max_diff <= tolerance * std::max(max_val, 1.0));
+  };
+
+  // Check that the cached face-neighbor data equals a fresh exchange of the current
+  // field values on the neighboring ranks.
+  auto CheckFaceNbrData = [&](GridFunction &gf)
+  {
+    Vector nbr_r = gf.Real().FaceNbrData();
+    Vector nbr_i;
+    if (gf.HasImag())
+    {
+      nbr_i = gf.Imag().FaceNbrData();
+    }
+    gf.Real().ExchangeFaceNbrData();
+    if (gf.HasImag())
+    {
+      gf.Imag().ExchangeFaceNbrData();
+    }
+    CheckScaled(nbr_r, gf.Real().FaceNbrData(), 1.0, rtol);
+    if (gf.HasImag())
+    {
+      CheckScaled(nbr_i, gf.Imag().FaceNbrData(), 1.0, rtol);
+    }
+  };
+
+  auto CheckScaling = [&](GridFunction &gf, double scale)
+  {
+    // Populate the field through the true-dof distribution, then cache the face-neighbor
+    // data and keep a baseline of the local field values.
+    Vector x(nd_fespace.GetTrueVSize());
+    linalg::SetRandom(comm, x, 1);
+    gf.Real().SetFromTrueDofs(x);
+    if (gf.HasImag())
+    {
+      linalg::SetRandom(comm, x, 2);
+      gf.Imag().SetFromTrueDofs(x);
+    }
+    gf.Real().ExchangeFaceNbrData();
+    if (gf.HasImag())
+    {
+      gf.Imag().ExchangeFaceNbrData();
+    }
+    REQUIRE(gf.Real().FaceNbrData().Size() > 0);
+    Vector base_r = gf.Real();
+    Vector base_i;
+    if (gf.HasImag())
+    {
+      REQUIRE(gf.Imag().FaceNbrData().Size() > 0);
+      base_i = gf.Imag();
+    }
+
+    // Scaling in place scales the cached face-neighbor data together with the field.
+    gf *= scale;
+    CheckScaled(base_r, gf.Real(), scale, rtol);
+    if (gf.HasImag())
+    {
+      CheckScaled(base_i, gf.Imag(), scale, rtol);
+    }
+    CheckFaceNbrData(gf);
+
+    // The Units in-place scaling round trip returns to the scaled baseline and also
+    // keeps the cached face-neighbor data consistent.
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(gf);
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(gf);
+    CheckScaled(base_r, gf.Real(), scale, rtol);
+    if (gf.HasImag())
+    {
+      CheckScaled(base_i, gf.Imag(), scale, rtol);
+    }
+    CheckFaceNbrData(gf);
+  };
+
+  constexpr double scale = 2.5;
+  GridFunction gf_real(nd_fespace);
+  CheckScaling(gf_real, scale);
+
+  GridFunction gf_complex(nd_fespace, true);
+  CheckScaling(gf_complex, scale);
+}

@@ -131,7 +131,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
-                 fem_op->GetH1Space(), fem_op->GetNDSpace()),
+                 fem_op->GetH1Space(), fem_op->GetNDSpace(),
+                 boundaries.GetSheetAttributes()),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -1152,31 +1153,17 @@ void ScaleGridFunctions(double L, int dim, std::unique_ptr<GridFunction> &E,
   if (E)
   {
     // Piola transform: J^-T
-    E->Real() *= L;
-    E->Real().FaceNbrData() *= L;
-    if (E->HasImag())
-    {
-      E->Imag() *= L;
-      E->Imag().FaceNbrData() *= L;
-    }
+    *E *= L;
   }
   if (B)
   {
     // Piola transform: J / |J|
-    const auto Ld = std::pow(L, dim - 1);
-    B->Real() *= Ld;
-    B->Real().FaceNbrData() *= Ld;
-    if (B->HasImag())
-    {
-      B->Imag() *= Ld;
-      B->Imag().FaceNbrData() *= Ld;
-    }
+    *B *= std::pow(L, dim - 1);
   }
   if (A)
   {
     // Piola transform: J^-T
-    A->Real() *= L;
-    A->Real().FaceNbrData() *= L;
+    *A *= L;
   }
 }
 
@@ -1195,11 +1182,11 @@ void DimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> &E,
   }
   if (A)
   {
-    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+    units.DimensionalizeInPlace<Units::ValueType::CURRENT>(*A);
   }
   if (V)
   {
-    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+    units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(*V);
   }
 }
 
@@ -1218,11 +1205,11 @@ void NondimensionalizeGridFunctions(Units &units, std::unique_ptr<GridFunction> 
   }
   if (A)
   {
-    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(A->Real());
+    units.NondimensionalizeInPlace<Units::ValueType::CURRENT>(*A);
   }
   if (V)
   {
-    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(V->Real());
+    units.NondimensionalizeInPlace<Units::ValueType::VOLTAGE>(*V);
   }
 }
 
@@ -1250,10 +1237,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   // H(curl) Piola transform scaling L applies to the DOFs, not H(div) scaling L^{dim-1}.
   if (Bt_inplane)
   {
-    Bt_inplane->Real() *= mesh_Lc0;
-    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
-    Bt_inplane->Imag() *= mesh_Lc0;
-    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // libCEED-evaluated derived domain fields are registered as lazy point evaluators;
@@ -1291,10 +1275,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }
@@ -1394,10 +1375,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   }
   if (Bt_inplane)
   {
-    Bt_inplane->Real() *= mesh_Lc0;
-    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
-    Bt_inplane->Imag() *= mesh_Lc0;
-    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    *Bt_inplane *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
   // Create grid function for vector coefficients.
@@ -1553,10 +1531,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
-    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
-    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+    *Bt_inplane *= (1.0 / mesh_Lc0);
   }
   Mpi::Barrier(fem_op->GetComm());
 }

@@ -735,8 +735,11 @@ given by
 
 where ``t_j`` is the thickness of the layer and ``\bm{D} = \varepsilon_{r,j}\bm{E}`` is the
 electric displacement field in the layer evaluated using the relative permittivity of the
-interface ``\varepsilon_{r,j}``. For an internal boundary, this integral is evaluated on a
-single side to resolve ambiguity due to the discontinuity of ``\bm{E}`` across the boundary.
+interface ``\varepsilon_{r,j}``. On an interior boundary, where ``\bm{E}`` can be
+discontinuous, the integrand uses the average of the fields on the two sides, except on an
+uncracked sheet with a boundary condition, such as a metal sheet, where the contributions of
+the two faces of the sheet are summed as on a cracked mesh (see
+[Interior boundaries](guide/boundaries.md#Interior-boundaries)).
 
 The above formula for interface dielectric loss can be specialized for the case of a
 metal-air, metal-substrate, or substrate-air interface [[4]](#References). In each case, the

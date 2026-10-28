@@ -30,6 +30,7 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/strattonchu.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
@@ -44,7 +45,7 @@ namespace
 
 std::unique_ptr<Mesh> LoadTestMesh(MPI_Comm comm, const std::string &file)
 {
-  mfem::Mesh smesh(std::string(PALACE_TEST_DATA_DIR) + "/mesh/" + file, 1, 1);
+  mfem::Mesh smesh(TestMeshPath(file), 1, 1);
   smesh.EnsureNodes();
   REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
