@@ -179,8 +179,11 @@ TEST_CASE_METHOD(test::SharedTempDir,
     companion(0, 2) = -c1;
     companion(0, 3) = -c0;
     companion(1, 0) = companion(2, 1) = companion(3, 2) = 1.0;
-    for (const auto f :
-         Eigen::ComplexEigenSolver<Eigen::Matrix4cd>(companion).eigenvalues())
+    // A named solver: the eigenvalues are a reference into it, and in C++20 a temporary in
+    // the range of a range-based for loop would be destroyed before the loop body.
+    const Eigen::ComplexEigenSolver<Eigen::Matrix4cd> roots(companion);
+    REQUIRE(roots.info() == Eigen::Success);
+    for (const auto f : roots.eigenvalues())
     {
       if (f.real() >= 8.0)
       {
