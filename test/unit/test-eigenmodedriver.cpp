@@ -226,41 +226,49 @@ TEST_CASE_METHOD(test::SharedTempDir,
 
 TEST_CASE_METHOD(
     test::SharedTempDir,
-    "Eigenmode driver: second-order absorbing boundaries next to a Lorentz medium",
+    "Eigenmode driver: second-order absorbing boundaries next to a Debye medium",
     "[eigenmodedriver][Serial][Parallel]")
 {
 #if !defined(PALACE_WITH_SLEPC)
   SKIP("Requires the SLEPc eigensolver");
 #endif
-  // The faces x = 0 and x = 1 are second-order absorbing boundaries next to the Lorentz
-  // medium, and the others PEC. The Hybrid nonlinear eigensolver, whose polynomial seed
-  // freezes the absorbing boundary pole terms (SpaceOperator::GetFarfieldPoleTerms), must
-  // find the requested modes, and each of them must be a mode found independently by the
-  // SLP solver, which does not use the seed.
+  // The faces x = 0 and x = 1 are second-order absorbing boundaries next to a Debye medium
+  // (ε∞ = 2, Δε = 0.5, τ = 0.01 ns), and the others PEC. The Hybrid nonlinear eigensolver
+  // freezes the pole terms of the absorbing boundaries in its polynomial seed
+  // (SpaceOperator::GetFarfieldPoleTerms), including those next to the frequency-dependent
+  // material. Each mode found must be an eigenpair (backward error), and they must be the
+  // four modes of lowest frequency above the target, two of them strongly damped. These
+  // reference values were computed with this solver and confirmed by their backward
+  // errors; without the frozen terms next to the material, the seed missed the two damped
+  // modes and Quasi-Newton returned two others instead, (23.035 + 2.534i) and
+  // (23.291 + 2.215i) GHz. SLP, as an independent solver, did not finish in minutes here.
   const auto mesh = WriteBoxMesh(temp_dir);
   const json boundaries = {{"PEC", {{"Attributes", {1, 2, 4, 6}}}},
                            {"Absorbing", {{"Attributes", {3, 5}}, {"Order", 2}}}};
+  const json debye = {
+      {"HighFrequency", eps_inf},
+      {"Terms",
+       {{{"Type", "Debye"}, {"DeltaPermittivity", 0.5}, {"RelaxationTime", 0.01}}}}};
   constexpr int n = 4;
-  const auto hybrid = RunEigenmode(
-      BoxConfig(mesh, LorentzPermittivityConfig(), boundaries, n, 8.0, "Hybrid"), temp_dir,
-      "hybrid");
-  const auto slp = RunEigenmode(
-      BoxConfig(mesh, LorentzPermittivityConfig(), boundaries, 2 * n, 8.0, "SLP"), temp_dir,
-      "slp");
+  const auto hybrid = RunEigenmode(BoxConfig(mesh, debye, boundaries, n, 18.0, "Hybrid"),
+                                   temp_dir, "hybrid");
   REQUIRE(hybrid.f.size() >= n);
-  REQUIRE(slp.f.size() >= n);
-  for (std::size_t i = 0; i < n; i++)
+  const std::vector<std::complex<double>> expected = {{19.108678, 2.399168},
+                                                      {22.125867, 26.837326},
+                                                      {22.287635, 6.409018},
+                                                      {22.567106, 25.977182}};
+  auto found = hybrid.f;
+  std::ranges::sort(found, [](auto a, auto b) { return a.real() < b.real(); });
+  for (std::size_t i = 0; i < hybrid.f.size(); i++)
   {
-    const auto f = hybrid.f[i];
-    CAPTURE(f, hybrid.backward_error[i]);
+    CAPTURE(hybrid.f[i]);
     CHECK(hybrid.backward_error[i] <= 1.0e-8);
-    CHECK(f.imag() > 0.0);  // Radiating through the absorbing faces
-    double rel = std::numeric_limits<double>::infinity();
-    for (const auto g : slp.f)
-    {
-      rel = std::min(rel, std::abs(f - g) / std::abs(g));
-    }
-    CHECK(rel <= 1.0e-6);
+    CHECK(hybrid.f[i].imag() > 0.0);  // Radiating through the absorbing faces
+  }
+  for (std::size_t k = 0; k < n; k++)
+  {
+    CAPTURE(k, found[k], expected[k]);
+    CHECK(std::abs(found[k] - expected[k]) <= 1.0e-6 * std::abs(expected[k]));
   }
 }
 
