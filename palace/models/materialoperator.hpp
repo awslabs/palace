@@ -53,7 +53,8 @@ private:
   mfem::Array<bool> attr_is_isotropic;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
-  // London penetration depth, Floquet wave vector, or frequency-dependent permittivity.
+  // London penetration depth, Floquet wave vector, or a frequency-dependent permittivity
+  // model (with mesh support on any process).
   bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr,
       has_frequency_dependent_permittivity;
 

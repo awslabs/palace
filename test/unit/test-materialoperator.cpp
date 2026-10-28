@@ -863,6 +863,10 @@ TEST_CASE("SpaceOperator does not evaluate dispersive materials without mesh sup
   Units units(1.0, 1.0);
   SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
   REQUIRE_FALSE(space_op.GetMaterialOp().HasFrequencyDependentPermittivitySupport(1));
+  // The configured model on no element leaves the constant-material route (for example,
+  // the divergence-free projection of the eigenmode solver) unchanged.
+  CHECK_FALSE(space_op.GetMaterialOp().HasFrequencyDependentPermittivity());
+  CHECK_FALSE(space_op.GetMaterialOp().HasFrequencyDependentPermittivityModel(1));
 
   const double omega = 1.0;  // s = iω at the pole
   CHECK_NOTHROW(space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO));
@@ -949,6 +953,9 @@ TEST_CASE("SpaceOperator dispersive mass action across partitioned material supp
   CHECK((dispersive.GetMaterialOp().GetCeedAttributes(std::vector<int>{2}).Size() > 0) ==
         (Mpi::Rank(comm) == 0));
   CHECK(dispersive.GetMaterialOp().HasFrequencyDependentPermittivitySupport(1));
+  // Also on the processes without the material: the route is the same on every process.
+  CHECK(dispersive.GetMaterialOp().HasFrequencyDependentPermittivity());
+  CHECK_FALSE(reference.GetMaterialOp().HasFrequencyDependentPermittivity());
 
   auto K = dispersive.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto C = dispersive.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);

@@ -149,7 +149,6 @@ void MaterialOperator::SetUpMaterialProperties(
   frequency_dependent_permittivity_sigma.assign(materials.size(), 0.0);
   frequency_dependent_permittivity_sigma_isotropic.assign(materials.size(), true);
   std::vector<double> permittivity_pole_conductivity(materials.size(), 0.0);
-  has_frequency_dependent_permittivity = false;
   for (std::size_t i = 0; i < materials.size(); i++)
   {
     const auto &data = materials[i];
@@ -166,7 +165,6 @@ void MaterialOperator::SetUpMaterialProperties(
       continue;
     }
 
-    has_frequency_dependent_permittivity = true;
     MFEM_VERIFY(internal::mat::IsIsotropic(data.epsilon_r),
                 "Frequency-dependent material Permittivity must be scalar!");
     MFEM_VERIFY(std::all_of(data.tandelta.s.begin(), data.tandelta.s.end(),
@@ -247,6 +245,13 @@ void MaterialOperator::SetUpMaterialProperties(
     frequency_dependent_permittivity_support[i] = model_support[i];
     frequency_dependent_permittivity_model_support[i] = model_support[nm + i];
   }
+  // The frequency-dependent route is chosen by the models with mesh support on any process,
+  // the same on every process, not by the configured materials: a model on no element of
+  // the mesh (such as one away from a port cross-section) leaves the constant-material
+  // paths unchanged.
+  has_frequency_dependent_permittivity =
+      std::ranges::any_of(frequency_dependent_permittivity_model_support,
+                          [](bool supported) { return supported; });
 
   attr_mat.SetSize(loc_attr.size());
   attr_mat = -1;
@@ -511,14 +516,13 @@ void MaterialOperator::SetUpMaterialProperties(
                           "config[\"Domains\"][\"Materials\"]!",
                           missing_attr));
 
-  bool has_attr[5] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
-                      has_wave_attr, has_frequency_dependent_permittivity};
-  Mpi::GlobalOr(5, has_attr, mesh.GetComm());
+  bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
+                      has_wave_attr};
+  Mpi::GlobalOr(4, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
-  has_frequency_dependent_permittivity = has_attr[4];
 }
 
 std::complex<double>
