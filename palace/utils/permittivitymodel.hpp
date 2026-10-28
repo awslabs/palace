@@ -5,6 +5,9 @@
 #define PALACE_UTILS_PERMITTIVITY_MODEL_HPP
 
 #include <complex>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 #include "utils/configfile.hpp"
 
@@ -59,6 +62,150 @@ double StoredEnergySusceptibility(const std::vector<config::PermittivityTermData
 // time-averaged dissipated power of the field is that of a loss ω ε₀ (−Im χ) |E|²/2.
 double DissipationSusceptibility(const std::vector<config::PermittivityTermData> &terms,
                                  double omega);
+
+//
+// Stored electric energy of a material's polarization, prepared once from its terms.
+//
+// Typed terms (Drude, Debye, Lorentz) and Djordjevic-Sarkar terms keep the physical
+// energies of their models, above. All PoleResidue terms of the material together form ONE
+// rational block, the RAW block χ_raw(s). Its stored energy is, by convention, the
+// AVAILABLE STORAGE of its polarization current J = ∂P/∂t, with admittance Y(s) = s
+// χ_raw(s): the largest energy that the polarization can return to the field, the smallest
+// stored energy of any passive realization of Y. It depends only on χ_raw(s), not on how it
+// is split into terms, their order, or repeated poles. It is NOT a microscopic energy: a
+// sum of typed terms and a RAW block with the same χ need not store the same energy. For
+// instance χ = 1/(s + 1) + 1/(s + 2) at ω = 1 stores 0.9 as two typed Debye terms and
+// 0.8675444679663243 as a RAW block. For a single Drude, Debye, or Lorentz section the two
+// agree.
+//
+// The available storage is evaluated as κ‖Hᵀ(iω/Ω − A)⁻¹B‖² (plus the fixed energies of
+// exact lossless resonances), with X = HHᵀ the minimal solution of the positive-real
+// (Kalman-Yakubovich-Popov) equations of a minimal realization (A, B, C, D) of Y(Ωu)/(κΩ),
+// from the outer spectral factor of Y(u) + Y(−u). It is nonnegative by construction. The
+// realization, factor, and its certificate are computed once; each frequency costs O(n²)
+// for n states. Ordinary conductivity and ε∞ are not part of the RAW block.
+//
+// Status of the RAW block. The whole material may be passive even when the RAW block alone
+// is not (it is compensated by typed or Djordjevic-Sarkar terms): NonpassiveRaw is not a
+// statement of gain of the material, and NumericalUnresolved is not a statement of gain at
+// all. In both cases the RAW block has no stored energy under this convention.
+enum class RawStorageStatus
+{
+  // No PoleResidue terms, or the available storage of the RAW block passed its checks.
+  CheckedAvailable,
+
+  // The RAW block alone is demonstrably not passive, beyond the resolution
+  // PreparedStorage::tolerance: a negative high-frequency current D, a negative zero-pole
+  // conductance, an invalid lossless residue, or a sampled frequency of negative Re Y(iω).
+  NonpassiveRaw,
+
+  // The certificate failed in double precision, for example for nearly coincident poles,
+  // and the RAW block was not demonstrated to be nonpassive either.
+  NumericalUnresolved
+};
+
+// Diagnostics of the preparation of the RAW block, in the scaled variables u = s/Ω and
+// χ/κ. Residuals are componentwise backward errors, relative to the rounding scale of each
+// entry (|A|ᵀ|H||H|ᵀ + |H||H|ᵀ|A| + |L|ᵀ|L| and similar), so that a large fast state
+// cannot hide an inaccurate slow state. They are the relative perturbations of the data for
+// which X = HHᵀ is an exact storage; they are numerical evidence, not interval proofs.
+struct RawStorageCertificate
+{
+  // Stable real states n, exact lossless (Re p = 0) oscillators, and finite zeros of the
+  // spectral factor G(u), counted with multiplicity, including any zero at u = 0.
+  int states = 0, lossless = 0, spectral_zeros = 0;
+
+  // Rate and amplitude scales Ω and κ (powers of two), and the scaled feedthrough D of
+  // the current Y(u) → D as u → ∞, including the zero-pole residue.
+  double rate_scale = 1.0, amplitude_scale = 1.0, feedthrough = 0.0;
+
+  // Largest normwise backward error of a computed spectral zero as an eigenvalue of its
+  // generalized eigenvalue pencil, and the ratio of the smallest |β|/|(α, β)| of a kept
+  // (finite) eigenvalue to the largest of a discarded (infinite) one.
+  double zero_backward_error = 0.0, infinite_separation = 0.0;
+
+  // Imaginary part of the real-coordinate storage matrix and factor rows, relative.
+  double reality_error = 0.0;
+
+  // Smallest pivot of the diagonally pivoted Cholesky factorization of the diagonally
+  // equilibrated storage matrix (one is perfectly conditioned), and the number of trailing
+  // pivots within the rounding of the factorization, 64nε, whose remainder (bounded by
+  // that) was dropped: a bounded perturbation, after which every residual is of the actual
+  // factor. Positive definite when zeroed_pivots = 0 (min_pivot is then positive).
+  double min_pivot = 0.0;
+  int zeroed_pivots = 0;
+
+  // AᵀX + XA + LᵀL = 0, XB − Cᵀ + LᵀW = 0, and W² − 2D = 0 for the actual X = HHᵀ, and
+  // F(u) − G(u)G(−u) at fixed probe points u.
+  double lyapunov_residual = 0.0, cross_residual = 0.0, feedthrough_residual = 0.0,
+         factor_residual = 0.0;
+};
+
+// Realization of the scaled RAW block, for verification only: χ_raw(s) = κ Y(s/Ω)/(s/Ω)
+// with Y(u) = D + C(uI − A)⁻¹B on the stable states, plus the exact lossless oscillators,
+// and storage X = HHᵀ with spectral factor G(u) = W + L(uI − A)⁻¹B. Matrices are row-major
+// n×n (A, X) or length n (B, C, L).
+struct RawStorageRealization
+{
+  int n = 0;
+  std::vector<double> A, B, C, L, X;
+  double D = 0.0, W = 0.0;
+  // (β, 2q) of each exact lossless oscillator Y = 2q u/(u² + β²).
+  std::vector<std::pair<double, double>> lossless;
+};
+
+class PreparedStorage
+{
+public:
+  // The resolution of the RAW checks: the largest accepted componentwise backward error of
+  // the storage, and the smallest relative violation that demonstrates nonpassivity. It is
+  // the tolerance FindDefects uses for the sign of the dissipated power.
+  static constexpr double tolerance = 1.0e-10;
+
+  explicit PreparedStorage(const std::vector<config::PermittivityTermData> &terms);
+
+  bool HasRaw() const { return has_raw; }
+  RawStorageStatus Status() const { return status; }
+
+  // Why the RAW block has its status, deterministic for the given terms.
+  const std::string &Reason() const { return reason; }
+  const RawStorageCertificate &Certificate() const { return certificate; }
+
+  // StoredEnergySusceptibility of the typed and Djordjevic-Sarkar terms plus the available
+  // storage of the RAW block, at real ω ≥ 0. Empty unless Status() is CheckedAvailable.
+  // Infinite at an exact lossless resonance.
+  std::optional<double> StoredEnergySusceptibility(double omega) const;
+
+  // The available storage of the RAW block alone, empty unless Status() is
+  // CheckedAvailable (zero without PoleResidue terms).
+  std::optional<double> RawStoredEnergySusceptibility(double omega) const;
+
+  RawStorageRealization Realization() const;
+
+private:
+  // Typed and Djordjevic-Sarkar terms.
+  std::vector<config::PermittivityTermData> physical;
+
+  bool has_raw = false;
+  RawStorageStatus status = RawStorageStatus::CheckedAvailable;
+  std::string reason;
+  RawStorageCertificate certificate;
+
+  // Stable blocks in canonical order: a real pole (im = 0) is one state, an
+  // upper-half-plane pole with its conjugate two states, x = (Re ξ, Im ξ).
+  struct Block
+  {
+    double re, im;
+  };
+  std::vector<Block> blocks;
+
+  // Hᵀ (row-major n×n), C, L, D, W, and lossless oscillators.
+  std::vector<double> factor, C, L;
+  double D = 0.0, W = 0.0;
+  std::vector<std::pair<double, double>> lossless;
+
+  void PrepareRaw(const std::vector<config::PermittivityPoleData> &raw);
+};
 
 // Verify the parameters of the terms. A typed term must be passive on its own: a negative
 // strength has gain at every frequency. ε∞ must be positive for a positive field energy.
