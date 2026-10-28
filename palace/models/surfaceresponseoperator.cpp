@@ -6194,7 +6194,11 @@ public:
         auto entry = aggregate.requirement;
         entry["Count"] = aggregate.count;
         entry["TotalEdgeLength"] = aggregate.total_edge_length;
-        if (count_table)
+        // T5 fallback (decisions 960 R4 / 961 MINOR-3): a FallbackPlaced requirement (the
+        // grown key of a cluster placed on its ungrown key) is never summed into the
+        // Status counts / lengths (Counts.Missing and Complete read as without it, to the
+        // byte); it is carried by Summary.FallbackPlaced below.
+        if (count_table && !entry.value("FallbackPlaced", false))
         {
           (*count_table)[entry["Status"].get<std::string>()] += aggregate.count;
           (*length_table)[entry["Status"].get<std::string>()] +=
@@ -6205,10 +6209,8 @@ public:
       return entries;
     };
     nlohmann::json entries = Entries(requirements, &counts, &lengths);
-    // T5 fallback (decisions 960 R4 / 961 MINOR-3): the FallbackPlaced requirements (the
-    // grown keys of clusters placed on their ungrown key) leave Counts.Missing and Complete
-    // (every patch has a model) and are carried by Summary.FallbackPlaced, written only
-    // when there are any so that every other manifest is unchanged.
+    // Summary.FallbackPlaced, written only when there are any FallbackPlaced requirements
+    // so that every other manifest is unchanged.
     int fallback_placed_count = 0;
     double fallback_placed_length = 0.0;
     nlohmann::json fallback_placed_keys = nlohmann::json::array();
@@ -6216,12 +6218,8 @@ public:
     {
       if (entry.value("FallbackPlaced", false))
       {
-        const int entry_count = entry["Count"].get<int>();
-        const double entry_length = entry["TotalEdgeLength"].get<double>();
-        counts[entry["Status"].get<std::string>()] -= entry_count;
-        lengths[entry["Status"].get<std::string>()] -= entry_length;
-        fallback_placed_count += entry_count;
-        fallback_placed_length += entry_length;
+        fallback_placed_count += entry["Count"].get<int>();
+        fallback_placed_length += entry["TotalEdgeLength"].get<double>();
         fallback_placed_keys.push_back(
             {{"Hash", entry["Hash"]}, {"PlacedModel", entry["PlacedModel"]}});
       }

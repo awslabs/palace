@@ -13029,27 +13029,38 @@ void Identifier::RecordContextFeatureIds(int feature)
                ? nlohmann::json(cluster_feature[c])
                : nlohmann::json(nullptr);
   };
-  nlohmann::json &context = record["Context"];
-  for (const char *list : {"ChainVertices", "ForeignVertices"})
+  auto Record = [&](nlohmann::json &context)
   {
-    for (auto &entry : context[list])
+    for (const char *list : {"ChainVertices", "ForeignVertices"})
     {
-      if (entry["Cluster"].is_number_integer())
+      for (auto &entry : context[list])
       {
-        entry["Feature"] = ClusterFeature(entry["Cluster"]);
-      }
-      else if (entry.contains("Site") && entry["Site"].is_number_integer())
-      {
-        const auto s = entry["Site"].get<std::size_t>();
-        entry["Feature"] = s < site_feature.size() && site_feature[s] >= 0
-                               ? nlohmann::json(site_feature[s])
-                               : nlohmann::json(nullptr);
+        if (entry["Cluster"].is_number_integer())
+        {
+          entry["Feature"] = ClusterFeature(entry["Cluster"]);
+        }
+        else if (entry.contains("Site") && entry["Site"].is_number_integer())
+        {
+          const auto s = entry["Site"].get<std::size_t>();
+          entry["Feature"] = s < site_feature.size() && site_feature[s] >= 0
+                                 ? nlohmann::json(site_feature[s])
+                                 : nlohmann::json(nullptr);
+        }
       }
     }
-  }
-  for (auto &entry : context["ClaimedByOtherFeature"]["Entries"])
+    for (auto &entry : context["ClaimedByOtherFeature"]["Entries"])
+    {
+      entry["Feature"] = ClusterFeature(entry["Cluster"]);
+    }
+  };
+  Record(record["Context"]);
+  // T5 (the header's contract): the UNGROWN record a T5-grown cluster carries for the
+  // placement's fallback is the pre-T5 record in full, its context census included.
+  if (record.contains("CornerContainment") &&
+      record["CornerContainment"].contains("Ungrown") &&
+      record["CornerContainment"]["Ungrown"]["SpatialSupport"].contains("Context"))
   {
-    entry["Feature"] = ClusterFeature(entry["Cluster"]);
+    Record(record["CornerContainment"]["Ungrown"]["SpatialSupport"]["Context"]);
   }
 }
 
