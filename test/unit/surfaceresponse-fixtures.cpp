@@ -1488,11 +1488,12 @@ std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeTouchingIslandMesh()
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
-mfem::Mesh SurfaceResponseFiles::MakeSerialOffsetCornerPairMesh()
+mfem::Mesh SurfaceResponseFiles::MakeSerialOffsetCornerPairMesh(bool straddling_island)
 {
   constexpr double extent = 2.0;
-  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 4, 16, mfem::Element::HEXAHEDRON,
-                                                  extent, 1.0, extent);
+  const double extent_z = straddling_island ? 3.0 : extent;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
+      16, 4, straddling_island ? 24 : 16, mfem::Element::HEXAHEDRON, extent, 1.0, extent_z);
   for (int face = 0; face < serial.GetNumFaces(); face++)
   {
     int element1, element2;
@@ -1505,7 +1506,7 @@ mfem::Mesh SurfaceResponseFiles::MakeSerialOffsetCornerPairMesh()
     serial.GetFaceVertices(face, vertices);
     bool on_plane = true;
     double xmin = extent, xmax = 0.0;
-    double zmin = extent, zmax = 0.0;
+    double zmin = extent_z, zmax = 0.0;
     for (const int vertex : vertices)
     {
       const double *point = serial.GetVertex(vertex);
@@ -1519,10 +1520,13 @@ mfem::Mesh SurfaceResponseFiles::MakeSerialOffsetCornerPairMesh()
                        zmin >= 0.25 - 1.0e-12 && zmax <= 0.75 + 1.0e-12;
     const bool second = xmin >= 1.125 - 1.0e-12 && xmax <= 1.625 + 1.0e-12 &&
                         zmin >= 0.875 - 1.0e-12 && zmax <= 1.75 + 1.0e-12;
-    if (on_plane && (first || second))
+    const bool third = straddling_island && xmin >= 0.125 - 1.0e-12 &&
+                       xmax <= 0.625 + 1.0e-12 && zmin >= 1.75 - 1.0e-12 &&
+                       zmax <= 2.25 + 1.0e-12;
+    if (on_plane && (first || second || third))
     {
       serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
-      serial.SetBdrAttribute(serial.GetNBE() - 1, first ? 9 : 10);
+      serial.SetBdrAttribute(serial.GetNBE() - 1, first ? 9 : second ? 10 : 11);
     }
   }
   serial.FinalizeTopology();
@@ -1530,9 +1534,10 @@ mfem::Mesh SurfaceResponseFiles::MakeSerialOffsetCornerPairMesh()
   return serial;
 }
 
-std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeOffsetCornerPairMesh()
+std::unique_ptr<mfem::ParMesh>
+SurfaceResponseFiles::MakeOffsetCornerPairMesh(bool straddling_island)
 {
-  mfem::Mesh serial = MakeSerialOffsetCornerPairMesh();
+  mfem::Mesh serial = MakeSerialOffsetCornerPairMesh(straddling_island);
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
