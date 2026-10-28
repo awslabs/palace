@@ -1669,8 +1669,8 @@ TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
                          "port-V.csv",          "port-Z.csv",         "domain-E.csv",
                          "error-indicators.csv"};
   // Full mixed 2x2 round-trip: synthesized-vs-field S to 7e-13 here at 16 processes, with
-  // the lumped port coupled through its voltage functional. The 2e-3 tolerance dates from
-  // the unit terminal selector, which was off by about 6e-4 here.
+  // the lumped port coupled through its voltage functional; 2e-3 is the tolerance set for
+  // the earlier unit terminal selector, kept unchanged.
   opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-3);
   opts.custom_checks["rom-eigenvalues.csv"] =
       CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
