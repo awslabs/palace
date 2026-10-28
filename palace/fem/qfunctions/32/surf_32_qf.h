@@ -224,6 +224,78 @@ CEED_QFUNCTION(f_integ_surf_epr_2_32)(void *__restrict__ ctx_, CeedInt Q,
   return 0;
 }
 
+// Conductor surface loss integrands following BdrSurfaceCurrentNorm2Coefficient
+// (fem/coefficient.hpp): the squared surface current density |n x H|², H = mu⁻¹ B, times
+// the surface measure and a scale factor. The "_1" variant evaluates the field from a
+// single element (an exterior boundary, or one face of a thick conductor on an interior
+// boundary, for which the contributions of the two faces add through separate one-sided
+// operators); the "_2" variant evaluates the total sheet current of a thin film on an
+// interior boundary from the jump of the field, |n x (H_1 - H_2)|². The context is a
+// CeedIntScalar array: [0].second = scale, followed by the inverse permeability material
+// property context. The normal direction sign is irrelevant (quadratic in n x H). Inputs
+// ("_1"): qw, grad_x_f, attr_1, grad_x_1, u_1; ("_2"): qw, grad_x_f, attr_1, grad_x_1,
+// attr_2, grad_x_2, u_1, u_2.
+CEED_QFUNCTION_HELPER CeedScalar SurfTangentialNorm2_32(const CeedScalar n[3],
+                                                        const CeedScalar H[3])
+{
+  const CeedScalar t0 = n[1] * H[2] - n[2] * H[1];
+  const CeedScalar t1 = n[2] * H[0] - n[0] * H[2];
+  const CeedScalar t2 = n[0] * H[1] - n[1] * H[0];
+  return t0 * t0 + t1 * t1 + t2 * t2;
+}
+
+// H = mu⁻¹ B at a point from the H(div) reference field and the side attribute.
+CEED_QFUNCTION_HELPER void SurfHField32(const CeedIntScalar *ctx, CeedInt i, CeedInt Q,
+                                        CeedInt attr, const CeedScalar *J_v,
+                                        const CeedScalar *u, CeedScalar H[3])
+{
+  CeedScalar B[3], invmu[9];
+  SurfHdivField32(i, Q, J_v, u, B);
+  CoeffUnpack3(ctx, attr, invmu);
+  MultAx33(invmu, B, H);
+}
+
+CEED_QFUNCTION(f_integ_surf_cond_1_32)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *u = in[4];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], H[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfHField32(ctx + 1, i, Q, (CeedInt)attr[i], J_v, u, H);
+    v[i] = ctx[0].second * wdetJ * SurfTangentialNorm2_32(n, H);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_integ_surf_cond_2_32)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr_1 = in[2], *J_v1 = in[3],
+                   *attr_2 = in[4], *J_v2 = in[5], *u_1 = in[6], *u_2 = in[7];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], H[3], H_2[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfHField32(ctx + 1, i, Q, (CeedInt)attr_1[i], J_v1, u_1, H);
+    SurfHField32(ctx + 1, i, Q, (CeedInt)attr_2[i], J_v2, u_2, H_2);
+    H[0] -= H_2[0];
+    H[1] -= H_2[1];
+    H[2] -= H_2[2];
+    v[i] = ctx[0].second * wdetJ * SurfTangentialNorm2_32(n, H);
+  }
+  return 0;
+}
+
 // Linear H(curl) mode-overlap integral for lumped-port voltage and S-parameter
 // extraction: v = qw * detJ_f * E . f_mode. Context layout:
 // [0].first = mode type (0 = uniform, 1 = coaxial), [1].second = scale,

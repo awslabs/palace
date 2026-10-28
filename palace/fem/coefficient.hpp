@@ -158,6 +158,80 @@ public:
   }
 };
 
+// Computes the squared magnitude of the tangential magnetic field |n x H|² = |n x μ⁻¹ B|²
+// on boundaries from B as a vector grid function: the integrand of the dissipated power
+// P = 1/2 Rs ∮ |n x H|² dS of an imperfect conductor with surface resistance Rs, to first
+// order in Rs. For a two-sided internal boundary, the contributions of the two conductor
+// faces add, |n x H₁|² + |n x H₂|² (a conductor thicker than the skin or penetration
+// depth), or for a thin film the total sheet current is used, |n x (H₁ - H₂)|².
+class BdrSurfaceCurrentNorm2Coefficient : public mfem::Coefficient,
+                                          public BdrGridFunctionCoefficient
+{
+private:
+  const mfem::ParGridFunction &B;
+  const MaterialOperator &mat_op;
+  const bool thin_film;
+
+public:
+  BdrSurfaceCurrentNorm2Coefficient(const mfem::ParGridFunction &B,
+                                    const MaterialOperator &mat_op, bool thin_film,
+                                    double scaling = 1.0)
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh(), scaling), B(B),
+      mat_op(mat_op), thin_film(thin_film)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrSurfaceCurrentNorm2Coefficient!");
+    bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
+    const int sdim = mesh.SpaceDimension();
+    if (sdim == 2)
+    {
+      // In 2D, B is a scalar (out-of-plane component) and entirely tangential to the
+      // boundary: |n x H|² = |μ⁻¹_zz B_z|².
+      double Hz = B.GetValue(*FET.Elem1, FET.Elem1->GetIntPoint()) *
+                  mat_op.GetInvPermeabilityZZ(FET.Elem1->Attribute);
+      if (!FET.Elem2)
+      {
+        return scaling * Hz * Hz;
+      }
+      double Hz2 = B.GetValue(*FET.Elem2, FET.Elem2->GetIntPoint()) *
+                   mat_op.GetInvPermeabilityZZ(FET.Elem2->Attribute);
+      return scaling * (thin_film ? (Hz - Hz2) * (Hz - Hz2) : Hz * Hz + Hz2 * Hz2);
+    }
+
+    double W_data[3], H1_data[3], H2_data[3], normal_data[3], Jt_data[3];
+    mfem::Vector W(W_data, sdim), H1(H1_data, sdim), H2(H2_data, sdim),
+        normal(normal_data, sdim), Jt(Jt_data, sdim);
+    GetNormal(T, normal, ori);
+    B.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), W);
+    mat_op.GetInvPermeability(FET.Elem1->Attribute).Mult(W, H1);
+    if (!FET.Elem2)
+    {
+      linalg::Cross3(normal, H1, Jt);
+      return scaling * (Jt * Jt);
+    }
+    B.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
+    mat_op.GetInvPermeability(FET.Elem2->Attribute).Mult(W, H2);
+    if (thin_film)
+    {
+      // Total sheet current Jₛ = n x (H₁ - H₂).
+      H1 -= H2;
+      linalg::Cross3(normal, H1, Jt);
+      return scaling * (Jt * Jt);
+    }
+    // Independent conductor faces on either side.
+    linalg::Cross3(normal, H1, Jt);
+    double val = Jt * Jt;
+    linalg::Cross3(normal, H2, Jt);
+    val += Jt * Jt;
+    return scaling * val;
+  }
+};
+
 // Computes the flux Φₛ = F ⋅ n with F = B or ε E on interior boundary elements using B or
 // E given as a vector grid function. For a two-sided internal boundary, the contributions
 // from both sides can either add or be averaged.

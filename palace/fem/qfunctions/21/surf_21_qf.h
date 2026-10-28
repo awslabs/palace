@@ -261,6 +261,51 @@ CEED_QFUNCTION(f_integ_surf_epr_2_21)(void *__restrict__ ctx_, CeedInt Q,
   return 0;
 }
 
+// Conductor surface loss integrands, mirroring f_integ_surf_cond_1_32 and
+// f_integ_surf_cond_2_32. In 2D, B is the scalar out-of-plane magnetic flux density B_z in
+// an L2 space (integral map), which is entirely tangential to the boundary, so the squared
+// surface current density is |n x H|² = H_z² with H_z = mu⁻¹_zz B_z (scalar 1x1
+// inverse permeability material context at ctx + 1).
+CEED_QFUNCTION(f_integ_surf_cond_1_21)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *u = in[4];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[2], n[2];
+    MatUnpack21(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure21(J_f_loc, n);
+    const CeedScalar Hz =
+        CoeffUnpack1(ctx + 1, (CeedInt)attr[i]) * IntegralMap22(i, Q, J_v, u);
+    v[i] = ctx[0].second * wdetJ * Hz * Hz;
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_integ_surf_cond_2_21)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr_1 = in[2], *J_v1 = in[3],
+                   *attr_2 = in[4], *J_v2 = in[5], *u_1 = in[6], *u_2 = in[7];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[2], n[2];
+    MatUnpack21(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure21(J_f_loc, n);
+    const CeedScalar Hz =
+        CoeffUnpack1(ctx + 1, (CeedInt)attr_1[i]) * IntegralMap22(i, Q, J_v1, u_1) -
+        CoeffUnpack1(ctx + 1, (CeedInt)attr_2[i]) * IntegralMap22(i, Q, J_v2, u_2);
+    v[i] = ctx[0].second * wdetJ * Hz * Hz;
+  }
+  return 0;
+}
+
 // Pointwise boundary surface charge, surface current, energy density, and Poynting
 // values at visualization lattice points for 2D line boundaries. These mirror the 3D
 // boundary visualization kernels in surf_32_qf.h using Palace's 2D field convention:
