@@ -31,6 +31,7 @@
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
 #include "models/waveportoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
@@ -596,6 +597,41 @@ TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
   //   kn ≈ 20708 1/m → nondimensional (×Lc where Lc = 1e-6 m) ≈ 0.02071
   // Allow 5% tolerance for the coarse 10×5 mesh at order 2.
   CHECK_THAT(kn_real, WithinRel(0.02071, 0.05));
+}
+
+TEST_CASE("ModeEigenSolver dispersive material in an oblique cross-section frame",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A port on an oblique plane rotates the materials into the frame of its cross-section
+  // (RotateMaterialDefinitions). A scalar dispersive substrate gives the same mode as in
+  // the axis-aligned frame; an anisotropic one is still rejected.
+  auto configure = [](const std::array<mfem::Vector, 3> *frame, double eps_zz)
+  {
+    return [frame, eps_zz](IoData &iodata)
+    {
+      const double rate = electromagnetics::c0_ / iodata.model.L0;
+      auto &material = iodata.domains.materials[0];
+      material.epsilon_r.s = {4.0, 4.0, eps_zz};
+      material.permittivity_terms.push_back(config::DebyeData{0.5, 1.0 / rate});
+      if (frame)
+      {
+        RotateMaterialDefinitions(iodata.domains.materials, (*frame)[0], (*frame)[1],
+                                  (*frame)[2]);
+      }
+    };
+  };
+  const auto ref =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure(nullptr, 4.0));
+  REQUIRE(ref.num_converged >= 1);
+  for (const auto &frame : test::ObliqueFrames(2))
+  {
+    const auto rotated =
+        SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure(&frame, 4.0));
+    REQUIRE(rotated.num_converged >= 1);
+    CHECK(std::abs(rotated.kn[0] - ref.kn[0]) <= 1.0e-12 * std::abs(ref.kn[0]));
+    CHECK_THROWS(
+        SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure(&frame, 4.5)));
+  }
 }
 
 TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",

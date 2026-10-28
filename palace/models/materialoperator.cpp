@@ -971,17 +971,20 @@ void RotateMaterialDefinitions(std::vector<config::MaterialData> &materials,
     return out;
   };
 
+  // An isotropic tensor is invariant under rotation. It stays exactly isotropic, not
+  // isotropic up to the roundoff of the rotation, so that checks which require a scalar
+  // property (frequency-dependent materials) hold in every frame.
+  auto Rotate = [&](config::SymmetricMatrixData<3> &data)
+  {
+    data = internal::mat::IsIsotropic(data) ? config::SymmetricMatrixData<3>(data.s[0])
+                                            : Rotated(internal::mat::ToDenseMatrix(data));
+  };
   for (auto &data : materials)
   {
-    const mfem::DenseMatrix mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
-    const mfem::DenseMatrix eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
-    const mfem::DenseMatrix tandelta_3d = internal::mat::ToDenseMatrix(data.tandelta);
-    const mfem::DenseMatrix sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
-
-    data.mu_r = Rotated(mu_3d);
-    data.epsilon_r = Rotated(eps_3d);
-    data.tandelta = Rotated(tandelta_3d);
-    data.sigma = Rotated(sigma_3d);
+    Rotate(data.mu_r);
+    Rotate(data.epsilon_r);
+    Rotate(data.tandelta);
+    Rotate(data.sigma);
     // `lambda_L` is a scalar length; unchanged by rotation.
   }
 }

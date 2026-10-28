@@ -4,7 +4,9 @@
 #ifndef PALACE_TEST_HELPERS_HPP
 #define PALACE_TEST_HELPERS_HPP
 
+#include <array>
 #include <string>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -20,6 +22,10 @@ std::string TestMeshPath(const std::string &name);
 
 namespace palace::test
 {
+
+// Deterministic pseudo-random orthonormal frames (e1, e2, normal) of planes oblique to
+// every coordinate axis.
+std::vector<std::array<mfem::Vector, 3>> ObliqueFrames(int num_frames);
 
 // Restores the global assembly and integration-order settings on destruction. With a
 // SolverData argument, first installs its integration orders, as the drivers do.

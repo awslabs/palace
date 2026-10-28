@@ -431,7 +431,8 @@ public:
 // constructed from the mutated iodata yields the physically correct in-plane 2x2 block
 // (leading submatrix = R^T M R) and scalar out-of-plane components ((2,2) = n^T M n) via
 // the default 2D construction path — no additional frame information is required
-// downstream. `lambda_L` is a scalar length, unaffected.
+// downstream. An isotropic tensor stays exactly isotropic. `lambda_L` is a scalar length,
+// unaffected.
 void RotateMaterialDefinitions(std::vector<config::MaterialData> &materials,
                                const mfem::Vector &e1, const mfem::Vector &e2,
                                const mfem::Vector &normal);
