@@ -1161,8 +1161,12 @@ std::optional<double> PreparedStorage::RawStoredEnergySusceptibility(double omeg
   // Evaluated in variables scaled by the frequency, without forming v = ω/Ω (which can
   // overflow for finite ω), a sum such as ω + Im p (which can overflow), or a product that
   // can overflow or underflow before the final result. With 2ᵉ ~ max(ω, Ω), the scaled
-  // frequency w = ω/2ᵉ < 2 and poles p/2ᵉ = (Ω/2ᵉ)λ = ã + ib̃ are exact powers-of-two
-  // rescalings, at most of order one. The states are z = (iv − A)⁻¹B = (Ω/2ᵉ)ζ̃, with ζ̃ =
+  // frequency w = ω/2ᵉ < 2 and poles p/2ᵉ = (Ω/2ᵉ)λ = ã + ib̃ are representable
+  // power-of-two rescalings, of order one at most. They are exact unless they underflow
+  // (for ω far above a pole's rate): ã or b̃ then loses digits or rounds to zero, which
+  // perturbs that pole's states by about its rounding, unless it makes a factor
+  // iw − ã ∓ ib̃ round to zero (a damping below 2⁻¹⁰⁷⁴ω at its resonance), where the energy
+  // is infinite. The states are z = (iv − A)⁻¹B = (Ω/2ᵉ)ζ̃, with ζ̃ =
   // 1/(iw − ã) for a real pole, and ζ̃ = ((iw − ã), b̃)/((iw − ã − ib̃)(iw − ã + ib̃)) for a
   // pair, divided by one factor at a time. Then the energy κ‖Hᵀz‖² = 2ᴱ‖Hᵀζ̃‖², E =
   // log₂(κΩ²) − 2e, with the factor 2ᴱ applied before squaring (as 2^⌊E/2⌋, and the

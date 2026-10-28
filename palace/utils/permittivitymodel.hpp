@@ -201,7 +201,8 @@ public:
   // The outer-factor storage of the RAW block alone at finite real ω ≥ 0, empty unless
   // Status() is CheckedAvailable (zero without PoleResidue terms). It is finite at any
   // finite ω (it may underflow to zero), except at an exact lossless resonance, where it is
-  // infinite, or if the energy itself overflows.
+  // infinite, if the energy itself overflows, or at a resonance whose damping is below
+  // 2⁻¹⁰⁷⁴ω (it underflows when scaled by ω), where it is infinite too.
   std::optional<double> RawStoredEnergySusceptibility(double omega) const;
 
   RawStorageRealization Realization() const;
