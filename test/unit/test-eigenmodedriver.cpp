@@ -10,9 +10,11 @@
 #include <complex>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -34,16 +36,16 @@ namespace
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// A 1 cm cube of 2 x 2 x 2 hexahedra (L0 = 1 cm). Boundary attributes of
-// mfem::Mesh::MakeCartesian3D: 1 (z = 0), 2 (y = 0), 3 (x = 1), 4 (y = 1), 5 (x = 0),
-// 6 (z = 1).
+// A 1 x 0.8 x 0.6 cm box of 2 x 2 x 2 hexahedra (L0 = 1 cm), without degenerate modes.
+// Boundary attributes of mfem::Mesh::MakeCartesian3D: 1 (z = 0), 2 (y = 0), 3 (x = 1), 4 (y
+// = 1), 5 (x = 0), 6 (z = 1).
 fs::path WriteBoxMesh(const fs::path &dir)
 {
   const auto path = dir / "box.mesh";
   if (Mpi::Root(Mpi::World()))
   {
     auto mesh =
-        mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+        mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON, 1.0, 0.8, 0.6);
     std::ofstream out(path);
     mesh.Print(out);
   }
@@ -132,8 +134,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   // In a PEC box filled with one material, the discrete modes of ε(ω) on the same mesh are
   // exactly those of a constant ε∞ rescaled by the material: f² ε(f) = f_h² ε∞, with f_h a
   // discrete eigenfrequency of the constant ε∞. Each Lorentz mode found by the nonlinear
-  // eigensolver (Quasi-Newton after the Hybrid seed) must satisfy this for some f_h,
-  // including the modes below the resonance f₀, where ε(f) differs most from ε∞.
+  // eigensolver (Quasi-Newton after the Hybrid seed) must satisfy this for some f_h.
   const auto mesh = WriteBoxMesh(temp_dir);
   const json pec = {{"PEC", {{"Attributes", {1, 2, 3, 4, 5, 6}}}}};
   const auto constant =
@@ -142,7 +143,6 @@ TEST_CASE_METHOD(test::SharedTempDir,
       BoxConfig(mesh, LorentzPermittivityConfig(), pec, 6, 8.0, ""), temp_dir, "lorentz");
   REQUIRE(constant.f.size() >= 16);
   REQUIRE(lorentz.f.size() >= 6);
-  bool below = false;
   for (std::size_t i = 0; i < lorentz.f.size(); i++)
   {
     const auto f = lorentz.f[i];
@@ -156,9 +156,52 @@ TEST_CASE_METHOD(test::SharedTempDir,
       rel = std::min(rel, std::abs(f * f * LorentzPermittivity(f) - lhs) / lhs);
     }
     CHECK(rel <= 1.0e-7);
-    below = below || f.real() < f0;
   }
-  CHECK(below);
+
+  // The requested modes are the lowest above the target: the roots of the quartic
+  // f² (ε∞ D(f) + Δε f₀²) = f_h² ε∞ D(f), D(f) = f₀² − f² + i γ f, for every f_h. With the
+  // target below the resonance and the constant modes above it, the roots lie between the
+  // target and the pole, on the other side of the pole from the constant modes. None may
+  // be skipped or replaced by a root beyond the pole.
+  std::vector<std::complex<double>> expected;
+  const std::complex<double> i(0.0, 1.0);
+  for (const auto f_h : constant.f)
+  {
+    const double h2 = std::norm(f_h) * eps_inf;
+    // Monic quartic f⁴ + c₃ f³ + c₂ f² + c₁ f + c₀ (divided by −ε∞), as a companion matrix.
+    const std::complex<double> c3 = -i * damping,
+                               c2 = -(eps_inf * f0 * f0 + delta_eps * f0 * f0 + h2) /
+                                    eps_inf,
+                               c1 = i * damping * h2 / eps_inf, c0 = h2 * f0 * f0 / eps_inf;
+    Eigen::Matrix4cd companion = Eigen::Matrix4cd::Zero();
+    companion(0, 0) = -c3;
+    companion(0, 1) = -c2;
+    companion(0, 2) = -c1;
+    companion(0, 3) = -c0;
+    companion(1, 0) = companion(2, 1) = companion(3, 2) = 1.0;
+    for (const auto f :
+         Eigen::ComplexEigenSolver<Eigen::Matrix4cd>(companion).eigenvalues())
+    {
+      if (f.real() >= 8.0)
+      {
+        expected.push_back(f);
+      }
+    }
+  }
+  auto by_frequency = [](auto a, auto b) { return a.real() < b.real(); };
+  std::ranges::sort(expected, by_frequency);
+  REQUIRE(expected.size() >= 6);
+  REQUIRE(expected[5].real() < f0);  // All on the target's side of the resonance
+  std::vector<std::complex<double>> found;
+  std::ranges::copy_if(lorentz.f, std::back_inserter(found),
+                       [](auto f) { return f.real() >= 8.0; });
+  std::ranges::sort(found, by_frequency);
+  REQUIRE(found.size() >= 6);
+  for (std::size_t k = 0; k < 6; k++)
+  {
+    CAPTURE(k, found[k], expected[k]);
+    CHECK(std::abs(found[k] - expected[k]) <= 1.0e-7 * std::abs(expected[k]));
+  }
 }
 
 TEST_CASE_METHOD(
