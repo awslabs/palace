@@ -76,7 +76,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "v1.0.0" CACHE STRING
+  "v1.0.1" CACHE STRING
   "Git tag for external libCEED build"
 )
 
@@ -230,7 +230,7 @@ set(EXTERN_SUPERLU_GIT_BRANCH
   "Git branch for external SuperLU_DIST build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "v9.3.0" CACHE STRING
+  "v9.3.1" CACHE STRING
   "Git tag for external SuperLU_DIST build"
 )
 
@@ -256,13 +256,13 @@ set(EXTERN_JSON_URL
 
 # nlohmann/json-schema-validator
 set(EXTERN_JSON_SCHEMA_VALIDATOR_URL
-  "https://github.com/pboettch/json-schema-validator/archive/refs/tags/2.4.0.tar.gz" CACHE STRING
+  "https://github.com/pboettch/json-schema-validator/archive/refs/tags/2.4.1.tar.gz" CACHE STRING
   "URL for external nlohmann/json-schema-validator build"
 )
 
 # fmt
 set(EXTERN_FMT_URL
-  "https://github.com/fmtlib/fmt/releases/download/12.1.0/fmt-12.1.0.zip" CACHE STRING
+  "https://github.com/fmtlib/fmt/releases/download/12.2.0/fmt-12.2.0.zip" CACHE STRING
   "URL for external fmt build"
 )
 
@@ -316,6 +316,6 @@ set(EXTERN_UMPIRE_GIT_BRANCH
   "Git branch for external UMPIRE build"
 )
 set(EXTERN_UMPIRE_GIT_TAG
-  "v2026.07.1" CACHE STRING
+  "v2026.07.2" CACHE STRING
   "Git tag for external UMPIRE build"
 )
