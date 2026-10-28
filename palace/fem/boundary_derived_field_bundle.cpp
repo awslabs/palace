@@ -47,27 +47,6 @@ void AppendRule(RouteKey &key, const std::vector<mfem::IntegrationPoint> &points
   }
 }
 
-// The temporary references are released after libCEED takes its own operator references.
-struct CeedAssemblyScratch
-{
-  Ceed ceed;
-  std::vector<CeedVector> vecs;
-  std::vector<CeedElemRestriction> restrictions;
-
-  explicit CeedAssemblyScratch(Ceed ceed_) : ceed(ceed_) {}
-  ~CeedAssemblyScratch()
-  {
-    for (auto &vec : vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&vec));
-    }
-    for (auto &restriction : restrictions)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&restriction));
-    }
-  }
-};
-
 int SideAttribute(const mfem::ParMesh &pmesh, const FaceSamplingPlan::Entry &entry,
                   int side)
 {
@@ -238,7 +217,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
     auto AssembleRoute =
         [&](bool batched_complex, std::vector<fem::CeedGroupOperator> &groups)
     {
-      CeedAssemblyScratch scratch(ceed);
+      ceed::CeedAssemblyScratch scratch(ceed);
       std::vector<ceed::CeedFunctionalFieldInput> inputs;
       std::vector<std::pair<std::string, int>> field_sources;
       auto AddFixed = [&](const std::string &name, Vector &data, int num_comp,
