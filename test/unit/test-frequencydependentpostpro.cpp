@@ -640,6 +640,21 @@ TEST_CASE_METHOD(test::SharedTempDir,
   }
 }
 
+// Whether the frequency-domain postprocessing of a SurfacePostOperator can be called with
+// and without the frequency of the fields.
+template <typename Op>
+concept CallableWithFrequency = requires(const Op &op, const GridFunction *E) {
+  op.GetSurfaceFlux(1, E, nullptr, 1.0);
+} && requires(const Op &op, const GridFunction &E) {
+  op.GetInterfaceElectricFieldEnergy(1, E, 1.0);
+};
+template <typename Op>
+concept CallableWithoutFrequency = requires(const Op &op, const GridFunction *E) {
+  op.GetSurfaceFlux(1, E, nullptr);
+} || requires(const Op &op, const GridFunction &E) {
+  op.GetInterfaceElectricFieldEnergy(1, E);
+};
+
 TEST_CASE("Electric surface flux of frequency-dependent materials",
           "[frequencydependent][Serial][Parallel][GPU]")
 {
@@ -683,7 +698,11 @@ TEST_CASE("Electric surface flux of frequency-dependent materials",
   SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace,
                                    nd_fespace);
   const double area = (dim == 3) ? 1.0 * 1.3 : 1.0;
-  CHECK_THROWS(surf_post_op.GetSurfaceFlux(1, &E, nullptr));  // Requires a frequency
+  // The frequency of the fields is a required argument, and positive for a
+  // frequency-dependent material.
+  static_assert(CallableWithFrequency<SurfacePostOperator> &&
+                !CallableWithoutFrequency<SurfacePostOperator>);
+  CHECK_THROWS(surf_post_op.GetSurfaceFlux(1, &E, nullptr, 0.0));
   for (double omega : {4.0, 1.1, 4.0})
   {
     CAPTURE(omega);

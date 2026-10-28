@@ -130,11 +130,12 @@ public:
 
   // Get surface integrals computing electric or magnetic field flux, or the stationary real
   // power flux, through a boundary. For complex fields the electric flux uses the complex
-  // permittivity D = (Re{ε} + i Im{ε}) E of a lossy dielectric. A frequency-dependent
-  // material uses its complete permittivity ε(iω) at the real angular frequency ω of the
-  // fields (unused without one).
+  // permittivity D = (Re{ε} + i Im{ε}) E of a lossy dielectric. ω is the real angular
+  // frequency of the fields, 0 for static fields: a frequency-dependent material uses its
+  // complete permittivity ε(iω), and requires ω > 0. The frequency is required, not
+  // defaulted, so that a caller cannot omit it for frequency-domain fields.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E, const GridFunction *B,
-                                      double omega = 0.0) const;
+                                      double omega) const;
 
   // Batch version for multiple theta/phi pairs. A frequency-dependent exterior medium
   // (next to the far-field boundaries) uses its wave speed at Re ε(i Re{ω}), which must be
@@ -146,10 +147,10 @@ public:
 
   // Get surface integrals computing interface dielectric energy.
   double GetInterfaceLossTangent(int idx) const;
-  // A frequency-dependent MS substrate uses |D_n| = |ε(iω)| |E_n| at the real angular
-  // frequency ω of the fields (unused without one).
+  // ω is the real angular frequency of the fields, 0 for static fields, required as for
+  // GetSurfaceFlux: a frequency-dependent MS substrate uses |D_n| = |ε(iω)| |E_n|.
   double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E,
-                                         double omega = 0.0) const;
+                                         double omega) const;
 
   int GetVDim() const { return mat_op.SpaceDimension(); };
 };

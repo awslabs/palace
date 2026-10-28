@@ -101,7 +101,8 @@ TEST_CASE("Electric surface flux of a lossy dielectric uses the complex permitti
   // Φ = ∫ D ⋅ n dS with D = ε_r (1 - i tan δ) E and n = +z on the top face.
   const std::complex<double> eps(eps_r, -eps_r * tandelta);
   const std::complex<double> expected = eps * Ez * sx * sy;
-  const auto flux_value = surf_post_op.GetSurfaceFlux(1, &E, nullptr);
+  // Any frequency of the fields: the constant materials do not depend on it.
+  const auto flux_value = surf_post_op.GetSurfaceFlux(1, &E, nullptr, 1.0);
   CHECK_THAT(flux_value.real(), WithinRel(expected.real(), 1.0e-10));
   CHECK_THAT(flux_value.imag(), WithinRel(expected.imag(), 1.0e-10));
 }
@@ -179,7 +180,8 @@ TEST_CASE("2D electric surface flux of a lossy anisotropic dielectric",
   const double sign = two_sided ? -1.0 : 1.0;
   const std::complex<double> eps(eps_r[n], -eps_r[n] * tandelta[n]);
   const std::complex<double> expected = sign * eps * E0[n] * length;
-  const auto flux_value = surf_post_op.GetSurfaceFlux(1, &E, nullptr);
+  // Any frequency of the fields: the constant materials do not depend on it.
+  const auto flux_value = surf_post_op.GetSurfaceFlux(1, &E, nullptr, 1.0);
   CHECK_THAT(flux_value.real(), WithinRel(expected.real(), 1.0e-10));
   CHECK_THAT(flux_value.imag(), WithinRel(expected.imag(), 1.0e-10));
 }
