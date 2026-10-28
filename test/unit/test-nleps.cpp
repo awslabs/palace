@@ -306,14 +306,22 @@ struct QuasiNewtonResult
 QuasiNewtonResult
 SolveQuasiNewton(const DiagonalLorentzProblem &p,
                  const std::vector<std::pair<std::complex<double>, int>> &seeds, int nev,
-                 double target, double pc_scale, double tol)
+                 double target, double pc_scale, double tol, double mix = 0.0)
 {
+  // Each seed vector is the unit vector of its dof plus mix times those of the others.
   std::vector<std::complex<double>> theta;
   std::vector<ComplexVector> vecs;
   for (const auto &[t, j] : seeds)
   {
     theta.push_back(t);
-    vecs.push_back(p.Unit(j));
+    auto &x = vecs.emplace_back(p.Unit(j));
+    for (std::size_t m = 0; m < p.k.size(); m++)
+    {
+      if (static_cast<int>(m) != j)
+      {
+        x.Add(mix, p.Unit(static_cast<long long>(m)));
+      }
+    }
   }
   const int num_seeds = static_cast<int>(seeds.size());
   QuasiNewtonSolver qn(Mpi::World(),
@@ -417,11 +425,12 @@ TEST_CASE("Quasi-Newton finds the roots on the target's side of a pole",
   }
 }
 
-// Seeds 2% below the roots on the target's side of the pole, so that Quasi-Newton takes
-// several steps, with a preconditioner scaled by 1e-10: as good a preconditioner, but the
-// preconditioned residual of the Newton correction is 1e-10 times smaller. With an absolute
-// tolerance on it, as the inner solves had with 1e-12, GMRES returns a zero correction
-// before the eigenpair residual reaches the tolerance, and the iteration stalls.
+// Seeds 2% below the roots on the target's side of the pole, with 5% of the other dofs in
+// their vectors, so that Quasi-Newton takes several steps with vector corrections, with a
+// preconditioner scaled by 1e-10: as good a preconditioner, but the preconditioned residual
+// of the Newton correction is 1e-10 times smaller. With an absolute tolerance on it, as the
+// inner solves had with 1e-12, GMRES returns a zero correction before the eigenpair
+// residual reaches the tolerance, and the iteration stalls.
 TEST_CASE("Quasi-Newton inner solves have no absolute tolerance",
           "[nleps][Serial][Parallel]")
 {
@@ -435,7 +444,8 @@ TEST_CASE("Quasi-Newton inner solves have no absolute tolerance",
   {
     seeds.emplace_back(expected[j] * 0.98, j);
   }
-  CheckEigenpairs(p, SolveQuasiNewton(p, seeds, 3, target, 1.0e-10, tol), expected, tol);
+  CheckEigenpairs(p, SolveQuasiNewton(p, seeds, 3, target, 1.0e-10, tol, 0.05), expected,
+                  tol);
 }
 
 // A degenerate pair: after the first mode of the pair is locked, the deflated iterate of
