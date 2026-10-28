@@ -1,0 +1,18 @@
+diff --git a/repos/spack_repo/builtin/packages/hypre/package.py b/repos/spack_repo/builtin/packages/hypre/package.py
+index b01e0f8161d..01a7283a96b 100644
+--- a/repos/spack_repo/builtin/packages/hypre/package.py
++++ b/repos/spack_repo/builtin/packages/hypre/package.py
+@@ -137,6 +137,13 @@ class Hypre(CMakePackage, AutotoolsPackage, CudaPackage, ROCmPackage):
+         description="C++ language standard (for GPU builds)",
+     )
+ 
++    # Sync compute stream before GPU-aware MPI in device matvec (hypre-space/hypre#1629)
++    patch(
++        "https://github.com/hypre-space/hypre/commit/5d0282f44490f406ea532ea6778fe914df677346.patch?full_index=1",
++        sha256="8b11d35c29215d462b8e727775e8771d808806ced107e1675082ed80b9ba84fb",
++        when="@2.33.0:3.2.0 +gpu-aware-mpi",
++    )
++
+     # Patch to fix GPU+TPLs and freebsd build issues
+     patch(
+         "https://github.com/hypre-space/hypre/pull/1463.patch?full_index=1",
