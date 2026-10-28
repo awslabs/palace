@@ -321,10 +321,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
       eigen->SetInitialSpace(*start);
     }
     const int n = eigen->Solve();
-    if (real_frequency)
-    {
-      reduced_model->RecordExactSolve();
-    }
     std::vector<double> distance(n);
     for (int i = 0; i < n; i++)
     {
@@ -359,6 +355,11 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     }
   }
 
+  // One logical exact solve, also when it was repeated from the fixed initial space.
+  if (real_frequency)
+  {
+    reduced_model->RecordExactSolve();
+  }
   if (real_frequency && num_conv > 0)
   {
     const int selected = std::min(num_modes - 1, num_conv - 1);
