@@ -3,6 +3,7 @@
 
 #include "errorestimator.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -105,6 +106,32 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
   return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+}
+
+// Construct a single-level view of the finest space of the hierarchy, which is broken
+// (discontinuous) across the interior boundaries formed by the given boundary attributes.
+// Returns nullptr when the mesh has no such interior boundaries. Without the coarser
+// levels, the projection on a broken space uses Jacobi preconditioning also when multigrid
+// is requested, rather than assembling the high-order mass matrix for AMG.
+std::unique_ptr<FiniteElementSpaceHierarchy>
+BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
+                         const std::vector<int> &crack_attr_list)
+{
+  if (crack_attr_list.empty())
+  {
+    return nullptr;
+  }
+  auto &fespace = fespaces.GetFinestFESpace();
+  auto &mesh = fespace.GetMesh();
+  const auto &sides = mesh.GetCrackSides(crack_attr_list);
+  int broken = sides.Any();
+  Mpi::GlobalMax(1, &broken, fespace.GetComm());
+  if (!broken)
+  {
+    return nullptr;
+  }
+  return std::make_unique<FiniteElementSpaceHierarchy>(
+      std::make_unique<FiniteElementSpace>(fespace, sides));
 }
 
 }  // namespace
@@ -428,26 +455,30 @@ template <typename VecType>
 GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg)
-  : nd_fespace(nd_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()), mat_op(mat_op),
-    fd_materials(
-        [&mat_op]()
-        {
-          std::vector<std::size_t> m;
-          for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials();
-               i++)
-          {
-            if (mat_op.HasFrequencyDependentPermittivityModel(i))
-            {
-              m.push_back(i);
-            }
-          }
-          return m;
-        }()),
+    bool use_mg, const std::vector<int> &crack_attr_list)
+  : broken_rt_fespaces(BuildBrokenRecoverySpace(rt_fespaces, crack_attr_list)),
+    nd_fespace(nd_fespace),
+    rt_fespace(broken_rt_fespaces ? broken_rt_fespaces->GetFinestFESpace()
+                                  : rt_fespaces.GetFinestFESpace()),
+    mat_op(mat_op), fd_materials(
+                        [&mat_op]()
+                        {
+                          std::vector<std::size_t> m;
+                          for (std::size_t i = 0;
+                               i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+                          {
+                            if (mat_op.HasFrequencyDependentPermittivityModel(i))
+                            {
+                              m.push_back(i);
+                            }
+                          }
+                          return m;
+                        }()),
     fd_loss_tangent(!fd_materials.empty() && mat_op.HasLossTangent()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetPermittivityReal()),
-              rt_fespaces, nd_fespace, tol, max_it, print, use_mg,
+              broken_rt_fespaces ? *broken_rt_fespaces : rt_fespaces, nd_fespace, tol,
+              max_it, print, use_mg && !broken_rt_fespaces,
               [&]()
               {
                 // The weighted terms of the complex constitutive flux: Im{ε} of the
@@ -780,11 +811,15 @@ template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
     FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
-    bool use_mg)
-  : rt_fespace(rt_fespace), nd_fespace(nd_fespaces.GetFinestFESpace()),
+    bool use_mg, const std::vector<int> &crack_attr_list)
+  : broken_nd_fespaces(BuildBrokenRecoverySpace(nd_fespaces, crack_attr_list)),
+    rt_fespace(rt_fespace),
+    nd_fespace(broken_nd_fespaces ? broken_nd_fespaces->GetFinestFESpace()
+                                  : nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetCurlCurlInvPermeability()),
-              nd_fespaces, rt_fespace, tol, max_it, print, use_mg),
+              broken_nd_fespaces ? *broken_nd_fespaces : nd_fespaces, rt_fespace, tol,
+              max_it, print, use_mg && !broken_nd_fespaces),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
 {
@@ -939,11 +974,11 @@ template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg)
+    bool use_mg, const std::vector<int> &crack_attr_list)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg),
+                   use_mg, crack_attr_list),
     curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print,
-                   use_mg)
+                   use_mg, crack_attr_list)
 {
 }
 
@@ -981,10 +1016,11 @@ BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
     FiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it, int print,
-    bool use_mg)
+    bool use_mg, const std::vector<int> &crack_attr_list)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg),
-    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg)
+                   use_mg, crack_attr_list),
+    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg,
+                   crack_attr_list)
 {
 }
 

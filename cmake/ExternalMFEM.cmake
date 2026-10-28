@@ -464,6 +464,22 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe
 )
 
+# https://github.com/mfem/mfem/pull/5639
+# Consistent order of the shared entities of ParSubMesh groups across ranks.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5639.diff
+  "https://github.com/mfem/mfem/commit/864d476acf25135d2059d3379d208e635823f26c.diff"
+  9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03
+)
+# https://github.com/mfem/mfem/pull/5698
+# NCMesh::GetRootTransforms and NCMesh::GetElementCornerNodes, for the interior boundary
+# sides of nonconforming meshes computed on their root elements.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5698.diff
+  "https://github.com/mfem/mfem/commit/e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff"
+  eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f
+)
+
 include(ExternalProject)
 ExternalProject_Add(mfem
   DEPENDS           ${MFEM_DEPENDENCIES}

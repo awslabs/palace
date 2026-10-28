@@ -4,12 +4,15 @@
 #include "mesh.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <utility>
 #include <ceed/backend.h>
+#include "fem/brokenspace.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -446,6 +449,67 @@ void Mesh::Update()
   lossy_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
+}
+
+const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
+{
+  std::vector<int> key(attr_list);
+  std::sort(key.begin(), key.end());
+  key.erase(std::unique(key.begin(), key.end()), key.end());
+  if (key == crack_attr_list && crack_mesh == mesh.get() &&
+      crack_sequence == mesh->GetSequence())
+  {
+    return crack_sides;
+  }
+  const int bdr_attr_max = mesh->bdr_attributes.Size() ? mesh->bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  for (auto attr : key)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      marker[attr - 1] = 1;
+    }
+  }
+  if (!mesh::HasHangingEntities(*mesh))
+  {
+    crack_sides = mesh::ComputeCrackSides(*mesh, marker);
+  }
+  else
+  {
+    // The sides of the root elements of the mesh are computed once, and the sides of the
+    // elements of the mesh are inherited from them through any refinement and rebalancing.
+    if (key != root_crack_attr_list || root_crack_mesh != mesh.get())
+    {
+      root_crack_valid = mesh::ComputeRootCrackSides(*mesh, marker, root_crack_sides);
+      root_crack_attr_list = key;
+      root_crack_mesh = mesh.get();
+      if (!root_crack_valid)
+      {
+        // For example a nonconforming mesh created from the elements of another one, whose
+        // refinement hierarchy is lost.
+        Mpi::Warning(mesh->GetComm(),
+                     "The sides of the interior boundaries cannot be identified on this "
+                     "nonconforming mesh, whose interior boundaries are not faces of the "
+                     "elements of the coarsest mesh of its refinement hierarchy, or whose "
+                     "coarsest mesh is nonconforming: error estimation will assume "
+                     "continuous fluxes across interior boundaries for the whole "
+                     "simulation, which overestimates the error next to them!\n");
+      }
+    }
+    if (root_crack_valid)
+    {
+      crack_sides = mesh::InheritRootCrackSides(*mesh, root_crack_sides);
+    }
+    else
+    {
+      crack_sides.Reset(mesh->GetNE());
+    }
+  }
+  crack_attr_list = std::move(key);
+  crack_mesh = mesh.get();
+  crack_sequence = mesh->GetSequence();
+  return crack_sides;
 }
 
 void Mesh::RebuildCeedAttributes()

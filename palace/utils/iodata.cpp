@@ -376,6 +376,62 @@ void IoData::WarnPermittivityModelDefects() const
 
 void IoData::CheckConfiguration()
 {
+  // Mesh cracking of interior boundaries is no longer required for error estimation, and is
+  // selected per boundary with the "Crack" option of impedance, rational impedance, and
+  // conductivity boundaries.
+  if (model.crack_bdr_elements.has_value())
+  {
+    Mpi::Warning(
+        "config[\"Model\"][\"CrackInternalBoundaryElements\"] is deprecated and "
+        "will be removed in a future release! By default, the mesh is only cracked "
+        "along interior boundaries with PMC or absorbing boundary conditions, and "
+        "along impedance, rational impedance, and conductivity boundaries with "
+        "\"Crack\": true.\n");
+    // The global option overrides the per-boundary choice. The legacy behavior also cracks
+    // impedance, rational impedance, and conductivity boundaries with the default "Crack":
+    // false, while disabling mesh cracking contradicts the boundaries which request it.
+    if (*model.crack_bdr_elements)
+    {
+      auto NotCracked = [](const auto &data) { return !data.crack; };
+      if (std::any_of(boundaries.conductivity.begin(), boundaries.conductivity.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.impedance.begin(), boundaries.impedance.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.rational_impedance.begin(),
+                      boundaries.rational_impedance.end(), NotCracked))
+      {
+        Mpi::Warning(
+            "config[\"Model\"][\"CrackInternalBoundaryElements\"] = true overrides "
+            "\"Crack\": false of impedance, rational impedance, and conductivity "
+            "boundaries, which are then modeled as two independent surfaces (cracked)!\n");
+      }
+    }
+    else
+    {
+      std::set<int> crack_attrs;
+      auto Append = [&crack_attrs](const auto &boundary_data)
+      {
+        for (const auto &data : boundary_data)
+        {
+          if (data.crack)
+          {
+            crack_attrs.insert(data.attributes.begin(), data.attributes.end());
+          }
+        }
+      };
+      Append(boundaries.conductivity);
+      Append(boundaries.impedance);
+      Append(boundaries.rational_impedance);
+      MFEM_VERIFY(crack_attrs.empty(),
+                  "\"Crack\": true on the boundaries with attributes "
+                      << fmt::format("{}", fmt::join(crack_attrs, ", "))
+                      << " conflicts with "
+                         "config[\"Model\"][\"CrackInternalBoundaryElements\"] = false, "
+                         "which disables mesh cracking! Remove the deprecated option to "
+                         "crack these boundaries, or set \"Crack\": false.");
+    }
+  }
+
   // Mixed current/flux inductance extraction has one complete-matrix contract: every
   // parallel current element supplies its oriented aperture, and every current port remains
   // open during the flux excitations. Reject partial or silently overridden configurations

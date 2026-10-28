@@ -1,9 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "fem/mesh.hpp"
@@ -208,6 +211,266 @@ TEST_CASE("RemapSubMeshBdrAttributes", "[geodata][Serial]")
   }
 }
 
+TEST_CASE("RemapSubMeshBdrAttributes after parallel nonconforming refinement",
+          "[geodata][Serial][Parallel]")
+{
+  // The parent boundary face adjacent to a submesh boundary edge can be owned by another
+  // process, and on a nonconforming mesh it can contain the edge or be contained in it.
+  // After parallel nonconforming refinement and rebalancing, the NCMesh node ids and the
+  // slave/master classification of the edges differ between processes, so the matching
+  // must not rely on them. Refine a cube towards the edges of its x = 0 face (MFEM
+  // boundary attribute 5) and elsewhere, with rebalancing, and check that every perimeter
+  // edge of the face's submesh gets the attribute of the cube face it lies on: 1 (z = 0),
+  // 2 (y = 0), 4 (y = 1) or 6 (z = 1). The curved variant maps the cube with a smooth
+  // deformation. Matching NCMesh node ids instead fails on 2 to 4 processes.
+  MPI_Comm comm = Mpi::World();
+  const bool curved = GENERATE(false, true);
+  CAPTURE(curved);
+  auto Deform = [](double y, double z) { return y + 0.1 * std::sin(std::numbers::pi * z); };
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  if (curved)
+  {
+    serial_mesh.SetCurvature(2);
+    serial_mesh.Transform(
+        [&](const mfem::Vector &x, mfem::Vector &y)
+        {
+          y = x;
+          y(1) = Deform(x(1), x(2));
+        });
+  }
+  serial_mesh.EnsureNCMesh(true);
+  mfem::ParMesh par_mesh(comm, serial_mesh);
+  mfem::Vector c;
+  for (int level = 0; level < 4; level++)
+  {
+    // Elements near the lines along x where the surfaces y = 0.1 sin(pi z) and
+    // y = 1 + 0.1 sin(pi z) (the deformed cube faces in the curved variant) meet z = 0 and
+    // z = 1: all of them near x = 0 and a deterministic, partition-independent selection
+    // elsewhere.
+    mfem::Array<int> marked;
+    for (int e = 0; e < par_mesh.GetNE(); e++)
+    {
+      par_mesh.GetElementCenter(e, c);
+      const double y = c(1) - (Deform(c(1), c(2)) - c(1));
+      const double r = 0.3 / (level + 1);
+      const bool selected =
+          c(0) < r || static_cast<int>(1000.0 * (c(0) + 3.0 * c(1) + 7.0 * c(2))) % 3 == 0;
+      if (selected && std::min({y, 1.0 - y, c(2), 1.0 - c(2)}) < r)
+      {
+        marked.Append(e);
+      }
+    }
+    par_mesh.GeneralRefinement(marked, 1);
+    par_mesh.Rebalance();
+  }
+
+  mfem::Array<int> surface_attrs({5});
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(par_mesh, surface_attrs);
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+
+  int wrong = 0, total = submesh.GetNBE();
+  mfem::IsoparametricTransformation T;
+  mfem::IntegrationPoint ip;
+  ip.x = 0.5;
+  mfem::Vector x(3);
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    submesh.GetEdgeTransformation(submesh.GetBdrElementFaceIndex(sbe), &T);
+    T.Transform(ip, x);
+    // Undo the deformation (exact at the nodes, interpolated between them).
+    const double y = x(1) - (Deform(x(1), x(2)) - x(1)) * curved;
+    constexpr double tol = 1.0e-3;
+    const int expected = (std::abs(x(2)) < tol)         ? 1
+                         : (std::abs(y) < tol)          ? 2
+                         : (std::abs(y - 1.0) < tol)    ? 4
+                         : (std::abs(x(2) - 1.0) < tol) ? 6
+                                                        : -1;
+    wrong += (expected < 0 || submesh.GetBdrAttribute(sbe) != expected);
+  }
+  Mpi::GlobalSum(1, &wrong, comm);
+  Mpi::GlobalSum(1, &total, comm);
+  CAPTURE(total);
+  REQUIRE(total > 100);
+  CHECK(wrong == 0);
+}
+
+TEST_CASE("RemapSubMeshBdrAttributes on curved meshes with deep nonconforming refinement",
+          "[geodata][Serial][Parallel]")
+{
+  // Refine a curved cube towards the edge x = 0, y = 0 on the side of its x = 0 face
+  // (MFEM boundary attribute 5) only, with no limit on the nonconforming levels, so that
+  // the perimeter edges of the face's submesh on that line are many levels finer than the
+  // curved edges of the adjacent y = 0 face (attribute 2) which contain them. The submesh
+  // edges must still get attribute 2 there (matching against a fixed number of points along
+  // each curved edge loses them past a few levels).
+  MPI_Comm comm = Mpi::World();
+  auto Deform = [](double y, double z) { return y + 0.1 * std::sin(std::numbers::pi * z); };
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  serial_mesh.SetCurvature(2);
+  serial_mesh.Transform(
+      [&](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        y(1) = Deform(x(1), x(2));
+      });
+  serial_mesh.EnsureNCMesh(true);
+  mfem::ParMesh par_mesh(comm, serial_mesh);
+  mfem::Vector c;
+  constexpr int levels = 7;
+  for (int level = 0; level < levels; level++)
+  {
+    mfem::Array<int> marked;
+    for (int e = 0; e < par_mesh.GetNE(); e++)
+    {
+      par_mesh.GetElementCenter(e, c);
+      const double y = c(1) - (Deform(c(1), c(2)) - c(1));
+      if (c(0) < 0.5 * y && y < 0.6 * std::pow(0.6, level))
+      {
+        marked.Append(e);
+      }
+    }
+    par_mesh.GeneralRefinement(marked, 1, 0);
+    par_mesh.Rebalance();
+  }
+
+  mfem::Array<int> surface_attrs({5});
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(par_mesh, surface_attrs);
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+
+  int wrong = 0, on_line = 0;
+  mfem::IsoparametricTransformation T;
+  mfem::IntegrationPoint ip;
+  ip.x = 0.5;
+  mfem::Vector x(3);
+  double min_length = mfem::infinity();
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    submesh.GetEdgeTransformation(submesh.GetBdrElementFaceIndex(sbe), &T);
+    T.Transform(ip, x);
+    const double y = x(1) - (Deform(x(1), x(2)) - x(1));
+    if (std::abs(y) < 1.0e-3)
+    {
+      on_line++;
+      wrong += (submesh.GetBdrAttribute(sbe) != 2);
+      mfem::Vector x0(3), x1(3);
+      mfem::IntegrationPoint ip0, ip1;
+      ip0.x = 0.0;
+      ip1.x = 1.0;
+      T.Transform(ip0, x0);
+      T.Transform(ip1, x1);
+      min_length = std::min(min_length, x0.DistanceTo(x1));
+    }
+  }
+  Mpi::GlobalSum(1, &wrong, comm);
+  Mpi::GlobalSum(1, &on_line, comm);
+  Mpi::GlobalMin(1, &min_length, comm);
+  CAPTURE(on_line, min_length);
+  // The finest submesh edges on the line are at least 5 levels below the coarse wall edges
+  // (of length about 0.5).
+  REQUIRE(min_length < 0.5 / 32.0);
+  CHECK(wrong == 0);
+}
+
+TEST_CASE("AddSubMeshInternalBoundaryElements after parallel nonconforming refinement",
+          "[geodata][Serial][Parallel]")
+{
+  // An uncracked internal boundary (attribute 7) at z = 0.5 crosses the x = 0 face of a
+  // cube (MFEM boundary attribute 5) along the line x = 0, z = 0.5. Refine towards the
+  // face on one side of the sheet only, so that the sheet and the face's submesh are
+  // nonconforming along that line, with rebalancing so that the sheet faces and the
+  // submesh edges on it are owned by different processes. Each piece of the line must
+  // then be a submesh boundary element with attribute 7 exactly once: on the slave edges
+  // of the refined side, not on their master edges, and on one process only. Matching
+  // the edges locally on each process instead fails on 2, 4 and 6 processes.
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  {
+    mfem::Array<int> v;
+    mfem::Vector c(3);
+    for (int f = 0; f < serial_mesh.GetNumFaces(); f++)
+    {
+      if (!serial_mesh.FaceIsInterior(f))
+      {
+        continue;
+      }
+      serial_mesh.GetFaceVertices(f, v);
+      bool on_sheet = true;
+      for (int k : v)
+      {
+        on_sheet = on_sheet && std::abs(serial_mesh.GetVertex(k)[2] - 0.5) < 1.0e-12;
+      }
+      if (on_sheet)
+      {
+        serial_mesh.AddBdrTriangle(v, 7);
+      }
+    }
+    serial_mesh.FinalizeTopology();
+    serial_mesh.Finalize();
+    serial_mesh.SetAttributes();
+  }
+  serial_mesh.EnsureNCMesh(true);
+  mfem::ParMesh par_mesh(comm, serial_mesh);
+  mfem::Vector c;
+  for (int level = 0; level < 3; level++)
+  {
+    mfem::Array<int> marked;
+    for (int e = 0; e < par_mesh.GetNE(); e++)
+    {
+      par_mesh.GetElementCenter(e, c);
+      const double r = 0.5 / (level + 1);
+      if (c(2) > 0.5 && c(2) < 0.5 + r &&
+          (c(0) < r || static_cast<int>(1000.0 * (c(0) + 3.0 * c(1))) % 3 == 0))
+      {
+        marked.Append(e);
+      }
+    }
+    par_mesh.GeneralRefinement(marked, 1);
+    par_mesh.Rebalance();
+  }
+
+  int sheet_elements = 0;
+  for (int be = 0; be < par_mesh.GetNBE(); be++)
+  {
+    sheet_elements += (par_mesh.GetBdrAttribute(be) == 7);
+  }
+  Mpi::GlobalSum(1, &sheet_elements, comm);
+  REQUIRE(sheet_elements > 0);
+
+  mfem::Array<int> surface_attrs({5});
+  auto submesh = mfem::ParSubMesh::CreateFromBoundary(par_mesh, surface_attrs);
+  REQUIRE(submesh.Nonconforming());
+  mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
+  mesh::AddSubMeshInternalBoundaryElements(submesh, surface_attrs, {7});
+
+  // Total length of the attribute 7 boundary elements, and number of them off the line.
+  double length = 0.0;
+  int off_line = 0;
+  mfem::IsoparametricTransformation T;
+  mfem::IntegrationPoint ip;
+  mfem::Vector x0(3), x1(3);
+  for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
+  {
+    if (submesh.GetBdrAttribute(sbe) != 7)
+    {
+      continue;
+    }
+    submesh.GetEdgeTransformation(submesh.GetBdrElementFaceIndex(sbe), &T);
+    ip.x = 0.0;
+    T.Transform(ip, x0);
+    ip.x = 1.0;
+    T.Transform(ip, x1);
+    length += x0.DistanceTo(x1);
+    off_line += (std::abs(x0(2) - 0.5) > 1.0e-12 || std::abs(x1(2) - 0.5) > 1.0e-12);
+  }
+  Mpi::GlobalSum(1, &length, comm);
+  Mpi::GlobalSum(1, &off_line, comm);
+  CHECK(off_line == 0);
+  CHECK_THAT(length, WithinRel(1.0, 1.0e-12));
+}
+
 TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
           "[geodata][Serial][Parallel]")
 {
@@ -223,45 +486,6 @@ TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
   int global_elements = submesh.GetNE();
   Mpi::GlobalSum(1, &global_elements, submesh.GetComm());
   REQUIRE(global_elements > 0);
-
-  // On two ranks this fixture includes a local slave whose master is not a locally
-  // addressable ParMesh edge. Keep that case explicit: the remapper must resolve the
-  // master through its NCMesh MeshId rather than indexing ParMesh with Slave::master.
-  if (Mpi::Size(submesh.GetComm()) > 1)
-  {
-    // Nodes beyond the ghost layer may have vertex references without a valid vertex
-    // index. They must be skipped while retaining numbered ghost vertices for masters.
-    int unnumbered_vertices = 0;
-    for (int n = 0; n < par_mesh->ncmesh->GetNumNodes(); n++)
-    {
-      const auto &node = par_mesh->ncmesh->GetNode(n);
-      unnumbered_vertices += node.HasVertex() && node.vert_index < 0;
-    }
-    Mpi::GlobalSum(1, &unnumbered_vertices, submesh.GetComm());
-    REQUIRE(unnumbered_vertices > 0);
-
-    int nonlocal_master_edges = 0;
-    const auto &edge_list = par_mesh->ncmesh->GetEdgeList();
-    mfem::Array<int> edges, orientations;
-    for (int be = 0; be < par_mesh->GetNBE(); be++)
-    {
-      par_mesh->GetBdrElementEdges(be, edges, orientations);
-      for (int edge : edges)
-      {
-        const auto id_and_type = edge_list.GetMeshIdAndType(edge);
-        if (id_and_type.type != mfem::NCMesh::NCList::MeshIdType::SLAVE)
-        {
-          continue;
-        }
-        const auto *slave = static_cast<const mfem::NCMesh::Slave *>(id_and_type.id);
-        const auto master = edge_list.GetMeshIdAndType(slave->master);
-        REQUIRE(master.id != nullptr);
-        nonlocal_master_edges += slave->master >= par_mesh->GetNEdges();
-      }
-    }
-    Mpi::GlobalSum(1, &nonlocal_master_edges, submesh.GetComm());
-    REQUIRE(nonlocal_master_edges > 0);
-  }
 
   mesh::RemapSubMeshBdrAttributes(submesh, surface_attrs);
   mfem::H1_FECollection parent_fec(1, 3), submesh_fec(1, 2);

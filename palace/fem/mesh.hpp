@@ -4,10 +4,12 @@
 #ifndef PALACE_FEM_MESH_HPP
 #define PALACE_FEM_MESH_HPP
 
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/brokenspace.hpp"
 #include "fem/libceed/ceed.hpp"
 
 namespace palace
@@ -96,6 +98,21 @@ private:
   //     boundary elements.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
 
+  // Interior boundary sides of the local elements used to construct finite element spaces
+  // which are broken across interior boundaries (see fem/brokenspace.hpp), for the sorted
+  // list of boundary attributes forming the interior boundaries. The sides are valid for
+  // the mesh object and sequence number they were computed for. On a nonconforming mesh
+  // with hanging entities, where they cannot be discovered, they are inherited from those
+  // of the root elements of the mesh, which are computed once for the mesh object.
+  mutable std::vector<int> crack_attr_list;
+  mutable CrackSides crack_sides;
+  mutable const mfem::ParMesh *crack_mesh = nullptr;
+  mutable long crack_sequence = -1;
+  mutable std::vector<int> root_crack_attr_list;
+  mutable RootCrackSides root_crack_sides;
+  mutable const mfem::ParMesh *root_crack_mesh = nullptr;
+  mutable bool root_crack_valid = false;
+
 public:
   template <typename... T>
   Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...))
@@ -174,6 +191,11 @@ public:
   {
     return GetCeedBdrAttributes(std::vector<int>{attr});
   }
+
+  // Return the interior boundary sides of the local elements for the interior boundaries
+  // formed by the given boundary attributes (see fem/brokenspace.hpp), computed on first
+  // use. Collective.
+  const CrackSides &GetCrackSides(const std::vector<int> &attr_list) const;
 
   auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }
   auto MaxCeedBdrAttribute() const

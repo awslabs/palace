@@ -8,6 +8,7 @@
 target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/bilinearform.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_derived_field_bundle.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_physical_trace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
