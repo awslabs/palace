@@ -1,0 +1,92 @@
+{
+  // Shorted circular waveguide (TE11 wave port at the top) with a lossy short modeled as an
+  // impedance boundary and a perfectly conducting side wall, so that the port mode is
+  // lossless and |S11|^2 is the reflected fraction of the incident power (the S-parameters
+  // of a lossy port mode are projections on the modal reaction). With the same surface
+  // resistance in its conductor loss postprocessing, the dissipated power of the short
+  // accounts for the power balance of the port, P_1 / P_inc = 1 - |S11|^2. The conductor
+  // loss of the side wall is the first-order estimate for a surface resistance of a
+  // perfect conductor.
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave_conductor"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [4]
+    },
+    "Impedance":
+    [
+      {
+        "Attributes": [3],
+        "Rs": 0.5  // Ω, exaggerated for a measurable reflection loss
+      }
+    ],
+    "Postprocessing":
+    {
+      "Conductor":
+      [
+        {
+          "Index": 1,
+          "Attributes": [3],  // Bottom (short)
+          "Rs": 0.5
+        },
+        {
+          "Index": 2,
+          "Attributes": [4],  // Side wall
+          "Rs": 0.5
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 2.5,
+      "MaxFreq": 5.0,
+      "FreqStep": 0.5,
+      "SaveStep": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}

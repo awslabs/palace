@@ -33,6 +33,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     imaginary parts of the incident voltage and current. A phase that is not a multiple of
     180 degrees is an error for transient simulations. SchemaVer 4-3-0
     [PR 1169](https://github.com/awslabs/palace/pull/1169).
+  - Added conductor surface loss postprocessing, `Boundaries.Postprocessing.Conductor`, for
+    eigenmode and driven simulations. For each group of boundary attributes, the geometric
+    factor `G` (in Ω) and the quality factor `Q = G / Rs` for a given surface resistance
+    `Rs` are computed to first order in the surface resistance, so that the loss of several
+    conductor surfaces with different surface resistances can be obtained from a single
+    simulation with perfect conductors, with `1/Q = Σ_j Rs_j / G_j`. Driven simulations
+    also report the time-averaged dissipated power and its fraction of the incident port
+    power. Interior boundaries are treated as two independent conductor faces by default,
+    or as a thin film with `"ThinFilm": true`. Results are written to `surface-Q.csv`.
+    SchemaVer 6-0-1.
 
 #### Interface Changes
 
