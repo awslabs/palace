@@ -1513,7 +1513,15 @@ offset `kSupportCornerContainmentBandOverRadius` = 1 R to both sides between the
 planes through its ends; no end caps: the segments' own end planes bound the band). Every face
 short of the target moves outward by its shortfall quantised UP to the T3 grid (n x 0.25 R), then
 T2 / T3 / T4 re-read the widened box (a span-cap breach is `SpanCapRefusedCornerContainment`);
-`Growth.Grown` true puts `Box` + `Context` into the key as a T3 / T4 growth does. The rule is
+`Growth.Grown` true puts `Box` + `Context` into the key as a T3 / T4 growth does. The re-read is a
+fresh T2 / T3 / T4 loop whose per-call counters decide the caps; the final record carries ONE history,
+stage 1 then the re-read (decision 972, record-only): `Growth.Steps` / `AttemptedSteps` summed,
+`StepReasons` / `Passes` / `FaceCrossingTilt.Widenings` concatenated (the re-read's `Pass` indices
+offset by the stage-1 pass count), `FaceRules.Passes` / `ThresholdBandHits` / `ExteriorVertices` /
+`ExteriorEdges` summed (the final-pass readings the re-read's), and `Growth.Reread` = {`FirstPass`
+(the index of the re-read's first pass in `Passes`), `Steps`, `AttemptedSteps` (the re-read's own)}, so
+that `Growth` explains `Box` from `ClaimsBox` (`BoxBeforeOverR` = the stage-1 box, `BoxWidenedOverR` =
+`Passes[Reread.FirstPass].Box`); `Ungrown.SpatialSupport` keeps the pre-T5 record as it was. The rule is
 library-independent (a MISSING cluster is re-keyed too, so that the coupon built for it contains
 its straddling corners: decision 971). Junction / endpoint windows are not candidates
 (OI-T5-JUNCTION-WINDOWS). Recorded ONLY where it acted (`SpatialSupport.CornerContainment` =
@@ -3126,7 +3134,7 @@ matching pass). The new top-level `Identification` object carries the contract:
                  "SpatialSupport": {"Contract": 2 | 3 | 0, "ClaimsKey": "sha256", "ContextDigest": "sha256" | null,
                                     "ClaimsBox": [x0, y0, x1, y1], "Box": [...], "SpanOverR": s,
                                     "SpanCapOverR": 16, "ExceedsSpanCap": b, "LegacyEquivalent": b,
-                                    "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "AttemptedSteps": [...], "StepReasons": ["..."], "Grown": b},
+                                    "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "AttemptedSteps": [...], "StepReasons": ["..."], "Grown": b, "Reread": {"FirstPass": n, "Steps": [...], "AttemptedSteps": [...]} (T5 clusters only)},
                                     "FaceRules": {"SnapOverR": 1e-3, "ClearanceOverR": 0.25, "SliversDropped": n, "Crossings": [4 counts],
                                                   "MinClearanceOverR": d | null, "MinCrossingSine": s | null, "MinCrossSectionOverR": w | null,
                                                   "NarrowCrossSections": n, "ExteriorVertices": n, "ExteriorEdges": n,

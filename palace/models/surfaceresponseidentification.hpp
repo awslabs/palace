@@ -577,7 +577,13 @@ CanonicalSignature CanonicalClusterSignature(
 // UP to the T3 grid (n x kSupportFaceGrowthStepOverRadius x R), then T2 / T3 / T4 re-read
 // the widened box (never past the span cap: a breach is Unboxable by name,
 // SpanCapRefusedCornerContainment); `grown` puts Box + Context into the key as a T3 / T4
-// growth does. Junction / endpoint windows are not candidates (OI-T5-JUNCTION-WINDOWS).
+// growth does. The re-read is a fresh T2 / T3 / T4 loop whose per-call counters decide the
+// caps; the final record carries ONE history (stage 1 then the re-read, record-only:
+// Growth.Steps / AttemptedSteps summed, StepReasons / Passes / FaceCrossingTilt.Widenings
+// concatenated with the re-read's pass indices offset, the FaceRules pass counters and the
+// threshold band hits summed; Growth.Reread = the re-read's own counters and first pass),
+// so Growth explains Box from ClaimsBox as on a T3 / T4 cluster. Junction / endpoint
+// windows are not candidates (OI-T5-JUNCTION-WINDOWS).
 // Recorded only where it acted (SpatialSupport.CornerContainment, carrying the UNGROWN
 // signature / key for the placement's fallback: a library without an entry matching the
 // grown key places the ungrown key's model exactly as before T5, decision 960 R4), so

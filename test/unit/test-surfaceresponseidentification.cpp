@@ -7264,7 +7264,7 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
   };
 
   // The control (no island): the claims box of record the islands below are placed by.
-  double x1 = 0.0, y0 = 0.0, y1 = 0.0;
+  double x0 = 0.0, x1 = 0.0, y0 = 0.0, y1 = 0.0;
   std::string control_hash;
   {
     const auto [input, result] = Identify(1.0, {});
@@ -7272,9 +7272,11 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
     REQUIRE(cluster != nullptr);
     CheckSilent(*cluster);
     const auto box = DeviceBox(*cluster, "ClaimsBox", R);
+    x0 = box[0];
     x1 = box[2];
     y0 = box[1];
     y1 = box[3];
+    CHECK_THAT(x0, WithinAbs(-12.872984, 1.0e-5));
     CHECK_THAT(x1, WithinAbs(12.872984, 1.0e-5));
     CHECK_THAT(y0, WithinAbs(-5.0, 1.0e-5));
     CHECK_THAT(y1, WithinAbs(12.0, 1.0e-5));
@@ -7362,6 +7364,18 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
     // the T5 box the re-read started from (= the final Box: T2 passes on it).
     CHECK(containment["BoxBeforeOverR"] == support["ClaimsBox"]);
     CHECK(containment["BoxWidenedOverR"] == support["Box"]);
+    // One Growth history (decision 972): the stage-1 pass (no step) then the re-read's one
+    // pass from the widened box; Growth.Reread names the re-read's own counters.
+    REQUIRE(support["Growth"].contains("Reread"));
+    CHECK(support["Growth"]["Reread"]["FirstPass"] ==
+          containment["Ungrown"]["SpatialSupport"]["Growth"]["Passes"].size());
+    CHECK(support["Growth"]["Reread"]["FirstPass"] == 1);
+    CHECK(support["Growth"]["Reread"]["Steps"] == nlohmann::json({0, 0, 0, 0}));
+    REQUIRE(support["Growth"]["Passes"].size() == 2);
+    CHECK(support["Growth"]["Passes"][0]["Box"] == containment["BoxBeforeOverR"]);
+    CHECK(support["Growth"]["Passes"][1]["Box"] == containment["BoxWidenedOverR"]);
+    CHECK(support["FaceRules"]["Passes"] == 2);
+    CHECK(!containment["Ungrown"]["SpatialSupport"]["Growth"].contains("Reread"));
     // The target reaches left + R along device x; the record is in frame units.
     const auto target = containment["TargetOverR"];
     double target_x1 = -1.0e300;
@@ -7494,6 +7508,124 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
                    widened[3].get<double>() - widened[1].get<double>()) >
           kSupportSpanCapOverRadius);
     CHECK(result.spatial_support.unboxable >= 1);
+  }
+
+  // (e) ONE Growth HISTORY where stage 1 and the re-read both step, and the step cap is
+  //     the LOOP's own (decision 972 (A), review MAJOR-2). Three islands of conductor 2:
+  //     S1 at x in [-9.5, -5.5] with a staircase top (levels y1 - 0.2 + 0.5 k, k = 0..7:
+  //     each level enters the y1 face's clearance band as the face moves: 8 stage-1 T3
+  //     steps on y1, the face at y1 + 4; its 0.5-um steps form a cluster of their own whose
+  //     box stays left of the lead); the class-(a) island at the x1 face (its left corners'
+  //     +x arms exit x1 by 1.127 um: T5, 3 steps on x1); S2 beyond x1 (left edge 1.25 um
+  //     outside: beyond the stage-1 shell, its windows wholly outside the box, its own
+  //     cluster box above y = 11.5: silent) with five 0.2 x 0.25 um notches on that edge at
+  //     y1 + 3.8 + 0.5 j (j = 0..4) and its top at y1 + 6.3 - once the T5 box reaches it
+  //     (x1 + 1.5 um), its vertices sit 0.25 / 0.05 um inside the x1 face (1 re-read step)
+  //     and its notch corners cascade the y1 face another 6 steps. The y1 face takes 8 + 6
+  //     = 14 steps in all, above MaxSteps 12: the cap counts per call (stage 1: 8; the
+  //     re-read: 6), the cluster stays boxable.
+  {
+    std::vector<Point2> staircase = {{-9.5, 4.5}, {-5.5, 4.5}};
+    for (int k = 7; k >= 0; k--)
+    {
+      const double level = y1 - 0.2 + 0.5 * k;
+      staircase.push_back({-9.5 + 0.5 * (k + 1), level});
+      staircase.push_back({-9.5 + 0.5 * k, level});
+    }
+    std::vector<Point2> notched = {
+        {x1 + 1.25, 15.5}, {x1 + 5.25, 15.5}, {x1 + 5.25, y1 + 6.3}, {x1 + 1.25, y1 + 6.3}};
+    for (int j = 4; j >= 0; j--)
+    {
+      const double bottom = y1 + 3.8 + 0.5 * j;
+      notched.push_back({x1 + 1.25, bottom + 0.25});
+      notched.push_back({x1 + 1.45, bottom + 0.25});
+      notched.push_back({x1 + 1.45, bottom});
+      notched.push_back({x1 + 1.25, bottom});
+    }
+    const auto [input, result] =
+        Identify(1.0, {LoopSpec{staircase, 2, 100.0},
+                       LoopSpec{Rectangle(x1 - 0.873, 4.5, x1 + 3.127, 8.5), 2, 100.0},
+                       LoopSpec{notched, 2, 100.0}});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Growth"]["Grown"] == true);
+    CHECK(support["Growth"]["MaxSteps"] == kSupportFaceGrowthMaxSteps);
+    REQUIRE(support.contains("CornerContainment"));
+    const auto &containment = support["CornerContainment"];
+    REQUIRE(containment["Vertices"].size() == 2);
+    CHECK(DeviceSteps(*cluster) == std::array<int, 4>{0, 0, 3, 0});
+    const auto &ungrown_growth = containment["Ungrown"]["SpatialSupport"]["Growth"];
+    const auto &growth = support["Growth"];
+    // Device-face step counts of the stage-1 record, the re-read and the merged history.
+    auto FaceCounts = [&](const nlohmann::json &steps)
+    {
+      std::array<int, 4> counts{};
+      for (int f = 0; f < 4; f++)
+      {
+        counts[static_cast<std::size_t>(DeviceFace(*cluster, "ClaimsBox", f))] =
+            steps[f].get<int>();
+      }
+      return counts;
+    };
+    CHECK(FaceCounts(ungrown_growth["Steps"]) == std::array<int, 4>{0, 0, 0, 8});
+    CHECK(FaceCounts(growth["Reread"]["Steps"]) == std::array<int, 4>{0, 0, 1, 6});
+    CHECK(FaceCounts(growth["Steps"]) == std::array<int, 4>{0, 0, 1, 14});
+    CHECK(growth["AttemptedSteps"] == growth["Steps"]);
+    CHECK(growth["Reread"]["AttemptedSteps"] == growth["Reread"]["Steps"]);
+    CHECK(FaceCounts(growth["Steps"])[3] > kSupportFaceGrowthMaxSteps);
+    // The passes: 9 of stage 1 (8 steps) then 7 of the re-read (6 steps), the first of the
+    // re-read from the T5-widened box; the step reasons follow.
+    REQUIRE(ungrown_growth["Passes"].size() == 9);
+    CHECK(growth["Reread"]["FirstPass"] == 9);
+    REQUIRE(growth["Passes"].size() == 16);
+    for (std::size_t k = 0; k < 9; k++)
+    {
+      CHECK(growth["Passes"][k] == ungrown_growth["Passes"][k]);
+    }
+    CHECK(growth["Passes"][9]["Box"] == containment["BoxWidenedOverR"]);
+    CHECK(growth["Passes"][0]["Box"] == support["ClaimsBox"]);
+    CHECK(growth["Passes"][8]["Box"] == containment["BoxBeforeOverR"]);
+    REQUIRE(growth["StepReasons"].size() == 14);
+    for (std::size_t k = 0; k < 8; k++)
+    {
+      CHECK(growth["StepReasons"][k] == ungrown_growth["StepReasons"][k]);
+    }
+    CHECK(support["FaceRules"]["Passes"] == 16);
+    CHECK(containment["Ungrown"]["SpatialSupport"]["FaceRules"]["Passes"] == 9);
+    // The summed pass counters = the stage-1 record's + the re-read's own passes.
+    for (const char *key : {"ExteriorVertices", "ExteriorEdges", "ThresholdBandHits"})
+    {
+      std::size_t reread = 0;
+      for (std::size_t k = 9; k < 16; k++)
+      {
+        reread += growth["Passes"][k][key].get<std::size_t>();
+      }
+      CHECK(support["FaceRules"][key].get<std::size_t>() ==
+            containment["Ungrown"]["SpatialSupport"]["FaceRules"][key].get<std::size_t>() +
+                reread);
+    }
+    // The boxes: ClaimsBox -> +4 um on y1 (stage 1) -> +1.5 um on x1 (T5) -> +0.5 um on x1
+    // and +3 um on y1 (the re-read).
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto before = DeviceBox(*cluster, containment["BoxBeforeOverR"], R);
+    const auto widened = DeviceBox(*cluster, containment["BoxWidenedOverR"], R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(claims_box[3], WithinAbs(y1, 1.0e-5));
+    CHECK_THAT(before[3], WithinAbs(y1 + 8.0 * step, 1.0e-5));
+    CHECK_THAT(before[2], WithinAbs(x1, 1.0e-5));
+    CHECK_THAT(widened[2], WithinAbs(x1 + 3.0 * step, 1.0e-5));
+    CHECK_THAT(widened[3], WithinAbs(before[3], 1.0e-9));
+    CHECK_THAT(box[2], WithinAbs(x1 + 4.0 * step, 1.0e-5));
+    CHECK_THAT(box[3], WithinAbs(y1 + 14.0 * step, 1.0e-5));
+    CHECK_THAT(box[0], WithinAbs(x0, 1.0e-9));
+    CHECK_THAT(box[1], WithinAbs(y0, 1.0e-9));
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
   }
 }
 

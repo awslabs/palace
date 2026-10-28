@@ -2539,6 +2539,70 @@ nlohmann::json BoxJson(const std::array<double, 4> &box)
                         RoundTo(box[3], kSignatureLengthQuantumOverRadius)};
 }
 
+// T5 (decision 972, the d968 review MAJOR-2): the re-read of the widened box is a fresh
+// T2 / T3 / T4 loop, so its record alone would describe the box from BoxWidenedOverR on and
+// lose the stage-1 history (the T3 steps and T4 widenings that took ClaimsBox to
+// BoxBeforeOverR). The final record carries ONE history, stage 1 then the re-read,
+// RECORD-ONLY: Growth.Steps / AttemptedSteps summed, StepReasons / Passes concatenated
+// (the re-read's pass indices offset), FaceCrossingTilt.Widenings concatenated, the
+// FaceRules pass counters summed (the final-pass readings stay the re-read's), the
+// threshold band hits summed (the box rule's, read once per call from the same claims,
+// counted once). Growth.Reread names the re-read's own counters, which are what the step
+// cap read (the loop's per-call counters decide the caps, unchanged).
+void MergeSpatialSupportHistory(const nlohmann::json &before, nlohmann::json &record,
+                                std::size_t &band_hits)
+{
+  const nlohmann::json &growth_before = before.at("Growth");
+  nlohmann::json &growth = record.at("Growth");
+  const std::size_t passes_before = growth_before.at("Passes").size();
+  growth["Reread"] = {{"FirstPass", passes_before},
+                      {"Steps", growth.at("Steps")},
+                      {"AttemptedSteps", growth.at("AttemptedSteps")}};
+  for (const char *key : {"Steps", "AttemptedSteps"})
+  {
+    for (std::size_t f = 0; f < 4; f++)
+    {
+      growth[key][f] = growth_before.at(key)[f].get<int>() + growth.at(key)[f].get<int>();
+    }
+  }
+  for (const char *key : {"StepReasons", "Passes"})
+  {
+    nlohmann::json merged = growth_before.at(key);
+    for (const auto &entry : growth.at(key))
+    {
+      merged.push_back(entry);
+    }
+    growth[key] = std::move(merged);
+  }
+  nlohmann::json widenings = before.contains("FaceCrossingTilt")
+                                 ? before.at("FaceCrossingTilt").at("Widenings")
+                                 : nlohmann::json::array();
+  if (record.contains("FaceCrossingTilt"))
+  {
+    for (auto entry : record.at("FaceCrossingTilt").at("Widenings"))
+    {
+      entry["Pass"] = entry.at("Pass").get<std::size_t>() + passes_before;
+      widenings.push_back(std::move(entry));
+    }
+  }
+  if (!widenings.empty())
+  {
+    nlohmann::json tilt = record.contains("FaceCrossingTilt")
+                              ? record.at("FaceCrossingTilt")
+                              : before.at("FaceCrossingTilt");
+    tilt["Widenings"] = std::move(widenings);
+    record["FaceCrossingTilt"] = std::move(tilt);
+  }
+  const nlohmann::json &rules_before = before.at("FaceRules");
+  nlohmann::json &rules = record.at("FaceRules");
+  for (const char *key :
+       {"Passes", "ThresholdBandHits", "ExteriorVertices", "ExteriorEdges"})
+  {
+    rules[key] = rules_before.at(key).get<std::size_t>() + rules.at(key).get<std::size_t>();
+  }
+  band_hits += rules_before.at("ThresholdBandHits").get<std::size_t>();
+}
+
 }  // namespace
 
 CanonicalSignature
@@ -13359,6 +13423,10 @@ void Identifier::EmitClusters()
         ClusterSupportResult grown =
             ClusterSupport(c, entry.portions, entry.vertices, entry.origin, entry.axes[0],
                            entry.axes[1], entry.span_cap_over_R, true, &reading.widened);
+        // One history, stage 1 then the re-read (decision 972; the record's Growth /
+        // FaceCrossingTilt / FaceRules explain Box from ClaimsBox; Ungrown keeps the
+        // pre-T5 record as it was).
+        MergeSpatialSupportHistory(entry.support.record, grown.record, grown.band_hits);
         if (!grown.support)
         {
           // The T2 / T3 re-read of the widened box breached a cap: Unboxable with that
