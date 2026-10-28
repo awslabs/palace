@@ -1457,7 +1457,9 @@ TEST_CASE("Stored energy of single sections as typed or RAW terms",
     std::vector<std::unique_ptr<MaterialOperator>> ops;
     std::vector<std::unique_ptr<DomainPostOperator>> posts;
     std::vector<std::unique_ptr<GradFluxErrorEstimator<ComplexVector>>> estimators;
-    for (const auto *terms : {&typed, &raw, &split})
+    const std::array<const std::vector<config::PermittivityTermData> *, 3> models = {
+        &typed, &raw, &split};
+    for (const auto *terms : models)
     {
       ops.push_back(std::make_unique<MaterialOperator>(
           std::vector<config::MaterialData>{MakeMaterial({1}, *terms),
