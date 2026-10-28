@@ -3625,7 +3625,7 @@ TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
     fd.ue_bundle->EvalBuffer(E, actual);
     CHECK(BoundaryDerivedFieldBundle::QFunctionApplyCount() == applies);
   }
-  CHECK(fd.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace));
+  CHECK(fd.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace.Get()));
 
   // A dielectric without a stored electric energy (a RAW −0.5/(s + 1) compensated by a
   // typed Debye 1/(1 + s)): the bundle does not support U_e, and neither its direct copy
@@ -3639,10 +3639,11 @@ TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
                                   *mesh);
   REQUIRE_FALSE(unavailable_op.HasStoredElectricEnergy());
   auto none = Make(unavailable_op);
-  CHECK_FALSE(none.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace));
-  CHECK(none.bundle->Supports(PointFieldKind::FLUX_Q, &nd_fespace));
-  CHECK(none.bundle->Supports(PointFieldKind::ENERGY_M, &rt_fespace));
-  CHECK(none.bundle->Supports(PointFieldKind::POYNTING, &nd_fespace, &rt_fespace));
+  CHECK_FALSE(none.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace.Get()));
+  CHECK(none.bundle->Supports(PointFieldKind::FLUX_Q, &nd_fespace.Get()));
+  CHECK(none.bundle->Supports(PointFieldKind::ENERGY_M, &rt_fespace.Get()));
+  CHECK(none.bundle->Supports(PointFieldKind::POYNTING, &nd_fespace.Get(),
+                              &rt_fespace.Get()));
   PointFieldEvaluator um_bundle(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
                                 rt_fespace, unavailable_op, lod, scaling, plan, none.traces,
                                 none.bundle),
