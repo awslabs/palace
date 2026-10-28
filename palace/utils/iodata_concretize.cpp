@@ -421,7 +421,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                boundaries.periodic.floquet_reference_freq);
   }
 
-  // Postprocessing: per-index maps for flux/dielectric/impedance/voltage.
+  // Postprocessing: per-index maps for flux/dielectric/conductor/impedance/voltage.
   if (j_boundaries.contains("Postprocessing"))
   {
     auto &j_pp = j_boundaries["Postprocessing"];
@@ -464,6 +464,17 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                    {
                      ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
                                             {"LossTan", it->second.tandelta}});
+                   }
+                 });
+
+    ApplyIndexed("Conductor",
+                 [&](int idx, json &j_entry)
+                 {
+                   auto it = pp.conductor.find(idx);
+                   if (it != pp.conductor.end())
+                   {
+                     ApplyEntries(j_entry, {{"Rs", it->second.Rs},
+                                            {"ThinFilm", it->second.thin_film}});
                    }
                  });
   }

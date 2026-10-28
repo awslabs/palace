@@ -131,6 +131,15 @@ Measurement Measurement::Dimensionalize(const Units &units,
     eps.energy = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy);
   }
 
+  for (const auto &data : nondim_measurement_cache.conductor_loss_i)
+  {
+    auto &cond = measurement_cache.conductor_loss_i.emplace_back(data);
+    cond.Rs = units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.Rs);
+    cond.geometric_factor =
+        units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.geometric_factor);
+    cond.power = units.Dimensionalize<Units::ValueType::POWER>(data.power);
+  }
+
   measurement_cache.farfield.thetaphis =
       nondim_measurement_cache.farfield.thetaphis;  // NONE
   // The far field r E_∞ is a field times a distance, i.e. a voltage.
@@ -273,6 +282,15 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   {
     auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
     eps.energy = units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy);
+  }
+
+  for (const auto &data : dim_measurement_cache.conductor_loss_i)
+  {
+    auto &cond = measurement_cache.conductor_loss_i.emplace_back(data);
+    cond.Rs = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.Rs);
+    cond.geometric_factor =
+        units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.geometric_factor);
+    cond.power = units.Nondimensionalize<Units::ValueType::POWER>(data.power);
   }
 
   measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
@@ -716,17 +734,33 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &surf_post_op)
+void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &surf_post_op,
+                                                   const fem_op_t<solver_t> &fem_op)
 {
-  if (surf_post_op.eps_surfs.empty())
+  if (surf_post_op.eps_surfs.empty() && surf_post_op.cond_surfs.empty())
   {
     return;
   }
   surface_Q = TableWithCSVFile(post_dir / "surface-Q.csv", reload_table);
 
+  // Driven conductor loss also reports the dissipated power, and its fraction of the
+  // incident power for excitations by power-normalized ports.
+  constexpr bool cond_power = (solver_t == ProblemType::DRIVEN);
+  auto HasIncidentPower = [&fem_op](std::size_t ex_idx)
+  {
+    if constexpr (cond_power)
+    {
+      const auto &excitations = fem_op.GetPortExcitations().excitations;
+      auto it = excitations.find(static_cast<int>(ex_idx));
+      return it != excitations.end() && it->second.NumPowerNormalizedPorts() > 0;
+    }
+    return false;
+  };
+
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * (2 * surf_post_op.eps_surfs.size());
+      1 + ex_idx_v_all.size() * (2 * surf_post_op.eps_surfs.size() +
+                                 (cond_power ? 4 : 2) * surf_post_op.cond_surfs.size());
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
   for (const auto ex_idx : ex_idx_v_all)
@@ -738,6 +772,23 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
                fmt::format("p_surf[{}]{}", idx, ex_label), ex_idx);
       t.insert(fmt::format("Q_{}_{}", idx, ex_idx),
                fmt::format("Q_surf[{}]{}", idx, ex_label), ex_idx);
+    }
+    for (const auto &[idx, data] : surf_post_op.cond_surfs)
+    {
+      t.insert(fmt::format("G_cond_{}_{}", idx, ex_idx),
+               fmt::format("G_cond[{}]{} (Ω)", idx, ex_label), ex_idx);
+      t.insert(fmt::format("Q_cond_{}_{}", idx, ex_idx),
+               fmt::format("Q_cond[{}]{}", idx, ex_label), ex_idx);
+      if constexpr (cond_power)
+      {
+        t.insert(fmt::format("P_cond_{}_{}", idx, ex_idx),
+                 fmt::format("P_cond[{}]{} (W)", idx, ex_label), ex_idx);
+        if (HasIncidentPower(ex_idx))
+        {
+          t.insert(fmt::format("P_cond_inc_{}_{}", idx, ex_idx),
+                   fmt::format("P_cond[{}]{}/P_inc", idx, ex_label), ex_idx);
+        }
+      }
     }
   }
   MoveTableValidateReload(*surface_Q, std::move(t));
@@ -757,6 +808,22 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
     surface_Q->table[fmt::format("p_{}_{}", data.idx, m_ex_idx)]
         << data.energy_participation;
     surface_Q->table[fmt::format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
+  }
+  for (const auto &data : measurement_cache.conductor_loss_i)
+  {
+    surface_Q->table[fmt::format("G_cond_{}_{}", data.idx, m_ex_idx)]
+        << data.geometric_factor;
+    surface_Q->table[fmt::format("Q_cond_{}_{}", data.idx, m_ex_idx)]
+        << data.quality_factor;
+    if constexpr (solver_t == ProblemType::DRIVEN)
+    {
+      surface_Q->table[fmt::format("P_cond_{}_{}", data.idx, m_ex_idx)] << data.power;
+      if (data.has_power_fraction)
+      {
+        surface_Q->table[fmt::format("P_cond_inc_{}_{}", data.idx, m_ex_idx)]
+            << data.power_fraction;
+      }
+    }
   }
   WriteTable(*surface_Q);
 }
@@ -1725,7 +1792,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   }
   InitializeDomainE(post_op.dom_post_op);
   InitializeSurfaceF(post_op.surf_post_op);
-  InitializeSurfaceQ(post_op.surf_post_op);
+  InitializeSurfaceQ(post_op.surf_post_op, *post_op.fem_op);
 
 #if defined(MFEM_USE_GSLIB)
   {

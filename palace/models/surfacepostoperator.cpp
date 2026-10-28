@@ -210,6 +210,14 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
   return {};  // For compiler warning
 }
 
+SurfacePostOperator::ConductorLossData::ConductorLossData(
+    const config::ConductorLossData &data, const mfem::Array<int> &bdr_attr_marker)
+  : Rs(data.Rs), thin_film(data.thin_film)
+{
+  // Store boundary attributes for this postprocessing boundary.
+  attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
+}
+
 SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &data,
                                                 const mfem::ParMesh &mesh,
                                                 const mfem::Array<int> &bdr_attr_marker)
@@ -231,7 +239,8 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!postpro.flux.empty() || !postpro.dielectric.empty() || !postpro.farfield.empty())
+  if (!postpro.flux.empty() || !postpro.dielectric.empty() || !postpro.conductor.empty() ||
+      !postpro.farfield.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -264,6 +273,16 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
     auto &surf = eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker)
                      .first->second;
     surf.sum_sides_marker = mesh::AttrToMarker(bdr_attr_max, sheet_attributes, true);
+  }
+
+  // Conductor surface loss postprocessing (requires the magnetic field and the stored
+  // energy of a time-harmonic solution, see IoData::CheckConfiguration).
+  if (problem_type == ProblemType::EIGENMODE || problem_type == ProblemType::DRIVEN)
+  {
+    for (const auto &[idx, data] : postpro.conductor)
+    {
+      cond_surfs.try_emplace(idx, data, bdr_attr_marker);
+    }
   }
 
   // FarField postprocessing.
@@ -312,6 +331,22 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
                         nd_fespace, iodata.boundaries.GetSheetAttributes())
 {
+  // A mesh cracked along an interior boundary has independent boundary elements on each
+  // face, which carry no field jump: their loss is always that of a thick conductor.
+  for (const auto &[idx, data] : cond_surfs)
+  {
+    if (data.thin_film &&
+        std::ranges::any_of(
+            data.attr_list,
+            [&](int attr) { return iodata.boundaries.cracked_attributes.contains(attr); }))
+    {
+      Mpi::Warning(
+          "\"Conductor\" boundary postprocessing index {:d} has \"ThinFilm\": true "
+          "on boundary attributes along which the mesh is cracked, whose faces are "
+          "treated as independent thick conductor surfaces!\n",
+          idx);
+    }
+  }
 }
 
 std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunction *E,
@@ -443,6 +478,63 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   auto f = it->second.GetCoefficient(E, mat_op);
   double dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
+  return weight * dot;
+}
+
+double SurfacePostOperator::GetConductorSurfaceResistance(int idx) const
+{
+  auto it = cond_surfs.find(idx);
+  MFEM_VERIFY(it != cond_surfs.end(),
+              "Unknown conductor loss postprocessing index requested!");
+  return it->second.Rs;
+}
+
+double SurfacePostOperator::GetConductorSurfaceCurrentNorm2(int idx,
+                                                            const GridFunction &B) const
+{
+  // The integrand |n x H|² is the squared magnitude of the surface current density
+  // Jₛ = n x H on the conductor surface; for complex peak phasors the reported value is
+  // the time average over one period, such that the power dissipated in a surface
+  // resistance Rs is Rs times this value.
+  auto it = cond_surfs.find(idx);
+  MFEM_VERIFY(it != cond_surfs.end(),
+              "Unknown conductor loss postprocessing index requested!");
+  const double weight = electromagnetics::TimeAverageWeight(B.HasImag());
+  const auto &mesh = *h1_fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
+
+  // Use the libCEED surface functional path when supported, avoiding per-call
+  // boundary LinearForm assembly in the legacy coefficient path.
+  auto &func = cond_funcs[idx];
+  if (!func)
+  {
+    func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, *B.ParFESpace(), mat_op, it->second.thin_film);
+  }
+  if (func && func->IsValid())
+  {
+    return weight * func->Eval(B);
+  }
+  if (IsSupportedSurfaceFunctionalDimension(mesh))
+  {
+    RequireCeedSurfaceFunctional(func.get(), "conductor loss postprocessing");
+  }
+
+  // The integrand is quadratic in the field, so the real and imaginary part contributions
+  // of a time-harmonic field add.
+  auto Integrate = [&](const mfem::ParGridFunction &Bi)
+  {
+    RestrictedCoefficient<BdrSurfaceCurrentNorm2Coefficient> f(
+        it->second.attr_list, Bi, mat_op, it->second.thin_film);
+    return GetLocalSurfaceIntegral(f, attr_marker);
+  };
+  double dot = Integrate(B.Real());
+  if (B.HasImag())
+  {
+    dot += Integrate(B.Imag());
+  }
+  Mpi::GlobalSum(1, &dot, B.GetComm());
   return weight * dot;
 }
 

@@ -97,6 +97,17 @@ struct Measurement
     double quality_factor;        // 1 / (energy_participation * tan δ)
   };
 
+  struct ConductorLossData
+  {
+    int idx = 0;                    // Conductor surface index
+    double Rs = 0.0;                // Surface resistance
+    double geometric_factor = 0.0;  // G = 2 ω W / <∮ |n x H|² dS> (impedance units)
+    double quality_factor = 0.0;    // G / Rs
+    double power = 0.0;             // Time-averaged dissipated power Rs <∮ |n x H|² dS>
+    double power_fraction = 0.0;    // P / P_inc for power-normalized port excitations
+    bool has_power_fraction = false;
+  };
+
   struct FarFieldData
   {
     // Theta: polar angle (0 to pi radians).
@@ -206,6 +217,7 @@ struct Measurement
 
   std::vector<FluxData> surface_flux_i;
   std::vector<InterfaceData> interface_eps_i;
+  std::vector<ConductorLossData> conductor_loss_i;
   FarFieldData farfield;
 
   // Floquet port S-parameters: port_idx -> {(m, n, is_te/is_rhc) -> S}.
@@ -307,7 +319,8 @@ protected:
   void PrintSurfaceF();
 
   std::optional<TableWithCSVFile> surface_Q;
-  void InitializeSurfaceQ(const SurfacePostOperator &surf_post_op);
+  void InitializeSurfaceQ(const SurfacePostOperator &surf_post_op,
+                          const fem_op_t<solver_t> &fem_op);
   void PrintSurfaceQ();
 
   std::optional<TableWithCSVFile> probe_E;

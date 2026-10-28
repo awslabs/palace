@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-0-0",
+  "$id": "urn:palace:schema:4-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1760,6 +1760,15 @@
             "$ref": "#/$defs/Dielectric"
           }
         },
+        "Conductor": {
+          "type": "array",
+          "title": "Conductor Loss",
+          "description": "Array of conductor surface resistance loss postprocessing boundaries, for eigenmode and driven simulations. Computes the geometric factor `G` of each surface and, given a surface resistance `Rs`, the associated quality factor `Q = G / Rs`, to first order in the surface resistance. Driven simulations also report the dissipated power and its fraction of the incident port power. See also the [reference documentation](../reference.md#Conductor-surface-loss). Results are written to `surface-Q.csv` in the output directory.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Conductor"
+          }
+        },
         "Impedance": {
           "type": "array",
           "title": "Mode Impedance",
@@ -1904,6 +1913,36 @@
           "type": "number",
           "description": "Loss tangent of this dielectric interface.",
           "default": 0.0
+        }
+      }
+    },
+    "Conductor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this conductor surface, used in output files.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Rs": {
+          "type": "number",
+          "description": "Surface resistance of this conductor surface, in Ω/sq, used to compute the quality factor Q = G / Rs. For a thin film (`\"ThinFilm\": true`), this is the sheet resistance of the film.",
+          "minimum": 0.0,
+          "default": 0.0
+        },
+        "ThinFilm": {
+          "type": "boolean",
+          "description": "Treat an interior boundary as a conducting film much thinner than the skin or penetration depth, with loss from the total sheet current. By default, the two faces of an interior boundary are independent conductor surfaces with loss from the tangential magnetic field on each face. No effect on exterior boundaries.",
+          "default": false
         }
       }
     },

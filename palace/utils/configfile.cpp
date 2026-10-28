@@ -769,6 +769,16 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   tandelta = dielectric.value("LossTan", tandelta);
 }
 
+ConductorLossData::ConductorLossData(const json &conductor)
+{
+  attributes = conductor.at("Attributes").get<std::vector<int>>();  // Required
+  std::ranges::sort(attributes);
+  Rs = conductor.value("Rs", Rs);
+  thin_film = conductor.value("ThinFilm", thin_film);
+  MFEM_VERIFY(Rs >= 0.0, "\"Conductor\" boundary postprocessing \"Rs\" must be "
+                         "non-negative!");
+}
+
 ModeImpedanceData::ModeImpedanceData(const json &imp)
 {
   if (auto it = imp.find("VoltageAttributes"); it != imp.end())
@@ -1027,6 +1037,8 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
       ParseOptionalMap<SurfaceFluxData>(postpro, "SurfaceFlux", "\"SurfaceFlux\" boundary");
   dielectric = ParseOptionalMap<InterfaceDielectricData>(postpro, "Dielectric",
                                                          "\"Dielectric\" boundary");
+  conductor =
+      ParseOptionalMap<ConductorLossData>(postpro, "Conductor", "\"Conductor\" boundary");
   impedance =
       ParseOptionalMap<ModeImpedanceData>(postpro, "Impedance", "\"Impedance\" boundary");
   voltage = ParseOptionalMap<ModeVoltageData>(postpro, "Voltage", "\"Voltage\" boundary");
@@ -1038,6 +1050,10 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &[idx, data] : dielectric)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : conductor)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
@@ -1923,6 +1939,11 @@ void Nondimensionalize(const Units &units, SurfaceFluxData &data)
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
 {
   data.t /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, ConductorLossData &data)
+{
+  data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
 }
 
 void Nondimensionalize(const Units &units, EigenSolverData &data)

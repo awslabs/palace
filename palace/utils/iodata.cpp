@@ -545,6 +545,14 @@ void IoData::CheckConfiguration()
         "conditions!\n");
   }
 
+  // Conductor surface loss postprocessing is defined for time-harmonic fields.
+  if (!boundaries.postpro.conductor.empty() && problem.type != ProblemType::EIGENMODE &&
+      problem.type != ProblemType::DRIVEN)
+  {
+    Mpi::Warning("Only the Eigenmode and Driven problem types support boundary conductor "
+                 "loss postprocessing!\n");
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -908,6 +916,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 
   // Dielectric interface thickness.
   for (auto &[idx, data] : boundaries.postpro.dielectric)
+  {
+    config::Nondimensionalize(units, data);
+  }
+
+  // Conductor surface resistance.
+  for (auto &[idx, data] : boundaries.postpro.conductor)
   {
     config::Nondimensionalize(units, data);
   }

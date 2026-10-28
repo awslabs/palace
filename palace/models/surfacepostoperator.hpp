@@ -24,6 +24,7 @@ namespace config
 struct BoundaryPostData;
 struct SurfaceFluxData;
 struct InterfaceDielectricData;
+struct ConductorLossData;
 struct FarFieldPostData;
 
 }  // namespace config
@@ -74,6 +75,14 @@ private:
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
                                                       const MaterialOperator &mat_op) const;
   };
+  struct ConductorLossData : public SurfaceData
+  {
+    double Rs;
+    bool thin_film;
+
+    ConductorLossData(const config::ConductorLossData &data,
+                      const mfem::Array<int> &bdr_attr_marker);
+  };
   struct FarFieldData : public SurfaceData
   {
     std::vector<std::pair<double, double>> thetaphis;
@@ -99,10 +108,11 @@ private:
   double GetLocalSurfaceIntegral(mfem::Coefficient &f,
                                  const mfem::Array<int> &attr_marker) const;
 
-  // libCEED surface functionals for flux and interface dielectric postprocessing,
-  // constructed lazily per surface index to replace per-call coefficient evaluation and
-  // boundary LinearForm assembly in the legacy paths when supported.
-  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
+  // libCEED surface functionals for flux, interface dielectric, and conductor loss
+  // postprocessing, constructed lazily per surface index to replace per-call coefficient
+  // evaluation and boundary LinearForm assembly in the legacy paths when supported.
+  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs,
+      cond_funcs;
   // Im{ε}-weighted electric flux functionals for complex fields in lossy dielectrics.
   mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs_imag;
   mutable std::unique_ptr<SurfaceFunctional> farfield_func;
@@ -112,6 +122,7 @@ public:
   // Data structures for postprocessing the surface with the given type.
   std::map<int, SurfaceFluxData> flux_surfs;
   std::map<int, InterfaceDielectricData> eps_surfs;
+  std::map<int, ConductorLossData> cond_surfs;
   FarFieldData farfield;
 
   // Interface dielectric energies on interior boundaries with attributes in
@@ -142,6 +153,13 @@ public:
   // complex-valued fields).
   double GetInterfaceLossTangent(int idx) const;
   double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+
+  // Get surface integrals of the squared surface current density, ∮ |n x H|² dS with
+  // H = μ⁻¹ B, for conductor surface resistance loss (time-averaged for complex-valued
+  // fields). The power dissipated in a conductor surface with surface resistance Rs is Rs
+  // times this integral, to first order in Rs.
+  double GetConductorSurfaceResistance(int idx) const;
+  double GetConductorSurfaceCurrentNorm2(int idx, const GridFunction &B) const;
 
   int GetVDim() const { return mat_op.SpaceDimension(); };
 };

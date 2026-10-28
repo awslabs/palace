@@ -76,11 +76,12 @@ class SurfaceFunctional
 public:
   enum class Kind
   {
-    AREA,           // ∫ dS (no field input, for validation)
-    HCURL_NORM2,    // ∫ |u|² dS for an H(curl) field u (single-sided, for validation)
-    INTERFACE_EPR,  // Interface dielectric energy following InterfaceDielectricCoefficient
-    SURFACE_FLUX,   // Surface flux following BdrSurfaceFluxCoefficient
-    FARFIELD        // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
+    AREA,            // ∫ dS (no field input, for validation)
+    HCURL_NORM2,     // ∫ |u|² dS for an H(curl) field u (single-sided, for validation)
+    INTERFACE_EPR,   // Interface dielectric energy following InterfaceDielectricCoefficient
+    SURFACE_FLUX,    // Surface flux following BdrSurfaceFluxCoefficient
+    CONDUCTOR_LOSS,  // Squared surface current following BdrSurfaceCurrentNorm2Coefficient
+    FARFIELD         // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
   };
 
 private:
@@ -96,6 +97,7 @@ private:
     HCURL_NORM2,
     INTERFACE_EPR,
     SURFACE_FLUX,
+    CONDUCTOR_LOSS,
     FARFIELD,
     MODE_OVERLAP,
     BDR_FIELD_E,
@@ -152,6 +154,10 @@ private:
   // assemble the complex D = (Re{ε} + i Im{ε}) E of a lossy dielectric from two
   // functionals.
   bool flux_imag_permittivity = false;
+  // Conductor loss on interior boundaries: if true, the total sheet current of a thin film
+  // from the jump of the tangential magnetic field across the boundary, otherwise the sum
+  // of the contributions of the two (independent) conductor faces.
+  bool cond_thin_film = false;
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
   std::complex<double> farfield_omega = 0.0;
@@ -300,6 +306,15 @@ public:
                     const mfem::ParFiniteElementSpace *rt_fespace,
                     const MaterialOperator &mat_op, SurfaceFlux type, bool two_sided,
                     const mfem::Vector &x0, bool imag_permittivity = false);
+
+  // Construct a conductor surface loss functional, ∮ |n x H|² dS with H = μ⁻¹ B (see
+  // BdrSurfaceCurrentNorm2Coefficient), for a magnetic flux density B in rt_fespace
+  // (H(div) in 3D, scalar L2 in 2D). On interior boundaries, the contributions of the two
+  // sides add, |n x H₁|² + |n x H₂|², or for a thin film the total sheet current is used,
+  // |n x (H₁ - H₂)|².
+  SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &rt_fespace,
+                    const MaterialOperator &mat_op, bool thin_film);
 
   // Construct a Stratton-Chu far-field functional for the given observation directions
   // (see AddStrattonChuIntegrandAtElement; external boundaries only).

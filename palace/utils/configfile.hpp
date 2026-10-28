@@ -739,6 +739,28 @@ public:
   InterfaceDielectricData(const json &dielectric);
 };
 
+struct ConductorLossData
+{
+public:
+  // Surface resistance [Ω/sq] used to compute the quality factor Q = G / Rs from the
+  // geometric factor G of the surface (optional).
+  double Rs = 0.0;
+
+  // Whether the conductor is a film much thinner than the skin or penetration depth. On an
+  // interior boundary separating the fields on its two sides, the loss of a thick
+  // conductor (default) is from the tangential magnetic field on each of its faces, ∮
+  // (|n x H₁|² + |n x H₂|²) dS, while the loss of a thin film is from the total sheet
+  // current, ∮ |n x (H₁ - H₂)|² dS, and Rs is the film sheet resistance. On an exterior
+  // boundary, the two are identical.
+  bool thin_film = false;
+
+  // List of boundary attributes for this conductor loss postprocessing index.
+  std::vector<int> attributes = {};
+
+  ConductorLossData() = default;
+  ConductorLossData(const json &conductor);
+};
+
 struct ModeImpedanceData
 {
 public:
@@ -799,6 +821,7 @@ public:
   // Boundary postprocessing objects.
   std::map<int, SurfaceFluxData> flux = {};
   std::map<int, InterfaceDielectricData> dielectric = {};
+  std::map<int, ConductorLossData> conductor = {};
   std::map<int, ModeImpedanceData> impedance = {};
   std::map<int, ModeVoltageData> voltage = {};
   FarFieldPostData farfield = {};
@@ -1307,6 +1330,7 @@ void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);
 void Nondimensionalize(const Units &units, SurfaceFluxData &data);
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data);
+void Nondimensionalize(const Units &units, ConductorLossData &data);
 void Nondimensionalize(const Units &units, EigenSolverData &data);
 void Nondimensionalize(const Units &units, DrivenSolverData &data);
 void Nondimensionalize(const Units &units, TransientSolverData &data);

@@ -340,6 +340,7 @@ protected:
   void MeasureSurfaceFlux() const;
   void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
+  void MeasureConductorLoss() const;          // Depends: DomainFieldEnergy, LumpedPorts
   void MeasureProbes() const;
 
   // Helper function called by all solvers. Has to ensure correct call order to deal with
@@ -354,6 +355,7 @@ protected:
     MeasureSParameter();
     MeasureSurfaceFlux();
     MeasureInterfaceEFieldEnergy();
+    MeasureConductorLoss();
     MeasureProbes();
     MeasureFarField();
   }

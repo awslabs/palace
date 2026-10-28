@@ -2055,6 +2055,66 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureConductorLoss() const
+{
+  // Depends on DomainFieldEnergy and LumpedPorts (stored energies).
+  //
+  // Compute the power dissipated by the surface resistance Rs_j of the conductor surface
+  // given by index idx, and its geometric factor, to first order in Rs_j: the fields of a
+  // solution with a perfect conductor on the surface are those of the Rs_j → 0 limit. With
+  // the time-averaged squared surface current of the solution,
+  // I²_j = <∮_{Γ_j} |n x H|² dS>, the time-averaged power dissipated in the surface is
+  // P_j = Rs_j I²_j and the associated quality factor is Q_j = G_j / Rs_j, with the
+  // geometric factor (independent of the surface resistance, dimensions of impedance)
+  //                              G_j = 2 ω W / I²_j .
+  // W is a time-averaged stored energy:
+  //  - Eigenmode: W = W_elec + W_cap, where 2 W is the total energy stored in the mode
+  //    (equipartition, as for the other eigenmode quality factors and participation
+  //    ratios), such that Q_j = 2 ω W / P_j is the contribution of the surface to the
+  //    mode quality factor, 1/Q = ∑_j Rs_j / G_j.
+  //  - Driven: W = W_mag + W_ind, such that Q_j = 2 ω W / P_j is the quality factor of
+  //    the inductive part of the response at the drive frequency (the analog of the ωL/R
+  //    of a lossy inductor), which reduces to the eigenmode Q_j at an isolated resonance.
+  //    For an excitation by power-normalized ports, each excited port delivers 1 W of
+  //    time-averaged incident power and the fraction of the incident power dissipated in
+  //    the surface, P_j / P_inc, is computed as well.
+  measurement_cache.conductor_loss_i.clear();
+  if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
+  {
+    const double omega = measurement_cache.freq.real();
+    const double energy = (solver_t == ProblemType::EIGENMODE)
+                              ? measurement_cache.domain_E_field_energy_all +
+                                    measurement_cache.lumped_port_capacitor_energy
+                              : measurement_cache.domain_H_field_energy_all +
+                                    measurement_cache.lumped_port_inductor_energy;
+    double incident_power = 0.0;
+    if constexpr (solver_t == ProblemType::DRIVEN)
+    {
+      const auto &excitations = fem_op->GetPortExcitations().excitations;
+      if (auto it = excitations.find(measurement_cache.ex_idx); it != excitations.end())
+      {
+        incident_power = static_cast<double>(it->second.NumPowerNormalizedPorts()) *
+                         units.Nondimensionalize<Units::ValueType::POWER>(1.0);
+      }
+    }
+    measurement_cache.conductor_loss_i.reserve(surf_post_op.cond_surfs.size());
+    for (const auto &[idx, data] : surf_post_op.cond_surfs)
+    {
+      auto &loss = measurement_cache.conductor_loss_i.emplace_back();
+      const double I2 = surf_post_op.GetConductorSurfaceCurrentNorm2(idx, *B);
+      loss.idx = idx;
+      loss.Rs = surf_post_op.GetConductorSurfaceResistance(idx);
+      loss.geometric_factor = (I2 > 0.0) ? 2.0 * omega * energy / I2 : mfem::infinity();
+      loss.quality_factor = (loss.Rs == 0.0 || I2 == 0.0) ? mfem::infinity()
+                                                          : loss.geometric_factor / loss.Rs;
+      loss.power = loss.Rs * I2;
+      loss.has_power_fraction = (incident_power > 0.0);
+      loss.power_fraction = loss.has_power_fraction ? loss.power / incident_power : 0.0;
+    }
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureProbes() const
 {
   measurement_cache.probe_E_field.clear();
@@ -2139,8 +2199,9 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   // frequency-dependent k × E correction to the full magnetic flux density.
   if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
       fem_op->GetSurfaceCurrentOp().Size() > 0 || !surf_post_op.flux_surfs.empty() ||
-      !surf_post_op.eps_surfs.empty() || surf_post_op.farfield.size() > 0 ||
-      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().HasSParameters())
+      !surf_post_op.eps_surfs.empty() || !surf_post_op.cond_surfs.empty() ||
+      surf_post_op.farfield.size() > 0 || !interp_op.GetProbes().empty() ||
+      !fem_op->GetPortExcitations().HasSParameters())
   {
     return;
   }

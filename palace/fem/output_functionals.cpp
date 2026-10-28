@@ -354,6 +354,8 @@ SurfaceFunctional::KernelKind SurfaceFunctional::ToKernelKind(Kind kind)
       return KernelKind::INTERFACE_EPR;
     case Kind::SURFACE_FLUX:
       return KernelKind::SURFACE_FLUX;
+    case Kind::CONDUCTOR_LOSS:
+      return KernelKind::CONDUCTOR_LOSS;
     case Kind::FARFIELD:
       return KernelKind::FARFIELD;
   }
@@ -493,6 +495,16 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
       "Missing finite element space for surface flux functional!");
   MFEM_VERIFY(!imag_permittivity || type == SurfaceFlux::ELECTRIC,
               "Imaginary permittivity is only meaningful for the electric surface flux!");
+  Assemble(mesh, bdr_attr_marker);
+}
+
+SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const mfem::ParFiniteElementSpace &rt_fespace,
+                                     const MaterialOperator &mat_op, bool thin_film)
+  : kind(KernelKind::CONDUCTOR_LOSS), cond_thin_film(thin_film), nd_fespace(nullptr),
+    rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+{
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -647,6 +659,17 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
   }
+  else if (kind == KernelKind::CONDUCTOR_LOSS)
+  {
+    // [0].second = scale, then the inverse permeability material context (scalar 1x1
+    // out-of-plane component in 2D).
+    base_ctx.resize(1);
+    base_ctx[0].second = 1.0;
+    MaterialPropertyCoefficient invmu_func(mat_op->GetAttributeToMaterial(),
+                                           mat_op->GetCurlCurlInvPermeability());
+    auto mat_ctx = ceed::PopulateCoefficientContext(is_2d ? 1 : dim, &invmu_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
   else if (kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_CURRENT_J)
   {
     base_ctx.resize(2);
@@ -765,6 +788,17 @@ void SurfaceFunctional::ConfigureGroupQFunction(bool is_2d, bool has_b, double s
                                                     : f_integ_surf_epr_1_21_loc)
                 : PalaceQFunctionRelativePath(has_b ? f_integ_surf_epr_2_32_loc
                                                     : f_integ_surf_epr_1_32_loc);
+      break;
+    case KernelKind::CONDUCTOR_LOSS:
+      // The "_2" kernel evaluates the thin film sheet current from both sides; the faces of
+      // a thick conductor use separate one-sided operators.
+      info.apply_qf = is_2d ? (has_b ? f_integ_surf_cond_2_21 : f_integ_surf_cond_1_21)
+                            : (has_b ? f_integ_surf_cond_2_32 : f_integ_surf_cond_1_32);
+      info.apply_qf_path =
+          is_2d ? PalaceQFunctionRelativePath(has_b ? f_integ_surf_cond_2_21_loc
+                                                    : f_integ_surf_cond_1_21_loc)
+                : PalaceQFunctionRelativePath(has_b ? f_integ_surf_cond_2_32_loc
+                                                    : f_integ_surf_cond_1_32_loc);
       break;
     case KernelKind::BDR_FIELD_E:
     case KernelKind::BDR_FIELD_B:
@@ -899,7 +933,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     buffer_num_comp = BufferNumComp(kind, sdim);
   }
   if (is_2d && kind != KernelKind::AREA && kind != KernelKind::HCURL_NORM2 &&
-      kind != KernelKind::INTERFACE_EPR && !IsBufferKind(kind))
+      kind != KernelKind::INTERFACE_EPR && kind != KernelKind::CONDUCTOR_LOSS &&
+      !IsBufferKind(kind))
   {
     valid = false;
     return;
@@ -942,10 +977,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                         const std::vector<long long> &point_key_b, double side_scale,
                         double normal_scale)
     {
-      // INTERFACE_EPR is the only non-separable paired operation. Keep its two sides
-      // in their common legacy q order. Every one-sided group (including the split
-      // buffer and flux paths) instead uses the canonical mapped cloud and retains a
-      // canonical_q -> original_q output permutation.
+      // INTERFACE_EPR and thin film CONDUCTOR_LOSS are the only non-separable paired
+      // operations. Keep their two sides in their common legacy q order. Every one-sided
+      // group (including the split buffer and flux paths) instead uses the canonical
+      // mapped cloud and retains a canonical_q -> original_q output permutation.
       const bool canonicalize = elem_b < 0;
       const auto Canonicalize = [&](const std::vector<mfem::IntegrationPoint> &pts)
       {
@@ -1144,13 +1179,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                  false, mfem::Geometry::INVALID, {}, {}, side_scale, -1.0);
       }
     }
-    else if (kind == KernelKind::INTERFACE_EPR && two_sided &&
-             epr_type != InterfaceDielectric::SA && attr <= epr_sum_sides_marker.Size() &&
-             epr_sum_sides_marker[attr - 1])
+    else if ((kind == KernelKind::INTERFACE_EPR && two_sided &&
+              epr_type != InterfaceDielectric::SA && attr <= epr_sum_sides_marker.Size() &&
+              epr_sum_sides_marker[attr - 1]) ||
+             (kind == KernelKind::CONDUCTOR_LOSS && two_sided && !cond_thin_film))
     {
       // An interior boundary separating the fields on its two sides (such as a thin metal
-      // sheet): the energies of both sides add, as for a mesh cut along the boundary, which
-      // makes the operation separable.
+      // sheet, or the two faces of a thick conductor): the energies (losses) of both sides
+      // add, as for a mesh cut along the boundary, which makes the operation separable.
       AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
                false, mfem::Geometry::INVALID, {}, {}, 1.0, 1.0);
       AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
@@ -1158,8 +1194,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else
     {
-      // Keep non-separable two-sided interface EPR paired. All other unsplit groups
-      // are ordinary one-sided fixed mapped-rule operators.
+      // Keep non-separable two-sided interface EPR and thin film conductor loss paired.
+      // All other unsplit groups are ordinary one-sided fixed mapped-rule operators.
       AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a,
                plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, 1.0,
                1.0);
@@ -1248,7 +1284,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         plan.elem_a = FET.Elem1No;
       }
-      else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||
+      else if (kind == KernelKind::SURFACE_FLUX || kind == KernelKind::CONDUCTOR_LOSS ||
+               IsBufferKind(kind) ||
                (kind == KernelKind::INTERFACE_EPR &&
                 epr_type == InterfaceDielectric::DEFAULT))
       {
@@ -1999,7 +2036,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
     }
     else if (kind == KernelKind::HCURL_NORM2 || kind == KernelKind::INTERFACE_EPR ||
-             kind == KernelKind::MODE_OVERLAP || buffer_kind)
+             kind == KernelKind::CONDUCTOR_LOSS || kind == KernelKind::MODE_OVERLAP ||
+             buffer_kind)
     {
       const auto &field_fespace = rt_fespace ? *rt_fespace : *nd_fespace;
       if (group.ghost_a)
@@ -2234,7 +2272,8 @@ double SurfaceFunctional::Eval(const Vector *u) const
 double SurfaceFunctional::Eval(const GridFunction &u) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
-  MFEM_VERIFY(kind == KernelKind::HCURL_NORM2 || kind == KernelKind::INTERFACE_EPR,
+  MFEM_VERIFY(kind == KernelKind::HCURL_NORM2 || kind == KernelKind::INTERFACE_EPR ||
+                  kind == KernelKind::CONDUCTOR_LOSS,
               "SurfaceFunctional::Eval with a grid function is only valid for functionals "
               "quadratic in a single field!");
   double dot = 0.0;

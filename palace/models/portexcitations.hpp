@@ -53,6 +53,19 @@ public:
       return out;
     }
 
+    // Number of excited ports with a power-normalized incident wave (lumped, wave, and
+    // Floquet ports, each delivering unit time-averaged incident power), or zero if the
+    // excitation includes impressed currents (surface currents or current dipoles), for
+    // which the incident power is not defined.
+    std::size_t NumPowerNormalizedPorts() const
+    {
+      if (!current_port.empty() || !current_dipole.empty())
+      {
+        return 0;
+      }
+      return lumped_port.size() + wave_port.size() + floquet_port.size();
+    }
+
     // Only a single port is excited.
     std::tuple<bool, PortType, int> IsSimple() const
     {
