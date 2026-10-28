@@ -528,6 +528,45 @@ TEST_CASE("RAW storage status of nonpassive and unresolved blocks",
   }
 }
 
+TEST_CASE("RAW storage is finite at extreme frequencies", "[permittivitystorage][Serial]")
+{
+  // A checked block evaluates to a finite value at any finite ω other than an exact
+  // lossless resonance, underflowing to zero rather than to NaN through ∞/∞.
+  auto Finite = [](const Terms &raw, double omega)
+  {
+    const PreparedStorage storage(raw);
+    REQUIRE(storage.Status() == RawStorageStatus::CheckedAvailable);
+    const double w = Energy(storage, omega);
+    CAPTURE(omega, w);
+    CHECK(std::isfinite(w));
+    return w;
+  };
+
+  // Lossless (ω² + 1)/(1 − ω²)² of p = i, r = −i/2: about 1/ω².
+  const auto lossless = Poles({{C(0.0, 1.0), C(0.0, -0.5)}});
+  CHECK_THAT(Finite(lossless, 1.0e100), Catch::Matchers::WithinRel(1.0e-200, 1.0e-12));
+  CHECK(Finite(lossless, 1.0e200) == 0.0);
+
+  // Debye 6/(ω² + 4) of p = −2, r = 3.
+  const auto debye = Poles({{-2.0, 3.0}});
+  CHECK_THAT(Finite(debye, 1.0e150), Catch::Matchers::WithinRel(6.0e-300, 1.0e-12));
+  CHECK(Finite(debye, 1.0e200) == 0.0);
+
+  // Lorentz Δε ω₀²(ω² + ω₀²)/((ω₀² − ω²)² + γ²ω²), as ω₀²Δε(1/ω² + ω₀²/ω⁴)/((1 − ω₀²/ω²)²
+  // + (γ/ω)²) for large ω (the typed formula itself overflows there).
+  const double delta = 0.8, w0 = 2.5, gamma = 0.3;
+  const auto lorentz = Raw({config::LorentzData{delta, w0, gamma}});
+  for (const double omega : {1.0e100, 1.0e150})
+  {
+    const double x = w0 / omega;
+    const double ref = delta * w0 * w0 *
+                       (1.0 / (omega * omega) + x * x * x * x / (w0 * w0)) /
+                       ((1.0 - x * x) * (1.0 - x * x) + (gamma / omega) * (gamma / omega));
+    CHECK_THAT(Finite(lorentz, omega), Catch::Matchers::WithinRel(ref, 1.0e-12));
+  }
+  CHECK(Finite(lorentz, 1.0e200) == 0.0);
+}
+
 TEST_CASE("A RAW block compensated by other terms is not material gain",
           "[permittivitystorage][Serial]")
 {

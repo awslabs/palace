@@ -1152,24 +1152,30 @@ std::optional<double> PreparedStorage::RawStoredEnergySusceptibility(double omeg
   {
     return std::nullopt;
   }
+  MFEM_VERIFY(std::isfinite(omega) && omega >= 0.0,
+              "The stored energy requires a finite frequency ω ≥ 0!");
   if (!has_raw)
   {
     return 0.0;
   }
+  // Every quantity below is a ratio of factors of moderate size, so that the result is
+  // finite (possibly underflowing to zero) for any finite ω, and infinite only at an exact
+  // lossless resonance.
   const double v = omega / certificate.rate_scale;
   const Complex s(0.0, v);
   const int n = certificate.states;
   std::vector<Complex> z(n);
   for (std::size_t b = 0, i = 0; b < blocks.size(); b++)
   {
-    // (iv − A)⁻¹B for each block, B = 1 or (1, 0), with (iv − a)² + w² in product form,
-    // accurate near a weakly damped resonance.
+    // (iv − A)⁻¹B for each block, B = 1 or (1, 0). For a pair, (iv − a)² + w² is the
+    // product of (iv − a ∓ iw), accurate near a weakly damped resonance, divided by one
+    // factor at a time.
     const double a = blocks[b].re, w = blocks[b].im;
     if (w > 0.0)
     {
-      const Complex den = Complex(-a, v - w) * Complex(-a, v + w);
-      z[i] = (s - a) / den;
-      z[i + 1] = w / den;
+      const Complex lo(-a, v - w), hi(-a, v + w);
+      z[i] = ((s - a) / lo) / hi;
+      z[i + 1] = (w / lo) / hi;
       i += 2;
     }
     else
@@ -1190,8 +1196,9 @@ std::optional<double> PreparedStorage::RawStoredEnergySusceptibility(double omeg
   }
   for (const auto &[beta, strength] : lossless)
   {
-    const double den = (beta - v) * (beta + v);
-    energy += strength * (v * v + beta * beta) / (den * den);
+    // (v² + β²)/((β − v)²(β + v)²) = ½(1/(β − v)² + 1/(β + v)²).
+    const double m = 1.0 / (beta - v), p = 1.0 / (beta + v);
+    energy += 0.5 * strength * (m * m + p * p);
   }
   return certificate.amplitude_scale * energy;
 }

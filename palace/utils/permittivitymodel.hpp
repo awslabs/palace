@@ -192,12 +192,15 @@ public:
   const RawStorageCertificate &Certificate() const { return certificate; }
 
   // StoredEnergySusceptibility of the typed and Djordjevic-Sarkar terms plus the
-  // outer-factor storage of the RAW block, at real ω ≥ 0. Empty unless Status() is
-  // CheckedAvailable. Infinite at an exact lossless resonance.
+  // outer-factor storage of the RAW block, at finite real ω ≥ 0. Empty unless Status() is
+  // CheckedAvailable. Infinite at an exact lossless resonance. The RAW part is otherwise
+  // finite (it may underflow to zero at extreme ω); the typed formulas are those of
+  // permittivity::StoredEnergySusceptibility.
   std::optional<double> StoredEnergySusceptibility(double omega) const;
 
-  // The outer-factor storage of the RAW block alone, empty unless Status() is
-  // CheckedAvailable (zero without PoleResidue terms).
+  // The outer-factor storage of the RAW block alone at finite real ω ≥ 0, empty unless
+  // Status() is CheckedAvailable (zero without PoleResidue terms). Finite except at an
+  // exact lossless resonance, where it is infinite.
   std::optional<double> RawStoredEnergySusceptibility(double omega) const;
 
   RawStorageRealization Realization() const;
