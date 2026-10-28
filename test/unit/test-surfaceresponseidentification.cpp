@@ -7508,6 +7508,24 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
                    widened[3].get<double>() - widened[1].get<double>()) >
           kSupportSpanCapOverRadius);
     CHECK(result.spatial_support.unboxable >= 1);
+    // OI-T5-UNBOXABLE (decision 972 (Q3)): the record keeps the Ungrown state the operator
+    // falls back to (the pre-T5 key, boxable, contract 3: the island is context), while
+    // the grown signature of record is the Unboxable one - the state the operator's
+    // fallback reads (Fallback.GrownUnboxable) and the requirements builder lists no
+    // FallbackPlaced requirement for (the signature's Unboxable flag). The matching-pass
+    // leg is OI-T5-UNBOXABLE-MATCHPASS (no mesh fixture reaches the span cap).
+    const auto &ungrown = support["CornerContainment"]["Ungrown"];
+    CHECK(ungrown["Key"] != cluster->hash);
+    CHECK(ungrown["Contract"] == 3);
+    CHECK(!ungrown["Signature"].contains("Unboxable"));
+    CHECK(ungrown["SpatialSupport"]["Unboxable"].is_null());
+    CHECK(ungrown["SpatialSupport"]["Box"] == support["Box"]);
+    CHECK(SignatureKeyAndHash(ungrown["Signature"], "SpatialEdgeCluster").second ==
+          ungrown["Key"].get<std::string>());
+    CHECK(SignatureKeyAndHash(cluster->signature, "SpatialEdgeCluster").second ==
+          cluster->hash);
+    CHECK(support["CornerContainment"]["GrownKey"] == cluster->hash);
+    CHECK((!support.contains("Growth") || support["Growth"]["Grown"] == false));
   }
 
   // (e) ONE Growth HISTORY where stage 1 and the re-read both step, and the step cap is

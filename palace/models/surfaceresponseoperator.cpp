@@ -8688,6 +8688,13 @@ IdentificationResult RunGeometryIdentification(
       continue;
     }
     containment.erase("Ungrown");
+    // OI-T5-UNBOXABLE (decision 972 (Q3), review MINOR-2): a cluster whose T5 widening the
+    // span cap refused (SpanCapRefusedCornerContainment) is Unboxable on its grown key, so
+    // no coupon can be built for it: the ungrown model is placed as here, the record names
+    // the unboxable grown key, and the requirements builder lists NO FallbackPlaced
+    // requirement for it (the corner keeps the SpatialClusterPriority hole with the raw
+    // add-back).
+    const bool grown_unboxable = grown_signature.value("Unboxable", false);
     containment["Grown"] = {{"Signature", grown_signature},
                             {"Key", grown_hash},
                             {"Contract", grown_record.value("Contract", 3)},
@@ -8697,13 +8704,16 @@ IdentificationResult RunGeometryIdentification(
         {"PlacedKey", feature.hash},
         {"PlacedModel", *feature.matched_model},
         {"Reason", "NoMatchedModel"},
+        {"GrownUnboxable", grown_unboxable},
         {"Rule",
-         "decisions 958 (a) / 960 R4 / 961 MINOR-2 / 969: no library entry matches "
+         "decisions 958 (a) / 960 R4 / 961 MINOR-2 / 969 / 972: no library entry matches "
          "the T5-grown key (a discovery placeholder included), so the UNGROWN key's "
          "model is placed exactly as before T5 (its SpatialClusterPriority "
          "exclusion and raw add-back included); the grown key is listed as a "
          "Missing-class requirement flagged FallbackPlaced (Summary.Counts.Missing "
-         "excludes it; Summary.FallbackPlaced carries it) for the discovery to plan"}};
+         "excludes it; Summary.FallbackPlaced carries it) for the discovery to plan - "
+         "unless GrownUnboxable (OI-T5-UNBOXABLE: the span cap refused the widening, "
+         "no coupon can contain the corner, no requirement is listed)"}};
     feature.spatial_support["CornerContainment"] = std::move(containment);
     feature.match_note =
         (feature.match_note ? *feature.match_note + "; " : std::string()) +
@@ -8712,9 +8722,10 @@ IdentificationResult RunGeometryIdentification(
         " placed (model \"" + *feature.matched_model + "\")";
     Mpi::Print("  Identification T5 fallback (decision 960 R4): cluster key {} (grown) has "
                "no library entry; the ungrown key {} is placed (model \"{}\"); the grown "
-               "key is a FallbackPlaced requirement\n",
-               grown_hash.substr(0, 12), feature.hash.substr(0, 12),
-               *feature.matched_model);
+               "key is {}\n",
+               grown_hash.substr(0, 12), feature.hash.substr(0, 12), *feature.matched_model,
+               grown_unboxable ? "UNBOXABLE (OI-T5-UNBOXABLE: no requirement listed)"
+                               : "a FallbackPlaced requirement");
   }
   // Mirror-formed features (DESIGN 2.2.2 / 2.2.5): Status Modelled when the library has the
   // model, Missing otherwise (its real portions then keep their raw energy as uncovered
@@ -9123,13 +9134,21 @@ IdentificationResult RunGeometryIdentification(
     // placed on its ungrown key is a requirement of its own (the full grown signature incl.
     // Box + Context, what the planner needs), Missing-class, flagged FallbackPlaced with
     // the placed model; one instance per cluster feature.
+    // OI-T5-UNBOXABLE (decision 972): a grown signature carrying Unboxable: true (the span
+    // cap refused the T5 widening) is no requirement (the planner would build it
+    // claims-only, a coupon that cannot contain the corner); the Fallback record's
+    // GrownUnboxable names it.
     if (feature.type == "SpatialEdgeCluster" && feature.matched_model &&
         feature.spatial_support.is_object() &&
         feature.spatial_support.contains("CornerContainment") &&
-        feature.spatial_support["CornerContainment"].contains("Fallback"))
+        feature.spatial_support["CornerContainment"].contains("Fallback") &&
+        !feature.spatial_support["CornerContainment"]["Fallback"].value("GrownUnboxable",
+                                                                        false))
     {
       const nlohmann::json &grown_signature =
           feature.spatial_support["CornerContainment"]["Grown"]["Signature"];
+      MFEM_VERIFY(!grown_signature.value("Unboxable", false),
+                  "A FallbackPlaced requirement for an Unboxable grown signature!");
       const auto [grown_key, grown_hash] =
           SignatureKeyAndHash(grown_signature, feature.type);
       (void)grown_hash;

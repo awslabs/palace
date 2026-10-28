@@ -261,6 +261,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(fallback["PlacedKey"] == ungrown_hash);
     CHECK(fallback["PlacedModel"] == "offset-corner-pair-t5-ungrown");
     CHECK(fallback["Reason"] == "NoMatchedModel");
+    CHECK(fallback["GrownUnboxable"] == false);  // OI-T5-UNBOXABLE: a boxable grown key
     CHECK(fallback_containment["Grown"]["Key"] == grown_hash);
     CHECK(fallback_containment["Grown"]["Contract"] == 3);
     CHECK(fallback_containment["Grown"]["Signature"] == cluster["Signature"]);
@@ -285,6 +286,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         CHECK(requirement["Signature"] == cluster["Signature"]);
         CHECK(requirement["Geometry"]["Signature"] == cluster["Signature"]);
         CHECK(!requirement.contains("SelectedModels"));
+        // OI-T5-UNBOXABLE: a FallbackPlaced requirement is always a boxable grown key.
+        CHECK(!requirement["Signature"].contains("Unboxable"));
+        CHECK(requirement["Signature"].contains("Box"));
       }
       else
       {

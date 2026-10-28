@@ -1535,13 +1535,18 @@ retries the full chain (exact / quantum near-match, legacy alias, role-insensiti
 UNGROWN key and places its model exactly as before T5 (the `SpatialClusterPriority` exclusion and
 raw add-back included); the feature's `Hash` / `Signature` / record then read the ungrown key's,
 with `CornerContainment.Fallback` = {`GrownKey`, `PlacedKey`, `PlacedModel`, `Reason`
-"NoMatchedModel"} and `CornerContainment.Grown` = {`Signature`, `Key`, `Contract`,
+"NoMatchedModel", `GrownUnboxable`} and `CornerContainment.Grown` = {`Signature`, `Key`, `Contract`,
 `SpatialSupport`} beside; the manifest lists the GROWN key as a Missing-class requirement
 (`Status` "Missing", `FallbackPlaced` true, `PlacedModel`), excluded from `Summary.Counts.Missing`
 and `Complete` (every patch has a model) and carried by `Summary.FallbackPlaced` = {`Count`,
 `TotalEdgeLength`, `Keys` [{`Hash`, `PlacedModel`}]} (written only when > 0), so that the
 discovery plans the grown coupon (its placeholder then matches the grown key: no fallback, no
-stall). With neither key matched the feature stays Missing on the grown key. The two thresholds of
+stall). With neither key matched the feature stays Missing on the grown key. OI-T5-UNBOXABLE
+(decision 972): a cluster whose T5 widening the span cap refused (`SpanCapRefusedCornerContainment`)
+is Unboxable on its grown key (`Signature.Unboxable` true, no coupon can contain the corner); the
+fallback places the ungrown model as above with `Fallback.GrownUnboxable` true, and NO
+FallbackPlaced requirement is listed (the corner keeps the `SpatialClusterPriority` hole with the
+raw add-back; a claims-only placeholder would not contain it). The two thresholds of
 the box rule itself (the 1e-5 end coincidence, the 2R continuation of a connected row end at
 R) are read within the knife-edge band too (`FaceRules.BoxRuleThresholdBandHits`). The
 perimeter segments inside the box excluded before the identification (a port cut, an
