@@ -1117,7 +1117,8 @@ int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
   MFEM_VERIFY(target > 0.0, "Eigenmode enrichment requires a positive target frequency!");
   {
     const double f_target =
-        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) /
+        (2 * std::numbers::pi);
     Mpi::Print("\nComputing {:d} eigenmodes for PROM enrichment (σ = {:.3e} GHz)\n", eig.n,
                f_target);
   }
@@ -1203,7 +1204,7 @@ int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
     {
       const double f =
           iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
-          (2 * M_PI);
+          (2 * std::numbers::pi);
       Mpi::Print(" Eigenmode {:d}: f = {:.6e} GHz\n", i + 1, f);
     }
     eigen->GetEigenvector(i, u);
