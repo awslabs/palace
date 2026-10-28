@@ -1401,7 +1401,7 @@ its own edge (a cell on the claimed mesh segment, or the side's edge abutting th
 within the signature parameter tolerance along and across the chain), so the side whose edge
 the cluster does not claim keeps its cells. Cells of foreign features inside the box keep
 their patches (the coupon's twins do not contain that metal; the mismatch is second order).
-The response-geometry cache (`PALACE_RESPONSE_GEOMETRY_CACHE`, version 10) stores the
+The response-geometry cache (`PALACE_RESPONSE_GEOMETRY_CACHE`, version 20) stores the
 unplaced patches with the provenance this needs, the corner-arm trim records and the
 uncovered portions; older caches are refused. The placed cells
 are reported under `Diagnostics.ContinuationOwnership` (per cell, per coupon) and the
@@ -1498,7 +1498,22 @@ cluster coupon's box is grown), reported in
 `spatialclusterpriority`) with the dropped coupons, their owners and the raw portions under
 `Diagnostics.SpatialClusterPriority` of `palace.json` and of the preflight manifest
 (written only when a coupon is dropped; the dry run's patch table still lists every built
-patch). Only the plane row is gated (the metal-top rows of a thin device read a few
+patch). The identification grows a cluster's support box over such a straddling corner
+window (the contract-v3 rule T5, `SpatialSupport.CornerContainment`; a library without the
+grown coupon places the ungrown one as before and lists the grown key as a `FallbackPlaced`
+requirement), and an electrostatic solve with dropped coupons also writes the DIAGNOSTIC
+companion table `surface-response-spatial-cluster-priority-clipped-correction.csv`: one row
+per dropped coupon, source and evaluation (0 fixed trace / 1 fixed flux on the raw field / 2
+the corrected field) with, per target interface, the coupon's fabricated energy on the device
+trace sampled at its own basis points (`fab energy`, never applied), the raw within-R energy
+of its whole window (`raw whole energy`) and of the window outside every cluster box (`raw
+outside energy`, the add-back per patch), `ratio` = fab / raw whole and `clipped correction` =
+(ratio - weight) x raw outside — the proportional estimate of the corner's missing correction
+outside the box (`weight` is the coupon's model blend weight, the weight it would carry if
+applied, never the ownership zeroing of the priority table's `Weight`); derived columns, listed
+with their parents in the table's header comment and
+under `Diagnostics.SpatialClusterPriority.ClippedCorrection`, never part of a total (the
+Maxwell path writes no such table). Only the plane row is gated (the metal-top rows of a thin device read a few
 percent of the amplitude and are recorded only), so a coupon frame whose process plane did
 not coincide with the device's metal sheet would be excluded wholesale and recorded. A
 conductor without a vertex on the process plane aborts at construction naming the model; a

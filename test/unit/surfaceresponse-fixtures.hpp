@@ -330,9 +330,15 @@ struct SurfaceResponseFiles
   // Two disconnected rectangular islands (attributes 9 / 10) on the plane y = 0.5 of a
   // 2 x 1 x 2 box whose facing corners (1.0, 0.75) and (1.125, 0.875) in (x, z) form the
   // offset-corner-pair spatial cluster; MakeSerialOffsetCornerPairMesh is the serial mesh
-  // MakeOffsetCornerPairMesh distributes (written to a file by the driver cases).
-  static mfem::Mesh MakeSerialOffsetCornerPairMesh();
-  static std::unique_ptr<mfem::ParMesh> MakeOffsetCornerPairMesh();
+  // MakeOffsetCornerPairMesh distributes (written to a file by the driver cases). With
+  // `straddling_island` the box is 2 x 1 x 3 and a third 0.5 x 0.5 island (attribute 11)
+  // x in [0.125, 0.625], z in [1.75, 2.25] sits across the cluster's contract-box face
+  // z = 1.93 (R = 0.2): its lower corners' +z arm windows exit the box by 0.02 (the T5
+  // excluded-corner containment fixture, OI-SCP-BOXGROW); 0.5 from island 2's top-left
+  // corner and 0.5 wide (beyond the 2R interaction: a free island, never a claim).
+  static mfem::Mesh MakeSerialOffsetCornerPairMesh(bool straddling_island = false);
+  static std::unique_ptr<mfem::ParMesh>
+  MakeOffsetCornerPairMesh(bool straddling_island = false);
   // The SA edge segments of interface `interface` (with their length and vertex types).
   static InterfaceEdgeSummary
   SummarizeInterfaceEdges(const mfem::ParMesh &mesh, const config::BoundaryData &boundaries,

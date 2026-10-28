@@ -554,7 +554,40 @@ CanonicalSignature CanonicalClusterSignature(
 // frame makes the record and the key (a rule inside every candidate would widen a
 // candidate's box and could make its key text sort below the frame of record's, renaming
 // a key whose own frame reads no steep crossing). Recorded only where it acted
-// (SpatialSupport.FaceCrossingTilt), so every other record is unchanged.
+// (SpatialSupport.FaceCrossingTilt), so every other record is unchanged. T5, the
+// EXCLUDED-CORNER CONTAINMENT rule (OI-SCP-BOXGROW, decisions 958 / 960 / 961 / 969;
+// boxgrow DESIGN sections 7-8): the placement drops a corner coupon whose basis box
+// overlaps a cluster's (SpatialClusterPriority) and the part of the corner's claim window
+// outside every cluster box then keeps the device's RAW energy (OI-SCP-HOLE), the corner's
+// own correction missing there. On the T2 / T3 / T4-final box in the frame of record,
+// evaluated ONCE per cluster against every boxable cluster's final contract box of the
+// plane BEFORE any T5 growth (a single pass, order-independent): for every FREE corner
+// site (ConvexCorner / ConcaveCorner with two incident runs, not owned by a cluster) whose
+// claim window W(v) - the identification's claim window of the site (R along each arm,
+// shortened to abut a feature vertex within 2R) plus the ApplyCornerArmTrim stretch
+// [max(R, claim end), s) along the counter-clockwise arm, s = R / max(|cos A|, |sin A|),
+// included whether or not a model is present - has a portion INSIDE this cluster's box
+// AND a portion OUTSIDE EVERY cluster's box (the operator's own OutsideLength rule: the
+// hole class), the box must contain the GEOMETRIC target = the AABB, in the frame of
+// record, of the window's R-band (each claim segment offset
+// kSupportCornerContainmentBandOverRadius x R to both sides between the perpendicular
+// planes through its ends: no end caps, the segments' own end planes bound the band; a
+// function of the device plan, R and the frame alone - mirror corners of mirror clusters
+// give one key). Every face short of the target moves outward by its shortfall quantised
+// UP to the T3 grid (n x kSupportFaceGrowthStepOverRadius x R), then T2 / T3 / T4 re-read
+// the widened box (never past the span cap: a breach is Unboxable by name,
+// SpanCapRefusedCornerContainment); `grown` puts Box + Context into the key as a T3 / T4
+// growth does. The re-read is a fresh T2 / T3 / T4 loop whose per-call counters decide the
+// caps; the final record carries ONE history (stage 1 then the re-read, record-only:
+// Growth.Steps / AttemptedSteps summed, StepReasons / Passes / FaceCrossingTilt.Widenings
+// concatenated with the re-read's pass indices offset, the FaceRules pass counters and the
+// threshold band hits summed; Growth.Reread = the re-read's own counters and first pass),
+// so Growth explains Box from ClaimsBox as on a T3 / T4 cluster. Junction / endpoint
+// windows are not candidates (OI-T5-JUNCTION-WINDOWS).
+// Recorded only where it acted (SpatialSupport.CornerContainment, carrying the UNGROWN
+// signature / key for the placement's fallback: a library without an entry matching the
+// grown key places the ungrown key's model exactly as before T5, decision 960 R4), so
+// every other record is unchanged.
 constexpr double kSupportContinuationOverRadius = 2.0;
 constexpr double kSupportPaddingOverRadius = 1.0;
 constexpr double kSupportEndCoincidenceOverRadius = 1.0e-5;
@@ -564,6 +597,7 @@ constexpr double kSupportFaceGrowthStepOverRadius = 0.25;
 constexpr int kSupportFaceGrowthMaxSteps = 12;
 constexpr double kSupportSpanCapOverRadius = 16.0;
 constexpr double kSupportFaceCrossingTiltBoundDegrees = 70.0;
+constexpr double kSupportCornerContainmentBandOverRadius = 1.0;
 
 // Validates a list of span-cap allowances (fail closed: a cap below
 // kSupportSpanCapOverRadius never lowers the cap; two allowances within 2 x

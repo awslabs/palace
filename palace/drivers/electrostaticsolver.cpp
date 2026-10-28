@@ -1055,6 +1055,97 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
   }
+  // The (ii-a) clipped-correction DIAGNOSTIC of the SpatialClusterPriority-dropped coupons
+  // (OI-SCP-BOXGROW, decisions 958 (b) / 960 / 969): per dropped patch, its whole window
+  // and its outside remainder as portions labelled "p<patch>" (the raw within-R energy per
+  // label = RawWhole / RawOut), paired per source and evaluation with the coupon's
+  // fabricated energy on the device trace (Fab, the operator's diagnostic-only patches) in
+  // surface-response-spatial-cluster-priority-clipped-correction.csv. DERIVED, never in a
+  // total; empty lists when no coupon is dropped (nothing evaluated).
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> clipped_window_portions;
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> clipped_outside_portions;
+  struct ClippedCorrectionRow
+  {
+    int source = 0;
+    int evaluation = 0;
+    SurfaceResponseOperator::ClippedCorrectionDiagnostic diagnostic;
+    std::map<int, double> raw_whole, raw_outside;  // per interface
+    bool fixed_flux = false;
+  };
+  std::vector<ClippedCorrectionRow> clipped_correction_rows;
+  if (response_correction)
+  {
+    for (const auto &entry :
+         response_correction->GetSpatialClusterPriorityExclusions().entries)
+    {
+      for (const auto &portion : entry.window_portions)
+      {
+        clipped_window_portions.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      for (const auto &portion : entry.outside_portions)
+      {
+        clipped_outside_portions.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+    }
+  }
+  // The per-patch raw energies of the current field (the postoperator's grid functions):
+  // RawWhole / RawOut per label, keyed by the dropped patch index.
+  auto ClippedRawEnergies = [&](const auto &portions)
+  {
+    std::map<int, std::map<int, double>> by_patch;  // patch -> interface -> energy
+    if (portions.empty())
+    {
+      return by_patch;
+    }
+    BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+    const auto energies = post_op.GetElectrostaticUncoveredEdgeEnergies(
+        response_correction->GetTargetInterfaces(), portions);
+    for (const auto &[interface, data] : energies)
+    {
+      for (const auto &[label, value] : data.by_type)
+      {
+        if (label.size() > 1 && label[0] == 'p')
+        {
+          by_patch[std::stoi(label.substr(1))][interface] = value;
+        }
+      }
+    }
+    return by_patch;
+  };
+  auto AppendClippedRows = [&](int source, const Vector &field, bool include_fixed_flux,
+                               const std::map<int, std::map<int, double>> &raw_whole,
+                               const std::map<int, std::map<int, double>> &raw_outside)
+  {
+    const auto diagnostics =
+        response_correction->GetSpatialClusterPriorityClippedCorrection(field,
+                                                                        include_fixed_flux);
+    for (const auto &diagnostic : diagnostics)
+    {
+      ClippedCorrectionRow row;
+      row.source = source;
+      row.evaluation = include_fixed_flux ? 0 : 2;
+      row.diagnostic = diagnostic;
+      const auto whole = raw_whole.find(diagnostic.patch);
+      const auto outside = raw_outside.find(diagnostic.patch);
+      if (whole != raw_whole.end())
+      {
+        row.raw_whole = whole->second;
+      }
+      if (outside != raw_outside.end())
+      {
+        row.raw_outside = outside->second;
+      }
+      clipped_correction_rows.push_back(row);
+      if (include_fixed_flux)
+      {
+        row.evaluation = 1;
+        row.fixed_flux = true;
+        clipped_correction_rows.push_back(row);
+      }
+    }
+  };
   // The corrected capacitance's self-consistent column (PostprocessCorrectedTerminals) is
   // written only when every source's corrected solve was accepted (fail closed).
   bool self_consistent_accepted = self_consistent_response;
@@ -1234,6 +1325,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
         raw_spatial_cluster_priority = post_op.GetElectrostaticUncoveredEdgeEnergies(
             response_correction->GetTargetInterfaces(), spatial_cluster_priority_portions);
+      }
+      if (!clipped_window_portions.empty())
+      {
+        // The (ii-a) diagnostic on the raw field (evaluations 0 / 1): the per-patch raw
+        // energies, then the dropped coupons' fabricated energies on the raw trace.
+        const auto raw_whole = ClippedRawEnergies(clipped_window_portions);
+        const auto raw_outside = ClippedRawEnergies(clipped_outside_portions);
+        BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
+        AppendClippedRows(idx, V[step], true, raw_whole, raw_outside);
       }
       if (!model_raw_portions.empty())
       {
@@ -1485,6 +1585,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               corrected_spatial_cluster_priority =
                   post_op.GetElectrostaticUncoveredEdgeEnergies(
                       target_interfaces, spatial_cluster_priority_portions);
+            }
+            if (!clipped_window_portions.empty())
+            {
+              // The (ii-a) diagnostic on the corrected field (evaluation 2).
+              const auto whole = ClippedRawEnergies(clipped_window_portions);
+              const auto outside = ClippedRawEnergies(clipped_outside_portions);
+              AppendClippedRows(idx, V_corrected[step], false, whole, outside);
             }
             if (!raw_conductor_consistency.empty())
             {
@@ -2135,6 +2242,79 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             return corrected ? result.corrected_spatial_cluster_priority
                              : result.raw_spatial_cluster_priority;
           });
+    }
+    // The (ii-a) companion table (OI-SCP-BOXGROW, decisions 958 (b) / 960 / 969): one row
+    // per dropped coupon x (source, evaluation 0 fixed trace / 1 fixed flux on the raw
+    // field / 2 the corrected field); per target interface the DERIVED columns Fab (weight
+    // x t^T K t of the dropped coupon on the device trace at its own basis points),
+    // RawWhole (the raw within-R energy of its whole window), RawOut (of the window outside
+    // every cluster box = the SCP table's add-back, per patch), Ratio = Fab / RawWhole and
+    // ClippedCorrection = (Ratio - weight) x RawOut (the proportional clip of the corner's
+    // missing correction; the co-located patches of a first-order split sum to the
+    // window's). Never in a total.
+    std::filesystem::remove(
+        post_dir / "surface-response-spatial-cluster-priority-clipped-correction.csv");
+    if (!clipped_correction_rows.empty())
+    {
+      std::ofstream output(
+          post_dir / "surface-response-spatial-cluster-priority-clipped-correction.csv");
+      MFEM_VERIFY(output,
+                  "Unable to open "
+                  "surface-response-spatial-cluster-priority-clipped-correction.csv!");
+      output
+          << "# DERIVED (decisions 958 (b) / 960 / 969; OI-SCP-BOXGROW (ii-a)): parents = "
+             "the dropped coupon's response matrices K_type on the device trace sampled "
+             "at its own basis points (fab energy), the raw within-R interface energy of "
+             "its whole window (raw whole energy) and of the window outside every "
+             "cluster box (raw outside energy = the SpatialClusterPriority add-back of "
+             "surface-response-spatial-cluster-priority-energy.csv per patch); ratio = "
+             "fab / raw whole; clipped correction = (ratio - weight) x raw outside. The "
+             "weight column is the dropped coupon's model BLEND weight, the weight it "
+             "would carry if applied (1 on a whole-weight coupon), never the ownership "
+             "zeroing: the Weight column of "
+             "surface-response-spatial-cluster-priority-energy.csv reads 0 on a corner "
+             "the vertex rule owns and is not this column. Evaluation 0 = fixed trace on "
+             "the raw field, 1 = fixed flux on the raw field, 2 = the self-consistent "
+             "corrected field. Diagnostic only: no total carries these columns.\n";
+      output << "source,evaluation,patch,model,feature,weight";
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        output << fmt::format(",fab energy[{0}] (J),raw whole energy[{0}] (J),raw outside "
+                              "energy[{0}] (J),ratio[{0}],clipped correction[{0}] (J)",
+                              interface);
+      }
+      output << '\n';
+      const double nan = std::numeric_limits<double>::quiet_NaN();
+      for (const auto &row : clipped_correction_rows)
+      {
+        output << fmt::format("{},{},{},{},{},{:+.12e}", row.source, row.evaluation,
+                              row.diagnostic.patch + 1, row.diagnostic.model,
+                              row.diagnostic.feature, row.diagnostic.weight);
+        for (const auto &[interface, data] : interfaces)
+        {
+          (void)data;
+          const auto &fab_map = row.fixed_flux
+                                    ? row.diagnostic.fabricated_surface_energy_fixed_flux
+                                    : row.diagnostic.fabricated_surface_energy;
+          const auto fab_it = fab_map.find(interface);
+          const auto whole_it = row.raw_whole.find(interface);
+          const auto outside_it = row.raw_outside.find(interface);
+          const double fab = fab_it != fab_map.end() ? fab_it->second : nan;
+          const double whole = whole_it != row.raw_whole.end() ? whole_it->second : 0.0;
+          const double outside =
+              outside_it != row.raw_outside.end() ? outside_it->second : 0.0;
+          const double ratio = whole > 0.0 && std::isfinite(fab) ? fab / whole : nan;
+          const double clipped =
+              std::isfinite(ratio) ? (ratio - row.diagnostic.weight) * outside : nan;
+          output << fmt::format(",{:+.12e},{:+.12e},{:+.12e},{:+.12e},{:+.12e}",
+                                iodata.units.Dimensionalize<VT::ENERGY>(fab),
+                                iodata.units.Dimensionalize<VT::ENERGY>(whole),
+                                iodata.units.Dimensionalize<VT::ENERGY>(outside), ratio,
+                                iodata.units.Dimensionalize<VT::ENERGY>(clipped));
+        }
+        output << '\n';
+      }
     }
     if (!response_correction->GetConductorConsistencyPortions().empty())
     {

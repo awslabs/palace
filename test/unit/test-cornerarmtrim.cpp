@@ -929,7 +929,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
     std::ifstream cache_input(cache_path);
     REQUIRE(cache_input);
     const json cache = json::parse(cache_input);
-    CHECK(cache["Version"] == 19);
+    CHECK(cache["Version"] == 20);
     const auto &cached_patches = cache["Patches"];
     for (const std::size_t p : extended)
     {
@@ -4415,6 +4415,11 @@ TEST_CASE_METHOD(
   const fs::path control_library = temp.temp_dir / "surface-process-scp-control.json";
   const fs::path straddling_library = temp.temp_dir / "surface-process-scp-straddling.json";
   const fs::path inside_library = temp.temp_dir / "surface-process-scp-inside.json";
+  // The (ii-a) reference (decisions 958 (b) / 969): the same Signature-keyed library
+  // WITHOUT the cluster model, so that the dropped corner's coupon is APPLIED (weight 1)
+  // and its PatchEnergy row is the fabricated energy the diagnostic column must reproduce.
+  const fs::path corner_only_library =
+      temp.temp_dir / "surface-process-scp-corner-only.json";
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
   // The Maxwell configuration of the spatial-cluster case in the identification-based
@@ -4500,7 +4505,8 @@ TEST_CASE_METHOD(
     // Edges, its first basis knots replaced by `knots` (device coordinates; empty = the
     // fixture's).
     auto WriteLibrary = [&](const std::vector<std::array<double, 3>> &knots,
-                            const fs::path &path, const char *suffix)
+                            const fs::path &path, const char *suffix,
+                            bool with_cluster = true)
     {
       json library = fixture_library;
       library["Name"] = std::string("unit-test-process-spatial-cluster-scp-") + suffix;
@@ -4515,6 +4521,10 @@ TEST_CASE_METHOD(
         const std::string type = feature["Type"];
         REQUIRE((type == "IsolatedEdge" || type == "ConvexCorner" ||
                  type == "SpatialEdgeCluster"));
+        if (type == "SpatialEdgeCluster" && !with_cluster)
+        {
+          continue;
+        }
         json model = fixture_library["Models"][type == "IsolatedEdge"   ? 0
                                                : type == "ConvexCorner" ? 1
                                                                         : 2];
@@ -4572,6 +4582,7 @@ TEST_CASE_METHOD(
     WriteLibrary({}, control_library, "control");
     WriteLibrary(straddling_knots, straddling_library, "straddling");
     WriteLibrary(inside_knots, inside_library, "inside");
+    WriteLibrary({}, corner_only_library, "corner-only", false);
   }
   Mpi::Barrier(comm);
 
@@ -4986,6 +4997,7 @@ TEST_CASE_METHOD(
   // (4) The electrostatic driver on the same mesh and libraries (its add-back and record).
   const fs::path es_straddling_dir = temp.temp_dir / "scp-es-straddling";
   const fs::path es_fixture_dir = temp.temp_dir / "scp-es-control";
+  const fs::path es_corner_only_dir = temp.temp_dir / "scp-es-corner-only";
   {
     json config = IslandConfig();
     config["Model"]["Mesh"] = mesh_path.string();
@@ -5002,6 +5014,13 @@ TEST_CASE_METHOD(
     RunElectrostatic(config);
     config["Problem"]["Output"] = es_fixture_dir.string();
     correction["Library"] = control_library.string();
+    RunElectrostatic(config);
+    // The (ii-a) reference: the corner APPLIED (no cluster model: the cluster is Missing,
+    // UnmatchedPolicy Warn) with PatchEnergy, on the same raw field.
+    config["Problem"]["Output"] = es_corner_only_dir.string();
+    correction["Library"] = corner_only_library.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["PatchEnergy"] = true;
     RunElectrostatic(config);
   }
   Mpi::Barrier(comm);
@@ -5234,7 +5253,122 @@ TEST_CASE_METHOD(
     {
       INFO(file);
       CHECK(ReadFile(es_straddling_dir / file) == ReadFile(es_fixture_dir / file));
+      CHECK(ReadFile(es_straddling_dir / file) == ReadFile(es_corner_only_dir / file));
     }
+  }
+
+  // (5) The (ii-a) clipped-correction DIAGNOSTIC (OI-SCP-BOXGROW; decisions 958 (b) / 960 /
+  //     969): the straddling run writes the companion table with ONE row per (source,
+  //     evaluation 0 / 1) for the dropped corner; per interface 4: RawOut = the SCP table's
+  //     add-back (the one dropped patch IS the 'convex corner' type), RawWhole > RawOut > 0
+  //     (the whole window carries the inside piece too), Fab = the fabricated energy the
+  //     SAME corner coupon yields when APPLIED on the same raw field (the corner-only run's
+  //     PatchEnergy row: the diagnostic-only patch samples the device trace at the coupon's
+  //     own points exactly as the applied patch does), Ratio = Fab / RawWhole and
+  //     ClippedCorrection = (Ratio - 1) x RawOut (weight 1); the record in palace.json; no
+  //     table on the control run; every existing table of the straddling run untouched by
+  //     the diagnostic (asserted through the add-back identity above and the raw-solve
+  //     identity).
+  {
+    const fs::path clipped_table =
+        "surface-response-spatial-cluster-priority-clipped-correction.csv";
+    REQUIRE(fs::is_regular_file(es_straddling_dir / clipped_table));
+    CHECK(!fs::exists(es_fixture_dir / clipped_table));
+    CHECK(!fs::exists(es_corner_only_dir / clipped_table));
+    // The table carries a '#' comment line naming the parents before its header.
+    std::vector<std::string> lines;
+    {
+      std::ifstream input(es_straddling_dir / clipped_table);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        lines.push_back(line);
+      }
+    }
+    REQUIRE(lines.size() == 2 + 4);  // the comment, the header, 2 sources x 2 evaluations
+    CHECK_THAT(lines[0], ContainsSubstring("DERIVED"));
+    CHECK_THAT(lines[0], ContainsSubstring("parents"));
+    const fs::path trimmed = temp.temp_dir / "scp-es-clipped-correction-trimmed.csv";
+    {
+      std::ofstream output(trimmed);
+      for (std::size_t i = 1; i < lines.size(); i++)
+      {
+        output << lines[i] << '\n';
+      }
+    }
+    const TextCsv clipped = ReadTrimmedCsv(trimmed);
+    REQUIRE(clipped.rows.size() == 4);
+    std::ifstream metadata_input(es_straddling_dir / "palace.json");
+    REQUIRE(metadata_input);
+    const json metadata = json::parse(metadata_input);
+    const auto &scp_record =
+        metadata.at("SurfaceResponse").at("Diagnostics").at("SpatialClusterPriority");
+    const int dropped_patch = scp_record.at("Patches").at(0).at("Patch").get<int>();
+    REQUIRE(scp_record.contains("ClippedCorrection"));
+    CHECK(scp_record.at("ClippedCorrection").at("Patches") == 1);
+    CHECK(scp_record.at("ClippedCorrection").at("File") == clipped_table.string());
+    CHECK(scp_record.at("ClippedCorrection").contains("Parents"));
+    CHECK(metadata.at("SurfaceResponse").at("Interpolation").at("DiagnosticPatches") == 1);
+    const TextCsv patch_energy =
+        ReadTrimmedCsv(es_corner_only_dir / "surface-response-patch-energy.csv");
+    auto AppliedCornerEnergy = [&](int source, int evaluation)
+    {
+      for (const auto &row : patch_energy.rows)
+      {
+        if (std::lround(std::stod(row[patch_energy.Column("source")])) == source &&
+            std::lround(std::stod(row[patch_energy.Column("evaluation")])) == evaluation &&
+            std::abs(std::stod(row[patch_energy.Column("origin x (m)")]) - corner[0]) <
+                1.0e-9 &&
+            std::abs(std::stod(row[patch_energy.Column("origin y (m)")]) - corner[1]) <
+                1.0e-9 &&
+            std::abs(std::stod(row[patch_energy.Column("origin z (m)")]) - corner[2]) <
+                1.0e-9)
+        {
+          CHECK_THAT(std::stod(row[patch_energy.Column("weight")]),
+                     WithinAbs(1.0, 1.0e-12));
+          return std::stod(row[patch_energy.Column("fabricated surface energy[4] (J)")]);
+        }
+      }
+      FAIL("no applied corner patch row of source " << source << " / evaluation "
+                                                    << evaluation);
+      return 0.0;
+    };
+    int rows_seen = 0;
+    for (const int source : {1, 2})
+    {
+      for (const int evaluation : {0, 1})
+      {
+        INFO("source " << source << " evaluation " << evaluation);
+        const auto row_it = std::find_if(
+            clipped.rows.begin(), clipped.rows.end(),
+            [&](const std::vector<std::string> &row)
+            {
+              return std::lround(std::stod(row[clipped.Column("source")])) == source &&
+                     std::lround(std::stod(row[clipped.Column("evaluation")])) ==
+                         evaluation;
+            });
+        REQUIRE(row_it != clipped.rows.end());
+        rows_seen++;
+        const auto &row = *row_it;
+        CHECK(std::lround(std::stod(row[clipped.Column("patch")])) == dropped_patch + 1);
+        CHECK_THAT(std::stod(row[clipped.Column("weight")]), WithinAbs(1.0, 1.0e-12));
+        const double fab = std::stod(row[clipped.Column("fab energy[4] (J)")]);
+        const double whole = std::stod(row[clipped.Column("raw whole energy[4] (J)")]);
+        const double outside = std::stod(row[clipped.Column("raw outside energy[4] (J)")]);
+        const double ratio = std::stod(row[clipped.Column("ratio[4]")]);
+        const double correction =
+            std::stod(row[clipped.Column("clipped correction[4] (J)")]);
+        CHECK(outside > 0.0);
+        CHECK(whole > outside);
+        CHECK_THAT(outside, WithinRel(SourcePortionTotal(es_straddling_dir / scp_table,
+                                                         source, evaluation),
+                                      1.0e-12));
+        CHECK_THAT(fab, WithinRel(AppliedCornerEnergy(source, evaluation), 1.0e-10));
+        CHECK_THAT(ratio, WithinRel(fab / whole, 1.0e-12));
+        CHECK_THAT(correction, WithinRel((ratio - 1.0) * outside, 1.0e-12));
+      }
+    }
+    CHECK(rows_seen == 4);
   }
 #endif
 }

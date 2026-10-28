@@ -1102,7 +1102,11 @@ smaller endpoint.
    gate reads on the device's arc chord, decision 611 (2) — and refuses a version-17 cache;
    version 19 snaps a mirror-formed coupon's image-side probes at their reflection into the
    domain, decision 774, and refuses a version-18 cache, whose image probes are un-snapped,
-   decision 781). The Maxwell operator path
+   decision 781; version 20 is written by the binary carrying the contract-v3 rule T5
+   (OI-SCP-BOXGROW, decision 972) and refuses a version-19 cache, which a pre-T5 binary may
+   have written with the UNGROWN model of a cluster the T5 binary grows once the library
+   carries the grown one - a placement divergence the cache's patch content cannot show).
+   The Maxwell operator path
    (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
    inert there (it multiplies the Maxwell domain terms for uniformity only). The record
    runs in the operator constructor (metadata
@@ -1496,7 +1500,57 @@ record's ("-10.3..." before "-2.9..."), renaming a key whose own frame reads no 
 the rule fired (`SpatialSupport.FaceCrossingTilt` = {`BoundDegrees`, `BoundSource`, `Widenings`
 [{`Pass` (the T2 pass whose clean box was read), `Face`, `P`, `TiltDegrees`, `ShortfallOverR`,
 `PaddingOverR`, `FaceLineOverR` [from, to]}]}; `Growth.Grown` true), so every other record is
-unchanged. The two thresholds of
+unchanged. T5, the EXCLUDED-CORNER CONTAINMENT rule (OI-SCP-BOXGROW; decisions 958 / 960 / 961 /
+969 / 971; the boxgrow DESIGN 7.1 / 7.2 / 8 / 9): the placement drops a corner coupon whose basis
+box overlaps a cluster's (`SpatialClusterPriority`) and the part of the corner's claim window
+outside every cluster box keeps the device's RAW energy (OI-SCP-HOLE), the corner's own correction
+missing there. Evaluated ONCE per cluster against every boxable cluster's T2 / T3 / T4-final
+contract box of its plane, BEFORE any T5 growth (a single pass, order-independent): for every FREE
+corner site (`ConvexCorner` / `ConcaveCorner` with two incident runs, not owned by a cluster) whose
+claim window W(v) — the identification's claim window of the site on the mesh segments (R along
+each arm, shortened to abut a feature vertex within 2R) plus the `ApplyCornerArmTrim` stretch
+[max(R, claim end), s) along the counter-clockwise arm, s = R / max(|cos A|, |sin A|), included
+whether or not a model is present — has a portion INSIDE this cluster's box AND a portion OUTSIDE
+EVERY cluster's box (the operator's own `OutsideLength` rule: the hole class), the box must contain
+the GEOMETRIC target: the AABB, in the frame of record, of the window's R-band (each claim segment
+offset `kSupportCornerContainmentBandOverRadius` = 1 R to both sides between the perpendicular
+planes through its ends; no end caps: the segments' own end planes bound the band). Every face
+short of the target moves outward by its shortfall quantised UP to the T3 grid (n x 0.25 R), then
+T2 / T3 / T4 re-read the widened box (a span-cap breach is `SpanCapRefusedCornerContainment`);
+`Growth.Grown` true puts `Box` + `Context` into the key as a T3 / T4 growth does. The re-read is a
+fresh T2 / T3 / T4 loop whose per-call counters decide the caps; the final record carries ONE history,
+stage 1 then the re-read (decision 972, record-only): `Growth.Steps` / `AttemptedSteps` summed,
+`StepReasons` / `Passes` / `FaceCrossingTilt.Widenings` concatenated (the re-read's `Pass` indices
+offset by the stage-1 pass count), `FaceRules.Passes` / `ThresholdBandHits` / `ExteriorVertices` /
+`ExteriorEdges` summed (the final-pass readings the re-read's), and `Growth.Reread` = {`FirstPass`
+(the index of the re-read's first pass in `Passes`), `Steps`, `AttemptedSteps` (the re-read's own)}, so
+that `Growth` explains `Box` from `ClaimsBox` (`BoxBeforeOverR` = the stage-1 box, `BoxWidenedOverR` =
+`Passes[Reread.FirstPass].Box`); `Ungrown.SpatialSupport` keeps the pre-T5 record as it was. The rule is
+library-independent (a MISSING cluster is re-keyed too, so that the coupon built for it contains
+its straddling corners: decision 971). Junction / endpoint windows are not candidates
+(OI-T5-JUNCTION-WINDOWS). Recorded ONLY where it acted (`SpatialSupport.CornerContainment` =
+{`Rule`, `BandOverR`, `StepOverR`, `Vertices` [{`Type`, `VertexOverR`, `AngleDegrees`, `Window`,
+`WindowLengthOverR`, `InsideOverR`, `OutsideEveryOverR`, `BandOverR`, `ShortfallsOverR`,
+`Steps`}], `TargetOverR`, `Steps`, `BoxBeforeOverR`, `BoxWidenedOverR`, `GrownKey`, `Ungrown`
+{`Signature`, `Key`, `Contract`, `SpatialSupport` (the complete pre-T5 record)}}), so every other
+record is unchanged. THE PLACEMENT FALLBACK (decisions 958 (a) / 960 R4 / 961 MINOR-2 / MINOR-3):
+when no library entry matches the grown key (a discovery placeholder included), the matching pass
+retries the full chain (exact / quantum near-match, legacy alias, role-insensitive alias) on the
+UNGROWN key and places its model exactly as before T5 (the `SpatialClusterPriority` exclusion and
+raw add-back included); the feature's `Hash` / `Signature` / record then read the ungrown key's,
+with `CornerContainment.Fallback` = {`GrownKey`, `PlacedKey`, `PlacedModel`, `Reason`
+"NoMatchedModel", `GrownUnboxable`} and `CornerContainment.Grown` = {`Signature`, `Key`, `Contract`,
+`SpatialSupport`} beside; the manifest lists the GROWN key as a Missing-class requirement
+(`Status` "Missing", `FallbackPlaced` true, `PlacedModel`), excluded from `Summary.Counts.Missing`
+and `Complete` (every patch has a model) and carried by `Summary.FallbackPlaced` = {`Count`,
+`TotalEdgeLength`, `Keys` [{`Hash`, `PlacedModel`}]} (written only when > 0), so that the
+discovery plans the grown coupon (its placeholder then matches the grown key: no fallback, no
+stall). With neither key matched the feature stays Missing on the grown key. OI-T5-UNBOXABLE
+(decision 972): a cluster whose T5 widening the span cap refused (`SpanCapRefusedCornerContainment`)
+is Unboxable on its grown key (`Signature.Unboxable` true, no coupon can contain the corner); the
+fallback places the ungrown model as above with `Fallback.GrownUnboxable` true, and NO
+FallbackPlaced requirement is listed (the corner keeps the `SpatialClusterPriority` hole with the
+raw add-back; a claims-only placeholder would not contain it). The two thresholds of
 the box rule itself (the 1e-5 end coincidence, the 2R continuation of a connected row end at
 R) are read within the knife-edge band too (`FaceRules.BoxRuleThresholdBandHits`). The
 perimeter segments inside the box excluded before the identification (a port cut, an
@@ -2491,7 +2545,7 @@ arc-fit tolerance (1e-3 R) of the chord in the arc's plane, it is read at its in
 foot on the chord — the device the solve has. Straight device edges never move a knot,
 nor does a knot already on the chord at the signature's resolution (1e-6 R, a device
 joint). The snaps travel with the placed patch (`Provenance.ProbeSnaps`, response-geometry
-cache version 19; a version-17 or version-18 cache is refused), the gate record carries `ProbeSnaps
+cache version 20; a version-17, -18 or -19 cache is refused), the gate record carries `ProbeSnaps
 {Count, MaxDisplacement, Knots[{Knot, Segment, Arc, Displacement}]}` per patch and
 excitation (mesh-file units), a snap naming a knot that is not a conductor vertex (a stale
 cache) fails closed on every rank alike, and the tolerance, the floor and the Python bar
@@ -3089,7 +3143,7 @@ matching pass). The new top-level `Identification` object carries the contract:
                  "SpatialSupport": {"Contract": 2 | 3 | 0, "ClaimsKey": "sha256", "ContextDigest": "sha256" | null,
                                     "ClaimsBox": [x0, y0, x1, y1], "Box": [...], "SpanOverR": s,
                                     "SpanCapOverR": 16, "ExceedsSpanCap": b, "LegacyEquivalent": b,
-                                    "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "AttemptedSteps": [...], "StepReasons": ["..."], "Grown": b},
+                                    "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "AttemptedSteps": [...], "StepReasons": ["..."], "Grown": b, "Reread": {"FirstPass": n, "Steps": [...], "AttemptedSteps": [...]} (T5 clusters only)},
                                     "FaceRules": {"SnapOverR": 1e-3, "ClearanceOverR": 0.25, "SliversDropped": n, "Crossings": [4 counts],
                                                   "MinClearanceOverR": d | null, "MinCrossingSine": s | null, "MinCrossSectionOverR": w | null,
                                                   "NarrowCrossSections": n, "ExteriorVertices": n, "ExteriorEdges": n,

@@ -3999,11 +3999,10 @@ std::array<double, 3> DevicePoint(const IdentifiedFeature &feature, double x, do
   return p;
 }
 
-// Device-coordinate bounding box of the feature's recorded support box.
-std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const char *key,
+// Device-coordinate bounding box of a recorded box (units of R) of the feature's frame.
+std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const nlohmann::json &box,
                                 double radius)
 {
-  const auto &box = feature.spatial_support.at(key);
   std::array<double, 4> device = {1.0e300, 1.0e300, -1.0e300, -1.0e300};
   for (const double bx : {box[0].get<double>(), box[2].get<double>()})
   {
@@ -4017,6 +4016,13 @@ std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const char *ke
     }
   }
   return device;
+}
+
+// Device-coordinate bounding box of the feature's recorded support box.
+std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const char *key,
+                                double radius)
+{
+  return DeviceBox(feature, feature.spatial_support.at(key), radius);
 }
 
 // Distance of a device point from the metal perimeter of the input (its segments).
@@ -4599,13 +4605,37 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
     CHECK(support["Growth"]["Passes"][2]["Failures"].empty());
     CHECK(support["FaceRules"]["Passes"] == 3);
     CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
-    // The same corner 0.5 R outside the face is beyond the clearance shell: invisible by
-    // the rule, the legacy-equivalent key as before.
+    // The same corner 0.5 R outside the face is beyond the clearance shell: invisible to
+    // the two-sided T2 rule (no T3 step, no exterior reading). It is the T5 hole class
+    // (OI-SCP-BOXGROW, decision 960 R1: a free corner whose window enters the box, the
+    // vertex outside it): its -x arm window runs 0.5 R into the box along the pad's top
+    // edge and the rest of its window lies outside every box, so T5 contains the window's
+    // R-band (the -y arm's band reaches x = corner + R: 1.5 R short -> 6 steps of 0.25 R)
+    // and the key is v3 with the grown box (no longer the legacy-equivalent key).
     const auto [input_far, result_far] = Identify(Scene(12.872984 + 0.5 * R));
     const auto *far = ClusterContaining(result_far, input_far, probe);
     REQUIRE(far != nullptr);
-    CHECK(far->spatial_support["Contract"] == 2);
-    CHECK(far->signature_key == legacy_key);
+    CHECK(far->spatial_support["Contract"] == 3);
+    CHECK(far->signature_key != legacy_key);
+    CHECK(far->spatial_support["Growth"]["Steps"] == nlohmann::json({0, 0, 0, 0}));
+    REQUIRE(far->spatial_support.contains("CornerContainment"));
+    const auto &containment = far->spatial_support["CornerContainment"];
+    REQUIRE(containment["Vertices"].size() == 1);
+    CHECK(containment["Vertices"][0]["Type"] == "ConvexCorner");
+    CHECK_THAT(containment["Vertices"][0]["InsideOverR"].get<double>(),
+               WithinAbs(0.5, 1.0e-5));
+    CHECK_THAT(containment["Vertices"][0]["OutsideEveryOverR"].get<double>(),
+               WithinAbs(1.5, 1.0e-5));
+    int containment_steps = 0;
+    for (const auto &steps : containment["Steps"])
+    {
+      containment_steps += steps.get<int>();
+    }
+    CHECK(containment_steps == 6);
+    const auto far_box = DeviceBox(*far, "Box", R);
+    CHECK_THAT(far_box[2] - DeviceBox(*far, "ClaimsBox", R)[2], WithinAbs(1.5 * R, 1.0e-5));
+    CHECK(containment["Ungrown"]["Key"] == legacy_hash);
+    CHECK(containment["Ungrown"]["Contract"] == 2);
   }
 
   // 11. The knife edge (R1 final review MAJOR-1; decisions 287 (b) / 288): the pad corner
@@ -6168,7 +6198,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     imaged.real_segments = static_cast<std::size_t>(chord);
     CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
   }
-  // 7. The geometry cache round trip of the record (version 19).
+  // 7. The geometry cache round trip of the record (version 20).
   {
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -6197,7 +6227,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     std::ifstream input(path);
     nlohmann::json cache = nlohmann::json::parse(input);
     input.close();
-    CHECK(cache["Version"] == 19);
+    CHECK(cache["Version"] == 20);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
     CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
     CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
@@ -6227,7 +6257,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       ContainsSubstring("cache version 17") &&
-                          ContainsSubstring("version 19"));
+                          ContainsSubstring("version 20"));
     // A version-18 cache (main before decision 774: the same schema, but a mirror-formed
     // coupon's image-side probes recorded un-snapped) is refused by the version message
     // (decision 781; the 527 rule), never read for its stale ProbeSnaps.
@@ -6240,7 +6270,22 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
                       ContainsSubstring("cache version 18") &&
-                          ContainsSubstring("version 19"));
+                          ContainsSubstring("version 20"));
+    // A version-19 cache (main before the T5 excluded-corner containment rule, decision
+    // 972: the same schema, but written by a binary that places the UNGROWN model of a
+    // cluster the T5 binary grows) is refused by the version message (the 527 / 781
+    // merge-order rule), never read for its stale placement.
+    nlohmann::json nineteen = cache;
+    nineteen["Version"] = 19;
+    const auto nineteen_path = dir / "geometry-v19.json";
+    {
+      std::ofstream output(nineteen_path);
+      output << nineteen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(nineteen_path, data),
+                      ContainsSubstring("cache version 19") &&
+                          ContainsSubstring("version 20") &&
+                          ContainsSubstring("excluded corner window"));
   }
 }
 
@@ -7165,6 +7210,455 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBandChains",
       CHECK_THAT(FeatureById(merged, feature.id)->length,
                  WithinAbs(feature.length, 1.0e-9));
     }
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationCornerContainment",
+          "[surfaceresponseidentification][cornercontainment][Serial]")
+{
+  // OI-SCP-BOXGROW, the contract-v3 rule T5 (decisions 958 / 960 / 961 / 969; boxgrow
+  // DESIGN 7.1 / 7.2 / 8). The SpatialSupportContract fixture (R = 2 um: pad A conductor 0
+  // y <= 0, lead B conductor 1 |x| <= 1 from y = 1; the lead end's claims box x in
+  // [-12.873, 12.873], y in [-5, 12] um) plus one foreign 4 x 4 um island (conductor 2)
+  // whose free convex corners sit near the box's x1 face. The record's faces are indexed in
+  // the cluster's frame of record and read through DeviceFace.
+  const double R = 2.0;
+  const double step = kSupportFaceGrowthStepOverRadius * R;  // 0.5 um
+  auto Identify = [&](double lead_half_width, const std::vector<LoopSpec> &foreign)
+  {
+    std::vector<LoopSpec> loops = {
+        {Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+        {Rectangle(-lead_half_width, 1.0, lead_half_width, 40.0), 1, 100.0}};
+    loops.insert(loops.end(), foreign.begin(), foreign.end());
+    const auto input = MakeInput(loops, R);
+    auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    return std::make_pair(input, std::move(result));
+  };
+  const std::array<double, 2> probe = {0.0, 1.0};  // the lead's end edge: in the cluster
+  auto DeviceFace = [&](const IdentifiedFeature &cluster, const char *key, int f)
+  {
+    const auto &box = cluster.spatial_support.at(key);
+    const auto device = DeviceBox(cluster, key, R);
+    const double mid_x = 0.5 * (box[0].get<double>() + box[2].get<double>()),
+                 mid_y = 0.5 * (box[1].get<double>() + box[3].get<double>());
+    const auto p = f % 2 == 0 ? DevicePoint(cluster, box[f].get<double>(), mid_y, R)
+                              : DevicePoint(cluster, mid_x, box[f].get<double>(), R);
+    int best = -1;
+    double best_distance = 1.0e300;
+    for (int k = 0; k < 4; k++)
+    {
+      const double distance = std::abs(p[k % 2] - device[static_cast<std::size_t>(k)]);
+      if (distance < best_distance)
+      {
+        best_distance = distance;
+        best = k;
+      }
+    }
+    REQUIRE(best_distance < 1.0e-6);
+    return best;
+  };
+  // The T5 steps of the record per DEVICE face (0 = x0, 1 = y0, 2 = x1, 3 = y1).
+  auto DeviceSteps = [&](const IdentifiedFeature &cluster)
+  {
+    std::array<int, 4> steps{};
+    const auto &containment = cluster.spatial_support.at("CornerContainment");
+    for (int f = 0; f < 4; f++)
+    {
+      steps[static_cast<std::size_t>(DeviceFace(cluster, "ClaimsBox", f))] =
+          containment["Steps"][f].get<int>();
+    }
+    return steps;
+  };
+  auto CheckSilent = [&](const IdentifiedFeature &cluster)
+  {
+    const auto &support = cluster.spatial_support;
+    CHECK(!support.contains("CornerContainment"));
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Box"] == support["ClaimsBox"]);
+  };
+
+  // The control (no island): the claims box of record the islands below are placed by.
+  double x0 = 0.0, x1 = 0.0, y0 = 0.0, y1 = 0.0;
+  std::string control_hash;
+  {
+    const auto [input, result] = Identify(1.0, {});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CheckSilent(*cluster);
+    const auto box = DeviceBox(*cluster, "ClaimsBox", R);
+    x0 = box[0];
+    x1 = box[2];
+    y0 = box[1];
+    y1 = box[3];
+    CHECK_THAT(x0, WithinAbs(-12.872984, 1.0e-5));
+    CHECK_THAT(x1, WithinAbs(12.872984, 1.0e-5));
+    CHECK_THAT(y0, WithinAbs(-5.0, 1.0e-5));
+    CHECK_THAT(y1, WithinAbs(12.0, 1.0e-5));
+    control_hash = cluster->hash;
+  }
+  // An axis-aligned 4 x 4 um island of conductor 2 with its left edge at x = left, y in
+  // [5, 9] (5 um above the pad and > 2R from the lead: a free island, never a claim).
+  auto Island = [&](double left)
+  { return LoopSpec{Rectangle(left, 5.0, left + 4.0, 9.0), 2, 100.0}; };
+
+  // (a) CLASS (a), the vertex INSIDE the box within R of a face: the island's left edge
+  //     0.873 um inside the x1 face (0.4365 R: T2's 0.25 R clearance passes, no T3 step),
+  //     its two left corners' +x arms exit the face (inside 0.873, outside 1.127 um of each
+  //     2-um arm). Both windows fire; the R-band of the +x arm reaches x = left + R, so the
+  //     x1 face is short by (left + R) - x1 = 1.127 um = 0.5635 R -> 3 steps of 0.25 R ->
+  //     +1.5 um; the y faces are not short (the bands lie inside y in [3, 11]); the key
+  //     carries the grown Box + Context (contract 3) and differs from the control's; the
+  //     Ungrown subtree carries the pre-T5 state (contract 3 here: the island is context).
+  std::string grown_hash;
+  {
+    const double left = x1 - 0.873;
+    const auto [input, result] = Identify(1.0, {Island(left)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Growth"]["Grown"] == true);
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      CHECK(steps.get<int>() == 0);  // no T3 step: the growth is T5's
+    }
+    REQUIRE(support.contains("CornerContainment"));
+    const auto &containment = support["CornerContainment"];
+    CHECK_THAT(containment["BandOverR"].get<double>(), WithinAbs(1.0, 0.0));
+    CHECK_THAT(containment["StepOverR"].get<double>(), WithinAbs(0.25, 0.0));
+    REQUIRE(containment["Vertices"].size() == 2);
+    for (const auto &vertex : containment["Vertices"])
+    {
+      CHECK(vertex["Type"] == "ConvexCorner");
+      CHECK_THAT(vertex["AngleDegrees"].get<double>(), WithinAbs(90.0, 1.0e-9));
+      CHECK(vertex["Window"].size() == 2);  // the two arms; no stretch at 90 degrees
+      CHECK_THAT(vertex["WindowLengthOverR"].get<double>(), WithinAbs(2.0, 1.0e-6));
+      CHECK_THAT(vertex["InsideOverR"].get<double>(), WithinAbs(1.0 + 0.873 / R, 1.0e-5));
+      CHECK_THAT(vertex["OutsideEveryOverR"].get<double>(),
+                 WithinAbs((2.0 - 0.873) / R, 1.0e-5));
+      const auto p = DevicePoint(*cluster, vertex["VertexOverR"][0].get<double>(),
+                                 vertex["VertexOverR"][1].get<double>(), R);
+      CHECK_THAT(p[0], WithinAbs(left, 1.0e-5));
+      CHECK((std::abs(p[1] - 5.0) < 1.0e-5 || std::abs(p[1] - 9.0) < 1.0e-5));
+      int moved_faces = 0;
+      for (const auto &s : vertex["Steps"])
+      {
+        moved_faces += s.get<int>() > 0 ? 1 : 0;
+      }
+      CHECK(moved_faces == 1);
+      // The vertex's OWN band (decision 972, review MAJOR-1: never the union of the
+      // vertices read before it): the +x arm's band x in [left, left + R], y in [cy -+ R];
+      // the left-edge arm's (halved to R) band x in [left - R, left + R], y between cy and
+      // the island's mid-height 7 -> the AABB x in [left - R, left + R], y in [cy -+ R].
+      const auto band = DeviceBox(*cluster, vertex["BandOverR"], R);
+      CHECK_THAT(band[0], WithinAbs(left - R, 1.0e-5));
+      CHECK_THAT(band[2], WithinAbs(left + R, 1.0e-5));
+      CHECK_THAT(band[1], WithinAbs(p[1] - R, 1.0e-5));
+      CHECK_THAT(band[3], WithinAbs(p[1] + R, 1.0e-5));
+      std::array<double, 4> own_shortfalls{};
+      for (int f = 0; f < 4; f++)
+      {
+        own_shortfalls[static_cast<std::size_t>(DeviceFace(*cluster, "ClaimsBox", f))] =
+            vertex["ShortfallsOverR"][f].get<double>();
+      }
+      CHECK_THAT(own_shortfalls[2], WithinAbs(1.127 / R, 1.0e-5));
+      CHECK_THAT(own_shortfalls[0] + own_shortfalls[1] + own_shortfalls[3],
+                 WithinAbs(0.0, 1.0e-12));
+    }
+    CHECK(DeviceSteps(*cluster) == std::array<int, 4>{0, 0, 3, 0});
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(claims_box[2], WithinAbs(x1, 1.0e-5));
+    CHECK_THAT(box[2], WithinAbs(x1 + 3.0 * step, 1.0e-5));
+    CHECK_THAT(box[0], WithinAbs(claims_box[0], 1.0e-9));
+    CHECK_THAT(box[1], WithinAbs(y0, 1.0e-9));
+    CHECK_THAT(box[3], WithinAbs(y1, 1.0e-9));
+    // BoxBeforeOverR = the T2 / T3 / T4-final box (the claims box here), BoxWidenedOverR =
+    // the T5 box the re-read started from (= the final Box: T2 passes on it).
+    CHECK(containment["BoxBeforeOverR"] == support["ClaimsBox"]);
+    CHECK(containment["BoxWidenedOverR"] == support["Box"]);
+    // One Growth history (decision 972): the stage-1 pass (no step) then the re-read's one
+    // pass from the widened box; Growth.Reread names the re-read's own counters.
+    REQUIRE(support["Growth"].contains("Reread"));
+    CHECK(support["Growth"]["Reread"]["FirstPass"] ==
+          containment["Ungrown"]["SpatialSupport"]["Growth"]["Passes"].size());
+    CHECK(support["Growth"]["Reread"]["FirstPass"] == 1);
+    CHECK(support["Growth"]["Reread"]["Steps"] == nlohmann::json({0, 0, 0, 0}));
+    REQUIRE(support["Growth"]["Passes"].size() == 2);
+    CHECK(support["Growth"]["Passes"][0]["Box"] == containment["BoxBeforeOverR"]);
+    CHECK(support["Growth"]["Passes"][1]["Box"] == containment["BoxWidenedOverR"]);
+    CHECK(support["FaceRules"]["Passes"] == 2);
+    CHECK(!containment["Ungrown"]["SpatialSupport"]["Growth"].contains("Reread"));
+    // The target reaches left + R along device x; the record is in frame units.
+    const auto target = containment["TargetOverR"];
+    double target_x1 = -1.0e300;
+    for (const double tx : {target[0].get<double>(), target[2].get<double>()})
+    {
+      for (const double ty : {target[1].get<double>(), target[3].get<double>()})
+      {
+        target_x1 = std::max(target_x1, DevicePoint(*cluster, tx, ty, R)[0]);
+      }
+    }
+    CHECK_THAT(target_x1, WithinAbs(left + R, 1.0e-5));
+    // The grown key and the ungrown state.
+    CHECK(containment["GrownKey"] == cluster->hash);
+    CHECK(cluster->hash != control_hash);
+    const auto &ungrown = containment["Ungrown"];
+    CHECK(ungrown["Contract"] == 3);
+    CHECK(ungrown["Key"] != cluster->hash);
+    CHECK(ungrown["Signature"]["Type"] == "SpatialEdgeCluster");
+    CHECK(ungrown["Signature"]["EdgeCount"] == cluster->signature["EdgeCount"]);
+    CHECK(ungrown["SpatialSupport"]["Box"] == support["ClaimsBox"]);
+    CHECK(ungrown["SpatialSupport"]["Contract"] == 3);
+    CHECK(ungrown["SpatialSupport"]["ClaimsKey"] == support["ClaimsKey"]);
+    CHECK(!ungrown["SpatialSupport"].contains("CornerContainment"));
+    CHECK(SignatureKeyAndHash(ungrown["Signature"], "SpatialEdgeCluster").second ==
+          ungrown["Key"].get<std::string>());
+    // The grown signature's Box is the record's; the context carries the island.
+    CHECK(cluster->signature["Box"] == support["Box"]);
+    CHECK(cluster->signature.contains("Context"));
+    // The island inside the grown box: its left edge and the parts of its top and bottom
+    // edges up to the moved face (its right edge stays outside).
+    CHECK(support["Context"]["ForeignPieces"].get<int>() == 3);
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    CHECK(result.spatial_support.grown >= 1);
+    grown_hash = cluster->hash;
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // (b) CLASS (b), the vertex OUTSIDE the box with one arm partly inside: the island
+  //     straddles the x1 face with its right edge 1.127 um outside it; its right corners'
+  //     -x arms enter the box by 0.873 um (inside), the rest of their windows (1.127 + the
+  //     2-um +-y arms) lie outside every box; its left corners (2.873 um inside the face)
+  //     have windows wholly inside (silent). The band of the -x arm reaches x = right, that
+  //     of the y arm x = right + R: the face is short by right + R - x1 = 3.127 um =
+  //     1.5635 R -> 7 steps -> +3.5 um.
+  {
+    const double left = x1 - 2.873;
+    const auto [input, result] = Identify(1.0, {Island(left)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    REQUIRE(support.contains("CornerContainment"));
+    REQUIRE(support["CornerContainment"]["Vertices"].size() == 2);
+    for (const auto &vertex : support["CornerContainment"]["Vertices"])
+    {
+      CHECK_THAT(vertex["InsideOverR"].get<double>(), WithinAbs(0.873 / R, 1.0e-5));
+      CHECK_THAT(vertex["OutsideEveryOverR"].get<double>(),
+                 WithinAbs((4.0 - 0.873) / R, 1.0e-5));
+    }
+    CHECK(DeviceSteps(*cluster) == std::array<int, 4>{0, 0, 7, 0});
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(box[2], WithinAbs(x1 + 7.0 * step, 1.0e-5));
+    CHECK(cluster->hash != grown_hash);
+    CHECK(cluster->hash != control_hash);
+  }
+
+  // (c) CONTROLS, the rule silent: an island wholly inside the box (its right corners' +x
+  //     arms end at x = 12.0 < x1); an 8.127-um island whose right corners' -x arms end at
+  //     x1 + 0.127, OUTSIDE the box (its left corners' windows wholly inside; the arm ends
+  //     are no vertices, so the T2 shell reads nothing); and an island beyond the box whose
+  //     windows never enter it. No record carries CornerContainment; the first two islands
+  //     are context (contract 3), the third is not (the control's key).
+  {
+    const auto [input, result] = Identify(1.0, {Island(6.0)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CheckSilent(*cluster);
+    CHECK(cluster->spatial_support["Contract"] == 3);
+  }
+  {
+    const auto [input, result] =
+        Identify(1.0, {LoopSpec{Rectangle(x1 - 6.0, 5.0, x1 + 2.127, 9.0), 2, 100.0}});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CheckSilent(*cluster);
+    CHECK(cluster->spatial_support["Contract"] == 3);
+  }
+  {
+    const auto [input, result] = Identify(1.0, {Island(x1 + 2.127)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CheckSilent(*cluster);
+    CHECK(cluster->hash == control_hash);
+  }
+
+  // (d) SPAN-CAP REFUSAL by name: a lead of half-width 4 um widens the claims box to
+  //     +-15.873 um (a span of 15.873 R, under the 16 R cap); the class-(a) island at its
+  //     x1 face asks for 3 steps (+1.5 um): the span would read 16.62 R > 16 R, so the
+  //     cluster is Unboxable by name (SpanCapRefusedCornerContainment), the record keeping
+  //     the T2 / T3 / T4-final box and the T5 reading (the refused widening recorded).
+  {
+    const auto [control_input, control] = Identify(4.0, {});
+    const auto *reference = ClusterContaining(control, control_input, probe);
+    REQUIRE(reference != nullptr);
+    CheckSilent(*reference);
+    const auto wide = DeviceBox(*reference, "ClaimsBox", R);
+    const double span = std::max(wide[2] - wide[0], wide[3] - wide[1]);
+    REQUIRE(span <= kSupportSpanCapOverRadius * R);
+    REQUIRE(span + 3.0 * step > kSupportSpanCapOverRadius * R);
+    const auto [input, result] = Identify(4.0, {Island(wide[2] - 0.873)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 0);
+    CHECK(cluster->signature["Unboxable"] == true);
+    CHECK(support["UnboxableReason"] == "SpanCapRefusedCornerContainment");
+    REQUIRE(support["Unboxable"].is_string());
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("excluded-corner containment rule"));
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("beyond the span cap 16"));
+    CHECK(support["Box"] == support["ClaimsBox"]);  // the refused widening is not applied
+    REQUIRE(support.contains("CornerContainment"));
+    CHECK(DeviceSteps(*cluster) == std::array<int, 4>{0, 0, 3, 0});
+    const auto widened = support["CornerContainment"]["BoxWidenedOverR"];
+    CHECK(std::max(widened[2].get<double>() - widened[0].get<double>(),
+                   widened[3].get<double>() - widened[1].get<double>()) >
+          kSupportSpanCapOverRadius);
+    CHECK(result.spatial_support.unboxable >= 1);
+    // OI-T5-UNBOXABLE (decision 972 (Q3)): the record keeps the Ungrown state the operator
+    // falls back to (the pre-T5 key, boxable, contract 3: the island is context), while
+    // the grown signature of record is the Unboxable one - the state the operator's
+    // fallback reads (Fallback.GrownUnboxable) and the requirements builder lists no
+    // FallbackPlaced requirement for (the signature's Unboxable flag). The matching-pass
+    // leg is OI-T5-UNBOXABLE-MATCHPASS (no mesh fixture reaches the span cap).
+    const auto &ungrown = support["CornerContainment"]["Ungrown"];
+    CHECK(ungrown["Key"] != cluster->hash);
+    CHECK(ungrown["Contract"] == 3);
+    CHECK(!ungrown["Signature"].contains("Unboxable"));
+    CHECK(ungrown["SpatialSupport"]["Unboxable"].is_null());
+    CHECK(ungrown["SpatialSupport"]["Box"] == support["Box"]);
+    CHECK(SignatureKeyAndHash(ungrown["Signature"], "SpatialEdgeCluster").second ==
+          ungrown["Key"].get<std::string>());
+    CHECK(SignatureKeyAndHash(cluster->signature, "SpatialEdgeCluster").second ==
+          cluster->hash);
+    CHECK(support["CornerContainment"]["GrownKey"] == cluster->hash);
+    CHECK((!support.contains("Growth") || support["Growth"]["Grown"] == false));
+  }
+
+  // (e) ONE Growth HISTORY where stage 1 and the re-read both step, and the step cap is
+  //     the LOOP's own (decision 972 (A), review MAJOR-2). Three islands of conductor 2:
+  //     S1 at x in [-9.5, -5.5] with a staircase top (levels y1 - 0.2 + 0.5 k, k = 0..7:
+  //     each level enters the y1 face's clearance band as the face moves: 8 stage-1 T3
+  //     steps on y1, the face at y1 + 4; its 0.5-um steps form a cluster of their own whose
+  //     box stays left of the lead); the class-(a) island at the x1 face (its left corners'
+  //     +x arms exit x1 by 1.127 um: T5, 3 steps on x1); S2 beyond x1 (left edge 1.25 um
+  //     outside: beyond the stage-1 shell, its windows wholly outside the box, its own
+  //     cluster box above y = 11.5: silent) with five 0.2 x 0.25 um notches on that edge at
+  //     y1 + 3.8 + 0.5 j (j = 0..4) and its top at y1 + 6.3 - once the T5 box reaches it
+  //     (x1 + 1.5 um), its vertices sit 0.25 / 0.05 um inside the x1 face (1 re-read step)
+  //     and its notch corners cascade the y1 face another 6 steps. The y1 face takes 8 + 6
+  //     = 14 steps in all, above MaxSteps 12: the cap counts per call (stage 1: 8; the
+  //     re-read: 6), the cluster stays boxable.
+  {
+    std::vector<Point2> staircase = {{-9.5, 4.5}, {-5.5, 4.5}};
+    for (int k = 7; k >= 0; k--)
+    {
+      const double level = y1 - 0.2 + 0.5 * k;
+      staircase.push_back({-9.5 + 0.5 * (k + 1), level});
+      staircase.push_back({-9.5 + 0.5 * k, level});
+    }
+    std::vector<Point2> notched = {
+        {x1 + 1.25, 15.5}, {x1 + 5.25, 15.5}, {x1 + 5.25, y1 + 6.3}, {x1 + 1.25, y1 + 6.3}};
+    for (int j = 4; j >= 0; j--)
+    {
+      const double bottom = y1 + 3.8 + 0.5 * j;
+      notched.push_back({x1 + 1.25, bottom + 0.25});
+      notched.push_back({x1 + 1.45, bottom + 0.25});
+      notched.push_back({x1 + 1.45, bottom});
+      notched.push_back({x1 + 1.25, bottom});
+    }
+    const auto [input, result] =
+        Identify(1.0, {LoopSpec{staircase, 2, 100.0},
+                       LoopSpec{Rectangle(x1 - 0.873, 4.5, x1 + 3.127, 8.5), 2, 100.0},
+                       LoopSpec{notched, 2, 100.0}});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Unboxable"].is_null());
+    CHECK(support["Growth"]["Grown"] == true);
+    CHECK(support["Growth"]["MaxSteps"] == kSupportFaceGrowthMaxSteps);
+    REQUIRE(support.contains("CornerContainment"));
+    const auto &containment = support["CornerContainment"];
+    REQUIRE(containment["Vertices"].size() == 2);
+    CHECK(DeviceSteps(*cluster) == std::array<int, 4>{0, 0, 3, 0});
+    const auto &ungrown_growth = containment["Ungrown"]["SpatialSupport"]["Growth"];
+    const auto &growth = support["Growth"];
+    // Device-face step counts of the stage-1 record, the re-read and the merged history.
+    auto FaceCounts = [&](const nlohmann::json &steps)
+    {
+      std::array<int, 4> counts{};
+      for (int f = 0; f < 4; f++)
+      {
+        counts[static_cast<std::size_t>(DeviceFace(*cluster, "ClaimsBox", f))] =
+            steps[f].get<int>();
+      }
+      return counts;
+    };
+    CHECK(FaceCounts(ungrown_growth["Steps"]) == std::array<int, 4>{0, 0, 0, 8});
+    CHECK(FaceCounts(growth["Reread"]["Steps"]) == std::array<int, 4>{0, 0, 1, 6});
+    CHECK(FaceCounts(growth["Steps"]) == std::array<int, 4>{0, 0, 1, 14});
+    CHECK(growth["AttemptedSteps"] == growth["Steps"]);
+    CHECK(growth["Reread"]["AttemptedSteps"] == growth["Reread"]["Steps"]);
+    CHECK(FaceCounts(growth["Steps"])[3] > kSupportFaceGrowthMaxSteps);
+    // The passes: 9 of stage 1 (8 steps) then 7 of the re-read (6 steps), the first of the
+    // re-read from the T5-widened box; the step reasons follow.
+    REQUIRE(ungrown_growth["Passes"].size() == 9);
+    CHECK(growth["Reread"]["FirstPass"] == 9);
+    REQUIRE(growth["Passes"].size() == 16);
+    for (std::size_t k = 0; k < 9; k++)
+    {
+      CHECK(growth["Passes"][k] == ungrown_growth["Passes"][k]);
+    }
+    CHECK(growth["Passes"][9]["Box"] == containment["BoxWidenedOverR"]);
+    CHECK(growth["Passes"][0]["Box"] == support["ClaimsBox"]);
+    CHECK(growth["Passes"][8]["Box"] == containment["BoxBeforeOverR"]);
+    REQUIRE(growth["StepReasons"].size() == 14);
+    for (std::size_t k = 0; k < 8; k++)
+    {
+      CHECK(growth["StepReasons"][k] == ungrown_growth["StepReasons"][k]);
+    }
+    CHECK(support["FaceRules"]["Passes"] == 16);
+    CHECK(containment["Ungrown"]["SpatialSupport"]["FaceRules"]["Passes"] == 9);
+    // The summed pass counters = the stage-1 record's + the re-read's own passes.
+    for (const char *key : {"ExteriorVertices", "ExteriorEdges", "ThresholdBandHits"})
+    {
+      std::size_t reread = 0;
+      for (std::size_t k = 9; k < 16; k++)
+      {
+        reread += growth["Passes"][k][key].get<std::size_t>();
+      }
+      CHECK(support["FaceRules"][key].get<std::size_t>() ==
+            containment["Ungrown"]["SpatialSupport"]["FaceRules"][key].get<std::size_t>() +
+                reread);
+    }
+    // The boxes: ClaimsBox -> +4 um on y1 (stage 1) -> +1.5 um on x1 (T5) -> +0.5 um on x1
+    // and +3 um on y1 (the re-read).
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto before = DeviceBox(*cluster, containment["BoxBeforeOverR"], R);
+    const auto widened = DeviceBox(*cluster, containment["BoxWidenedOverR"], R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(claims_box[3], WithinAbs(y1, 1.0e-5));
+    CHECK_THAT(before[3], WithinAbs(y1 + 8.0 * step, 1.0e-5));
+    CHECK_THAT(before[2], WithinAbs(x1, 1.0e-5));
+    CHECK_THAT(widened[2], WithinAbs(x1 + 3.0 * step, 1.0e-5));
+    CHECK_THAT(widened[3], WithinAbs(before[3], 1.0e-9));
+    CHECK_THAT(box[2], WithinAbs(x1 + 4.0 * step, 1.0e-5));
+    CHECK_THAT(box[3], WithinAbs(y1 + 14.0 * step, 1.0e-5));
+    CHECK_THAT(box[0], WithinAbs(x0, 1.0e-9));
+    CHECK_THAT(box[1], WithinAbs(y0, 1.0e-9));
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
   }
 }
 
