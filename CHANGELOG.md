@@ -41,7 +41,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     simulation with perfect conductors, with `1/Q = Σ_j Rs_j / G_j`. Driven simulations
     also report the time-averaged dissipated power and its fraction of the incident port
     power. Interior boundaries are treated as two independent conductor faces by default,
-    or as a thin film with `"ThinFilm": true`. Results are written to `surface-Q.csv`.
+    or as a thin film with `"ThinFilm": true`, with a warning when this does not match
+    the boundary condition of the simulation. Results are written to `surface-Q.csv`.
     SchemaVer 6-0-1.
 
 #### Interface Changes
