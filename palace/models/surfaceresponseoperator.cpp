@@ -6205,6 +6205,27 @@ public:
       return entries;
     };
     nlohmann::json entries = Entries(requirements, &counts, &lengths);
+    // T5 fallback (decisions 960 R4 / 961 MINOR-3): the FallbackPlaced requirements (the
+    // grown keys of clusters placed on their ungrown key) leave Counts.Missing and Complete
+    // (every patch has a model) and are carried by Summary.FallbackPlaced, written only
+    // when there are any so that every other manifest is unchanged.
+    int fallback_placed_count = 0;
+    double fallback_placed_length = 0.0;
+    nlohmann::json fallback_placed_keys = nlohmann::json::array();
+    for (const auto &entry : entries)
+    {
+      if (entry.value("FallbackPlaced", false))
+      {
+        const int entry_count = entry["Count"].get<int>();
+        const double entry_length = entry["TotalEdgeLength"].get<double>();
+        counts[entry["Status"].get<std::string>()] -= entry_count;
+        lengths[entry["Status"].get<std::string>()] -= entry_length;
+        fallback_placed_count += entry_count;
+        fallback_placed_length += entry_length;
+        fallback_placed_keys.push_back(
+            {{"Hash", entry["Hash"]}, {"PlacedModel", entry["PlacedModel"]}});
+      }
+    }
     nlohmann::json result = {
         {"Version", identification_active ? 2 : 1},
         {"Complete", counts["Missing"] == 0},
@@ -6223,6 +6244,17 @@ public:
     {
       result["Identification"] = identification;
       result["LegacyRequirements"] = Entries(legacy_requirements, nullptr, nullptr);
+    }
+    if (fallback_placed_count > 0)
+    {
+      result["Summary"]["FallbackPlaced"] = {
+          {"Count", fallback_placed_count},
+          {"TotalEdgeLength", fallback_placed_length},
+          {"Keys", fallback_placed_keys},
+          {"Rule", "decisions 960 R4 / 961 MINOR-3 (OI-SCP-BOXGROW): the grown keys of T5 "
+                   "clusters placed on their ungrown key (SpatialSupport.CornerContainment."
+                   "Fallback); Missing-class requirements the discovery plans, excluded "
+                   "from Counts.Missing and Complete"}};
     }
     if (!statistics.is_null())
     {
@@ -8411,7 +8443,11 @@ IdentificationResult RunGeometryIdentification(
   std::map<int, nlohmann::json> corner_records;     // per feature, for the manifest
   CornerBlendMatrixCache corner_blend_cache;        // the corner nodes' matrices, read once
   library_keys.RefuseNearDuplicateClusters();
-  for (auto &feature : result.features)
+  // The matching of one feature (the key-based chain exact / quantum near-match -> legacy
+  // alias -> role-insensitive alias, then the curvature / corner families); true when a
+  // model was matched. Called once per feature, and once more on the UNGROWN key of a
+  // T5-grown cluster the library has no entry for (the fallback below).
+  auto MatchFeature = [&](IdentifiedFeature &feature)
   {
     if (const auto match = library_keys.Match(feature.signature))
     {
@@ -8608,6 +8644,79 @@ IdentificationResult RunGeometryIdentification(
         feature.match_note = "corner family: " + reason;
       }
     }
+    return feature.matched_model.has_value();
+  };
+  for (auto &feature : result.features)
+  {
+    if (MatchFeature(feature))
+    {
+      continue;
+    }
+    // T5 FALLBACK (OI-SCP-BOXGROW; decisions 958 (a) / 960 R4 / 961 MINOR-2 / 969 Q3): a
+    // SpatialEdgeCluster whose box the excluded-corner containment rule grew carries the
+    // UNGROWN signature it had before T5 (SpatialSupport.CornerContainment.Ungrown). With
+    // no library entry matching the grown key (a discovery placeholder included), the
+    // ungrown key is matched by the same chain and its model PLACED exactly as before T5
+    // (the SpatialClusterPriority exclusion + raw add-back included); the record names the
+    // fallback and keeps the grown signature for the requirement the discovery plans
+    // (FallbackPlaced). With neither key matched the feature stays Missing on the grown
+    // key.
+    if (feature.type != "SpatialEdgeCluster" || !feature.spatial_support.is_object() ||
+        !feature.spatial_support.contains("CornerContainment") ||
+        !feature.spatial_support["CornerContainment"].contains("Ungrown"))
+    {
+      continue;
+    }
+    const nlohmann::json grown_signature = feature.signature;
+    const std::string grown_key = feature.signature_key, grown_hash = feature.hash;
+    nlohmann::json grown_record = feature.spatial_support;
+    nlohmann::json containment = grown_record["CornerContainment"];
+    grown_record.erase("CornerContainment");
+    const nlohmann::json &ungrown = containment["Ungrown"];
+    feature.signature = ungrown["Signature"];
+    std::tie(feature.signature_key, feature.hash) =
+        SignatureKeyAndHash(feature.signature, feature.type);
+    MFEM_VERIFY(feature.hash == ungrown["Key"].get<std::string>(),
+                "The T5 fallback's ungrown key does not reproduce the identification's!");
+    feature.spatial_support = ungrown["SpatialSupport"];
+    if (!MatchFeature(feature))
+    {
+      // Neither key has an entry: the grown key stays the requirement (Missing).
+      feature.signature = grown_signature;
+      feature.signature_key = grown_key;
+      feature.hash = grown_hash;
+      grown_record["CornerContainment"] = std::move(containment);
+      feature.spatial_support = std::move(grown_record);
+      continue;
+    }
+    containment.erase("Ungrown");
+    containment["Grown"] = {{"Signature", grown_signature},
+                            {"Key", grown_hash},
+                            {"Contract", grown_record.value("Contract", 3)},
+                            {"SpatialSupport", grown_record}};
+    containment["Fallback"] = {
+        {"GrownKey", grown_hash},
+        {"PlacedKey", feature.hash},
+        {"PlacedModel", *feature.matched_model},
+        {"Reason", "NoMatchedModel"},
+        {"Rule",
+         "decisions 958 (a) / 960 R4 / 961 MINOR-2 / 969: no library entry matches "
+         "the T5-grown key (a discovery placeholder included), so the UNGROWN key's "
+         "model is placed exactly as before T5 (its SpatialClusterPriority "
+         "exclusion and raw add-back included); the grown key is listed as a "
+         "Missing-class requirement flagged FallbackPlaced (Summary.Counts.Missing "
+         "excludes it; Summary.FallbackPlaced carries it) for the discovery to plan"}};
+    feature.spatial_support["CornerContainment"] = std::move(containment);
+    feature.match_note =
+        (feature.match_note ? *feature.match_note + "; " : std::string()) +
+        "T5 fallback (decision 960 R4): the grown key " + grown_hash.substr(0, 12) +
+        " has no library entry; the ungrown key " + feature.hash.substr(0, 12) +
+        " placed (model \"" + *feature.matched_model + "\")";
+    Mpi::Print("  Identification T5 fallback (decision 960 R4): cluster key {} (grown) has "
+               "no library entry; the ungrown key {} is placed (model \"{}\"); the grown "
+               "key is a FallbackPlaced requirement\n",
+               grown_hash.substr(0, 12), feature.hash.substr(0, 12),
+               *feature.matched_model);
   }
   // Mirror-formed features (DESIGN 2.2.2 / 2.2.5): Status Modelled when the library has the
   // model, Missing otherwise (its real portions then keep their raw energy as uncovered
@@ -8855,6 +8964,11 @@ IdentificationResult RunGeometryIdentification(
     // configurations of one key (RealPortions / Planes) or the identification's refusal.
     nlohmann::json mirror_formed_contract;
     std::string contract_refusal;
+    // T5 fallback (decisions 960 R4 / 961 MINOR-3): the GROWN key of a cluster whose
+    // ungrown key's model was placed; a Missing-class requirement flagged FallbackPlaced
+    // with the placed model(s), excluded from Summary.Counts.Missing.
+    bool fallback_placed = false;
+    std::set<std::string> placed_models;
   };
   struct GroupBase
   {
@@ -9007,6 +9121,45 @@ IdentificationResult RunGeometryIdentification(
     {
       instance->second.notes.insert(*feature.match_note);
     }
+    // T5 fallback (decisions 960 R4 / 961 MINOR-2 / MINOR-3): the grown key of a cluster
+    // placed on its ungrown key is a requirement of its own (the full grown signature incl.
+    // Box + Context, what the planner needs), Missing-class, flagged FallbackPlaced with
+    // the placed model; one instance per cluster feature.
+    if (feature.type == "SpatialEdgeCluster" && feature.matched_model &&
+        feature.spatial_support.is_object() &&
+        feature.spatial_support.contains("CornerContainment") &&
+        feature.spatial_support["CornerContainment"].contains("Fallback"))
+    {
+      const nlohmann::json &grown_signature =
+          feature.spatial_support["CornerContainment"]["Grown"]["Signature"];
+      const auto [grown_key, grown_hash] =
+          SignatureKeyAndHash(grown_signature, feature.type);
+      (void)grown_hash;
+      const std::string grown_base_key =
+          feature.type + "|" + interfaces.dump() + "|" + law.dump() + "|" +
+          SplitSignatureParameters(grown_signature).topology_key;
+      auto [grown_base, grown_inserted] = bases.emplace(grown_base_key, GroupBase{});
+      if (grown_inserted)
+      {
+        grown_base->second.type = feature.type;
+        grown_base->second.interfaces = interfaces;
+        grown_base->second.law = law;
+      }
+      auto [grown_instance, new_grown_instance] =
+          grown_base->second.instances.emplace(grown_key, Instance{});
+      if (new_grown_instance)
+      {
+        grown_instance->second.signature = grown_signature;
+        grown_base->second.order.push_back(grown_key);
+      }
+      grown_instance->second.count += count;
+      grown_instance->second.features++;
+      grown_instance->second.length += feature.length;
+      grown_instance->second.exact =
+          grown_instance->second.exact && feature.exact_parameters;
+      grown_instance->second.fallback_placed = true;
+      grown_instance->second.placed_models.insert(*feature.matched_model);
+    }
   }
   for (auto &[base_key, base] : bases)
   {
@@ -9056,11 +9209,15 @@ IdentificationResult RunGeometryIdentification(
       nlohmann::json mirror_formed_contract;
       std::string contract_refusal;
       int contract_instances = 0;
+      bool fallback_placed = false;
+      std::set<std::string> placed_models;
       for (const std::size_t i : members)
       {
         const Instance &instance = base.instances.at(base.order[i]);
         signatures.push_back(instance.signature);
         mirror_formed = mirror_formed || instance.mirror_formed;
+        fallback_placed = fallback_placed || instance.fallback_placed;
+        placed_models.insert(instance.placed_models.begin(), instance.placed_models.end());
         if (!instance.contract_refusal.empty() && contract_refusal.empty())
         {
           contract_refusal = instance.contract_refusal;
@@ -9226,6 +9383,16 @@ IdentificationResult RunGeometryIdentification(
         // Matched through the library's explicit legacy-contract alias (USER decision
         // 283): Status Exact (the legacy coupon is applied), flagged with the record.
         record["LegacyContract"] = legacy_contract;
+      }
+      if (fallback_placed && models.empty())
+      {
+        // The grown key of a T5 cluster placed on its ungrown key (decisions 960 R4 / 961
+        // MINOR-2 / MINOR-3): Missing-class (the discovery plans it), flagged with the
+        // placed model(s); excluded from Summary.Counts.Missing and Complete.
+        record["FallbackPlaced"] = true;
+        record["PlacedModel"] = placed_models.size() == 1
+                                    ? nlohmann::json(*placed_models.begin())
+                                    : nlohmann::json(placed_models);
       }
       requirements->AddFeatureRecord(record, count, length);
     }

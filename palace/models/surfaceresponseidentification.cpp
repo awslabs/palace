@@ -3886,12 +3886,46 @@ private:
   // candidate could otherwise win over the frame of record and rename a built key); ON for
   // the one call in the chosen frame that produces the record and the key, where the
   // coupon generator reads its box.
-  ClusterSupportResult ClusterSupport(std::size_t c,
-                                      const std::vector<SignaturePortion> &portions,
-                                      const std::vector<SignatureVertex> &vertices,
-                                      const Point3D &origin, const Point3D &x,
-                                      const Point3D &y, double span_cap_over_R,
-                                      bool face_crossing_tilt_rule) const;
+  // `corner_containment_box`: the T5-widened box (units of R, this frame) the T2 / T3 / T4
+  // loop starts from in place of the claims box (EmitClusters, after the single T5 pass);
+  // a box differing from the claims box reads `grown` (Box + Context into the key).
+  ClusterSupportResult
+  ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &portions,
+                 const std::vector<SignatureVertex> &vertices, const Point3D &origin,
+                 const Point3D &x, const Point3D &y, double span_cap_over_R,
+                 bool face_crossing_tilt_rule,
+                 const std::array<double, 4> *corner_containment_box = nullptr) const;
+  // T5 (the header's contract): a boxable cluster's T2 / T3 / T4-final box (units of R) in
+  // its frame of record, on its plane.
+  struct ClusterPlaneBox
+  {
+    Point3D origin;
+    Point3D x, y;
+    std::array<double, 4> box;
+    int plane;
+  };
+  // The reading of T5 for one cluster against every boxable cluster's final box of the
+  // plane: whether a free corner site's claim window fires (a portion inside this box and a
+  // portion outside every box), the R-band target, the quantised steps per face and the
+  // widened box (before the T2 / T3 / T4 re-read), with one record entry per firing window.
+  struct CornerContainmentReading
+  {
+    bool fires = false;
+    std::array<double, 4> target{};
+    std::array<int, 4> steps{};
+    std::array<double, 4> widened{};
+    nlohmann::json vertices = nlohmann::json::array();
+  };
+  CornerContainmentReading
+  ReadCornerContainment(const ClusterPlaneBox &own,
+                        const std::vector<ClusterPlaneBox> &boxes) const;
+  // The claim window W(v) of a free corner site as straight mesh-segment pieces (mesh
+  // units): the site's claimed run intervals piece by piece on the perimeter segments (the
+  // operator's raw claims) plus the ApplyCornerArmTrim stretch [max(R, claim end), s) along
+  // the counter-clockwise arm, s = R / max(|cos A|, |sin A|) (included whether or not a
+  // model is present: the conservative window, boxgrow DESIGN 8 MINOR-4).
+  std::vector<std::pair<Point3D, Point3D>>
+  CornerWindowSegments(const VertexFeatureSite &site) const;
   // Mirror band (decision 732, F-M1; built by BuildMirrorImageIndex): every non-empty
   // subset of the mirroring planes of input.mirror_planes (ascending members, the
   // extension's own subset order) and, per REAL segment, the subsets it was imaged through
@@ -10680,7 +10714,8 @@ Identifier::ClusterSupportResult
 Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &portions,
                            const std::vector<SignatureVertex> &vertices,
                            const Point3D &origin, const Point3D &x, const Point3D &y,
-                           double span_cap_over_R, bool face_crossing_tilt_rule) const
+                           double span_cap_over_R, bool face_crossing_tilt_rule,
+                           const std::array<double, 4> *corner_containment_box) const
 {
   using Point2 = std::array<double, 2>;
   ClusterSupportResult out;
@@ -10722,6 +10757,13 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   std::size_t box_band_hits = 0;
   const std::array<double, 4> claims_box = SupportBoxFromSignature(claims, &box_band_hits);
   std::array<double, 4> box = claims_box;
+  if (corner_containment_box)
+  {
+    // T5 (the header's contract): the loop below re-reads T2 / T3 / T4 from the widened
+    // box; the widening is a growth of the key exactly as a T3 step is.
+    box = *corner_containment_box;
+    out.grown = box != claims_box;
+  }
   const int plane = run_plane[cluster_claimed[c].front().first];
   std::map<std::size_t, std::vector<Interval>> claimed_by_run;
   for (const auto &[r, interval] : cluster_claimed[c])
@@ -12672,6 +12714,259 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   return out;
 }
 
+std::vector<std::pair<Point3D, Point3D>>
+Identifier::CornerWindowSegments(const VertexFeatureSite &site) const
+{
+  std::vector<std::pair<Point3D, Point3D>> segments;
+  // The claimed run intervals on the perimeter segments (the operator's raw claims: the
+  // mesh chords, an arc run's as its polyline).
+  for (const auto &[r, interval] : site.window)
+  {
+    for (const auto &rs : runs[r].segments)
+    {
+      const double a = std::max(interval.first, rs.t0),
+                   b = std::min(interval.second, rs.t1);
+      if (b - a <= Tol() || rs.t1 - rs.t0 <= 0.0)
+      {
+        continue;
+      }
+      const auto &segment = input.segments[rs.segment];
+      auto At = [&](double t)
+      {
+        const double fraction = (t - rs.t0) / (rs.t1 - rs.t0);
+        return rs.forward ? Add(segment.p0, Scale(fraction, Sub(segment.p1, segment.p0)))
+                          : Add(segment.p1, Scale(fraction, Sub(segment.p0, segment.p1)));
+      };
+      segments.emplace_back(At(a), At(b));
+    }
+  }
+  if (site.arm_directions.size() != 2)
+  {
+    return segments;
+  }
+  // The ApplyCornerArmTrim stretch [max(R, claim end), s) along the second arm, the arm
+  // counter-clockwise about the site's own process normal from the first (the corner frame
+  // of Assign; surfaceresponseoperator.cpp ApplyCornerArmTrim / FillVertexRawClaims).
+  const Point3D n_site = SiteProcessNormal(site);
+  Point3D first = site.arm_directions[0], second = site.arm_directions[1];
+  if (Dot(Cross(n_site, first), second) < 0.0)
+  {
+    std::swap(first, second);
+  }
+  const Point3D arm = Normalize(Sub(second, Scale(Dot(second, n_site), n_site)));
+  const double theta = site.angle_degrees * std::acos(-1.0) / 180.0;
+  const double exit = R / std::max(std::abs(std::cos(theta)), std::abs(std::sin(theta)));
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  double start = R;
+  if (site.corner_radius > 0.0)
+  {
+    // A rounded corner's claim already reaches the tangent point + R along the arm: the
+    // stretch begins at the farthest claim end on the arm's line (CornerArmClaimEnd).
+    for (const auto &[p, q] : segments)
+    {
+      for (const Point3D &end : {p, q})
+      {
+        const Point3D d = Sub(end, site.point);
+        const double along = Dot(d, arm);
+        const Point3D transverse =
+            Sub(d, Add(Scale(along, arm), Scale(Dot(d, n_site), n_site)));
+        if (Norm(transverse) <= tolerance && std::abs(Dot(d, n_site)) <= tolerance)
+        {
+          start = std::max(start, along);
+        }
+      }
+    }
+  }
+  if (exit - start > tolerance)
+  {
+    segments.emplace_back(Add(site.point, Scale(start, arm)),
+                          Add(site.point, Scale(exit, arm)));
+  }
+  return segments;
+}
+
+Identifier::CornerContainmentReading
+Identifier::ReadCornerContainment(const ClusterPlaneBox &own,
+                                  const std::vector<ClusterPlaneBox> &boxes) const
+{
+  using Point2 = std::array<double, 2>;
+  CornerContainmentReading reading;
+  const double step = kSupportFaceGrowthStepOverRadius;
+  const double band = kSupportCornerContainmentBandOverRadius;
+  const double quantum = kSignatureLengthQuantumOverRadius;
+  const double half_quantum = 0.5 * quantum;
+  auto Q = [](double v) { return RoundTo(v, kSignatureLengthQuantumOverRadius); };
+  auto Local = [&](const ClusterPlaneBox &frame, const Point3D &p) -> Point2
+  {
+    const Point3D r = Sub(p, frame.origin);
+    return {Dot(r, frame.x) / R, Dot(r, frame.y) / R};
+  };
+  // The parameter interval of the segment p -> q inside the box (Liang-Barsky), or nullopt.
+  auto ClipInterval = [](const Point2 &p, const Point2 &q,
+                         const std::array<double, 4> &box) -> std::optional<Interval>
+  {
+    double t0 = 0.0, t1 = 1.0;
+    for (int axis = 0; axis < 2; axis++)
+    {
+      const double lo = box[static_cast<std::size_t>(axis)],
+                   hi = box[static_cast<std::size_t>(axis + 2)];
+      const double d = q[axis] - p[axis];
+      if (std::abs(d) <= 1.0e-15)
+      {
+        if (p[axis] < lo || p[axis] > hi)
+        {
+          return std::nullopt;
+        }
+        continue;
+      }
+      double ta = (lo - p[axis]) / d, tb = (hi - p[axis]) / d;
+      if (ta > tb)
+      {
+        std::swap(ta, tb);
+      }
+      t0 = std::max(t0, ta);
+      t1 = std::min(t1, tb);
+      if (t0 > t1)
+      {
+        return std::nullopt;
+      }
+    }
+    return Interval{t0, t1};
+  };
+  std::array<double, 4> target = {
+      std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
+  for (const auto &site : sites)
+  {
+    if (site.cluster >= 0 || site.arm_directions.size() != 2 ||
+        (site.type != "ConvexCorner" && site.type != "ConcaveCorner") ||
+        SitePlane(site) != own.plane)
+    {
+      continue;
+    }
+    const auto segments = CornerWindowSegments(site);
+    double inside = 0.0, outside_every = 0.0, window_length = 0.0;
+    nlohmann::json window = nlohmann::json::array();
+    std::array<double, 4> site_target = target;
+    for (const auto &[p3, q3] : segments)
+    {
+      const Point2 p = Local(own, p3), q = Local(own, q3);
+      const double length = std::hypot(q[0] - p[0], q[1] - p[1]);
+      if (length <= half_quantum)
+      {
+        continue;
+      }
+      window_length += length;
+      window.push_back({Q(p[0]), Q(p[1]), Q(q[0]), Q(q[1])});
+      if (const auto own_interval = ClipInterval(p, q, own.box))
+      {
+        inside += (own_interval->second - own_interval->first) * length;
+      }
+      // Outside EVERY cluster box of the plane: the complement of the union of the clipped
+      // parameter intervals, each box read in its own frame.
+      std::vector<Interval> covered;
+      for (const auto &other : boxes)
+      {
+        if (other.plane != own.plane)
+        {
+          continue;
+        }
+        if (const auto interval =
+                ClipInterval(Local(other, p3), Local(other, q3), other.box))
+        {
+          covered.push_back(*interval);
+        }
+      }
+      std::sort(covered.begin(), covered.end());
+      double covered_length = 0.0;
+      std::optional<Interval> current;
+      for (const auto &interval : covered)
+      {
+        if (!current)
+        {
+          current = interval;
+        }
+        else if (interval.first <= current->second)
+        {
+          current->second = std::max(current->second, interval.second);
+        }
+        else
+        {
+          covered_length += current->second - current->first;
+          current = interval;
+        }
+      }
+      if (current)
+      {
+        covered_length += current->second - current->first;
+      }
+      outside_every += (1.0 - covered_length) * length;
+      // The R-band of the segment: the rectangle of half-width `band` about it between the
+      // perpendicular planes through its ends (no end caps).
+      const Point2 normal = {-(q[1] - p[1]) / length * band, (q[0] - p[0]) / length * band};
+      for (const Point2 &corner : {Point2{p[0] + normal[0], p[1] + normal[1]},
+                                   Point2{p[0] - normal[0], p[1] - normal[1]},
+                                   Point2{q[0] + normal[0], q[1] + normal[1]},
+                                   Point2{q[0] - normal[0], q[1] - normal[1]}})
+      {
+        site_target[0] = std::min(site_target[0], corner[0]);
+        site_target[1] = std::min(site_target[1], corner[1]);
+        site_target[2] = std::max(site_target[2], corner[0]);
+        site_target[3] = std::max(site_target[3], corner[1]);
+      }
+    }
+    // The trigger at the contract's quantum: a portion inside this box AND a portion
+    // outside every box.
+    if (!(inside > quantum && outside_every > quantum))
+    {
+      continue;
+    }
+    std::array<double, 4> shortfalls{}, site_steps_double{};
+    std::array<int, 4> site_steps{};
+    for (int f = 0; f < 4; f++)
+    {
+      const auto k = static_cast<std::size_t>(f);
+      shortfalls[k] = f < 2 ? std::max(0.0, own.box[k] - site_target[k])
+                            : std::max(0.0, site_target[k] - own.box[k]);
+      // Quantised up to the T3 grid (half-quantum inclusive): a shortfall within half a
+      // quantum of n steps reads n.
+      site_steps[k] =
+          shortfalls[k] > half_quantum
+              ? static_cast<int>(std::ceil((shortfalls[k] - half_quantum) / step))
+              : 0;
+      site_steps_double[k] = site_steps[k];
+      reading.steps[k] = std::max(reading.steps[k], site_steps[k]);
+      target[k] =
+          f < 2 ? std::min(target[k], site_target[k]) : std::max(target[k], site_target[k]);
+    }
+    const Point2 vertex = Local(own, site.point);
+    reading.fires = true;
+    reading.vertices.push_back(
+        {{"Type", site.type},
+         {"VertexOverR", {Q(vertex[0]), Q(vertex[1])}},
+         {"AngleDegrees", site.angle_degrees},
+         {"Window", window},
+         {"WindowLengthOverR", Q(window_length)},
+         {"InsideOverR", Q(inside)},
+         {"OutsideEveryOverR", Q(outside_every)},
+         {"BandOverR", BoxJson(site_target)},
+         {"ShortfallsOverR",
+          {Q(shortfalls[0]), Q(shortfalls[1]), Q(shortfalls[2]), Q(shortfalls[3])}},
+         {"Steps", site_steps}});
+  }
+  if (!reading.fires)
+  {
+    return reading;
+  }
+  reading.target = target;
+  for (int f = 0; f < 4; f++)
+  {
+    const auto k = static_cast<std::size_t>(f);
+    reading.widened[k] = Q(own.box[k] + (f < 2 ? -1.0 : 1.0) * reading.steps[k] * step);
+  }
+  return reading;
+}
+
 void Identifier::BuildMirrorImageIndex()
 {
   mirror_subsets.clear();
@@ -12780,11 +13075,39 @@ void Identifier::EmitClusters()
   }
   cluster_feature.assign(cluster_claimed.size(), -1);
   spatial_support_summary = {};
+  // Stage 1 (per cluster, as before T5): the frame of record and its T2 / T3 / T4 support;
+  // the feature is emitted in stage 3, after the single T5 pass of stage 2 has read every
+  // cluster's final box (the header's contract: T5 is evaluated once per cluster against
+  // the T2 / T3 / T4-final boxes, before any T5 growth).
+  struct PendingCluster
+  {
+    std::vector<SignaturePortion> portions;
+    std::vector<SignatureVertex> vertices;
+    Point3D n_cluster{};
+    CanonicalSignature canonical;
+    nlohmann::json claims_signature;
+    double span_cap_over_R = kSupportSpanCapOverRadius;
+    nlohmann::json span_cap_allowance;
+    ClusterSupportResult support;
+    nlohmann::json signature;
+    int chirality = 1;
+    Point3D origin{};
+    std::array<Point3D, 3> axes{};
+    int contract = 2;
+    bool boxable = false;
+    double signature_seconds = 0.0;
+    // T5 (stage 2): the record written only where the rule acted, and the UNGROWN state
+    // (the signature / contract the cluster had before T5) the placement falls back to.
+    nlohmann::json corner_containment;
+  };
+  std::vector<PendingCluster> pending(cluster_claimed.size());
   for (std::size_t c = 0; c < cluster_claimed.size(); c++)
   {
     stage.Progress(c, cluster_claimed.size());
-    std::vector<SignaturePortion> portions = ClusterSignaturePortions(cluster_claimed[c]);
-    std::vector<SignatureVertex> vertices;
+    PendingCluster &entry = pending[c];
+    entry.portions = ClusterSignaturePortions(cluster_claimed[c]);
+    std::vector<SignaturePortion> &portions = entry.portions;
+    std::vector<SignatureVertex> &vertices = entry.vertices;
     for (const std::size_t s : cluster_sites[c])
     {
       vertices.push_back({sites[s].point, sites[s].type, sites[s].turn_degrees});
@@ -12794,7 +13117,7 @@ void Identifier::EmitClusters()
     // The cluster's own signed process normal (claimed-length weighted; decision 266), not
     // the sign-canonical n_ref: on a flipped plane the canonical frame's w must point into
     // that plane's vacuum.
-    Point3D n_cluster;
+    Point3D &n_cluster = entry.n_cluster;
     {
       std::vector<std::pair<std::size_t, double>> weighted;
       for (const auto &[r, interval] : cluster_claimed[c])
@@ -12806,7 +13129,7 @@ void Identifier::EmitClusters()
                                              std::to_string(portions.size()) + " edges)");
     }
     const auto signature_started = std::chrono::steady_clock::now();
-    const auto canonical = CanonicalClusterSignature(
+    entry.canonical = CanonicalClusterSignature(
         portions, vertices, n_cluster, R,
         [&](std::size_t done, std::size_t total)
         {
@@ -12815,6 +13138,7 @@ void Identifier::EmitClusters()
                              std::to_string(cluster_claimed.size()) + ", " +
                              std::to_string(portions.size()) + " edges");
         });
+    const CanonicalSignature &canonical = entry.canonical;
     // Spatial-support contract v3 (decision 282): the support in the claims-only canonical
     // frame decides the contract — an empty context without growth keeps the claims-only
     // key (today's coupons keep their keys); otherwise Box + Context enter the hashed
@@ -12822,11 +13146,12 @@ void Identifier::EmitClusters()
     // cluster no frame can box is an UnboxableFeature (a Missing placeholder key).
     // The claims-only signature (contract 2 key; the key a legacy model carries; the key
     // the span-cap allowances are resolved by, BEFORE any box: block (b) DESIGN A4).
-    nlohmann::json claims_signature = canonical.signature;
+    nlohmann::json &claims_signature = entry.claims_signature;
+    claims_signature = canonical.signature;
     claims_signature["EdgeCount"] = portions.size();
     claims_signature["Type"] = "SpatialEdgeCluster";
-    double span_cap_over_R = kSupportSpanCapOverRadius;
-    nlohmann::json span_cap_allowance;
+    double &span_cap_over_R = entry.span_cap_over_R;
+    nlohmann::json &span_cap_allowance = entry.span_cap_allowance;
     if (const auto resolved =
             ResolveSpanCapAllowance(claims_signature, input.span_cap_allowances))
     {
@@ -12855,15 +13180,20 @@ void Identifier::EmitClusters()
     // WITH the rule in that frame produces the record, and the key is serialised from it
     // (unchanged where the rule is silent; Box + Context of the widened box where it acted;
     // Unboxable where its widening breached the span cap).
-    ClusterSupportResult support =
-        ClusterSupport(c, portions, vertices, canonical.origin, canonical.axes[0],
-                       canonical.axes[1], span_cap_over_R, false);
-    nlohmann::json signature;
-    int chirality = canonical.chirality;
-    Point3D origin = canonical.origin;
-    std::array<Point3D, 3> axes = canonical.axes;
-    int contract = 2;
-    bool boxable = support.support.has_value();
+    ClusterSupportResult &support = entry.support;
+    support = ClusterSupport(c, portions, vertices, canonical.origin, canonical.axes[0],
+                             canonical.axes[1], span_cap_over_R, false);
+    nlohmann::json &signature = entry.signature;
+    int &chirality = entry.chirality;
+    chirality = canonical.chirality;
+    Point3D &origin = entry.origin;
+    origin = canonical.origin;
+    std::array<Point3D, 3> &axes = entry.axes;
+    axes = canonical.axes;
+    int &contract = entry.contract;
+    contract = 2;
+    bool &boxable = entry.boxable;
+    boxable = support.support.has_value();
     if (!(support.support && support.legacy_equivalent))
     {
       const auto v3 = CanonicalClusterSignatureWithSupport(
@@ -12916,9 +13246,158 @@ void Identifier::EmitClusters()
       signature = canonical.signature;
       signature["Unboxable"] = true;
     }
-    signature_seconds +=
+    entry.signature_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - signature_started)
             .count();
+  }
+
+  // Stage 2: T5, the excluded-corner containment rule (the header's contract; boxgrow
+  // DESIGN 7.1 / 7.2 / 8), one pass over the T2 / T3 / T4-final boxes of stage 1.
+  {
+    std::vector<ClusterPlaneBox> boxes;
+    for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+    {
+      const PendingCluster &entry = pending[c];
+      if (entry.boxable && entry.support.support)
+      {
+        boxes.push_back({entry.origin, entry.axes[0], entry.axes[1],
+                         entry.support.support->box,
+                         run_plane[cluster_claimed[c].front().first]});
+      }
+    }
+    for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+    {
+      PendingCluster &entry = pending[c];
+      if (!entry.boxable || !entry.support.support)
+      {
+        continue;
+      }
+      const auto signature_started = std::chrono::steady_clock::now();
+      const ClusterPlaneBox own = {entry.origin, entry.axes[0], entry.axes[1],
+                                   entry.support.support->box,
+                                   run_plane[cluster_claimed[c].front().first]};
+      const CornerContainmentReading reading = ReadCornerContainment(own, boxes);
+      if (!reading.fires)
+      {
+        continue;
+      }
+      // The UNGROWN state the placement falls back to (decision 960 R4 / 969 Q3): the
+      // signature, key, contract and context digest exactly as stage 1 emitted them.
+      nlohmann::json ungrown_signature = entry.signature;
+      ungrown_signature["EdgeCount"] = entry.portions.size();
+      ungrown_signature["Type"] = "SpatialEdgeCluster";
+      const auto [ungrown_key_text, ungrown_hash] =
+          SignatureKeyAndHash(ungrown_signature, "SpatialEdgeCluster");
+      (void)ungrown_key_text;
+      nlohmann::json ungrown_record = entry.support.record;
+      ungrown_record["Contract"] = entry.contract;
+      ungrown_record["ContextDigest"] =
+          entry.contract == 3
+              ? nlohmann::json(SpatialSupportContextDigest(ungrown_signature))
+              : nlohmann::json(nullptr);
+      nlohmann::json corner_containment = {
+          {"Rule",
+           "T5 excluded-corner containment (OI-SCP-BOXGROW; decisions 958 / 960 / 961 / "
+           "969; boxgrow DESIGN 7.1 / 7.2 / 8): a free corner site whose claim window (the "
+           "identification's R windows + the ApplyCornerArmTrim stretch on the "
+           "counter-clockwise arm) has a portion inside this cluster's T2 / T3 / T4-final "
+           "box AND a portion outside every boxable cluster's final box of the plane "
+           "(the SpatialClusterPriority OutsideLength rule) requires the box to contain "
+           "the AABB, in the frame of record, of the window's R-band; each face short of "
+           "it moves outward by its shortfall quantised up to the T3 step; T2 / T3 / T4 "
+           "re-read the widened box; evaluated once per cluster before any T5 growth; "
+           "the placement falls back to Ungrown when no library entry matches the grown "
+           "key (Fallback, Reason NoMatchedModel). Lengths in units of R; faces 0 = x0, "
+           "1 = y0, 2 = x1, 3 = y1 of the frame of record"},
+          {"BandOverR", kSupportCornerContainmentBandOverRadius},
+          {"StepOverR", kSupportFaceGrowthStepOverRadius},
+          {"Vertices", reading.vertices},
+          {"TargetOverR", BoxJson(reading.target)},
+          {"Steps", reading.steps},
+          {"BoxBeforeOverR", BoxJson(entry.support.support->box)},
+          {"BoxWidenedOverR", BoxJson(reading.widened)},
+          {"Ungrown",
+           {{"Signature", ungrown_signature},
+            {"Key", ungrown_hash},
+            {"Contract", entry.contract},
+            {"SpatialSupport", ungrown_record}}}};
+      const double widened_span = std::max(reading.widened[2] - reading.widened[0],
+                                           reading.widened[3] - reading.widened[1]);
+      if (widened_span > entry.span_cap_over_R * (1.0 + 1.0e-12))
+      {
+        // Unboxable by name: the refused widening is recorded, the box of the record stays
+        // the T2 / T3 / T4-final one.
+        std::ostringstream what;
+        what << "the excluded-corner containment rule (" << reading.vertices.size()
+             << " corner window(s) with a portion inside this box and a portion outside "
+                "every cluster box) takes the plan span to "
+             << widened_span << " R beyond the span cap " << entry.span_cap_over_R << " R";
+        entry.support.record["Unboxable"] = what.str();
+        entry.support.record["UnboxableReason"] = "SpanCapRefusedCornerContainment";
+        entry.support.support.reset();
+        entry.boxable = false;
+        entry.contract = 0;
+        entry.signature = entry.canonical.signature;
+        entry.signature["Unboxable"] = true;
+      }
+      else
+      {
+        ClusterSupportResult grown =
+            ClusterSupport(c, entry.portions, entry.vertices, entry.origin, entry.axes[0],
+                           entry.axes[1], entry.span_cap_over_R, true, &reading.widened);
+        if (!grown.support)
+        {
+          // The T2 / T3 re-read of the widened box breached a cap: Unboxable with that
+          // reading's own reason.
+          entry.boxable = false;
+          entry.contract = 0;
+          entry.signature = entry.canonical.signature;
+          entry.signature["Unboxable"] = true;
+        }
+        else
+        {
+          entry.contract = 3;
+          entry.signature =
+              SignatureWithSupportInFrame(entry.portions, entry.vertices, entry.origin,
+                                          entry.axes[0], entry.axes[1], R, *grown.support);
+        }
+        entry.support = std::move(grown);
+      }
+      entry.corner_containment = std::move(corner_containment);
+      entry.signature_seconds += std::chrono::duration<double>(
+                                     std::chrono::steady_clock::now() - signature_started)
+                                     .count();
+      if (input.log)
+      {
+        std::ostringstream text;
+        text << "  Identification spatial support T5 (excluded-corner containment): "
+                "cluster "
+             << c << " (" << entry.portions.size() << " edges): " << reading.vertices.size()
+             << " corner window(s), steps x0 / y0 / x1 / y1 = " << reading.steps[0] << " / "
+             << reading.steps[1] << " / " << reading.steps[2] << " / " << reading.steps[3]
+             << (entry.boxable ? " -> keyed with the grown Box + Context" : " -> UNBOXABLE")
+             << " (the ungrown key " << ungrown_hash.substr(0, 12)
+             << " is the placement's fallback)\n";
+        input.log(text.str());
+      }
+    }
+  }
+
+  // Stage 3: the features.
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    PendingCluster &entry = pending[c];
+    const std::vector<SignaturePortion> &portions = entry.portions;
+    const CanonicalSignature &canonical = entry.canonical;
+    const nlohmann::json &claims_signature = entry.claims_signature;
+    const nlohmann::json &span_cap_allowance = entry.span_cap_allowance;
+    ClusterSupportResult &support = entry.support;
+    nlohmann::json &signature = entry.signature;
+    const int chirality = entry.chirality;
+    const Point3D &origin = entry.origin;
+    const std::array<Point3D, 3> &axes = entry.axes;
+    const int contract = entry.contract;
+    signature_seconds += entry.signature_seconds;
     signature["EdgeCount"] = portions.size();
     const int feature = NewFeature("SpatialEdgeCluster", signature, chirality);
     cluster_feature[c] = feature;
@@ -12948,6 +13427,20 @@ void Identifier::EmitClusters()
         contract == 3
             ? nlohmann::json(SpatialSupportContextDigest(features[feature].signature))
             : nlohmann::json(nullptr);
+    if (!entry.corner_containment.is_null())
+    {
+      // T5 acted (stage 2): the record names the grown key; its Ungrown subtree carries
+      // the complete pre-T5 record (ClaimsKey / SpanCapAllowance alike).
+      entry.corner_containment["GrownKey"] = features[feature].hash;
+      entry.corner_containment["Ungrown"]["SpatialSupport"]["ClaimsKey"] =
+          support.record["ClaimsKey"];
+      if (!span_cap_allowance.is_null())
+      {
+        entry.corner_containment["Ungrown"]["SpatialSupport"]["SpanCapAllowance"] =
+            span_cap_allowance;
+      }
+      support.record["CornerContainment"] = std::move(entry.corner_containment);
+    }
     features[feature].spatial_support = support.record;
     spatial_support_summary.clusters++;
     spatial_support_summary.claims_keyed += contract == 2 ? 1 : 0;
@@ -15471,22 +15964,32 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "as a history and asserts nothing about the models of any particular library. "
          "ORIGINAL rule (corner-family review 2026-09-29; RingLayout MetalRingsOnly): on "
          "every box ring that meets the metal the knots are the two metal-arm crossings "
-         "(PEC), MetalInteriorKnots at equal perimeter-arc-length fractions of the metal arc "
-         "(PEC) and FreeKnots at equal fractions of the free arc, ordered by role (one knot "
-         "semantics, one zero set, like-to-like free knots for every node); the other rings "
+         "(PEC), MetalInteriorKnots at equal perimeter-arc-length fractions of the metal "
+         "arc "
+         "(PEC) and FreeKnots at equal fractions of the free arc, ordered by role (one "
+         "knot "
+         "semantics, one zero set, like-to-like free knots for every node); the other "
+         "rings "
          "carry the fixed fractions k / RingSize; box corners that are no knot are slave "
          "trace vertices; knot coincidence 1e-6 of the perimeter. Kink-aware interpolation "
          "(corner-qualification block 2026-09-29): a stencil never straddles a geometric "
-         "EVENT of that basis (a knot of a metal ring passing a fixed-layout vertex flips a "
-         "band diagonal); coupons sharing TraceBasis ConnectivityAngleDegrees form a SEGMENT "
-         "with one triangulation; the stencil is Lagrange on the segment's nodes nearest to "
+         "EVENT of that basis (a knot of a metal ring passing a fixed-layout vertex flips "
+         "a "
+         "band diagonal); coupons sharing TraceBasis ConnectivityAngleDegrees form a "
+         "SEGMENT "
+         "with one triangulation; the stencil is Lagrange on the segment's nodes nearest "
+         "to "
          "the angle; an exact node prefers the legacy coupon at that angle (decision 140 "
          "(1)); coupons without the record are exact matches only; a segment across a "
-         "passage, two coupons at one angle in a segment or overlapping segments fail closed "
-         "at library load (CheckCornerFamilySegments). REFINED rule (corner-basis refinement "
-         "2026-09-30, USER decision 161; RingLayout AllRingsFollowMetal): EVERY ring of the "
+         "passage, two coupons at one angle in a segment or overlapping segments fail "
+         "closed "
+         "at library load (CheckCornerFamilySegments). REFINED rule (corner-basis "
+         "refinement "
+         "2026-09-30, USER decision 161; RingLayout AllRingsFollowMetal): EVERY ring of "
+         "the "
          "box (the outer rings at -R, -R/3, -OveretchDepth, 0, MetalThickness, "
-         "MetalThickness + k OveretchDepth for k in ExtraLevelsAboveOverOveretch, R/3, R and "
+         "MetalThickness + k OveretchDepth for k in ExtraLevelsAboveOverOveretch, R/3, R "
+         "and "
          "the two inner cap rings) carries the same fractions — the two crossings, the "
          "metal-interior knots at equal fractions of the metal arc, the free knots graded "
          "by FreeKnotGrading (perimeter distances over R from each crossing on the free "
@@ -15495,7 +15998,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "by FreeArc / Reference, block (b) family 4, decision 318, the key recorded only "
          "where the scaling is active) — PEC on the two metal rings only, box corners "
          "slaves on every ring, cap centres slaves at the mean of the two crossing knots, "
-         "every band a regular column grid: NO events (CornerBasisEvents empty), one segment "
+         "every band a regular column grid: NO events (CornerBasisEvents empty), one "
+         "segment "
          "per convexity (no connectivity angle; a coupon carrying one is refused), the "
          "stencil the cubic sliding window on the four nearest nodes; the library load "
          "checks every coupon's ring levels, basis points and trace mesh against its rule "
@@ -15505,12 +16009,15 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "METAL-GRADED refinement of the refined rule (the concave-MS remedy, supervisor "
          "decisions 587 (1) / 590 / 629 O-9, 2026-10-09): the refined rule with the "
          "metal-interior knots graded from each crossing INTO the metal arc exactly as the "
-         "free knots are (MetalKnotGrading = perimeter distances over R from each crossing, "
+         "free knots are (MetalKnotGrading = perimeter distances over R from each "
+         "crossing, "
          "scaled by min(1, MetalArc / FreeKnotGradingReferenceFreeArcOverR) on a metal arc "
          "shorter than the free side's reference arc, the rest at equal fractions between "
-         "the innermost graded ones; the recorded equal-fraction metal knots left one chord "
+         "the innermost graded ones; the recorded equal-fraction metal knots left one "
+         "chord "
          "of length R from each crossing on the concave 90-degree node, 50 nm under the MS "
-         "interface, over a potential that falls 8x within it: the MS DIAGNOSIS of record), "
+         "interface, over a potential that falls 8x within it: the MS DIAGNOSIS of "
+         "record), "
          "one rule for both convexities and the rounded nodes; a coupon's rule, knot count "
          "and zero set are its TraceBasis record's"},
         {"SagittaOverR", kArcSagittaOverRadius},
