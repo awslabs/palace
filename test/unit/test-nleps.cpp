@@ -418,8 +418,8 @@ TEST_CASE("Quasi-Newton finds the roots on the target's side of a pole",
 }
 
 // Seeds 2% below the roots on the target's side of the pole, so that Quasi-Newton takes
-// several steps, with a preconditioner scaled by 1e-6: as good a preconditioner, but the
-// preconditioned residual of the Newton correction is 1e-6 times smaller. With an absolute
+// several steps, with a preconditioner scaled by 1e-10: as good a preconditioner, but the
+// preconditioned residual of the Newton correction is 1e-10 times smaller. With an absolute
 // tolerance on it, as the inner solves had with 1e-12, GMRES returns a zero correction
 // before the eigenpair residual reaches the tolerance, and the iteration stalls.
 TEST_CASE("Quasi-Newton inner solves have no absolute tolerance",
@@ -435,7 +435,7 @@ TEST_CASE("Quasi-Newton inner solves have no absolute tolerance",
   {
     seeds.emplace_back(expected[j] * 0.98, j);
   }
-  CheckEigenpairs(p, SolveQuasiNewton(p, seeds, 3, target, 1.0e-6, tol), expected, tol);
+  CheckEigenpairs(p, SolveQuasiNewton(p, seeds, 3, target, 1.0e-10, tol), expected, tol);
 }
 
 // A degenerate pair: after the first mode of the pair is locked, the deflated iterate of
