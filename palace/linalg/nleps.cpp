@@ -750,12 +750,10 @@ int QuasiNewtonSolver::Solve()
         break;
       }
 
-      // End if residual below tolerance and eigenvalue above the target. The iterate
-      // [v, v2] has unit norm, but the invariant pair stores v / ||v||, whose residual is
-      // res / ||v||: an iterate collapsing into the span of X has a small res without being
-      // an eigenpair.
+      // End if residual below tolerance and eigenvalue above the target (the residual of
+      // the stored column, see nleps::AcceptsInvariantColumn).
       const double norm_v = linalg::Norml2(GetComm(), v);
-      if (res < rtol * norm_v)
+      if (nleps::AcceptsInvariantColumn(res, norm_v, rtol))
       {
         if (print > 0)
         {

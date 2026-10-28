@@ -18,6 +18,21 @@
 namespace palace
 {
 
+namespace nleps
+{
+
+// Whether a deflated Quasi-Newton iterate [v, v₂] with extended residual norm res locks as
+// an eigenpair: the invariant pair stores the physical column v / ||v||, whose residual is
+// res / ||v||, so res must be below rtol ||v||. An iterate collapsing into the span of the
+// locked eigenvectors has a small res without being an eigenpair, and a zero column is
+// never accepted.
+inline bool AcceptsInvariantColumn(double res, double norm_v, double rtol)
+{
+  return res < rtol * norm_v;
+}
+
+}  // namespace nleps
+
 //
 // Abstract base class for nonlinear eigensolvers.
 // Currently only implemented for complex scalar interface.

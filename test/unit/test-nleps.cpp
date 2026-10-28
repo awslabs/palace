@@ -25,6 +25,27 @@ using namespace palace;
 
 // The Newton step on the pole-cleared d(λ) T(λ) uses L = d′/d, and the line search compares
 // residuals scaled by |d|.
+// Decision coverage of the locking criterion of Quasi-Newton (not an end-to-end trajectory
+// in which the iterate collapses): the extended residual is compared with the tolerance
+// relative to the norm of the physical column, which an absolute threshold does not do.
+TEST_CASE("Quasi-Newton locks a column relative to its norm", "[nleps][Serial]")
+{
+  constexpr double rtol = 1.0e-8;
+  CHECK_FALSE(nleps::AcceptsInvariantColumn(1.0e-10, 1.0e-6, rtol));  // 1e-10 < rtol
+  CHECK(nleps::AcceptsInvariantColumn(1.0e-16, 1.0e-6, rtol));
+  CHECK_FALSE(nleps::AcceptsInvariantColumn(rtol * 1.0e-6, 1.0e-6, rtol));  // Strict
+  CHECK(nleps::AcceptsInvariantColumn(0.5e-8, 1.0, rtol));
+  CHECK_FALSE(nleps::AcceptsInvariantColumn(2.0e-8, 1.0, rtol));
+  for (double c : {1.0e-12, 1.0e-3, 1.0e3})
+  {
+    // The decision depends on res / ||v|| only.
+    CAPTURE(c);
+    CHECK_FALSE(nleps::AcceptsInvariantColumn(c * 1.0e-10, c * 1.0e-6, rtol));
+    CHECK(nleps::AcceptsInvariantColumn(c * 1.0e-16, c * 1.0e-6, rtol));
+  }
+  CHECK_FALSE(nleps::AcceptsInvariantColumn(0.0, 0.0, rtol));  // A zero column
+}
+
 TEST_CASE("Pole-cleared Newton terms", "[nleps][Serial]")
 {
   const std::complex<double> p(-0.1, 1.5);
