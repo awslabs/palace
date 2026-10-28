@@ -36,7 +36,7 @@ namespace
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// A 1 x 0.8 x 0.6 cm box of 2 x 2 x 2 hexahedra (L0 = 1 cm), without degenerate modes.
+// A 1 x 0.8 x 0.6 cm box of 2 x 2 x 2 hexahedra (L0 = 1 cm).
 // Boundary attributes of mfem::Mesh::MakeCartesian3D: 1 (z = 0), 2 (y = 0), 3 (x = 1), 4 (y
 // = 1), 5 (x = 0), 6 (z = 1).
 fs::path WriteBoxMesh(const fs::path &dir)
@@ -158,13 +158,13 @@ TEST_CASE_METHOD(test::SharedTempDir,
     CHECK(rel <= 1.0e-7);
   }
 
-  // The roots above the target are those of the quartic f² (ε∞ D(f) + Δε f₀²) =
-  // f_h² ε∞ D(f), D(f) = f₀² − f² + i γ f, for every f_h. With the target below the
-  // resonance and the constant modes above it, the requested modes are roots between the
-  // target and the pole, on the other side of the pole from the constant modes, distinct,
-  // and include the root nearest the target. The roots accumulate at the pole, where the
-  // polynomial seed of the Hybrid method resolves them only approximately, so the modes
-  // found need not be the next ones in order after the first.
+  // The requested modes are the N lowest above the target, counted with multiplicity: the
+  // roots of the quartic f² (ε∞ D(f) + Δε f₀²) = f_h² ε∞ D(f), D(f) = f₀² − f² + i γ f, for
+  // every constant mode f_h, including both modes of a degenerate f_h. With the target
+  // below the resonance and the constant modes above it, the six lowest roots lie between
+  // the target and the pole, on the other side of the pole from the constant modes: one of
+  // them skipped or replaced by a root beyond the pole fails. (This box has degenerate
+  // constant modes, at 24.586, 30.767, and 33.750 GHz.)
   std::vector<std::complex<double>> expected;
   const std::complex<double> i(0.0, 1.0);
   for (const auto f_h : constant.f)
@@ -187,7 +187,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
     REQUIRE(roots.info() == Eigen::Success);
     for (const auto f : roots.eigenvalues())
     {
-      if (f.real() >= 8.0 && f.real() < f0)
+      if (f.real() >= 8.0)
       {
         expected.push_back(f);
       }
@@ -196,32 +196,17 @@ TEST_CASE_METHOD(test::SharedTempDir,
   auto by_frequency = [](auto a, auto b) { return a.real() < b.real(); };
   std::ranges::sort(expected, by_frequency);
   REQUIRE(expected.size() >= 6);
+  REQUIRE(expected[5].real() < f0);  // All on the target's side of the resonance
   std::vector<std::complex<double>> found;
   std::ranges::copy_if(lorentz.f, std::back_inserter(found),
                        [](auto f) { return f.real() >= 8.0; });
   std::ranges::sort(found, by_frequency);
   REQUIRE(found.size() >= 6);
-  auto Match = [&](std::complex<double> f)
+  for (std::size_t k = 0; k < 6; k++)
   {
-    for (std::size_t k = 0; k < expected.size(); k++)
-    {
-      if (std::abs(f - expected[k]) <= 1.0e-7 * std::abs(expected[k]))
-      {
-        return static_cast<int>(k);
-      }
-    }
-    return -1;
-  };
-  std::vector<int> matched;
-  for (const auto f : found)
-  {
-    CAPTURE(f);
-    const int k = Match(f);
-    CHECK(k >= 0);  // A root on the target's side of the resonance
-    CHECK(std::ranges::find(matched, k) == matched.end());
-    matched.push_back(k);
+    CAPTURE(k, found[k], expected[k]);
+    CHECK(std::abs(found[k] - expected[k]) <= 1.0e-7 * std::abs(expected[k]));
   }
-  CHECK(matched.front() == 0);
 }
 
 TEST_CASE_METHOD(
