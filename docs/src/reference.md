@@ -1498,7 +1498,20 @@ cluster coupon's box is grown), reported in
 `spatialclusterpriority`) with the dropped coupons, their owners and the raw portions under
 `Diagnostics.SpatialClusterPriority` of `palace.json` and of the preflight manifest
 (written only when a coupon is dropped; the dry run's patch table still lists every built
-patch). Only the plane row is gated (the metal-top rows of a thin device read a few
+patch). The identification grows a cluster's support box over such a straddling corner
+window (the contract-v3 rule T5, `SpatialSupport.CornerContainment`; a library without the
+grown coupon places the ungrown one as before and lists the grown key as a `FallbackPlaced`
+requirement), and an electrostatic solve with dropped coupons also writes the DIAGNOSTIC
+companion table `surface-response-spatial-cluster-priority-clipped-correction.csv`: one row
+per dropped coupon, source and evaluation (0 fixed trace / 1 fixed flux on the raw field / 2
+the corrected field) with, per target interface, the coupon's fabricated energy on the device
+trace sampled at its own basis points (`fab energy`, never applied), the raw within-R energy
+of its whole window (`raw whole energy`) and of the window outside every cluster box (`raw
+outside energy`, the add-back per patch), `ratio` = fab / raw whole and `clipped correction` =
+(ratio - weight) x raw outside — the proportional estimate of the corner's missing correction
+outside the box; derived columns, listed with their parents in the table's header comment and
+under `Diagnostics.SpatialClusterPriority.ClippedCorrection`, never part of a total (the
+Maxwell path writes no such table). Only the plane row is gated (the metal-top rows of a thin device read a few
 percent of the amplitude and are recorded only), so a coupon frame whose process plane did
 not coincide with the device's metal sheet would be excluded wholesale and recorded. A
 conductor without a vertex on the process plane aborts at construction naming the model; a
