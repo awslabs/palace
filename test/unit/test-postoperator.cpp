@@ -566,14 +566,19 @@ TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normal
   const double at_material = 0.5 * norm_E2 * (2.0 + (dispersive ? 9.0 / 8.0 : 0.0));
   const double capacitor = 0.5 * 0.4 * norm_E2;
   const double total = 0.5 * (stored + at_material) + capacitor;
-  CHECK_THAT(measured.domain_E_field_energy_all, WithinRel(stored, 1.0e-12));
+  // The typed models have a stored electric energy, so every normalized output exists.
+  REQUIRE(measured.domain_E_field_energy_all);
+  REQUIRE(measured.TotalEnergyNormalization());
+  CHECK_THAT(*measured.domain_E_field_energy_all, WithinRel(stored, 1.0e-12));
   CHECK_THAT(measured.domain_E_field_energy_material, WithinRel(at_material, 1.0e-12));
-  CHECK_THAT(measured.TotalEnergyNormalization(), WithinRel(total, 1.0e-12));
+  CHECK_THAT(*measured.TotalEnergyNormalization(), WithinRel(total, 1.0e-12));
   const auto &port = measured.lumped_port_vi.at(1);
+  REQUIRE(port.mode_port_kappa);
+  REQUIRE(port.inductive_energy_participation);
   CHECK_THAT(std::norm(port.V), WithinRel(norm_E2, 1.0e-12));
-  CHECK_THAT(std::abs(port.mode_port_kappa),
+  CHECK_THAT(std::abs(*port.mode_port_kappa),
              WithinRel(0.5 * norm_E2 / 3.0 / total, 1.0e-12));
-  CHECK_THAT(std::abs(port.inductive_energy_participation),
+  CHECK_THAT(std::abs(*port.inductive_energy_participation),
              WithinRel(0.5 * norm_E2 / 2.0 / total, 1.0e-12));
   REQUIRE(measured.interface_eps_i.size() == 1);
   const auto &interface = measured.interface_eps_i.front();
