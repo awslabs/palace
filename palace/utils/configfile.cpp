@@ -1968,7 +1968,7 @@ void Nondimensionalize(const Units &units, DrivenSolverData &data)
     f = 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
   }
   data.adaptive_circuit_synthesis_anchor_freq =
-      2 * M_PI *
+      2 * std::numbers::pi *
       units.Nondimensionalize<Units::ValueType::FREQUENCY>(
           data.adaptive_circuit_synthesis_anchor_freq);
 }
