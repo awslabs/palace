@@ -173,6 +173,28 @@ void FarfieldBoundaryOperator::AddDispersiveExtraSystemBdrCoefficients(
   }
 }
 
+void FarfieldBoundaryOperator::AddPreconditionerBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &df,
+    MaterialPropertyCoefficient &f) const
+{
+  const std::complex<double> s = 0.5 / omega;
+  AddExtraSystemBoundaryCurlCurlBdrCoefficients(s.real(), df);
+  if (s.imag() != 0.0)
+  {
+    AddExtraSystemBoundaryCurlCurlBdrCoefficients(-s.imag(), df);
+  }
+  constexpr std::complex<double> i(0.0, 1.0);
+  for (std::size_t k = 0; k < ceed_attr_dispersive.size(); k++)
+  {
+    const auto r = GetDispersiveScale(k, omega);
+    AddDispersiveDampingBdrCoefficients(k, std::abs(i * omega * r), f);
+    if (order > 1)
+    {
+      AddDispersiveCurlCurlBdrCoefficients(k, std::abs(0.5 / (omega * r)), df);
+    }
+  }
+}
+
 std::complex<double>
 FarfieldBoundaryOperator::GetDispersiveScale(std::size_t k,
                                              std::complex<double> omega) const

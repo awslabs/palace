@@ -1471,7 +1471,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(a2_pc, fr);
   AddRealMassBdrCoefficients(a2_pc, fbr);
   AddFrequencyDependentPermittivityA2Coefficients(a3, fr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+  AddRealPreconditionerExtraSystemBdrCoefficients(a3, dfbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
@@ -1508,7 +1508,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(a2_pc, fr);
   AddRealMassBdrCoefficients(a2_pc, fbr);
   AddFrequencyDependentPermittivityA2Coefficients(a3, fr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+  AddRealPreconditionerExtraSystemBdrCoefficients(a3, dfbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2) : a2), fr);
@@ -1712,6 +1712,26 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+}
+
+void SpaceOperator::AddRealPreconditionerExtraSystemBdrCoefficients(
+    double omega, MaterialPropertyCoefficient &dfb, MaterialPropertyCoefficient &fb)
+{
+  farfield_op.AddPreconditionerBdrCoefficients(omega, dfb, fb);
+  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fb, fb);
+  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fb, fb);
+  wave_port_op.AddExtraSystemBdrCoefficients(omega, fb, fb);
+  floquet_port_op.AddExtraSystemBdrCoefficients(omega, fb, fb);
+}
+
+void SpaceOperator::AddRealPreconditionerExtraSystemBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &dfb,
+    MaterialPropertyCoefficient &fb)
+{
+  farfield_op.AddPreconditionerBdrCoefficients(omega, dfb, fb);
+  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fb, fb);
+  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fb, fb);
+  wave_port_op.AddExtraSystemBdrCoefficients(omega, fb, fb);
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,

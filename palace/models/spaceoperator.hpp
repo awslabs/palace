@@ -121,6 +121,16 @@ private:
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
+  // The same for a real-valued preconditioner, in one coefficient each: the sum of the
+  // real and imaginary parts of each term, except next to frequency-dependent materials at
+  // absorbing boundaries, which use the magnitudes of their terms (see
+  // FarfieldBoundaryOperator::AddPreconditionerBdrCoefficients).
+  void AddRealPreconditionerExtraSystemBdrCoefficients(double omega,
+                                                       MaterialPropertyCoefficient &dfb,
+                                                       MaterialPropertyCoefficient &fb);
+  void AddRealPreconditionerExtraSystemBdrCoefficients(std::complex<double> omega,
+                                                       MaterialPropertyCoefficient &dfb,
+                                                       MaterialPropertyCoefficient &fb);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 

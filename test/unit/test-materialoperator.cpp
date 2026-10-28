@@ -1393,6 +1393,91 @@ TEST_CASE("Second-order absorbing boundary pole terms",
   }
 }
 
+TEST_CASE("Real preconditioner of absorbing boundaries below the plasma frequency",
+          "[materialoperator][Serial][Parallel]")
+{
+  // Below its plasma frequency, a Drude medium has Re ε < 0 and the second-order absorbing
+  // boundary term next to it, i·(0.5/ω)/r(ω) with r ≈ -i|r|, is a negative curl-curl
+  // shift in the system. The real-valued preconditioner uses its magnitude instead, a
+  // positive shift, and the constant term 0.5/ω next to vacuum is unchanged.
+  auto MakeMesh = []
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+    for (int i = 0; i < serial_mesh->GetNE(); i++)
+    {
+      mfem::Vector center;
+      serial_mesh->GetElementCenter(i, center);
+      serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+    return mesh;
+  };
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
+  config::MaterialData drude, vacuum;
+  drude.attributes = {1};
+  drude.epsilon_r.s = {2.0, 2.0, 2.0};
+  drude.permittivity_terms.push_back(config::DrudeData{3.0, 0.01});
+  vacuum.attributes = {2};
+  config::DomainData domains;
+  domains.materials = {drude, vacuum};
+  const double omega = 1.3;
+  std::list<std::vector<std::unique_ptr<Mesh>>> meshes;
+  auto Operators = [&](int order)
+  {
+    config::BoundaryData boundaries;
+    boundaries.farfield.attributes = {3, 5};
+    boundaries.farfield.order = order;
+    // The operator references the mesh, which must outlive it.
+    auto &mesh = meshes.emplace_back(MakeMesh());
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries, ProblemType::DRIVEN,
+                                           units, mesh);
+  };
+  auto first = Operators(1), second = Operators(2);
+  const std::complex<double> r = second->GetFarfieldOp().GetDispersiveScale(0, omega),
+                             z2 = std::complex<double>(0.0, 0.5) / (omega * r);
+  CAPTURE(r, z2);
+  REQUIRE(z2.real() < -0.1 * std::abs(z2));
+
+  auto PC = [&](SpaceOperator &space_op)
+  { return space_op.GetPreconditionerMatrix<Operator>(1.0, omega, -omega * omega, omega); };
+  const auto pc1 = PC(*first), pc2 = PC(*second);
+  auto M_k = second->GetFarfieldDispersiveCurlCurlMatrix(0, Operator::DIAG_ZERO);
+  auto M_ff = second->GetFarfieldBoundaryCurlCurlMatrix<Operator>(Operator::DIAG_ZERO);
+  REQUIRE(M_k);
+  REQUIRE(M_ff);
+
+  Vector x(second->GetNDSpace().GetTrueVSize()), y(x.Size()), z(x.Size());
+  ComplexVector xc(x.Size()), t(x.Size());
+  for (auto *v : {&x, &y, &z})
+  {
+    v->UseDevice(true);
+  }
+  xc.UseDevice(true);
+  t.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  pc2->Mult(x, y);
+  pc1->AddMult(x, y, -1.0);
+  M_ff->Mult(x, z);
+  z *= 0.5 / omega;
+  xc = 0.0;
+  xc.Real() = x;
+  M_k->Mult(xc, t);  // i M_k x, on the imaginary slot
+  z.Add(std::abs(z2), t.Imag());
+  const double norm = linalg::Norml2(Mpi::World(), y);
+  REQUIRE(norm > 0.0);
+  CHECK(linalg::Dot(Mpi::World(), x, y) > 0.0);
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+}
+
 TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")
 {
   SECTION("IsOrthonormal")

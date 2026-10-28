@@ -96,6 +96,16 @@ public:
   // coefficient, and the second-order term i·(0.5/ω)/r_k(ω) times the curl-curl
   // coefficient, both with the high-frequency permittivity.
   std::size_t NumDispersiveMaterials() const { return ceed_attr_dispersive.size(); }
+
+  // The extra system terms for a real-valued preconditioner, in one coefficient each: the
+  // second-order term next to constant materials as the sum of its real and imaginary
+  // parts, and the terms next to frequency-dependent materials by their magnitudes
+  // |iω r_k(ω)| and |0.5/(ω r_k(ω))|, which stay positive also where r_k is not real
+  // (lossy, or a Drude medium below its plasma frequency). The system operator is
+  // unchanged.
+  void AddPreconditionerBdrCoefficients(std::complex<double> omega,
+                                        MaterialPropertyCoefficient &df,
+                                        MaterialPropertyCoefficient &f) const;
   std::complex<double> GetDispersiveScale(std::size_t k, std::complex<double> omega) const;
   void AddDispersiveDampingBdrCoefficients(std::size_t k, double coeff,
                                            MaterialPropertyCoefficient &fb) const;
