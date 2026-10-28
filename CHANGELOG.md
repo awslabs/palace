@@ -128,6 +128,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refuses a graded coupon whose record lacks the key. The planner's default rule is
     unchanged. The identification `Conventions.CornerTraceBasisRule` text is a dated history
     of the known rules asserting no per-model fact.
+  - Spatial-cluster contract rule T5 (excluded-corner containment) of the automatic
+    surface-response correction: a free corner whose claim window lies partly inside a
+    cluster's contract box and partly outside every cluster box (the corner coupon the
+    spatial-cluster priority drops, leaving its outside arms uncorrected) widens that box by
+    `0.25 R` steps until the corner's `R`-neighbourhood is contained, recorded under
+    `SpatialSupport.CornerContainment` (the stage-1 growth history merged into the re-read
+    record, `Growth.Reread`); a grown cluster without a library model falls back to the
+    ungrown key's model (`CornerContainment.Fallback`, reason `NoMatchedModel`) and the
+    grown signature is listed as a Missing-class `FallbackPlaced` requirement
+    (`Summary.FallbackPlaced`; none for an `Unboxable` grown signature). The electrostatic
+    solver writes the diagnostic-only companion table
+    `surface-response-spatial-cluster-priority-clipped-correction.csv` (the dropped corner
+    coupons' fabricated / raw / clipped-correction energies; every existing output
+    unchanged). Response-geometry cache version 20 (a version-19 cache, which may hold the
+    ungrown placement of a cluster this rule grows, is refused).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
