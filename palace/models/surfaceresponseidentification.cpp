@@ -12833,9 +12833,10 @@ Identifier::ReadCornerContainment(const ClusterPlaneBox &own,
     }
     return Interval{t0, t1};
   };
-  std::array<double, 4> target = {
+  const std::array<double, 4> empty_target = {
       std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
       -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
+  std::array<double, 4> target = empty_target;
   for (const auto &site : sites)
   {
     if (site.cluster >= 0 || site.arm_directions.size() != 2 ||
@@ -12847,7 +12848,9 @@ Identifier::ReadCornerContainment(const ClusterPlaneBox &own,
     const auto segments = CornerWindowSegments(site);
     double inside = 0.0, outside_every = 0.0, window_length = 0.0;
     nlohmann::json window = nlohmann::json::array();
-    std::array<double, 4> site_target = target;
+    // This site's own band (its record's BandOverR / ShortfallsOverR / Steps); the
+    // cluster's target is the union over the firing sites (decision 972, review MAJOR-1).
+    std::array<double, 4> site_target = empty_target;
     for (const auto &[p3, q3] : segments)
     {
       const Point2 p = Local(own, p3), q = Local(own, q3);

@@ -3999,11 +3999,10 @@ std::array<double, 3> DevicePoint(const IdentifiedFeature &feature, double x, do
   return p;
 }
 
-// Device-coordinate bounding box of the feature's recorded support box.
-std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const char *key,
+// Device-coordinate bounding box of a recorded box (units of R) of the feature's frame.
+std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const nlohmann::json &box,
                                 double radius)
 {
-  const auto &box = feature.spatial_support.at(key);
   std::array<double, 4> device = {1.0e300, 1.0e300, -1.0e300, -1.0e300};
   for (const double bx : {box[0].get<double>(), box[2].get<double>()})
   {
@@ -4017,6 +4016,13 @@ std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const char *ke
     }
   }
   return device;
+}
+
+// Device-coordinate bounding box of the feature's recorded support box.
+std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const char *key,
+                                double radius)
+{
+  return DeviceBox(feature, feature.spatial_support.at(key), radius);
 }
 
 // Distance of a device point from the metal perimeter of the input (its segments).
@@ -7325,6 +7331,24 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
         moved_faces += s.get<int>() > 0 ? 1 : 0;
       }
       CHECK(moved_faces == 1);
+      // The vertex's OWN band (decision 972, review MAJOR-1: never the union of the
+      // vertices read before it): the +x arm's band x in [left, left + R], y in [cy -+ R];
+      // the left-edge arm's (halved to R) band x in [left - R, left + R], y between cy and
+      // the island's mid-height 7 -> the AABB x in [left - R, left + R], y in [cy -+ R].
+      const auto band = DeviceBox(*cluster, vertex["BandOverR"], R);
+      CHECK_THAT(band[0], WithinAbs(left - R, 1.0e-5));
+      CHECK_THAT(band[2], WithinAbs(left + R, 1.0e-5));
+      CHECK_THAT(band[1], WithinAbs(p[1] - R, 1.0e-5));
+      CHECK_THAT(band[3], WithinAbs(p[1] + R, 1.0e-5));
+      std::array<double, 4> own_shortfalls{};
+      for (int f = 0; f < 4; f++)
+      {
+        own_shortfalls[static_cast<std::size_t>(DeviceFace(*cluster, "ClaimsBox", f))] =
+            vertex["ShortfallsOverR"][f].get<double>();
+      }
+      CHECK_THAT(own_shortfalls[2], WithinAbs(1.127 / R, 1.0e-5));
+      CHECK_THAT(own_shortfalls[0] + own_shortfalls[1] + own_shortfalls[3],
+                 WithinAbs(0.0, 1.0e-12));
     }
     CHECK(DeviceSteps(*cluster) == std::array<int, 4>{0, 0, 3, 0});
     const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);

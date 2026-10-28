@@ -127,12 +127,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(!containment.contains("Fallback"));
   CHECK(containment["Steps"] == json({0, 0, 1, 1}));
   REQUIRE(containment["Vertices"].size() == 2);
+  // Per vertex, its OWN band and steps (decision 972, review MAJOR-1): the left corner
+  // (0.125, 1.75) is short on the x face too (its +z arm's band reaches x = -0.075), the
+  // right corner (0.625, 1.75) on the z face only; the cluster's Steps is the max.
+  std::multiset<std::array<int, 4>> vertex_steps;
   for (const auto &vertex : containment["Vertices"])
   {
     CHECK(vertex["Type"] == "ConvexCorner");
     CHECK_THAT(vertex["InsideOverR"].get<double>(), WithinAbs(1.9, 1.0e-3));
     CHECK_THAT(vertex["OutsideEveryOverR"].get<double>(), WithinAbs(0.1, 1.0e-3));
+    vertex_steps.insert(vertex["Steps"].get<std::array<int, 4>>());
+    // The band is the vertex's own: 2 R wide across its +z arm (x in [vx - R, vx + R]).
+    const auto &band = vertex["BandOverR"];
+    CHECK_THAT(band[2].get<double>() - band[0].get<double>(), WithinAbs(2.0, 1.0e-3));
   }
+  CHECK(vertex_steps == std::multiset<std::array<int, 4>>{{0, 0, 1, 1}, {0, 0, 0, 1}});
   CHECK(cluster["SpatialSupport"]["Contract"] == 3);
   CHECK(cluster["SpatialSupport"]["Growth"]["Grown"] == true);
   CHECK(cluster["SpatialSupport"]["Growth"]["Steps"] == json({0, 0, 0, 0}));
