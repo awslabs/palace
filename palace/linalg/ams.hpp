@@ -61,6 +61,8 @@ public:
           iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen, print)
   {
   }
+  HypreAmsSolver(const HypreAmsSolver &) = delete;
+  HypreAmsSolver &operator=(const HypreAmsSolver &) = delete;
   ~HypreAmsSolver() override;
 
   void SetOperator(const Operator &op) override;
