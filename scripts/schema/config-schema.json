@@ -1941,7 +1941,7 @@
         },
         "ThinFilm": {
           "type": "boolean",
-          "description": "Treat an interior boundary as a conducting film much thinner than the skin or penetration depth, with loss from the total sheet current. By default, the two faces of an interior boundary are independent conductor surfaces with loss from the tangential magnetic field on each face. No effect on exterior boundaries.",
+          "description": "Treat an interior boundary as a conducting film much thinner than the skin or penetration depth, with loss from the total sheet current. By default, the two faces of an interior boundary are independent conductor surfaces with loss from the tangential magnetic field on each face. No effect on exterior boundaries, or on interior boundaries along which the mesh is cracked, whose faces are always independent. Impedance and conductivity boundaries which are not cracked are thin films in the simulation, and should use `true` (a warning is issued otherwise). For perfect electric conductor sheets, either model can be used depending on the thickness of the metal.",
           "default": false
         }
       }

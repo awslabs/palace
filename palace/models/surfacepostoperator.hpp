@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
@@ -21,6 +22,7 @@ class MaterialOperator;
 namespace config
 {
 
+struct BoundaryData;
 struct BoundaryPostData;
 struct SurfaceFluxData;
 struct InterfaceDielectricData;
@@ -160,6 +162,15 @@ public:
   // times this integral, to first order in Rs.
   double GetConductorSurfaceResistance(int idx) const;
   double GetConductorSurfaceCurrentNorm2(int idx, const GridFunction &B) const;
+
+  // Check the conductor loss model of each postprocessing index on interior boundaries
+  // against the model of the boundary conditions on them in the simulation, returning a
+  // warning message for each mismatch: uncracked impedance and conductivity sheets model a
+  // thin film, whose loss is given by the total sheet current ("ThinFilm": true), while the
+  // faces of cracked interior boundaries are independent conductor surfaces, which carry no
+  // field jump ("ThinFilm" has no effect). Collective on the mesh communicator.
+  std::vector<std::string>
+  CheckConductorLossModels(const config::BoundaryData &boundaries) const;
 
   int GetVDim() const { return mat_op.SpaceDimension(); };
 };

@@ -822,7 +822,11 @@ G_j(\omega) = \frac{4\omega\mathcal{E}^{mag}}{\oint_{\Gamma_j} |\bm{n}\times\bm{
 
 which is the quality factor of the inductive response at the drive frequency (the analog of
 ``\omega L/R`` for a lossy inductor), and is equal to the eigenmode geometric factor at an
-isolated resonance. The dissipated power ``P_j`` is also reported, along with its fraction
+isolated resonance. The energy stored in the surface inductance of impedance boundaries, such
+as the kinetic inductance of superconducting films, is not included in
+``\mathcal{E}^{mag}``, which underestimates the driven geometric factor by the kinetic
+inductance fraction. For eigenmodes, the electric energy ``\mathcal{E}^{elec}_m`` accounts
+for the total stored energy of the mode including it. The dissipated power ``P_j`` is also reported, along with its fraction
 ``P_j/P^{inc}`` of the incident power of the excitation for excitations by ports, each of
 which delivers ``1\text{ W}`` of time-averaged incident power. When the dissipated power is
 not small compared to the other losses of a resonance, for example in an undercoupled
@@ -839,6 +843,32 @@ integrand is the sum ``|\bm{n}\times\bm{H}_1|^2 + |\bm{n}\times\bm{H}_2|^2`` of 
 contributions of the two faces. For a film much thinner than the skin or penetration depth,
 the loss is determined by the total sheet current, with integrand
 ``|\bm{n}\times(\bm{H}_1-\bm{H}_2)|^2``, and ``R_{s,j}`` is the sheet resistance of the film.
+The loss model should match the model of the boundary condition in the simulation (see
+[Interior boundaries](guide/boundaries.md#Interior-boundaries)):
+
+  - A perfect electric conductor sheet has independent fields on its two sides, and either
+    model can be used, depending on the thickness of the metal it represents.
+  - An impedance boundary which is not cracked is a thin film in the simulation, with a
+    single tangential electric field and the sheet current given by the jump in the
+    tangential magnetic field, and should use the thin film model with the sheet resistance
+    of the film. In this case, ``P_j`` is the power dissipated in the film by the
+    simulation itself if the sheet impedance includes the same resistance. A conductivity
+    boundary which is not cracked shares the sheet current equally between its two faces,
+    corresponding to the thin film model with half the surface resistance of the conductor.
+  - The faces of a cracked boundary are independent surfaces in the simulation, and
+    always use the independent face model.
+
+A warning is issued when the loss model of a conductor surface does not match the boundary
+conditions of the simulation. For films of intermediate thickness, such as superconducting
+films with a thickness comparable to the penetration depth, the two models are the limits of
+the loss, which can be estimated with both from a single simulation.
+
+To include the kinetic inductance of superconductors, the reactive surface impedance can be
+modeled with an impedance boundary with only a surface inductance, and the surface
+resistance with the conductor loss postprocessing. This avoids the parallel combination of
+resistance and inductance of the impedance boundary condition, which differs from the series
+surface impedance ``R_s + i\omega L_s`` of a superconductor, and keeps the first order
+approximation to the surface resistance only.
 
 This model assumes a local surface impedance relation on the conductor. The surface integral
 is evaluated from the magnetic field at the boundary, which converges more slowly with mesh

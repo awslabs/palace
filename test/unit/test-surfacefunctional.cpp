@@ -1604,6 +1604,93 @@ TEST_CASE("SurfaceFunctional Conductor Loss 2D", "[surfacefunctional][Serial][GP
   }
 }
 
+TEST_CASE("SurfacePostOperator Conductor Loss Model Checks",
+          "[surfacefunctional][Serial][Parallel]")
+{
+  // Conductor loss postprocessing on the interior interface (attribute 7) and an exterior
+  // boundary (attribute 1), with the thick conductor and thin film models, checked against
+  // the model of the boundary conditions of the simulation on them.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto mesh = MakeInterfaceMesh(comm, mfem::Element::HEXAHEDRON);
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+  mfem::H1_FECollection h1_fec(1, 3);
+  mfem::ND_FECollection nd_fec(1, 3);
+  FiniteElementSpace h1_fespace(*mesh, &h1_fec), nd_fespace(*mesh, &nd_fec);
+
+  config::BoundaryPostData postpro;
+  auto AddConductor = [&postpro](int idx, int attr, bool thin_film)
+  {
+    config::ConductorLossData data;
+    data.attributes = {attr};
+    data.thin_film = thin_film;
+    postpro.conductor.emplace(idx, data);
+  };
+  AddConductor(1, 7, false);  // Thick, interior
+  AddConductor(2, 7, true);   // Thin film, interior
+  AddConductor(3, 1, false);  // Thick, exterior
+  AddConductor(4, 1, true);   // Thin film, exterior
+  SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace,
+                                   nd_fespace);
+
+  // Returns the postprocessing indices of the warnings, checking their content.
+  auto Check = [&](const config::BoundaryData &boundaries, const std::string &content)
+  {
+    std::vector<int> indices;
+    for (const auto &msg : surf_post_op.CheckConductorLossModels(boundaries))
+    {
+      CAPTURE(msg);
+      CHECK(msg.find(content) != std::string::npos);
+      for (int idx = 1; idx <= 4; idx++)
+      {
+        if (msg.find(fmt::format("index {:d} ", idx)) != std::string::npos)
+        {
+          indices.push_back(idx);
+        }
+      }
+    }
+    return indices;
+  };
+
+  SECTION("PEC sheet")
+  {
+    // Either model is consistent with a zero thickness perfect conductor.
+    config::BoundaryData boundaries;
+    boundaries.pec.attributes = {1, 7};
+    CHECK(Check(boundaries, "").empty());
+  }
+
+  SECTION("Uncracked impedance sheet")
+  {
+    // A thin film in the simulation: the thick conductor model is inconsistent.
+    config::BoundaryData boundaries;
+    boundaries.impedance.emplace_back().attributes = {1, 7};
+    CHECK(Check(boundaries, "sheet resistance of the film") == std::vector<int>{1});
+    config::BoundaryData rational;
+    rational.rational_impedance.emplace_back().attributes = {7};
+    CHECK(Check(rational, "sheet resistance of the film") == std::vector<int>{1});
+  }
+
+  SECTION("Uncracked conductivity sheet")
+  {
+    config::BoundaryData boundaries;
+    boundaries.conductivity.emplace_back().attributes = {1, 7};
+    CHECK(Check(boundaries, "half the surface resistance") == std::vector<int>{1});
+  }
+
+  SECTION("Cracked impedance boundary")
+  {
+    // Independent faces in the simulation: the thin film model has no effect.
+    config::BoundaryData boundaries;
+    boundaries.impedance.emplace_back().attributes = {1, 7};
+    boundaries.cracked_attributes = {7};
+    CHECK(Check(boundaries, "cracked") == std::vector<int>{2});
+  }
+}
+
 TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;

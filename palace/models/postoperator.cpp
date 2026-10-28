@@ -135,6 +135,12 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
                  boundaries.GetSheetAttributes()),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
+  // Check the conductor loss models against the boundary conditions of the simulation.
+  for (const auto &msg : surf_post_op.CheckConductorLossModels(boundaries))
+  {
+    Mpi::Warning("{}\n", msg);
+  }
+
   // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())
   {

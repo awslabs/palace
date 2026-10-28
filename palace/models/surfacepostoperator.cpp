@@ -7,6 +7,9 @@
 #include <complex>
 #include <set>
 #include <string>
+#include <vector>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
@@ -331,21 +334,9 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
                         nd_fespace, iodata.boundaries.GetSheetAttributes())
 {
-  // A mesh cracked along an interior boundary has independent boundary elements on each
-  // face, which carry no field jump: their loss is always that of a thick conductor.
-  for (const auto &[idx, data] : cond_surfs)
+  for (const auto &msg : CheckConductorLossModels(iodata.boundaries))
   {
-    if (data.thin_film &&
-        std::ranges::any_of(
-            data.attr_list,
-            [&](int attr) { return iodata.boundaries.cracked_attributes.contains(attr); }))
-    {
-      Mpi::Warning(
-          "\"Conductor\" boundary postprocessing index {:d} has \"ThinFilm\": true "
-          "on boundary attributes along which the mesh is cracked, whose faces are "
-          "treated as independent thick conductor surfaces!\n",
-          idx);
-    }
+    Mpi::Warning("{}\n", msg);
   }
 }
 
@@ -479,6 +470,103 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   double dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return weight * dot;
+}
+
+std::vector<std::string>
+SurfacePostOperator::CheckConductorLossModels(const config::BoundaryData &boundaries) const
+{
+  std::vector<std::string> messages;
+  if (cond_surfs.empty())
+  {
+    return messages;
+  }
+
+  // Boundary attributes with interior (two-sided) boundary elements, from all processes.
+  const auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::vector<int> interior(bdr_attr_max, 0);
+  for (int i = 0; i < mesh.GetNBE(); i++)
+  {
+    const int attr = mesh.GetBdrAttribute(i);
+    if (!interior[attr - 1] &&
+        mesh.GetFaceInformation(mesh.GetBdrElementFaceIndex(i)).IsInterior())
+    {
+      interior[attr - 1] = 1;
+    }
+  }
+  Mpi::GlobalSum(bdr_attr_max, interior.data(), mesh.GetComm());
+  auto IsInterior = [&](int attr)
+  { return attr > 0 && attr <= bdr_attr_max && interior[attr - 1] > 0; };
+
+  // Interior boundaries with a surface impedance which are not cracked are thin films in
+  // the simulation: a single tangential electric field on the sheet, with the sheet current
+  // given by the jump in the tangential magnetic field.
+  std::set<int> impedance_films, conductivity_films;
+  auto AddFilms = [&](const auto &bcs, std::set<int> &films)
+  {
+    for (const auto &data : bcs)
+    {
+      for (auto attr : data.attributes)
+      {
+        if (IsInterior(attr) && !boundaries.cracked_attributes.contains(attr))
+        {
+          films.insert(attr);
+        }
+      }
+    }
+  };
+  AddFilms(boundaries.impedance, impedance_films);
+  AddFilms(boundaries.rational_impedance, impedance_films);
+  AddFilms(boundaries.conductivity, conductivity_films);
+
+  for (const auto &[idx, data] : cond_surfs)
+  {
+    std::vector<int> cracked, impedance, conductivity;
+    for (auto attr : data.attr_list)
+    {
+      if (data.thin_film && boundaries.cracked_attributes.contains(attr))
+      {
+        cracked.push_back(attr);
+      }
+      else if (!data.thin_film && impedance_films.contains(attr))
+      {
+        impedance.push_back(attr);
+      }
+      else if (!data.thin_film && conductivity_films.contains(attr))
+      {
+        conductivity.push_back(attr);
+      }
+    }
+    if (!cracked.empty())
+    {
+      messages.push_back(fmt::format(
+          "\"Conductor\" boundary postprocessing index {:d} has \"ThinFilm\": true on "
+          "interior boundary attributes along which the mesh is cracked ({}), whose two "
+          "faces are independent conductor surfaces in the simulation: \"ThinFilm\" has no "
+          "effect for these attributes!",
+          idx, fmt::join(cracked, ", ")));
+    }
+    if (!impedance.empty())
+    {
+      messages.push_back(fmt::format(
+          "\"Conductor\" boundary postprocessing index {:d} models independent conductor "
+          "faces (\"ThinFilm\": false) on interior impedance boundary attributes which are "
+          "not cracked ({}), which are thin films in the simulation: consider "
+          "\"ThinFilm\": true, with \"Rs\" the sheet resistance of the film!",
+          idx, fmt::join(impedance, ", ")));
+    }
+    if (!conductivity.empty())
+    {
+      messages.push_back(fmt::format(
+          "\"Conductor\" boundary postprocessing index {:d} models independent conductor "
+          "faces (\"ThinFilm\": false) on interior conductivity boundary attributes which "
+          "are not cracked ({}), which share the sheet current equally between their two "
+          "faces in the simulation: consider \"ThinFilm\": true, with \"Rs\" half the "
+          "surface resistance of the conductor!",
+          idx, fmt::join(conductivity, ", ")));
+    }
+  }
+  return messages;
 }
 
 double SurfacePostOperator::GetConductorSurfaceResistance(int idx) const
