@@ -7,6 +7,8 @@
 #include <fstream>
 #include <iterator>
 #include <numbers>
+#include <string>
+#include <vector>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -506,12 +508,38 @@ TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normal
 {
   // Exercise the real measurement consumers, not only the normalization helper. The
   // electric field is uniform, so its volume energies and the port voltage are analytic;
-  // B = 0 deliberately ensures that normalization uses only the electric-side forms.
-  const bool dispersive = GENERATE(false, true);
-  CAPTURE(dispersive);
+  // B = 0 deliberately ensures that normalization uses only the electric-side forms. A
+  // material without a stored electric energy (a RAW −0.5/(s + 1) compensated by a typed
+  // Debye 1/(1 + s)) has no total energy: κ, the participations, and the interface
+  // outputs are omitted, and so are their CSV files, also when an earlier run left them
+  // in the output folder. The other files there are kept.
+  enum class Model
+  {
+    CONSTANT,
+    LORENTZ,
+    COMPENSATED
+  };
+  const auto model = GENERATE(Model::CONSTANT, Model::LORENTZ, Model::COMPENSATED);
+  CAPTURE(static_cast<int>(model));
+  const bool dispersive = (model == Model::LORENTZ);
+  const bool stored = (model != Model::COMPENSATED);
+  const auto output = temp_dir / fmt::format("participation_{}", static_cast<int>(model));
+  const std::vector<std::string> omitted = {"port-Q.csv", "port-EPR.csv", "surface-Q.csv"};
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    fs::remove_all(output);
+    fs::create_directories(output);
+    for (const auto &name : omitted)
+    {
+      std::ofstream(output / name) << "stale\n";
+    }
+    std::ofstream(output / "unrelated.txt") << "kept\n";
+  }
+  Mpi::Barrier(comm);
   IoData iodata(Units(1.0, 1.0));
   iodata.problem.type = ProblemType::EIGENMODE;
-  iodata.problem.output = temp_dir.string();
+  iodata.problem.output = output.string();
   iodata.solver.order = 1;
   iodata.solver.linear.mg_max_levels = 1;
   config::MaterialData material;
@@ -520,6 +548,11 @@ TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normal
   if (dispersive)
   {
     material.permittivity_terms = {config::LorentzData{1.0, 3.0, 0.0}};
+  }
+  else if (!stored)
+  {
+    material.permittivity_terms = {config::DebyeData{1.0, 1.0},
+                                   config::PermittivityPoleData{-1.0, -0.5}};
   }
   iodata.domains.materials = {material};
   json boundaries;
@@ -560,22 +593,53 @@ TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normal
   b = 0.0;
   const auto measured = post.MeasureForTest(e, b, 1.0);
 
-  // At ω = 1, χ = 9/8 and w = 90/64 for this lossless Lorentz oscillator.
+  // At ω = 1, χ = 9/8 and w = 90/64 for this lossless Lorentz oscillator, and
+  // Re χ = Re 0.5/(1 + i) = 1/4 for the compensated Debye.
   constexpr double norm_E2 = 1.25;
-  const double stored = 0.5 * norm_E2 * (2.0 + (dispersive ? 90.0 / 64.0 : 0.0));
-  const double at_material = 0.5 * norm_E2 * (2.0 + (dispersive ? 9.0 / 8.0 : 0.0));
+  const double re_chi = dispersive ? 9.0 / 8.0 : (stored ? 0.0 : 0.25);
+  const double at_material = 0.5 * norm_E2 * (2.0 + re_chi);
+  CHECK_THAT(measured.domain_E_field_energy_material, WithinRel(at_material, 1.0e-12));
+  const auto &port = measured.lumped_port_vi.at(1);
+  CHECK_THAT(std::norm(port.V), WithinRel(norm_E2, 1.0e-12));
+  if (Mpi::Root(comm))
+  {
+    for (const auto &name : omitted)
+    {
+      CAPTURE(name);
+      REQUIRE(fs::exists(output / name) == stored);
+      if (stored && name != "surface-Q.csv")
+      {
+        // Written by this run at setup, not left from the earlier one (surface-Q.csv is
+        // written at the first printed measurement, which this test does not make).
+        std::ifstream file(output / name);
+        std::string header;
+        std::getline(file, header);
+        CHECK(header != "stale");
+      }
+    }
+    CHECK(fs::exists(output / "unrelated.txt"));
+  }
+  if (!stored)
+  {
+    // No total energy, so no normalized output, and not a placeholder value.
+    CHECK_FALSE(measured.domain_E_field_energy_all);
+    CHECK_FALSE(measured.TotalEnergyNormalization());
+    CHECK_FALSE(port.mode_port_kappa);
+    CHECK_FALSE(port.quality_factor);
+    CHECK_FALSE(port.inductive_energy_participation);
+    CHECK(measured.interface_eps_i.empty());
+    return;
+  }
+  const double stored_E = 0.5 * norm_E2 * (2.0 + (dispersive ? 90.0 / 64.0 : 0.0));
   const double capacitor = 0.5 * 0.4 * norm_E2;
-  const double total = 0.5 * (stored + at_material) + capacitor;
+  const double total = 0.5 * (stored_E + at_material) + capacitor;
   // The typed models have a stored electric energy, so every normalized output exists.
   REQUIRE(measured.domain_E_field_energy_all);
   REQUIRE(measured.TotalEnergyNormalization());
-  CHECK_THAT(*measured.domain_E_field_energy_all, WithinRel(stored, 1.0e-12));
-  CHECK_THAT(measured.domain_E_field_energy_material, WithinRel(at_material, 1.0e-12));
+  CHECK_THAT(*measured.domain_E_field_energy_all, WithinRel(stored_E, 1.0e-12));
   CHECK_THAT(*measured.TotalEnergyNormalization(), WithinRel(total, 1.0e-12));
-  const auto &port = measured.lumped_port_vi.at(1);
   REQUIRE(port.mode_port_kappa);
   REQUIRE(port.inductive_energy_participation);
-  CHECK_THAT(std::norm(port.V), WithinRel(norm_E2, 1.0e-12));
   CHECK_THAT(std::abs(*port.mode_port_kappa),
              WithinRel(0.5 * norm_E2 / 3.0 / total, 1.0e-12));
   CHECK_THAT(std::abs(*port.inductive_energy_participation),

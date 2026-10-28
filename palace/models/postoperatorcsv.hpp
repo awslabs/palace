@@ -289,6 +289,12 @@ protected:
   std::chrono::steady_clock::time_point last_deferred_flush;
   void FlushDeferredTables();
 
+  // Remove the file of a configured table which this run omits (it is normalized by an
+  // energy which is not available), so that a fresh run does not leave the file of an
+  // earlier run beside its other outputs. A restart (reload_table) keeps existing files.
+  // Called on the root process, like the table writes.
+  void RemoveOmittedTable(const fs::path &file_name) const;
+
   // Flush deferred tables if the flush interval has elapsed. Call only at a step boundary,
   // once every table holds this step's row.
   void MaybeFlushDeferredTables();

@@ -588,6 +588,16 @@ void PostOperatorCSV<solver_t>::FinalizeCSVData()
 }
 
 template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::RemoveOmittedTable(const fs::path &file_name) const
+{
+  // Like WriteFullTableTrunc, which removes the previous file before writing it.
+  if (!reload_table)
+  {
+    fs::remove(post_dir / file_name);
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_post_op)
 {
   domain_E = TableWithCSVFile(post_dir / "domain-E.csv", reload_table);
@@ -763,9 +773,14 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &surf_post_op,
                                                    bool total_energy)
 {
-  // The participations are normalized by the total energy, so omitted without one.
-  if (surf_post_op.eps_surfs.empty() || !total_energy)
+  if (surf_post_op.eps_surfs.empty())
   {
+    return;
+  }
+  // The participations are normalized by the total energy, so omitted without one.
+  if (!total_energy)
+  {
+    RemoveOmittedTable("surface-Q.csv");
     return;
   }
   surface_Q = TableWithCSVFile(post_dir / "surface-Q.csv", reload_table);
@@ -1549,9 +1564,14 @@ void PostOperatorCSV<solver_t>::InitializeEigPortEPR(
   auto has_L = [](const auto &port) { return std::abs(port.second.L) > 0.0; };
   std::ranges::copy(lumped_port_op | std::views::filter(has_L) | std::views::keys,
                     std::back_inserter(ports_with_L));
-  // The participations are normalized by the total energy, so omitted without one.
-  if (ports_with_L.empty() || !total_energy)
+  if (ports_with_L.empty())
   {
+    return;
+  }
+  // The participations are normalized by the total energy, so omitted without one.
+  if (!total_energy)
+  {
+    RemoveOmittedTable("port-EPR.csv");
     return;
   }
   port_EPR = TableWithCSVFile(post_dir / "port-EPR.csv");
@@ -1589,9 +1609,14 @@ void PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lum
   auto has_R = [](const auto &port) { return std::abs(port.second.R) > 0.0; };
   std::ranges::copy(lumped_port_op | std::views::filter(has_R) | std::views::keys,
                     std::back_inserter(ports_with_R));
-  // The coupling rates are normalized by the total energy, so omitted without one.
-  if (ports_with_R.empty() || !total_energy)
+  if (ports_with_R.empty())
   {
+    return;
+  }
+  // The coupling rates are normalized by the total energy, so omitted without one.
+  if (!total_energy)
+  {
+    RemoveOmittedTable("port-Q.csv");
     return;
   }
   port_Q = TableWithCSVFile(post_dir / "port-Q.csv");
