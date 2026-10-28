@@ -109,6 +109,18 @@ file. These include:
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
     written to the file `surface-Q.csv` in the specified output directory.
+  - [`config["Boundaries"]["Postprocessing"]["Conductor"]`](../config/reference.md#config-boundaries-postprocessing-conductor) :
+    Postprocesses the loss of imperfect conductors with a given surface resistance at
+    surfaces of the model, to first order in the surface resistance, for eigenmode and
+    driven simulations. This allows the conductor loss of several surfaces with different
+    surface resistances to be computed from a single simulation, typically with perfect
+    electric conductor boundaries. For each surface, the geometric factor ``G`` (in
+    ``\Omega``), which depends only on the fields, and the associated quality factor
+    ``Q = G/R_s`` are written to the file `surface-Q.csv` in the specified output directory,
+    such that ``1/Q = \sum_j R_{s,j}/G_j``. Driven simulations also write the time-averaged
+    dissipated power ``P``, and its fraction of the incident power for excitations by ports.
+    See the [Conductor surface loss](../reference.md#Conductor-surface-loss) section of
+    the reference for more information.
 
 ## Visualization
 

@@ -158,6 +158,28 @@ Q_c = \left(\frac{1}{Q}-\frac{1}{Q_d}\right)^{-1} = 2.94\times 10^4
 which is the same as the analytical result given in Example 6.4 from [[1]](#References) for
 this geometry.
 
+The conductor losses can also be computed from the `cavity_pec.json` simulation without
+modeling the walls as impedance boundaries, using the
+[`config["Boundaries"]["Postprocessing"]["Conductor"]`](../config/reference.md#config-boundaries-postprocessing-conductor)
+object. This computes the loss of each group of walls, to first order in the surface
+resistance, from the fields of the perfectly conducting cavity. Here, the end caps (index 1)
+and the side wall (index 2) are postprocessed separately with the same surface resistance
+as the impedance boundary of `cavity_impedance.json`. The geometric factors ``G`` and
+quality factors ``Q = G/R_s`` of each group are written to
+`postpro/cavity_pec/surface-Q.csv`:
+
+```@example include_example
+include_example_file("cylinder/cavity_pec", "surface-Q.csv") # hide
+```
+
+The geometric factors depend only on the mode, so a single simulation gives the
+conductor-limited quality factor for any surface resistance of each wall, with
+``1/Q_c = \sum_j R_{s,j}/G_j``. For the ``\text{TE}_{011}`` mode, the end caps and side
+wall give ``Q_c = 2.94\times 10^4``, in agreement with the result of the impedance boundary
+simulation, while showing that the loss in the side wall dominates for this mode. For the
+lowest ``\text{TM}_{010}`` mode, the geometric factors of the side wall and of the two end
+caps match the analytic values ``G = \omega\mu_0 a/2`` and ``G = \omega\mu_0 d/2``.
+
 Finally, a clipped view of the electric field (left) and magnetic flux density magnitudes
 for the ``\text{TE}_{011}`` mode is shown below.
 

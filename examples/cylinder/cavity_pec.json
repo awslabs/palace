@@ -37,6 +37,22 @@
     "PEC":
     {
       "Attributes": [2,3,4]
+    },
+    "Postprocessing":
+    {
+      "Conductor":
+      [
+        {
+          "Index": 1,
+          "Attributes": [2, 3],  // Top and bottom
+          "Rs": 0.0184  // Ω, surface resistance of Cu @ 5 GHz
+        },
+        {
+          "Index": 2,
+          "Attributes": [4],  // Side wall
+          "Rs": 0.0184
+        }
+      ]
     }
   },
   "Solver":

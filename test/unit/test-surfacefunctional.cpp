@@ -1426,6 +1426,184 @@ TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial][GPU]")
   }
 }
 
+TEST_CASE("SurfaceFunctional Conductor Loss", "[surfacefunctional][Serial][GPU]")
+{
+  // Squared surface current ∮ |n x H|² dS on exterior and interior boundaries (the latter
+  // for both the thick conductor sum of the two faces and the thin film sheet current),
+  // against the legacy coefficient. The permeability is anisotropic in the upper region so
+  // that H = μ⁻¹ B differs between the two sides of the interface.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto complex = GENERATE(false, true);
+  CAPTURE(elem_type, order, complex);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, magnetic;
+  vacuum.attributes = {1};
+  magnetic.attributes = {2};
+  magnetic.mu_r.s[0] = 1.4;
+  magnetic.mu_r.s[1] = 2.3;
+  magnetic.mu_r.s[2] = 0.7;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, magnetic}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::RT_FECollection rt_fec(order - 1, pmesh.Dimension());
+  FiniteElementSpace rt_fespace(*mesh, &rt_fec);
+
+  GridFunction B(rt_fespace, complex);
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  B.Real().ProjectCoefficient(fbr);
+  if (complex)
+  {
+    mfem::VectorFunctionCoefficient fbi(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = std::cos(x(2)) - 0.2;
+                                          v(1) = x(0) * x(2) + 0.1;
+                                          v(2) = std::sin(x(1)) - x(0);
+                                        });
+    B.Imag().ProjectCoefficient(fbi);
+  }
+
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  auto TestSurface = [&](int attr, bool thin_film)
+  {
+    CAPTURE(attr, thin_film);
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    marker[attr - 1] = 1;
+    SurfaceFunctional cond(*mesh, marker, rt_fespace.Get(), mat_op, thin_film);
+    REQUIRE(cond.IsValid());
+
+    BdrSurfaceCurrentNorm2Coefficient legacy_re(B.Real(), mat_op, thin_film);
+    double ref = RefSurfaceCoefficientIntegral(pmesh, legacy_re, marker);
+    if (complex)
+    {
+      BdrSurfaceCurrentNorm2Coefficient legacy_im(B.Imag(), mat_op, thin_film);
+      ref += RefSurfaceCoefficientIntegral(pmesh, legacy_im, marker);
+    }
+    const double val = cond.Eval(B);
+    CAPTURE(ref, val);
+    REQUIRE(ref > 0.0);
+    CHECK(val == Catch::Approx(ref).epsilon(1.0e-10));
+    return val;
+  };
+
+  SECTION("Exterior boundary")
+  {
+    // z = 0 (vacuum side), z = 1 (magnetic side). On an exterior boundary, the thin film
+    // and thick conductor models coincide.
+    for (int attr : {1, 6})
+    {
+      const double thick = TestSurface(attr, false);
+      const double thin = TestSurface(attr, true);
+      CHECK(thin == Catch::Approx(thick).epsilon(1.0e-12));
+    }
+  }
+
+  SECTION("Interior material interface")
+  {
+    // The thick conductor is the sum of the independent faces, the thin film uses the
+    // field jump: the two differ when the fields differ between the sides.
+    const double thick = TestSurface(7, false);
+    const double thin = TestSurface(7, true);
+    CHECK(std::abs(thin - thick) > 1.0e-3 * thick);
+  }
+}
+
+TEST_CASE("SurfaceFunctional Conductor Loss 2D", "[surfacefunctional][Serial][GPU]")
+{
+  // 2D counterpart of the conductor loss functional test, where B = B_z is a scalar L2
+  // field entirely tangential to the boundary.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  auto order = GENERATE(1, 2);
+  auto complex = GENERATE(false, true);
+  CAPTURE(elem_type, order, complex);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh2D(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, magnetic;
+  vacuum.attributes = {1};
+  magnetic.attributes = {2};
+  magnetic.mu_r.s[0] = 1.4;
+  magnetic.mu_r.s[1] = 2.3;
+  magnetic.mu_r.s[2] = 0.7;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, magnetic}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::L2_FECollection l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace l2_fespace(*mesh, &l2_fec);
+
+  GridFunction B(l2_fespace, complex);
+  mfem::FunctionCoefficient fbr([](const mfem::Vector &x)
+                                { return std::cos(1.3 * x(0)) + x(1) * x(1) + 0.4; });
+  B.Real().ProjectCoefficient(fbr);
+  if (complex)
+  {
+    mfem::FunctionCoefficient fbi([](const mfem::Vector &x)
+                                  { return std::sin(x(0) + 0.7 * x(1)) - 0.3; });
+    B.Imag().ProjectCoefficient(fbi);
+  }
+
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  auto TestSurface = [&](int attr, bool thin_film)
+  {
+    CAPTURE(attr, thin_film);
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    marker[attr - 1] = 1;
+    SurfaceFunctional cond(*mesh, marker, l2_fespace.Get(), mat_op, thin_film);
+    REQUIRE(cond.IsValid());
+
+    BdrSurfaceCurrentNorm2Coefficient legacy_re(B.Real(), mat_op, thin_film);
+    double ref = RefSurfaceCoefficientIntegral(pmesh, legacy_re, marker);
+    if (complex)
+    {
+      BdrSurfaceCurrentNorm2Coefficient legacy_im(B.Imag(), mat_op, thin_film);
+      ref += RefSurfaceCoefficientIntegral(pmesh, legacy_im, marker);
+    }
+    const double val = cond.Eval(B);
+    CAPTURE(ref, val);
+    REQUIRE(ref > 0.0);
+    CHECK(val == Catch::Approx(ref).epsilon(1.0e-10));
+  };
+
+  SECTION("Exterior boundary")
+  {
+    for (int attr : {1, 3})  // y = 0 (vacuum side), y = 1 (magnetic side)
+    {
+      TestSurface(attr, false);
+      TestSurface(attr, true);
+    }
+  }
+
+  SECTION("Interior material interface")
+  {
+    TestSurface(7, false);
+    TestSurface(7, true);
+  }
+}
+
 TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
@@ -2156,6 +2334,28 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
       auto legacy = MakeLegacy();
       const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
       const double val = epr.Eval(E);
+      CAPTURE(ref, val);
+      CheckPart(val, ref);
+    }
+
+    // Conductor loss, separable (thick conductor) and paired (thin film) on interior
+    // boundaries across processor boundaries.
+    for (bool thin_film : {false, true})
+    {
+      CAPTURE(thin_film);
+      SurfaceFunctional cond(*mesh, marker, rt_fespace.Get(), mat_op, thin_film);
+      bool valid = cond.IsValid();
+      bool valid_and = valid, valid_or = valid;
+      Mpi::GlobalAnd(1, &valid_and, comm);
+      Mpi::GlobalOr(1, &valid_or, comm);
+      REQUIRE(valid_and == valid_or);
+      REQUIRE(valid);
+
+      BdrSurfaceCurrentNorm2Coefficient legacy_re(B.Real(), mat_op, thin_film);
+      BdrSurfaceCurrentNorm2Coefficient legacy_im(B.Imag(), mat_op, thin_film);
+      const double ref = RefSurfaceCoefficientIntegral(pmesh, legacy_re, marker) +
+                         RefSurfaceCoefficientIntegral(pmesh, legacy_im, marker);
+      const double val = cond.Eval(B);
       CAPTURE(ref, val);
       CheckPart(val, ref);
     }

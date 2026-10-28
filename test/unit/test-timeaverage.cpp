@@ -109,7 +109,8 @@ std::complex<double> ExpectedPoyntingZ(const UniformFields &f)
 
 }  // namespace
 
-TEST_CASE("Time-averaged domain energies, surface power flux, and interface energy",
+TEST_CASE("Time-averaged domain energies, surface power flux, interface energy, and "
+          "conductor loss",
           "[timeaverage][Serial][Parallel]")
 {
   constexpr int order = 1;
@@ -211,6 +212,12 @@ TEST_CASE("Time-averaged domain energies, surface power flux, and interface ener
     dielectric.tandelta = 0.0;
     dielectric.attributes = {top_attr};
     postpro.dielectric.emplace(1, dielectric);
+    // Conductor surface loss on the same face, with a surface resistance Rs [Ω/sq].
+    constexpr double Rs = 0.3;
+    config::ConductorLossData conductor;
+    conductor.Rs = units.Nondimensionalize<VT::IMPEDANCE>(Rs);
+    conductor.attributes = {top_attr};
+    postpro.conductor.emplace(1, conductor);
     SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace,
                                      nd_fespace);
 
@@ -227,6 +234,16 @@ TEST_CASE("Time-averaged domain energies, surface power flux, and interface ener
         (fields.complex ? 0.25 : 0.5) * t * eps_r * E2_nondim * sx * sy;
     CHECK_THAT(surf_post_op.GetInterfaceElectricFieldEnergy(1, E),
                WithinRel(expected_interface, 1.0e-10));
+
+    // The surface current on the face is n x H = ẑ x H_y ŷ = -H_y x̂, so that the power
+    // dissipated in the surface resistance is 1/2 Rs |H_y|² A (complex peak phasor, time
+    // average) or Rs H_y² A (real, instantaneous).
+    const double P_cond =
+        units.Dimensionalize<VT::POWER>(surf_post_op.GetConductorSurfaceResistance(1) *
+                                        surf_post_op.GetConductorSurfaceCurrentNorm2(1, B));
+    CHECK_THAT(P_cond, WithinRel((fields.complex ? 0.5 : 1.0) * Rs * std::norm(fields.Hy) *
+                                     top_area_m2,
+                                 1.0e-10));
   }
 }
 

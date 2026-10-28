@@ -43,6 +43,12 @@ The surface impedance relating the tangential electric and magnetic fields on th
 is computed from the parallel impedances due to the specified resistance, inductance, and
 capacitance per square.
 
+The resistive loss of imperfect conductors can also be estimated without modeling them as
+impedance boundaries, to first order in the surface resistance, using the
+[conductor loss postprocessing](postprocessing.md#Boundary-postprocessing) of a simulation
+with perfect electric conductor boundaries. This gives the loss of several surfaces with
+different surface resistances from a single simulation.
+
 ## Rational impedance boundary
 
 A surface impedance boundary whose per-square impedance is an arbitrary rational function

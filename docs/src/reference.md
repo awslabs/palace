@@ -777,6 +777,76 @@ quality factor for interface ``j`` is given by
 where ``\bm{E}_n`` denotes the normal field to the interface and
 ``\bm{E}_t = \bm{E}-\bm{E}_n`` denotes the tangential field.
 
+## Conductor surface loss
+
+An imperfect conductor with surface resistance ``R_{s,j}`` on the boundary ``\Gamma_j``
+dissipates the time-averaged power
+
+```math
+P_j = \frac{1}{2} \, R_{s,j} \oint_{\Gamma_j} |\bm{n}\times\bm{H}|^2\,dS
+```
+
+where ``\bm{H} = \mu_r^{-1}\bm{B}`` and ``\bm{n}\times\bm{H}`` is the surface current
+density on the conductor. To first order in the surface resistance, valid when
+``R_{s,j}`` is small compared to the wave impedance of the adjacent medium, the fields are
+those of the same problem with a perfect conductor in place of the lossy one. The losses of
+several surfaces with different surface resistances can therefore be computed from a single
+simulation with perfect electric conductor boundaries, and scaled afterwards by any (for
+example, frequency or temperature dependent) surface resistance. The quality factor due to
+the conductor loss of surface ``j`` in eigenmode ``m`` is
+
+```math
+\frac{1}{Q_{mj}} = \frac{P_{mj}}{\omega_m \mathcal{E}_m} = \frac{R_{s,j}}{G_{mj}} \,,
+\qquad
+G_{mj} = \frac{4\omega_m\mathcal{E}^{elec}_m}
+    {\oint_{\Gamma_j} |\bm{n}\times\bm{H}_m|^2\,dS}
+```
+
+where ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m`` is the total energy of the mode (see
+[Energy-participation ratios](#Energy-participation-ratios)). The geometric factor
+``G_{mj}`` has dimensions of impedance and depends only on the shape of the mode and the
+material properties, not on the surface resistance: it is the surface resistance analog of
+the inverse participation ratio ``1/p_j`` of dielectric loss, and like ``1/Q``, ``1/G`` adds
+over surfaces, ``1/Q_m = \sum_j R_{s,j}/G_{mj}``. For a vacuum cavity it reduces to the
+classical geometric factor ``G = \omega\mu_0\int_\Omega|\bm{H}|^2\,dV /
+\oint_{\Gamma}|\bm{n}\times\bm{H}|^2\,dS``, which is independent of the size of the
+cavity [[13]](#References).
+
+For driven simulations, the geometric factor at each frequency uses the time-averaged
+magnetic field energy, including the energy stored in inductive lumped elements,
+
+```math
+G_j(\omega) = \frac{4\omega\mathcal{E}^{mag}}{\oint_{\Gamma_j} |\bm{n}\times\bm{H}|^2\,dS}
+\,, \qquad Q_j(\omega) = \frac{G_j(\omega)}{R_{s,j}} = \frac{2\omega\mathcal{E}^{mag}}{P_j}
+```
+
+which is the quality factor of the inductive response at the drive frequency (the analog of
+``\omega L/R`` for a lossy inductor), and is equal to the eigenmode geometric factor at an
+isolated resonance. The dissipated power ``P_j`` is also reported, along with its fraction
+``P_j/P^{inc}`` of the incident power of the excitation for excitations by ports, each of
+which delivers ``1\text{ W}`` of time-averaged incident power. When the dissipated power is
+not small compared to the other losses of a resonance, for example in an undercoupled
+resonator, the first-order estimate of ``P_j`` from a simulation with perfect conductors
+differs from the power dissipated with the actual surface resistance, which reduces the
+field amplitude at resonance. In this case, the surface resistance should also be included
+in the simulation as an [impedance boundary](guide/boundaries.md#Impedance-boundary) for a
+self-consistent dissipated power. The geometric factor, a ratio of quantities quadratic in
+the fields, is not affected.
+
+On an interior boundary, the conductor surfaces on the two sides of the boundary are by
+default independent (a conductor much thicker than the skin or penetration depth), and the
+integrand is the sum ``|\bm{n}\times\bm{H}_1|^2 + |\bm{n}\times\bm{H}_2|^2`` of the
+contributions of the two faces. For a film much thinner than the skin or penetration depth,
+the loss is determined by the total sheet current, with integrand
+``|\bm{n}\times(\bm{H}_1-\bm{H}_2)|^2``, and ``R_{s,j}`` is the sheet resistance of the film.
+
+This model assumes a local surface impedance relation on the conductor. The surface integral
+is evaluated from the magnetic field at the boundary, which converges more slowly with mesh
+refinement than the eigenfrequencies. At the edges of infinitely thin conducting sheets, the
+surface current density has an integrable singularity but its square does not, such that
+the computed loss of a sheet grows logarithmically with mesh refinement near its edges. As
+for interface dielectric loss on such sheets, the results should be checked for convergence.
+
 ## Electrostatic Simulations
 
 For electrostatic simulations, the Maxwell capacitance matrix is computed in the following
@@ -976,4 +1046,6 @@ problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
 Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
-[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
+[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
+[13] H. Padamsee, J. Knobloch, and T. Hays, *RF Superconductivity for Accelerators*, Second
+edition. Wiley-VCH, Weinheim, 2008.

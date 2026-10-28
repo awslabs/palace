@@ -1,0 +1,84 @@
+{
+  // Shorted circular waveguide (TE11 wave port at the top, conductor walls elsewhere) with
+  // lossy walls modeled as impedance boundaries, and the same surface resistance in the
+  // conductor loss postprocessing of each wall: the dissipated powers then account for the
+  // full power balance of the port, Sum_j P_j / P_inc = 1 - |S11|^2.
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave_conductor"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "Impedance":
+    [
+      {
+        "Attributes": [3, 4],
+        "Rs": 0.5  // Ω, exaggerated for a measurable reflection loss
+      }
+    ],
+    "Postprocessing":
+    {
+      "Conductor":
+      [
+        {
+          "Index": 1,
+          "Attributes": [3],  // Bottom (short)
+          "Rs": 0.5
+        },
+        {
+          "Index": 2,
+          "Attributes": [4],  // Side wall
+          "Rs": 0.5
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 2.5,
+      "MaxFreq": 5.0,
+      "FreqStep": 0.5,
+      "SaveStep": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}

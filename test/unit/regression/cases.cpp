@@ -1254,6 +1254,89 @@ TEST_CASE("ring_disk_mixed_current_flux", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("ring_disk", "ring_disk.json", "", opts);
 }
 
+// Find a column of a table by its header text.
+palace::Column *FindColumnByHeader(palace::Table &t, const std::string &header)
+{
+  for (auto &c : t)
+  {
+    if (c.header_text == header)
+    {
+      return &c;
+    }
+  }
+  return nullptr;
+}
+
+// Conductor loss of the cylindrical cavity (examples/cylinder/mesh/mesh.jl: radius a = 2.74
+// cm, height d = 5.48 cm) with the geometric factors of the top and bottom walls (index 1)
+// and the side wall (index 2), checked for the TM010 mode (the lowest mode, m = 1) against
+// the analytic values G_side = ω μ₀ a / 2 and G_top = G_bottom = ω μ₀ d, and Q = G / Rs, in
+// addition to the reference comparison.
+palace::test::CustomCheck TestCylinderConductorLoss(double rtol,
+                                                    palace::test::RegressionOptions opts)
+{
+  return [rtol, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    palace::TableWithCSVFile eig((path.parent_path() / "eig.csv").string(), true);
+    auto *f = FindColumnByHeader(eig.table, "Re{f} (GHz)");
+    auto *G_caps = FindColumnByHeader(actual, "G_cond[1] (Ω)");
+    auto *G_side = FindColumnByHeader(actual, "G_cond[2] (Ω)");
+    auto *Q_caps = FindColumnByHeader(actual, "Q_cond[1]");
+    REQUIRE(f);
+    REQUIRE(G_caps);
+    REQUIRE(G_side);
+    REQUIRE(Q_caps);
+    REQUIRE(actual.n_rows() > 0);
+    constexpr double a = 2.74e-2, d = 5.48e-2, Rs = 0.0184;
+    const double omega_mu0 =
+        2.0 * std::numbers::pi * f->data[0] * 1.0e9 * palace::electromagnetics::mu0_;
+    CHECK_THAT(G_side->data[0], Catch::Matchers::WithinRel(0.5 * omega_mu0 * a, rtol));
+    CHECK_THAT(G_caps->data[0], Catch::Matchers::WithinRel(0.5 * omega_mu0 * d, rtol));
+    CHECK_THAT(Q_caps->data[0], Catch::Matchers::WithinRel(G_caps->data[0] / Rs, 1.0e-12));
+  };
+}
+
+// Power balance of a lossy one-port: with the wall losses modeled as impedance boundaries,
+// the conductor loss postprocessing with the same surface resistance accounts for the
+// power absorbed from the incident wave, Sum_j P_j / P_inc = 1 - |S11|², and since each
+// excited port delivers 1 W of incident power, P_j / P_inc = P_j / (1 W).
+palace::test::CustomCheck TestConductorPowerBalance(double rtol,
+                                                    palace::test::RegressionOptions opts)
+{
+  return [rtol, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    palace::TableWithCSVFile port_S((path.parent_path() / "port-S.csv").string(), true);
+    auto *S11 = FindColumnByHeader(port_S.table, "|S[1][1]| (dB)");
+    REQUIRE(S11);
+    REQUIRE(S11->data.size() == actual.n_rows());
+    for (std::size_t r = 0; r < actual.n_rows(); r++)
+    {
+      double absorbed = 0.0;
+      for (int idx = 1;; idx++)
+      {
+        auto *P = FindColumnByHeader(actual, "P_cond[" + std::to_string(idx) + "] (W)");
+        auto *P_frac =
+            FindColumnByHeader(actual, "P_cond[" + std::to_string(idx) + "]/P_inc");
+        if (!P)
+        {
+          break;
+        }
+        REQUIRE(P_frac);
+        CHECK_THAT(P_frac->data[r], Catch::Matchers::WithinRel(P->data[r], 1.0e-12));
+        absorbed += P_frac->data[r];
+      }
+      const double expected = 1.0 - std::pow(10.0, S11->data[r] / 10.0);
+      INFO("row " << r + 1 << ": Sum_j P_j / P_inc = " << absorbed
+                  << ", 1 - |S11|^2 = " << expected);
+      CHECK_THAT(absorbed, Catch::Matchers::WithinRel(expected, rtol));
+    }
+  };
+}
+
 // --- cylinder: reltol=1e-4, abstol=1e-16 for the four eigen-style cases ---
 
 TEST_CASE("cylinder_cavity_pec", "[Serial][Parallel][GPU][Regression]")
@@ -1264,6 +1347,7 @@ TEST_CASE("cylinder_cavity_pec", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
+  opts.custom_checks["surface-Q.csv"] = TestCylinderConductorLoss(1.0e-3, opts);
   palace::test::RunRegressionCase("cylinder", "cavity_pec.json", "cavity_pec", opts);
 }
 
@@ -1306,6 +1390,21 @@ TEST_CASE("cylinder_driven_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   palace::test::RunRegressionCase("cylinder", "driven_wave.json", "driven_wave", opts);
+}
+
+// The TE11 shorted waveguide of cylinder_driven_wave with lossy walls (impedance
+// boundaries) and their conductor loss postprocessing, checking the power balance of the
+// port against the dissipated power of each wall.
+TEST_CASE("cylinder_driven_wave_conductor", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.custom_checks["surface-Q.csv"] = TestConductorPowerBalance(1.0e-2, opts);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_conductor.json",
+                                  "driven_wave_conductor", opts);
 }
 
 // Drives the TM01 port mode (Mode 3) of a lossless PEC-shorted circular waveguide.
