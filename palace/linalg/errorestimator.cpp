@@ -423,12 +423,18 @@ Vector RecoveredNorms(const Mesh &mesh, const ceed::Operator &integ_op, VecType 
 }
 
 // The scale of the squared indicators normalized by the total energy, with the factor of
-// 1/2 in the energy. A nonpositive or nonfinite energy (possible for a general
-// PoleResidue model with a negative stored energy) is replaced by the energy norm of the
-// recovered fluxes, so that the indicators stay positive and comparable across samples.
-double IndicatorScale(double Et, const std::function<double()> &recovered_energy,
-                      MPI_Comm comm)
+// 1/2 in the energy. On the frequency-dependent route, a nonpositive or nonfinite energy
+// (possible for a general PoleResidue model with a negative stored energy) is replaced by
+// the energy norm of the recovered fluxes, so that the indicators stay positive and
+// comparable across samples. Without a frequency-dependent material, the scale is that of
+// the constant-material estimators, including for a zero field.
+double IndicatorScale(double Et, bool frequency_dependent,
+                      const std::function<double()> &recovered_energy, MPI_Comm comm)
 {
+  if (!frequency_dependent)
+  {
+    return (Et > 0.0) ? 0.5 / Et : 1.0;
+  }
   if (Et > 0.0 && std::isfinite(Et))
   {
     return 0.5 / Et;
@@ -800,10 +806,10 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
 {
   auto estimates = ComputeEstimates(E, omega);
   const auto comm = nd_fespace.GetComm();
-  linalg::Sqrt(
-      estimates,
-      IndicatorScale(
-          Et, [&]() { return 0.5 * GlobalSum(RecoveredFluxNorms(), comm); }, comm));
+  linalg::Sqrt(estimates,
+               IndicatorScale(
+                   Et, !fd_materials.empty(),
+                   [&]() { return 0.5 * GlobalSum(RecoveredFluxNorms(), comm); }, comm));
   indicator.AddIndicator(estimates);
 }
 
@@ -1001,7 +1007,7 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
   auto curl_estimates = curl_estimator.ComputeEstimates(B);
   const auto comm = grad_estimator.nd_fespace.GetComm();
   const double scale = IndicatorScale(
-      Et,
+      Et, !grad_estimator.fd_materials.empty(),
       [&]()
       {
         return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +
@@ -1043,7 +1049,7 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
   auto curl_estimates = curl_estimator.ComputeEstimates(B);
   const auto comm = grad_estimator.nd_fespace.GetComm();
   const double scale = IndicatorScale(
-      Et,
+      Et, !grad_estimator.fd_materials.empty(),
       [&]()
       {
         return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +

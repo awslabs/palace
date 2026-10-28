@@ -1103,6 +1103,27 @@ TEST_CASE("Flux error estimator with a nonpositive energy normalization",
     }
     CHECK_THAT(r, WithinRel(ratio, 1.0e-10));
   }
+
+  // Without a frequency-dependent material, the normalization is that of the constant
+  // estimators also for a nonpositive energy (a zero field): the frequency overload gives
+  // the same indicator as the established one, with no fallback.
+  MaterialOperator constant_op({MakeMaterial({1}, {}), MakeMaterial({2}, {})}, periodic,
+                               ProblemType::DRIVEN, mesh);
+  TimeDependentFluxErrorEstimator<ComplexVector> constant_estimator(
+      constant_op, nd_fespaces, rt_fespaces, 1.0e-14, 1000, 0, false);
+  for (double Et : {0.0, -1.0})
+  {
+    CAPTURE(Et);
+    ErrorIndicator with_omega, without_omega;
+    constant_estimator.AddErrorIndicator(E, B, Et, omega, with_omega);
+    constant_estimator.AddErrorIndicator(E, B, Et, without_omega);
+    const auto *a = with_omega.Local().HostRead();
+    const auto *b = without_omega.Local().HostRead();
+    for (int i = 0; i < with_omega.Local().Size(); i++)
+    {
+      CHECK(a[i] == b[i]);
+    }
+  }
 }
 
 namespace
