@@ -565,6 +565,30 @@ TEST_CASE("RAW storage is finite at extreme frequencies", "[permittivitystorage]
     CHECK_THAT(Finite(lorentz, omega), Catch::Matchers::WithinRel(ref, 1.0e-12));
   }
   CHECK(Finite(lorentz, 1.0e200) == 0.0);
+
+  // p = t(−1 + i), r = −itκ', χ = 2κ't²/(s² + 2ts + 2t²): the normalized model is that of
+  // t = κ' = 1, w = 2κ'(v² + 2)/((2 − v²)² + 4v²) at v = ω/t, but v overflows at ω = 2⁷⁰⁰
+  // for t = 2⁻⁷⁰⁰, where the energy rounds to zero. With r = −i2³²³ (κ' = 2¹⁰²³) at ω =
+  // 2³³⁰, v = 2¹⁰³⁰ still overflows while the energy 2¹⁰²⁴/v²(1 + O(1/v²)) = 2⁻¹⁰³⁶ is a
+  // representable (subnormal) number, which a normalized energy times κ would underflow to
+  // zero.
+  const double t = std::ldexp(1.0, -700), big = std::ldexp(1.0, 1023);
+  auto Pair = [t](double kappa) { return Poles({{C(-t, t), C(0.0, -t * kappa)}}); };
+  auto Exact = [](double kappa, double v)
+  { return kappa * (2.0 * (v * v + 2.0) / ((2.0 - v * v) * (2.0 - v * v) + 4.0 * v * v)); };
+  for (const double v : {0.0, 0.3, 1.0, 7.0, 1024.0})
+  {
+    for (const double kappa : {1.0, big})
+    {
+      CAPTURE(v, kappa);
+      CHECK_THAT(Finite(Pair(kappa), v * t),
+                 Catch::Matchers::WithinRel(Exact(kappa, v), 1.0e-12));
+    }
+  }
+  CHECK(Finite(Pair(1.0), std::ldexp(1.0, 700)) == 0.0);
+  // Subnormal: 2⁻¹⁰³⁶ has 38 significant bits.
+  CHECK_THAT(Finite(Pair(big), std::ldexp(1.0, 330)),
+             Catch::Matchers::WithinRel(std::ldexp(1.0, -1036), 1.0e-10));
 }
 
 TEST_CASE("A RAW block compensated by other terms is not material gain",

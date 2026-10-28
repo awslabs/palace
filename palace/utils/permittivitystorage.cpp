@@ -1158,49 +1158,59 @@ std::optional<double> PreparedStorage::RawStoredEnergySusceptibility(double omeg
   {
     return 0.0;
   }
-  // Every quantity below is a ratio of factors of moderate size, so that the result is
-  // finite (possibly underflowing to zero) for any finite ω, and infinite only at an exact
-  // lossless resonance.
-  const double v = omega / certificate.rate_scale;
-  const Complex s(0.0, v);
+  // Evaluated in the unscaled variables, without forming v = ω/Ω (which can overflow for
+  // finite ω) or a product that can overflow or underflow before the final result. With
+  // p = Ωλ (exact, from the checked scaling), the states are z = (iv − A)⁻¹B = Ωζ: ζ =
+  // 1/(iω − p) for a real pole, and ζ = ((iω − Re p), Im p)/((iω − p)(iω − p̄)) for a pair,
+  // divided by one factor at a time. With ζ̃ = 2ᵉζ, 2ᵉ ~ max(ω, Ω), every ζ̃ is of the size
+  // of the normalized states, and the energy κ‖Hᵀz‖² = 2ᴱ‖Hᵀζ̃‖², E = log₂(κΩ²) − 2e. The
+  // factor 2ᴱ is applied before squaring (as 2^⌊E/2⌋, and the remaining 2^(E mod 2) after),
+  // so that the energy is finite (possibly underflowing to zero) for any finite ω, and
+  // infinite only at an exact lossless resonance or if the energy itself overflows.
+  const int ek = std::ilogb(certificate.amplitude_scale),
+            em = std::ilogb(certificate.rate_scale),
+            e = std::ilogb(std::max(omega, certificate.rate_scale)),
+            E = ek + 2 * em - 2 * e, h = (E >= 0) ? E / 2 : -((1 - E) / 2), rem = E - 2 * h;
+  const double sigma = std::ldexp(1.0, e);
   const int n = certificate.states;
-  std::vector<Complex> z(n);
+  std::vector<Complex> zeta(n);
   for (std::size_t b = 0, i = 0; b < blocks.size(); b++)
   {
-    // (iv − A)⁻¹B for each block, B = 1 or (1, 0). For a pair, (iv − a)² + w² is the
-    // product of (iv − a ∓ iw), accurate near a weakly damped resonance, divided by one
-    // factor at a time.
-    const double a = blocks[b].re, w = blocks[b].im;
-    if (w > 0.0)
+    const double pr = std::ldexp(blocks[b].re, em), pi = std::ldexp(blocks[b].im, em);
+    if (pi > 0.0)
     {
-      const Complex lo(-a, v - w), hi(-a, v + w);
-      z[i] = ((s - a) / lo) / hi;
-      z[i + 1] = (w / lo) / hi;
+      const Complex lo(-pr, omega - pi), hi(-pr, omega + pi), last = sigma / hi;
+      zeta[i] = (Complex(-pr, omega) / lo) * last;
+      zeta[i + 1] = (pi / lo) * last;
       i += 2;
     }
     else
     {
-      z[i] = 1.0 / (s - a);
+      zeta[i] = sigma / Complex(-pr, omega);
       i += 1;
     }
   }
+  auto Scaled = [h](Complex x)
+  { return Complex(std::ldexp(x.real(), h), std::ldexp(x.imag(), h)); };
   double energy = 0.0;
   for (int j = 0; j < n; j++)
   {
     Complex y = 0.0;
     for (int i = 0; i < n; i++)
     {
-      y += factor[j * n + i] * z[i];
+      y += factor[j * n + i] * zeta[i];
     }
-    energy += std::norm(y);
+    energy += std::norm(Scaled(y));
   }
   for (const auto &[beta, strength] : lossless)
   {
-    // (v² + β²)/((β − v)²(β + v)²) = ½(1/(β − v)² + 1/(β + v)²).
-    const double m = 1.0 / (beta - v), p = 1.0 / (beta + v);
+    // Normalized ½ s (1/(β − v)² + 1/(β + v)²) = (v² + β²)/((β − v)²(β + v)²) s, with
+    // 1/(β ∓ v) = Ω 2⁻ᵉ (2ᵉ/(B ∓ ω)), B = Ωβ.
+    const double B = std::ldexp(beta, em), m = std::ldexp(sigma / (B - omega), h),
+                 p = std::ldexp(sigma / (B + omega), h);
     energy += 0.5 * strength * (m * m + p * p);
   }
-  return certificate.amplitude_scale * energy;
+  return std::ldexp(energy, rem);
 }
 
 std::optional<double> PreparedStorage::StoredEnergySusceptibility(double omega) const
