@@ -6198,7 +6198,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     imaged.real_segments = static_cast<std::size_t>(chord);
     CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
   }
-  // 7. The geometry cache round trip of the record (version 19).
+  // 7. The geometry cache round trip of the record (version 20).
   {
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -6227,7 +6227,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     std::ifstream input(path);
     nlohmann::json cache = nlohmann::json::parse(input);
     input.close();
-    CHECK(cache["Version"] == 19);
+    CHECK(cache["Version"] == 20);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
     CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
     CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
@@ -6257,7 +6257,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       ContainsSubstring("cache version 17") &&
-                          ContainsSubstring("version 19"));
+                          ContainsSubstring("version 20"));
     // A version-18 cache (main before decision 774: the same schema, but a mirror-formed
     // coupon's image-side probes recorded un-snapped) is refused by the version message
     // (decision 781; the 527 rule), never read for its stale ProbeSnaps.
@@ -6270,7 +6270,22 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
                       ContainsSubstring("cache version 18") &&
-                          ContainsSubstring("version 19"));
+                          ContainsSubstring("version 20"));
+    // A version-19 cache (main before the T5 excluded-corner containment rule, decision
+    // 972: the same schema, but written by a binary that places the UNGROWN model of a
+    // cluster the T5 binary grows) is refused by the version message (the 527 / 781
+    // merge-order rule), never read for its stale placement.
+    nlohmann::json nineteen = cache;
+    nineteen["Version"] = 19;
+    const auto nineteen_path = dir / "geometry-v19.json";
+    {
+      std::ofstream output(nineteen_path);
+      output << nineteen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(nineteen_path, data),
+                      ContainsSubstring("cache version 19") &&
+                          ContainsSubstring("version 20") &&
+                          ContainsSubstring("excluded corner window"));
   }
 }
 

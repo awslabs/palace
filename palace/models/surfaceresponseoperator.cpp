@@ -17992,7 +17992,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 19},
+  nlohmann::json cache = {{"Version", 20},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -18146,10 +18146,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 19,
+      data.value("Version", 0) == 20,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 19 carries the feature, mesh segment, chain stretch, own-edge "
+          << " (version 20 carries the feature, mesh segment, chain stretch, own-edge "
              "offset and own-cell pre-image (decision 537) of every patch, the claims, "
              "support box, chain and foreign (Chain: false, decision 553) context pieces "
              "of every spatial cluster patch, the raw claims of every vertex coupon "
@@ -18176,7 +18176,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "which a solve refuses, decision 632); version 19 reads a mirror-formed "
              "coupon's image-side probes at their reflection into the domain before the "
              "chord snap (decision 774): a version-18 cache carries that coupon's image "
-             "probes un-snapped (decision 781); delete a stale cache)!");
+             "probes un-snapped (decision 781); version 20 is written by the binary that "
+             "grows a spatial cluster's box over an excluded corner window (the "
+             "contract-v3 rule T5, OI-SCP-BOXGROW, decisions 958 / 960 / 972): a "
+             "version-19 cache written by a pre-T5 binary with a library carrying a "
+             "T5-grown model places the UNGROWN model where the T5 binary places the grown "
+             "one, a divergence the cache's patch content cannot show (the 527 / 781 "
+             "merge-order rule); delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();

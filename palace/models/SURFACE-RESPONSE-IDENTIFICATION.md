@@ -1102,7 +1102,11 @@ smaller endpoint.
    gate reads on the device's arc chord, decision 611 (2) — and refuses a version-17 cache;
    version 19 snaps a mirror-formed coupon's image-side probes at their reflection into the
    domain, decision 774, and refuses a version-18 cache, whose image probes are un-snapped,
-   decision 781). The Maxwell operator path
+   decision 781; version 20 is written by the binary carrying the contract-v3 rule T5
+   (OI-SCP-BOXGROW, decision 972) and refuses a version-19 cache, which a pre-T5 binary may
+   have written with the UNGROWN model of a cluster the T5 binary grows once the library
+   carries the grown one - a placement divergence the cache's patch content cannot show).
+   The Maxwell operator path
    (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
    inert there (it multiplies the Maxwell domain terms for uniformity only). The record
    runs in the operator constructor (metadata
@@ -2541,7 +2545,7 @@ arc-fit tolerance (1e-3 R) of the chord in the arc's plane, it is read at its in
 foot on the chord — the device the solve has. Straight device edges never move a knot,
 nor does a knot already on the chord at the signature's resolution (1e-6 R, a device
 joint). The snaps travel with the placed patch (`Provenance.ProbeSnaps`, response-geometry
-cache version 19; a version-17 or version-18 cache is refused), the gate record carries `ProbeSnaps
+cache version 20; a version-17, -18 or -19 cache is refused), the gate record carries `ProbeSnaps
 {Count, MaxDisplacement, Knots[{Knot, Segment, Arc, Displacement}]}` per patch and
 excitation (mesh-file units), a snap naming a knot that is not a conductor vertex (a stale
 cache) fails closed on every rank alike, and the tolerance, the floor and the Python bar
