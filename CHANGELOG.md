@@ -362,9 +362,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which keeps host hypre matrix products from reading a device-resident row cache.
     [PR 992](https://github.com/awslabs/palace/pull/992).
   - Bumped the superbuild dependencies to their latest releases: libCEED v1.0.1,
-    SuperLU_DIST v9.3.1, json-schema-validator 2.4.1, fmt 12.2.0, and Umpire v2026.07.2.
-    ButterflyPACK stays at v4.1.0, as STRUMPACK 8.1.0 does not link against ButterflyPACK
-    5.0.0.
+    SuperLU_DIST v9.3.1, json-schema-validator 2.4.1, fmt 12.2.0, Umpire v2026.07.2, and
+    Enzyme v0.0.303. ButterflyPACK stays at v4.1.0, as STRUMPACK 8.1.0 does not link
+    against ButterflyPACK 5.0.0.
+    [PR 1114](https://github.com/awslabs/palace/pull/1114).
 
 ## [0.18.1] - 2026-09-21
 
