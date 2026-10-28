@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cmath>
 #include <numbers>
 #include <vector>
 #include <Eigen/Dense>
@@ -17,6 +19,7 @@
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/romoperator.hpp"
+#include "models/spaceeigensolver.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
@@ -1953,6 +1956,221 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Eigenmodes
   CHECK(has_eigen);
   // Port block untouched.
   CHECK(prom_op.GetOrthR()(0, 0) > 0.0);
+}
+
+// =============================================================================
+// ENRICHMENT WITH FREQUENCY-DEPENDENT BOUNDARIES
+// =============================================================================
+
+namespace
+{
+
+// Driven circuit-synthesis configuration on the unit cube with an inductive, anchored
+// lumped port on attribute 100 and the given boundary conditions on the other faces.
+json EnrichmentCubeConfig(const std::string &output, const json &boundaries,
+                          bool extrapolate = false)
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", output}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"Refinement", json::object({})}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = boundaries;
+  setup_json["Boundaries"]["LumpedPort"] =
+      json::array({json::object({{"Index", 1},
+                                 {"L", 25.0e-9},
+                                 {"SynthesisAnchor", true},
+                                 {"Excitation", uint(1)},
+                                 {"Attributes", json::array({100})},
+                                 {"Direction", "+X"}})});
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Eigenmode", {{"Target", 50.0}, {"N", 2}, {"Tol", 1.0e-12}}},
+      {"Driven",
+       {{"AdaptiveTol", 1e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"AdaptiveCircuitSynthesisAnchorExtrapolate", extrapolate},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 1.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 500}, {"Tol", 1e-12}}}};
+  return setup_json;
+}
+
+// The anchor column (basis vector 1, after the single port mode) for the given
+// configuration.
+Vector ComputeAnchorColumn(const json &setup_json)
+{
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+  prom_op.AddLumpedPortModesForSynthesis();
+  prom_op.AddLumpedPortAnchorModesForSynthesis(
+      0.1 * iodata.solver.driven.sample_f.front(),
+      iodata.solver.driven.adaptive_circuit_synthesis_anchor_extrapolate);
+  REQUIRE(prom_op.GetReducedDimension() == 2);
+  REQUIRE(prom_op.GetNodeLabels().back() == "anchor_1_re");
+  return prom_op.GetVectors().at(1);
+}
+
+double RelativeDifference(const Vector &a, const Vector &b)
+{
+  REQUIRE(a.Size() == b.Size());
+  Vector d(a);
+  d -= b;
+  const double na = std::sqrt(linalg::Dot(Mpi::World(), a, a));
+  REQUIRE(na > 0.0);
+  return std::sqrt(linalg::Dot(Mpi::World(), d, d)) / na;
+}
+
+// Parallel Rs || Ls || Cs sheet, as an Impedance boundary (stiffness, damping and mass
+// matrices) or the equivalent RationalImpedance Zs(s) = s·Ls·Rs / (Ls·Cs·Rs·s² + Ls·s + Rs)
+// (frequency-dependent A2 term with Robin coefficient g(s) = Cs·s² + s/Rs + 1/Ls).
+constexpr double sheet_Rs = 377.0, sheet_Ls = 2.0e-9, sheet_Cs = 1.0e-13;
+
+json ParallelRLCImpedance(int attr)
+{
+  return json::array({json::object({{"Attributes", json::array({attr})},
+                                    {"Rs", sheet_Rs},
+                                    {"Ls", sheet_Ls},
+                                    {"Cs", sheet_Cs}})});
+}
+
+json ParallelRLCRationalImpedance(int attr)
+{
+  return json::array(
+      {json::object({{"Attributes", json::array({attr})},
+                     {"Numerator", json::array({sheet_Ls * sheet_Rs, 0.0})},
+                     {"Denominator", json::array({sheet_Ls * sheet_Cs * sheet_Rs, sheet_Ls,
+                                                  sheet_Rs})}})});
+}
+
+// Purely inductive sheet, Zs(s) = s·Ls, as an Impedance boundary (stiffness 1/Ls) or a
+// RationalImpedance (Robin coefficient g(s) = 1/Ls, a constant in A2).
+json InductiveImpedance(int attr)
+{
+  return json::array(
+      {json::object({{"Attributes", json::array({attr})}, {"Ls", sheet_Ls}})});
+}
+
+json InductiveRationalImpedance(int attr)
+{
+  return json::array({json::object({{"Attributes", json::array({attr})},
+                                    {"Numerator", json::array({sheet_Ls, 0.0})},
+                                    {"Denominator", json::array({1.0})}})});
+}
+
+}  // namespace
+
+// The anchor solve evaluates frequency-dependent boundaries at their quasistatic (DC)
+// limit. Second-order farfield and surface conductivity are singular at ω = 0 and a
+// resistive rational impedance has no DC term: none may enter the static operator, and the
+// anchor solve must stay finite (its preconditioner must not evaluate them at ω = 0).
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-AnchorWithFrequencyDependentBoundaries",
+                 "[romoperator][Serial]")
+{
+  json boundaries;
+  boundaries["Absorbing"] = {{"Order", 2}, {"Attributes", json::array({101})}};
+  boundaries["Conductivity"] = json::array(
+      {json::object({{"Attributes", json::array({102})}, {"Conductivity", 5.8e7}})});
+  boundaries["RationalImpedance"] =
+      json::array({json::object({{"Attributes", json::array({103})},
+                                 {"Numerator", json::array({50.0})},
+                                 {"Denominator", json::array({1.0})}})});
+  const auto setup_json = EnrichmentCubeConfig(temp_dir, boundaries);
+
+  {
+    IoData iodata(setup_json, false);
+    auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+    SpaceOperator space_op(iodata, mesh_io);
+    CHECK(space_op.GetExtraSystemMatrix(SpaceOperator::QuasistaticLimit{},
+                                        Operator::DIAG_ZERO) == nullptr);
+  }
+  const auto v = ComputeAnchorColumn(setup_json);
+  const double norm = std::sqrt(linalg::Dot(Mpi::World(), v, v));
+  CHECK(std::isfinite(norm));
+  CHECK(norm > 0.0);
+}
+
+// An inductive rational surface impedance carries DC current, so it must enter the anchor
+// solve through its DC Robin term 1/Ls: a RationalImpedance sheet must give the same anchor
+// as the equivalent Impedance sheet, whose 1/Ls term is part of the stiffness matrix. (A
+// sheet with capacitance would differ at O(ν²) for a single shift: the anchor screening is
+// ν²M, and an Impedance sheet's Cs is part of M while a rational one's is not.)
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-AnchorInductiveRationalImpedance",
+                 "[romoperator][Serial]")
+{
+  const bool extrapolate = GENERATE(false, true);
+  json impedance, rational;
+  impedance["Impedance"] = InductiveImpedance(101);
+  rational["RationalImpedance"] = InductiveRationalImpedance(101);
+  const auto v_impedance =
+      ComputeAnchorColumn(EnrichmentCubeConfig(temp_dir, impedance, extrapolate));
+  const auto v_rational =
+      ComputeAnchorColumn(EnrichmentCubeConfig(temp_dir, rational, extrapolate));
+  CHECK(RelativeDifference(v_impedance, v_rational) < 1.0e-8);
+
+  // The DC Robin term must actually matter: without the sheet, the anchor differs.
+  const auto v_open = ComputeAnchorColumn(EnrichmentCubeConfig(temp_dir, json::object()));
+  CHECK(RelativeDifference(v_impedance, v_open) > 1.0e-3);
+}
+
+// The eigenmode enrichment solves the eigenmode driver's (nonlinear) eigenvalue problem, so
+// a RationalImpedance sheet, contributing A2(λ) = g(λ)·M_b, must give the eigenvalues of
+// the equivalent Impedance sheet in the K/C/M pencil.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-EigenmodesRationalImpedance",
+                 "[romoperator][Serial]")
+{
+  auto solve = [this](const json &boundaries, bool check_basis)
+  {
+    const auto setup_json = EnrichmentCubeConfig(temp_dir, boundaries);
+    IoData iodata(setup_json, false);
+    auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+    SpaceOperator space_op(iodata, mesh_io);
+    std::vector<std::complex<double>> omega;
+    {
+      auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+      auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+      SpaceEigenSolver eigen(iodata, space_op, *K, C.get(), *M, ksp);
+      const int num_conv = eigen.Solve();
+      REQUIRE(num_conv >= 1);
+      CHECK(eigen.IsQuadratic());
+      for (int i = 0; i < num_conv; i++)
+      {
+        omega.push_back(eigen.GetOmega(i));
+      }
+    }
+    if (check_basis)
+    {
+      RomOperatorTest prom_op(iodata, space_op, 100);
+      prom_op.AddLumpedPortModesForSynthesis();
+      CHECK(prom_op.AddEigenmodesForSynthesis(iodata) >= 1);
+      CHECK(prom_op.GetNodeLabels().at(1).starts_with("eigen_1"));
+    }
+    return omega;
+  };
+  json impedance, rational;
+  impedance["Impedance"] = ParallelRLCImpedance(101);
+  rational["RationalImpedance"] = ParallelRLCRationalImpedance(101);
+  const auto omega_impedance = solve(impedance, false);
+  const auto omega_rational = solve(rational, true);
+  const auto &w0 = omega_impedance.front();
+  // The two pencils are the same, so the nearest eigenvalue to the target must be shared.
+  const auto it = std::ranges::min_element(omega_rational, {}, [&w0](std::complex<double> w)
+                                           { return std::abs(w - w0); });
+  CHECK(std::abs(*it - w0) < 1.0e-9 * std::abs(w0));
 }
 
 // =============================================================================

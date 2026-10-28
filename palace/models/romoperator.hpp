@@ -552,13 +552,15 @@ public:
   // orthogonalisation tolerance).
   void AddWavePortModesForSynthesis(double omega_ref);
 
-  // Enrich the PROM basis with eigenmodes of the full K/C/M system near the given target
-  // (labels "eigen_<k>"). A shift-and-invert eigensolve with the same operator dispatch as
-  // the eigenmode solver driver (quadratic pencil when a damping matrix is present, linear
-  // otherwise; no frequency-nonlinear A2 terms — circuit synthesis forbids them). The solve
-  // requests the configured number of modes near the target; it does not attempt or
-  // guarantee complete coverage of any frequency band. Parameters come from
-  // config["Solver"]["Eigenmode"]. Returns the number of converged eigenmodes added. Call
+  // Enrich the PROM basis with eigenmodes of the full system near the configured target
+  // (labels "eigen_<k>"). The eigenvalue problem is the eigenmode solver driver's (see
+  // SpaceEigenSolver): the linear or, with damping, quadratic K/C/M pencil, or, with
+  // frequency-dependent boundaries (wave ports, second-order farfield, surface
+  // conductivity, rational impedance), the nonlinear problem K + λC + λ²M + A2(λ) solved
+  // with the configured "NonlinearType". The solve requests the configured number of modes
+  // near the target; it does not attempt or guarantee complete coverage of any frequency
+  // band. Parameters come from config["Solver"]["Eigenmode"]. Returns the number of
+  // converged eigenmodes added. Call
   // after AddLumpedPortModesForSynthesis and before the offline sampling loop, so the
   // leading port-mode block and the RHS1r projection bookkeeping stay consistent.
   int AddEigenmodesForSynthesis(const IoData &iodata);
@@ -573,11 +575,16 @@ public:
   // from the ε-weighted field energies) to post_dir on the root process. Returns the
   // number of solutions added. Same ordering contract as the other enrichment solves.
   int AddElectrostaticModesForSynthesis(const IoData &iodata, const fs::path &post_dir);
-  // Solve the screened quasistatic system (K + ν²M) x = b_p for each anchor-flagged
-  // lumped port and add the solution to the PROM basis (labels "anchor_<idx>"). The
-  // positive screening term makes the system symmetric positive definite, so the solve
-  // cannot resonate with band or near-degenerate basis modes; with ν well below the sweep
-  // band the solution is the quasistatic (inductive-limit) response of the port. Must be
+  // Solve the screened quasistatic system (K₀ + ν²M) x = b_p for each anchor-flagged
+  // lumped port and add the solution to the PROM basis (labels "anchor_<idx>"). K₀ is the
+  // static system stiffness, K plus the DC limit of the frequency-dependent boundary terms
+  // (SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit, ...)): nonzero only for an
+  // inductive rational surface impedance, since wave-port and surface-conductivity terms
+  // vanish at DC like the damping matrix, and the second-order farfield pole at ω = 0 is
+  // omitted. The positive screening term makes the system symmetric positive definite, so
+  // the solve cannot resonate with band or near-degenerate basis modes; with ν well below
+  // the sweep band the solution is the quasistatic (inductive-limit) response of the port.
+  // Must be
   // called after AddLumpedPortModesForSynthesis and before the offline sampling loop, so
   // the leading port-mode block and the RHS1r projection bookkeeping stay consistent.
   //

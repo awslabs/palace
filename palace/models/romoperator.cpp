@@ -21,8 +21,6 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/amg.hpp"
-#include "linalg/divfree.hpp"
-#include "linalg/eps.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
@@ -32,6 +30,7 @@
 #include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/spaceeigensolver.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/aaa.hpp"
 #include "utils/communication.hpp"
@@ -1107,91 +1106,31 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
 
 int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
 {
-  // Mirror the eigenmode solver driver's setup (drivers/eigensolver.cpp) with the same
-  // operator dispatch, minus the frequency-nonlinear A2 machinery: circuit synthesis
-  // forbids wave ports, surface conductivity, and second-order farfield boundaries, so
-  // the pencil is exactly quadratic (K + λC + λ²M with λ = iω) or linear (K u = ω²M u)
-  // when there is no damping.
+  // Solve the same eigenvalue problem as the eigenmode simulation driver: the linear or
+  // quadratic K/C/M pencil, or, with frequency-dependent boundaries (wave ports,
+  // second-order farfield, surface conductivity, rational impedance), the nonlinear problem
+  // T(λ) = K + λC + λ²M + A2(λ) with the configured nonlinear strategy (see
+  // SpaceEigenSolver). The enrichment vectors are then eigenvectors of the system the PROM
+  // reduces, whatever its boundary conditions.
   const auto &eig = iodata.solver.eigenmode;
-  const double target = eig.target;
-  MFEM_VERIFY(target > 0.0, "Eigenmode enrichment requires a positive target frequency!");
+  MFEM_VERIFY(eig.target > 0.0,
+              "Eigenmode enrichment requires a positive target frequency!");
   {
     const double f_target =
-        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) /
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(eig.target) /
         (2 * std::numbers::pi);
     Mpi::Print("\nComputing {:d} eigenmodes for PROM enrichment (σ = {:.3e} GHz)\n", eig.n,
                f_target);
   }
 
-  // Configure the eigenvalue solver: no frequency-nonlinear A2 terms here (circuit
-  // synthesis forbids them), so the pencil is quadratic exactly when damping is present.
-  const bool quadratic = (C != nullptr);
-  std::unique_ptr<EigenvalueSolver> eigen =
-      BuildEigenvalueSolver(space_op.GetComm(), eig, iodata.solver.linear.gs_orthog,
-                            iodata.problem.verbose, quadratic);
-  EigenvalueSolver::ScaleType scale =
-      eig.scale ? EigenvalueSolver::ScaleType::NORM_2 : EigenvalueSolver::ScaleType::NONE;
-  if (quadratic)
-  {
-    eigen->SetOperators(*K, *C, *M, scale);
-  }
-  else
-  {
-    eigen->SetOperators(*K, *M, scale);
-  }
+  // The eigensolve reuses the shared PROM linear solver: every subsequent SolveHDM resets
+  // its operators.
+  SpaceEigenSolver eigen(iodata, space_op, *K, C.get(), *M, *ksp);
+  const int num_conv = eigen.Solve();
 
-  // Divergence-free projection to solve orthogonal to the nullspace of the stiffness
-  // matrix, as in the eigenmode driver.
-  std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
-  if (iodata.solver.linear.divfree_max_it > 0 &&
-      !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth())
-  {
-    constexpr int divfree_verbose = 0;
-    divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
-        space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
-        iodata.solver.linear.divfree_max_it, divfree_verbose);
-    eigen->SetDivFreeProjector(*divfree);
-  }
-
-  // Initial vector.
-  if (eig.init_v0)
-  {
-    ComplexVector v0;
-    if (eig.init_v0_const)
-    {
-      space_op.GetConstantInitialVector(v0);
-    }
-    else
-    {
-      space_op.GetRandomInitialVector(v0);
-    }
-    if (divfree)
-    {
-      divfree->Mult(v0);
-    }
-    eigen->SetInitialSpace(v0);
-  }
-
-  // Shift-and-invert about the target, matching the eigenmode driver's conventions for
-  // the quadratic (λ = iω) and linear (μ = ω²) pencils.
-  SetEigenSolverShiftInvert(*eigen, eig.type, target, quadratic);
-
-  // Linear solver for the spectral transformation, assembled once at the fixed shift.
-  // Reuse the shared PROM solver: every subsequent SolveHDM resets the operators.
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                    std::complex<double>(-target * target, 0.0), K.get(),
-                                    C.get(), M.get());
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
-  ksp->SetOperators(*A, *P);
-  eigen->SetLinearSolver(*ksp);
-
-  // Solve and add the converged eigenvectors to the basis. The eigenvectors are complex in
-  // general; UpdatePROM splits real and imaginary parts into separate basis columns and
-  // renormalizes, so the eigensolver's own scaling is irrelevant.
-  int num_conv = eigen->Solve();
+  // Add the converged eigenvectors to the basis. They are complex in general; UpdatePROM
+  // splits real and imaginary parts into separate basis columns and renormalizes, so the
+  // eigensolver's own scaling is irrelevant.
   const int num_add = std::min(num_conv, eig.n);
   Mpi::Print(" Found {:d} converged eigenvalue{}, adding {:d} to the PROM basis\n",
              num_conv, (num_conv == 1) ? "" : "s", num_add);
@@ -1200,14 +1139,17 @@ int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
   u.UseDevice(true);
   for (int i = 0; i < num_add; i++)
   {
-    std::complex<double> omega = EigenvalueToOmega(eigen->GetEigenvalue(i), quadratic);
+    const std::complex<double> omega = eigen.GetOmega(i);
     {
-      const double f =
+      const double f_re =
           iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
           (2 * std::numbers::pi);
-      Mpi::Print(" Eigenmode {:d}: f = {:.6e} GHz\n", i + 1, f);
+      const double f_im =
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag()) /
+          (2 * std::numbers::pi);
+      Mpi::Print(" Eigenmode {:d}: f = {:.6e}{:+.6e}i GHz\n", i + 1, f_re, f_im);
     }
-    eigen->GetEigenvector(i, u);
+    eigen.GetEigenvector(i, u);
     UpdatePROM(u, fmt::format("eigen_{:d}", i + 1));
   }
   return num_add;
@@ -1382,17 +1324,25 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapola
     return;
   }
 
-  // The anchor is the screened quasistatic response (K + ν²M) x(ν) = b_p. The positive
+  // The anchor is the screened quasistatic response (K₀ + ν²M) x(ν) = b_p, where
+  // K₀ = K + A2(0) is the static system stiffness: the ω → 0 limit of the system matrix
+  // A(ω) = K + iωC − ω²M + A2(ω) without its mass term. Damping (iωC) vanishes in this
+  // limit, and so do the frequency-dependent boundary terms A2(ω) of wave ports and surface
+  // conductivity; an inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a
+  // finite DC Robin term, and the second-order farfield pole at ω = 0 is omitted (see
+  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). The positive
   // mass coefficient makes the (real part of the) system positive definite — unlike the
   // driven system at real frequency ω, which is indefinite (K − ω²M) and can resonate with
   // band or near-degenerate modes. The same positive coefficient also gives a genuinely
   // positive-definite preconditioner without the sign-shift heuristic used for the driven
-  // case.
+  // case, assembled from the same quasistatic boundary terms (no boundary is evaluated at
+  // ω = 0, where the second-order farfield and surface conductivity terms are singular and
+  // a wave port has no mode).
   //
   // The screening biases the anchor away from the unscreened (bare inductive-limit)
-  // response x₀ solving K x₀ = b_p: in ε = ν² the resolvent expansion is
+  // response x₀ solving K₀ x₀ = b_p: in ε = ν² the resolvent expansion is
   //
-  //   x(ε) = x₀ − ε K⁻¹ M x₀ + O(ε²),
+  //   x(ε) = x₀ − ε K₀⁻¹ M x₀ + O(ε²),
   //
   // so the exported column satisfies L⁻¹ v + ν² C v = s e_p rather than L⁻¹ v = s e_p, an
   // O((ν/ω)²) relative deviation from the bare L-column identity. When `extrapolate` is
@@ -1417,13 +1367,15 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapola
         NumSynthesisAnchorPorts());
   }
 
-  ComplexVector rhs, u, u_acc;
+  ComplexVector rhs, u;
   rhs.SetSize(space_op.GetNDSpace().GetTrueVSize());
   rhs.UseDevice(true);
   u.SetSize(space_op.GetNDSpace().GetTrueVSize());
   u.UseDevice(true);
-  u_acc.SetSize(space_op.GetNDSpace().GetTrueVSize());
-  u_acc.UseDevice(true);
+
+  // DC limit of the frequency-dependent boundary terms (null when none contributes).
+  constexpr SpaceOperator::QuasistaticLimit dc{};
+  auto A2_dc = space_op.GetExtraSystemMatrix(dc, Operator::DIAG_ZERO);
 
   // Accumulate the per-port extrapolation across shifts so each (expensive) operator and
   // preconditioner assembly is shared by every anchored port at that shift. Shift 0 is ν
@@ -1435,9 +1387,9 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapola
     const double weight = extrapolate ? ((is == 0) ? (-1.0 / 3.0) : (4.0 / 3.0)) : 1.0;
     auto A = space_op.GetSystemMatrix(
         std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0),
-        std::complex<double>(nu_s * nu_s, 0.0), K.get(), C.get(), M.get());
+        std::complex<double>(nu_s * nu_s, 0.0), K.get(), C.get(), M.get(), A2_dc.get());
     auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 0.0 + 0.0i,
-                                                               nu_s * nu_s + 0.0i, 0.0);
+                                                               nu_s * nu_s + 0.0i, dc);
     // Safe to repurpose the shared solver: every SolveHDM call resets the operators.
     ksp->SetOperators(*A, *P);
     for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
