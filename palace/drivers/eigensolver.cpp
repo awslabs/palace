@@ -3,7 +3,6 @@
 
 #include "eigensolver.hpp"
 
-#include <algorithm>
 #include <complex>
 #include <numbers>
 #include <vector>
@@ -279,19 +278,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, scale);
     }
   }
-  // The polynomial seed of the Hybrid solver with a frequency-dependent permittivity asks
-  // for more modes than requested: with exactly N, its Krylov solve can converge only one
-  // mode of a degenerate pair among its N, and Quasi-Newton then returns another mode in
-  // place of the missing one. The margin is capped by the subspace dimension (MaxSize), and
-  // Quasi-Newton still returns N modes.
-  int num_seed = iodata.solver.eigenmode.n;
-  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
-      space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
-  {
-    num_seed = std::min(num_seed + std::max(2, (num_seed + 1) / 2),
-                        std::max(num_seed, iodata.solver.eigenmode.max_size));
-  }
-  eigen->SetNumModes(num_seed, iodata.solver.eigenmode.max_size);
+  eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
   const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
                          ? iodata.solver.eigenmode.linear_tol
                          : iodata.solver.eigenmode.tol;
