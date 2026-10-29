@@ -1161,8 +1161,12 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
+  // With a Floquet wave vector, the stiffness matrix is not symmetric: it is Hermitian
+  // with the domain Floquet terms (for a Floquet wave vector which does not depend on
+  // frequency).
   Kr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old, true);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old,
+                     !space_op.GetMaterialOp().HasWaveVector());
   if (C)
   {
     Cr.conservativeResize(dim_V_new, dim_V_new);
