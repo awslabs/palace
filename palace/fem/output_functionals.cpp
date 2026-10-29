@@ -56,6 +56,10 @@ using FaceConfigKey = std::vector<long long>;
 constexpr CeedSize FarFieldMaxBatchStorage = 64LL * 1024LL * 1024LL;
 constexpr int FarFieldMaxDirectionsPerBatch = 256;
 
+// Offset of the observation directions in the FARFIELD QFunction context (see
+// f_integ_surf_farfield_32).
+constexpr int FarFieldDirsOffset = 9;
+
 void AppendPointRuleSignature(FaceConfigKey &key,
                               const std::vector<mfem::IntegrationPoint> &pts)
 {
@@ -501,10 +505,14 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &nd_fespace,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op,
-                                     const std::vector<std::array<double, 3>> &r_naughts)
-  : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), nd_fespace(&nd_fespace),
-    rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+                                     const std::vector<std::array<double, 3>> &r_naughts,
+                                     bool orient, const mfem::Vector &x0)
+  : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), farfield_orient(orient),
+    farfield_x0(x0), nd_fespace(&nd_fespace), rt_fespace(&rt_fespace), mat_op(&mat_op),
+    comm(mesh.GetComm())
 {
+  MFEM_VERIFY(!orient || x0.Size() == 3,
+              "Far-field normal orientation requires a 3D center point!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -703,17 +711,22 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
                     b_map_type == mfem::FiniteElement::H_DIV,
                 "Far-field postprocessing requires an H(curl) or H(div) magnetic field "
                 "space!");
-    base_ctx.resize(5 + 3 * N);
-    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx.resize(FarFieldDirsOffset + 3 * N);
+    base_ctx[0].second = 1.0;  // Normal sign and side weight, set per group
     base_ctx[1].second = farfield_omega.real();
     base_ctx[2].second = farfield_omega.imag();
     base_ctx[3].first = N;
     base_ctx[4].first = (b_map_type == mfem::FiniteElement::H_DIV) ? 1 : 0;
+    base_ctx[5].first = farfield_orient ? 1 : 0;
+    for (int c = 0; c < 3; c++)
+    {
+      base_ctx[6 + c].second = farfield_orient ? farfield_x0(c) : 0.0;
+    }
     for (int d = 0; d < N; d++)
     {
       for (int c = 0; c < 3; c++)
       {
-        base_ctx[5 + 3 * d + c].second = farfield_dirs[d][c];
+        base_ctx[FarFieldDirsOffset + 3 * d + c].second = farfield_dirs[d][c];
       }
     }
     MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
@@ -1121,6 +1134,16 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
                false, mfem::Geometry::INVALID, {}, {}, 1.0, scale_b);
     }
+    else if (kind == KernelKind::FARFIELD && two_sided)
+    {
+      // The Stratton-Chu integrand is linear in the traces: average the two (local) sides
+      // with two one-sided operators (normal scale 1/2 each, the sign is fixed in the
+      // kernel by the orientation center).
+      AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
+               false, mfem::Geometry::INVALID, {}, {}, 1.0, 0.5);
+      AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
+               false, mfem::Geometry::INVALID, {}, {}, 1.0, 0.5);
+    }
     else if (buffer_kind && two_sided)
     {
       // Fixed mapped rules are side-specific. Split separable visualization quantities
@@ -1238,15 +1261,27 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       else if (kind == KernelKind::FARFIELD)
       {
+        plan.elem_a = FET.Elem1No;
         if (has_elem2)
         {
-          // Far-field computations are only supported on external boundaries. Record
-          // local invalidity but keep participating in subsequent collectives; another
-          // rank may own no element of this interior surface.
-          valid = false;
-          continue;
+          // Interior surface: the normal is oriented in the kernel (the boundary element
+          // normal has no outward meaning). Without an orientation center the result
+          // would depend on the arbitrary boundary element orientation: record local
+          // invalidity but keep participating in subsequent collectives.
+          if (!farfield_orient)
+          {
+            valid = false;
+            continue;
+          }
+          // Average the traces of both sides when both elements are local. On a parallel
+          // interface, use the local side only: the tangential traces entering the
+          // integrand are continuous up to discretization error, and the four far-field
+          // field inputs are not part of the face-neighbor exchange.
+          if (elem2_local)
+          {
+            plan.elem_b = FET.Elem2No;
+          }
         }
-        plan.elem_a = FET.Elem1No;
       }
       else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||
                (kind == KernelKind::INTERFACE_EPR &&
@@ -2527,7 +2562,8 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   // Frequency and directions enter only the retained QFunction contexts. Reuse the
   // assembled bases, restrictions, and geometry inputs while processing bounded
   // direction batches. FARFIELD context layout is [0] normal sign, [1..2] omega,
-  // [3] batch size, [4] B Piola map, [5..] batch directions, then material data.
+  // [3] batch size, [4] B Piola map, [5] orientation flag, [6..8] orientation center,
+  // [9..] batch directions, then material data.
   const int N = static_cast<int>(farfield_dirs.size());
   MFEM_VERIFY(farfield_batch_size > 0 && local_out.Size() == 6 * farfield_batch_size,
               "Invalid far-field batch output layout!");
@@ -2550,7 +2586,7 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
       {
         for (int c = 0; c < 3; c++)
         {
-          data[5 + 3 * d + c].second =
+          data[FarFieldDirsOffset + 3 * d + c].second =
               (d < batch_count) ? farfield_dirs[first + d][c] : 0.0;
         }
       }
