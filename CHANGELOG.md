@@ -141,6 +141,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
+    vector (`"FloquetWaveVector"`), as it already did Floquet ports: the phase shift across
+    the periodic boundaries makes the problem non-reciprocal, and the synthesized L⁻¹, R⁻¹,
+    and C matrices were not symmetric. The description of `"AdaptiveCircuitSynthesis"` in the
+    configuration schema now lists these restrictions, its other requirements, and the
+    frequency-dependent boundary conditions it supports. SchemaVer 4-1-1
+    [Issue 1108](https://github.com/awslabs/palace/issues/1108).
   - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
     which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
     the stiffness matrix as if it were symmetric.

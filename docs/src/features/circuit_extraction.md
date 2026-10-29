@@ -149,6 +149,13 @@ There are several constraints and considerations for using this feature:
     or `WavePort`; *Palace* reports an error otherwise.
   - `FloquetPort` boundaries are not yet supported with circuit synthesis. Their frequency-dependent
     Robin contribution is included in the adaptive sweep but not in the synthesized circuit pencil.
+  - A nonzero `"FloquetWaveVector"` in
+    [`config["Boundaries"]["Periodic"]`](../config/reference.md#config-boundaries-periodic) is not
+    supported with circuit synthesis either. The phase shift across the periodic boundaries makes
+    the problem non-reciprocal, so that the synthesized ``\widehat{\bm{L}}^{-1}``,
+    ``\widehat{\bm{R}}^{-1}``, and ``\widehat{\bm{C}}`` matrices would not be symmetric, as those of a
+    network of resistors, inductors, and capacitors are. Periodic boundaries without a phase shift
+    are supported.
   - All the guidance and caveats on using the adaptive solver discussed in [Adaptive Frequency Sweeps
     for Driven Simulations](adaptive_driven_solver.md) still apply.
 
