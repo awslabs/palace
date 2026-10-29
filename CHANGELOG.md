@@ -141,6 +141,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Fixed the second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`)
+    with Floquet periodic boundary conditions (`"FloquetWaveVector"`): the surface curl in
+    its second-order term did not include the Floquet wave vector, so that, for example,
+    the condition reduced to the first-order one for an obliquely incident plane wave.
+    [Issue 1108](https://github.com/awslabs/palace/issues/1108).
   - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
     vector (`"FloquetWaveVector"`), as it already did Floquet ports: the phase shift across
     the periodic boundaries makes the problem non-reciprocal, and the synthesized L⁻¹, R⁻¹,

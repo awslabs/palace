@@ -578,7 +578,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // can be folded into circuit synthesis (projected per basis growth in UpdatePROM, fit
   // in CalculateNormalizedPROMMatrices). On the imaginary slot, matching Mwp_p.
   //   - 2nd-order farfield ABC: M_ff with full term i·(0.5/ω)·M_ff (M_ff includes the
-  //     negative sign of β).
+  //     negative sign of β, and is complex with a Floquet wave vector).
   //   - Surface conductivity: one boundary mass per active attribute group, term
   //     (i·ω/Z_g(ω))·A_σ_g.
   M_ff_ = space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO,
@@ -1162,8 +1162,8 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
   // With a Floquet wave vector, the stiffness matrix is not symmetric: it is Hermitian
-  // with the domain Floquet terms (for a Floquet wave vector which does not depend on
-  // frequency).
+  // (domain Floquet terms) or has an antisymmetric real part (Floquet terms of second-order
+  // farfield boundaries, with a frequency dependent wave vector).
   Kr.conservativeResize(dim_V_new, dim_V_new);
   ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old,
                      !space_op.GetMaterialOp().HasWaveVector());
@@ -1188,8 +1188,12 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // like the wave-port masses so the synthesis path treats them uniformly.
   if (M_ff_)
   {
+    // Hermitian (not symmetric) with a Floquet wave vector which does not depend on
+    // frequency.
+    const auto &mat_op = space_op.GetMaterialOp();
     M_ff_r.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *M_ff_, M_ff_r, r, dim_V_old, true);
+    ProjectMatInternal(comm, V, *M_ff_, M_ff_r, r, dim_V_old,
+                       !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
   }
   for (std::size_t g = 0; g < Asig_g_.size(); g++)
   {
@@ -1330,8 +1334,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     auto apply_factored_other_A2 = [&]()
     {
       // Factored 2nd-order farfield ABC: A2_ff(ω) = i·(0.5/ω)·M_ff. M_ff_r carries the
-      // boundary mass on the imaginary slot (the i) and the negative sign of β, so scaling
-      // by the real scalar 0.5/ω reproduces the full contribution.
+      // boundary mass on the imaginary slot (the i, i·M_ff is projected) and the negative
+      // sign of β, so scaling by the real scalar 0.5/ω reproduces the full contribution.
       if (M_ff_ && M_ff_r.rows() == static_cast<long>(V.size()))
       {
         Ar += std::complex<double>(0.5 / omega, 0.0) * M_ff_r;

@@ -1,0 +1,88 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/scatterer_adaptive"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/floquet_absorbing_scatterer.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [2],  // Scatterer
+        "Permeability": 1.0,
+        "Permittivity": 4.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    {
+      "FloquetWaveVector": [0.0, 0.4445958682, 0.0],  // 45° incidence at 3 GHz
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [1],
+          "ReceiverAttributes": [2]
+        },
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4]
+        }
+      ]
+    },
+    "FloquetPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Excitation": true,
+        "IncidentPolarization": "TE",
+        "MaxOrder": 0
+      }
+    ],
+    "Absorbing":
+    {
+      "Attributes": [6],
+      "Order": 2
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Linear",
+          "MinFreq": 2.5,
+          "MaxFreq": 3.5,
+          "FreqStep": 0.25,
+          "SaveStep": 0
+        }
+      ],
+      "AdaptiveTol": 1.0e-6
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  }
+}

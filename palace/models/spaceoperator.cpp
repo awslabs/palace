@@ -339,6 +339,8 @@ void AddConfiguredIntegrators(BilinearForm &a, const MaterialPropertyCoefficient
                               const MaterialPropertyCoefficient *dfb,
                               const MaterialPropertyCoefficient *fb,
                               const MaterialPropertyCoefficient *fp,
+                              const MaterialPropertyCoefficient *frb,
+                              const MaterialPropertyCoefficient *fpb,
                               bool assemble_q_data = false)
 {
   const bool has_df = df && !df->empty();
@@ -381,6 +383,17 @@ void AddConfiguredIntegrators(BilinearForm &a, const MaterialPropertyCoefficient
     a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fp);
     a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*fp, true);
   }
+
+  // Floquet terms of the second-order absorbing boundary condition.
+  if (frb && !frb->empty())
+  {
+    a.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(*frb);
+  }
+  if (fpb && !fpb->empty())
+  {
+    a.AddBoundaryIntegrator<MixedVectorWeakCurlIntegrator>(*fpb);
+    a.AddBoundaryIntegrator<MixedVectorCurlIntegrator>(*fpb, true);
+  }
   if (assemble_q_data)
   {
     a.AssembleQuadratureData();
@@ -401,15 +414,19 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                     const MaterialPropertyCoefficient *f,
                     const MaterialPropertyCoefficient *dfb,
                     const MaterialPropertyCoefficient *fb,
-                    const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
+                    const MaterialPropertyCoefficient *fp,
+                    const MaterialPropertyCoefficient *frb,
+                    const MaterialPropertyCoefficient *fpb, bool assemble_q_data = false)
 {
   AddConfiguredIntegrators(a, ActiveCoefficient(df), ActiveCoefficient(f),
                            ActiveCoefficient(dfb), ActiveCoefficient(fb),
-                           ActiveCoefficient(fp), assemble_q_data);
+                           ActiveCoefficient(fp), ActiveCoefficient(frb),
+                           ActiveCoefficient(fpb), assemble_q_data);
 }
 
 void AddConfiguredAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
                                  const MaterialPropertyCoefficient *fb,
+                                 const MaterialPropertyCoefficient *frb,
                                  bool assemble_q_data = false)
 {
   if (f && !f->empty())
@@ -420,6 +437,10 @@ void AddConfiguredAuxIntegrators(BilinearForm &a, const MaterialPropertyCoeffici
   {
     a.AddBoundaryIntegrator<DiffusionIntegrator>(*fb);
   }
+  if (frb && !frb->empty())
+  {
+    a.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(*frb);
+  }
   if (assemble_q_data)
   {
     a.AssembleQuadratureData();
@@ -427,36 +448,35 @@ void AddConfiguredAuxIntegrators(BilinearForm &a, const MaterialPropertyCoeffici
 }
 
 void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
-                       const MaterialPropertyCoefficient *fb, bool assemble_q_data = false)
+                       const MaterialPropertyCoefficient *fb,
+                       const MaterialPropertyCoefficient *frb, bool assemble_q_data = false)
 {
   AddConfiguredAuxIntegrators(a, ActiveCoefficient(f), ActiveCoefficient(fb),
-                              assemble_q_data);
+                              ActiveCoefficient(frb), assemble_q_data);
 }
 
-auto AssembleOperator(const FiniteElementSpace &fespace,
-                      const MaterialPropertyCoefficient *df,
-                      const MaterialPropertyCoefficient *f,
-                      const MaterialPropertyCoefficient *dfb,
-                      const MaterialPropertyCoefficient *fb,
-                      const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
-                      bool assemble_q_data = false)
+auto AssembleOperator(
+    const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
+    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
+    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
+    const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
+    bool skip_zeros = false, bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
   // System matrices are only ever applied matrix-free (their sums are assembled into
   // SumOperator, which has no sparse representation), so elements where a coefficient is
   // exactly zero can be left out of the partially assembled operator.
   a.SkipZeroCoefficientElements();
-  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fp, frb, fpb, assemble_q_data);
   return a.Assemble(skip_zeros);
 }
 
-auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
-                       const MaterialPropertyCoefficient *df,
-                       const MaterialPropertyCoefficient *f,
-                       const MaterialPropertyCoefficient *dfb,
-                       const MaterialPropertyCoefficient *fb,
-                       const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
-                       bool assemble_q_data = false)
+auto AssembleOperators(
+    const FiniteElementSpaceHierarchy &fespaces, const MaterialPropertyCoefficient *df,
+    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
+    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
+    const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
+    bool skip_zeros = false, bool assemble_q_data = false)
 {
   // Keep configured coefficient support on the coarse sparse level. This is required for
   // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
@@ -466,7 +486,7 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
   // independent of the chosen sparse-solver representation. Fine partial-assembly levels
   // have no symbolic structure to preserve, so exact-zero terms are omitted there.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp);
+  AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, frb, fpb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -477,7 +497,7 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
     // operator action and its diagonal), so elements where a coefficient is exactly zero
     // can be left out.
     fine.SkipZeroCoefficientElements();
-    AddIntegrators(fine, df, f, dfb, fb, fp, assemble_q_data);
+    AddIntegrators(fine, df, f, dfb, fb, fp, frb, fpb, assemble_q_data);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
     {
@@ -489,12 +509,13 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
 
 auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
-                          const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
+                          const MaterialPropertyCoefficient *fb,
+                          const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
                           bool assemble_q_data = false)
 {
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  AddConfiguredAuxIntegrators(coarse, f, fb);
+  AddConfiguredAuxIntegrators(coarse, f, fb, frb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -502,7 +523,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
     fine.SkipZeroCoefficientElements();
-    AddAuxIntegrators(fine, f, fb, assemble_q_data);
+    AddAuxIntegrators(fine, f, fb, frb, assemble_q_data);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
     {
@@ -520,7 +541,8 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
+      fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute()),
+      fpb(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
   if (!mat_op.HasFloquetFrequencyScaling())
@@ -528,7 +550,11 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     AddRealPeriodicCoefficients(1.0, f);
     AddImagPeriodicCoefficients(1.0, fc);
   }
-  int empty[2] = {AreExactlyZero(df, f, fb), fc.IsExactlyZero()};
+  else
+  {
+    AddStiffnessPeriodicBdrCoefficients(1.0, fpb);
+  }
+  int empty[2] = {AreExactlyZero(df, f, fb, fpb), fc.IsExactlyZero()};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -538,12 +564,13 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   std::unique_ptr<Operator> kr, ki;
   if (!empty[0])
   {
-    kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, skip_zeros);
+    kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, &fpb,
+                          skip_zeros);
   }
   if (!empty[1])
   {
-    ki =
-        AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, skip_zeros);
+    ki = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, nullptr,
+                          nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -568,21 +595,24 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
       fb(mat_op.MaxCeedBdrAttribute());
-  MaterialPropertyCoefficient fp(mat_op.MaxCeedAttribute());
+  MaterialPropertyCoefficient fp(mat_op.MaxCeedAttribute()),
+      frb(mat_op.MaxCeedBdrAttribute());
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddImagPeriodicCoefficients(1.0, fp);
+    AddDampingPeriodicBdrCoefficients(1.0, frb);
   }
-  int empty = AreExactlyZero(f, fb, fp);
+  int empty = AreExactlyZero(f, fb, fp, frb);
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, skip_zeros);
+  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, &frb, nullptr,
+                            skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -623,11 +653,13 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, skip_zeros);
+    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, nullptr,
+                          nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, skip_zeros);
+    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, nullptr,
+                          nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -659,9 +691,13 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-      fbi(mat_op.MaxCeedBdrAttribute());
-  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, include_wave_ports);
-  int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
+      fbi(mat_op.MaxCeedBdrAttribute()), frbr(mat_op.MaxCeedBdrAttribute()),
+      frbi(mat_op.MaxCeedBdrAttribute()), fpbr(mat_op.MaxCeedBdrAttribute()),
+      fpbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi,
+                                include_wave_ports);
+  int empty[2] = {AreExactlyZero(dfbr, fbr, frbr, fpbr),
+                  AreExactlyZero(dfbi, fbi, frbi, fpbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -671,11 +707,13 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
+                          &fpbr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
+                          &fpbi, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -705,9 +743,12 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
-      fbi(mat_op.MaxCeedBdrAttribute());
-  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  int empty[2] = {AreExactlyZero(dfbr, fbr), AreExactlyZero(dfbi, fbi)};
+      fbi(mat_op.MaxCeedBdrAttribute()), frbr(mat_op.MaxCeedBdrAttribute()),
+      frbi(mat_op.MaxCeedBdrAttribute()), fpbr(mat_op.MaxCeedBdrAttribute()),
+      fpbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi);
+  int empty[2] = {AreExactlyZero(dfbr, fbr, frbr, fpbr),
+                  AreExactlyZero(dfbi, fbi, frbi, fpbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -717,11 +758,13 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
+                          &fpbr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
+                          &fpbi, skip_zeros);
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -746,8 +789,8 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m =
-      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
+                            nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -768,33 +811,47 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
                                                  bool imag_slot)
 {
   // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
-  // scale; the negative sign of β is included in M_ff by
-  // AddExtraSystemBoundaryCurlCurlBdrCoefficients, so the scalings below are positive. By
-  // default stored on the REAL slot of the resulting ComplexParOperator so that downstream
-  // BuildParSumOperator can scale it by an arbitrary complex coefficient (the real-ω path
-  // uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true it is placed on
-  // the IMAGINARY slot, matching the wave-port boundary-mass convention (the i in i·f(ω)·M
+  // scale: the term at frequency ω is β·B = i·(0.5/ω)·M_ff, for β = 1/(2iω) and the
+  // boundary curl-curl form B (see FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients),
+  // so M_ff = -B includes the negative sign of β and the scalings below are positive. With
+  // a Floquet wave vector which does not depend on frequency, B is Hermitian and M_ff is
+  // complex. By default M_ff is stored as is (the curl-curl term on the REAL slot of the
+  // resulting ComplexParOperator) so that downstream BuildParSumOperator can scale it by an
+  // arbitrary complex coefficient (the real-ω path uses i·(0.5/ω); the complex-λ path uses
+  // -0.5/λ). With imag_slot=true i·M_ff is stored instead (the curl-curl term on the
+  // IMAGINARY slot), matching the wave-port boundary-mass convention (the i in i·f(ω)·M
   // baked in) so circuit synthesis can fold it in uniformly. Returns null if the farfield
   // ABC order < 2 or it contributes no DoFs on any rank (the check is collective, so the
   // null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
-  farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
-  int empty = df.IsExactlyZero();
-  Mpi::GlobalMin(1, &empty, GetComm());
-  if (empty)
+  MaterialPropertyCoefficient dfr(mat_op.MaxCeedBdrAttribute()),
+      dfi(mat_op.MaxCeedBdrAttribute()), frr(mat_op.MaxCeedBdrAttribute()),
+      fri(mat_op.MaxCeedBdrAttribute()), fpr(mat_op.MaxCeedBdrAttribute()),
+      fpi(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddCurlCurlBdrCoefficients(imag_slot ? std::complex<double>(0.0, -1.0) : -1.0,
+                                         dfr, dfi, frr, fri, &fpr, &fpi);
+  int empty[2] = {AreExactlyZero(dfr, frr, fpr), AreExactlyZero(dfi, fri, fpi)};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
   {
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m =
-      AssembleOperator(GetNDSpace(), nullptr, nullptr, &df, nullptr, nullptr, skip_zeros);
+  std::unique_ptr<Operator> mr, mi;
+  if (!empty[0])
+  {
+    mr = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfr, nullptr, nullptr, &frr,
+                          &fpr, skip_zeros);
+  }
+  if (!empty[1])
+  {
+    mi = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfi, nullptr, nullptr, &fri,
+                          &fpi, skip_zeros);
+  }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op =
-        imag_slot
-            ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
-            : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+        std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
   }
@@ -803,7 +860,9 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
     MFEM_VERIFY(!imag_slot,
                 "imag_slot is only meaningful for the ComplexOperator instantiation of "
                 "GetFarfieldBoundaryCurlCurlMatrix!");
-    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    MFEM_VERIFY(
+        !mi, "Unexpected imaginary part in GetFarfieldBoundaryCurlCurlMatrix<Operator>!");
+    auto M_op = std::make_unique<ParOperator>(std::move(mr), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
   }
@@ -829,8 +888,8 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m =
-      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
+                            nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -868,8 +927,8 @@ std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m =
-      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
+                            nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op =
@@ -915,8 +974,8 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m =
-      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
+                            nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -1170,7 +1229,9 @@ void SpaceOperator::AssemblePreconditioner(
       fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute()), fpi(mat_op.MaxCeedAttribute()),
-      fpr(mat_op.MaxCeedAttribute());
+      fpr(mat_op.MaxCeedAttribute()), frbr(mat_op.MaxCeedBdrAttribute()),
+      frbi(mat_op.MaxCeedBdrAttribute()), fpbr(mat_op.MaxCeedBdrAttribute()),
+      fpbi(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
   AddStiffnessCoefficients(a0.imag(), dfi, fi);
   AddStiffnessBdrCoefficients(a0.real(), fbr);
@@ -1185,24 +1246,32 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(a2.imag(), fbi);
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+  AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi);
   if (pc_mat_amg)
   {
     // dfbr/dfbi hold only the second-order absorbing BC term -i(0.5/ω)(μ⁻¹c ∇ₛ×E, ∇ₛ×F),
     // whose imaginary part is negative semidefinite. AMS/BoomerAMG are applied to the
     // real-valued Br + Bi (see MfemWrapperSolver), which this term can make indefinite, so
     // flip its sign in the preconditioner (like PCMatShifted does for the mass term). The
-    // system matrix keeps the correct sign.
+    // system matrix keeps the correct sign. Its Floquet terms keep their sign: the rotated
+    // boundary mass term is bounded by the first-order absorbing BC term for propagating
+    // waves, and the mixed boundary curl terms are antisymmetric.
     dfbr *= -1.0;
     dfbi *= -1.0;
   }
   if (mat_op.HasFloquetFrequencyScaling())
   {
-    // k₀-based tensors: cross terms scale with a1, mass term with a2.
+    // k₀-based tensors: cross terms scale with a1, mass term with a2. For the second-order
+    // absorbing BC, the rotated boundary mass term scales with a1 and the mixed boundary
+    // curl terms with a0.
     AddImagPeriodicCoefficients(a1.imag(), fpi);
     AddImagPeriodicCoefficients(a1.real(), fpr);
     AddRealPeriodicCoefficients(-a2.real(), fr);
     AddRealPeriodicCoefficients(-a2.imag(), fi);
+    AddDampingPeriodicBdrCoefficients(a1.real(), frbr);
+    AddDampingPeriodicBdrCoefficients(a1.imag(), frbi);
+    AddStiffnessPeriodicBdrCoefficients(a0.real(), fpbr);
+    AddStiffnessPeriodicBdrCoefficients(a0.imag(), fpbi);
   }
   else
   {
@@ -1211,23 +1280,24 @@ void SpaceOperator::AssemblePreconditioner(
     AddImagPeriodicCoefficients(a0.real(), fpi);
     AddImagPeriodicCoefficients(-a0.imag(), fpr);
   }
-  int empty[2] = {
-      (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty()),
-      (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() && fpi.empty())};
+  int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
+                   fpr.empty() && frbr.empty() && fpbr.empty()),
+                  (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
+                   fpi.empty() && frbi.empty() && fpbi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (!empty[0])
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, skip_zeros,
-                               assemble_q_data);
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
+                               skip_zeros, assemble_q_data);
     br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
   if (!empty[1])
   {
-    bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, skip_zeros,
-                               assemble_q_data);
+    bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
+                               skip_zeros, assemble_q_data);
     bi_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_q_data);
+        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
   }
 }
 
@@ -1240,33 +1310,37 @@ void SpaceOperator::AssemblePreconditioner(
   constexpr bool skip_zeros = false;
   const bool assemble_q_data = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
-      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
+      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      frbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddDampingCoefficients(a1.imag(), fr);
   AddDampingBdrCoefficients(a1.imag(), fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr, frbr, frbr, nullptr, nullptr);
   // Real-valued preconditioner (every level, including the smoothers): flip the sign of the
-  // second-order absorbing BC term so it stays positive semidefinite (see above).
+  // second-order absorbing BC term so it stays positive semidefinite (see above). Like the
+  // domain Floquet cross terms, the antisymmetric mixed boundary curl terms of this BC are
+  // dropped.
   dfbr *= -1.0;
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
+    AddDampingPeriodicBdrCoefficients(a1.imag(), frbr);
   }
   else
   {
     AddRealPeriodicCoefficients(a0.real(), fr);
   }
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
-                               assemble_q_data);
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
+                               nullptr, skip_zeros, assemble_q_data);
     br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
 }
 
@@ -1278,30 +1352,32 @@ void SpaceOperator::AssemblePreconditioner(
   constexpr bool skip_zeros = false;
   const bool assemble_q_data = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
-      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute());
+      dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      frbr(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(a0, dfr, fr);
   AddStiffnessBdrCoefficients(a0, fbr);
   AddDampingCoefficients(a1, fr);
   AddDampingBdrCoefficients(a1, fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr, frbr, frbr, nullptr, nullptr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2) : a2), fr);
+    AddDampingPeriodicBdrCoefficients(a1, frbr);
   }
   else
   {
     AddRealPeriodicCoefficients(a0, fr);
   }
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
-                               assemble_q_data);
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
+                               nullptr, skip_zeros, assemble_q_data);
     br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
 }
 
@@ -1449,15 +1525,15 @@ void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoeffic
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
 }
 
-void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
-                                                  MaterialPropertyCoefficient &dfbr,
-                                                  MaterialPropertyCoefficient &dfbi,
-                                                  MaterialPropertyCoefficient &fbr,
-                                                  MaterialPropertyCoefficient &fbi,
-                                                  bool include_wave_ports)
+void SpaceOperator::AddExtraSystemBdrCoefficients(
+    double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
+    MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
+    MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi,
+    bool include_wave_ports)
 {
   // Contribution for second-order farfield boundaries and finite conductivity boundaries.
-  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
+  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, frbr, frbi, fpbr, fpbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 
@@ -1472,11 +1548,12 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
   floquet_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
-void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
-                                                  MaterialPropertyCoefficient &dfbr,
-                                                  MaterialPropertyCoefficient &dfbi,
-                                                  MaterialPropertyCoefficient &fbr,
-                                                  MaterialPropertyCoefficient &fbi)
+void SpaceOperator::AddExtraSystemBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
+    MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,
+    MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
+    MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
+    MaterialPropertyCoefficient *fpbi)
 {
   // Complex-ω overload for the eigenmode nonlinear solve and its matching preconditioner:
   // all frequency-dependent boundary terms (2nd-order farfield ABC, surface conductivity,
@@ -1485,7 +1562,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // real ω the operators' complex overloads reduce to their double overloads, except the
   // wave-port term, which additionally carries the line attenuation -Im(k_n)·M on the
   // real slot (the real-ω overload intentionally stamps only Re(k_n)).
-  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
+  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, frbr, frbi, fpbr, fpbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
@@ -1509,6 +1586,22 @@ void SpaceOperator::AddImagPeriodicCoefficients(double coeff,
   {
     f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetFloquetCurl(), coeff);
   }
+}
+
+void SpaceOperator::AddDampingPeriodicBdrCoefficients(double coeff,
+                                                      MaterialPropertyCoefficient &frb)
+{
+  // Floquet periodicity contributions for second-order farfield boundaries, with a
+  // frequency dependent Floquet wave vector.
+  farfield_op.AddDampingFloquetBdrCoefficients(coeff, frb);
+}
+
+void SpaceOperator::AddStiffnessPeriodicBdrCoefficients(double coeff,
+                                                        MaterialPropertyCoefficient &fpb)
+{
+  // Floquet periodicity contributions for second-order farfield boundaries, with a
+  // frequency dependent Floquet wave vector.
+  farfield_op.AddStiffnessFloquetBdrCoefficients(coeff, fpb);
 }
 
 bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)

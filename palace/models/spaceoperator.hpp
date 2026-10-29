@@ -102,21 +102,30 @@ private:
   void AddRealMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
-                                     MaterialPropertyCoefficient &dfbi,
-                                     MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi,
-                                     bool include_wave_ports = true);
+  // The frequency-dependent boundary terms: boundary curl-curl (dfb), boundary mass (fb),
+  // and, for second-order farfield boundaries with Floquet periodicity, rotated boundary
+  // mass (frb) and mixed boundary curl (fpb, dropped when null) coefficients.
+  void AddExtraSystemBdrCoefficients(
+      double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+      MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
+      MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
+      MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi,
+      bool include_wave_ports = true);
   // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
   // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
   // matching preconditioner. Reduces to the double overload for real ω.
-  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
-                                     MaterialPropertyCoefficient &dfbr,
-                                     MaterialPropertyCoefficient &dfbi,
-                                     MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
+  void AddExtraSystemBdrCoefficients(
+      std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
+      MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,
+      MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
+      MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
+      MaterialPropertyCoefficient *fpbi);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
+  // Floquet terms of second-order farfield boundaries, with a frequency dependent Floquet
+  // wave vector: rotated boundary mass (frb) and mixed boundary curl (fpb) coefficients.
+  void AddDampingPeriodicBdrCoefficients(double coeff, MaterialPropertyCoefficient &frb);
+  void AddStiffnessPeriodicBdrCoefficients(double coeff, MaterialPropertyCoefficient &fpb);
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
@@ -280,16 +289,19 @@ public:
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
-  // (absorbing) BC, with unit scale; M_ff includes the negative sign of β (applied in
-  // FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients). By default
-  // stored on the real slot (so a caller scales it by an arbitrary complex coefficient):
-  // the full A2 contribution at frequency ω is `i·(0.5/ω)·M_ff` (real-ω stamping) or
-  // `-0.5/λ·M_ff` (complex-λ analytic continuation). Used by the NLEPS HYBRID frozen-ABC
-  // seed strategy. Set `imag_slot=true` to instead place M_ff on the imaginary slot,
-  // matching the wave-port boundary-mass convention (i·f(ω)·M with the i baked in) so it
-  // can be folded into circuit synthesis uniformly with wave ports. Returns null if the
-  // farfield BC order < 2 or contributes no DoFs on any rank (the check is collective, so
-  // the null contract is rank-uniform).
+  // (absorbing) BC, with unit scale; M_ff includes the negative sign of β (the term is
+  // β·B = i·(0.5/ω)·M_ff with β = 1/(2iω) and the boundary curl-curl form B of
+  // FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients, so M_ff = -B). With a Floquet
+  // wave vector which does not depend on frequency, M_ff is complex (Hermitian). By default
+  // stored as is, with the curl-curl term on the real slot (so a caller scales it by an
+  // arbitrary complex coefficient): the full A2 contribution at frequency ω is
+  // `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff` (complex-λ analytic continuation).
+  // Used by the NLEPS HYBRID frozen-ABC seed strategy. Set `imag_slot=true` to instead
+  // store i·M_ff, with the curl-curl term on the imaginary slot, matching the wave-port
+  // boundary-mass convention (i·f(ω)·M with the i baked in) so it can be folded into
+  // circuit synthesis uniformly with wave ports. Returns null if the farfield BC order < 2
+  // or contributes no DoFs on any rank (the check is collective, so the null contract is
+  // rank-uniform).
   template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,

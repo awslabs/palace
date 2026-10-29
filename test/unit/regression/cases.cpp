@@ -996,6 +996,135 @@ palace::test::CustomCheck TestAbsorbingReflection(int order, double atol_lin)
   };
 }
 
+// Reference-free check of the absorbing boundary reflection in the floquet_absorbing case:
+// a doubly periodic vacuum cell with a Floquet port and a second-order absorbing boundary
+// on opposite faces, so that the port excites a TE plane wave incident on the absorbing
+// boundary at the angle sin θ = k_y / k, for the Floquet wave vector k_y. The boundary
+// imposes n × ∇ × E = i k_eff E_t instead of the exact i k cos θ E_t, so |S11| =
+// |k cos θ - k_eff| / (k cos θ + k_eff), with k_eff = k (1 - sin²θ / 2) (k_eff = k for the
+// first-order condition). The periodic part of the plane wave is uniform on the boundary,
+// so that without the Floquet wave vector in its surface curl, the second-order condition
+// reduces to the first-order one. With FloquetReferenceFrequency f_ref > 0, the wave vector
+// scales with frequency and θ is fixed.
+palace::test::CustomCheck TestFloquetAbsorbingReflection(double f_ref, double atol_lin)
+{
+  return [f_ref, atol_lin](palace::Table &actual, palace::Table &,
+                           const std::filesystem::path &)
+  {
+    constexpr double c0 = 299792458.0;
+    constexpr double ky = 0.4445958682e2;  // Floquet wave vector (1/m), see JSON configs
+    const palace::Column *freq = nullptr, *s11 = nullptr;
+    for (auto &c : actual)
+    {
+      if (c.header_text.find("f (GHz)") != std::string::npos)
+      {
+        freq = &c;
+      }
+      else if (c.header_text.find("|S[P1(0;0)TE][1]| (dB)") != std::string::npos)
+      {
+        s11 = &c;
+      }
+    }
+    REQUIRE(freq);
+    REQUIRE(s11);
+    REQUIRE(actual.n_rows() > 0);
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const double k = 2.0 * std::numbers::pi * freq->data[r] * 1.0e9 / c0;
+      const double sin_theta = (f_ref > 0.0 ? ky * freq->data[r] / f_ref : ky) / k;
+      const double cos_theta = std::sqrt(1.0 - sin_theta * sin_theta);
+      const double k_eff = 1.0 - 0.5 * sin_theta * sin_theta;
+      const double r_exact = std::abs(cos_theta - k_eff) / (cos_theta + k_eff);
+      const double s11_lin = std::pow(10.0, s11->data[r] / 20.0);
+      INFO("f = " << freq->data[r] << " GHz: |S11| = " << s11_lin << ", closed form "
+                  << r_exact);
+      CHECK_THAT(s11_lin, Catch::Matchers::WithinAbs(r_exact, atol_lin));
+    }
+  };
+}
+
+// Reference-free check of the eigenfrequencies in the floquet_absorbing_eigen case: a guide
+// with PEC walls x = 0, a, shorted at z = 0 and terminated by a second-order absorbing
+// boundary at z = L, periodic in y with period b and Floquet wave vector k_y. Its modes are
+// TE or TM to z, with transverse wave number k_t² = (m π / a)² + (k_y + 2 π n / b)² and
+// E_t ∝ sin(β z), β² = k² - k_t². For TE modes the boundary imposes n × ∇ × E = i k_eff E_t
+// with k_eff = k - k_t² / (2 k), so β cos(β L) + i k_eff sin(β L) = 0, and for TM modes the
+// second-order term vanishes and k cos(β L) + i β sin(β L) = 0. Every eigenfrequency
+// must be a root of one of these relations: Newton's method from the computed value
+// converges to the nearest root. The modes with m > 0 or n ≠ 0 have a periodic part
+// which is not uniform on the absorbing boundary, and the TM modes are only unaffected by
+// the second-order term when its Floquet terms are included.
+palace::test::CustomCheck TestFloquetAbsorbingEigen(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  {
+    constexpr double c0 = 299792458.0;
+    constexpr double a = 2.0e-2, b = 2.0e-2, L = 4.0e-2;  // m, see mesh/mesh.jl
+    constexpr double ky = 1.0e2;                          // 1/m, see JSON config
+    const palace::Column *re = nullptr, *im = nullptr;
+    for (auto &c : actual)
+    {
+      if (c.header_text.find("Re{f} (GHz)") != std::string::npos)
+      {
+        re = &c;
+      }
+      else if (c.header_text.find("Im{f} (GHz)") != std::string::npos)
+      {
+        im = &c;
+      }
+    }
+    REQUIRE(re);
+    REQUIRE(im);
+    REQUIRE(actual.n_rows() > 0);
+    const std::complex<double> i(0.0, 1.0);
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const std::complex<double> k_h = 2.0 * std::numbers::pi *
+                                       std::complex<double>(re->data[r], im->data[r]) *
+                                       1.0e9 / c0;
+      double min_rel = std::numeric_limits<double>::infinity();
+      std::string match;
+      for (int te = 0; te < 2; te++)
+      {
+        for (int m = (te ? 0 : 1); m <= 2; m++)
+        {
+          for (int n = -1; n <= 1; n++)
+          {
+            const double kyn = ky + 2.0 * std::numbers::pi * n / b;
+            const double kt2 = std::pow(m * std::numbers::pi / a, 2) + kyn * kyn;
+            auto F = [&](std::complex<double> k)
+            {
+              const auto beta = std::sqrt(k * k - kt2);
+              return te ? beta * std::cos(beta * L) +
+                              i * (k - kt2 / (2.0 * k)) * std::sin(beta * L)
+                        : k * std::cos(beta * L) + i * beta * std::sin(beta * L);
+            };
+            std::complex<double> k = k_h;
+            bool converged = false;
+            for (int it = 0; it < 50 && !converged; it++)
+            {
+              const double h = 1.0e-7 * std::abs(k);
+              const auto dk = -F(k) * 2.0 * h / (F(k + h) - F(k - h));
+              k += dk;
+              converged = (std::abs(dk) < 1.0e-13 * std::abs(k));
+            }
+            const double rel = std::abs(k - k_h) / std::abs(k);
+            if (converged && rel < min_rel)
+            {
+              min_rel = rel;
+              match = std::string(te ? "TE" : "TM") + "(m = " + std::to_string(m) +
+                      ", n = " + std::to_string(n) + ")";
+            }
+          }
+        }
+      }
+      INFO("f = " << re->data[r] << " + " << im->data[r] << "i GHz: nearest closed form "
+                  << match << ", relative difference " << min_rel);
+      CHECK(min_rel < rtol);
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -1404,6 +1533,58 @@ TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-S.csv"] = TestAbsorbingReflection(2, 1.0e-3);
   palace::test::RunRegressionCase("waveguide_absorbing", "waveguide_absorbing_order2.json",
                                   "order2", opts);
+}
+
+// Floquet periodic cells terminated by a second-order absorbing boundary: |S11| of the
+// Floquet port (TestFloquetAbsorbingReflection) and the eigenfrequencies of a Floquet
+// periodic guide (TestFloquetAbsorbingEigen) are checked against their closed forms, the
+// other outputs against the reference.
+TEST_CASE("floquet_absorbing_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  // Frequency dependent Floquet wave vector (fixed angle of incidence) and adaptive
+  // frequency sweep. The error indicators depend on the adaptive samples.
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetAbsorbingReflection(3.0, 1.0e-4);
+  palace::test::RunRegressionCase("floquet_absorbing", "floquet_absorbing_adaptive.json",
+                                  "adaptive", opts);
+}
+
+TEST_CASE("floquet_absorbing_scatterer_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  // Adaptive frequency sweep with a Floquet wave vector which does not depend on frequency
+  // and a dielectric scatterer. The domain Floquet terms make the stiffness matrix
+  // Hermitian, and the scatterer makes the periodic field vary in the cell, so that the
+  // reduced-order model only converges with the stiffness matrix projected as a
+  // nonsymmetric matrix. The higher Floquet orders decay before they reach the absorbing
+  // boundary, so this case does not test the mixed boundary curl terms of the second-order
+  // condition: floquet_absorbing_eigen does. The noise-level TM response is not compared,
+  // and the error indicators depend on the adaptive samples.
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "TM]"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("floquet_absorbing",
+                                  "floquet_absorbing_scatterer_adaptive.json",
+                                  "scatterer_adaptive", opts);
+}
+
+TEST_CASE("floquet_absorbing_eigen", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"};
+  opts.paraview_fields = false;
+  opts.custom_checks["eig.csv"] = TestFloquetAbsorbingEigen(1.0e-4);
+  palace::test::RunRegressionCase("floquet_absorbing", "floquet_absorbing_eigen.json",
+                                  "eigen", opts);
 }
 
 // Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port
