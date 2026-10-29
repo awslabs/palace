@@ -409,6 +409,17 @@ void IoData::CheckConfiguration()
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
+    // A Floquet wave vector shifts the phase across the periodic boundaries, which makes
+    // the problem non-reciprocal: the synthesized inverse inductance, inverse resistance,
+    // and capacitance matrices would not be symmetric.
+    MFEM_VERIFY(
+        !solver.driven.adaptive_circuit_synthesis ||
+            std::ranges::all_of(boundaries.periodic.wave_vector,
+                                [](double k) { return k == 0.0; }),
+        "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+        "support a nonzero Floquet wave vector (FloquetWaveVector): the phase shift "
+        "across the periodic boundaries makes the problem non-reciprocal, so the "
+        "synthesized circuit matrices would not be symmetric.\n");
     // Second-order absorbing (farfield), surface-conductivity, and rational surface
     // impedance boundaries are supported in circuit synthesis: their frequency-dependent
     // contributions are folded into the synthesised pencil via the same auxiliary-state
