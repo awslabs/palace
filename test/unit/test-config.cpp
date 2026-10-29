@@ -300,8 +300,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     json one_short = surface_current;
     one_short[0]["InactiveMode"] = "Short";
     CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", one_short}}), false));
-    // Each flux loop is its own excitation (not grouped or held at zero), on a solution
-    // space that is not broken across two-sided films.
+    // Flux loops grouped in an excitation or held at zero fluxoid, but no two-sided films
+    // (whose solution space is broken across the film).
     json grouped = flux_loop;
     grouped.push_back({{"Index", 3},
                        {"FilmAttributes", {8}},
@@ -309,16 +309,15 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                        {"FluxAmounts", {1.0}},
                        {"Direction", "+Z"},
                        {"Excitation", 2}});
-    CHECK_THROWS_WITH(IoData(make_config({{"FluxLoop", grouped}}), false),
-                      Catch::Matchers::ContainsSubstring("in its own excitation"));
+    CHECK_NOTHROW(IoData(make_config({{"FluxLoop", grouped}}), false));
     json held = flux_loop;
     held[0]["Excitation"] = 0;
-    CHECK_THROWS_WITH(IoData(make_config({{"FluxLoop", held}}), false),
-                      Catch::Matchers::ContainsSubstring("in its own excitation"));
+    CHECK_NOTHROW(IoData(make_config({{"FluxLoop", held}}), false));
     json two_sided = superconductor;
     two_sided[0]["TwoSided"] = true;
     CHECK_THROWS_WITH(
-        IoData(make_config({{"FluxLoop", flux_loop}, {"Superconductor", two_sided}}), false),
+        IoData(make_config({{"FluxLoop", flux_loop}, {"Superconductor", two_sided}}),
+               false),
         Catch::Matchers::ContainsSubstring("\"TwoSided\""));
   }
 }

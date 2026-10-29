@@ -845,15 +845,7 @@ void IoData::CheckConfiguration()
             "current ports (SurfaceCurrent index "
                 << idx << ")!");
       }
-      // Each flux loop is its own excitation, on a solution space that is not broken across
-      // the films.
-      for (const auto &[idx, data] : boundaries.fluxloop)
-      {
-        MFEM_VERIFY(data.excitation == idx,
-                    "Magnetostatic substructuring drives each flux loop in its own "
-                    "excitation (FluxLoop index "
-                        << idx << ")!");
-      }
+      // A two-sided film breaks the solution space across the film.
       MFEM_VERIFY(std::none_of(boundaries.superconductor.begin(),
                                boundaries.superconductor.end(),
                                [](const auto &data) { return data.two_sided; }),
