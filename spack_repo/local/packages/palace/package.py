@@ -377,6 +377,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("eigen@3.5:", type="build")
 
     with when("@0.19:"):
+        depends_on("mfem build_system=cmake")
         depends_on("mfem+cudss", when="+cudss")
         depends_on("cudss+mpi", when="+cudss")
 
@@ -493,21 +494,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_64BIT_INT", "int64"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
-            self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
             self.define_from_variant("PALACE_WITH_HIP", "rocm"),
             self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
-            self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
-            self.define_from_variant("PALACE_WITH_CUDSS", "cudss"),
             self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
-            self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
-            self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
-            self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
-            self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
             # PROCESSORS accounting (ranks x threads) is exact. Unit [Parallel]
             # cases stay at 2 ranks (light, fast); regression cases use ~8 CPUs
@@ -534,15 +528,27 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # Lets `palace --version` point at the full spec (`spack find /<hash>`)
         args.append(self.define("PALACE_BUILD_ID", f"Spack {self.spec.dag_hash()}"))
 
-        if self.spec.satisfies("@0.16:"):
-            args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
-            if self.spec.satisfies("+enzyme"):
-                args.append(
-                    self.define(
-                        "ENZYME_DIR",
-                        self.spec["enzyme"].prefix.lib.join("cmake").join("Enzyme"),
-                    )
+        if self.spec.satisfies("+enzyme"):
+            args.append(
+                self.define(
+                    "ENZYME_DIR", self.spec["enzyme"].prefix.lib.join("cmake").join("Enzyme")
                 )
+            )
+
+        # From 0.19, Palace takes the solvers and their dependencies from MFEM's CMake package
+        if self.spec.satisfies("@:0.18"):
+            args.extend(
+                [
+                    self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
+                    self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
+                    self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
+                    self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
+                    self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
+                ]
+            )
+
+        if self.spec.satisfies("@0.16:0.18"):
+            args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
             if self.spec.satisfies("+mumps"):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
             if self.spec.satisfies("+cudss"):
@@ -556,7 +562,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
             args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
-        else:
+        elif self.spec.satisfies("@:0.15"):
+            args.append(self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests))
             # Pass libraries down to the ExternalMFEM cmake file. Needed only
             # before 0.16 because we compile MFEM with Spack afterwards.
             hypre_packages = ["LAPACK", "BLAS"]
@@ -729,7 +736,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             # After v 0.13 gslib and libceed are built externally and
             # so the directories for these are passed explicitly.
             args.append(self.define("LIBCEED_DIR", self.spec["libceed"].prefix))
-            if self.spec.satisfies("+gslib"):
+            if self.spec.satisfies("+gslib @:0.18"):
                 args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
 
         return args

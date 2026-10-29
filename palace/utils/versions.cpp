@@ -11,15 +11,18 @@
 #include <ceed.h>
 #include <metis.h>
 #include <mpi.h>
-#include <parmetis.h>
 #include <fmt/format.h>
 #include <scn/fwd.h>
 #include <nlohmann/json.hpp>
 #include <mfem/config/config.hpp>
 #include <mfem/general/version.hpp>
 
-#if defined(PALACE_WITH_SUPERLU)
+#if defined(MFEM_USE_SUPERLU)
 #include <superlu_defs.h>
+#endif
+// ParMETIS is reachable through the sparse direct solvers that use it
+#if __has_include(<parmetis.h>)
+#include <parmetis.h>
 #endif
 #if defined(MFEM_USE_MUMPS)
 #include <dmumps_c.h>
@@ -39,14 +42,14 @@
 #elif defined(MFEM_USE_HIP)
 #include <hip/hip_runtime.h>
 #endif
-#if defined(PALACE_WITH_UMPIRE)
+#if defined(MFEM_USE_UMPIRE)
 #include <camp/config.hpp>
 #include <umpire/config.hpp>
 #endif
-#if defined(PALACE_WITH_CUDSS)
+#if defined(MFEM_USE_CUDSS)
 #include <cudss.h>
 #endif
-#if defined(PALACE_WITH_ZLIB)
+#if defined(MFEM_USE_ZLIB)
 #include <zlib.h>
 #endif
 #if defined(PALACE_WITH_ZFP)
@@ -101,7 +104,7 @@ extern "C"
 namespace palace
 {
 
-#if defined(PALACE_WITH_GSLIB)
+#if defined(MFEM_USE_GSLIB)
 // Defined in utils/gslibversion.cpp, which isolates the GSLIB header
 int GetGslibReleaseVersion();
 #endif
@@ -181,7 +184,7 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   versions.emplace_back("ARPACK-NG", "unknown");
 #endif
 #endif
-#if defined(PALACE_WITH_SUPERLU)
+#if defined(MFEM_USE_SUPERLU)
   superlu_dist_GetVersionNumber(&major, &minor, &patch);
   versions.emplace_back("SuperLU_DIST", fmt::format("{}.{}.{}", major, minor, patch));
 #endif
@@ -219,21 +222,23 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   SUNDIALSGetVersion(sundials_version, sizeof(sundials_version));
   versions.emplace_back("SUNDIALS", sundials_version);
 #endif
-#if defined(PALACE_WITH_CUDSS)
+#if defined(MFEM_USE_CUDSS)
   major = minor = patch = 0;
   cudssGetProperty(MAJOR_VERSION, &major);
   cudssGetProperty(MINOR_VERSION, &minor);
   cudssGetProperty(PATCH_LEVEL, &patch);
   versions.emplace_back("cuDSS", fmt::format("{}.{}.{}", major, minor, patch));
 #endif
-#if defined(PALACE_WITH_GSLIB)
+#if defined(MFEM_USE_GSLIB)
   versions.emplace_back("GSLIB", DecodeVersion(GetGslibReleaseVersion(), 10000, 100));
 #endif
   versions.emplace_back("METIS", fmt::format("{}.{}.{}", METIS_VER_MAJOR, METIS_VER_MINOR,
                                              METIS_VER_SUBMINOR));
+#if defined(PARMETIS_MAJOR_VERSION)
   versions.emplace_back("ParMETIS",
                         fmt::format("{}.{}.{}", PARMETIS_MAJOR_VERSION,
                                     PARMETIS_MINOR_VERSION, PARMETIS_SUBMINOR_VERSION));
+#endif
 
 #if defined(MFEM_USE_CUDA)
   int cuda_version = 0;
@@ -249,7 +254,7 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
     versions.emplace_back("HIP runtime", DecodeVersion(hip_version, 10000000, 100000));
   }
 #endif
-#if defined(PALACE_WITH_UMPIRE)
+#if defined(MFEM_USE_UMPIRE)
   // Umpire versions are dates (vYYYY.MM.P)
   versions.emplace_back("Umpire", fmt::format("{}.{:02}.{}", UMPIRE_VERSION_MAJOR,
                                               UMPIRE_VERSION_MINOR, UMPIRE_VERSION_PATCH));
@@ -262,7 +267,7 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
 #if defined(PALACE_MAGMA_VERSION)
   versions.emplace_back("MAGMA", PALACE_MAGMA_VERSION);
 #endif
-#if defined(PALACE_WITH_ZLIB)
+#if defined(MFEM_USE_ZLIB)
   versions.emplace_back("zlib", zlibVersion());
 #endif
 

@@ -401,7 +401,7 @@ std::unique_ptr<Mesh> MakeNCMixedCoarseOwnerMesh(MPI_Comm comm,
                                                  MixedCoarseInterface interface,
                                                  int refinement_depth)
 {
-  mfem::Mesh source(std::string(PALACE_TEST_DATA_DIR) + "/mesh/tinyzoo-3d.mesh", 1, 1);
+  mfem::Mesh source(TestMeshPath("tinyzoo-3d.mesh"), 1, 1);
   REQUIRE(source.GetNE() == 4);
   // Replicate disconnected zoo components so MPI partitions with more than two ranks do
   // not leave a rank with an under-populated mixed NC component during Mesh setup.
@@ -733,7 +733,7 @@ TEST_CASE("SurfaceFunctional Area", "[surfacefunctional][Serial][Parallel][GPU]"
   fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
   fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
   auto file =
-      GENERATE(std::string("fichera-tet.mesh"), std::string("fichera-hex.mesh"),
+      GENERATE(std::string("fichera-tet.mesh"), std::string("fichera.mesh"),
                std::string("fichera-mixed-p2.mesh"), std::string("tinyzoo-3d.mesh"));
   CAPTURE(file);
   auto mesh = LoadTestMesh(comm, file);
@@ -776,7 +776,7 @@ TEST_CASE("SurfaceFunctional HCurl Norm (fixed mapped face rules)",
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto file =
-      GENERATE(std::string("fichera-tet.mesh"), std::string("fichera-hex.mesh"),
+      GENERATE(std::string("fichera-tet.mesh"), std::string("fichera.mesh"),
                std::string("fichera-mixed-p2.mesh"), std::string("tinyzoo-3d.mesh"));
   auto order = GENERATE(1, 2);
   CAPTURE(file, order);

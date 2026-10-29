@@ -113,13 +113,6 @@ target_link_libraries(unit-tests
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
 
-# The PostOperator boundary-viz regression decodes MFEM's compressed binary VTU output
-# when MFEM is built with zlib support.
-find_package(ZLIB QUIET)
-if(ZLIB_FOUND)
-  target_link_libraries(unit-tests PRIVATE ZLIB::ZLIB)
-endif()
-
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
   ${CMAKE_SOURCE_DIR}/fem/libceed/operator.cpp
@@ -157,10 +150,17 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
-# Add path for test data files.
+# Add paths for test data files. MFEM installs its data directory, with the meshes the tests
+# use, next to its lib directory.
+cmake_path(GET MFEM_LIBRARY_DIR PARENT_PATH MFEM_DATA_DIR)
+cmake_path(APPEND MFEM_DATA_DIR data)
+if(NOT EXISTS "${MFEM_DATA_DIR}/star.mesh")
+  message(WARNING "MFEM data directory not found at ${MFEM_DATA_DIR}")
+endif()
 target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
+          "PALACE_MFEM_DATA_DIR=\"${MFEM_DATA_DIR}\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>:PALACE_WITH_COVERAGE="LLVM">
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<CXX_COMPILER_ID:GNU>>:PALACE_WITH_COVERAGE="GCC">
