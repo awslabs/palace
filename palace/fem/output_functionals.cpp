@@ -1273,14 +1273,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             valid = false;
             continue;
           }
-          // Average the traces of both sides when both elements are local. On a parallel
-          // interface, use the local side only: the tangential traces entering the
-          // integrand are continuous up to discretization error, and the four far-field
-          // field inputs are not part of the face-neighbor exchange.
-          if (elem2_local)
-          {
-            plan.elem_b = FET.Elem2No;
-          }
+          // Average the traces of both sides (the discrete tangential magnetic field is
+          // discontinuous across the surface). On a parallel interface, the other side is
+          // a face neighbor element, whose fields are imported below: the result does not
+          // depend on the partitioning.
+          plan.elem_b = FET.Elem2No;
         }
       }
       else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||
@@ -1492,7 +1489,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     if (any_ghost > 0 && !trace_cache)
     {
       // Source slots match the field inputs: SURFACE_FLUX uses slot 0 = E (nd_fespace)
-      // and slot 1 = B (rt_fespace); all other kinds carry a single field at slot 0.
+      // and slot 1 = B (rt_fespace), FARFIELD the real and imaginary parts of both; all
+      // other kinds carry a single field at slot 0.
       std::array<const mfem::ParFiniteElementSpace *, FaceNbrFieldExchange::MaxSources>
           ex_fes = {nullptr, nullptr, nullptr, nullptr};
       unsigned int source_mask;
@@ -1509,6 +1507,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         ex_fes[0] = nd_fespace;
         ex_fes[1] = rt_fespace;
         source_mask = 0b11u;
+      }
+      else if (kind == KernelKind::FARFIELD)
+      {
+        // Slots 0-1 = Re/Im E (nd_fespace), slots 2-3 = Re/Im B (rt_fespace).
+        ex_fes = {nd_fespace, nd_fespace, rt_fespace, rt_fespace};
+        source_mask = 0b1111u;
       }
       else
       {
@@ -2061,11 +2065,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (kind == KernelKind::FARFIELD)
     {
+      // Far-field groups are one-sided (the two sides of an interior surface are separate
+      // groups): side 1 is either local or a face neighbor element.
       const mfem::IntegrationRule &ir = *group.mapped_ir_a;
-      AddFieldInput("u_1", 0, *nd_fespace, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_2", 1, *nd_fespace, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_3", 2, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_4", 3, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
+      for (int source = 0; source < 4; source++)
+      {
+        const std::string name = "u_" + std::to_string(source + 1);
+        if (group.ghost_a)
+        {
+          AddFieldInputGhost(name, source, ir);
+        }
+        else
+        {
+          AddFieldInput(name, source, (source < 2) ? *nd_fespace : *rt_fespace,
+                        group.vol_indices_a, group.vol_geom_a, ir);
+        }
+      }
     }
     else if (kind == KernelKind::SURFACE_FLUX)
     {
@@ -2568,6 +2583,13 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   MFEM_VERIFY(farfield_batch_size > 0 && local_out.Size() == 6 * farfield_batch_size,
               "Invalid far-field batch output layout!");
   std::vector<double> integrals(6 * N, 0.0);
+  const std::array<const Vector *, 4> srcs = {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()};
+  if (face_nbr_exchange)
+  {
+    // Collective: import the face neighbor fields once, they do not change across the
+    // direction batches.
+    face_nbr_exchange->Exchange(srcs);
+  }
   for (int first = 0; first < N; first += farfield_batch_size)
   {
     const int batch_count = std::min(farfield_batch_size, N - first);
@@ -2594,8 +2616,9 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
     }
 
     local_out = 0.0;
-    fem::ApplyAddGroupOperators(groups, {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()},
-                                local_out);
+    fem::ApplyAddGroupOperators(groups, srcs, local_out,
+                                face_nbr_exchange ? &face_nbr_exchange->Imported()
+                                                  : nullptr);
     const double *batch_data = local_out.HostRead();
     std::copy_n(batch_data, 6 * batch_count, integrals.data() + 6 * first);
   }
