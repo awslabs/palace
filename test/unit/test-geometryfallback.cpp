@@ -7,6 +7,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -555,6 +556,13 @@ TEST_CASE_METHOD(
     CHECK(raw);
     REQUIRE(!record.is_null());
     CHECK(record.at("Classes").at("NoMatchedFeature").get<int>() == 1);
+    // MAJOR-A of the d1000 confirmation (decision 1011): the whole-run entry counts 100 %
+    // of every Type by length on the solve record (H1 names its interfaces with the max
+    // per-interface length; the share no longer depends on that).
+    REQUIRE(record.at("RawShareByLength").contains("SA"));
+    CHECK_THAT(record.at("RawShareByLength").at("SA").at("Share").get<double>(),
+               WithinAbs(1.0, 1.0e-12));
+    CHECK(record.at("RawShareByEnergy").at("SA").at("Share").get<double>() == 1.0);
     CHECK(CheckGeometryFallbackInvariant(manifest, record) == 0);
   }
 
@@ -615,12 +623,134 @@ TEST_CASE_METHOD(
                                             .at("TestedPatches")
                                             .get<std::size_t>());
     CHECK(entry.at("Patches").size() > 1);
+    // MAJOR-A of the d1000 confirmation (decision 1011): the whole-run fallback reads 100 %
+    // of every selected Type BY LENGTH on the preflight record (the only record of an H8
+    // run under the discovery's RecordRaw leaf; the census / stage D read it), its Summary
+    // mirror and the solve record alike; the entry's Length is the total selected length
+    // (the island selects SA only), so the U-INV Length comparison below is non-trivial.
+    const auto &preflight_share = preflight_record.at("RawShareByLength");
+    REQUIRE(preflight_share.size() == 1);
+    REQUIRE(preflight_share.contains("SA"));
+    const double type_length = preflight_share.at("SA").at("TypeLength").get<double>();
+    CHECK(type_length > 0.0);
+    CHECK_THAT(preflight_share.at("SA").at("FallbackLength").get<double>(),
+               WithinAbs(type_length, 1.0e-12 * type_length));
+    CHECK_THAT(preflight_share.at("SA").at("Share").get<double>(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(entry.at("Length").get<double>(),
+               WithinAbs(type_length, 1.0e-12 * type_length));
+    CHECK_THAT(manifest.at("Summary")
+                   .at("GeometryFallbacks")
+                   .at("RawShareByLength")
+                   .at("SA")
+                   .at("Share")
+                   .get<double>(),
+               WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(GeometryFallbackBanner(preflight_record, "manifest"),
+               ContainsSubstring("SA 100.00 % of the length") &&
+                   ContainsSubstring("AllPatchesOutside 1"));
     const auto [raw, record] = Solve(config);
     CHECK(raw);
     REQUIRE(!record.is_null());
     CHECK(record.at("Classes").at("AllPatchesOutside").get<int>() == 1);
+    CHECK_THAT(record.at("RawShareByLength").at("SA").at("Share").get<double>(),
+               WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(record.at("Entries").front().at("Length").get<double>(),
+               WithinAbs(type_length, 1.0e-12 * type_length));
     CHECK(record.at("RawShareByEnergy").at("SA").at("Share").get<double>() == 1.0);
     CHECK(CheckGeometryFallbackInvariant(manifest, record) == 1);
   }
 #endif
+}
+
+// MAJOR-A of the d1000 confirmation (decision 1011) on the record function itself: a
+// whole-run entry (What "run") counts the TOTAL selected length of EVERY type whatever the
+// site recorded (H8 records length 0 and no interface; H1 records its interfaces with the
+// MAX per-interface length), its Length is that total, and a feature-level entry keeps the
+// per-type rule (its length on the types of the interfaces it names).
+TEST_CASE(
+    "Geometry fallback record: a whole-run entry counts 100 % of every Type by length "
+    "(decision 1011)",
+    "[surfaceresponseoperator][geometryfallback][Serial]")
+{
+  // Two SA interfaces (lengths 3 and 5) and one MS interface (length 4), the lengths in
+  // mesh units; the record scaled by 2.
+  const std::map<int, double> lengths = {{1, 3.0}, {2, 5.0}, {3, 4.0}};
+  const std::map<int, InterfaceDielectric> types = {{1, InterfaceDielectric::SA},
+                                                    {2, InterfaceDielectric::SA},
+                                                    {3, InterfaceDielectric::MS}};
+  const double scale = 2.0;
+  auto Share = [](const json &record, const char *type)
+  { return record.at("RawShareByLength").at(type); };
+
+  SECTION("H8 form: What run, length 0, no interface -> 100 % of SA and MS")
+  {
+    GeometryFallbackData entry;
+    entry.cls = "AllPatchesOutside";
+    entry.site = "H8/FindDomainBoundaryExclusions:all-excluded";
+    entry.what = "run";
+    entry.patches = {0, 1};
+    const json record = DescribeGeometryFallbacks(
+        {entry}, GeometryFailurePolicy::RECORD_RAW, true, scale, lengths, types);
+    CHECK(record.at("Run") == "Preflight");
+    CHECK_THAT(Share(record, "SA").at("TypeLength").get<double>(),
+               WithinAbs(8.0 * scale, 1.0e-12));
+    CHECK_THAT(Share(record, "SA").at("FallbackLength").get<double>(),
+               WithinAbs(8.0 * scale, 1.0e-12));
+    CHECK_THAT(Share(record, "SA").at("Share").get<double>(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(Share(record, "MS").at("FallbackLength").get<double>(),
+               WithinAbs(4.0 * scale, 1.0e-12));
+    CHECK_THAT(Share(record, "MS").at("Share").get<double>(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(record.at("Entries").front().at("Length").get<double>(),
+               WithinAbs(12.0 * scale, 1.0e-12));
+    CHECK_THAT(GeometryFallbackBanner(record, "manifest"),
+               ContainsSubstring("MS 100.00 % of the length") &&
+                   ContainsSubstring("SA 100.00 % of the length"));
+  }
+
+  SECTION("H1 form: What run naming the interfaces with the max length -> 100 % of both")
+  {
+    GeometryFallbackData entry;
+    entry.cls = "NoMatchedFeature";
+    entry.site = "H1/BuildAutomaticResponseData3D:features";
+    entry.what = "run";
+    entry.interfaces = {1, 2, 3};
+    entry.length = 5.0;
+    const json record = DescribeGeometryFallbacks(
+        {entry}, GeometryFailurePolicy::RECORD_RAW, false, scale, lengths, types);
+    CHECK(record.at("Run") == "Solve");
+    CHECK_THAT(Share(record, "SA").at("Share").get<double>(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(Share(record, "MS").at("Share").get<double>(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(record.at("Entries").front().at("Length").get<double>(),
+               WithinAbs(12.0 * scale, 1.0e-12));
+  }
+
+  SECTION("a feature-level entry keeps the per-type rule beside a whole-run one")
+  {
+    GeometryFallbackData feature;
+    feature.cls = "KeyMismatch";
+    feature.site = "H7a";
+    feature.what = "feature";
+    feature.features = {7};
+    feature.interfaces = {1};
+    feature.length = 1.5;
+    const json alone = DescribeGeometryFallbacks(
+        {feature}, GeometryFailurePolicy::RECORD_RAW, false, scale, lengths, types);
+    CHECK_THAT(Share(alone, "SA").at("FallbackLength").get<double>(),
+               WithinAbs(1.5 * scale, 1.0e-12));
+    CHECK_THAT(Share(alone, "SA").at("Share").get<double>(), WithinAbs(1.5 / 8.0, 1.0e-12));
+    CHECK_THAT(Share(alone, "MS").at("Share").get<double>(), WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(alone.at("Entries").front().at("Length").get<double>(),
+               WithinAbs(1.5 * scale, 1.0e-12));
+    GeometryFallbackData run;
+    run.cls = "NoPerimeter";
+    run.site = "H13-I1";
+    run.what = "run";
+    const json both = DescribeGeometryFallbacks(
+        {feature, run}, GeometryFailurePolicy::FAIL_CLOSED, true, scale, lengths, types);
+    CHECK(both.at("Count").get<int>() == 2);
+    CHECK_THAT(Share(both, "SA").at("Share").get<double>(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(Share(both, "MS").at("Share").get<double>(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(Share(both, "SA").at("FallbackLength").get<double>(),
+               WithinAbs(8.0 * scale, 1.0e-12));
+  }
 }

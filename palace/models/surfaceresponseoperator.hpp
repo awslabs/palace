@@ -1259,9 +1259,10 @@ public:
 // palace.json's SurfaceResponse.Diagnostics; every length = mesh length units x
 // `coordinate_scale`, the mesh length relative scale on both records): Version, Policy,
 // Run, Count, Classes, Entries and the raw share by LENGTH per interface type (the fallback
-// entries' length over the selected perimeter length of the interfaces of that type;
-// `type_lengths` = the selected length per target interface, `types` = the interface type
-// per target interface).
+// entries' length over the selected perimeter length of the interfaces of that type; a
+// whole-run entry (What = "run") counts the total selected length of every type = 100 % per
+// type and carries that total as its Length; `type_lengths` = the selected length per
+// target interface, `types` = the interface type per target interface).
 nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
                                          GeometryFailurePolicy policy, bool preflight,
                                          double coordinate_scale,

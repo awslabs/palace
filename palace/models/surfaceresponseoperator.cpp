@@ -18748,18 +18748,29 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
                            {"Run", preflight ? "Preflight" : "Solve"},
                            {"Count", entries.size()}};
   std::map<std::string, int> classes;
-  // Fallback length per interface TYPE: an entry naming no interface (a whole-run fallback)
-  // counts on every type.
+  // Fallback length per interface TYPE. A whole-run fallback (an entry whose What is "run":
+  // NoMatchedFeature / AllPatchesOutside / NoPerimeter, no correction applied) counts the
+  // TOTAL selected length of EVERY type (100 % per type) whatever interfaces or length the
+  // site recorded, and its Length is that total; any other entry naming no interface counts
+  // its length on every type.
   std::map<std::string, double> fallback_length, total_length;
   for (const auto &[interface, type] : types)
   {
     const auto length = type_lengths.find(interface);
     total_length[ToString(type)] += length == type_lengths.end() ? 0.0 : length->second;
   }
+  double whole_run_length = 0.0;
+  for (const auto &[name, total] : total_length)
+  {
+    (void)name;
+    whole_run_length += total;
+  }
   nlohmann::json list = nlohmann::json::array();
   for (const auto &entry : entries)
   {
     classes[entry.cls]++;
+    const bool whole_run = entry.what == "run";
+    const double entry_length = whole_run ? whole_run_length : entry.length;
     nlohmann::json item = {{"Class", entry.cls},
                            {"Site", entry.site},
                            {"Reason", entry.reason},
@@ -18767,7 +18778,7 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
                            {"Features", entry.features},
                            {"Patches", entry.patches},
                            {"Models", entry.models},
-                           {"Length", entry.length * coordinate_scale},
+                           {"Length", entry_length * coordinate_scale},
                            {"ExampleOrigin",
                             {entry.example_origin[0] * coordinate_scale,
                              entry.example_origin[1] * coordinate_scale,
@@ -18775,6 +18786,14 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
                            {"Interfaces", entry.interfaces},
                            {"Topology", entry.topology}};
     list.push_back(std::move(item));
+    if (whole_run)
+    {
+      for (const auto &[name, total] : total_length)
+      {
+        fallback_length[name] = total;
+      }
+      continue;
+    }
     std::set<std::string> entry_types;
     if (entry.interfaces.empty())
     {
@@ -18816,11 +18835,12 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
       "its raw within-R energy in the raw term and records one entry here (Site = the "
       "conversion id / source line of record; every Length in mesh length units x the mesh "
       "length relative scale, the manifest's units, on the preflight and the solve alike); "
-      "RawShareByLength "
-      "= the entries' length over the selected perimeter length per interface type (a "
-      "whole-run fallback counts on every type); the solve adds RawShareByEnergy from "
-      "surface-response-geometry-fallbacks.csv. Under FailClosed the same entries are "
-      "recorded and the run aborts once the placement is complete.";
+      "RawShareByLength = the entries' length over the selected perimeter length per "
+      "interface type (a whole-run fallback, What = run, counts the total selected length "
+      "of every type: 100 % per type, and its Length is that total); the solve adds "
+      "RawShareByEnergy from surface-response-geometry-fallbacks.csv (a whole-run "
+      "fallback: 100 % per type, no correction applied). Under FailClosed the same entries "
+      "are recorded and the run aborts once the placement is complete.";
   return record;
 }
 
