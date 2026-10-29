@@ -464,12 +464,23 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
   // overlap integral as the lumped ports. Using a unit weight here corresponds to a
   // reference impedance Z_R = 1 (in internal units) for the waveport, matching the
   // lumped-port convention. The exact value only affects diagonal scaling of synthesis
-  // matrices, not their off-diagonal structure or the recovered S-parameters.
+  // matrices, not their off-diagonal structure or the recovered S-parameters. Several wave
+  // ports can observe different modes of the same boundary (for example an inactive port
+  // extracting the S-parameters of a second mode at the boundary of an active port), so
+  // each port boundary attribute is weighted once.
+  mfem::Array<int> wave_port_attr_list;
   for (const auto &[idx, data] : space_op.GetWavePortOp())
   {
-    fb_port.AddMaterialProperty(mat_op.GetCeedBdrAttributes(data.GetAttrList()), 1.0);
-    port_attr_list_local.Append(data.GetAttrList());
+    for (auto attr : data.GetAttrList())
+    {
+      if (wave_port_attr_list.Find(attr) < 0)
+      {
+        wave_port_attr_list.Append(attr);
+      }
+    }
   }
+  fb_port.AddMaterialProperty(mat_op.GetCeedBdrAttributes(wave_port_attr_list), 1.0);
+  port_attr_list_local.Append(wave_port_attr_list);
   // Need to check this as this per MPI rank. Ranks where the material property is empty
   // should not add this integrator.
   if (!fb_port.empty())
