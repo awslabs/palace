@@ -57,6 +57,12 @@ private:
                               const std::vector<double> &domain_energy,
                               const std::vector<double> &london_kinetic) const;
 
+  // Write terminal-Phi.csv with the stored energy of each excitation (currents first) and
+  // the fluxoid it imposes on each flux loop.
+  void PrintExcitations(const std::vector<int> &excitation_idx,
+                        const std::vector<int> &loop_idx, const std::vector<double> &energy,
+                        const mfem::DenseMatrix &fluxoid) const;
+
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 

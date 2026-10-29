@@ -1268,6 +1268,33 @@ TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
                                   "base", opts);
 }
 
+// The flux loops of substructuring_magnetostatic in one excitation: the stored energy and
+// the fluxoids of the loops, without an inductance matrix. The references are regular
+// simulations.
+TEST_CASE("substructuring_magnetostatic_grouped", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_grouped.json", "grouped", opts);
+}
+
+// The same with the loop of the environment held at zero fluxoid instead: the inductance of
+// the region's loop, screened by the other.
+TEST_CASE("substructuring_magnetostatic_held", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic_held.json",
+                                  "held", opts);
+}
+
 // Magnetostatic substructuring with a finite-penetration-depth London film (λ = 0.4 μm,
 // d = 0.1 μm) shared by both flux loops and crossing the interface: the film is a free
 // London sheet in the condensation, and the total inductance includes the kinetic part.

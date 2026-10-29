@@ -121,9 +121,11 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Excitations of the surface currents (and their aperture flux functionals, for mixed
     // extraction) and fluxoid generators of the flux loops, from the native operator,
     // freed before the condensation.
-    std::vector<int> current_idx, flux_idx;
+    std::vector<int> current_idx, flux_idx, loop_idx;
     std::vector<Vector> J, apertures, a;
     std::vector<double> I_inc, Phi_inc;
+    bool single_loops = true;
+    mfem::DenseMatrix fluxoid;
     {
       CurlCurlOperator curlcurl_op(iodata, mesh);
       const bool mixed = curlcurl_op.GetSurfaceCurrentOp().Size() > 0 &&
@@ -151,15 +153,54 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           apertures.push_back(std::move(l));
         }
       }
-      if (curlcurl_op.GetSurfaceFluxOp().Size() > 0)
+      // A flux loop excitation drives its loops together, with the sum of their fluxoid
+      // generators (each normalized to its own loop's fluxoid); a loop held at zero fluxoid
+      // is a London sheet without a drive.
+      const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
+      single_loops = surf_flux_op.HasSingleLoopExcitations();
+      if (surf_flux_op.Size() > 0)
       {
         PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
-        for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+        for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
         {
-          curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
-          a.push_back(boundary_values);
+          Vector a_ex;
+          for (int loop : loops)
+          {
+            curlcurl_op.GetFluxExcitationVector(loop, RHS, post_op, &boundary_values);
+            if (a_ex.Size() == 0)
+            {
+              a_ex.SetSize(boundary_values.Size());
+              a_ex.UseDevice(true);
+              a_ex = 0.0;
+            }
+            a_ex += boundary_values;
+          }
+          a.push_back(std::move(a_ex));
           flux_idx.push_back(idx);
-          Phi_inc.push_back(data.GetExcitationFlux());
+          Phi_inc.push_back((loops.size() == 1)
+                                ? surf_flux_op.GetSource(loops.front()).GetExcitationFlux()
+                                : std::numeric_limits<double>::quiet_NaN());
+        }
+        if (!single_loops)
+        {
+          // The fluxoids cᵀa_h that each excitation imposes on the loops, for the report of
+          // the excitation energies (zero for the surface currents).
+          const int nc = static_cast<int>(J.size());
+          fluxoid.SetSize(nc + static_cast<int>(a.size()),
+                          static_cast<int>(surf_flux_op.Size()));
+          fluxoid = 0.0;
+          for (const auto &[loop, data] : surf_flux_op)
+          {
+            loop_idx.push_back(loop);
+          }
+          for (std::size_t k = 0; k < a.size(); k++)
+          {
+            for (std::size_t j = 0; j < loop_idx.size(); j++)
+            {
+              fluxoid(nc + static_cast<int>(k), static_cast<int>(j)) =
+                  curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], a[k]);
+            }
+          }
         }
       }
     }
@@ -169,7 +210,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     SubstructuringSolver sub(iodata, mesh);
     sub.CondenseEnvironment();
     Mpi::Print("\nSubstructuring inductance sweep: {:d} surface current{} and {:d} flux "
-               "loop{}\n",
+               "loop excitation{}\n",
                nc, (nc != 1) ? "s" : "", nf, (nf != 1) ? "s" : "");
     // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
     // Superconductor), as is every "Superconductor" boundary. Only the fields to be saved
@@ -182,10 +223,25 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
         current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
         &A, n_save, adapt ? &region_fields : nullptr);
-    // Excitations in the layout of the regular solve (currents first, zero elsewhere).
-    I_inc.resize(nc + nf, 0.0);
-    Phi_inc.insert(Phi_inc.begin(), nc, 0.0);
-    PostprocessInductance(current_idx, flux_idx, E, I_inc, Phi_inc, linked_flux);
+    if (single_loops)
+    {
+      // Excitations in the layout of the regular solve (currents first, zero elsewhere).
+      I_inc.resize(nc + nf, 0.0);
+      Phi_inc.insert(Phi_inc.begin(), nc, 0.0);
+      PostprocessInductance(current_idx, flux_idx, E, I_inc, Phi_inc, linked_flux);
+    }
+    else
+    {
+      // The stored energy of each state is half its energy-matrix diagonal.
+      std::vector<int> excitation_idx(current_idx);
+      excitation_idx.insert(excitation_idx.end(), flux_idx.begin(), flux_idx.end());
+      std::vector<double> energy(nc + nf);
+      for (int i = 0; i < nc + nf; i++)
+      {
+        energy[i] = 0.5 * E(i, i);
+      }
+      PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
+    }
     if (n_save > 0)
     {
       std::vector<int> ids(current_idx);
@@ -620,35 +676,47 @@ void MagnetostaticSolver::PostprocessExcitations(
   const auto &surf_j_op = curlcurl_op.GetSurfaceCurrentOp();
   const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
   const int n = static_cast<int>(domain_energy.size());
-  std::vector<int> source_idx;
+  std::vector<int> excitation_idx, loop_idx;
   for (const auto &[idx, data] : surf_j_op)
   {
-    source_idx.push_back(idx);
+    excitation_idx.push_back(idx);
   }
   for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
   {
-    source_idx.push_back(idx);
+    excitation_idx.push_back(idx);
+  }
+  for (const auto &[idx, data] : surf_flux_op)
+  {
+    loop_idx.push_back(idx);
   }
   // The fluxoid functional is a collective dot product, so measure before the root write.
-  mfem::DenseMatrix fluxoid(n, static_cast<int>(surf_flux_op.Size()));
+  mfem::DenseMatrix fluxoid(n, static_cast<int>(loop_idx.size()));
   fluxoid = 0.0;
+  std::vector<double> energy(n);
   for (int i = 0; i < n; i++)
   {
-    int j = 0;
-    for (const auto &[loop_idx, data] : surf_flux_op)
+    energy[i] = domain_energy[i] + 0.5 * london_kinetic[i];
+    for (std::size_t j = 0; j < loop_idx.size(); j++)
     {
       if (london_ah[i].Size() > 0)
       {
-        fluxoid(i, j) = curlcurl_op.MeasureLondonHoleFlux(loop_idx, london_ah[i]);
+        fluxoid(i, static_cast<int>(j)) =
+            curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], london_ah[i]);
       }
-      j++;
     }
   }
+  PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
+}
+
+void MagnetostaticSolver::PrintExcitations(const std::vector<int> &excitation_idx,
+                                           const std::vector<int> &loop_idx,
+                                           const std::vector<double> &energy,
+                                           const mfem::DenseMatrix &fluxoid) const
+{
   if (!root)
   {
     return;
   }
-
   const double energy_scale = iodata.units.GetScaleFactor<Units::ValueType::ENERGY>();
   const double magnetic_flux_scale =
       iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>() *
@@ -656,20 +724,19 @@ void MagnetostaticSolver::PostprocessExcitations(
   TableWithCSVFile terminal_Phi(post_dir / "terminal-Phi.csv");
   terminal_Phi.table.insert(Column("i", "i", 0, 0, 2, ""));
   terminal_Phi.table.insert("E", "E (J)");
-  for (const auto &[loop_idx, data] : surf_flux_op)
+  for (int idx : loop_idx)
   {
-    terminal_Phi.table.insert(fmt::format("Phi{}", loop_idx),
-                              fmt::format("Phi_inc[{}] (Wb)", loop_idx));
+    terminal_Phi.table.insert(fmt::format("Phi{}", idx),
+                              fmt::format("Phi_inc[{}] (Wb)", idx));
   }
-  for (int i = 0; i < n; i++)
+  for (std::size_t i = 0; i < excitation_idx.size(); i++)
   {
-    terminal_Phi.table["i"] << double(source_idx[i]);
-    terminal_Phi.table["E"] << (domain_energy[i] + 0.5 * london_kinetic[i]) * energy_scale;
-    int j = 0;
-    for (const auto &[loop_idx, data] : surf_flux_op)
+    terminal_Phi.table["i"] << double(excitation_idx[i]);
+    terminal_Phi.table["E"] << energy[i] * energy_scale;
+    for (std::size_t j = 0; j < loop_idx.size(); j++)
     {
-      terminal_Phi.table[fmt::format("Phi{}", loop_idx)]
-          << fluxoid(i, j++) * magnetic_flux_scale;
+      terminal_Phi.table[fmt::format("Phi{}", loop_idx[j])]
+          << fluxoid(static_cast<int>(i), static_cast<int>(j)) * magnetic_flux_scale;
     }
   }
   terminal_Phi.WriteFullTableTrunc();
