@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <regex>
 #include <set>
@@ -409,17 +411,17 @@ void IoData::CheckConfiguration()
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
-    // A Floquet wave vector shifts the phase across the periodic boundaries, which makes
-    // the problem non-reciprocal: the synthesized inverse inductance, inverse resistance,
-    // and capacitance matrices would not be symmetric.
-    MFEM_VERIFY(
-        !solver.driven.adaptive_circuit_synthesis ||
-            std::ranges::all_of(boundaries.periodic.wave_vector,
-                                [](double k) { return k == 0.0; }),
-        "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
-        "support a nonzero Floquet wave vector (FloquetWaveVector): the phase shift "
-        "across the periodic boundaries makes the problem non-reciprocal, so the "
-        "synthesized circuit matrices would not be symmetric.\n");
+    // The Floquet terms of a wave vector k make the system matrices Hermitian rather than
+    // complex symmetric (the transpose of the problem for k is the one for -k), so that the
+    // synthesized inverse inductance, inverse resistance, and capacitance matrices would
+    // not be symmetric. The wave vector is nonzero as for MaterialOperator::HasWaveVector.
+    const auto &k = boundaries.periodic.wave_vector;
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    std::hypot(k[0], k[1], k[2]) <= std::numeric_limits<double>::epsilon(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support a nonzero Floquet wave vector (FloquetWaveVector): its terms make "
+                "the system matrices Hermitian rather than complex symmetric, so the "
+                "synthesized circuit matrices would not be symmetric.\n");
     // Second-order absorbing (farfield), surface-conductivity, and rational surface
     // impedance boundaries are supported in circuit synthesis: their frequency-dependent
     // contributions are folded into the synthesised pencil via the same auxiliary-state

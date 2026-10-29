@@ -31,6 +31,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
     modes.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
+    vector (`"FloquetWaveVector"`), as it already did Floquet ports, instead of synthesizing
+    L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
+    matrices Hermitian rather than complex symmetric. Such configurations must be updated.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
 #### Performance Improvements
 
@@ -178,16 +183,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     warns when the tangential part of the Floquet wave vector exceeds √2 times the
     wavenumber at the absorbing boundary, where the second-order condition is not passive.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
-  - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
-    vector (`"FloquetWaveVector"`), as it already did Floquet ports: the phase shift across
-    the periodic boundaries makes the problem non-reciprocal, and the synthesized L⁻¹, R⁻¹,
-    and C matrices were not symmetric. The description of `"AdaptiveCircuitSynthesis"` in the
-    configuration schema now lists these restrictions, its other requirements, and the
-    frequency-dependent boundary conditions it supports. SchemaVer 4-2-1
-    [PR 1112](https://github.com/awslabs/palace/pull/1112).
   - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
     which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
     the stiffness matrix as if it were symmetric.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
+
+#### Documentation
+
+  - Updated the configuration schema descriptions of `"AdaptiveCircuitSynthesis"`, which
+    listed frequency-dependent boundary conditions it supports as unsupported, and of the
+    absorbing boundary `"Order"`, and documented the limitations of the second-order
+    absorbing boundary condition: it only improves on the first-order one for TE fields, and
+    it is not passive for tangential wavenumbers above √2 times the wavenumber in the
+    material. SchemaVer 4-2-1
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
 #### Build system
