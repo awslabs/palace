@@ -143,6 +143,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     coupons' fabricated / raw / clipped-correction energies; every existing output
     unchanged). Response-geometry cache version 20 (a version-19 cache, which may hold the
     ungrown placement of a cluster this rule grows, is refused).
+  - Continuation ownership of the automatic surface-response correction: a translational
+    stretch that ENTERS a spatial cluster's contract box without continuing one of its
+    claims is now judged per cell on the cell's inside interval against the cluster's
+    `Chain: true` context pieces (previously only a stretch lying wholly inside the box was):
+    a context-edge cell inside the box is owned (weight 0) and a context-edge cell
+    straddling a box face is re-cut at the face exactly as a continuing cell (the inside
+    part owned, the outside part kept with the weight scaled by kept / cell). Recorded and
+    left untouched: a cell the box lies strictly inside of and every `Chain: false` cell of
+    such a stretch. New diagnostics leaf
+    `TranslationalStretchesPartiallyInsideSpatialSupport` (written only when it has
+    records), `PartialStretch: true` on the `ContinuationOwnership.OwnedCells` entries the
+    rule touches and a `ContinuationOwnership.PartialStretch` counter block (only when it
+    acted). A placement rule: keys, requirements and the response-geometry cache (version
+    20) are unchanged.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

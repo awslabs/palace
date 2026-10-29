@@ -1152,8 +1152,9 @@ smaller endpoint.
    untouched. Unit: `SurfaceResponseOperatorPartialStretchContextOwnership`
    ([partialstretch]; its section (a) fails on the pre-984 code).
    The Maxwell operator path
-   (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
-   inert there (it multiplies the Maxwell domain terms for uniformity only). The record
+   (`ConfigureMaxwellResponse`) runs the same `ApplyPlacementOwnership` pass (so the
+   ownership rules above, the partial-stretch rule included, and the `domain_weight` factor
+   act on the Maxwell domain terms exactly as on the electrostatic ones). The record
    runs in the operator constructor (metadata
    `SurfaceResponse.Diagnostics`, with the warning) and in the preflight on the spatial
    models whose basis points the library provides (manifest `Identification.Diagnostics`
