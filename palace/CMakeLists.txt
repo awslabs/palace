@@ -31,7 +31,6 @@ project(palace LANGUAGES CXX VERSION 0.18.1)
 # Define build settings and defaults. Palace uses OpenMP, CUDA, or HIP when MFEM does.
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
-set(PALACE_WITH_GPU_AWARE_MPI OFF CACHE BOOL "Option to set if MPI distribution is GPU aware")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -464,11 +463,6 @@ target_link_libraries(
   PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>
           $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>
           $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>)
-if(PALACE_WITH_GPU_AWARE_MPI)
-  target_compile_definitions(${LIB_TARGET_NAME}
-    PUBLIC PALACE_WITH_GPU_AWARE_MPI
-  )
-endif()
 
 # Tell utils/versions.cpp which optional dependencies are linked. Versions of dependencies
 # without a header or runtime query that Palace can reach are taken from CMake.

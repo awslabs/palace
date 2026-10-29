@@ -537,7 +537,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             )
 
         # Before 0.19, Spack builds Palace through the superbuild, and Palace does not take
-        # its configuration and dependencies from MFEM's CMake package
+        # its configuration and dependencies from MFEM's CMake package or GPU-aware MPI
+        # from hypre
         if self.spec.satisfies("@:0.18"):
             args.extend(
                 [
@@ -552,6 +553,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
                 ]
             )
+            gpu_aware_mpi = any(
+                self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
+                for var in ["openmpi", "mpich", "mvapich-plus"]
+            )
+            args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", gpu_aware_mpi))
 
         if self.spec.satisfies("@0.16:0.18"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
@@ -722,13 +728,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     "CMAKE_HIP_ARCHITECTURES", ";".join(self.spec.variants["amdgpu_target"].value)
                 )
             )
-
-        palace_with_gpu_aware_mpi = any(
-            self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
-            for var in ["openmpi", "mpich", "mvapich-plus"]
-        )
-
-        args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
 
         # Pass down external BLAS/LAPACK
         args.extend(
