@@ -1415,9 +1415,9 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
 // has at least one inside cell on a context piece. Per record the cell counts by
 // containment (wholly inside / straddling a face / outside; the straddling cells whose
 // inside interval touches neither end = subcells) and by piece class on the inside parts,
-// and the treatment the placement applies: OwnedInsidePart (Chain: true cells: the inside
-// cells owned, the straddling ones re-cut at the face) or RecordedOnly (every inside cell
-// on a Chain: false piece straddles, or every straddling cell is a subcell). Read on the
+// and the treatment the placement applies: OwnedInsidePart (some Chain: true cell inside
+// the box or straddling a face, owned or re-cut) or RecordedOnly (every inside cell lies on
+// a Chain: false piece, or every Chain: true cell is a subcell). Read on the
 // INTACT patches like the wholly-inside records; (feature, stretch, spatial patch) order.
 struct PartialStretchOwnershipRecord
 {
@@ -1532,11 +1532,13 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 // at the face exactly as the continuation pass clips a continuing cell (the inside part
 // owned, the outside part kept at weight x kept / cell, the origin at the kept midpoint);
 // a straddling cell whose inside interval touches neither end (the box strictly inside one
-// cell) and a Chain: false cell straddling a face are left untouched and RECORDED
-// (`partial_stretch_subcells`, `partial_stretch_foreign_edge_cells`). Every cell the rule
-// owns or clips carries `partial_stretch`. Keys, boxes and the identification are untouched
-// (a placement rule); the geometry cache (version 20) stores the unplaced patches and this
-// pass runs on every load, so no cache version change.
+// cell) and every Chain: false cell of a partially inside stretch (984 Q1: Chain: true
+// pieces only; the decision-553 domain drop stays with wholly inside stretches) are left
+// untouched and RECORDED (`partial_stretch_subcells`,
+// `partial_stretch_foreign_edge_cells`). Every cell the rule owns or clips carries
+// `partial_stretch`. Keys, boxes and the identification are untouched (a placement rule);
+// the geometry cache (version 20) stores the unplaced patches and this pass runs on every
+// load, so no cache version change.
 struct ContinuationOwnership
 {
   struct Cell
@@ -1578,9 +1580,11 @@ struct ContinuationOwnership
   double foreign_context_length = 0.0;  // the ForeignContextEdge part of owned_length
   int foreign_context_cells = 0;
   // The partial-stretch rule (decision 984): the cells it owned or clipped (listed under
-  // `cells` with partial_stretch), and the two recorded-only classes — a straddling cell
-  // whose inside interval touches neither end (OI-T5-PARTIAL-STRETCH-SUBCELL) and a Chain:
-  // false cell straddling a face (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE) — left untouched.
+  // `cells` with partial_stretch), and the two recorded-only classes - a straddling cell
+  // whose inside interval touches neither end (OI-T5-PARTIAL-STRETCH-SUBCELL) and every
+  // Chain: false cell of a partially inside stretch, inside the box or straddling a face
+  // (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE; 984 Q1: the rule reaches Chain: true pieces only)
+  // - left untouched.
   struct PartialStretchCell
   {
     std::size_t patch = 0;

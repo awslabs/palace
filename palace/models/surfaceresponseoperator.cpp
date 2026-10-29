@@ -20151,7 +20151,7 @@ nlohmann::json DescribeTranslationalPartialStretchRecords(
   nlohmann::json entries = nlohmann::json::array();
   double length = 0.0, inside_length = 0.0, owned_length = 0.0;
   std::size_t wholly_inside = 0, straddling = 0, subcell = 0, outside = 0,
-              straddling_excluded = 0;
+              straddling_excluded = 0, on_excluded = 0;
   int owned_inside_part = 0, recorded_only = 0;
   for (const auto &record : records)
   {
@@ -20170,6 +20170,7 @@ nlohmann::json DescribeTranslationalPartialStretchRecords(
     subcell += record.cells_subcell;
     outside += record.cells_outside;
     straddling_excluded += record.straddling_cells_on_excluded_edges;
+    on_excluded += record.cells_on_excluded_edges;
     double owned = 0.0;
     if (ownership)
     {
@@ -20212,6 +20213,7 @@ nlohmann::json DescribeTranslationalPartialStretchRecords(
       {"CellsStraddling", straddling},
       {"CellsSubcell", subcell},
       {"CellsOutside", outside},
+      {"CellsOnExcludedEdges", on_excluded},
       {"StraddlingCellsOnExcludedEdges", straddling_excluded},
       {"OwnedInsidePart", owned_inside_part},
       {"RecordedOnly", recorded_only},
@@ -20240,9 +20242,10 @@ nlohmann::json DescribeTranslationalPartialStretchRecords(
        "stretch's extent (the transmon island side edges x = +-12 um inside the grown jjsa "
        "box, decision 982 (A)). Recorded, never treated: a straddling cell whose inside "
        "interval touches neither cell end (the box strictly inside one cell, "
-       "OI-T5-PARTIAL-STRETCH-SUBCELL) and a Chain: false (ForeignEdge) cell straddling a "
-       "face (one scalar domain weight, OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE). Claims stay "
-       "with "
+       "OI-T5-PARTIAL-STRETCH-SUBCELL) and every Chain: false (ForeignEdge) cell of a "
+       "partially inside stretch, inside the box or straddling a face (one scalar domain "
+       "weight; the decision-553 domain drop stays with wholly inside stretches, 984 Q1; "
+       "OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE). Claims stay with "
        "the continuation criterion (decision 252: a parallel stretch alongside a claim is "
        "not "
        "owned). A placement rule: keys, boxes, requirements and the geometry cache are "
@@ -20275,7 +20278,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
       "{:d} translational response-correction stretch(es) lie PARTIALLY inside a spatial "
       "patch's box on its context pieces (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT; "
       "{:d} OwnedInsidePart / {:d} RecordedOnly; {} inside + {} straddling cell(s), {} "
-      "subcell(s) and {} straddling ForeignEdge cell(s) recorded only; {:.6e} mesh units "
+      "subcell(s) and {} cell(s) on excluded pieces recorded only; {:.6e} mesh units "
       "owned; recorded under "
       "Diagnostics.TranslationalStretchesPartiallyInsideSpatialSupport):\n{}",
       diagnostics["Count"].get<int>(), diagnostics["OwnedInsidePart"].get<int>(),
@@ -20283,7 +20286,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
       diagnostics["CellsWhollyInside"].get<std::size_t>(),
       diagnostics["CellsStraddling"].get<std::size_t>(),
       diagnostics["CellsSubcell"].get<std::size_t>(),
-      diagnostics["StraddlingCellsOnExcludedEdges"].get<std::size_t>(),
+      diagnostics["CellsOnExcludedEdges"].get<std::size_t>(),
       diagnostics["OwnedLength"].get<double>(), lines);
 }
 
@@ -20492,25 +20495,28 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
   // midpoint), the owned interval being the union of the owners' inside intervals (verified
   // contiguous and touching a cell end); a straddling cell whose inside interval touches
   // NEITHER end (the box strictly inside one cell, a coarse-mesh case) is left untouched
-  // and recorded (OI-T5-PARTIAL-STRETCH-SUBCELL, 984 Q2); a Chain: false cell STRADDLING a
-  // face has one scalar domain weight and no exact partial analogue, so it is left
-  // untouched and recorded (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, 984 Q3); every cell the
-  // partial rule owns or clips carries `partial_stretch` (the manifest leaf per cut).
+  // and recorded (OI-T5-PARTIAL-STRETCH-SUBCELL, 984 Q2); the partial rule reaches Chain:
+  // true pieces ONLY (984 Q1): a Chain: false cell of a partially inside stretch, inside
+  // the box or straddling a face, keeps its weight and its domain correction (one scalar
+  // domain weight, no exact partial analogue) and is recorded
+  // (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, 984 Q3) - the decision-553 domain drop stays with
+  // the cells of WHOLLY inside stretches; every cell the partial rule owns or clips carries
+  // `partial_stretch` (the manifest leaf per cut).
   {
     struct CellTreatment
     {
       std::pair<int, int> key;
       ForeignContextCellClass cls = ForeignContextCellClass::NONE;
-      // (spatial patch, support index) of the supports of `cls`, ascending by spatial
-      // patch.
-      std::vector<std::pair<std::size_t, std::size_t>> owners;
+      // (spatial patch, support index, the pair is a partially inside stretch) of the
+      // supports of `cls`, ascending by spatial patch.
+      std::vector<std::tuple<std::size_t, std::size_t, bool>> owners;
       bool partial = false;  // some owner's stretch pair is a partially inside one
     };
     std::map<std::size_t, CellTreatment> treatments;  // by patch index (ascending)
     for (const auto &context : foreign_context)
     {
-      const std::pair<std::size_t, std::size_t> owner = {supports[context.support].patch,
-                                                         context.support};
+      const std::tuple<std::size_t, std::size_t, bool> owner = {
+          supports[context.support].patch, context.support, context.partial};
       for (std::size_t i = 0; i < context.patches.size(); i++)
       {
         const auto cell_class = context.classification.cells[i];
@@ -20552,11 +20558,16 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       struct InsideOwner
       {
         std::size_t spatial_patch = 0;
+        bool partial = false;
         CellContainment containment;
       };
       std::vector<InsideOwner> inside_owners;
       bool whole = false;
-      for (const auto &[spatial_patch, support] : treatment.owners)
+      // The Chain: false (ForeignEdge) treatment stays the decision-553 one: an owner whose
+      // stretch pair lies WHOLLY inside the box (decision 984 Q1: the partial rule reaches
+      // Chain: true pieces only; a partial pair's Chain: false cells are recorded).
+      bool whole_by_wholly_inside_pair = false;
+      for (const auto &[spatial_patch, support, pair_partial] : treatment.owners)
       {
         auto containment = ClassifyCellContainment(patch, supports[support], dimension);
         if (!containment.inside)
@@ -20564,7 +20575,9 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
           continue;
         }
         whole = whole || containment.whole;
-        inside_owners.push_back({spatial_patch, std::move(containment)});
+        whole_by_wholly_inside_pair =
+            whole_by_wholly_inside_pair || (containment.whole && !pair_partial);
+        inside_owners.push_back({spatial_patch, pair_partial, std::move(containment)});
       }
       if (inside_owners.empty())
       {
@@ -20669,25 +20682,37 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
         ClipLongitudinalCell(patch, kept_lo, kept_hi);
         ownership.cells.push_back(std::move(cell));
       }
-      else if (!whole)
+      else if (!whole_by_wholly_inside_pair)
       {
-        // OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE (decision 984 Q3 (a)): a Chain: false cell
-        // straddling a face keeps its weight AND its domain correction; recorded.
+        // OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE (decision 984 Q1 / Q3 (a)): a Chain: false
+        // cell reached only through a partially inside stretch pair (inside the box or
+        // straddling a face) keeps its weight AND its domain correction; recorded with the
+        // union of its inside intervals.
         std::vector<std::size_t> owner_patches;
+        double inside_lo = std::numeric_limits<double>::infinity(),
+               inside_hi = -std::numeric_limits<double>::infinity();
         for (const auto &owner : inside_owners)
         {
           owner_patches.push_back(owner.spatial_patch);
+          inside_lo = std::min(inside_lo, (*owner.containment.inside)[0]);
+          inside_hi = std::max(inside_hi, (*owner.containment.inside)[1]);
         }
-        ownership.partial_stretch_foreign_edge_cells.push_back(
-            {patch_idx, feature, stretch, owner_patches, cell_length, 0.0});
+        ownership.partial_stretch_foreign_edge_cells.push_back({patch_idx, feature, stretch,
+                                                                owner_patches, cell_length,
+                                                                inside_hi - inside_lo});
         ownership.partial_stretch_foreign_edge_length += cell_length;
       }
       else if (patch.domain_weight > 0.0)
       {
+        // The decision-553 treatment through the wholly inside pairs' owners (a partial
+        // pair's owner does not treat the cell and is not listed).
         std::vector<std::size_t> owner_patches;
         for (const auto &owner : inside_owners)
         {
-          owner_patches.push_back(owner.spatial_patch);
+          if (!owner.partial)
+          {
+            owner_patches.push_back(owner.spatial_patch);
+          }
         }
         patch.domain_weight = 0.0;
         ownership.foreign_excluded_cells.push_back(
@@ -21364,11 +21389,11 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
         {"SubcellCells", static_cast<int>(ownership.partial_stretch_subcells.size())},
         {"SubcellLength", ownership.partial_stretch_subcell_length * coordinate_scale},
         {"SubcellRecords", DescribePartialStretchCells(ownership.partial_stretch_subcells)},
-        {"ForeignEdgeStraddlingCells",
+        {"ForeignEdgeCells",
          static_cast<int>(ownership.partial_stretch_foreign_edge_cells.size())},
-        {"ForeignEdgeStraddlingLength",
+        {"ForeignEdgeLength",
          ownership.partial_stretch_foreign_edge_length * coordinate_scale},
-        {"ForeignEdgeStraddlingRecords",
+        {"ForeignEdgeRecords",
          DescribePartialStretchCells(ownership.partial_stretch_foreign_edge_cells)},
         {"Rule",
          "decision 983 (1) / 984 (2026-10-29), OI-T5-PARTIAL-STRETCH-CONTEXT: the cells of "
@@ -21376,10 +21401,12 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
          "context pieces are owned (inside the box) or re-cut at the box face (straddling "
          "it; the continuation ownership's clip), listed under OwnedCells with "
          "PartialStretch: true; a straddling cell whose inside interval touches neither "
+         "cell end (OI-T5-PARTIAL-STRETCH-SUBCELL) and every Chain: false (ForeignEdge) "
          "cell "
-         "end (OI-T5-PARTIAL-STRETCH-SUBCELL) and a Chain: false cell straddling a face "
-         "(OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE) are left untouched and listed here. Lengths "
-         "in mesh units"}};
+         "of a partially inside stretch, inside the box or straddling a face "
+         "(OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE; the decision-553 domain drop stays with the "
+         "cells of wholly inside stretches) are left untouched and listed here. Lengths in "
+         "mesh units"}};
   }
   return description;
 }
@@ -21509,14 +21536,13 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
         "  partial-stretch ownership (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT): {:d} "
         "cell(s) of stretches partially inside a coupon's box owned on its context edges "
         "({:d} re-cut at a box face; {:.6e} mesh units); recorded untouched: {:d} "
-        "subcell(s) "
-        "(OI-T5-PARTIAL-STRETCH-SUBCELL, {:.6e} mesh units), {:d} straddling ForeignEdge "
-        "cell(s) (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, {:.6e} mesh units)\n",
+        "subcell(s) (OI-T5-PARTIAL-STRETCH-SUBCELL, {:.6e} mesh units), {:d} ForeignEdge "
+        "cell(s) of partial stretches (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, {:.6e} mesh "
+        "units)\n",
         partial["Cells"].get<int>(), partial["ClippedCells"].get<int>(),
         partial["OwnedLength"].get<double>(), partial["SubcellCells"].get<int>(),
-        partial["SubcellLength"].get<double>(),
-        partial["ForeignEdgeStraddlingCells"].get<int>(),
-        partial["ForeignEdgeStraddlingLength"].get<double>());
+        partial["SubcellLength"].get<double>(), partial["ForeignEdgeCells"].get<int>(),
+        partial["ForeignEdgeLength"].get<double>());
   }
   return fmt::format(
       "Continuation ownership (decisions 236 (2) / 553 / 559): {:d} translational cell(s) "
