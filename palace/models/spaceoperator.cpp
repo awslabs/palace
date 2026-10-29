@@ -74,6 +74,10 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   // Configure the two shared libCEED element sets before any geometry data is built.
   SetUpCeedElementSets(mesh);
 
+  // The second-order absorbing boundary condition is not passive for large tangential
+  // Floquet wave vectors.
+  farfield_op.CheckFloquetPassivity(solver, problem_type, units, *mesh.back());
+
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
   // target space.
@@ -534,6 +538,16 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
 }
 
 }  // namespace
+
+bool SpaceOperator::HasSymmetricStiffnessMatrix() const
+{
+  if (!mat_op.HasWaveVector())
+  {
+    return true;
+  }
+  return mat_op.HasFloquetFrequencyScaling() &&
+         (farfield_op.GetAttrList().Size() == 0 || farfield_op.GetOrder() < 2);
+}
 
 template <OperatorType OperType>
 std::unique_ptr<OperType>
@@ -1254,8 +1268,11 @@ void SpaceOperator::AssemblePreconditioner(
     // real-valued Br + Bi (see MfemWrapperSolver), which this term can make indefinite, so
     // flip its sign in the preconditioner (like PCMatShifted does for the mass term). The
     // system matrix keeps the correct sign. Its Floquet terms keep their sign: the rotated
-    // boundary mass term is bounded by the first-order absorbing BC term for propagating
-    // waves, and the mixed boundary curl terms are antisymmetric.
+    // boundary mass term is bounded by the first-order absorbing BC term when the
+    // tangential Floquet wave vector is below √2 times the wavenumber at the boundary, in
+    // particular for propagating waves (above, the boundary condition is not passive, see
+    // FarfieldBoundaryOperator::CheckFloquetPassivity), and the mixed boundary curl terms
+    // are antisymmetric.
     dfbr *= -1.0;
     dfbi *= -1.0;
   }

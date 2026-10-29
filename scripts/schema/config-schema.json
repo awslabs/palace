@@ -1021,7 +1021,7 @@
         },
         "Order": {
           "type": "integer",
-          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain driven simulations.",
+          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain simulations. It omits the term in the divergence of the tangential field, so that it only improves on first order for TE fields, and it is not passive for fields whose tangential wavenumber on the boundary exceeds \u221a2 times the wavenumber in the medium, see [Other boundary conditions](../reference.md#Other-boundary-conditions).",
           "minimum": 1,
           "maximum": 2,
           "default": 1,
