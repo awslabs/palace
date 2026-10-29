@@ -854,13 +854,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto *response_config = iodata.solver.electrostatic.response_correction
                                     ? &*iodata.solver.electrostatic.response_correction
                                     : nullptr;
-  const bool postprocess_response =
-      response_config && response_config->IncludesPostprocessing();
-  const bool self_consistent_response =
+  // Non-const: a whole-run geometry fallback (below) turns every response branch off.
+  bool postprocess_response = response_config && response_config->IncludesPostprocessing();
+  bool self_consistent_response =
       response_config && response_config->IncludesSelfConsistent();
   // Decision 352 follow-up (1): the per-patch energies (surface-response-patch-energy.csv)
   // are evaluated and written only on request; every other output is unchanged.
-  const bool patch_energy_response = response_config && response_config->patch_energy;
+  bool patch_energy_response = response_config && response_config->patch_energy;
   MFEM_VERIFY(!archive_reduce_only || !response_config,
               "PALACE_RESPONSE_REDUCE_ONLY reduces archived fields of a configuration "
               "without ResponseCorrection!");
@@ -906,15 +906,28 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       patches.WriteFullTableTrunc();
     }
   };
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): a whole-run raw fallback (no model
+  // / patch applied: NoMatchedFeature, AllPatchesOutside, NoPerimeter) saves the operator's
+  // record + banner and runs the thin solve WITHOUT the operator (every other output = the
+  // run without ResponseCorrection); nothing else below sees a response_correction.
   if (response_config)
   {
     response_correction =
         std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
-    WritePatchTable();
-    if (self_consistent_response)
+    if (response_correction->IsRawFallback())
     {
-      corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
-      system_K = corrected_K.get();
+      SaveMetadata(*response_correction);
+      response_correction.reset();
+      postprocess_response = self_consistent_response = patch_energy_response = false;
+    }
+    else
+    {
+      WritePatchTable();
+      if (self_consistent_response)
+      {
+        corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
+        system_K = corrected_K.get();
+      }
     }
   }
   const auto &Grad = laplace_op.GetGradMatrix();

@@ -243,6 +243,16 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
                                            ResponseCorrectionData::UnmatchedPolicy::ERROR
               ? "Error"
               : "Warn";
+      if (response.geometry_failure_policy)
+      {
+        // Echoed only when set (the resolved configs of record stay bitwise).
+        j_response["GeometryFailurePolicy"] =
+            *response.geometry_failure_policy ==
+                    config::ElectrostaticSolverData::ResponseCorrectionData::
+                        GeometryFailurePolicy::FAIL_CLOSED
+                ? "FailClosed"
+                : "RecordRaw";
+      }
       j_response["PatchConstruction"] =
           response.patch_construction ==
                   config::ElectrostaticSolverData::ResponseCorrectionData::
@@ -696,6 +706,16 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
                                            ResponseCorrectionData::UnmatchedPolicy::ERROR
               ? "Error"
               : "Warn";
+      if (response.geometry_failure_policy)
+      {
+        // Echoed only when set (the resolved configs of record stay bitwise).
+        j_response["GeometryFailurePolicy"] =
+            *response.geometry_failure_policy ==
+                    config::ElectrostaticSolverData::ResponseCorrectionData::
+                        GeometryFailurePolicy::FAIL_CLOSED
+                ? "FailClosed"
+                : "RecordRaw";
+      }
       j_response["PatchConstruction"] =
           response.patch_construction ==
                   config::ElectrostaticSolverData::ResponseCorrectionData::

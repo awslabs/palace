@@ -613,6 +613,23 @@ private:
   // The ownership records of the translational stretches inside the spatial supports
   // (decision 236), reported under Diagnostics with the statistics.
   nlohmann::json ownership_diagnostics;
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the matching-time entries of the
+  // automatic configuration plus the placement-time entries of this construction; the
+  // run's effective policy; the whole-run raw fallback flag (NoMatchedFeature /
+  // AllPatchesOutside / NoPerimeter: the drivers then run the thin solve without the
+  // operator after saving its record). The denominators of RawShareByLength come with the
+  // configuration.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFallbackData>
+      geometry_fallbacks;
+  config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFailurePolicy
+      geometry_failure_policy = config::ElectrostaticSolverData::ResponseCorrectionData::
+          GeometryFailurePolicy::RECORD_RAW;
+  std::map<int, double> geometry_fallback_interface_lengths;
+  std::map<int, InterfaceDielectric> geometry_fallback_interface_types;
+  bool raw_fallback = false;
+  // RawShareByEnergy per interface type (SA / MS / MA -> share), set by the driver from the
+  // fallback portions' raw within-R energy of the last evaluation; empty until then.
+  std::map<std::string, double> geometry_fallback_energy_shares;
   // The uncovered requirements (decision 394 F2): the portions of the unmatched features
   // as perimeter sub-segments in mesh coordinates, whose raw within-R surface energy the
   // electrostatic driver keeps in the corrected interface energies.
@@ -1149,6 +1166,22 @@ public:
   // counts. This method is collective over the response operator communicator.
   nlohmann::json GetStatistics() const;
 
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the entries of this configuration
+  // (matching + placement), the record (null when none fired) and whether the whole run is
+  // raw (no model / patch applied: the driver saves the record and runs without the
+  // operator).
+  const auto &GetGeometryFallbacks() const { return geometry_fallbacks; }
+  nlohmann::json GetGeometryFallbackRecord() const;
+  bool IsRawFallback() const { return raw_fallback; }
+  void SetGeometryFallbackEnergyShares(std::map<std::string, double> shares)
+  {
+    geometry_fallback_energy_shares = std::move(shares);
+  }
+  const auto &GetGeometryFallbackEnergyShares() const
+  {
+    return geometry_fallback_energy_shares;
+  }
+
 private:
   // Gather the local per-patch response records of GetElectrostaticResponse on every rank
   // and decode them, ordered by patch index.
@@ -1161,6 +1194,63 @@ private:
 // reports exact, interpolated, and missing process-library requirements.
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path);
+
+// Geometry fallbacks (readiness hardening; USER decision 1000 (b), supervisor 1001; DESIGN
+// readiness-20261029/hardening): the GeometryFailurePolicy of a run and the ledger every
+// converted former-abort site records into when its condition holds. Under RecordRaw the
+// site takes its raw branch and the run continues; under FailClosed the same record is
+// taken and the abort is DEFERRED to Enforce() at the end of the configuration (the
+// preflight writes its manifest first), so every fallback is reported at once and the
+// preflight predicts the solve. Absent leaf: RecordRaw on a solve, FailClosed on the
+// preflight. Every conversion decision is taken on replicated data (the root's
+// identification broadcast, the replicated patch table), so the ledger is rank-consistent.
+using GeometryFailurePolicy =
+    config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFailurePolicy;
+using GeometryFallbackData =
+    config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFallbackData;
+GeometryFailurePolicy ResolveGeometryFailurePolicy(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request, bool preflight);
+const char *GeometryFailurePolicyName(GeometryFailurePolicy policy);
+
+class GeometryFallbackLedger
+{
+private:
+  GeometryFailurePolicy policy;
+  bool preflight;
+  std::vector<GeometryFallbackData> &entries;
+
+public:
+  GeometryFallbackLedger(GeometryFailurePolicy policy, bool preflight,
+                         std::vector<GeometryFallbackData> &entries)
+    : policy(policy), preflight(preflight), entries(entries)
+  {
+  }
+  GeometryFailurePolicy GetPolicy() const { return policy; }
+  bool IsPreflight() const { return preflight; }
+  bool Empty() const { return entries.empty(); }
+  const std::vector<GeometryFallbackData> &Entries() const { return entries; }
+  // Appends the record and prints one line (root): "Geometry fallback <class> (<site>):
+  // <reason>".
+  void Record(GeometryFallbackData entry);
+  // The deferred FailClosed abort: a no-op under RecordRaw or without a record.
+  void Enforce(const std::string &where) const;
+};
+
+// The Diagnostics entry "GeometryFallbacks" (the manifest's Identification.Diagnostics and
+// palace.json's SurfaceResponse.Diagnostics; lengths in mesh length units x
+// coordinate_scale): Version, Policy, Run, Count, Classes, Entries and the raw share by
+// LENGTH per interface type (the fallback entries' length over the selected perimeter
+// length of the interfaces of that type; `type_lengths` = the selected length per target
+// interface, `types` = the interface type per target interface).
+nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
+                                         GeometryFailurePolicy policy, bool preflight,
+                                         double coordinate_scale,
+                                         const std::map<int, double> &type_lengths,
+                                         const std::map<int, InterfaceDielectric> &types);
+// The LOW-confidence banner (one line) printed by the run summary whenever the ledger is
+// non-empty: the raw share per type by energy (the record's RawShareByEnergy where present:
+// a whole-run fallback reads "100 % (no correction applied)") and by length.
+std::string GeometryFallbackBanner(const nlohmann::json &record, const std::string &where);
 
 // The response-geometry cache (PALACE_RESPONSE_GEOMETRY_CACHE): the automatically
 // constructed models and UNPLACED patches with the provenance the continuation ownership
@@ -1903,7 +1993,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     double mirror_band = 0.0,
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
-        &unmerged_portions = {});
+        &unmerged_portions = {},
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // The per-process cache of the DERIVED model response matrices (decision 734 F1; the
 // response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /

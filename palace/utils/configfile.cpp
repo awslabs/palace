@@ -1703,6 +1703,26 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_ABORT("Electrostatic response-correction \"UnmatchedPolicy\" must be "
                    "\"Warn\" or \"Error\"!");
       }
+      if (auto geometry_policy = correction.find("GeometryFailurePolicy");
+          geometry_policy != correction.end())
+      {
+        const std::string value = geometry_policy->get<std::string>();
+        if (value == "RecordRaw")
+        {
+          data.geometry_failure_policy =
+              ResponseCorrectionData::GeometryFailurePolicy::RECORD_RAW;
+        }
+        else if (value == "FailClosed")
+        {
+          data.geometry_failure_policy =
+              ResponseCorrectionData::GeometryFailurePolicy::FAIL_CLOSED;
+        }
+        else
+        {
+          MFEM_ABORT("Response-correction \"GeometryFailurePolicy\" must be \"RecordRaw\" "
+                     "or \"FailClosed\"!");
+        }
+      }
       const std::string patch_construction =
           correction.value("PatchConstruction", "Features");
       if (patch_construction == "Features")

@@ -11776,8 +11776,27 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             .count());
   };
   auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
-  MFEM_VERIFY(!geometry.Empty(),
-              "Fabrication-process response matching found no metal perimeter!");
+  const GeometryFailurePolicy geometry_policy =
+      ResolveGeometryFailurePolicy(request, requirements != nullptr);
+  if (geometry.Empty())
+  {
+    // H13-I1 (readiness hardening; the identification's "no perimeter runs" at
+    // ReferenceProcessNormal is guarded by this test): a device whose metal has no
+    // perimeter (closed shells; no metal boundary element) -> the whole run RAW with the
+    // record NoPerimeter (every type 100 %); the former abort stays the FailClosed text.
+    ResponseCorrectionData empty;
+    empty.unmatched_policy = request.unmatched_policy;
+    empty.matching_radius = library.matching_radius;
+    GeometryFallbackData entry;
+    entry.cls = "NoPerimeter";
+    entry.site = "H13-I1/BuildAutomaticResponseData3D:geometry.Empty";
+    entry.reason = "Fabrication-process response matching found no metal perimeter";
+    entry.what = "run";
+    GeometryFallbackLedger(geometry_policy, requirements != nullptr,
+                           empty.geometry_fallbacks)
+        .Record(std::move(entry));
+    return empty;
+  }
   if (!geometry.refinement_points.empty())
   {
     Mpi::Print("  Identification root-level perimeter: {:d} refinement vertices merged out"
@@ -11953,6 +11972,31 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.mortar_oversampling = request.mortar_oversampling;
   result.patch_energy = request.patch_energy;
   result.matching_radius = library.matching_radius;
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the matching-time ledger; the
+  // deferred FailClosed abort is the constructor's / the preflight's (after the manifest).
+  GeometryFallbackLedger geometry_ledger(geometry_policy, requirements != nullptr,
+                                         result.geometry_fallbacks);
+  // H1: a solve whose matching produced no model / patch runs RAW with the record
+  // NoMatchedFeature (the preflight lists every feature Missing and records the same).
+  auto RecordNoMatchedFeature = [&](const char *site)
+  {
+    if (!result.models.empty() && !result.patches.empty())
+    {
+      return;
+    }
+    GeometryFallbackData entry;
+    entry.cls = "NoMatchedFeature";
+    entry.site = site;
+    entry.reason =
+        "Fabrication-process response matching produced no usable correction patches";
+    entry.what = "run";
+    for (const auto &[target, length] : result.geometry_fallback_interface_lengths)
+    {
+      entry.interfaces.push_back(target);
+      entry.length = std::max(entry.length, length);
+    }
+    geometry_ledger.Record(std::move(entry));
+  };
   int next_model_index = 1;
   int next_interpolation_group = 1;
   int matched_intervals = 0;
@@ -12855,6 +12899,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
       }
     }
+    // The GeometryFallbacks record's RawShareByLength denominators (every run; written only
+    // when a fallback fires).
+    for (const auto &segment : global_segments)
+    {
+      for (const auto &[type, target] : segment.targets)
+      {
+        result.geometry_fallback_interface_lengths[target] += segment.length;
+        result.geometry_fallback_interface_types[target] = type;
+      }
+    }
     const auto summary = BuildFeaturePatches(
         library, identification, global_segments, quadrature,
         requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
@@ -13044,9 +13098,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                    << " pair feature(s) are inconsistent (UnmatchedPolicy = Error)!");
       }
     }
-    MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),
-                "Fabrication-process response matching produced no usable correction "
-                "patches!");
+    if (!requirements)
+    {
+      RecordNoMatchedFeature("H1/BuildAutomaticResponseData3D:features");
+    }
     return result;
   }
   // Legacy per-group classification (comparison only): it reads fillets as runs of REGULAR
@@ -16372,9 +16427,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
   }
 
-  MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),
-              "Fabrication-process response matching produced no usable correction "
-              "patches!");
+  if (!requirements)
+  {
+    RecordNoMatchedFeature("H1/BuildAutomaticResponseData3D:legacy");
+  }
   Mpi::Print("\nAutomatic fabrication-process response matching:\n"
              " Library: {}\n"
              " Matched physical edge segments: {:d}\n"
@@ -18440,6 +18496,201 @@ double QuadraticForm(const mfem::DenseMatrix &matrix, const Vector &x, Vector &w
 
 }  // namespace
 
+GeometryFailurePolicy ResolveGeometryFailurePolicy(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request, bool preflight)
+{
+  if (request.geometry_failure_policy)
+  {
+    return *request.geometry_failure_policy;
+  }
+  return preflight ? GeometryFailurePolicy::FAIL_CLOSED : GeometryFailurePolicy::RECORD_RAW;
+}
+
+const char *GeometryFailurePolicyName(GeometryFailurePolicy policy)
+{
+  return policy == GeometryFailurePolicy::FAIL_CLOSED ? "FailClosed" : "RecordRaw";
+}
+
+void GeometryFallbackLedger::Record(GeometryFallbackData entry)
+{
+  Mpi::Print(
+      "Geometry fallback {} ({}; {}): {} [{} {:d} feature(s), {:d} patch(es), length "
+      "{:.6e}]\n",
+      entry.cls, entry.site, GeometryFailurePolicyName(policy), entry.reason, entry.what,
+      entry.features.size(), entry.patches.size(), entry.length);
+  entries.push_back(std::move(entry));
+}
+
+void GeometryFallbackLedger::Enforce(const std::string &where) const
+{
+  if (policy != GeometryFailurePolicy::FAIL_CLOSED || entries.empty())
+  {
+    return;
+  }
+  std::map<std::string, int> classes;
+  for (const auto &entry : entries)
+  {
+    classes[entry.cls]++;
+  }
+  std::string summary;
+  for (const auto &[cls, count] : classes)
+  {
+    summary += (summary.empty() ? "" : ", ") + cls + " " + std::to_string(count);
+  }
+  MFEM_ABORT("Surface-response GeometryFailurePolicy FailClosed: "
+             << entries.size() << " geometry fallback(s) recorded (" << summary << "); see "
+             << (preflight ? "Identification.Diagnostics.GeometryFallbacks of the manifest"
+                           : "SurfaceResponse.Diagnostics.GeometryFallbacks")
+             << " (" << where << ")!");
+}
+
+namespace
+{
+
+const char *GeometryFallbackTypeName(InterfaceDielectric type)
+{
+  switch (type)
+  {
+    case InterfaceDielectric::MA:
+      return "MA";
+    case InterfaceDielectric::MS:
+      return "MS";
+    case InterfaceDielectric::SA:
+      return "SA";
+    default:
+      return "Default";
+  }
+}
+
+}  // namespace
+
+nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
+                                         GeometryFailurePolicy policy, bool preflight,
+                                         double coordinate_scale,
+                                         const std::map<int, double> &type_lengths,
+                                         const std::map<int, InterfaceDielectric> &types)
+{
+  nlohmann::json record = {{"Version", 1},
+                           {"Policy", GeometryFailurePolicyName(policy)},
+                           {"Run", preflight ? "Preflight" : "Solve"},
+                           {"Count", entries.size()}};
+  std::map<std::string, int> classes;
+  // Fallback length per interface TYPE: an entry naming no interface (a whole-run fallback)
+  // counts on every type.
+  std::map<std::string, double> fallback_length, total_length;
+  for (const auto &[interface, type] : types)
+  {
+    const auto length = type_lengths.find(interface);
+    total_length[GeometryFallbackTypeName(type)] +=
+        length == type_lengths.end() ? 0.0 : length->second;
+  }
+  nlohmann::json list = nlohmann::json::array();
+  for (const auto &entry : entries)
+  {
+    classes[entry.cls]++;
+    nlohmann::json item = {{"Class", entry.cls},
+                           {"Site", entry.site},
+                           {"Reason", entry.reason},
+                           {"What", entry.what},
+                           {"Features", entry.features},
+                           {"Patches", entry.patches},
+                           {"Models", entry.models},
+                           {"Length", entry.length * coordinate_scale},
+                           {"ExampleOrigin",
+                            {entry.example_origin[0] * coordinate_scale,
+                             entry.example_origin[1] * coordinate_scale,
+                             entry.example_origin[2] * coordinate_scale}},
+                           {"Interfaces", entry.interfaces},
+                           {"Topology", entry.topology}};
+    list.push_back(std::move(item));
+    std::set<std::string> entry_types;
+    if (entry.interfaces.empty())
+    {
+      for (const auto &[name, length] : total_length)
+      {
+        (void)length;
+        entry_types.insert(name);
+      }
+    }
+    for (const int interface : entry.interfaces)
+    {
+      const auto type = types.find(interface);
+      if (type != types.end())
+      {
+        entry_types.insert(GeometryFallbackTypeName(type->second));
+      }
+    }
+    for (const auto &name : entry_types)
+    {
+      fallback_length[name] += entry.length;
+    }
+  }
+  record["Classes"] = classes;
+  record["Entries"] = std::move(list);
+  nlohmann::json shares = nlohmann::json::object();
+  for (const auto &[name, total] : total_length)
+  {
+    const double fallback = std::min(fallback_length[name], total);
+    shares[name] = {{"FallbackLength", fallback * coordinate_scale},
+                    {"TypeLength", total * coordinate_scale},
+                    {"Share", total > 0.0 ? fallback / total : 1.0}};
+  }
+  record["RawShareByLength"] = std::move(shares);
+  record["Rule"] =
+      "USER decision 1000 (b) / supervisor 1001 (readiness hardening): every converted "
+      "former-abort site of the identification / placement that fires under "
+      "GeometryFailurePolicy RecordRaw excludes the affected feature / patch / segment, "
+      "keeps "
+      "its raw within-R energy in the raw term and records one entry here (Site = the "
+      "conversion id / source line of record; Length in mesh length units); "
+      "RawShareByLength "
+      "= the entries' length over the selected perimeter length per interface type (a "
+      "whole-run fallback counts on every type); the solve adds RawShareByEnergy from "
+      "surface-response-geometry-fallbacks.csv. Under FailClosed the same entries are "
+      "recorded and the run aborts at the end of the configuration.";
+  return record;
+}
+
+std::string GeometryFallbackBanner(const nlohmann::json &record, const std::string &where)
+{
+  std::string classes;
+  for (const auto &[cls, count] : record.at("Classes").items())
+  {
+    classes += (classes.empty() ? "" : ", ") + cls + " " + std::to_string(count.get<int>());
+  }
+  std::string shares;
+  const bool energy = record.contains("RawShareByEnergy");
+  for (const auto &[type, share] : record.at("RawShareByLength").items())
+  {
+    std::string text = type + " ";
+    if (energy && record.at("RawShareByEnergy").contains(type))
+    {
+      const auto &by_energy = record.at("RawShareByEnergy").at(type);
+      if (by_energy.contains("Note"))
+      {
+        text += "100 % (" + by_energy.at("Note").get<std::string>() + ")";
+      }
+      else
+      {
+        text += fmt::format("{:.2f} % of the within-R energy ({:.2f} % of the length)",
+                            100.0 * by_energy.at("Share").get<double>(),
+                            100.0 * share.at("Share").get<double>());
+      }
+    }
+    else
+    {
+      text +=
+          fmt::format("{:.2f} % of the length", 100.0 * share.at("Share").get<double>());
+    }
+    shares += (shares.empty() ? "" : ", ") + text;
+  }
+  return fmt::format(
+      "\n*** LOW CONFIDENCE (GeometryFailurePolicy {}): {:d} geometry fallback(s) "
+      "recorded - raw share per Type: {}; classes: {}; see {} ***\n",
+      record.at("Policy").get<std::string>(), record.at("Count").get<int>(), shares,
+      classes, where);
+}
+
 // The patch dry run: every automatically constructed 3D patch with its feature, model,
 // weights and the segment portion it integrates (lengths and coordinates in the manifest's
 // units), so that the audit can gate the construction against the manifest without a
@@ -18552,6 +18803,10 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     // provides (a signature placeholder of a Missing key has none), the margin overlaps
     // (decision 244) and the domain-boundary exclusions (decision 258).
     const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+    // The dry run's placement passes record their geometry fallbacks (H4a / H6 / H8) into
+    // the same ledger as the matching: the manifest predicts the solve.
+    GeometryFallbackLedger preflight_ledger(ResolveGeometryFailurePolicy(request, true),
+                                            true, patches.geometry_fallbacks);
     std::map<int, std::vector<std::array<double, 3>>> basis_points;
     std::map<int, bool> spatial_basis;
     std::map<int, std::string> model_names;
@@ -18738,7 +18993,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         [&](int model_idx) { return model_names.at(model_idx); }, coordinate_scale,
         patches.matching_radius, {}, patches.mirror_planes,
         patches.mirror_band_over_radius * patches.matching_radius,
-        patches.mirror_unmerged_portions);
+        patches.mirror_unmerged_portions, &preflight_ledger);
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
     // F-DB-a (decisions 442 / 454): the excluded patches' raw claims, never dropped; the
@@ -18978,6 +19233,24 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       Mpi::Print("{}", DescribeDomainBoundaryExclusionSummary(exclusion_diagnostics));
     }
   }
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the record + the Summary leaf +
+  // the LOW-confidence banner ONLY when a converted site fired (a manifest without one
+  // keeps its bytes); under the preflight default FailClosed the abort follows the write.
+  const GeometryFailurePolicy geometry_policy = ResolveGeometryFailurePolicy(request, true);
+  nlohmann::json geometry_fallbacks;
+  if (!patches.geometry_fallbacks.empty())
+  {
+    geometry_fallbacks =
+        DescribeGeometryFallbacks(patches.geometry_fallbacks, geometry_policy, true,
+                                  iodata.units.GetMeshLengthRelativeScale(),
+                                  patches.geometry_fallback_interface_lengths,
+                                  patches.geometry_fallback_interface_types);
+    manifest["Identification"]["Diagnostics"]["GeometryFallbacks"] = geometry_fallbacks;
+    manifest["Summary"]["GeometryFallbacks"] = {
+        {"Count", geometry_fallbacks["Count"]},
+        {"Classes", geometry_fallbacks["Classes"]},
+        {"RawShareByLength", geometry_fallbacks["RawShareByLength"]}};
+  }
   if (Mpi::Root(parallel_mesh.GetComm()))
   {
     std::ofstream output(path);
@@ -18997,6 +19270,15 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   {
     Mpi::Print(parallel_mesh.GetComm(), " Patch dry run: {} ({:d} patches)\n", patches_path,
                static_cast<int>(patches.patches.size()));
+  }
+  if (!geometry_fallbacks.is_null())
+  {
+    Mpi::Print(
+        parallel_mesh.GetComm(), "{}",
+        GeometryFallbackBanner(geometry_fallbacks,
+                               "Identification.Diagnostics.GeometryFallbacks of " + path));
+    GeometryFallbackLedger(geometry_policy, true, patches.geometry_fallbacks)
+        .Enforce("surface-response preflight");
   }
 }
 
@@ -22290,7 +22572,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     double matching_radius, const std::set<std::size_t> &skipped,
     const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
     double mirror_band,
-    const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions)
+    const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions,
+    GeometryFallbackLedger *geometry_ledger)
 {
   const auto start = std::chrono::steady_clock::now();
   const int dimension = mesh.Dimension();
@@ -22787,11 +23070,35 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       result.patches.push_back(exclusion);
     }
   }
-  MFEM_VERIFY(candidates.empty() || result.patches.size() < candidates.size(),
-              "The domain-boundary exclusion leaves no applied surface-response patch: all "
-                  << candidates.size()
-                  << " tested patches have placed coupon points outside the device mesh "
-                     "(misplaced or mis-scaled coupons)!");
+  if (geometry_ledger && !candidates.empty() && result.patches.size() >= candidates.size())
+  {
+    // H8 (readiness hardening): every tested patch leaves the mesh (a device smaller than
+    // one coupon box) -> the whole run RAW with the record AllPatchesOutside; the operator
+    // reads the record and runs the thin solve.
+    GeometryFallbackData entry;
+    entry.cls = "AllPatchesOutside";
+    entry.site = "H8/FindDomainBoundaryExclusions:all-excluded";
+    entry.reason =
+        "The domain-boundary exclusion leaves no applied surface-response patch: "
+        "all " +
+        std::to_string(candidates.size()) +
+        " tested patches have placed coupon points outside the device mesh";
+    entry.what = "run";
+    for (const auto &exclusion : result.patches)
+    {
+      entry.patches.push_back(static_cast<int>(exclusion.patch));
+    }
+    geometry_ledger->Record(std::move(entry));
+  }
+  else
+  {
+    MFEM_VERIFY(
+        candidates.empty() || result.patches.size() < candidates.size(),
+        "The domain-boundary exclusion leaves no applied surface-response patch: all "
+            << candidates.size()
+            << " tested patches have placed coupon points outside the device mesh "
+               "(misplaced or mis-scaled coupons)!");
+  }
   result.wall_time =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   Mpi::GlobalMax(1, &result.wall_time, comm);
@@ -24015,6 +24322,10 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     bool setup_timing)
 {
   auto &response_mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the placement passes record into
+  // the operator's ledger (the members set by the constructor before this call).
+  GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
+                                         geometry_fallbacks);
   // A three-dimensional spatial response represents one complete coupon volume and has
   // unit weight. Such volumes must never overlap: adding both dense defects would count
   // the shared physical domain twice. Use transformed matching-contour bounds as a
@@ -24414,7 +24725,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
             { return models[model_indices.at(model_idx)].spatial_basis; },
             [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
             coordinate_scale, config.matching_radius, spatially_owned_patches,
-            config.mirror_planes, containment_mirror_band, config.mirror_unmerged_portions);
+            config.mirror_planes, containment_mirror_band, config.mirror_unmerged_portions,
+            &geometry_ledger);
         if (containment_hit && first_order_mesh)
         {
           VerifyDomainBoundaryContainmentReproduces((*containment_cache)->exclusions,
@@ -24443,6 +24755,15 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       {
         spatially_owned_patches.insert(exclusion.patch);
         vertex_coupon_exclusion_reasons.emplace(exclusion.patch, "DomainBoundary");
+      }
+      if (std::any_of(geometry_fallbacks.begin(), geometry_fallbacks.end(),
+                      [](const auto &entry) { return entry.cls == "AllPatchesOutside"; }))
+      {
+        // H8: no applied patch remains; the whole run is raw (the constructor returns
+        // after this pass; the driver resets the operator after saving the record);
+        // FailClosed aborts here with the summary.
+        raw_fallback = true;
+        geometry_ledger.Enforce("electrostatic surface-response configuration");
       }
       ownership_diagnostics["DomainBoundaryExclusions"] =
           DescribeDomainBoundaryExclusions(exclusions, config, coordinate_scale);
@@ -24678,6 +24999,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         {
           MFEM_VERIFY(write_geometry_cache, "Response-geometry cache generation requires "
                                             "PALACE_RESPONSE_GEOMETRY_CACHE_WRITE=1!");
+          // Decision 1001 Q5: a configuration with geometry fallbacks is never cached (the
+          // cache version stays 20; a cache read is a configuration without fallbacks).
+          MFEM_VERIFY(
+              automatic_config->geometry_fallbacks.empty(),
+              "A surface-response configuration with "
+                  << automatic_config->geometry_fallbacks.size()
+                  << " geometry fallback(s) is not cached (GeometryFailurePolicy; "
+                     "decision 1001 Q5): run without PALACE_RESPONSE_GEOMETRY_CACHE!");
           if (Mpi::Root(fespace.GetComm()))
           {
             WriteResponseGeometryCache(*geometry_cache, *automatic_config);
@@ -24702,6 +25031,26 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         config = &*automatic_config;
       }
     }
+  }
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the configuration's matching-time
+  // entries; the placement passes below append theirs; the deferred FailClosed abort at the
+  // end of the construction. A whole-run raw fallback (an automatic configuration with no
+  // model / patch, recorded by the matching) leaves the operator empty and flagged: the
+  // driver saves its record and runs the thin solve without it. The manual configuration
+  // and FailClosed keep the former abort's condition (deferred to Enforce under
+  // FailClosed).
+  geometry_fallbacks = config->geometry_fallbacks;
+  geometry_failure_policy = ResolveGeometryFailurePolicy(*request, false);
+  geometry_fallback_interface_lengths = config->geometry_fallback_interface_lengths;
+  geometry_fallback_interface_types = config->geometry_fallback_interface_types;
+  GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
+                                         geometry_fallbacks);
+  if (request->IsAutomatic() && !geometry_fallbacks.empty() &&
+      (config->models.empty() || config->patches.empty()))
+  {
+    raw_fallback = true;
+    geometry_ledger.Enforce("electrostatic surface-response configuration");
+    return;
   }
   MFEM_VERIFY(!config->models.empty() && !config->patches.empty(),
               "Surface response correction requires at least one model and patch!");
@@ -25259,6 +25608,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   auto placement =
       ApplyPlacementOwnership(*config, model_indices, basis_points, coordinate_scale,
                               dimension, cached_geometry, setup_timing);
+  if (raw_fallback)
+  {
+    return;  // H8: every patch excluded by the domain boundary (recorded)
+  }
   const auto &placed_patches = placement.placed_patches;
   const auto &spatially_owned_patches = placement.owned_patches;
 
@@ -25937,6 +26290,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                "correction.csv)\n",
                global_diagnostic_patch_count, global_diagnostic_point_count);
   }
+  geometry_ledger.Enforce("electrostatic surface-response configuration");
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -26046,6 +26400,21 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   const auto &config = *config_ptr;
+  // Geometry fallbacks (USER decision 1000 (b) / 1001), the Maxwell path: as the
+  // electrostatic constructor (a whole-run raw fallback leaves HasSurfaceResponse() false
+  // with the record; the deferred FailClosed abort at the end of the configuration).
+  geometry_fallbacks = config.geometry_fallbacks;
+  geometry_failure_policy = ResolveGeometryFailurePolicy(*request, false);
+  geometry_fallback_interface_lengths = config.geometry_fallback_interface_lengths;
+  geometry_fallback_interface_types = config.geometry_fallback_interface_types;
+  GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
+                                         geometry_fallbacks);
+  if (!geometry_fallbacks.empty() && (config.models.empty() || config.patches.empty()))
+  {
+    raw_fallback = true;
+    geometry_ledger.Enforce("Maxwell surface-response configuration");
+    return;
+  }
   // The mirror planes for the fail-closed check of the Maxwell line samples (no mirror in
   // Maxwell runs; boundary-cut DESIGN 2.2.3).
   mirror_planes = config.mirror_planes;
@@ -26271,6 +26640,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   const auto placement =
       ApplyPlacementOwnership(config, model_indices, basis_points, coordinate_scale,
                               dimension, cached_geometry, false);
+  if (raw_fallback)
+  {
+    return;  // H8: every patch excluded by the domain boundary (recorded)
+  }
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
@@ -26740,6 +27113,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {"UnconstrainedKnots", maxwell_loop_fit_unconstrained_count},
       {"Cycles", maxwell_loop_fit_cycle_count},
       {"RemainderMeasured", maxwell_loop_remainder_measured}};
+  geometry_ledger.Enforce("Maxwell surface-response configuration");
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -29822,6 +30196,38 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   return result;
 }
 
+nlohmann::json SurfaceResponseOperator::GetGeometryFallbackRecord() const
+{
+  if (geometry_fallbacks.empty())
+  {
+    return nlohmann::json();
+  }
+  auto record = DescribeGeometryFallbacks(geometry_fallbacks, geometry_failure_policy,
+                                          false, 1.0, geometry_fallback_interface_lengths,
+                                          geometry_fallback_interface_types);
+  if (raw_fallback)
+  {
+    // The whole run is raw: 100 % per type by definition (no correction applied).
+    nlohmann::json shares = nlohmann::json::object();
+    for (const auto &[type, share] : record["RawShareByLength"].items())
+    {
+      (void)share;
+      shares[type] = {{"Share", 1.0}, {"Note", "no correction applied"}};
+    }
+    record["RawShareByEnergy"] = std::move(shares);
+  }
+  else if (!geometry_fallback_energy_shares.empty())
+  {
+    nlohmann::json shares = nlohmann::json::object();
+    for (const auto &[type, share] : geometry_fallback_energy_shares)
+    {
+      shares[type] = {{"Share", share}};
+    }
+    record["RawShareByEnergy"] = std::move(shares);
+  }
+  return record;
+}
+
 nlohmann::json SurfaceResponseOperator::GetStatistics() const
 {
   const auto comm = fespace.GetComm();
@@ -29883,6 +30289,12 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
     {
       result["Diagnostics"][key] = value;
     }
+  }
+  if (!geometry_fallbacks.empty())
+  {
+    // Written only when a converted site fired (USER decision 1000 (b)); the drivers add
+    // RawShareByEnergy from the fallback portions' raw within-R energy.
+    result["Diagnostics"]["GeometryFallbacks"] = GetGeometryFallbackRecord();
   }
   if (global_diagnostic_patch_count > 0 &&
       result["Diagnostics"].contains("SpatialClusterPriority"))
