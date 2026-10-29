@@ -16,6 +16,7 @@
 #include "models/postoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
@@ -1036,6 +1037,76 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The DomainBoundary raw claims (F-DB-a) as the same kind of portions, integrated by the
   // same machinery in a separate call (their own table and share).
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> domain_boundary_portions;
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the converted sites' excluded
+  // claims, ALREADY inside domain_boundary_portions (kept raw, F-DB-a); this copy is
+  // measured for the record's RawShareByEnergy and surface-response-geometry-fallbacks.csv
+  // (written only when a fallback fired).
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> geometry_fallback_portions;
+  std::unique_ptr<std::ofstream> geometry_fallback_csv;
+  auto MeasureGeometryFallbacks = [&](int source, const EnergyData &energies)
+  {
+    if (geometry_fallback_portions.empty())
+    {
+      return;
+    }
+    BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+    const auto targets = response_correction->GetTargetInterfaces();
+    const auto raw_fallback =
+        post_op.GetElectrostaticUncoveredEdgeEnergies(targets, geometry_fallback_portions);
+    const auto &types = response_correction->GetGeometryFallbackInterfaceTypes();
+    std::map<std::string, double> fallback_by_type, within_by_type;
+    std::map<std::string, std::map<std::string, double>> fallback_by_class_type;
+    for (const auto &[interface, data] : energies.interfaces)
+    {
+      if (!targets.count(interface) || data.edge_energies.empty())
+      {
+        continue;
+      }
+      const auto type = types.find(interface);
+      const std::string name = type == types.end() ? "Default" : ToString(type->second);
+      within_by_type[name] += data.energy - data.edge_energies.back().energy_outside;
+      const auto fallback = raw_fallback.find(interface);
+      if (fallback != raw_fallback.end())
+      {
+        fallback_by_type[name] += fallback->second.energy;
+        for (const auto &[cls, energy] : fallback->second.by_type)
+        {
+          fallback_by_class_type[cls][name] += energy;
+        }
+      }
+    }
+    std::map<std::string, double> shares;
+    for (const auto &[name, within] : within_by_type)
+    {
+      shares[name] = within > 0.0 ? fallback_by_type[name] / within : 0.0;
+    }
+    response_correction->SetGeometryFallbackEnergyShares(shares);
+    if (!root)
+    {
+      return;
+    }
+    if (!geometry_fallback_csv)
+    {
+      geometry_fallback_csv = std::make_unique<std::ofstream>(
+          post_dir / "surface-response-geometry-fallbacks.csv");
+      *geometry_fallback_csv
+          << "source,class,type,raw energy (J),within-R energy (J),share\n"
+          << std::setprecision(17);
+    }
+    for (const auto &[cls, by_type] : fallback_by_class_type)
+    {
+      for (const auto &[name, energy] : by_type)
+      {
+        const double within = within_by_type[name];
+        *geometry_fallback_csv
+            << source << "," << cls << "," << name << ","
+            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy) << ","
+            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(within) << ","
+            << (within > 0.0 ? energy / within : 0.0) << "\n";
+      }
+    }
+    geometry_fallback_csv->flush();
+  };
   // The SpatialClusterPriority raw remainders (decision 922) likewise.
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       spatial_cluster_priority_portions;
@@ -1055,6 +1126,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     for (const auto &portion : response_correction->GetDomainBoundaryPortions())
     {
       domain_boundary_portions.push_back(
+          {portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    for (const auto &portion : response_correction->GetGeometryFallbackPortions())
+    {
+      geometry_fallback_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
     for (const auto &portion : response_correction->GetSpatialClusterPriorityPortions())
@@ -1331,6 +1407,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         raw_domain_boundary = post_op.GetElectrostaticUncoveredEdgeEnergies(
             response_correction->GetTargetInterfaces(), domain_boundary_portions);
       }
+      // Geometry fallbacks (USER decision 1000 (b)): the share of the within-R energy the
+      // converted sites left raw, on the same raw field (nothing when none fired).
+      MeasureGeometryFallbacks(idx, raw_energies);
       if (!spatial_cluster_priority_portions.empty())
       {
         // The SpatialClusterPriority raw remainders' within-R energy (decision 922) on the

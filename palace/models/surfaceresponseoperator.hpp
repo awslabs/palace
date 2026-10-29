@@ -630,6 +630,7 @@ private:
   // RawShareByEnergy per interface type (SA / MS / MA -> share), set by the driver from the
   // fallback portions' raw within-R energy of the last evaluation; empty until then.
   std::map<std::string, double> geometry_fallback_energy_shares;
+  ExcludedPatchPortions geometry_fallback_portions;
   // The uncovered requirements (decision 394 F2): the portions of the unmatched features
   // as perimeter sub-segments in mesh coordinates, whose raw within-R surface energy the
   // electrostatic driver keeps in the corrected interface energies.
@@ -1081,6 +1082,21 @@ public:
   {
     return domain_boundary_portions;
   }
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the raw claims of the patches a
+  // converted site excluded (OverlapExcluded: the subordinate's claims outside the owner's
+  // box), labelled by class in `topology`. They are ALSO appended to the DomainBoundary
+  // portions (F-DB-a: kept raw in the corrected interface energies, no new energy term);
+  // this copy is the drivers' measurement for RawShareByEnergy and the fallback CSV.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetGeometryFallbackPortions() const
+  {
+    return geometry_fallback_portions.portions;
+  }
+  const auto &GetGeometryFallbackInterfaceTypes() const
+  {
+    return geometry_fallback_interface_types;
+  }
   // The parts of the SpatialClusterPriority-dropped coupons' raw claims outside every
   // matched cluster's box (OI-SCP-HOLE, decision 922; empty when no coupon is dropped or
   // every dropped window lies inside its owner's box): kept in the corrected interface
@@ -1273,10 +1289,12 @@ struct LegacyContractAlias
 // The alias record of a feature whose hash is the alias key: fails closed (MFEM_ABORT) when
 // the feature's context digest differs from the alias's or when the feature's claims-only
 // signature is not the legacy model's Signature (the alias names another geometry).
-nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
-                                          const nlohmann::json &model_signature,
-                                          const LegacyContractAlias &alias,
-                                          const IdentifiedFeature &feature);
+// Under a geometry-fallback ledger (a solve run) a mismatch is recorded as KeyMismatch and
+// null is returned (the feature stays Missing); the library build's callers pass none.
+nlohmann::json ResolveLegacyContractAlias(
+    const std::string &model_name, const nlohmann::json &model_signature,
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature,
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // The role-insensitive Box + Context digest (decision 899 B2, OI-ROLEKEY): SHA-256 of
 // {Box, Context} with the Conductor label removed from every Chain: false piece (a piece
@@ -1290,7 +1308,8 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
 std::string RoleInsensitiveContextDigest(const nlohmann::json &signature);
 nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
     const std::string &model_name, const nlohmann::json &model_signature,
-    const LegacyContractAlias &alias, const IdentifiedFeature &feature);
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature,
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // Distance from a point to a straight segment a-b.
 double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
@@ -1738,7 +1757,8 @@ struct ContinuationOwnership
 ContinuationOwnership ApplyContinuationOwnership(
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
     const std::vector<SpatialSupportBounds> &supports, int dimension,
-    double continuation_tolerance, double matching_radius);
+    double continuation_tolerance, double matching_radius,
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // Clip the uncovered requirements' portions by the matched spatial clusters' support boxes
 // (decision 399 MAJOR-1): for every support with claims (a matched SpatialEdgeCluster; a
@@ -2096,10 +2116,24 @@ OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchDat
 // of them a spatial edge cluster yields (subordinate patch, owner patch); a placeholder
 // support (from_signature_box: a Missing key, no coupon) and cluster / cluster pairs (the
 // margin-overlap record) are skipped. Deterministic in the supports' order.
+// With `geometry_ledger` (readiness hardening H4a): a same-class pair whose boxes
+// interior-overlap without ownership (two clusters with a claim inside the other's claims
+// hull per `margin_overlaps`, or two vertex coupons) yields (subordinate, owner) in
+// `overlap_excluded` (the subordinate = the smaller claimed length, ties by the larger patch
+// index: the operator's rule) with an OverlapExcluded record; the subordinate is owned from
+// then on. Without the ledger the same-class pairs are skipped as before.
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
-    const std::set<std::size_t> &owned_patches, int dimension);
+    const std::set<std::size_t> &owned_patches, int dimension,
+    const std::vector<SpatialSupportMarginOverlap> *margin_overlaps = nullptr,
+    GeometryFallbackLedger *geometry_ledger = nullptr,
+    std::vector<std::pair<std::size_t, std::size_t>> *overlap_excluded = nullptr);
+// The H4a subordinate of two overlapping same-class patches: the smaller claimed length
+// (provenance claims + raw claims), ties by the larger patch index.
+std::size_t OverlapExcludedSubordinate(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config, std::size_t first,
+    std::size_t second);
 
 // The dropped coupons' raw claims (provenance raw_claims: the arms' R windows) clipped by
 // ClipUncoveredPortionsBySpatialSupport against every matched cluster's box; the kept

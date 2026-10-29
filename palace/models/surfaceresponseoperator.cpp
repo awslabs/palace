@@ -7826,16 +7826,55 @@ private:
 
 }  // namespace
 
+// H7a (readiness hardening, USER decision 1000 (b) / 1001): under a ledger a refused alias
+// (the context digest / the claims-only key of the feature differ from the alias's) is
+// recorded as KeyMismatch and the resolver returns null (the feature stays Missing: raw);
+// without a ledger (the library BUILD's callers of record) the former aborts stand.
+namespace
+{
+bool RecordKeyMismatch(GeometryFallbackLedger *geometry_ledger, const char *site,
+                       const std::string &model_name, const LegacyContractAlias &alias,
+                       const IdentifiedFeature &feature, const std::string &reason)
+{
+  if (!geometry_ledger)
+  {
+    return false;
+  }
+  GeometryFallbackData entry;
+  entry.cls = "KeyMismatch";
+  entry.site = site;
+  entry.reason = reason;
+  entry.what = "feature";
+  entry.features = {feature.id};
+  entry.models = {model_name, alias.key};
+  entry.length = feature.length;
+  entry.example_origin = feature.origin;
+  entry.topology = feature.type;
+  geometry_ledger->Record(std::move(entry));
+  return true;
+}
+}  // namespace
+
 nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                                           const nlohmann::json &model_signature,
                                           const LegacyContractAlias &alias,
-                                          const IdentifiedFeature &feature)
+                                          const IdentifiedFeature &feature,
+                                          GeometryFallbackLedger *geometry_ledger)
 {
   MFEM_VERIFY(feature.hash == alias.key,
               "Legacy-contract alias of model \""
                   << model_name << "\" resolved for a feature whose key " << feature.hash
                   << " is not the alias key " << alias.key << "!");
   const std::string digest = SpatialSupportContextDigest(feature.signature);
+  if (!(!digest.empty() && digest == alias.context_digest) &&
+      RecordKeyMismatch(geometry_ledger, "H7a/ResolveLegacyContractAlias:context-digest",
+                        model_name, alias, feature,
+                        "Legacy-contract alias " + alias.key + " of model \"" + model_name +
+                            "\": the feature's context digest " + digest +
+                            " does not match the alias's " + alias.context_digest))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!digest.empty() && digest == alias.context_digest,
               "Legacy-contract alias "
                   << alias.key << " of model \"" << model_name
@@ -7852,6 +7891,16 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
           : std::string{};
   const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
   (void)model_key;
+  if (!(!claims_hash.empty() && claims_hash == model_hash) &&
+      RecordKeyMismatch(geometry_ledger, "H7a/ResolveLegacyContractAlias:claims-key",
+                        model_name, alias, feature,
+                        "Legacy-contract alias " + alias.key + " of model \"" + model_name +
+                            "\": the feature's claims-only key " + claims_hash +
+                            " is not the legacy model's key " + model_hash +
+                            " (the alias names another geometry)"))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
               "Legacy-contract alias "
                   << alias.key << " of model \"" << model_name
@@ -7894,10 +7943,21 @@ std::string RoleInsensitiveContextDigest(const nlohmann::json &signature)
 
 nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
     const std::string &model_name, const nlohmann::json &model_signature,
-    const LegacyContractAlias &alias, const IdentifiedFeature &feature)
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature,
+    GeometryFallbackLedger *geometry_ledger)
 {
   const std::string digest = SpatialSupportContextDigest(feature.signature);
   const std::string role_insensitive = RoleInsensitiveContextDigest(feature.signature);
+  if (!(!role_insensitive.empty() &&
+        role_insensitive == RoleInsensitiveContextDigest(alias.context)) &&
+      RecordKeyMismatch(
+          geometry_ledger, "H7a/ResolveRoleInsensitiveLegacyContractAlias:context-digest",
+          model_name, alias, feature,
+          "Role-insensitive legacy-contract alias " + alias.key + " of model \"" +
+              model_name + "\": the role-insensitive context digests differ"))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!role_insensitive.empty() &&
                   role_insensitive == RoleInsensitiveContextDigest(alias.context),
               "Role-insensitive legacy-contract alias "
@@ -7909,6 +7969,16 @@ nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
           : std::string{};
   const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
   (void)model_key;
+  if (!(!claims_hash.empty() && claims_hash == model_hash) &&
+      RecordKeyMismatch(
+          geometry_ledger, "H7a/ResolveRoleInsensitiveLegacyContractAlias:claims-key",
+          model_name, alias, feature,
+          "Role-insensitive legacy-contract alias " + alias.key + " of model \"" +
+              model_name + "\": the feature's claims-only key " + claims_hash +
+              " is not the legacy model's key " + model_hash))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
               "Role-insensitive legacy-contract alias "
                   << alias.key << " of model \"" << model_name
@@ -8150,7 +8220,7 @@ IdentificationResult RunGeometryIdentification(
     std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr,
     std::map<int, FeatureCornerMatch> *corner_matches = nullptr,
     const mfem::ParMesh *mesh = nullptr, const ResponseCorrectionData *request = nullptr,
-    MirrorBandResult *mirror = nullptr)
+    MirrorBandResult *mirror = nullptr, GeometryFallbackLedger *geometry_ledger = nullptr)
 {
   const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
@@ -8479,7 +8549,14 @@ IdentificationResult RunGeometryIdentification(
       // Legacy-contract alias (USER decision 283): the library lists this contract-3 key
       // explicitly for a legacy model; verified (digest, claims) or aborted, recorded.
       feature.legacy_contract = ResolveLegacyContractAlias(
-          alias->model, alias->model_signature, alias->alias, feature);
+          alias->model, alias->model_signature, alias->alias, feature, geometry_ledger);
+      if (feature.legacy_contract.is_null())
+      {
+        // H7a: the alias refused under the ledger (KeyMismatch recorded): Missing.
+        feature.match_note = "legacy contract alias of \"" + alias->model +
+                             "\" refused (KeyMismatch geometry fallback): Missing";
+        return false;
+      }
       // The legacy model's Edges and basis points live in the claims-only canonical frame:
       // the feature is placed in that frame (the contract-3 frame minimises Box + Context
       // and may differ by a rotation / reflection), so that the patches are the legacy
@@ -8504,7 +8581,15 @@ IdentificationResult RunGeometryIdentification(
       // Role-insensitive legacy alias (decision 899 B2, OI-ROLEKEY): recorded, placed in
       // the claims-only frame exactly as the exact alias.
       feature.legacy_contract = ResolveRoleInsensitiveLegacyContractAlias(
-          role_alias->model, role_alias->model_signature, role_alias->alias, feature);
+          role_alias->model, role_alias->model_signature, role_alias->alias, feature,
+          geometry_ledger);
+      if (feature.legacy_contract.is_null())
+      {
+        feature.match_note = "role-insensitive legacy contract alias of \"" +
+                             role_alias->model +
+                             "\" refused (KeyMismatch geometry fallback): Missing";
+        return false;
+      }
       feature.origin = feature.claims_origin;
       feature.axes = feature.claims_axes;
       feature.chirality = feature.claims_chirality;
@@ -10577,10 +10662,15 @@ FeaturePatchSummary BuildFeaturePatches(
     const std::map<int, FeatureCurvatureMatch> &curved_matches = {},
     const std::map<int, FeatureCornerMatch> &corner_matches = {},
     const std::vector<EdgeSegment3D> &image_segments = {},
-    const std::vector<MirrorPlane> &mirror_planes = {})
+    const std::vector<MirrorPlane> &mirror_planes = {},
+    GeometryFallbackLedger *geometry_ledger = nullptr)
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
+  // H5 (readiness hardening): the features whose placement was refused (the Context
+  // disagreement / the A10 context test) under a ledger: NOT placed, read as Missing by
+  // the uncovered-portion pass below (their perimeter stays raw).
+  std::set<int> placement_rejected;
   // The spatial cluster models' trace meshes, read once per library model (the probe snap).
   std::map<std::size_t, TraceMeshData> trace_meshes;
   std::map<std::size_t, const EdgeSegment3D *> framed;
@@ -11498,6 +11588,74 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto context_agreement = CompareClusterContexts(
             signature.value("Context", nlohmann::json::array()),
             feature.signature.value("Context", nlohmann::json(nullptr)));
+        // H5a / H5b (readiness hardening, USER decision 1000 (b) / 1001): a refused
+        // placement makes the feature Missing (raw) with the record PlacementRejected;
+        // the matched counters are rolled back; the former abort is the FailClosed
+        // summary's. The runtime model registered above stays (0 patches).
+        auto RejectPlacement = [&](const char *site, const std::string &reason)
+        {
+          summary.matched_features--;
+          summary.matched_length -= feature_length;
+          summary.unmatched_features++;
+          summary.unmatched_length += feature_length;
+          auto &entry = summary.unmatched_by_type[feature.type];
+          entry.first++;
+          entry.second += feature_length;
+          if (diagnostics)
+          {
+            for (const auto &portion : feature.portions)
+            {
+              if (IsImage(portion))
+              {
+                continue;
+              }
+              const double length = portion.s1 - portion.s0;
+              diagnostics->matched_length -= length;
+              for (const auto &[type, target] : framed.at(portion.segment)->targets)
+              {
+                (void)type;
+                diagnostics->matched_length_by_interface[target] -= length;
+              }
+            }
+          }
+          placement_rejected.insert(feature.id);
+          GeometryFallbackData record;
+          record.cls = "PlacementRejected";
+          record.site = site;
+          record.reason = reason;
+          record.what = "feature";
+          record.features = {feature.id};
+          record.models = {model.name};
+          record.length = feature_length;
+          record.example_origin = patch.origin;
+          record.topology = feature.type;
+          for (const auto &framed_portion : portions)
+          {
+            for (const auto &[type, target] : framed_portion.segment->targets)
+            {
+              (void)type;
+              if (std::find(record.interfaces.begin(), record.interfaces.end(), target) ==
+                  record.interfaces.end())
+              {
+                record.interfaces.push_back(target);
+              }
+            }
+          }
+          geometry_ledger->Record(std::move(record));
+        };
+        if (geometry_ledger &&
+            !(feature.signature.contains("Context") && context_agreement.agrees))
+        {
+          RejectPlacement(
+              "H5a/BuildFeaturePatches:context-beyond-near-match",
+              fmt::format(
+                  "The Context of model \"{}\" differs from the matched feature's "
+                  "beyond the cluster quantum near-match (max {:g} quanta over {:d} "
+                  "differing number(s), or another topology)",
+                  model.name, context_agreement.max_delta_quanta,
+                  context_agreement.differing_paths.size()));
+          continue;
+        }
         MFEM_VERIFY(
             feature.signature.contains("Context") && context_agreement.agrees,
             "The Context of model \""
@@ -11536,6 +11694,7 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto &support_box = patch.provenance.support_box;
         const double span_band =
             std::max(support_box[2] - support_box[0], support_box[3] - support_box[1]) * R;
+        std::optional<double> context_deviation;
         for (const auto &entry : signature.at("Context"))
         {
           const auto P = entry.at("P").get<std::array<double, 4>>();
@@ -11543,6 +11702,11 @@ FeaturePatchSummary BuildFeaturePatches(
           {
             const double distance = MirrorCompletePerimeterDistance(
                 identification, q, mirror_planes, span_band, tolerance);
+            if (geometry_ledger && distance > tolerance)
+            {
+              context_deviation = std::max(context_deviation.value_or(0.0), distance);
+              continue;
+            }
             MFEM_VERIFY(distance <= tolerance,
                         "Context piece of model \""
                             << model.name << "\" placed for feature " << feature.id
@@ -11551,6 +11715,17 @@ FeaturePatchSummary BuildFeaturePatches(
                                "mis-keyed library or a placement frame defect)!");
             checked++;
           }
+        }
+        if (context_deviation)
+        {
+          RejectPlacement(
+              "H5b/BuildFeaturePatches:context-piece-off-device-edge",
+              fmt::format(
+                  "Context piece of model \"{}\" placed for feature {:d} lies {:g} R "
+                  "from every device edge (A10 extended to the context: a mis-keyed "
+                  "library or a placement frame defect)",
+                  model.name, feature.id, *context_deviation / R));
+          continue;
         }
         summary.context_points_checked += checked;
       }
@@ -11657,7 +11832,8 @@ FeaturePatchSummary BuildFeaturePatches(
   result.uncovered_portions.clear();
   for (const auto &feature : identification.features)
   {
-    if (feature.matched_model || IsUnmergedMirrorConfiguration(feature))
+    if ((feature.matched_model && !placement_rejected.count(feature.id)) ||
+        IsUnmergedMirrorConfiguration(feature))
     {
       // A Missing mirror-formed configuration's real perimeter is the touched real
       // features' (decision 481 / 512 (c)): never listed twice.
@@ -12835,7 +13011,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       mesh.GetComm(), geometry, global_segments, library,
       requirements ? *requirements : law_describer, requirements, frame_normal_configured,
       request.span_cap_allowances, &curved_matches, &corner_matches, &mesh,
-      maxwell ? nullptr : &request, &mirror_band);
+      maxwell ? nullptr : &request, &mirror_band, &geometry_ledger);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (statistics)
@@ -12909,10 +13085,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         result.geometry_fallback_interface_types[target] = type;
       }
     }
-    const auto summary = BuildFeaturePatches(
-        library, identification, global_segments, quadrature,
-        requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
-        curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes);
+    const auto summary =
+        BuildFeaturePatches(library, identification, global_segments, quadrature,
+                            requirements ? *requirements : law_describer, diagnostics,
+                            result, coordinate_scale, curved_matches, corner_matches,
+                            mirror_band.image_frames, mirror_band.planes, &geometry_ledger);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     if (statistics)
     {
@@ -18850,15 +19027,23 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         spatial_cluster_priority_owned.insert(patch_idx);
       }
     }
+    // H4a on the dry run: the same-class overlaps the operator would drop, recorded into
+    // the preflight ledger (the margin-overlap record of decision 244 exempts a
+    // margins-only cluster pair, as in the operator).
+    const auto dry_run_margin_overlaps =
+        FindSpatialSupportMarginOverlaps(boxes, 3, continuation_tolerance);
+    std::vector<std::pair<std::size_t, std::size_t>> dry_run_overlap_excluded;
     const auto spatial_cluster_priority_pairs = FindSpatialClusterPriorityExclusions(
-        boxes, patches, spatial_cluster_priority_owned, 3);
+        boxes, patches, spatial_cluster_priority_owned, 3, &dry_run_margin_overlaps,
+        &preflight_ledger, &dry_run_overlap_excluded);
     // The placement's continuation ownership (decision 236 (2)) on the dry run: the
     // written patches are the placed ones (clipped cells, weight 0 inside the boxes). The
     // partial-stretch records (decision 984) are read on the intact patches like `records`.
     const auto partial_records = FindTranslationalStretchPartiallyInsideSpatialSupport(
         patches.patches, boxes, 3, continuation_tolerance);
-    const auto ownership = ApplyContinuationOwnership(
-        patches.patches, boxes, 3, continuation_tolerance, patches.matching_radius);
+    const auto ownership =
+        ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance,
+                                   patches.matching_radius, &preflight_ledger);
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
     // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of the
     // built patches: the dry run's cells are the trimmed ones; the uncovered portions are
@@ -20602,7 +20787,8 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 ContinuationOwnership
 ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
                            const std::vector<SpatialSupportBounds> &supports, int dimension,
-                           double continuation_tolerance, double matching_radius)
+                           double continuation_tolerance, double matching_radius,
+                           GeometryFallbackLedger *geometry_ledger)
 {
   ContinuationOwnership ownership;
   const auto stretches = CollectTranslationalStretches(patches, dimension);
@@ -20674,16 +20860,52 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       }
       std::sort(sorted_inside.begin(), sorted_inside.end());
       double removed_lo = sorted_inside.front()[0], removed_hi = sorted_inside.front()[1];
+      bool gap_inside = false;
       for (const auto &interval : sorted_inside)
       {
-        MFEM_VERIFY(interval[0] <= removed_hi + 1.0e-12 * scale,
-                    "Continuation ownership: the boxes owning the longitudinal cell of "
-                    "patch "
-                        << patch_idx + 1 << " leave a gap inside the cell!");
+        gap_inside = gap_inside || interval[0] > removed_hi + 1.0e-12 * scale;
         removed_hi = std::max(removed_hi, interval[1]);
       }
       const bool at_begin = removed_lo <= c0 + 1.0e-12 * scale;
       const bool at_end = removed_hi >= c1 - 1.0e-12 * scale;
+      if (geometry_ledger && (gap_inside || !(at_begin || at_end)))
+      {
+        // H6a / H6b (readiness hardening, USER decision 1000 (b) / 1001): the owning boxes
+        // leave a gap inside the cell, or a box lies strictly inside it -> the cell is left
+        // UNTOUCHED (the decision-984 SUBCELL form: its own patch keeps correcting it; the
+        // inside interval is a recorded double-count risk, nothing goes raw) with the
+        // record ContinuationUnresolved; the former abort is the FailClosed summary's.
+        GeometryFallbackData entry;
+        entry.cls = "ContinuationUnresolved";
+        entry.site = gap_inside ? "H6a/ApplyContinuationOwnership:gap-inside-cell"
+                                : "H6b/ApplyContinuationOwnership:box-inside-cell";
+        entry.reason =
+            gap_inside
+                ? fmt::format("Continuation ownership: the boxes owning the longitudinal "
+                              "cell of patch {:d} leave a gap inside the cell",
+                              patch_idx + 1)
+                : fmt::format("Continuation ownership: the box of spatial patch {:d} lies "
+                              "strictly inside the longitudinal cell of patch {:d} "
+                              "(feature {:d}, stretch {:d})",
+                              supports[inside.front().support].patch + 1, patch_idx + 1,
+                              key.first, key.second);
+        entry.what = "cell";
+        entry.features = {key.first};
+        entry.patches = {static_cast<int>(patch_idx)};
+        for (const auto &owner : inside)
+        {
+          entry.patches.push_back(static_cast<int>(supports[owner.support].patch));
+        }
+        entry.length = std::min(removed_hi - removed_lo, cell_length);
+        entry.example_origin = patch.origin;
+        entry.topology = "untouched cell (double-count risk over the inside interval)";
+        geometry_ledger->Record(std::move(entry));
+        continue;
+      }
+      MFEM_VERIFY(!gap_inside,
+                  "Continuation ownership: the boxes owning the longitudinal cell of "
+                  "patch "
+                      << patch_idx + 1 << " leave a gap inside the cell!");
       MFEM_VERIFY(at_begin || at_end,
                   "Continuation ownership: the box of spatial patch "
                       << supports[inside.front().support].patch + 1
@@ -23450,9 +23672,36 @@ ExcludedPatchPortions CollectDomainBoundaryPortions(
   return result;
 }
 
+std::size_t OverlapExcludedSubordinate(const ResponseCorrectionData &config,
+                                       std::size_t first, std::size_t second)
+{
+  auto ClaimedLength = [&](std::size_t patch_idx)
+  {
+    double length = 0.0;
+    for (const auto &claim : config.patches[patch_idx].provenance.claims)
+    {
+      length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    for (const auto &claim : config.patches[patch_idx].provenance.raw_claims)
+    {
+      length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    return length;
+  };
+  const double first_length = ClaimedLength(first), second_length = ClaimedLength(second);
+  if (first_length != second_length)
+  {
+    return first_length < second_length ? first : second;
+  }
+  return std::max(first, second);
+}
+
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
-    const std::set<std::size_t> &owned_patches, int dimension)
+    const std::set<std::size_t> &owned_patches, int dimension,
+    const std::vector<SpatialSupportMarginOverlap> *margin_overlaps,
+    GeometryFallbackLedger *geometry_ledger,
+    std::vector<std::pair<std::size_t, std::size_t>> *overlap_excluded)
 {
   std::unordered_map<int, const ResponseModelData *> models;
   for (const auto &model : config.models)
@@ -23505,6 +23754,53 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
       const bool second_cluster = IsCluster(second);
       if (first_cluster == second_cluster)
       {
+        if (!geometry_ledger)
+        {
+          continue;
+        }
+        // H4a on the dry run (the operator's rule): a margins-only cluster / cluster
+        // overlap is the decision-244 record, not a drop; otherwise the subordinate.
+        if (first_cluster && margin_overlaps)
+        {
+          const auto overlap = std::find_if(
+              margin_overlaps->begin(), margin_overlaps->end(), [&](const auto &entry)
+              { return entry.first_patch == first && entry.second_patch == second; });
+          if (overlap != margin_overlaps->end() && !overlap->claim_in_hull)
+          {
+            continue;
+          }
+        }
+        const std::size_t subordinate = OverlapExcludedSubordinate(config, first, second);
+        const std::size_t owner = subordinate == first ? second : first;
+        if (overlap_excluded)
+        {
+          overlap_excluded->emplace_back(subordinate, owner);
+        }
+        GeometryFallbackData entry;
+        entry.cls = "OverlapExcluded";
+        entry.site = "H4a/ApplyPlacementOwnership:matching-volumes-overlap";
+        entry.reason = fmt::format(
+            "Three-dimensional response-correction matching volumes for patches {:d} and "
+            "{:d} overlap without complete spatial-cluster ownership{}",
+            first + 1, second + 1,
+            first_cluster ? " (a claim of one cluster lies inside the other's claims)" : "");
+        entry.what = "patch";
+        entry.patches = {static_cast<int>(subordinate), static_cast<int>(owner)};
+        entry.models = {models.at(config.patches[subordinate].model)->name,
+                        models.at(config.patches[owner].model)->name};
+        entry.features = {config.patches[subordinate].provenance.feature};
+        entry.example_origin = config.patches[subordinate].origin;
+        entry.topology = models.at(config.patches[subordinate].model)->topology;
+        for (const auto &claim : config.patches[subordinate].provenance.claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        for (const auto &claim : config.patches[subordinate].provenance.raw_claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        geometry_ledger->Record(std::move(entry));
+        owned.insert(subordinate);
         continue;
       }
       const auto subordinate = first_cluster ? second : first;
@@ -23513,6 +23809,43 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
     }
   }
   return exclusions;
+}
+
+ExcludedPatchPortions CollectGeometryFallbackPortions(
+    const std::vector<std::pair<std::size_t, std::size_t>> &exclusions,
+    const std::string &cls, const std::vector<ResponsePatchData> &patches,
+    const ResponseCorrectionData &config, const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double matching_radius)
+{
+  ExcludedPatchPortions result;
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  for (const auto &[patch_idx, owner] : exclusions)
+  {
+    (void)owner;
+    // The dropped patch's claim by the DomainBoundary rule, then clipped by every OTHER
+    // matched cluster's box (its own box would remove its own claims).
+    ExcludedPatchPortions claim;
+    AppendExcludedPatchClaim(claim, patch_idx, patches, config, ownership,
+                             uncovered_clipping, tolerance);
+    std::vector<SpatialSupportBounds> others;
+    for (const auto &support : supports)
+    {
+      if (support.patch != patch_idx)
+      {
+        others.push_back(support);
+      }
+    }
+    std::vector<ResponseCorrectionData::UncoveredPortionData> window = claim.portions;
+    ClipUncoveredPortionsBySpatialSupport(window, others, dimension);
+    for (auto portion : window)
+    {
+      portion.topology = cls;
+      AppendExcludedPatchPortion(result, patch_idx, portion, false, tolerance);
+    }
+  }
+  return result;
 }
 
 SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
@@ -24340,6 +24673,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   std::set<std::size_t> spatially_owned_patches;
   // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
   std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
+  // H4a: (subordinate, owner) pairs of the OverlapExcluded drops (geometry fallbacks).
+  std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded_pairs;
   // The SpatialClusterPriority exclusions (subordinate patch, owner patch) of this
   // placement, read after the domain-boundary pass for the raw remainder (decision 922).
   std::vector<std::pair<std::size_t, std::size_t>> spatial_cluster_priority_pairs;
@@ -24457,15 +24792,45 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         {
           continue;
         }
-        MFEM_ABORT("Three-dimensional response-correction matching volumes for patches "
-                   << first + 1 << " (" << first_model.name << ") and " << second + 1
-                   << " (" << second_model.name
-                   << ") overlap without complete spatial-cluster ownership"
-                   << (first_cluster && second_cluster
-                           ? " (a claim of one cluster lies inside the other's claims)"
-                           : "")
-                   << ". Replace them with one coupled spatial model or an explicit "
-                      "nonoverlapping partition!");
+        // H4a (readiness hardening, USER decision 1000 (b) / 1001): two same-class
+        // supports overlap without ownership -> the SUBORDINATE patch (the smaller
+        // claimed length; ties by the larger patch index) is dropped like a
+        // SpatialClusterPriority coupon (weight 0, owned) and its claims OUTSIDE the
+        // owner's box stay RAW (the geometry-fallback portions, F-DB-a) with the record
+        // OverlapExcluded; the former abort is the FailClosed summary's.
+        const std::size_t subordinate_patch = OverlapExcludedSubordinate(config, first, second);
+        const bool drop_second = subordinate_patch == second;
+        const std::size_t owner_patch = drop_second ? first : second;
+        spatially_owned_patches.insert(subordinate_patch);
+        vertex_coupon_exclusion_reasons.emplace(subordinate_patch, "OverlapExcluded");
+        overlap_excluded_pairs.emplace_back(subordinate_patch, owner_patch);
+        GeometryFallbackData entry;
+        entry.cls = "OverlapExcluded";
+        entry.site = "H4a/ApplyPlacementOwnership:matching-volumes-overlap";
+        entry.reason = fmt::format(
+            "Three-dimensional response-correction matching volumes for patches {:d} ({}) "
+            "and {:d} ({}) overlap without complete spatial-cluster ownership{}",
+            first + 1, first_model.name, second + 1, second_model.name,
+            first_cluster && second_cluster
+                ? " (a claim of one cluster lies inside the other's claims)"
+                : "");
+        entry.what = "patch";
+        entry.patches = {static_cast<int>(subordinate_patch),
+                         static_cast<int>(owner_patch)};
+        entry.models = {drop_second ? second_model.name : first_model.name,
+                        drop_second ? first_model.name : second_model.name};
+        entry.features = {config.patches[subordinate_patch].provenance.feature};
+        for (const auto &claim : config.patches[subordinate_patch].provenance.claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        for (const auto &claim : config.patches[subordinate_patch].provenance.raw_claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        entry.example_origin = config.patches[subordinate_patch].origin;
+        entry.topology = drop_second ? second_model.topology : first_model.topology;
+        geometry_ledger.Record(std::move(entry));
       }
     }
     // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of
@@ -24614,7 +24979,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     const ContinuationOwnership ownership = ApplyContinuationOwnership(
         placed_patches, boxes, dimension,
         kSignatureParameterToleranceOverRadius * config.matching_radius,
-        config.matching_radius);
+        config.matching_radius, &geometry_ledger);
     {
       for (const auto &cell : ownership.cells)
       {
@@ -24772,6 +25137,24 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       domain_boundary_portions = CollectDomainBoundaryPortions(
           exclusions, placed_patches, config, ownership, uncovered_spatial_support_clipping,
           config.matching_radius);
+      if (!overlap_excluded_pairs.empty())
+      {
+        // H4a: the dropped patches' claims (the DomainBoundary rule) clipped by the OTHER
+        // matched clusters' boxes (the owner corrects the inside), labelled by the class;
+        // kept raw with the DomainBoundary portions and measured separately for the share.
+        geometry_fallback_portions = CollectGeometryFallbackPortions(
+            overlap_excluded_pairs, "OverlapExcluded", placed_patches, config, ownership,
+            uncovered_spatial_support_clipping, boxes, dimension, config.matching_radius);
+        for (std::size_t i = 0; i < geometry_fallback_portions.portions.size(); i++)
+        {
+          domain_boundary_portions.portions.push_back(
+              geometry_fallback_portions.portions[i]);
+          domain_boundary_portions.patches.push_back(geometry_fallback_portions.patches[i]);
+          domain_boundary_portions.translational.push_back(
+              geometry_fallback_portions.translational[i]);
+        }
+        domain_boundary_portions.length += geometry_fallback_portions.length;
+      }
       ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
       // S7diag R1 (decision 758): the raw claim of every applied patch the

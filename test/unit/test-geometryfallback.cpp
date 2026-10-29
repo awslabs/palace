@@ -16,6 +16,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -311,4 +312,180 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                           ContainsSubstring("(test)"));
   }
 #endif
+}
+
+// H4a (operator ApplyPlacementOwnership "matching volumes overlap without complete
+// spatial-cluster ownership"; the dry run's FindSpatialClusterPriorityExclusions carries
+// the same rule): the S1p pair of the margin-overlap case (decision 244) with B's claim
+// reaching into A's claims hull. Without the ledger the same-class pair is skipped (the
+// record of decision 244, the operator aborts); with it the SUBORDINATE (the smaller
+// claimed length: B, 10.05 vs 15.55) is owned with the OverlapExcluded record naming both
+// patches / models; a margins-only pair records nothing. The operator's branch shares
+// OverlapExcludedSubordinate.
+TEST_CASE(
+    "Geometry fallback H4a OverlapExcluded: an owned-less same-class overlap drops the "
+    "subordinate support with the record (decisions 1000 (b) / 1001)",
+    "[surfaceresponseoperator][geometryfallback][Serial]")
+{
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  using Model = config::ElectrostaticSolverData::ResponseCorrectionModelData;
+  const double R = 1.9;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  const double y = -108.325;
+  SpatialSupportBounds a, b;
+  a.patch = 0;
+  a.SetMeshAlignedBox({568.55, -128.2, 2.85}, {592.75, -102.625, 6.8});
+  a.claims = {Claim{494, {583.25, y, 4.8}, {583.55, y, 4.8}},
+              Claim{514, {583.55, y, 4.8}, {587.05, y, 4.8}},
+              Claim{520, {583.25, y, 4.8}, {583.25, -120.0, 4.8}}};
+  b.patch = 1;
+  b.SetMeshAlignedBox({583.05, -128.2, 2.85}, {607.25, -102.625, 6.8});
+  // B's second claim turns into A's hull (claim_in_hull: the true overlap).
+  b.claims = {Claim{646, {586.0, y, 4.8}, {593.0, y, 4.8}},
+              Claim{650, {586.0, y, 4.8}, {586.0, -115.0, 4.8}}};
+  config::ElectrostaticSolverData::ResponseCorrectionData config;
+  config.matching_radius = R;
+  for (int k = 0; k < 2; k++)
+  {
+    Model model;
+    model.idx = k + 1;
+    model.name = k == 0 ? "cluster-a" : "cluster-b";
+    model.topology = "spatial edge cluster";
+    model.spatial_basis = true;
+    config.models.push_back(model);
+    Patch patch;
+    patch.model = k + 1;
+    patch.weight = 1.0;
+    patch.provenance.feature = 10 + k;
+    patch.provenance.claims = k == 0 ? a.claims : b.claims;
+    patch.origin = k == 0 ? std::array<double, 3>{580.0, y, 4.8}
+                          : std::array<double, 3>{595.0, y, 4.8};
+    config.patches.push_back(patch);
+  }
+  const auto margin_overlaps = FindSpatialSupportMarginOverlaps({a, b}, 3, tolerance);
+  REQUIRE(margin_overlaps.size() == 1);
+  REQUIRE(margin_overlaps.front().claim_in_hull);
+  // The rule of record without a ledger: the same-class pair is skipped (0 SCP drops).
+  CHECK(FindSpatialClusterPriorityExclusions({a, b}, config, {}, 3).empty());
+  CHECK(FindSpatialClusterPriorityExclusions({a, b}, config, {}, 3, &margin_overlaps)
+            .empty());
+  // The subordinate rule: B's claims 7.0 + 6.675 = 13.675 < A's 0.3 + 3.5 + 11.675
+  // = 15.475.
+  CHECK(OverlapExcludedSubordinate(config, 0, 1) == 1);
+  // With the ledger: B is owned, one OverlapExcluded record.
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded;
+    const auto scp = FindSpatialClusterPriorityExclusions(
+        {a, b}, config, {}, 3, &margin_overlaps, &ledger, &overlap_excluded);
+    CHECK(scp.empty());
+    REQUIRE(overlap_excluded.size() == 1);
+    CHECK(overlap_excluded.front() == std::make_pair(std::size_t{1}, std::size_t{0}));
+    REQUIRE(entries.size() == 1);
+    const auto &entry = entries.front();
+    CHECK(entry.cls == "OverlapExcluded");
+    CHECK(entry.what == "patch");
+    CHECK(entry.patches == std::vector<int>{1, 0});
+    CHECK(entry.models == std::vector<std::string>{"cluster-b", "cluster-a"});
+    CHECK(entry.features == std::vector<int>{11});
+    CHECK_THAT(entry.length, WithinAbs(13.675, 1.0e-9));
+    CHECK_THAT(entry.reason, ContainsSubstring("patches 1 and 2") &&
+                                 ContainsSubstring("inside the other's claims"));
+    // The ties rule: equal claimed lengths drop the larger index.
+    auto tie = config;
+    tie.patches[1].provenance.claims = tie.patches[0].provenance.claims;
+    CHECK(OverlapExcludedSubordinate(tie, 0, 1) == 1);
+    CHECK(OverlapExcludedSubordinate(tie, 1, 0) == 1);
+  }
+  // A margins-only pair (decision 244: no claim inside the other's hull) records nothing
+  // even under the ledger.
+  {
+    SpatialSupportBounds margins = b;
+    margins.claims = {Claim{646, {589.95, y, 4.8}, {593.0, y, 4.8}},
+                      Claim{650, {593.0, y, 4.8}, {593.0, -120.0, 4.8}}};
+    const auto margins_only = FindSpatialSupportMarginOverlaps({a, margins}, 3, tolerance);
+    REQUIRE(margins_only.size() == 1);
+    REQUIRE(!margins_only.front().claim_in_hull);
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded;
+    CHECK(FindSpatialClusterPriorityExclusions({a, margins}, config, {}, 3, &margins_only,
+                                               &ledger, &overlap_excluded)
+              .empty());
+    CHECK(overlap_excluded.empty());
+    CHECK(entries.empty());
+  }
+}
+
+// H6a / H6b (operator ApplyContinuationOwnership: the owning boxes leave a gap inside a
+// cell / a box lies strictly inside a cell). By construction every continued support
+// contains the stretch's first end, so every inside interval starts at the cell's begin
+// and neither condition arises from a consistent placement (the code's "verified, not
+// assumed"); the branch is reached here with a support whose claims lie OUTSIDE its own
+// box (an inconsistent input the guard exists for). Without the ledger the abort of record
+// stands; with it the cell is left untouched and ContinuationUnresolved is recorded.
+TEST_CASE("Geometry fallback H6 ContinuationUnresolved: a gap inside a continued cell is "
+          "recorded and the cell left untouched (decisions 1000 (b) / 1001)",
+          "[surfaceresponseoperator][geometryfallback][Serial]")
+{
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  auto Cell = [](int feature, int stretch, double begin, double end)
+  {
+    Patch patch;
+    patch.origin = {0.5 * (begin + end), 0.0, 0.0};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    patch.weight = 1.0;
+    return patch;
+  };
+  const double R = 1.5;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  // Support A: box x in [-3, 1.5], its claim on y = 0 ends at x = 0 (continued along +x).
+  SpatialSupportBounds a;
+  a.patch = 0;
+  a.SetMeshAlignedBox({-3.0, -3.0, -2.0}, {1.5, 3.0, 2.0});
+  a.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}}};
+  // Support B: the same claim end at x = 0 (so the stretch continues it) but a box
+  // x in [2.0, 4.5] that does not contain it: on the cell [0, 3] its inside interval
+  // [2.0, 3.0] leaves the gap (1.5, 2.0) after A's [0, 1.5].
+  SpatialSupportBounds b;
+  b.patch = 1;
+  b.SetMeshAlignedBox({2.0, -3.0, -2.0}, {4.5, 3.0, 2.0});
+  b.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}}};
+  std::vector<Patch> patches = {Cell(4, 0, 0.0, 3.0), Cell(4, 0, 3.0, 4.0)};
+  {
+    auto copy = patches;
+    CHECK_THROWS_WITH(ApplyContinuationOwnership(copy, {a, b}, 3, tolerance, R),
+                      ContainsSubstring("leave a gap inside the cell"));
+  }
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    auto copy = patches;
+    const auto before = copy;
+    const auto ownership =
+        ApplyContinuationOwnership(copy, {a, b}, 3, tolerance, R, &ledger);
+    REQUIRE(entries.size() == 1);
+    CHECK(entries.front().cls == "ContinuationUnresolved");
+    CHECK(entries.front().site == "H6a/ApplyContinuationOwnership:gap-inside-cell");
+    CHECK(entries.front().what == "cell");
+    CHECK(entries.front().features == std::vector<int>{4});
+    CHECK(entries.front().patches == std::vector<int>{0, 0, 1});
+    CHECK_THAT(entries.front().reason, ContainsSubstring("patch 1 leave a gap"));
+    // The cell is untouched (weight, cell, quadrature weight), not owned.
+    CHECK(copy[0].weight == before[0].weight);
+    CHECK(copy[0].longitudinal_cell == before[0].longitudinal_cell);
+    // The next cell [3, 4] lies wholly inside B's box: owned as usual (the fallback is
+    // per cell).
+    REQUIRE(ownership.cells.size() == 1);
+    CHECK(ownership.cells.front().patch == 1);
+  }
 }

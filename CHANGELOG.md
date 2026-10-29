@@ -19,6 +19,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
+    `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
+    hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the
+    identification / placement (no matched feature, every coupon outside the mesh, no metal
+    perimeter, overlapping coupon supports without an owner, a refused placement, an alias
+    key mismatch) become recorded raw fallbacks on a solve run (`SurfaceResponse.
+    Diagnostics.GeometryFallbacks`, `surface-response-geometry-fallbacks.csv`, a LOW
+    CONFIDENCE banner with the raw share per interface type) and a deferred abort after the
+    manifest on the preflight; nothing changes when no site fires.
   - New optional `config["Model"]["Refinement"]["MinElementSize"]`, an element-size floor
     for AMR marking (a length in mesh units; default `0` = off, bitwise the previous
     marking). With a floor, only elements whose volume-based size `h` (the `h` of the mesh

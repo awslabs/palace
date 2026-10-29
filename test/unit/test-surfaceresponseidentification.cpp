@@ -4906,6 +4906,36 @@ TEST_CASE("SurfaceResponseIdentificationLegacyContractAlias",
   CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
                                                claims_alias, *legacy_cluster),
                     ContainsSubstring("(no Box)"));
+  // H7a (geometry fallback, USER decision 1000 (b) / 1001): under a ledger (a solve run)
+  // the digest / claims-key mismatches are recorded as KeyMismatch and the resolver
+  // returns null (the matching pass then leaves the feature Missing); a valid alias
+  // resolves as before with no record; the alias-key invariant (INTERNAL) still aborts.
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    CHECK(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                     wrong_digest, *v3_cluster, &ledger)
+              .is_null());
+    CHECK(ResolveLegacyContractAlias("other-model", other_cluster->signature, alias,
+                                     *v3_cluster, &ledger)
+              .is_null());
+    REQUIRE(entries.size() == 2);
+    CHECK(entries[0].cls == "KeyMismatch");
+    CHECK(entries[0].site == "H7a/ResolveLegacyContractAlias:context-digest");
+    CHECK(entries[0].features == std::vector<int>{v3_cluster->id});
+    CHECK(entries[0].models == std::vector<std::string>{"legacy-model", alias.key});
+    CHECK(entries[1].site == "H7a/ResolveLegacyContractAlias:claims-key");
+    CHECK(entries[1].models.front() == "other-model");
+    CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                                 alias, *legacy_cluster, &ledger),
+                      ContainsSubstring("is not the alias key"));
+    CHECK(!ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature, alias,
+                                      *v3_cluster, &ledger)
+               .is_null());
+    CHECK(entries.size() == 2);
+    GeometryFallbackLedger fail_closed(GeometryFailurePolicy::FAIL_CLOSED, false, entries);
+    CHECK_THROWS_WITH(fail_closed.Enforce("test"), ContainsSubstring("KeyMismatch 2"));
+  }
 
   // The record survives the broadcast form and reaches the manifest's Match entry.
   IdentificationResult copy_source = v3;
