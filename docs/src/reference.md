@@ -116,6 +116,18 @@ as
 \bm{B}_p = -\frac{1}{i\omega}\nabla\times\bm{E}_p + \frac{1}{\omega} \bm{k}_p \times \bm{E}_p \,.
 ```
 
+Likewise, boundary conditions involving the curl of the electric field on the boundary, like
+the [second-order absorbing boundary condition](#Other-boundary-conditions), apply to the
+full field ``\bm{E}``, whose surface curl is given in terms of the periodic field by
+
+```math
+\bm{n}\cdot\nabla\times\bm{E} = e^{-i \bm{k}_p \cdot \bm{x}} \,
+    \bm{n}\cdot(\nabla\times\bm{E}_p - i\bm{k}_p\times\bm{E}_p) \,.
+```
+
+For example, for a plane wave incident on a boundary of the periodic cell, the periodic
+field is uniform on the boundary and the surface curl is given entirely by the second term.
+
 ## Time domain formulation
 
 A time-dependent formulation is also available to compute the electric field response

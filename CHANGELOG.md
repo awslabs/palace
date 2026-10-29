@@ -169,6 +169,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     a strongly lossy coplanar-strip line at 1 GHz, and the power normalization of lossy
     modes wrong. Results are unchanged for lossless modes.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Fixed the second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`)
+    with Floquet periodic boundary conditions (`"FloquetWaveVector"`): the surface curl in
+    its second-order term did not include the Floquet wave vector, so that, for example,
+    the condition reduced to the first-order one for an obliquely incident plane wave.
+    [Issue 1108](https://github.com/awslabs/palace/issues/1108).
   - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
     vector (`"FloquetWaveVector"`), as it already did Floquet ports: the phase shift across
     the periodic boundaries makes the problem non-reciprocal, and the synthesized L⁻¹, R⁻¹,

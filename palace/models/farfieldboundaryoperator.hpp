@@ -58,25 +58,58 @@ public:
   // Add contributions to system matrices from first- or second-order absorbing boundary
   // condition.
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+
+  // Add the second-order absorbing BC term at the frequency ω (see
+  // AddCurlCurlBdrCoefficients with a = β = 1/(2iω)) to the real and imaginary parts of the
+  // system matrix. Without a Floquet wave vector, only the boundary curl-curl coefficients
+  // dfbr, dfbi are modified.
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
-                                     MaterialPropertyCoefficient &dfbi);
+                                     MaterialPropertyCoefficient &dfbi,
+                                     MaterialPropertyCoefficient &frbr,
+                                     MaterialPropertyCoefficient &frbi,
+                                     MaterialPropertyCoefficient *fpbr,
+                                     MaterialPropertyCoefficient *fpbi);
 
   // Complex-ω overload, used by the eigenmode nonlinear solve where the second-order
-  // absorbing-BC coefficient i·(0.5/ω) is evaluated at the genuinely complex eigenvalue
-  // (ω = -i·λ). For real ω (imag = 0) this produces the same (dfbr, dfbi) split as the
-  // double overload (the whole term on dfbi).
+  // absorbing-BC coefficient β = 1/(2iω) is evaluated at the genuinely complex eigenvalue
+  // (ω = -i·λ). For real ω (imag = 0) this produces the same split as the double overload.
   void AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                      MaterialPropertyCoefficient &dfbr,
-                                     MaterialPropertyCoefficient &dfbi);
+                                     MaterialPropertyCoefficient &dfbi,
+                                     MaterialPropertyCoefficient &frbr,
+                                     MaterialPropertyCoefficient &frbi,
+                                     MaterialPropertyCoefficient *fpbr,
+                                     MaterialPropertyCoefficient *fpbi);
 
-  // Add the ω-independent boundary curl-curl coefficient of the second-order absorbing BC
-  // (the μ⁻¹·c₀ normal-projected term that the real-ω stamping scales by 0.5/ω), scaled by
-  // `-coeff`: the negative sign of β = μ⁻¹c₀/(2iω) is applied here, so callers pass a
-  // positive scale. Pulled out so both the real-ω and complex-ω overloads share the
-  // material-coefficient construction. No-op when order < 2 or there are no farfield
-  // attributes.
-  void AddExtraSystemBoundaryCurlCurlBdrCoefficients(double coeff,
-                                                     MaterialPropertyCoefficient &df) const;
+  // With a Floquet wave vector k = ω k₀ which depends on frequency
+  // (FloquetReferenceFrequency), the Floquet terms of the second-order absorbing BC (see
+  // AddCurlCurlBdrCoefficients) scale as iω (rotated boundary mass) and 1 (mixed boundary
+  // curl), and are added with coefficient coeff to the damping and stiffness matrices
+  // instead of the extra system matrix. No-op without a frequency dependent Floquet wave
+  // vector.
+  void AddDampingFloquetBdrCoefficients(double coeff, MaterialPropertyCoefficient &frb);
+  void AddStiffnessFloquetBdrCoefficients(double coeff, MaterialPropertyCoefficient &fpb);
+
+  // Add a·(μ⁻¹c₀ n·∇ₖ×u, n·∇₋ₖ×v) on the absorbing boundaries for the complex scalar a,
+  // with μ⁻¹c₀ normal projected. For a = β = 1/(2iω), this is the second-order absorbing BC
+  // term (see docs/src/reference.md). With the Floquet wave vector k, the surface curl of
+  // the field u exp(-i k·x) is exp(-i k·x) n·∇ₖ×u, where n·∇ₖ×u = n·∇×u - i n·(k x u),
+  // which splits the Hermitian form into
+  //   (μ⁻¹c₀ n·∇ₖ×u, n·∇₋ₖ×v) = (μ⁻¹c₀ n·∇×u, n·∇×v) + (μ⁻¹c₀ k kᵀ n x u, n x v)
+  //       + i [(μ⁻¹c₀ [k x]ᵀ ∇×u, v) - (μ⁻¹c₀ [k x] u, ∇×v)],
+  // with the boundary curl ∇×u = (n·∇×u) n of the tangential trace. The boundary curl-curl
+  // term is added to dfr, dfi, the rotated boundary mass term
+  // (RotatedVectorFEMassIntegrator) to frr, fri, and the mixed boundary curl terms
+  // (transposed MixedVectorCurlIntegrator and MixedVectorWeakCurlIntegrator) to fpr, fpi,
+  // unless null. The Floquet terms are only included with a Floquet wave vector which does
+  // not depend on frequency (see AddDampingFloquetBdrCoefficients). No-op when order < 2 or
+  // there are no farfield attributes.
+  void AddCurlCurlBdrCoefficients(std::complex<double> a, MaterialPropertyCoefficient &dfr,
+                                  MaterialPropertyCoefficient &dfi,
+                                  MaterialPropertyCoefficient &frr,
+                                  MaterialPropertyCoefficient &fri,
+                                  MaterialPropertyCoefficient *fpr,
+                                  MaterialPropertyCoefficient *fpi) const;
 };
 
 }  // namespace palace
