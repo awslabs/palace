@@ -1535,8 +1535,11 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 // cell) and every Chain: false cell of a partially inside stretch (984 Q1: Chain: true
 // pieces only; the decision-553 domain drop stays with wholly inside stretches) are left
 // untouched and RECORDED (`partial_stretch_subcells`,
-// `partial_stretch_foreign_edge_cells`). Every cell the rule owns or clips carries
-// `partial_stretch`. Keys, boxes and the identification are untouched (a placement rule);
+// `partial_stretch_foreign_edge_cells`). Every Chain: true cell some PARTIAL pair contains
+// carries `partial_stretch`: the cells the rule newly owns or re-cuts and the cells a
+// wholly inside pair already owned that a partial pair's box also contains (owned as
+// before, the owned length split equally among the owners: re-attributed, not newly owned).
+// Keys, boxes and the identification are untouched (a placement rule);
 // the geometry cache (version 20) stores the unplaced patches and this pass runs on every
 // load, so no cache version change.
 struct ContinuationOwnership
@@ -1557,9 +1560,11 @@ struct ContinuationOwnership
     // The cell is owned as a ForeignContextEdge cell (decision 553 sub-class (ii)), not
     // as the continuation of a claim.
     bool foreign_context = false;
-    // The cell belongs to a stretch PARTIALLY inside the owner's box (decision 983 (1) /
-    // 984, OI-T5-PARTIAL-STRETCH-CONTEXT): owned wholly (a cell inside the box) or clipped
-    // at the box face (owned_length < cell_length); the manifest leaf per cut.
+    // The cell lies inside the box of an owner reached through a stretch PARTIALLY inside
+    // it (decision 983 (1) / 984, OI-T5-PARTIAL-STRETCH-CONTEXT), read on the current cell:
+    // owned wholly (a cell inside the box; newly, or already owned through a wholly inside
+    // pair and re-attributed) or clipped at the box face (owned_length < cell_length); the
+    // manifest leaf per cut.
     bool partial_stretch = false;
   };
   std::vector<Cell> cells;  // in patch order
@@ -1579,10 +1584,13 @@ struct ContinuationOwnership
   double foreign_excluded_length = 0.0;
   double foreign_context_length = 0.0;  // the ForeignContextEdge part of owned_length
   int foreign_context_cells = 0;
-  // The partial-stretch rule (decision 984): the cells it owned or clipped (listed under
-  // `cells` with partial_stretch), and the two recorded-only classes - a straddling cell
-  // whose inside interval touches neither end (OI-T5-PARTIAL-STRETCH-SUBCELL) and every
-  // Chain: false cell of a partially inside stretch, inside the box or straddling a face
+  // The partial-stretch rule (decision 984): the Chain: true cells some partial pair
+  // contains (listed under `cells` with partial_stretch: newly owned, re-cut, or already
+  // owned through a wholly inside pair and re-attributed - the counters bound the rule's
+  // physical effect from above, the newly owned length is the patches CSV's changed rows),
+  // and the two recorded-only classes - a straddling cell whose inside interval touches
+  // neither end (OI-T5-PARTIAL-STRETCH-SUBCELL) and every Chain: false cell of a partially
+  // inside stretch, inside the box or straddling a face
   // (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE; 984 Q1: the rule reaches Chain: true pieces only)
   // - left untouched.
   struct PartialStretchCell
@@ -1592,9 +1600,10 @@ struct ContinuationOwnership
     int stretch = -1;
     std::vector<std::size_t> owners;  // spatial patches whose box the cell enters
     double cell_length = 0.0;
-    double inside_length = 0.0;  // the inside interval's union (0 when not read)
+    // The union of the owners' inside intervals (overlaps merged, a gap not counted).
+    double inside_length = 0.0;
   };
-  int partial_stretch_cells = 0;          // owned or clipped by the partial rule
+  int partial_stretch_cells = 0;  // some partial pair contains them: owned or re-attributed
   int partial_stretch_clipped_cells = 0;  // of those, clipped at a box face
   double partial_stretch_owned_length = 0.0;
   std::vector<PartialStretchCell> partial_stretch_subcells;  // in patch order

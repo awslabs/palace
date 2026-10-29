@@ -19491,6 +19491,33 @@ CellContainment ClassifyCellContainment(const ResponsePatchData &patch,
   containment.whole = containment.at_begin && containment.at_end;
   return containment;
 }
+// The length of the union of inside intervals (sorted by begin, overlaps merged): the
+// recorded inside length of a cell several boxes enter (a span would count a gap between
+// two disjoint intervals).
+double InsideIntervalsUnionLength(std::vector<std::array<double, 2>> intervals)
+{
+  std::sort(intervals.begin(), intervals.end());
+  double length = 0.0;
+  std::optional<std::array<double, 2>> merged;
+  for (const auto &interval : intervals)
+  {
+    if (merged && interval[0] <= (*merged)[1])
+    {
+      (*merged)[1] = std::max((*merged)[1], interval[1]);
+      continue;
+    }
+    if (merged)
+    {
+      length += (*merged)[1] - (*merged)[0];
+    }
+    merged = interval;
+  }
+  if (merged)
+  {
+    length += (*merged)[1] - (*merged)[0];
+  }
+  return length;
+}
 // A stretch enters a support's box when some cell has an inside interval (a wholly inside
 // stretch enters it; a stretch touching a face from outside does not).
 bool StretchEntersBox(const TranslationalStretch &stretch,
@@ -20500,8 +20527,12 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
   // the box or straddling a face, keeps its weight and its domain correction (one scalar
   // domain weight, no exact partial analogue) and is recorded
   // (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, 984 Q3) - the decision-553 domain drop stays with
-  // the cells of WHOLLY inside stretches; every cell the partial rule owns or clips carries
-  // `partial_stretch` (the manifest leaf per cut).
+  // the cells of WHOLLY inside stretches. Every Chain: true cell some PARTIAL pair contains
+  // carries `partial_stretch` (the manifest leaf per cut): the cells the partial rule newly
+  // owns or re-cuts AND the cells a wholly inside pair already owned that a partial pair's
+  // box also contains (owned as before, the owned length split equally among every owner:
+  // re-attributed, not newly owned), so the PartialStretch counters bound the rule's
+  // physical effect from above; the newly owned length is the patches CSV's changed rows.
   {
     struct CellTreatment
     {
@@ -20510,7 +20541,6 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       // (spatial patch, support index, the pair is a partially inside stretch) of the
       // supports of `cls`, ascending by spatial patch.
       std::vector<std::tuple<std::size_t, std::size_t, bool>> owners;
-      bool partial = false;  // some owner's stretch pair is a partially inside one
     };
     std::map<std::size_t, CellTreatment> treatments;  // by patch index (ascending)
     for (const auto &context : foreign_context)
@@ -20529,14 +20559,12 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
         if (cell_class == treatment.cls)
         {
           treatment.owners.push_back(owner);
-          treatment.partial = treatment.partial || context.partial;
         }
         else if (treatment.cls == ForeignContextCellClass::NONE ||
                  cell_class == ForeignContextCellClass::CHAIN_EDGE)
         {
           treatment.cls = cell_class;  // the stronger class replaces the weaker
           treatment.owners = {owner};
-          treatment.partial = context.partial;
         }
       }
     }
@@ -20553,31 +20581,38 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       treatment.owners.erase(std::unique(treatment.owners.begin(), treatment.owners.end()),
                              treatment.owners.end());
       const auto &[feature, stretch] = treatment.key;
-      // The owners' inside intervals on the current cell; an owner whose box the cell has
-      // left (a continuation clip) owns nothing of it.
+      // The owners' inside intervals on the current cell (parallel to `inside_owners`); an
+      // owner whose box the cell has left (a continuation clip) owns nothing of it.
       struct InsideOwner
       {
         std::size_t spatial_patch = 0;
         bool partial = false;
-        CellContainment containment;
       };
       std::vector<InsideOwner> inside_owners;
+      std::vector<std::array<double, 2>> inside_intervals;
       bool whole = false;
+      // Some owner that still contains part of the cell reaches it through a partially
+      // inside stretch pair (the `partial_stretch` flag; an owner the cell has left is not
+      // read).
+      bool partial = false;
       // The Chain: false (ForeignEdge) treatment stays the decision-553 one: an owner whose
       // stretch pair lies WHOLLY inside the box (decision 984 Q1: the partial rule reaches
       // Chain: true pieces only; a partial pair's Chain: false cells are recorded).
       bool whole_by_wholly_inside_pair = false;
       for (const auto &[spatial_patch, support, pair_partial] : treatment.owners)
       {
-        auto containment = ClassifyCellContainment(patch, supports[support], dimension);
+        const auto containment =
+            ClassifyCellContainment(patch, supports[support], dimension);
         if (!containment.inside)
         {
           continue;
         }
         whole = whole || containment.whole;
+        partial = partial || pair_partial;
         whole_by_wholly_inside_pair =
             whole_by_wholly_inside_pair || (containment.whole && !pair_partial);
-        inside_owners.push_back({spatial_patch, pair_partial, std::move(containment)});
+        inside_intervals.push_back(*containment.inside);
+        inside_owners.push_back({spatial_patch, pair_partial});
       }
       if (inside_owners.empty())
       {
@@ -20587,16 +20622,14 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       {
         // The owned interval: the whole cell when one owner contains it (the decision-559
         // form: every owner of the class listed, the length split equally), else the union
-        // of the owners' inside intervals, which must be contiguous and touch a cell end.
+        // of the owners' inside intervals, which must be contiguous and touch a cell end; a
+        // union covering the whole cell (two straddling owners from opposite faces) owns it
+        // wholly.
         const double scale = std::max(1.0, cell_length);
         double removed_lo = c0, removed_hi = c1;
         if (!whole)
         {
-          std::vector<std::array<double, 2>> sorted_inside;
-          for (const auto &owner : inside_owners)
-          {
-            sorted_inside.push_back(*owner.containment.inside);
-          }
+          std::vector<std::array<double, 2>> sorted_inside = inside_intervals;
           std::sort(sorted_inside.begin(), sorted_inside.end());
           removed_lo = sorted_inside.front()[0];
           removed_hi = sorted_inside.front()[1];
@@ -20611,18 +20644,20 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
           if (!contiguous || !(at_begin || at_end))
           {
             // OI-T5-PARTIAL-STRETCH-SUBCELL (decision 984 Q2): the boxes' inside intervals
-            // lie strictly inside the cell (or leave a gap): untouched, recorded.
+            // lie strictly inside the cell (or leave a gap): untouched, recorded with the
+            // union of the inside intervals.
             std::vector<std::size_t> owner_patches;
             for (const auto &owner : inside_owners)
             {
               owner_patches.push_back(owner.spatial_patch);
             }
-            ownership.partial_stretch_subcells.push_back({patch_idx, feature, stretch,
-                                                          owner_patches, cell_length,
-                                                          removed_hi - removed_lo});
+            ownership.partial_stretch_subcells.push_back(
+                {patch_idx, feature, stretch, owner_patches, cell_length,
+                 InsideIntervalsUnionLength(inside_intervals)});
             ownership.partial_stretch_subcell_length += cell_length;
             continue;
           }
+          whole = contiguous && at_begin && at_end;
         }
         const double owned_length = whole ? cell_length : removed_hi - removed_lo;
         const double kept_lo =
@@ -20636,7 +20671,7 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
         cell.cell_length = cell_length;
         cell.owned_length = owned_length;
         cell.foreign_context = true;
-        cell.partial_stretch = treatment.partial;
+        cell.partial_stretch = partial;
         // The owned length split equally between the owners, the own-edge interval in
         // consecutive pieces (one owner takes the whole owned interval).
         const std::size_t n = inside_owners.size();
@@ -20689,17 +20724,13 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
         // straddling a face) keeps its weight AND its domain correction; recorded with the
         // union of its inside intervals.
         std::vector<std::size_t> owner_patches;
-        double inside_lo = std::numeric_limits<double>::infinity(),
-               inside_hi = -std::numeric_limits<double>::infinity();
         for (const auto &owner : inside_owners)
         {
           owner_patches.push_back(owner.spatial_patch);
-          inside_lo = std::min(inside_lo, (*owner.containment.inside)[0]);
-          inside_hi = std::max(inside_hi, (*owner.containment.inside)[1]);
         }
-        ownership.partial_stretch_foreign_edge_cells.push_back({patch_idx, feature, stretch,
-                                                                owner_patches, cell_length,
-                                                                inside_hi - inside_lo});
+        ownership.partial_stretch_foreign_edge_cells.push_back(
+            {patch_idx, feature, stretch, owner_patches, cell_length,
+             InsideIntervalsUnionLength(inside_intervals)});
         ownership.partial_stretch_foreign_edge_length += cell_length;
       }
       else if (patch.domain_weight > 0.0)
@@ -21400,10 +21431,14 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
          "a stretch partially inside a contract-3 coupon's box that lie on its Chain: true "
          "context pieces are owned (inside the box) or re-cut at the box face (straddling "
          "it; the continuation ownership's clip), listed under OwnedCells with "
-         "PartialStretch: true; a straddling cell whose inside interval touches neither "
+         "PartialStretch: true. Cells / ClippedCells / OwnedLength count every Chain: true "
+         "cell some partial pair contains: the cells newly owned or re-cut by this rule "
+         "and the cells a wholly inside pair already owned that a partial pair's box also "
+         "contains (re-attributed, the owned length split equally among the owners), so "
+         "they bound the rule's effect from above; the newly owned length is the patches "
+         "CSV's changed rows. A straddling cell whose inside interval touches neither "
          "cell end (OI-T5-PARTIAL-STRETCH-SUBCELL) and every Chain: false (ForeignEdge) "
-         "cell "
-         "of a partially inside stretch, inside the box or straddling a face "
+         "cell of a partially inside stretch, inside the box or straddling a face "
          "(OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE; the decision-553 domain drop stays with the "
          "cells of wholly inside stretches) are left untouched and listed here. Lengths in "
          "mesh units"}};
@@ -21534,8 +21569,9 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
     const auto &partial = diagnostics["PartialStretch"];
     partial_stretch = fmt::format(
         "  partial-stretch ownership (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT): {:d} "
-        "cell(s) of stretches partially inside a coupon's box owned on its context edges "
-        "({:d} re-cut at a box face; {:.6e} mesh units); recorded untouched: {:d} "
+        "context-edge cell(s) some partially inside stretch pair contains, owned or "
+        "re-attributed ({:d} re-cut at a box face; {:.6e} mesh units; the newly owned "
+        "length is the patches CSV's changed rows); recorded untouched: {:d} "
         "subcell(s) (OI-T5-PARTIAL-STRETCH-SUBCELL, {:.6e} mesh units), {:d} ForeignEdge "
         "cell(s) of partial stretches (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, {:.6e} mesh "
         "units)\n",
