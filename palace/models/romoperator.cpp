@@ -1485,8 +1485,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         {
           continue;
         }
-        const double kn = space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
-        Ar += std::complex<double>(kn, 0.0) * Mp_r;
+        const std::complex<double> kn =
+            space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
+        Ar += kn * Mp_r;
       }
 
       // Add the low-rank wave-port modal correction Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ,
@@ -1608,15 +1609,32 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   auto dense_omegas = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_dense);
 
   // Sample kₙ,p on the fit grid. Each call triggers (or hits the cache of)
-  // WavePortData::Initialize. Cheap because the cross-section EVP is small.
+  // WavePortData::Initialize. Cheap because the cross-section EVP is small. The synthesized
+  // port load models the port line as lossless: only the real (propagating) part of kₙ is
+  // fit, while the full and reduced-order models include the attenuation Im{kₙ} of a lossy
+  // port mode in the wave-port boundary condition.
   Eigen::VectorXcd y_fit(n_fit);
+  double max_atten = 0.0;
   for (int i = 0; i < n_fit; i++)
   {
-    y_fit(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
+    const std::complex<double> kn =
+        space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
+    y_fit(i) = kn.real();
+    if (std::abs(kn) > 0.0)
+    {
+      max_atten = std::max(max_atten, std::abs(kn.imag()) / std::abs(kn));
+    }
+  }
+  if (max_atten > 1.0e-3)
+  {
+    Mpi::Warning("Wave port {:d}: circuit synthesis models the port line as lossless, "
+                 "neglecting the attenuation of the lossy port mode (|Im{{kₙ}}| / |kₙ| up "
+                 "to {:.3e} in the band)!\n",
+                 port_idx, max_atten);
   }
   // LSQ polynomial fit at order 2 in ω. Higher orders cannot be absorbed into the
-  // K + iωC − ω²M synthesis structure (cf. design notes). kₙ is real, so the complex
-  // LSQ returns real coefficients (imaginary parts exactly zero).
+  // K + iωC − ω²M synthesis structure (cf. design notes). The samples are real, so the
+  // complex LSQ returns real coefficients (imaginary parts exactly zero).
   Eigen::Vector3cd coeffs = FitQuadratic(fit_omegas, y_fit);
   fit.alpha0 = coeffs(0).real();
   fit.alpha1 = coeffs(1).real();
@@ -1629,7 +1647,7 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   for (int i = 0; i < n_dense; i++)
   {
     const double w = dense_omegas[i];
-    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
+    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w).real();
     // fit.aux is still empty here, so EvaluateWavePortKnFit returns the bare polynomial.
     const double poly = EvaluateWavePortKnFit(fit, w);
     max_abs_truth = std::max(max_abs_truth, std::abs(truth));
@@ -1691,7 +1709,7 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   for (int i = 0; i < n_dense; i++)
   {
     const double w = dense_omegas[i];
-    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
+    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w).real();
     max_rel = std::max(max_rel, std::abs(EvaluateWavePortKnFit(fit, w) - truth));
   }
   fit.rel_err_augmented = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
@@ -3028,13 +3046,17 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     {
       const double omega = sweep_omega_samples[fi];
       // Source map G forces the reduced circuit from an incident wave; observation map H
-      // reads the outgoing wave off the circuit state. Aux rows carry no port coupling.
+      // reads the outgoing wave off the circuit state, for a wave port with the
+      // unconjugated modal reaction of WavePortData::GetSParameter (relative to the
+      // reaction R of the mode, R = -1 for a lossless mode). Aux rows carry no port
+      // coupling.
       Eigen::MatrixXcd &G = coupled_g[fi];
       Eigen::MatrixXcd &H = coupled_h[fi];
       for (std::size_t p = 0; p < n_ports; p++)
       {
         Eigen::VectorXcd cvec = Eigen::VectorXcd::Zero(nr);
         double y_ref = unit_ohm_inv;  // wave-port modal (unit-power) reference
+        std::complex<double> h_scale = 1.0;
         if (coupled_ports[p].is_wave)
         {
           auto s = space_op.GetWavePortModeVector(coupled_ports[p].idx, omega);
@@ -3042,6 +3064,10 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
           // kn0 is current (GetWavePortModeVector just Initialized at omega).
           const auto &pd = space_op.GetWavePortOp().GetPort(coupled_ports[p].idx);
           coupled_deembed[fi][p] = std::exp(1i * pd.kn0 * pd.d_offset);
+          if (std::abs(pd.modal_reaction) > 0.0)
+          {
+            h_scale = -1.0 / pd.modal_reaction;
+          }
         }
         else
         {
@@ -3062,7 +3088,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
             d.head(nr).cast<std::complex<double>>().cwiseProduct(cvec);
         const double root_y = std::sqrt(y_ref);
         G.col(p).head(nr) = -2.0 * root_y * dsv;
-        H.row(p).head(nr) = -root_y * dsv.conjugate().transpose();
+        H.row(p).head(nr) = -root_y * h_scale * dsv.transpose();
       }
       const std::complex<double> s_phys = 1i * omega * omega0;
       Eigen::MatrixXcd Y = (*matrices.L_inv) / s_phys + s_phys * (*matrices.C);

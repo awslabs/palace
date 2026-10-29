@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -345,6 +346,100 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
                                    Catch::Matchers::WithinAbs(rc.data[r], atol));
       }
     }
+  };
+}
+
+// S-parameter check for a driven run on a uniform line between two wave ports, whose port
+// modes are lossy (complex k_n). Reference-free guards:
+//   (1) Matched ports, |S_jj| <= atol: the port boundary condition and the modal projection
+//       must use the complex k_n and the unconjugated reaction of the lossy mode. With the
+//       real part of k_n in the boundary condition and the conjugated (power) projection,
+//       a matched lossy line shows a spurious reflection of the order of |Im{k_n}| /
+//       Re{k_n}.
+//   (2) Reciprocity, |S_ij - S_ji| <= atol, and passivity, Sum_i |S_ij|^2 <= 1.
+// The transmission columns are also diffed against the reference data at the case
+// tolerances, while the reflection columns, at the level of the discretization error, are
+// only checked by (1).
+palace::test::CustomCheck TestWavePortMatchedLine(double atol,
+                                                  palace::test::RegressionOptions opts)
+{
+  return [atol, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
+  {
+    // Complex S[i][j] by row from the "|S[i][j]| (dB)" and "arg(S[i][j]) (deg.)" columns.
+    std::map<std::pair<int, int>, std::vector<std::complex<double>>> S;
+    for (auto &c : actual)
+    {
+      const std::string &hdr = c.header_text;
+      int i = 0, j = 0;
+      if (std::sscanf(hdr.c_str(), "|S[%d][%d]| (dB)", &i, &j) != 2)
+      {
+        continue;
+      }
+      const std::string arg_hdr =
+          "arg(S[" + std::to_string(i) + "][" + std::to_string(j) + "]) (deg.)";
+      const palace::Column *arg = nullptr;
+      for (auto &c_arg : actual)
+      {
+        if (c_arg.header_text == arg_hdr)
+        {
+          arg = &c_arg;
+        }
+      }
+      REQUIRE(arg != nullptr);
+      auto &v = S[{i, j}];
+      for (std::size_t r = 0; r < c.data.size(); r++)
+      {
+        v.push_back(std::polar(std::pow(10.0, c.data[r] / 20.0),
+                               arg->data[r] * std::numbers::pi / 180.0));
+      }
+    }
+    REQUIRE(!S.empty());
+    std::vector<std::string> reflection_columns;
+    for (const auto &[ij, v] : S)
+    {
+      const auto [i, j] = ij;
+      for (std::size_t r = 0; r < v.size(); r++)
+      {
+        INFO("row " << r + 1 << ": S[" << i << "][" << j << "] = " << v[r]);
+        if (i == j)
+        {
+          CHECK(std::abs(v[r]) <= atol);
+        }
+        else if (S.contains({j, i}))
+        {
+          CHECK(std::abs(v[r] - S.at({j, i})[r]) <= atol);
+        }
+      }
+      if (i == j)
+      {
+        reflection_columns.push_back("S[" + std::to_string(i) + "][" + std::to_string(j) +
+                                     "]");
+      }
+    }
+    std::map<int, std::vector<double>> power;
+    for (const auto &[ij, v] : S)
+    {
+      auto &p = power[ij.second];
+      p.resize(v.size(), 0.0);
+      for (std::size_t r = 0; r < v.size(); r++)
+      {
+        p[r] += std::norm(v[r]);
+      }
+    }
+    for (const auto &[j, p] : power)
+    {
+      for (std::size_t r = 0; r < p.size(); r++)
+      {
+        INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
+                    << "]|^2 = " << p[r]);
+        CHECK(p[r] <= 1.0);
+      }
+    }
+    auto opts_tx = opts;
+    opts_tx.excluded_columns.insert(opts_tx.excluded_columns.end(),
+                                    reflection_columns.begin(), reflection_columns.end());
+    palace::test::CompareCSVFiles(actual, reference, opts_tx);
   };
 }
 
@@ -1569,6 +1664,30 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   // Wave port 2 at its own excitation: Z[2][2] against Z_PV (1 + S22) / (1 - S22).
   opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(2, opts);
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
+                                  opts);
+}
+
+// Uniform coaxial line of finite-conductivity conductors between two wave ports, whose port
+// modes are lossy (|Im{k_n}| / Re{k_n} = 0.04 to 0.065 in the band). The ports are matched
+// to the line, so S_11 = S_22 = 0 up to the discretization error (below 1e-5 here), where
+// the real part of k_n in the port boundary condition and the conjugated projection gave
+// |S_11| = 0.07 to 0.12, and S_21 = S_12 = exp(-i k_n L) (diffed against the reference).
+// The wave port characteristic impedance Z_PV = |V|^2 / P* is complex for the lossy mode
+// (Im{Z_PV} = -3.5 to -2.1 Ohm), and the total-field input impedance of the excited port
+// must match Z_PV (1 + S11) / (1 - S11) up to the discretization error of the total-field
+// power, which reaches 1.3% at 15 GHz (a real Z_PV would be off by 5%).
+TEST_CASE("coaxial_wave_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestWavePortMatchedLine(1.0e-4, opts);
+  auto opts_z = opts;
+  opts_z.rtol = 2.0e-2;
+  opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(1, opts_z);
+  palace::test::RunRegressionCase("coaxial", "wave_conductivity.json", "wave_conductivity",
                                   opts);
 }
 
