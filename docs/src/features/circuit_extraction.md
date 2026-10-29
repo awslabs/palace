@@ -151,8 +151,9 @@ There are several constraints and considerations for using this feature:
     Robin contribution is included in the adaptive sweep but not in the synthesized circuit pencil.
   - A nonzero `"FloquetWaveVector"` in
     [`config["Boundaries"]["Periodic"]`](../config/reference.md#config-boundaries-periodic) is not
-    supported with circuit synthesis either. The phase shift across the periodic boundaries makes
-    the problem non-reciprocal, so that the synthesized ``\widehat{\bm{L}}^{-1}``,
+    supported with circuit synthesis either. Its Floquet terms make the system matrices Hermitian
+    rather than complex symmetric (the transpose of the problem for the wave vector ``\bm{k}`` is
+    the one for ``-\bm{k}``), so that the synthesized ``\widehat{\bm{L}}^{-1}``,
     ``\widehat{\bm{R}}^{-1}``, and ``\widehat{\bm{C}}`` matrices would not be symmetric, as those of a
     network of resistors, inductors, and capacitors are. Periodic boundaries without a phase shift
     are supported.
