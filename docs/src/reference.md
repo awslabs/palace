@@ -1406,7 +1406,15 @@ unplaced patches with the provenance this needs, the corner-arm trim records and
 uncovered portions; older caches are refused. The placed cells
 are reported under `Diagnostics.ContinuationOwnership` (per cell, per coupon) and the
 stretch record `Diagnostics.TranslationalStretchesInsideSpatialSupport` carries the owned
-length per record. Two cluster boxes may overlap in their margins only (no claim of either
+length per record. A stretch that enters a coupon's box on one of its `Chain: true` context
+edges without lying wholly inside it (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT) is judged
+per cell on the cell's inside interval: its cells inside the box are owned, a cell straddling
+a box face is re-cut at the face like a continuing cell (the inside part owned, the outside
+part kept), a cell outside stays; such stretches are recorded under
+`Diagnostics.TranslationalStretchesPartiallyInsideSpatialSupport` (only when present) and
+their owned cells carry `PartialStretch: true`; a straddling cell with the box strictly
+inside it and a straddling cell on a `Chain: false` piece are recorded and left untouched.
+Two cluster boxes may overlap in their margins only (no claim of either
 lies inside the other's claims); the edge length corrected by both coupons there — one
 coupon's continuation over the other's claims or over the other's continuation — is
 recorded under `Diagnostics.SpatialSupportMarginOverlaps` with a warning and cannot be
