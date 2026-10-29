@@ -1,7 +1,6 @@
 {
   "Problem": { "Type": "Driven", "Output": "postpro/offline" },
-  "Model": { "Mesh": "mesh/box.mesh", "L0": 1.0e-3,
-    "CrackInternalBoundaryElements": false },
+  "Model": { "Mesh": "mesh/box.mesh", "L0": 1.0e-3 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permittivity": 4.0, "LossTan": 1.0e-3 },
     { "Attributes": [2], "Permittivity": 2.0 } ],

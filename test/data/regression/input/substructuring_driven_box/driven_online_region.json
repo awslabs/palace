@@ -1,7 +1,6 @@
 {
   "Problem": { "Type": "Driven", "Output": "postpro/online_region" },
-  "Model": { "Mesh": "environment_model_region.mesh", "L0": 1.0e-3,
-    "CrackInternalBoundaryElements": false },
+  "Model": { "Mesh": "environment_model_region.mesh", "L0": 1.0e-3 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permittivity": 4.5, "LossTan": 1.0e-3 },
     { "Attributes": [2], "Permittivity": 2.0 } ],
