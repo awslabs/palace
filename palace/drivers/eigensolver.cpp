@@ -255,11 +255,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           auto pep_linear = std::make_unique<slepc::SlepcPEPLinearSolver>(
               space_op.GetComm(), iodata.problem.verbose);
           if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
+              iodata.solver.eigenmode.refine_nonlinear &&
               space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
           {
             // The seed solve from one start can miss one mode of a degenerate pair, which
             // Quasi-Newton then replaces by another mode: solve once more from a second
-            // random start (another seed than the first start's).
+            // random start (another seed than the first start's). The pool of both solves
+            // is only for Quasi-Newton: without refinement, the seeds are the output.
             ComplexVector v;
             space_op.GetRandomInitialVector(v, 1);
             pep_linear->SetSecondInitialSpace(v);

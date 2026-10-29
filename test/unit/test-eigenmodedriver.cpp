@@ -232,15 +232,40 @@ TEST_CASE_METHOD(test::SharedTempDir,
   const auto seed = RunEigenmode(config, temp_dir, "seed");
   REQUIRE(seed.f.size() >= 6);
   const auto scale = std::sqrt(eps_inf / LorentzPermittivity(8.0));
-  for (const auto f : seed.f)
+  // Each seed is a rescaled constant mode, and the output is the eigenpairs of one seed
+  // solve, in order of frequency: no constant mode appears more often than its
+  // multiplicity, as it could in the pool of two seed solves used for Quasi-Newton.
+  std::vector<int> count(constant.f.size(), 0);
+  for (std::size_t i = 0; i < seed.f.size(); i++)
   {
-    CAPTURE(f);
-    double rel = std::numeric_limits<double>::infinity();
-    for (const auto f_h : constant.f)
+    const auto f = seed.f[i];
+    CAPTURE(i, f);
+    if (i > 0)
     {
-      rel = std::min(rel, std::abs(f - f_h * scale) / std::abs(f_h * scale));
+      CHECK(f.real() >= seed.f[i - 1].real());
+    }
+    double rel = std::numeric_limits<double>::infinity();
+    for (std::size_t h = 0; h < constant.f.size(); h++)
+    {
+      const auto ref = constant.f[h] * scale;
+      rel = std::min(rel, std::abs(f - ref) / std::abs(ref));
+      if (std::abs(f - ref) <= 1.0e-7 * std::abs(ref))
+      {
+        count[h]++;
+      }
     }
     CHECK(rel <= 1.0e-7);
+  }
+  for (std::size_t h = 0; h < constant.f.size(); h++)
+  {
+    // The multiplicity of f_h among the constant modes (whose list holds each copy).
+    int multiplicity = 0;
+    for (const auto g : constant.f)
+    {
+      multiplicity += (std::abs(g - constant.f[h]) <= 1.0e-7 * std::abs(constant.f[h]));
+    }
+    CAPTURE(constant.f[h], multiplicity);
+    CHECK(count[h] <= multiplicity);
   }
 }
 
