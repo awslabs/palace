@@ -1413,7 +1413,8 @@ a box face is re-cut at the face like a continuing cell (the inside part owned, 
 part kept), a cell outside stays; such stretches are recorded under
 `Diagnostics.TranslationalStretchesPartiallyInsideSpatialSupport` (only when present) and
 their owned cells carry `PartialStretch: true`; a straddling cell with the box strictly
-inside it and a straddling cell on a `Chain: false` piece are recorded and left untouched.
+inside it and the cells of such a stretch on a `Chain: false` piece are recorded and left
+untouched.
 Two cluster boxes may overlap in their margins only (no claim of either
 lies inside the other's claims); the edge length corrected by both coupons there — one
 coupon's continuation over the other's claims or over the other's continuation — is

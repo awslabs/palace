@@ -1129,11 +1129,12 @@ smaller endpoint.
    boxes owns the UNION of the inside intervals once (contiguous and touching a cell end),
    every owner listed, the owned length split equally. Recorded and left untouched: a
    straddling cell whose inside interval touches NEITHER cell end — the box strictly inside
-   one coarse cell (OI-T5-PARTIAL-STRETCH-SUBCELL, decision 984 Q2: never an abort) — and a
-   `Chain: false` cell straddling a face, whose single scalar `domain_weight` has no exact
-   partial analogue (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, 984 Q3 (a)); a wholly inside
-   `Chain: false` cell drops its domain correction as before. Claims stay with the
-   continuation criterion (decision 252: a parallel stretch alongside a claim is not owned).
+   one coarse cell (OI-T5-PARTIAL-STRETCH-SUBCELL, decision 984 Q2: never an abort) — and
+   every `Chain: false` cell of a partially inside stretch, inside the box or straddling a
+   face (984 Q1: the rule reaches `Chain: true` pieces only; a single scalar `domain_weight`
+   has no exact partial analogue; OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, 984 Q3 (a)); the
+   decision-553 domain drop stays with the cells of WHOLLY inside stretches. Claims stay
+   with the continuation criterion (decision 252: a parallel stretch alongside a claim is not owned).
    Records: the NEW `Diagnostics.TranslationalStretchesPartiallyInsideSpatialSupport`
    (`FindTranslationalStretchPartiallyInsideSpatialSupport`, read on the intact patches like
    the wholly-inside records; written ONLY when it has records: per (stretch, support) the
@@ -1142,7 +1143,7 @@ smaller endpoint.
    with a warning line per record); every `ContinuationOwnership.OwnedCells` entry the rule
    produced carries `PartialStretch: true` (the manifest leaf per cut; absent elsewhere) and
    a `ContinuationOwnership.PartialStretch` block (`Cells`, `ClippedCells`, `OwnedLength`,
-   the `SubcellRecords` and `ForeignEdgeStraddlingRecords` with their lengths) appears only
+   the `SubcellRecords` and `ForeignEdgeRecords` with their lengths) appears only
    when the rule owned, clipped or recorded a cell, so a placement without a partial stretch
    keeps its manifest bytes; the existing leaves and `Rule` strings are unchanged. A
    placement rule, not an identification rule: keys, signatures, boxes, `Match`,
