@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 #include "linalg/operator.hpp"
@@ -94,6 +95,15 @@ public:
   double GetElectricFieldEnergy(const GridFunction &E, double omega,
                                 ElectricEnergy type = ElectricEnergy::STORED) const;
   double GetMagneticFieldEnergy(const GridFunction &B) const;
+
+  // The STORED (if HasStoredElectricFieldEnergy()) and MATERIAL electric energies in the
+  // entire domain, from one set of field products.
+  struct ElectricFieldEnergies
+  {
+    std::optional<double> stored;
+    double material;
+  };
+  ElectricFieldEnergies GetElectricFieldEnergies(const GridFunction &E, double omega) const;
 
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.

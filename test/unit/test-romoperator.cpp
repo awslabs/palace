@@ -196,6 +196,7 @@ TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
 }
 
 // TODO: Do some more basic RomOperator Ctor Checks
+
 TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]")
 {
   // With a conductivity boundary, the first-frequency self-check sees only the boundary
@@ -663,6 +664,8 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
   }
 }
 
+// Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary
+// inner-product weight and port overlap. Works with a simple 1x1x1 Cube. This is a serial
 // test as hex mesh only has a single element.
 TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube111",
                  "[romoperator][Serial]")

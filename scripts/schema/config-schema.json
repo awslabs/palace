@@ -2357,7 +2357,7 @@
       "oneOf": [
         {
           "const": "Hybrid",
-          "description": "Use the hybrid nonlinear eigensolver strategy."
+          "description": "Use the hybrid nonlinear eigensolver strategy: quasi-Newton refinement of the eigenpairs of a polynomial seed. With a frequency-dependent permittivity, the seed takes the permittivity, and the first-order absorbing boundary coefficient next to it, at the target, and is solved from two starts, so that it can hold both modes of a degenerate pair. The seed gives initial guesses only: it does not guarantee that every eigenvalue near the target is found."
         },
         {
           "const": "SLP",

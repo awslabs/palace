@@ -1674,17 +1674,9 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // every process), the energies with it, and the participations in the total, are
     // left empty.
     const double omega = measurement_cache.freq.real();
-    const bool fd = fem_op->GetMaterialOp().HasFrequencyDependentPermittivity();
-    std::optional<double> energy;
-    if (dom_post_op.HasStoredElectricFieldEnergy())
-    {
-      energy = dom_post_op.GetElectricFieldEnergy(field, omega);
-    }
+    const auto [energy, material] = dom_post_op.GetElectricFieldEnergies(field, omega);
     measurement_cache.domain_E_field_energy_all = energy;
-    measurement_cache.domain_E_field_energy_material =
-        fd ? dom_post_op.GetElectricFieldEnergy(
-                 field, omega, DomainPostOperator::ElectricEnergy::MATERIAL)
-           : energy.value();
+    measurement_cache.domain_E_field_energy_material = material;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
@@ -2442,13 +2434,8 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
         max_reference = std::max(max_reference, std::abs(*exact));
       }
     };
-    std::optional<double> exact_E;
-    if (stored_E)
-    {
-      exact_E = dom_post_op.GetElectricFieldEnergy(*E, omega.real());
-    }
-    const double exact_E_material = dom_post_op.GetElectricFieldEnergy(
-        *E, omega.real(), DomainPostOperator::ElectricEnergy::MATERIAL);
+    const auto [exact_E, exact_E_material] =
+        dom_post_op.GetElectricFieldEnergies(*E, omega.real());
     const double exact_H = dom_post_op.GetMagneticFieldEnergy(*B);
     compare(measurement_cache.domain_E_field_energy_all, exact_E);
     compare(measurement_cache.domain_E_field_energy_material, exact_E_material);

@@ -1604,6 +1604,18 @@ TEST_CASE("Frequency-dependent material without a stored electric energy",
       const double material =
           post.GetElectricFieldEnergy(c.E, omega, ElectricEnergy::MATERIAL);
       CHECK(std::isfinite(material));
+      // Both energies from one set of products: the same values, without the stored one.
+      const auto energies = post.GetElectricFieldEnergies(c.E, omega);
+      CHECK(!energies.stored);
+      CHECK(energies.material == material);
+      const auto reference = reference_post.GetElectricFieldEnergies(c.E, omega);
+      CHECK(reference.stored.has_value() == reference_post.HasStoredElectricFieldEnergy());
+      if (reference.stored)
+      {
+        CHECK(*reference.stored == reference_post.GetElectricFieldEnergy(c.E, omega));
+      }
+      CHECK(reference.material ==
+            reference_post.GetElectricFieldEnergy(c.E, omega, ElectricEnergy::MATERIAL));
       if (k == 0)
       {
         CHECK_THAT(material, WithinRel(reference_post.GetElectricFieldEnergy(

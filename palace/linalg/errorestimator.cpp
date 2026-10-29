@@ -443,13 +443,6 @@ double IndicatorScale(const std::optional<double> &Et, const MaterialOperator &m
   return (Er > 0.0) ? 0.5 / Er : 1.0;
 }
 
-double GlobalSum(const Vector &v, MPI_Comm comm)
-{
-  double sum = linalg::LocalSum(v);
-  Mpi::GlobalSum(1, &sum, comm);
-  return sum;
-}
-
 }  // namespace
 
 template <typename VecType>
@@ -805,7 +798,7 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E,
   const auto comm = nd_fespace.GetComm();
   linalg::Sqrt(estimates,
                IndicatorScale(Et, mat_op, [&]()
-                              { return 0.5 * GlobalSum(RecoveredFluxNorms(), comm); }));
+                              { return 0.5 * linalg::Sum(comm, RecoveredFluxNorms()); }));
   indicator.AddIndicator(estimates);
 }
 
@@ -1003,13 +996,13 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
   auto grad_estimates = grad_estimator.ComputeEstimates(E, omega);
   auto curl_estimates = curl_estimator.ComputeEstimates(B);
   const auto comm = grad_estimator.nd_fespace.GetComm();
-  const double scale =
-      IndicatorScale(Et, grad_estimator.mat_op,
-                     [&]()
-                     {
-                       return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +
-                                     GlobalSum(curl_estimator.RecoveredFluxNorms(), comm));
-                     });
+  const double scale = IndicatorScale(
+      Et, grad_estimator.mat_op,
+      [&]()
+      {
+        return 0.5 * (linalg::Sum(comm, grad_estimator.RecoveredFluxNorms()) +
+                      linalg::Sum(comm, curl_estimator.RecoveredFluxNorms()));
+      });
   AddFluxErrorIndicator(std::move(grad_estimates), curl_estimates, scale, indicator);
 }
 
@@ -1045,13 +1038,13 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
   auto grad_estimates = grad_estimator.ComputeEstimates(E, omega);
   auto curl_estimates = curl_estimator.ComputeEstimates(B);
   const auto comm = grad_estimator.nd_fespace.GetComm();
-  const double scale =
-      IndicatorScale(Et, grad_estimator.mat_op,
-                     [&]()
-                     {
-                       return 0.5 * (GlobalSum(grad_estimator.RecoveredFluxNorms(), comm) +
-                                     GlobalSum(curl_estimator.RecoveredFluxNorms(), comm));
-                     });
+  const double scale = IndicatorScale(
+      Et, grad_estimator.mat_op,
+      [&]()
+      {
+        return 0.5 * (linalg::Sum(comm, grad_estimator.RecoveredFluxNorms()) +
+                      linalg::Sum(comm, curl_estimator.RecoveredFluxNorms()));
+      });
   AddFluxErrorIndicator(std::move(grad_estimates), curl_estimates, scale, indicator);
 }
 

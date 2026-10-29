@@ -423,8 +423,9 @@ int QuasiNewtonSolver::Solve()
   // bounded number of iterations: in a region partially filled with a pole material the
   // mode shapes next to the pole differ from the seed's, and Newton from the extra start
   // can stagnate.
-  auto rayleigh_root =
-      [&](const ComplexVector &x, std::complex<double> theta, bool target_side)
+  // The roots of the interpolated functional, from the same applications of T(λ) v for
+  // both starts of a seed.
+  auto rayleigh_roots = [&](const ComplexVector &x, std::complex<double> theta)
   {
     const int degree = 2 + static_cast<int>(poles.poles.size());
     const std::complex<double> c = 0.5 * (sigma + theta), r = 0.5 * (theta - sigma);
@@ -473,15 +474,24 @@ int QuasiNewtonSolver::Solve()
     {
       comp(k, k - 1) = 1.0;
     }
-    // The root nearest the target between it and the pole, or the root nearest θ on its
-    // side of the poles.
+    const Eigen::ComplexEigenSolver<Eigen::MatrixXcd> roots(comp);
+    std::vector<std::complex<double>> out;
+    for (const auto mu : roots.eigenvalues())
+    {
+      out.push_back(c + r * mu);
+    }
+    return out;
+  };
+  // The root nearest the target between it and the pole, or the root nearest θ on its side
+  // of the poles.
+  auto rayleigh_root = [&](const std::vector<std::complex<double>> &roots,
+                           std::complex<double> theta, bool target_side)
+  {
     const auto ref = target_side ? sigma : theta;
     std::complex<double> best = ref;
     double best_dist = std::numeric_limits<double>::infinity();
-    const Eigen::ComplexEigenSolver<Eigen::MatrixXcd> roots(comp);
-    for (const auto mu : roots.eigenvalues())
+    for (const auto l : roots)
     {
-      const auto l = c + r * mu;
       if (std::isfinite(std::abs(l)) && l.imag() >= sigma.imag() &&
           poles.Separates(l, theta) == target_side && !poles.IsAtPole(l, 1.0e-6) &&
           std::abs(l - ref) < best_dist)
@@ -503,15 +513,16 @@ int QuasiNewtonSolver::Solve()
     std::vector<ComplexVector> vec_guess;
     for (std::size_t i = 0; i < eigenvalues.size(); i++)
     {
+      const auto roots = poles.Empty() ? std::vector<std::complex<double>>{}
+                                       : rayleigh_roots(eigenvectors[i], eigenvalues[i]);
       if (poles.Separates(sigma, eigenvalues[i]))
       {
-        eig_guess.push_back(rayleigh_root(eigenvectors[i], eigenvalues[i], true));
+        eig_guess.push_back(rayleigh_root(roots, eigenvalues[i], true));
         vec_guess.push_back(eigenvectors[i]);
         pole_start.push_back(true);
       }
-      eig_guess.push_back(poles.Empty()
-                              ? eigenvalues[i]
-                              : rayleigh_root(eigenvectors[i], eigenvalues[i], false));
+      eig_guess.push_back(poles.Empty() ? eigenvalues[i]
+                                        : rayleigh_root(roots, eigenvalues[i], false));
       vec_guess.push_back(eigenvectors[i]);
       pole_start.push_back(false);
     }

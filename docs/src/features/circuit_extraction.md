@@ -130,7 +130,10 @@ There are several constraints and considerations for using this feature:
     frequency dependence in the synthesized matrices, as described in [Synthesizing
     Frequency-Dependent Boundary Conditions](#Synthesizing-Frequency-Dependent-Boundary-Conditions)
     below. The fit accuracy is governed by `"AdaptiveTol"`; *Palace* prints the per-boundary fit
-    residual and warns if it cannot be met.
+    residual and warns if it cannot be met. The tolerance applies on the real frequency band of
+    the sweep: at complex frequencies off the band, for example next to a damped material
+    resonance, the synthesized circuit can differ from the reduced model by much more (a few
+    percent in S, where the reduced model itself still agrees with the full model).
   - All `LumpedPort` attributes must be orthogonal to each other, since these are separated out as
     individual rows and columns in the circuit matrix. For *Palace*'s Nédélec meshes, this means
     that lumped ports cannot share parallel edges, since the degree of freedom on the edge

@@ -346,6 +346,38 @@ double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E, double 
   return ElectricFieldEnergy(*M_elec, M_elec_fd, E, omega, type);
 }
 
+DomainPostOperator::ElectricFieldEnergies
+DomainPostOperator::GetElectricFieldEnergies(const GridFunction &E, double omega) const
+{
+  MFEM_VERIFY(M_elec, "Domain postprocessing is not configured for electric field energy "
+                      "calculation!");
+  auto dot = [&](const Operator &op)
+  {
+    op.Mult(E.Real(), D);
+    double d = linalg::LocalDot(E.Real(), D);
+    if (E.HasImag())
+    {
+      op.Mult(E.Imag(), D);
+      d += linalg::LocalDot(E.Imag(), D);
+    }
+    return d;
+  };
+  const bool stored = HasStoredElectricFieldEnergy();
+  double energy[2];  // STORED, MATERIAL
+  energy[0] = energy[1] = dot(*M_elec);
+  for (const auto &[m, op] : M_elec_fd)
+  {
+    const double d = dot(*op);
+    if (stored)
+    {
+      energy[0] += GetFrequencyDependentEnergyWeight(m, omega, ElectricEnergy::STORED) * d;
+    }
+    energy[1] += GetFrequencyDependentEnergyWeight(m, omega, ElectricEnergy::MATERIAL) * d;
+  }
+  Mpi::GlobalSum(2, energy, E.GetComm());
+  return {stored ? std::optional<double>(0.5 * energy[0]) : std::nullopt, 0.5 * energy[1]};
+}
+
 double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
 {
   if (M_mag)
