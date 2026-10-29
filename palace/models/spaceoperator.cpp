@@ -34,6 +34,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
+    pc_mat_amg(solver.linear.type == LinearSolver::AMS ||
+               solver.linear.type == LinearSolver::BOOMER_AMG),
     print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -766,13 +768,15 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
                                                  bool imag_slot)
 {
   // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
-  // coefficient. By default stored on the REAL slot of the resulting ComplexParOperator so
-  // that downstream BuildParSumOperator can scale it by an arbitrary complex coefficient
-  // (the real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true
-  // it is placed on the IMAGINARY slot, matching the wave-port boundary-mass convention
-  // (the i in i·f(ω)·M baked in) so circuit synthesis can fold it in uniformly. Returns
-  // null if the farfield ABC order < 2 or it contributes no DoFs on any rank (the check is
-  // collective, so the null contract is rank-uniform).
+  // scale; the negative sign of β is included in M_ff by
+  // AddExtraSystemBoundaryCurlCurlBdrCoefficients, so the scalings below are positive. By
+  // default stored on the REAL slot of the resulting ComplexParOperator so that downstream
+  // BuildParSumOperator can scale it by an arbitrary complex coefficient (the real-ω path
+  // uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true it is placed on
+  // the IMAGINARY slot, matching the wave-port boundary-mass convention (the i in i·f(ω)·M
+  // baked in) so circuit synthesis can fold it in uniformly. Returns null if the farfield
+  // ABC order < 2 or it contributes no DoFs on any rank (the check is collective, so the
+  // null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
   farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
@@ -1182,6 +1186,16 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+  if (pc_mat_amg)
+  {
+    // dfbr/dfbi hold only the second-order absorbing BC term -i(0.5/ω)(μ⁻¹c ∇ₛ×E, ∇ₛ×F),
+    // whose imaginary part is negative semidefinite. AMS/BoomerAMG are applied to the
+    // real-valued Br + Bi (see MfemWrapperSolver), which this term can make indefinite, so
+    // flip its sign in the preconditioner (like PCMatShifted does for the mass term). The
+    // system matrix keeps the correct sign.
+    dfbr *= -1.0;
+    dfbi *= -1.0;
+  }
   if (mat_op.HasFloquetFrequencyScaling())
   {
     // k₀-based tensors: cross terms scale with a1, mass term with a2.
@@ -1234,6 +1248,9 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+  // Real-valued preconditioner (every level, including the smoothers): flip the sign of the
+  // second-order absorbing BC term so it stays positive semidefinite (see above).
+  dfbr *= -1.0;
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
