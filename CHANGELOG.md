@@ -19,6 +19,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Magnetostatic simulations now model superconducting domains, those whose material has a
+    `LondonDepth`: the supercurrent `J = -A/(mu lambda^2)` of the London equations adds the
+    London term to the curl-curl operator, and its kinetic energy is included in the
+    extracted inductance. Unlike the `Superconductor` sheets, the domains resolve the
+    current distribution through conductors of any thickness and width. Such simulations
+    also use the `LondonPCShift` preconditioner and enable
+    `Solver.Linear.MGAuxiliarySmoother` by default.
+    [PR 1111](https://github.com/awslabs/palace/pull/1111).
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
