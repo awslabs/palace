@@ -1973,6 +1973,228 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
   RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, false, order, true);
 }
 
+namespace
+{
+
+// Reference integrators for the boundary integrators on 2D elements in 3D which use the
+// boundary normal. The normal n = (J₁ x J₂) / |J₁ x J₂| of each element has the orientation
+// of its scalar curl, so that (n·curl u) n does not depend on the element orientation.
+void BoundaryNormal(mfem::ElementTransformation &T, mfem::Vector &n)
+{
+  n.SetSize(3);
+  mfem::CalcOrtho(T.Jacobian(), n);
+  n /= n.Norml2();
+}
+
+// a(u, v) = (Q (n·curl u) n, v), or a(u, v) = -(Q u, (n·curl v) n) when weak is true, for
+// Nedelec elements.
+class BoundaryMixedCurlRefIntegrator : public mfem::BilinearFormIntegrator
+{
+private:
+  mfem::MatrixCoefficient &Q;
+  bool weak, transpose;
+
+public:
+  BoundaryMixedCurlRefIntegrator(mfem::MatrixCoefficient &Q, bool weak, bool transpose)
+    : Q(Q), weak(weak), transpose(transpose)
+  {
+  }
+
+  void AssembleElementMatrix(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
+                             mfem::DenseMatrix &elmat) override
+  {
+    const int ndof = fe.GetDof();
+    mfem::DenseMatrix vshape(ndof, 3), curl_shape(ndof, 1), K(3), Kt(3);
+    mfem::Vector n(3), Kn(3), vKn(ndof), curl(ndof);
+    elmat.SetSize(ndof);
+    elmat = 0.0;
+    const auto &ir =
+        mfem::IntRules.Get(fe.GetGeomType(), fem::DefaultIntegrationOrder::Get(T));
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      fe.CalcVShape(T, vshape);
+      fe.CalcPhysCurlShape(T, curl_shape);
+      BoundaryNormal(T, n);
+      Q.Eval(K, T, ip);
+      if (transpose)
+      {
+        Kt.Transpose(K);
+        K = Kt;
+      }
+      if (!weak)
+      {
+        // elmat(i, j) = (K n)·φ_i curl φ_j.
+        K.Mult(n, Kn);
+        vshape.Mult(Kn, vKn);
+        curl_shape.GetColumn(0, curl);
+        mfem::AddMult_a_VWt(ip.weight * T.Weight(), vKn, curl, elmat);
+      }
+      else
+      {
+        // elmat(i, j) = -curl φ_i (Kᵀ n)·φ_j.
+        K.MultTranspose(n, Kn);
+        vshape.Mult(Kn, vKn);
+        curl_shape.GetColumn(0, curl);
+        mfem::AddMult_a_VWt(-ip.weight * T.Weight(), curl, vKn, elmat);
+      }
+    }
+  }
+};
+
+// a(u, v) = (Q n x u, n x v) for Nedelec elements, or (Q n x grad u, n x grad v) for H1
+// elements.
+class BoundaryRotatedMassRefIntegrator : public mfem::BilinearFormIntegrator
+{
+private:
+  mfem::MatrixCoefficient &Q;
+
+public:
+  BoundaryRotatedMassRefIntegrator(mfem::MatrixCoefficient &Q) : Q(Q) {}
+
+  void AssembleElementMatrix(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
+                             mfem::DenseMatrix &elmat) override
+  {
+    const int ndof = fe.GetDof();
+    const bool h1 = (fe.GetRangeType() == mfem::FiniteElement::SCALAR);
+    mfem::DenseMatrix vshape(ndof, 3), rshape(ndof, 3), K(3), rK(ndof, 3);
+    mfem::Vector n(3), v(3), nxv(3);
+    elmat.SetSize(ndof);
+    elmat = 0.0;
+    const auto &ir =
+        mfem::IntRules.Get(fe.GetGeomType(), fem::DefaultIntegrationOrder::Get(T));
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      if (h1)
+      {
+        fe.CalcPhysDShape(T, vshape);
+      }
+      else
+      {
+        fe.CalcVShape(T, vshape);
+      }
+      BoundaryNormal(T, n);
+      for (int i = 0; i < ndof; i++)
+      {
+        vshape.GetRow(i, v);
+        n.cross3D(v, nxv);
+        rshape.SetRow(i, nxv);
+      }
+      Q.Eval(K, T, ip);
+      mfem::MultABt(rshape, K, rK);  // rK = rshape Kᵀ, (rK)_i = K (n x φ_i)
+      mfem::AddMult_a_ABt(ip.weight * T.Weight(), rshape, rK, elmat);
+    }
+  }
+};
+
+// General (not symmetric) 3 x 3 boundary coefficient for the tests below, with a
+// different value for every material.
+void BuildGeneralBoundaryCoefficient(const Mesh &mesh, MaterialPropertyCoefficient &Q,
+                                     mfem::DenseTensor &C)
+{
+  mfem::Array<int> attr_mat;
+  mfem::DenseTensor mat_coeff;
+  BuildCoefficientHelper(mesh, true, CoeffType::Matrix, attr_mat, mat_coeff);
+  for (int k = 0; k < mat_coeff.SizeK(); k++)
+  {
+    for (int j = 0; j < 3; j++)
+    {
+      for (int i = 0; i < 3; i++)
+      {
+        mat_coeff(i, j, k) += 0.3 * (i - 2.0 * j) + 0.05 * k;
+      }
+    }
+  }
+  mfem::Array<int> loc_attr_mat(mesh.MaxCeedBdrAttribute());
+  loc_attr_mat = -1;
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    for (auto attr : mesh.GetCeedBdrAttributes(i + 1))
+    {
+      loc_attr_mat[attr - 1] = attr_mat[i];
+    }
+  }
+  Q = MaterialPropertyCoefficient(loc_attr_mat, mat_coeff);
+  C.SetSize(3, 3, attr_mat.Size());
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    C(i) = mat_coeff(attr_mat[i]);
+  }
+}
+
+}  // namespace
+
+// The boundary integrators for the Floquet terms of the second-order absorbing boundary
+// condition (boundary curl of the tangential trace along the normal, and rotated tangential
+// trace), against reference element matrices built with the normal computed by MFEM.
+TEMPLATE_TEST_CASE_SIG("3D libCEED Boundary Normal Operators",
+                       "[libCEED][Serial][Parallel]", ((const char *Mesh), Mesh),
+                       FicheraHex, FicheraTet, FicheraMixedP2)
+{
+  auto amr = GENERATE(false, true);
+  auto order = GENERATE(1, 2, 3);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath(Mesh), 0, amr);
+
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  INFO("Mesh: " << Mesh << "\nAMR: " << amr << "\nOrder: " << order);
+
+  MaterialPropertyCoefficient Q(0);
+  mfem::DenseTensor C;
+  BuildGeneralBoundaryCoefficient(mesh, Q, C);
+  PWCoefficient Q_ref(C);
+
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  auto transpose = GENERATE(false, true);
+  INFO("Transpose: " << transpose);
+  mfem::TransposeMatrixCoefficient Qt_ref(Q_ref);
+  mfem::MatrixCoefficient &Q_rot_ref = transpose
+                                           ? static_cast<mfem::MatrixCoefficient &>(Qt_ref)
+                                           : static_cast<mfem::MatrixCoefficient &>(Q_ref);
+  SECTION("Boundary Mixed Vector Curl Integrator")
+  {
+    BilinearForm a_test(nd_fespace);
+    mfem::BilinearForm a_ref(&nd_fespace.Get());
+    a_test.AddBoundaryIntegrator<MixedVectorCurlIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(
+        new BoundaryMixedCurlRefIntegrator(Q_ref, false, transpose));
+    TestCeedOperator(a_test, a_ref);
+  }
+  SECTION("Boundary Mixed Vector Weak Curl Integrator")
+  {
+    BilinearForm a_test(nd_fespace);
+    mfem::BilinearForm a_ref(&nd_fespace.Get());
+    a_test.AddBoundaryIntegrator<MixedVectorWeakCurlIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(new BoundaryMixedCurlRefIntegrator(Q_ref, true, transpose));
+    TestCeedOperator(a_test, a_ref);
+  }
+  SECTION("Boundary Rotated Vector FE Mass Integrator")
+  {
+    BilinearForm a_test(nd_fespace);
+    mfem::BilinearForm a_ref(&nd_fespace.Get());
+    a_test.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(new BoundaryRotatedMassRefIntegrator(Q_rot_ref));
+    TestCeedOperator(a_test, a_ref);
+  }
+  SECTION("Boundary Rotated Diffusion Integrator")
+  {
+    BilinearForm a_test(h1_fespace);
+    mfem::BilinearForm a_ref(&h1_fespace.Get());
+    a_test.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(new BoundaryRotatedMassRefIntegrator(Q_rot_ref));
+    TestCeedOperator(a_test, a_ref);
+  }
+}
+
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
 // configures when running on CPU, including the boundary terms contributed by absorbing and
 // impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
@@ -2038,6 +2260,34 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
   {
     TestCeedQuadratureData(comm, nd_fespace, [&](BilinearForm &a)
                            { a.AddBoundaryIntegrator<VectorFEMassIntegrator>(MQ_bdr); });
+  }
+  if (dim == 3)
+  {
+    // A second-order absorbing boundary with a Floquet wave vector adds the rotated
+    // boundary mass and mixed boundary curl terms. The mixed terms are always applied
+    // without quadrature data.
+    SECTION("Boundary Rotated Mass")
+    {
+      TestCeedQuadratureData(
+          comm, nd_fespace, [&](BilinearForm &a)
+          { a.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(MQ_bdr); });
+    }
+    SECTION("Boundary Mixed Curl")
+    {
+      TestCeedQuadratureData(
+          comm, nd_fespace,
+          [&](BilinearForm &a)
+          {
+            a.AddBoundaryIntegrator<MixedVectorWeakCurlIntegrator>(MQ_bdr);
+            a.AddBoundaryIntegrator<MixedVectorCurlIntegrator>(MQ_bdr, true);
+          });
+    }
+    SECTION("Auxiliary Boundary Rotated Diffusion")
+    {
+      TestCeedQuadratureData(
+          comm, h1_fespace, [&](BilinearForm &a)
+          { a.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(MQ_bdr); });
+    }
   }
   SECTION("Auxiliary Diffusion")
   {

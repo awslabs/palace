@@ -116,6 +116,31 @@ public:
   }
 };
 
+// Integrator for a(u, v) = (Q n x u, n x v) for Nedelec elements on the boundary of a 3D
+// domain, where n x u is the tangential trace of u rotated by 90° about the boundary normal
+// n. For H1 elements, it integrates a(u, v) = (Q n x grad u, n x grad v) instead, the
+// corresponding term of the auxiliary space operator (like DiffusionIntegrator for
+// VectorFEMassIntegrator).
+class RotatedVectorFEMassIntegrator : public BilinearFormIntegrator
+{
+protected:
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+
+public:
+  using BilinearFormIntegrator::BilinearFormIntegrator;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
+};
+
 // Integrator for a(u, v) = (Q grad u, grad v) for H1 elements.
 class DiffusionIntegrator : public BilinearFormIntegrator
 {
@@ -250,7 +275,9 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
-// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl).
+// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl). On
+// the boundary of a 3D domain (u and v in H(curl)), curl u is the curl of the tangential
+// trace of u, (n · curl u) n with the boundary normal n.
 class MixedVectorCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
@@ -271,7 +298,9 @@ public:
   }
 };
 
-// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl).
+// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl). On
+// the boundary of a 3D domain (u and v in H(curl)), curl v is the curl of the tangential
+// trace of v, as for MixedVectorCurlIntegrator.
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
