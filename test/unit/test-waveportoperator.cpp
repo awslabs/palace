@@ -86,12 +86,13 @@ json LoadIrisWaveConfig()
 }  // namespace
 
 // Verify the factorisation invariant
-//   Im{A2(ω) v}  ==  Σ_p k_{n,p}(ω) · M_{μ⁻¹,p} v   (as ND-vector actions),
-// where A2(ω) is the imaginary part of `GetExtraSystemMatrix(ω)` (the wave-port
-// contribution; cf. waveportoperator.cpp:1080-1088) and M_{μ⁻¹,p} is the new per-port
-// boundary mass returned by `GetWavePortBoundaryMassMatrix(p)`. The identity must hold
-// at every ω since both sides assemble the same bilinear form, with the only ω-dependent
-// factor being the scalar k_{n,p}(ω).
+//   A2(ω) v  ==  Σ_p i·k_{n,p}(ω) · M_{μ⁻¹,p} v   (as ND-vector actions),
+// where A2(ω) is `GetExtraSystemMatrix(ω)` (the wave-port contribution; cf.
+// WavePortOperator::AddExtraSystemBdrCoefficients), M_{μ⁻¹,p} is the per-port boundary
+// mass returned by `GetWavePortBoundaryMassMatrix(p)`, and k_{n,p}(ω) is the complex
+// propagation constant of the (lossy) cpw port mode. The identity must hold at every ω
+// since both sides assemble the same bilinear form, with the only ω-dependent factor being
+// the scalar k_{n,p}(ω).
 TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
           "[waveportoperator][Serial][Parallel]")
 {
@@ -138,27 +139,27 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
 
   for (double omega : omega_nd)
   {
-    // LHS: imaginary part of A2(ω) acting on v. A2 currently encodes the wave-port term
-    // as fbi (imaginary part of the bilinear form), so Im{A2 v} carries the k_n-scaled
-    // boundary mass action.
+    // LHS: A2(ω) acting on v. A2 encodes the wave-port term i·k_n·M as −Im{k_n}·M in fbr
+    // (real part of the bilinear form) and Re{k_n}·M in fbi (imaginary part).
     auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     REQUIRE(A2);
     y_lhs = 0.0;
     A2->Mult(v, y_lhs);
 
-    // RHS: Σ_p k_{n,p}(ω) · M_{μ⁻¹,p} v. The M_p we built lives in the imaginary part,
-    // so we want Im{Mwp_p · v} multiplied by the real scalar k_n.
+    // RHS: Σ_p i·k_{n,p}(ω) · M_{μ⁻¹,p} v. The M_p we built lives in the imaginary part,
+    // so its action is i·M_p v, to be multiplied by the complex scalar k_n.
     y_rhs = 0.0;
     for (std::size_t i = 0; i < port_idxs.size(); i++)
     {
-      double kn = space_op.GetWavePortOp().GetWavePortKn(port_idxs[i], omega);
+      const std::complex<double> kn =
+          space_op.GetWavePortOp().GetWavePortKn(port_idxs[i], omega);
       tmp = 0.0;
       Mwp_p[i]->Mult(v, tmp);
       // tmp is a ComplexOperator action on a complex v; Mwp_p is purely imaginary, so its
       // action multiplies the input by i times the real boundary-mass action. Adding the
       // ports together and scaling by kn gives the Σ form above.
       // y_rhs += kn * tmp
-      linalg::AXPY(std::complex<double>(kn, 0.0), tmp, y_rhs);
+      linalg::AXPY(kn, tmp, y_rhs);
     }
 
     // Compare actions. Tolerance accounts for finite-precision matrix assembly &
@@ -278,11 +279,12 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   CHECK(rel_err < 1.0e-8);
 }
 
-// The complex-ω (eigenmode) correction reconstructs n×H with full complex kₙ; the real-ω
-// (driven) correction uses Re{kₙ} and lets the sparse mass carry the Im{kₙ} attenuation. So
-// at ω=ω0 they differ by the mode attenuation a≈|Im{kₙ0}|/|Re{kₙ0}|. Check the relative
-// action difference is ~a: present (guards the eigenmode path from reverting to Re{kₙ}) and
-// bounded (paths track, vanishing as a→0).
+// The real-ω (driven) and complex-ω (eigenmode) modal corrections both reconstruct n×H with
+// the full complex kₙ of the port mode, matching the i·kₙ·M boundary mass, so for the lossy
+// cpw port mode they agree at ω=ω0 up to the cross-section EVP re-solve of the complex-ω
+// path. A reconstruction from Re{kₙ} on either path would make them differ by ~0.04a, with
+// a≈|Im{kₙ0}|/|Re{kₙ0}| the mode attenuation (the attenuation term largely cancels between
+// W_full and W_scalar), so check the difference is well below that.
 TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
           "[waveportoperator][Serial][Parallel]")
 {
@@ -299,8 +301,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
                        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
 
   // Real-ω operator (triggers Initialize(ω0=omega)), then the complex-ω operator reusing
-  // the frozen reference; same (empty) essential-dof list so any difference is purely the
-  // kₙ convention.
+  // the frozen reference; same (empty) essential-dof list so any difference is due to the
+  // kₙ convention or the EVP re-solve.
   mfem::Array<int> dbc;
   auto W_real = wp_op.GetModalCorrectionOperator(omega, nd_fespace, dbc);
   auto W_cplx =
@@ -317,7 +319,7 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
       atten = std::max(atten, std::abs(data.kn0.imag()) / std::abs(data.kn0.real()));
     }
   }
-  REQUIRE(atten > 0.0);  // cpw mode is lossy; the two paths must differ.
+  REQUIRE(atten > 0.0);  // cpw mode is lossy, so a Re{kₙ} reconstruction would differ.
 
   // Apply both to a fixed nonzero vector and compare (each is Σ_k g_k (s_kᵀx) s_k).
   ComplexVector x(n), yr(n), yc(n), diff(n);
@@ -336,11 +338,53 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
   linalg::AXPY(std::complex<double>(-1.0, 0.0), yr, diff);
   double rel_err = linalg::Norml2(comm, diff) / std::max(linalg::Norml2(comm, yr), 1e-300);
   CAPTURE(omega, atten, rel_err);
-  // The attenuation term largely cancels between W_full and W_scalar, so the net difference
-  // is ~0.04a, well above the EVP re-solve floor. Bracket loosely: nonzero guards the
-  // full-kₙ term, the upper bound guards against gross divergence.
-  CHECK(rel_err > 0.005 * atten);
-  CHECK(rel_err < 0.5 * atten);
+  CHECK(rel_err < 0.005 * atten);
+}
+
+// The wave port S-parameter projection is the unconjugated reaction ∫ (E x H_mode) ⋅ n of
+// the field with the port mode, relative to that of the mode itself, which separates the
+// incident and reflected modal amplitudes also for a lossy port mode. The unit-power mode
+// has a real reaction, close to unity. Applied to the port's own mode field the projection
+// must return exactly 1 (a matched port has S_ii = 0). The conjugated projection
+// ∫ (E x H_mode⋆) ⋅ n would instead return the complex power P of the mode, which has a
+// phase for the lossy cpw port mode, giving a spurious S_ii = P - 1 at a matched port.
+TEST_CASE("WavePortOperator-LossyModeProjection", "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  wp_op.PrepareFrequency(omega);
+
+  auto &nd_fespace = space_op.GetNDSpace();
+  const auto &mesh = *nd_fespace.Get().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  for (const auto &[idx, data] : wp_op)
+  {
+    // The port mode is lossy (complex kₙ), with a real reaction close to unity (the
+    // reaction sᵀe = ∫ (n x H) ⋅ E = -∫ (E x H) ⋅ n of the code is negative).
+    CAPTURE(idx, data.kn0, data.modal_reaction);
+    REQUIRE(std::abs(data.kn0.imag()) > 0.0);
+    CHECK(std::abs(data.modal_reaction.imag()) < 1.0e-12);
+    CHECK(std::abs(data.modal_reaction + 1.0) < 1.0e-3);
+
+    // Tangential trace of the mode field on the parent ND space (zero elsewhere).
+    GridFunction E(nd_fespace, true);
+    E = 0.0;
+    mfem::Array<int> marker = mesh::AttrToMarker(bdr_attr_max, data.GetAttrList());
+    auto er = data.GetModeFieldCoefficientReal();
+    auto ei = data.GetModeFieldCoefficientImag();
+    E.Real().ProjectBdrCoefficientTangent(*er, marker);
+    E.Imag().ProjectBdrCoefficientTangent(*ei, marker);
+    const std::complex<double> S = data.GetSParameter(E);
+    CAPTURE(S);
+    CHECK(std::abs(S - 1.0) < 1.0e-8);
+  }
 }
 
 // An inactive wave port is an unloaded boundary, but its unit mass remains part of the
