@@ -1283,6 +1283,116 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   check_excitations(omega_back);
 }
 
+// Several wave ports can observe different modes of the same boundary, for example
+// inactive ports extracting the S-parameters of a second mode at the boundaries of the
+// active ports. Circuit synthesis must weight such a shared port boundary once in its inner
+// product, as for a single port, instead of aborting on the repeated boundary attribute.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-Synthesis-WavePortSharedBoundary",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  const auto domain_orthog =
+      GENERATE(as<std::string>{}, "Energy", "SpaceOverlap", "FEBasisIdentity");
+  CAPTURE(domain_orthog);
+
+  // The box and port faces of the wave port pairing test above: wave ports on the
+  // 1 cm x 1 cm faces 14 (active) and 18 (inactive), with PEC on every other face. The
+  // shared configuration adds inactive second-mode ports on both faces.
+  json pec_attributes = json::array();
+  for (int attr = 1; attr <= 22; attr++)
+  {
+    if (attr != 14 && attr != 18)
+    {
+      pec_attributes.push_back(attr);
+    }
+  }
+  auto wave_port = [](int index, int attr, int mode, bool active)
+  {
+    json port = {{"Index", index},
+                 {"Attributes", json::array({attr})},
+                 {"Mode", mode},
+                 {"Offset", 0.0}};
+    if (active)
+    {
+      port["Excitation"] = uint(1);
+    }
+    else
+    {
+      port["Active"] = false;
+    }
+    return port;
+  };
+
+  // Inner products of fixed random vectors under the synthesis weight, and the global
+  // number of port true dofs it removes from the domain part.
+  auto weights = [&](bool shared)
+  {
+    json ports = json::array({wave_port(1, 14, 1, true), wave_port(2, 18, 1, false)});
+    if (shared)
+    {
+      ports.push_back(wave_port(3, 14, 2, false));
+      ports.push_back(wave_port(4, 18, 2, false));
+    }
+    json setup_json;
+    setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+    setup_json["Model"] = {{"Mesh", mesh_path},
+                           {"L0", 1.0e-2},
+                           {"Refinement", json::object({})},
+                           {"CrackInternalBoundaryElements", false}};
+    setup_json["Domains"] = {
+        {"Materials",
+         json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                    {"Permeability", 1.0},
+                                    {"Permittivity", 1.0},
+                                    {"LossTan", 0.0}})})}};
+    setup_json["Boundaries"] = {{"PEC", {{"Attributes", pec_attributes}}},
+                                {"WavePort", ports}};
+    setup_json["Solver"] = {
+        {"Order", 2UL},
+        {"Device", "CPU"},
+        {"Driven",
+         {{"AdaptiveTol", 1.0e-3},
+          {"AdaptiveCircuitSynthesis", true},
+          {"AdaptiveCircuitSynthesisDomainOrthogonalization", domain_orthog},
+          {"MinFreq", 20.0},
+          {"MaxFreq", 30.0},
+          {"FreqStep", 10.0}}},
+        {"Linear",
+         {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+    IoData iodata(setup_json, false);
+    auto mesh = LoadScaleParMesh2(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+    RomOperatorTest rom_op(iodata, space_op, 4);
+    const auto &weight_op = rom_op.GetWeightOp();
+    REQUIRE(weight_op.has_value());
+
+    Vector x(space_op.GetNDSpace().GetTrueVSize()), y(x.Size()), work(x.Size());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    work.UseDevice(true);
+    linalg::SetRandom(comm, x, 42);
+    linalg::SetRandom(comm, y, 43);
+    const std::array<double, 3> dots = {weight_op->InnerProduct(comm, x, x, work),
+                                        weight_op->InnerProduct(comm, x, y, work),
+                                        weight_op->InnerProduct(comm, y, y, work)};
+    int n_port_tdofs = weight_op->port_tdof_list.Size();
+    Mpi::GlobalSum(1, &n_port_tdofs, comm);
+    return std::make_pair(dots, n_port_tdofs);
+  };
+  const auto [dots_ref, n_port_tdofs_ref] = weights(false);
+  const auto [dots, n_port_tdofs] = weights(true);
+  REQUIRE(n_port_tdofs_ref > 0);
+  CHECK(n_port_tdofs == n_port_tdofs_ref);
+  for (std::size_t i = 0; i < dots.size(); i++)
+  {
+    CHECK_THAT(dots[i], WithinRel(dots_ref[i], 1.0e-12));
+  }
+}
+
 TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial]")
 {
   json setup_json;
