@@ -1,0 +1,40 @@
+diff --git a/BLACS/SRC/BI_Srecv.c b/BLACS/SRC/BI_Srecv.c
+index 926174f..bc2aeec 100644
+--- a/BLACS/SRC/BI_Srecv.c
++++ b/BLACS/SRC/BI_Srecv.c
+@@ -5,6 +5,35 @@ void BI_Srecv(BLACSCONTEXT *ctxt, Int src, Int msgid, BLACBUFF *bp)
+    Int i, info;
+    extern MPI_Status *BI_Stats;
+ 
++/*
++ * Messages are sent packed (MPI_PACKED, see BI_Pack) and received with the
++ * datatype of the message. Some MPI implementations fail to unpack a
++ * message received in several segments into a derived datatype whose basic
++ * elements straddle the segments (MPICH ch4 shared memory with complex
++ * types), so derived datatypes are received packed and unpacked locally.
++ */
++   if (bp->dtype != MPI_PACKED)
++   {
++      MpiInt combiner, ni, na, nd;
++      MPI_Type_get_envelope(bp->dtype, &ni, &na, &nd, &combiner);
++      if (combiner != MPI_COMBINER_NAMED)
++      {
++         MpiInt psize, pcount, pos = 0;
++         char *pbuf;
++         MPI_Pack_size(bp->N, bp->dtype, ctxt->scp->comm, &psize);
++         pbuf = (char *) malloc(psize > 0 ? psize : 1);
++         if (pbuf == NULL)
++            BI_BlacsErr(BI_ContxtNum(ctxt), __LINE__, __FILE__,
++                        "Not enough memory to allocate receive buffer\n");
++         info=MPI_Recv(pbuf, psize, MPI_PACKED, src, msgid, ctxt->scp->comm,
++                       BI_Stats);
++         info=MPI_Get_count(BI_Stats, MPI_PACKED, &pcount);
++         info=MPI_Unpack(pbuf, pcount, &pos, bp->Buff, bp->N, bp->dtype,
++                         ctxt->scp->comm);
++         free(pbuf);
++         return;
++      }
++   }
+    info=MPI_Recv(bp->Buff, bp->N, bp->dtype, src, msgid, ctxt->scp->comm,BI_Stats);
+ /*
+  * If we are doing our own buffering, need to determine the true length of

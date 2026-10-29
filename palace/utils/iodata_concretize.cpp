@@ -84,6 +84,8 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
                 {"PMLSubdomainSolver", ToString(linear.pml_subdomain_solver)},
+                {"PMLSmootherThreshold", linear.pml_smoother_threshold},
+                {"PMLSubdomainSinglePrecision", linear.pml_subdomain_single_precision},
                 {"ReorderingReuse", linear.reorder_reuse},
                 {"PCSide", ToString(linear.pc_side)},
                 {"ColumnOrdering", ToString(linear.sym_factorization)},

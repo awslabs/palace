@@ -46,8 +46,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                solver.linear.type == LinearSolver::BOOMER_AMG),
     complex_coarse_solve(solver.linear.complex_coarse_solve),
     pml_subdomain(solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DIRECT),
-    print_hdr(true), print_prec_hdr(true),
-    dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
+    pml_smoother_threshold(solver.linear.pml_smoother_threshold), print_hdr(true),
+    print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),
@@ -1905,28 +1905,68 @@ void SpaceOperator::AssemblePreconditioner(
 namespace
 {
 
-// Local true DOFs of the elements of the PML regions which are not shared with elements
-// outside of the PML regions, sorted and unique. The rows and columns of the system matrix
-// for these DOFs only have contributions from the PML elements and the boundary elements.
-// The DOFs of the local elements are mapped to true DOFs on all processes, since a true DOF
-// of an element may be owned by a process which has no element containing it (and, for
-// nonconforming meshes, the DOFs of an element may be constrained by true DOFs of other
-// elements).
+// Largest magnitude max_a |s_a| of the PML stretch factors at the vertices of each local
+// element of the mesh, or zero for the elements outside of the PML regions. A
+// frequency-dependent stretch is evaluated at omega.
+std::vector<double> GetPMLStretchMagnitudes(const Mesh &mesh,
+                                            const MaterialOperator &mat_op,
+                                            std::complex<double> omega)
+{
+  const auto &pmesh = mesh.Get();
+  std::vector<double> m(pmesh.GetNE(), 0.0);
+  mfem::Array<int> verts;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    const int attr = pmesh.GetAttribute(e);
+    for (const auto &layer : mat_op.GetPMLLayers())
+    {
+      const auto &attrs = layer.GetAttributes();
+      if (!std::binary_search(attrs.begin(), attrs.end(), attr))
+      {
+        continue;
+      }
+      m[e] = 1.0;
+      pmesh.GetElementVertices(e, verts);
+      for (const int v : verts)
+      {
+        const double *x = pmesh.GetVertex(v);
+        for (const auto &s :
+             pml::EvaluateStretch(layer.GetStretch(), {x[0], x[1], x[2]}, omega))
+        {
+          m[e] = std::max(m[e], std::abs(s));
+        }
+      }
+      break;
+    }
+  }
+  return m;
+}
+
+// Local true DOFs of the elements of the PML regions whose stretch magnitude (see
+// GetPMLStretchMagnitudes) exceeds the threshold (all of the PML elements for a threshold
+// of at most 1), which are not shared with other elements, sorted and unique. The rows and
+// columns of the system matrix for these DOFs only have contributions from these elements
+// and the boundary elements. The DOFs of the local elements are mapped to true DOFs on all
+// processes, since a true DOF of an element may be owned by a process which has no element
+// containing it (and, for nonconforming meshes, the DOFs of an element may be constrained
+// by true DOFs of other elements).
 std::vector<int> GetPMLTrueDofs(const FiniteElementSpace &fespace,
-                                const MaterialOperator &mat_op)
+                                const std::vector<double> &stretch_magnitude,
+                                double threshold)
 {
   const auto &pfes = fespace.Get();
   const auto &mesh = fespace.GetMesh();
-  const auto &loc_attr = mesh.GetCeedAttributes();
-  auto MarkTrueDofs = [&](bool in_pml)
+  MFEM_VERIFY(stretch_magnitude.size() == static_cast<std::size_t>(mesh.Get().GetNE()),
+              "Invalid PML stretch magnitudes for the mesh elements!");
+  auto MarkTrueDofs = [&](bool inside)
   {
     mfem::Array<int> ldof_marker(pfes.GetVSize()), marker(pfes.GetTrueVSize());
     ldof_marker = 0;
     mfem::Array<int> vdofs;
     for (int e = 0; e < mesh.Get().GetNE(); e++)
     {
-      const auto it = loc_attr.find(mesh.Get().GetAttribute(e));
-      if ((it != loc_attr.end() && mat_op.IsPMLCeedAttribute(it->second)) != in_pml)
+      const double m = stretch_magnitude[e];
+      if ((m > 0.0 && (threshold <= 1.0 || m > threshold)) != inside)
       {
         continue;
       }
@@ -1940,11 +1980,11 @@ std::vector<int> GetPMLTrueDofs(const FiniteElementSpace &fespace,
                                                     marker.HostWrite());
     return marker;
   };
-  const auto pml_marker = MarkTrueDofs(true), physical_marker = MarkTrueDofs(false);
+  const auto in_marker = MarkTrueDofs(true), out_marker = MarkTrueDofs(false);
   std::vector<int> tdofs;
-  for (int i = 0; i < pml_marker.Size(); i++)
+  for (int i = 0; i < in_marker.Size(); i++)
   {
-    if (pml_marker[i] && !physical_marker[i])
+    if (in_marker[i] && !out_marker[i])
     {
       tdofs.push_back(i);
     }
@@ -2039,13 +2079,70 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
         return op ? dynamic_cast<const ParOperator &>(*op).StealParallelAssemble()
                   : nullptr;
       };
-      B->SetPMLSubdomain(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op),
-                         Assemble(A->Real()), Assemble(A->Imag()));
+      SelectPMLTrueDofs(a3);
+      B->SetPMLSubdomain(std::vector<int>(pml_subdomain_tdofs), Assemble(A->Real()),
+                         Assemble(A->Imag()));
+      if (!pml_smoother_masks.empty())
+      {
+        B->SetSmootherMasks(std::vector<std::vector<int>>(pml_smoother_masks),
+                            std::vector<std::vector<int>>(pml_aux_smoother_masks));
+      }
     }
   }
 
   print_prec_hdr = false;
   return B;
+}
+
+void SpaceOperator::SelectPMLTrueDofs(std::complex<double> omega)
+{
+  // The multigrid smoothers do not converge on the PML equations of strongly stretched
+  // elements: the Jacobi-scaled operator has eigenvalues near the imaginary axis and in the
+  // left half-plane, which the Chebyshev polynomials amplify. The DOFs of these elements
+  // are instead only updated by the coarse-level correction and the PML subdomain
+  // correction, whose subdomain (all of the PML elements) contains the smoother masks.
+  if (pml_dofs_selected)
+  {
+    return;
+  }
+  pml_dofs_selected = true;
+  const auto &nd_fespaces = GetNDSpaces();
+  const auto n_levels = nd_fespaces.GetNumLevels();
+  const auto &fespace = nd_fespaces.GetFinestFESpace();
+  const auto m = GetPMLStretchMagnitudes(fespace.GetMesh(), mat_op, omega);
+  pml_subdomain_tdofs = GetPMLTrueDofs(fespace, m, 0.0);
+  pml_smoother_masks.clear();
+  pml_aux_smoother_masks.clear();
+  if (pml_smoother_threshold > 0.0)
+  {
+    pml_smoother_masks.resize(n_levels);
+    pml_aux_smoother_masks.resize(n_levels);
+    for (std::size_t l = 1; l < n_levels; l++)
+    {
+      const auto &nd_fespace = nd_fespaces.GetFESpaceAtLevel(l);
+      const auto m_l = (&nd_fespace.GetMesh() == &fespace.GetMesh())
+                           ? m
+                           : GetPMLStretchMagnitudes(nd_fespace.GetMesh(), mat_op, omega);
+      pml_smoother_masks[l] = GetPMLTrueDofs(nd_fespace, m_l, pml_smoother_threshold);
+      pml_aux_smoother_masks[l] =
+          GetPMLTrueDofs(GetH1Spaces().GetFESpaceAtLevel(l), m_l, pml_smoother_threshold);
+    }
+  }
+  HYPRE_BigInt n[3] = {
+      static_cast<HYPRE_BigInt>(pml_subdomain_tdofs.size()),
+      pml_smoother_masks.empty()
+          ? 0
+          : static_cast<HYPRE_BigInt>(pml_smoother_masks.back().size()),
+      pml_aux_smoother_masks.empty()
+          ? 0
+          : static_cast<HYPRE_BigInt>(pml_aux_smoother_masks.back().size())};
+  Mpi::GlobalSum(3, n, GetComm());
+  if (pml_smoother_threshold > 0.0)
+  {
+    Mpi::Print(" PML elements with stretch magnitude max|s| > {:.2f}: {:d} + {:d} "
+               "(auxiliary) unknowns are not updated by the smoothers\n",
+               pml_smoother_threshold, n[1], n[2]);
+  }
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
