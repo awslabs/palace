@@ -487,19 +487,22 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     depends_on("catch2@3:", type="test")
 
+    @property
+    def root_cmakelists_dir(self):
+        # From 0.19, Spack builds Palace directly instead of through the superbuild
+        if self.spec.satisfies("@0.19:"):
+            return join_path(self.stage.source_path, "palace")
+        return self.stage.source_path
+
     def cmake_args(self):
         args = [
             self.define_from_variant("CMAKE_CXX_STANDARD", "cxxstd"),
             self.define_from_variant("BUILD_SHARED_LIBS", "shared"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
-            self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
-            self.define_from_variant("PALACE_WITH_HIP", "rocm"),
-            self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
-            self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
             # PROCESSORS accounting (ranks x threads) is exact. Unit [Parallel]
             # cases stay at 2 ranks (light, fast); regression cases use ~8 CPUs
@@ -533,10 +536,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        # From 0.19, Palace takes the solvers and their dependencies from MFEM's CMake package
+        # Before 0.19, Spack builds Palace through the superbuild, and Palace does not take
+        # its configuration and dependencies from MFEM's CMake package
         if self.spec.satisfies("@:0.18"):
             args.extend(
                 [
+                    self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
+                    self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
+                    self.define_from_variant("PALACE_WITH_HIP", "rocm"),
+                    self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
                     self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
                     self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
                     self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
@@ -748,11 +756,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     def build(self, spec, prefix):
         with working_dir(self.build_directory):
+            make()
             if self.run_tests:
                 make("palace-tests")
-            else:
-                make()
 
     def install(self, spec, prefix):
-        # No install phase for Palace (always performed during build)
-        pass
+        # Before 0.19, the superbuild installs Palace while building it
+        if spec.satisfies("@0.19:"):
+            with working_dir(self.build_directory):
+                make("install")

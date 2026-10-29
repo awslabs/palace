@@ -125,8 +125,18 @@ resolve_build_dir() {
     (cd "$dir" && pwd)
 }
 
-# BUILD_DIR is the superbuild root (where ctest runs from).
-# PALACE_BUILD_DIR is the inner Palace build (where coverage data lives).
+# The Palace build is in palace-build for the superbuild and is the build directory itself
+# otherwise (e.g. Spack).
+inner_build_dir() {
+    if [[ -d "$1/palace-build" ]]; then
+        echo "$1/palace-build"
+    else
+        echo "$1"
+    fi
+}
+
+# BUILD_DIR is the build root (where ctest runs from).
+# PALACE_BUILD_DIR is the Palace build (where coverage data lives).
 # UNIT_TEST_EXEC is derived from BUILD_DIR.
 BUILD_DIR=""
 PALACE_BUILD_DIR=""
@@ -136,7 +146,7 @@ COVERAGE_FILES=()
 case "$COMMAND" in
     generate)
         BUILD_DIR="$(resolve_build_dir "${1:-"$PALACE_ROOT/build"}")"
-        PALACE_BUILD_DIR="$BUILD_DIR/palace-build"
+        PALACE_BUILD_DIR="$(inner_build_dir "$BUILD_DIR")"
         UNIT_TEST_EXEC="$PALACE_BUILD_DIR/test/unit/palace-unit-tests"
         ;;
     merge)
@@ -434,7 +444,7 @@ main() {
             if [[ -d "$ARG" ]]; then
                 log "Detected build directory, running generate first..."
                 BUILD_DIR="$(resolve_build_dir "$ARG")"
-                PALACE_BUILD_DIR="$BUILD_DIR/palace-build"
+                PALACE_BUILD_DIR="$(inner_build_dir "$BUILD_DIR")"
                 UNIT_TEST_EXEC="$PALACE_BUILD_DIR/test/unit/palace-unit-tests"
 
                 run_generate

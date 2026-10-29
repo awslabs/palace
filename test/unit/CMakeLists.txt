@@ -119,14 +119,14 @@ set(TARGET_SOURCES_DEVICE
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
-if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
-  if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA OR MFEM_USE_HIP)
+  if(MFEM_USE_CUDA)
     set(LANGUAGE_PROPERTY CUDA)
-  elseif(PALACE_WITH_HIP)
+  elseif(MFEM_USE_HIP)
     set(LANGUAGE_PROPERTY HIP)
   endif()
   set(COMPILE_OPTIONS_PROPERTY "-Wno-pedantic")
-  if(PALACE_WITH_OPENMP)
+  if(MFEM_USE_OPENMP)
     set(COMPILE_OPTIONS_PROPERTY "${COMPILE_OPTIONS_PROPERTY} ${OpenMP_CXX_FLAGS}")
   endif()
   set_property(
@@ -140,7 +140,7 @@ if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
 endif()
 
 # Resolve linker error with CUDA and static linkage
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   set_target_properties(unit-tests PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 endif()
 
@@ -182,6 +182,12 @@ endif()
 install(
   TARGETS unit-tests
   RUNTIME DESTINATION bin
+)
+
+# Build the unit tests and install them with their data
+add_custom_target(palace-tests
+  COMMAND ${CMAKE_COMMAND} --install ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS unit-tests
 )
 
 # Install test data files to share directory. Some source-tree regression fixtures are
@@ -307,13 +313,13 @@ catch_discover_tests(unit-tests
 )
 
 # GPU tests (if available)
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   set(PALACE_GPU_DEVICE cuda)
-elseif(PALACE_WITH_HIP)
+elseif(MFEM_USE_HIP)
   set(PALACE_GPU_DEVICE hip)
 endif()
 
-if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+if(MFEM_USE_CUDA OR MFEM_USE_HIP)
   catch_discover_tests(unit-tests
     TEST_PREFIX "gpu-"
     # Exclude [Regression] (own registration) and [Long] (long-* only) so the

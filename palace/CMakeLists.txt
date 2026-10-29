@@ -28,13 +28,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Initialize the project
 project(palace LANGUAGES CXX VERSION 0.18.1)
 
-# Define build settings and defaults
-set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
-set(PALACE_WITH_CUDA OFF CACHE BOOL "Use CUDA for NVIDIA GPU support")
-set(PALACE_WITH_HIP OFF CACHE BOOL "Use HIP for AMD or NVIDIA GPU support")
-
+# Define build settings and defaults. Palace uses OpenMP, CUDA, or HIP when MFEM does.
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
+set(PALACE_WITH_GPU_AWARE_MPI OFF CACHE BOOL "Option to set if MPI distribution is GPU aware")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -63,26 +60,33 @@ set(ENZYME_DIR "" CACHE STRING
   "Path to Enzyme build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
 
+# Find MFEM. The mfem target also links HYPRE, METIS, the sparse direct solvers, SUNDIALS,
+# GSLIB, Umpire, and the other libraries MFEM was built with. Recent MFEM targets link to
+# target Threads::Threads, for some reason.
+find_package(Threads REQUIRED)
+find_package(MFEM REQUIRED CONFIG HINTS "${MFEM_DIR}")
+message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
+if(NOT MFEM_USE_MPI)
+  message(FATAL_ERROR "Build requires MFEM with MPI support")
+endif()
+
 # Enable Fortran if required
 if(PALACE_WITH_ARPACK)
   enable_language(Fortran)
 endif()
 
 # Enable CUDA/HIP if required
-if(PALACE_WITH_CUDA AND PALACE_WITH_HIP)
-  message(FATAL_ERROR "PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
-endif()
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
   # C++20 device code: nvcc supports -std=c++20 from 12.0
   if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND
      CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0)
     message(FATAL_ERROR
-      "PALACE_WITH_CUDA requires CUDA 12.0 or later (found ${CMAKE_CUDA_COMPILER_VERSION})")
+      "CUDA builds require CUDA 12.0 or later (found ${CMAKE_CUDA_COMPILER_VERSION})")
   endif()
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-extended-lambda")
-elseif(PALACE_WITH_HIP)
+elseif(MFEM_USE_HIP)
   enable_language(HIP)
 endif()
 
@@ -156,7 +160,7 @@ if(PALACE_WITH_ARPACK)
 endif()
 
 # Find OpenMP
-if(PALACE_WITH_OPENMP)
+if(MFEM_USE_OPENMP)
   find_package(OpenMP REQUIRED)
 endif()
 
@@ -211,30 +215,20 @@ if(PALACE_WITH_ENZYME)
   message(STATUS "Found Enzyme for LLVM ${ENZYME_LLVM_VERSION} in ${Enzyme_DIR}")
 endif()
 
-# Find MFEM. The mfem target also links HYPRE, METIS, the sparse direct solvers, SUNDIALS,
-# GSLIB, Umpire, and the other libraries MFEM was built with. Recent MFEM targets link to
-# target Threads::Threads, for some reason.
-find_package(Threads REQUIRED)
-find_package(MFEM REQUIRED CONFIG HINTS "${MFEM_DIR}")
-message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
-if(NOT MFEM_USE_MPI)
-  message(FATAL_ERROR "Build requires MFEM with MPI support")
-endif()
-
 # Find libCEED
 include(PkgConfigHelpers)
 set(GPU_TEST_DEPS)
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   if(BUILD_SHARED_LIBS)
     list(APPEND GPU_TEST_DEPS CUDA::cudart CUDA::cublas CUDA::cuda_driver)
   else()
     list(APPEND GPU_TEST_DEPS CUDA::cudart_static CUDA::cublas_static CUDA::cuda_driver)
   endif()
-elseif(PALACE_WITH_HIP)
+elseif(MFEM_USE_HIP)
   list(APPEND GPU_TEST_DEPS hip::host)
 endif()
 set(LIBCEED_TEST_DEPS ${GPU_TEST_DEPS})
-if(PALACE_WITH_OPENMP)
+if(MFEM_USE_OPENMP)
   list(APPEND LIBCEED_TEST_DEPS OpenMP::OpenMP_CXX)
 endif()
 find_libceed_pkgconfig("${LIBCEED_TEST_DEPS}" LIBCEED_TARGET)
@@ -245,7 +239,7 @@ endif()
 # Find PETSc and SLEPc
 if(PALACE_WITH_SLEPC)
   set(PETSC_TEST_DEPS MPI::MPI_CXX ${GPU_TEST_DEPS})
-  if(PALACE_WITH_OPENMP)
+  if(MFEM_USE_OPENMP)
     list(APPEND PETSC_TEST_DEPS OpenMP::OpenMP_CXX)
   endif()
   find_petsc_pkgconfig("${PETSC_TEST_DEPS}" PETSC_TARGET)
@@ -329,14 +323,14 @@ set_target_properties(${LIB_TARGET_NAME}
 # TARGET_SOURCES_DEVICE defines a list of files that contain device code.
 # We manually specify this list because we cannot use compilers like nvcc for
 # everything, since they tend to be slower and do not support everything we need.
-if(NOT "${TARGET_SOURCES_DEVICE}" STREQUAL "" AND (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
-  if(PALACE_WITH_CUDA)
+if(NOT "${TARGET_SOURCES_DEVICE}" STREQUAL "" AND (MFEM_USE_CUDA OR MFEM_USE_HIP))
+  if(MFEM_USE_CUDA)
     set(LANGUAGE_PROPERTY CUDA)
-  elseif(PALACE_WITH_HIP)
+  elseif(MFEM_USE_HIP)
     set(LANGUAGE_PROPERTY HIP)
   endif()
   set(COMPILE_OPTIONS_PROPERTY "-Wno-pedantic")
-  if(PALACE_WITH_OPENMP)
+  if(MFEM_USE_OPENMP)
     set(COMPILE_OPTIONS_PROPERTY "${COMPILE_OPTIONS_PROPERTY} ${OpenMP_CXX_FLAGS}")
   endif()
   set_property(
@@ -349,7 +343,7 @@ if(NOT "${TARGET_SOURCES_DEVICE}" STREQUAL "" AND (PALACE_WITH_CUDA OR PALACE_WI
   )
 endif()
 
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   if (BUILD_SHARED_LIBS)
     target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cudart CUDA::cublas)
   else()
@@ -427,7 +421,7 @@ if(PALACE_WITH_ARPACK)
     PUBLIC PALACE_WITH_ARPACK
   )
 endif()
-if(PALACE_WITH_OPENMP)
+if(MFEM_USE_OPENMP)
   target_link_libraries(${LIB_TARGET_NAME}
     PUBLIC OpenMP::OpenMP_CXX
   )
@@ -437,7 +431,7 @@ target_link_libraries(${LIB_TARGET_NAME}
          nlohmann_json_schema_validator::validator fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   # libCEED uses the CUDA driver API. FindCUDAToolkit resolves this target to
   # the toolkit stub at build time without adding the stub directory to RPATH;
   # the NVIDIA driver provides libcuda.so.1 at runtime.
@@ -579,6 +573,7 @@ install(
 )
 
 # Add tests (disabled by default)
+enable_testing()
 add_subdirectory(../test/unit ${CMAKE_BINARY_DIR}/test/unit EXCLUDE_FROM_ALL)
 
 # Status messages for build settings
