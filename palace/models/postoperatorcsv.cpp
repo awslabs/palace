@@ -36,6 +36,8 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
   measurement_cache.error_abs = nondim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;                // NONE
+  measurement_cache.pml_energy_fraction =
+      nondim_measurement_cache.pml_energy_fraction;  // NONE
 
   measurement_cache.domain_E_field_energy_all =
       units.Dimensionalize<Units::ValueType::ENERGY>(
@@ -180,6 +182,8 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
   measurement_cache.error_abs = dim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = dim_measurement_cache.error_bkwd;                // NONE
+  measurement_cache.pml_energy_fraction =
+      dim_measurement_cache.pml_energy_fraction;  // NONE
 
   measurement_cache.domain_E_field_energy_all =
       units.Nondimensionalize<Units::ValueType::ENERGY>(
@@ -1464,17 +1468,22 @@ void PostOperatorCSV<solver_t>::PrintFloquetPortS()
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeEig()
+void PostOperatorCSV<solver_t>::InitializeEig(bool has_pml)
   requires(solver_t == ProblemType::EIGENMODE)
 {
   eig = TableWithCSVFile(post_dir / "eig.csv");
-  eig->table.reserve(nr_expected_measurement_rows, 6);
+  eig_pml = has_pml;
+  eig->table.reserve(nr_expected_measurement_rows, eig_pml ? 7 : 6);
   eig->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
   eig->table.insert("f_re", "Re{f} (GHz)");
   eig->table.insert("f_im", "Im{f} (GHz)");
   eig->table.insert("q", "Q");
   eig->table.insert("err_back", "Error (Bkwd.)");
   eig->table.insert("err_abs", "Error (Abs.)");
+  if (eig_pml)
+  {
+    eig->table.insert("pml", "PML fraction");
+  }
   WriteTable(*eig);
 }
 
@@ -1492,6 +1501,10 @@ void PostOperatorCSV<solver_t>::PrintEig()
   eig->table["q"] << measurement_cache.eigenmode_Q;
   eig->table["err_back"] << measurement_cache.error_bkwd;
   eig->table["err_abs"] << measurement_cache.error_abs;
+  if (eig_pml)
+  {
+    eig->table["pml"] << measurement_cache.pml_energy_fraction;
+  }
   WriteTable(*eig);
 }
 
@@ -1758,7 +1771,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
-    InitializeEig();
+    InitializeEig(post_op.dom_post_op.HasPML());
     InitializeEigPortEPR(post_op.fem_op->GetLumpedPortOp());
     InitializeEigPortQ(post_op.fem_op->GetLumpedPortOp());
   }

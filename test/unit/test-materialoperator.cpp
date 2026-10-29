@@ -149,6 +149,33 @@ TEST_CASE("MaterialPropertyCoefficient exact-zero predicate", "[materialoperator
   }
 }
 
+TEST_CASE("MaterialPropertyCoefficient restriction to attributes without a material",
+          "[materialoperator][Serial]")
+{
+  // Attributes 1 and 3 have materials 0 and 1, attribute 2 has none (as the PML attributes
+  // with the bulk attribute map of MaterialOperator). The restriction keeps the materials
+  // of the listed attributes with a material, and no material for the others.
+  mfem::Array<int> attr_mat({0, -1, 1});
+  mfem::DenseTensor mat_coeff(1, 1, 2);
+  mat_coeff(0, 0, 0) = 2.0;
+  mat_coeff(0, 0, 1) = 5.0;
+  MaterialPropertyCoefficient coeff(attr_mat, mat_coeff);
+  coeff.RestrictCoefficient(mfem::Array<int>({2, 3}));
+  const auto &attr_mat_r = coeff.GetAttributeToMaterial();
+  const auto &mat_coeff_r = coeff.GetMaterialProperties();
+  REQUIRE(mat_coeff_r.SizeK() == 1);
+  CHECK(attr_mat_r[0] == -1);
+  CHECK(attr_mat_r[1] == -1);
+  CHECK(attr_mat_r[2] == 0);
+  CHECK(mat_coeff_r(0, 0, 0) == 5.0);
+
+  // Only attributes without a material.
+  MaterialPropertyCoefficient coeff_none(attr_mat, mat_coeff);
+  coeff_none.RestrictCoefficient(mfem::Array<int>({2}));
+  CHECK(coeff_none.empty());
+  CHECK(coeff_none.GetAttributeToMaterial()[1] == -1);
+}
+
 TEST_CASE("MaterialPropertyCoefficient adds a term only to the listed attributes",
           "[materialoperator][Serial]")
 {

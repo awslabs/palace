@@ -2357,9 +2357,23 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
       (omega == 0.0) ? mfem::infinity() : 0.5 * std::abs(omega) / std::abs(omega.imag());
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
+  MeasureAllImpl();
 
-  // Mini pretty-print table of eig summaries: always print with header since other
-  // measurements may log their results.
+  // Fraction of the field energy in the PML regions, which identifies the modes of the PML
+  // (with the material properties of the background medium in the layer, see
+  // DomainPostOperator).
+  const bool has_pml = dom_post_op.HasPML();
+  if (has_pml)
+  {
+    const double energy_pml = dom_post_op.GetPMLElectricFieldEnergy(*E) +
+                              dom_post_op.GetPMLMagneticFieldEnergy(*B);
+    const double energy_all = measurement_cache.domain_E_field_energy_all +
+                              measurement_cache.domain_H_field_energy_all + energy_pml;
+    measurement_cache.pml_energy_fraction =
+        (energy_all > 0.0) ? energy_pml / energy_all : 0.0;
+  }
+
+  // Mini pretty-print table of eig summaries.
   if (Mpi::Root(fem_op->GetComm()))
   {
     Table table;
@@ -2375,10 +2389,13 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
+    if (has_pml)
+    {
+      table.insert(Column("pml", "PML fraction") << measurement_cache.pml_energy_fraction);
+    }
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
-  MeasureAllImpl();
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);

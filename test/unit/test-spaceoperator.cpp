@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -233,6 +234,879 @@ TEST_CASE("CPU preconditioner quadrature data preserves the multigrid operators"
                    Catch::Matchers::WithinAbs(0.0, 2.0e-13));
       }
     }
+  }
+}
+
+TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  using namespace std::complex_literals;
+
+  // Unit cube with a PML layer z ∈ [0.75, 1] (attribute 2).
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) > 0.75) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  constexpr double omega0 = 2.0;
+  auto MakeSpaceOperator = [&](bool frequency_dependent)
+  {
+    config::MaterialData vacuum, pml;
+    vacuum.attributes = {1};
+    pml.attributes = {2};
+    pml.epsilon_r.s = {2.0, 2.0, 2.0};
+    config::PMLData pml_pml;
+    pml_pml.autodetect_geometry = false;
+    pml_pml.directions = {false, false, false, false, false, true};
+    pml_pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.25};
+    pml_pml.kappa_max = {1.0, 1.0, 1.5};
+    pml_pml.alpha_max = {0.0, 0.0, 0.2};
+    pml_pml.frequency_dependent = frequency_dependent;
+    pml_pml.reference_frequency = omega0;
+    config::DomainData domains;
+    domains.attributes = {1, 2};
+    domains.materials = {vacuum, pml};
+    domains.pml = {pml_pml};
+    domains.pml[0].attributes = pml.attributes;
+    config::BoundaryData boundaries;
+    Units units(1.0, 1.0);
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries,
+                                           ProblemType::EIGENMODE, units, mesh);
+  };
+  auto fd_op = MakeSpaceOperator(true);
+  const ComplexOperator *C0 = nullptr;
+  REQUIRE(fd_op->GetMaterialOp().HasPML());
+  REQUIRE(fd_op->GetMaterialOp().HasFrequencyDependentPML());
+
+  ComplexVector x(fd_op->GetNDSpace().GetTrueVSize()), y1(x.Size()), y2(x.Size());
+  x.UseDevice(true);
+  y1.UseDevice(true);
+  y2.UseDevice(true);
+  x.Real().Randomize(42 + Mpi::Rank(comm));
+  x.Imag().Randomize(314159 + Mpi::Rank(comm));
+  auto RelErr = [&](ComplexVector &a, const ComplexVector &b)
+  {
+    a.Add(-1.0, b);
+    return linalg::Norml2(comm, a) / linalg::Norml2(comm, b);
+  };
+  auto A2 = [&](std::complex<double> omega)
+  {
+    auto op = fd_op->GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    REQUIRE(op);
+    return op;
+  };
+
+  SECTION("Complex frequency overload matches the real frequency one for real ω")
+  {
+    auto A2r = fd_op->GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
+    REQUIRE(A2r);
+    A2r->Mult(x, y1);
+    A2(omega0)->Mult(x, y2);
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+  }
+
+  SECTION("System matrix at real ω matches the static PML with ω₀ = ω")
+  {
+    auto static_op = MakeSpaceOperator(false);
+    REQUIRE(!static_op->GetMaterialOp().HasFrequencyDependentPML());
+    auto Ks = static_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto Ms = static_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto As = static_op->GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -omega0 * omega0 + 0.0i,
+                                         Ks.get(), C0, Ms.get());
+    auto Kf = fd_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto Mf = fd_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2f = A2(omega0);
+    auto Af = fd_op->GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -omega0 * omega0 + 0.0i,
+                                     Kf.get(), C0, Mf.get(), A2f.get());
+    As->Mult(x, y1);
+    Af->Mult(x, y2);
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+  }
+
+  SECTION("Frozen-stretch PML matrices are the static PML matrices")
+  {
+    // The frozen-stretch matrices at ω₀ reproduce A2(ω₀) and the static PML terms of the
+    // stiffness and mass matrices for the reference frequency ω₀.
+    auto P = fd_op->GetFrozenPMLMatrices(omega0, Operator::DIAG_ZERO);
+    REQUIRE(P[0]);
+    REQUIRE(!P[1]);
+    REQUIRE(P[2]);
+    ComplexVector t(x.Size());
+    t.UseDevice(true);
+    P[0]->Mult(x, y1);
+    P[2]->Mult(x, t);
+    y1.Add(-omega0 * omega0, t);
+    A2(omega0)->Mult(x, y2);
+    CHECK_THAT(RelErr(y1, y2), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+
+    auto static_op = MakeSpaceOperator(false);
+    auto Ks = static_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto Kf = fd_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    Ks->Mult(x, y1);
+    Kf->Mult(x, y2);
+    P[0]->AddMult(x, y2);
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+    auto Ms = static_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto Mf = fd_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    Ms->Mult(x, y1);
+    Mf->Mult(x, y2);
+    P[2]->AddMult(x, y2);
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+
+    // Without the PML terms, A2 is empty.
+    CHECK(!fd_op->GetExtraSystemMatrix(std::complex<double>(omega0, 0.3),
+                                       Operator::DIAG_ZERO, false));
+  }
+
+  SECTION("A2(ω) is the analytic continuation in ω")
+  {
+    // Cauchy-Riemann equations for the operator action, with central differences.
+    const std::complex<double> omega = {omega0, 0.3};
+    const double h = 1.0e-5;
+    ComplexVector t(x.Size());
+    t.UseDevice(true);
+    A2(omega + h)->Mult(x, y1);
+    A2(omega - h)->Mult(x, t);
+    y1.Add(-1.0, t);  // ∂A2/∂Re{ω} x (2 h)
+    A2(omega + 1i * h)->Mult(x, y2);
+    A2(omega - 1i * h)->Mult(x, t);
+    y2.Add(-1.0, t);
+    y2 *= -1i;  // -i ∂A2/∂Im{ω} x (2 h) = ∂A2/∂Re{ω} x (2 h)
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-8));
+
+    // The stretch is evaluated at the complex frequency, not its real part.
+    A2(omega)->Mult(x, y1);
+    A2(omega.real())->Mult(x, y2);
+    CHECK(RelErr(y2, y1) > 1.0e-3);
+  }
+
+  SECTION("Preconditioner matches the system matrix at complex ω")
+  {
+    const std::complex<double> omega = {omega0, 0.3}, lambda = 1i * omega;
+    auto K = fd_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = fd_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2c = A2(omega);
+    auto A = fd_op->GetSystemMatrix(1.0 + 0.0i, lambda, lambda * lambda, K.get(), C0,
+                                    M.get(), A2c.get());
+    auto P = fd_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, lambda,
+                                                             lambda * lambda, omega);
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    A->Mult(x, y1);
+    mg->GetFinestOperator().Mult(x, y2);
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  }
+}
+
+TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  using namespace std::complex_literals;
+
+  // Unit cube (vacuum, lossless) with a strongly absorbing PML layer z ∈ [0.75, 1]
+  // (attribute 2), with two multigrid levels.
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) > 0.75) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  constexpr double omega = 2.0;
+  auto MakeSpaceOperator = [&](bool pc_mat_real, bool complex_coarse_solve)
+  {
+    config::SolverData solver;
+    solver.order = 2;
+    solver.linear.mg_max_levels = 2;
+    solver.linear.pc_mat_real = pc_mat_real;
+    solver.linear.pc_mat_shifted = 0;
+    solver.linear.complex_coarse_solve = complex_coarse_solve;
+    fem::DefaultIntegrationOrder::p_trial = solver.order;
+    config::MaterialData vacuum;
+    vacuum.attributes = {1, 2};
+    config::PMLData pml;
+    pml.attributes = {2};
+    pml.reference_frequency = omega;
+    pml.sigma_max = {0.0, 0.0, 100.0};
+    config::DomainData domains;
+    domains.attributes = {1, 2};
+    domains.materials = {vacuum};
+    domains.pml = {pml};
+    config::BoundaryData boundaries;
+    Units units(1.0, 1.0);
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries, ProblemType::DRIVEN,
+                                           units, mesh);
+  };
+  auto Coarse = [](const std::unique_ptr<ComplexOperator> &P) -> const ComplexOperator &
+  {
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    REQUIRE(mg->GetNumLevels() == 2);
+    return mg->GetOperatorAtLevel(0);
+  };
+
+  // Real-valued approximation of the preconditioner (PCMatReal).
+  auto real_op = MakeSpaceOperator(true, false);
+  auto P_real = real_op->GetPreconditionerMatrix<ComplexOperator>(
+      1.0 + 0.0i, 0.0 + 0.0i, -omega * omega + 0.0i, omega);
+  const ComplexOperator &B_real = Coarse(P_real);
+  REQUIRE(B_real.Real());
+  REQUIRE(!B_real.Imag());
+  Vector x(B_real.Width()), y_real(B_real.Height());
+  x.UseDevice(true);
+  y_real.UseDevice(true);
+  x.Randomize(42 + Mpi::Rank(comm));
+  B_real.Real()->Mult(x, y_real);
+
+  // With a real-valued coarse solve, the coarse-level operator of the complex
+  // preconditioner has the real-valued approximation Re{c} |T| of the PML terms as its real
+  // part, and no PML terms in its imaginary part (zero for this lossless problem): the sum
+  // of the two parts factored by the coarse solver is the coarse-level operator of the
+  // real-valued approximation.
+  for (bool complex_coarse_solve : {false, true})
+  {
+    auto space_op = MakeSpaceOperator(false, complex_coarse_solve);
+    auto P = space_op->GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 0.0 + 0.0i, -omega * omega + 0.0i, omega);
+    const ComplexOperator &B = Coarse(P);
+    REQUIRE(B.Real());
+    Vector y(B.Height()), t(B.Height());
+    y.UseDevice(true);
+    t.UseDevice(true);
+    B.Real()->Mult(x, y);
+    if (B.Imag())
+    {
+      B.Imag()->Mult(x, t);
+      y += t;
+    }
+    t = y;
+    t -= y_real;
+    const double err = linalg::Norml2(comm, t) / linalg::Norml2(comm, y_real);
+    INFO("ComplexCoarseSolve = " << complex_coarse_solve);
+    if (complex_coarse_solve)
+    {
+      // The complex coarse-level operator has the exact PML terms.
+      CHECK(err > 1.0e-2);
+    }
+    else
+    {
+      CHECK_THAT(err, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+    }
+  }
+}
+
+TEST_CASE("SpaceOperator PML blocks with static and frequency-dependent stretches",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  // Unit cube with PML layers z ∈ [0, 0.25] (attribute 2) and z ∈ [0.75, 1] (attribute 3).
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) < 0.25) ? 2 : ((center(2) > 0.75) ? 3 : 1));
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  constexpr double omega0 = 2.0;
+  auto MakeBlock = [](std::vector<int> attributes, int order, bool frequency_dependent)
+  {
+    config::PMLData pml;
+    pml.attributes = std::move(attributes);
+    pml.order = order;
+    pml.kappa_max = {1.0, 1.0, 1.5};
+    pml.frequency_dependent = frequency_dependent;
+    pml.reference_frequency = omega0;
+    return pml;
+  };
+  auto MakeSpaceOperator = [&](const std::vector<config::PMLData> &pml)
+  {
+    config::MaterialData vacuum, dielectric;
+    vacuum.attributes = {1, 3};
+    dielectric.attributes = {2};
+    dielectric.epsilon_r.s = {2.0, 2.0, 2.0};
+    config::DomainData domains;
+    domains.attributes = {1, 2, 3};
+    domains.materials = {vacuum, dielectric};
+    domains.pml = pml;
+    config::BoundaryData boundaries;
+    Units units(1.0, 1.0);
+    return std::make_unique<SpaceOperator>(solver, domains, boundaries, ProblemType::DRIVEN,
+                                           units, mesh);
+  };
+
+  ComplexVector x, y1, y2;
+  auto RelErr = [&](ComplexVector &a, const ComplexVector &b)
+  {
+    a.Add(-1.0, b);
+    return linalg::Norml2(comm, a) / linalg::Norml2(comm, b);
+  };
+  auto Apply = [&](SpaceOperator &space_op, std::complex<double> omega, ComplexVector &y)
+  {
+    const ComplexOperator *C0 = nullptr;
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A2 = space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -omega * omega, K.get(), C0,
+                                      M.get(), A2.get());
+    if (x.Size() == 0)
+    {
+      x.SetSize(space_op.GetNDSpace().GetTrueVSize());
+      x.UseDevice(true);
+      x.Real().Randomize(42 + Mpi::Rank(comm));
+      x.Imag().Randomize(314159 + Mpi::Rank(comm));
+    }
+    y.SetSize(x.Size());
+    y.UseDevice(true);
+    A->Mult(x, y);
+    return A2 != nullptr;
+  };
+
+  // A static block with a different grading and a frequency-dependent block: at ω = ω₀,
+  // the system matrix is the one of two static blocks.
+  auto mixed = MakeSpaceOperator({MakeBlock({2}, 2, false), MakeBlock({3}, 3, true)});
+  REQUIRE(mixed->GetMaterialOp().GetPMLLayers().size() == 2);
+  REQUIRE(mixed->GetMaterialOp().HasFrequencyDependentPML());
+  auto both_static =
+      MakeSpaceOperator({MakeBlock({2}, 2, false), MakeBlock({3}, 3, false)});
+  REQUIRE(!both_static->GetMaterialOp().HasFrequencyDependentPML());
+  CHECK(Apply(*mixed, omega0, y1));
+  CHECK(!Apply(*both_static, omega0, y2));
+  CHECK_THAT(RelErr(y1, y2), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+
+  // At another frequency, only the frequency-dependent block changes.
+  Apply(*mixed, 1.5 * omega0, y1);
+  Apply(*both_static, 1.5 * omega0, y2);
+  CHECK(RelErr(y1, y2) > 1.0e-3);
+
+  // Blocks with the same parameters are a single block (σ_max is given, since by default it
+  // depends on the materials of each block).
+  auto Block = [&](std::vector<int> attributes)
+  {
+    auto pml = MakeBlock(std::move(attributes), 3, false);
+    pml.sigma_max = {0.0, 0.0, 20.0};
+    return pml;
+  };
+  auto single = MakeSpaceOperator({Block({2, 3})});
+  auto split = MakeSpaceOperator({Block({2}), Block({3})});
+  REQUIRE(single->GetMaterialOp().GetPMLLayers().size() == 1);
+  Apply(*single, omega0, y1);
+  Apply(*split, omega0, y2);
+  CHECK_THAT(RelErr(y1, y2), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+}
+
+TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitioning",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  // Box [0, 1] x [0, 1] x [0, 2] with a PML layer z > 1.5 (attribute 2), with the PML
+  // elements on the first or last process and the others on the remaining processes, so
+  // that the true DOFs on the interface with the PML layer are owned by a process with
+  // only PML elements or only physical elements.
+  MPI_Comm comm = Mpi::World();
+  const int np = Mpi::Size(comm);
+  constexpr int order = 2, nz = 8;
+  if (np > nz - 1)
+  {
+    SKIP("Test requires at most " << nz - 1 << " processes");
+  }
+  const bool pml_first = GENERATE(false, true);
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(2, 2, nz, mfem::Element::HEXAHEDRON, 1.0, 1.0, 2.0);
+  std::vector<int> partitioning(serial_mesh.GetNE());
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    const bool is_pml = (center(2) > 1.5);
+    serial_mesh.SetAttribute(i, is_pml ? 2 : 1);
+    const int layer = static_cast<int>(center(2) / (2.0 / nz));
+    const int pml_rank = pml_first ? 0 : np - 1;
+    const int physical_rank = (layer * (np - 1)) / (nz - 2) + (pml_first ? 1 : 0);
+    partitioning[i] = (np == 1) ? 0 : (is_pml ? pml_rank : physical_rank);
+  }
+  serial_mesh.SetAttributes();
+
+  // Expected number of PML subdomain unknowns: the DOFs of the PML elements which are not
+  // DOFs of physical elements.
+  mfem::ND_FECollection fec(order, serial_mesh.Dimension());
+  mfem::FiniteElementSpace serial_fespace(&serial_mesh, &fec);
+  std::vector<char> marker(serial_fespace.GetVSize(), 0);
+  mfem::Array<int> vdofs;
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    serial_fespace.GetElementVDofs(i, vdofs);
+    for (const int vdof : vdofs)
+    {
+      marker[(vdof >= 0) ? vdof : -1 - vdof] |= (serial_mesh.GetAttribute(i) == 2) ? 1 : 2;
+    }
+  }
+  const auto n_pml_expected = std::ranges::count(marker, 1);
+  REQUIRE(n_pml_expected > 0);
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh, partitioning.data()));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = order;
+  solver.linear.mg_max_levels = 2;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  solver.linear.pml_subdomain_solver = PMLSubdomainSolver::DIRECT;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  config::MaterialData vacuum, pml;
+  vacuum.attributes = {1};
+  pml.attributes = {2};
+  config::PMLData pml_pml;
+  pml_pml.autodetect_geometry = false;
+  pml_pml.directions = {false, false, false, false, false, true};
+  pml_pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.5};
+  pml_pml.reference_frequency = 2.0;
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {vacuum, pml};
+  domains.pml = {pml_pml};
+  domains.pml[0].attributes = pml.attributes;
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+
+  constexpr double omega = 2.0;
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                             -omega * omega + 0.0i, omega);
+  const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+  REQUIRE(mg);
+  REQUIRE(mg->GetNumLevels() > 1);
+  const auto &tdofs = mg->GetPMLTrueDofs();
+  CHECK(std::ranges::is_sorted(tdofs));
+  CHECK(std::ranges::adjacent_find(tdofs) == tdofs.end());
+  long long n_pml = static_cast<long long>(tdofs.size());
+  Mpi::GlobalSum(1, &n_pml, comm);
+  CHECK(n_pml == n_pml_expected);
+}
+
+TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  // Rectangle [0, 2] x [0, 1] with a PML layer x > 1.5 (attribute 2).
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian2D(8, 4, mfem::Element::QUADRILATERAL, true, 2.0, 1.0);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(0) > 1.5) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  config::MaterialData vacuum, pml;
+  vacuum.attributes = {1};
+  pml.attributes = {2};
+  config::PMLData pml_pml;
+  pml_pml.reference_frequency = 2.0;
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {vacuum, pml};
+  domains.pml = {pml_pml};
+  domains.pml[0].attributes = pml.attributes;
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  for (auto problem_type : {ProblemType::DRIVEN, ProblemType::EIGENMODE})
+  {
+    CHECK_THROWS_WITH(SpaceOperator(solver, domains, boundaries, problem_type, units, mesh),
+                      Catch::Matchers::ContainsSubstring(
+                          "PML regions are only supported for 3D simulations"));
+  }
+
+  // Other simulation types treat the PML regions as regular materials.
+  SpaceOperator transient_op(solver, domains, boundaries, ProblemType::TRANSIENT, units,
+                             mesh);
+  CHECK(!transient_op.GetMaterialOp().HasPML());
+}
+
+TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  using namespace std::complex_literals;
+
+  // With σ = 0, κ = 1, the PML tensors equal the background material tensors, so all PML
+  // terms (including the Floquet terms) must reproduce the standard bulk integrators.
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(0) > 2.0 / 3.0 || center(2) > 2.0 / 3.0) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.pa_order_threshold = 2;
+  solver.linear.mg_max_levels = 2;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  solver.linear.pc_mat_shifted = 0;
+  BilinearForm::pa_order_threshold = solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+
+  const bool isotropic = GENERATE(false, true);
+  const bool scaled = GENERATE(false, true);
+  auto MakeSpaceOperator = [&](bool with_pml)
+  {
+    config::MaterialData vacuum, layer;
+    vacuum.attributes = {1};
+    layer.attributes = {2};
+    if (isotropic)
+    {
+      layer.mu_r.s = {1.5, 1.5, 1.5};
+      layer.epsilon_r.s = {3.0, 3.0, 3.0};
+      layer.tandelta.s = {2.0e-2, 2.0e-2, 2.0e-2};
+    }
+    else
+    {
+      // Rotated material axes, so the background tensors are full.
+      const double c = std::cos(0.3), s = std::sin(0.3);
+      const std::array<std::array<double, 3>, 3> axes = {
+          {{c, s, 0.0}, {-s * c, c * c, s}, {s * s, -c * s, c}}};
+      layer.mu_r.s = {1.0, 2.0, 3.0};
+      layer.mu_r.v = axes;
+      layer.epsilon_r.s = {2.0, 4.0, 5.0};
+      layer.epsilon_r.v = axes;
+      layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
+      layer.tandelta.v = axes;
+    }
+    config::DomainData domains;
+    domains.attributes = {1, 2};
+    domains.materials = {vacuum, layer};
+    if (with_pml)
+    {
+      auto &pml = domains.pml.emplace_back();
+      pml.attributes = layer.attributes;
+      pml.autodetect_geometry = false;
+      pml.directions = {false, true, false, false, false, true};
+      pml.thickness = {0.0, 1.0 / 3.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+      pml.sigma_max = {0.0, 0.0, 0.0};
+      pml.reference_frequency = 2.0;
+    }
+    config::BoundaryData boundaries;
+    boundaries.periodic.wave_vector = {0.3, -0.2, 0.5};
+    boundaries.periodic.floquet_reference_freq = scaled ? 1.5 : 0.0;
+    Units units(1.0, 1.0);
+    return std::make_unique<SpaceOperator>(
+        solver, domains, boundaries, scaled ? ProblemType::DRIVEN : ProblemType::EIGENMODE,
+        units, mesh);
+  };
+  auto pml_op = MakeSpaceOperator(true), ref_op = MakeSpaceOperator(false);
+  REQUIRE(pml_op->GetMaterialOp().HasPML());
+  REQUIRE(pml_op->GetMaterialOp().HasWaveVector());
+  REQUIRE(pml_op->GetMaterialOp().HasFloquetFrequencyScaling() == scaled);
+  REQUIRE(!ref_op->GetMaterialOp().HasPML());
+
+  auto CheckEqual = [&](const auto *A, const auto *B, auto &x, auto &y1, auto &y2)
+  {
+    REQUIRE(A);
+    REQUIRE(B);
+    for (int seed : {42, 314159})
+    {
+      if constexpr (std::is_same_v<std::decay_t<decltype(x)>, ComplexVector>)
+      {
+        x.Real().Randomize(seed + Mpi::Rank(comm));
+        x.Imag().Randomize(2 * seed + 1 + Mpi::Rank(comm));
+      }
+      else
+      {
+        x.Randomize(seed + Mpi::Rank(comm));
+      }
+      A->Mult(x, y1);
+      B->Mult(x, y2);
+      const double norm = linalg::Norml2(comm, y2);
+      REQUIRE(norm > 0.0);
+      y1.Add(-1.0, y2);
+      CHECK_THAT(linalg::Norml2(comm, y1) / norm, Catch::Matchers::WithinAbs(0.0, 1.0e-13));
+    }
+  };
+  auto CheckComplex = [&](const ComplexOperator *A, const ComplexOperator *B)
+  {
+    ComplexVector x(A->Width()), y1(A->Height()), y2(A->Height());
+    x.UseDevice(true);
+    y1.UseDevice(true);
+    y2.UseDevice(true);
+    CheckEqual(A, B, x, y1, y2);
+  };
+
+  SECTION("System matrices")
+  {
+    constexpr auto diag = Operator::DIAG_ONE;
+    CheckComplex(pml_op->GetStiffnessMatrix<ComplexOperator>(diag).get(),
+                 ref_op->GetStiffnessMatrix<ComplexOperator>(diag).get());
+    CheckComplex(pml_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO).get(),
+                 ref_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO).get());
+    if (scaled)
+    {
+      CheckComplex(pml_op->GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO).get(),
+                   ref_op->GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO).get());
+    }
+    CHECK(
+        !pml_op->GetExtraSystemMatrix(std::complex<double>(2.0, 0.1), Operator::DIAG_ZERO));
+  }
+
+  SECTION("Preconditioner")
+  {
+    // The real-valued approximation uses the entrywise magnitudes of the PML tensors, which
+    // matches the bulk approximation for isotropic materials.
+    for (bool pc_mat_real : {false, true})
+    {
+      if (pc_mat_real && !isotropic)
+      {
+        continue;
+      }
+      solver.linear.pc_mat_real = pc_mat_real;
+      auto pml_pc_op = MakeSpaceOperator(true), ref_pc_op = MakeSpaceOperator(false);
+      const std::complex<double> omega = {2.0, 0.1}, lambda = 1i * omega;
+      auto P1 = pml_pc_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, lambda,
+                                                                    lambda * lambda, omega);
+      auto P2 = ref_pc_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, lambda,
+                                                                    lambda * lambda, omega);
+      const auto *mg1 = dynamic_cast<const ComplexMultigridOperator *>(P1.get());
+      const auto *mg2 = dynamic_cast<const ComplexMultigridOperator *>(P2.get());
+      REQUIRE(mg1);
+      REQUIRE(mg2);
+      REQUIRE(mg1->GetNumLevels() == 2);
+      for (std::size_t l = 0; l < mg1->GetNumLevels(); l++)
+      {
+        CheckComplex(&mg1->GetOperatorAtLevel(l), &mg2->GetOperatorAtLevel(l));
+        CheckComplex(&mg1->GetAuxiliaryOperatorAtLevel(l),
+                     &mg2->GetAuxiliaryOperatorAtLevel(l));
+      }
+    }
+  }
+}
+
+TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
+          "[spaceoperator][pml][Serial][Parallel][GPU]")
+{
+  using namespace std::complex_literals;
+
+  // Unit cube with a PML layer on the +x and +z faces (including the edge region), on
+  // tetrahedral and hexahedral meshes. The PML curl-curl and mass operators are compared
+  // to MFEM integrators with the PML tensors evaluated at the quadrature points by an
+  // independent implementation of the stretch.
+  const auto element = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, element);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(0) > 2.0 / 3.0 || center(2) > 2.0 / 3.0) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  config::MaterialData vacuum, layer;
+  vacuum.attributes = {1};
+  layer.attributes = {2};
+  layer.mu_r.s = {1.0, 2.0, 1.5};
+  layer.epsilon_r.s = {2.0, 3.0, 4.0};
+  layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
+  config::PMLData layer_pml;
+  layer_pml.autodetect_geometry = false;
+  layer_pml.directions = {false, true, false, false, false, true};
+  layer_pml.thickness = {0.0, 1.0 / 3.0, 0.0, 0.0, 0.0, 1.0 / 3.0};
+  layer_pml.sigma_max = {3.0, 0.0, 5.0};
+  layer_pml.kappa_max = {1.5, 1.0, 2.0};
+  layer_pml.alpha_max = {0.2, 0.0, 0.1};
+  layer_pml.reference_frequency = 2.0;
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {vacuum, layer};
+  domains.pml = {layer_pml};
+  domains.pml[0].attributes = layer.attributes;
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+  REQUIRE(space_op.GetMaterialOp().HasPML());
+  const auto &p = space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch();
+
+  // Diagonal background material of the layer.
+  std::array<double, 3> b_mu_inv, b_eps_re, b_eps_im;
+  for (int i = 0; i < 3; i++)
+  {
+    b_mu_inv[i] = 1.0 / layer.mu_r.s[i];
+    b_eps_re[i] = layer.epsilon_r.s[i];
+    b_eps_im[i] = -layer.epsilon_r.s[i] * layer.tandelta.s[i];
+  }
+
+  // Reference stretch factors and tensors at a physical point.
+  auto Stretch = [&p](const mfem::Vector &x)
+  {
+    std::array<std::complex<double>, 3> s;
+    const std::array<double, 3> xp = {x(0), x(1), x(2)};
+    for (int a = 0; a < 3; a++)
+    {
+      const auto &g = p.geometry;
+      double r = 0.0;
+      if (g.thickness[2 * a] > 0.0 && xp[a] < g.inner[2 * a])
+      {
+        r = (g.inner[2 * a] - xp[a]) / g.thickness[2 * a];
+      }
+      else if (g.thickness[2 * a + 1] > 0.0 && xp[a] > g.inner[2 * a + 1])
+      {
+        r = (xp[a] - g.inner[2 * a + 1]) / g.thickness[2 * a + 1];
+      }
+      const double shape = std::pow(std::min(r, 1.0), p.order);
+      const bool pos = (xp[a] > p.geometry.inner[2 * a + 1]);
+      const double sigma = shape * p.sigma_max[2 * a + (pos ? 1 : 0)];
+      s[a] = 1.0 + (p.kappa_max[a] - 1.0) * shape +
+             sigma / (p.alpha_max[a] * shape + 1i * p.reference_frequency);
+    }
+    return s;
+  };
+  auto MakeCoefficient = [&](bool muinv, bool imag)
+  {
+    return mfem::MatrixFunctionCoefficient(
+        3,
+        [=](const mfem::Vector &x, mfem::DenseMatrix &T)
+        {
+          // Bulk material values are evaluated by the PWConstCoefficient below.
+          const auto s = Stretch(x);
+          const auto det = s[0] * s[1] * s[2];
+          T = 0.0;
+          for (int i = 0; i < 3; i++)
+          {
+            const std::complex<double> b =
+                muinv ? b_mu_inv[i] : b_eps_re[i] + 1i * b_eps_im[i];
+            const std::complex<double> t =
+                muinv ? b * s[i] * s[i] / det : b * det / (s[i] * s[i]);
+            T(i, i) = imag ? t.imag() : t.real();
+          }
+        });
+  };
+
+  const auto &pfes = space_op.GetNDSpace().Get();
+  const int q_order = fem::DefaultIntegrationOrder::Get(
+      mesh[0]->Get(), mesh[0]->Get().GetElementGeometry(0));
+  auto AssembleReference = [&](bool muinv, bool imag)
+  {
+    mfem::ParBilinearForm a(const_cast<mfem::ParFiniteElementSpace *>(&pfes));
+    mfem::Array<int> pml_marker({0, 1}), bulk_marker({1, 0});
+    auto *pml_coef = new mfem::MatrixFunctionCoefficient(MakeCoefficient(muinv, imag));
+    auto *bulk_coef = new mfem::ConstantCoefficient(muinv ? 1.0 : 1.0);
+    const auto &ir = mfem::IntRules.Get(mesh[0]->Get().GetElementGeometry(0), q_order);
+    mfem::BilinearFormIntegrator *integ_pml, *integ_bulk = nullptr;
+    if (muinv)
+    {
+      integ_pml = new mfem::CurlCurlIntegrator(*pml_coef);
+      if (!imag)
+      {
+        integ_bulk = new mfem::CurlCurlIntegrator(*bulk_coef);
+      }
+    }
+    else
+    {
+      integ_pml = new mfem::VectorFEMassIntegrator(*pml_coef);
+      if (!imag)
+      {
+        integ_bulk = new mfem::VectorFEMassIntegrator(*bulk_coef);
+      }
+    }
+    integ_pml->SetIntRule(&ir);
+    a.AddDomainIntegrator(integ_pml, pml_marker);
+    if (integ_bulk)
+    {
+      integ_bulk->SetIntRule(&ir);
+      a.AddDomainIntegrator(integ_bulk, bulk_marker);
+    }
+    a.Assemble();
+    a.Finalize();
+    std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+    delete pml_coef;
+    delete bulk_coef;
+    return A;
+  };
+
+  for (bool muinv : {true, false})
+  {
+    auto Ar = AssembleReference(muinv, false), Ai = AssembleReference(muinv, true);
+    auto A = muinv ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+                   : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(A);
+    ComplexVector x(A->Width()), y(A->Height()), y_ref(A->Height());
+    x.Real().Randomize(42 + Mpi::Rank(comm));
+    x.Imag().Randomize(4242 + Mpi::Rank(comm));
+    A->Mult(x, y);
+    Vector t(A->Height());
+    Ar->Mult(x.Real(), y_ref.Real());
+    Ai->Mult(x.Imag(), t);
+    y_ref.Real().Add(-1.0, t);
+    Ar->Mult(x.Imag(), y_ref.Imag());
+    Ai->Mult(x.Real(), t);
+    y_ref.Imag().Add(1.0, t);
+    const double norm = linalg::Norml2(comm, y_ref);
+    y.Add(-1.0, y_ref);
+    INFO("muinv = " << muinv << ", element = " << static_cast<int>(element));
+    CHECK_THAT(linalg::Norml2(comm, y) / norm, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
   }
 }
 
