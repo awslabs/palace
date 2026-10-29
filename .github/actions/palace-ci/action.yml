@@ -263,6 +263,31 @@ runs:
         spack -e . concretize -f --test root
         end_timer "Concretize"
 
+    - name: Probe dependency build
+      if: inputs.toolchain == 'intel-oneapi'
+      shell: bash
+      run: |
+        set +e
+        spack -e . install --only-concrete --no-check-signature --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc) > /tmp/deps-install.log 2>&1 &
+        pid=$!
+        for i in $(seq 1 50); do
+          sleep 30
+          kill -0 $pid 2>/dev/null || break
+          echo "--- t=$((i*30))s: $(grep -E '\] [a-z0-9]{7} [a-z0-9-]+@' /tmp/deps-install.log | tail -1 | cut -c1-120)"
+          ps -eo etimes=,args= | grep -E '/compiler/20[0-9.]+/bin/(icpx|icx|compiler/clang)' | grep -v grep | grep -oE '^ *[0-9]+|-c [^ ]+' | paste -sd' ' | sed -E 's/ ([0-9]+) -c/\n\1s -c/g' | sed -E 's#/tmp/[^ ]*/spack-src/##' | head -20
+        done
+        if kill -0 $pid 2>/dev/null; then
+          echo "=== still running after 25 min; long-running compiles:"
+          ps -eo etimes=,args= | grep -E 'bin/(icpx|icx)' | grep -v grep | awk '$1 > 300' | cut -c1-2000
+          for r in /tmp/icpx*/icpxarg*; do [ -f "$r" ] && { echo "== $r"; grep -oE '"?-main-file-name"? "?[^ "]+' "$r"; grep -oE '"?-O[0-3s]"?' "$r" | sort | uniq -c; }; done
+          pkill -TERM -P $pid; kill $pid; sleep 5
+          tail -30 /tmp/deps-install.log | cut -c1-300
+          exit 1
+        fi
+        wait $pid; rc=$?
+        tail -30 /tmp/deps-install.log | cut -c1-300
+        exit $rc
+
     - name: Build Dependencies
       shell: bash
       run: |
