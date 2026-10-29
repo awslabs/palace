@@ -294,6 +294,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     types `"MA"` and `"MS"` on sheets with the same material on both sides, such as air
     bridges. They now give the same results as on a cracked mesh.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Fixed a segmentation fault reading 2D meshes with boundary elements which are not an
+    edge of any element, for example a conductor face tagged on an outer boundary of the
+    mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
+    no domain element is attached to, are now removed with a warning.
+    [PR 1100](https://github.com/awslabs/palace/pull/1100).
 
 #### Performance Improvements
 
