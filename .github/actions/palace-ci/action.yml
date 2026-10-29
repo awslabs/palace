@@ -359,7 +359,7 @@ runs:
         cd "$GITHUB_WORKSPACE"
         b=$(ls -d /tmp/*/spack-stage/spack-stage-slate-*/spack-build-*/ | head -1)
         echo "=== make -k in $b"
-        spack -e . build-env slate -- make -k -j "$(nproc)" -C "$b" > /tmp/slate-makek.log 2>&1
+        timeout 900 spack -e . build-env slate -- make -k -j "$(nproc)" -C "$b" > /tmp/slate-makek.log 2>&1
         echo "make rc=$?"
         grep -E "Error [0-9]|frontend command failed" /tmp/slate-makek.log | sort | uniq -c | head -40
 
