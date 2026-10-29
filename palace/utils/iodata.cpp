@@ -845,6 +845,20 @@ void IoData::CheckConfiguration()
             "current ports (SurfaceCurrent index "
                 << idx << ")!");
       }
+      // Each flux loop is its own excitation, on a solution space that is not broken across
+      // the films.
+      for (const auto &[idx, data] : boundaries.fluxloop)
+      {
+        MFEM_VERIFY(data.excitation == idx,
+                    "Magnetostatic substructuring drives each flux loop in its own "
+                    "excitation (FluxLoop index "
+                        << idx << ")!");
+      }
+      MFEM_VERIFY(std::none_of(boundaries.superconductor.begin(),
+                               boundaries.superconductor.end(),
+                               [](const auto &data) { return data.two_sided; }),
+                  "Magnetostatic substructuring does not support \"TwoSided\" "
+                  "superconductor boundaries yet!");
     }
     std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
     for (int a : sub.environment_attributes)

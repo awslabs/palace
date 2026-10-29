@@ -167,7 +167,11 @@ magnetostatic solution and is rejected.
 
     With substructuring, inactive surface-current ports must be `"Open"` (see
     [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic-inactiveports)):
-    every excitation is solved against the same condensed environment.
+    every excitation is solved against the same condensed environment. Each flux loop is its own
+    excitation (the default
+    [`"Excitation"`](../config/reference.md#config-boundaries-fluxloop-excitation)), and
+    [`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) superconductor
+    films are not supported yet.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 
