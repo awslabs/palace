@@ -169,6 +169,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     a strongly lossy coplanar-strip line at 1 GHz, and the power normalization of lossy
     modes wrong. Results are unchanged for lossless modes.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+  - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
+    which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
+    the stiffness matrix as if it were symmetric.
 
 #### Build system
 
