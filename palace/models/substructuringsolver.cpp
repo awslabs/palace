@@ -1982,10 +1982,49 @@ struct SubstructuringSolver::Impl
     }
   }
 
+  // The true DOFs of the environment elements touching the marked true DOFs, those written
+  // in the mesh of the region (see palace::WriteRegionMesh). Collective.
+  std::vector<char> WrittenEnvTrueDofs(const std::vector<char> &keep) const
+  {
+    const auto &P = *parent_fes.Dof_TrueDof_Matrix();
+    mfem::Vector t(P.Width()), l(P.Height()), lw(P.Height());
+    for (int i = 0; i < t.Size(); i++)
+    {
+      t(i) = keep[i] ? 1.0 : 0.0;
+    }
+    P.Mult(t, l);
+    lw = 0.0;
+    mfem::Array<int> dofs;
+    auto index = [](int d) { return (d >= 0) ? d : -1 - d; };
+    for (int e = 0; e < parent.GetNE(); e++)
+    {
+      if (ea_arr.Find(parent.GetAttribute(e)) < 0)
+      {
+        continue;
+      }
+      parent_fes.GetElementDofs(e, dofs);
+      if (std::any_of(dofs.begin(), dofs.end(), [&](int d) { return l(index(d)) != 0.0; }))
+      {
+        for (int d : dofs)
+        {
+          lw(index(d)) = 1.0;
+        }
+      }
+    }
+    P.AbsMultTranspose(1.0, lw, 0.0, t);
+    std::vector<char> written(t.Size());
+    for (int i = 0; i < t.Size(); i++)
+    {
+      written[i] = (t(i) > 0.0);
+    }
+    return written;
+  }
+
   // The mesh of the region for online runs: the region, with the environment elements
   // touching the region's Dirichlet DOFs (set on Γ by boundary conditions of the
   // environment) and, in magnetostatics, those of the surface currents and flux loops,
-  // whose excitations need their boundaries. Collective.
+  // whose excitations need their boundaries, and both sides of the two-sided films these
+  // elements touch. Collective.
   void WriteRegionMesh(const std::string &path)
   {
     std::vector<char> keep(region_dbc.begin(),
@@ -2014,6 +2053,57 @@ struct SubstructuringSolver::Impl
       for (std::size_t i = 0; i < keep.size(); i++)
       {
         keep[i] = keep[i] || mark[i];
+      }
+    }
+    if (broken)
+    {
+      // A two-sided film touched by a written element is written whole, with the elements
+      // touching it, so that none of its faces lies on the boundary of the mesh (until no
+      // further film is touched).
+      std::vector<std::vector<int>> films;  // the true DOFs of each film attribute
+      for (const auto &sc : iodata.boundaries.superconductor)
+      {
+        if (!sc.two_sided)
+        {
+          continue;
+        }
+        for (int a : sc.attributes)
+        {
+          const auto mark = BoundaryTrueDofs(parent_fes, {a});
+          auto &dofs = films.emplace_back();
+          for (std::size_t i = 0; i < mark.size(); i++)
+          {
+            if (mark[i])
+            {
+              dofs.push_back(static_cast<int>(i));
+            }
+          }
+        }
+      }
+      std::vector<int> whole(films.size(), 0);
+      for (bool grown = true; grown;)
+      {
+        const auto written = WrittenEnvTrueDofs(keep);
+        std::vector<int> touched(films.size(), 0);
+        for (std::size_t f = 0; f < films.size(); f++)
+        {
+          touched[f] = !whole[f] && std::any_of(films[f].begin(), films[f].end(),
+                                                [&](int i) { return written[i]; });
+        }
+        Mpi::GlobalMax(static_cast<int>(touched.size()), touched.data(), parent.GetComm());
+        grown = false;
+        for (std::size_t f = 0; f < films.size(); f++)
+        {
+          if (touched[f])
+          {
+            whole[f] = 1;
+            grown = true;
+            for (int i : films[f])
+            {
+              keep[i] = 1;
+            }
+          }
+        }
       }
     }
     const auto &sub = *iodata.solver.substructuring;

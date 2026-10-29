@@ -63,14 +63,14 @@ region and the environment are given by domain attributes, which together must c
     may be re-meshed between runs, as long as the environment and the interface are unchanged.
 
 An `"Offline"` run that saves a model also writes a mesh of the region next to it
-(`<model>_region.mesh` for `"SaveModel": "<model>.model"`), with the few environment elements
-along the boundary conditions of the environment that reach the interface and, in
-magnetostatics, at the surface currents and flux loops of the environment. An `"Online"` run on
-it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and partitions the region
-only. The environment is then that of the model, and its fingerprint is not checked; the
-interface is found from the saved interface DOFs, and the nondimensionalization is that of the
-model. Every excitation with sources in the environment must be in the model, the fields are
-written in the region and on the interface only, and adaptive refinement needs the full mesh. A
+(`<model>_region.mesh` for `"SaveModel": "<model>.model"`), with the few environment elements along
+the boundary conditions of the environment that reach the interface and, in magnetostatics, at the
+surface currents and flux loops of the environment (with both sides of the `"TwoSided"` films they
+touch). An `"Online"` run on it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads
+and partitions the region only. The environment is then that of the model, and its fingerprint is
+not checked; the interface is found from the saved interface DOFs, and the nondimensionalization is
+that of the model. Every excitation with sources in the environment must be in the model, the fields
+are written in the region and on the interface only, and adaptive refinement needs the full mesh. A
 redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).

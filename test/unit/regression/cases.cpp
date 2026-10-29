@@ -1454,6 +1454,23 @@ TEST_CASE("substructuring_magnetostatic_two_sided_swapped",
                                   "two_sided_swapped", opts);
 }
 
+// An online run on the mesh of the region, for a surface-current port standing on a
+// two-sided film of the environment: the mesh holds the whole film, with both its sides.
+// The references are regular simulations.
+TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_port.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_port_online_region.json",
+                                  "two_sided_port_online_region", opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and
