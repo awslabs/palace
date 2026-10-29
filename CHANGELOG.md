@@ -351,8 +351,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `PALACE_WITH_MUMPS`, `PALACE_WITH_CUDSS`, `PALACE_WITH_SUNDIALS`, and
     `PALACE_WITH_GSLIB` options or the `*_DIR` options for these libraries: it follows
     the MFEM build. The superbuild options are unchanged.
+    [PR 1113](https://github.com/awslabs/palace/pull/1113).
   - The unit tests read the MFEM example meshes from MFEM's installed `data/` folder
     instead of copies in `test/data/mesh`.
+    [PR 1113](https://github.com/awslabs/palace/pull/1113).
 
 ## [0.18.1] - 2026-09-21
 
