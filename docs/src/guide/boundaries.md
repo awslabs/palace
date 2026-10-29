@@ -146,6 +146,19 @@ regions are best limited to the faces through which waves leave the domain. A st
 (extruded) mesh of layers of elements, aligned with the faces of the box, is recommended
 in the PML regions.
 
+The theoretical reflection, which is printed for each face, is that of the continuous
+layer. The discretized layer reflects more, which dominates at normal and moderate
+incidence where the theoretical reflection is very small: at normal incidence and with the
+default `"SigmaMax"`, second-order elements reflect about -80 to -85 dB with 8 elements
+and -93 to -100 dB with 12 elements for ``h`` between ``\lambda / 32`` and
+``\lambda / 16``, and refining the mesh at a fixed number of elements does not reduce
+this reflection. The default conductivity is chosen for oblique and grazing incidence,
+where the theoretical reflection is reached. For waves which leave the domain near normal
+incidence (such as the backscattered field of a scatterer), a weaker absorption, with a
+`"ReflectionTarget"` slightly below the required reflection, reflects less (for example
+5 to 20 dB less with 8 to 12 second-order elements and a target of ``10^{-6}`` to
+``10^{-7}``), at the cost of larger reflections at grazing incidence.
+
 A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
 of the structures, which it distorts instead. The PML regions should therefore be placed at
 a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
