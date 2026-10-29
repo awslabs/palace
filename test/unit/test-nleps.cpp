@@ -251,10 +251,20 @@ struct DiagonalLorentzProblem
     fespace = std::make_unique<FiniteElementSpace>(*mesh, &fec);
     const int n = mesh->Get().GetNE();
     REQUIRE(fespace->GetVSize() == n);
+    // The global number of local element i is the offset of this process plus i. The
+    // offset comes from a collective scan on every process: ParMesh::GetGlobalElementNum
+    // computes it on first use, which a process without elements never makes, so with an
+    // empty process the scan was unmatched and later collectives returned wrong numbers.
+    long long num_local = n, offset = 0;
+    MPI_Exscan(&num_local, &offset, 1, MPI_LONG_LONG, MPI_SUM, Mpi::World());
+    if (Mpi::Rank(Mpi::World()) == 0)
+    {
+      offset = 0;  // MPI_Exscan leaves the result on the first process undefined
+    }
     Vector kd(n), md(n);
     for (int i = 0; i < n; i++)
     {
-      gid.push_back(mesh->Get().GetGlobalElementNum(i));
+      gid.push_back(offset + i);
       kd(i) = k.at(gid.back());
       md(i) = 1.0;
     }
@@ -659,10 +669,6 @@ TEST_CASE("Seed solver with a second start", "[nleps][Serial][Parallel]")
   }
   const auto first = eps.GetEigenvalue(0);
   CHECK(std::abs(first - std::complex<double>(0.0, 1.5)) <= 1.0e-8);
-  if (Mpi::Size(Mpi::World()) > 1)
-  {
-    return;  // The errors of the protocol are checked on one process
-  }
   // Another problem (of the same or of another size) or Solve is an error, and leaves the
   // results.
   CHECK_THROWS(eps.SetOperators(*p.K, C, *p.M, EigenvalueSolver::ScaleType::NONE));
