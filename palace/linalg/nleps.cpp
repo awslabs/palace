@@ -1002,8 +1002,9 @@ int QuasiNewtonSolver::Solve()
   // eigs[i] were stored together. X[i] is the eigenvector if it is one of T(eigs[i]);
   // otherwise it is X y for the eigenvector y = [a; 1; 0] of the upper triangular H, with
   // (eigs[i] I - H₀₀) a = H(0:i, i). Either is accepted only with the residual criterion
-  // of the iteration: a defective or ill-conditioned pair gives no field, rather than a
-  // generalized vector or a copy of another field.
+  // of the iteration; if neither passes (an inaccurate, defective, or ill-conditioned
+  // invariant pair), no field is returned for that eigenvalue. The residual does not
+  // certify the geometric multiplicity: nearly parallel fields can both pass.
   eigenvalues.clear();
   eigenvectors.clear();
   ComplexVector r(X.empty() ? 0 : X[0].Size());
@@ -1042,8 +1043,8 @@ int QuasiNewtonSolver::Solve()
     {
       Mpi::Warning(
           GetComm(),
-          "No eigenvector found for the converged eigenvalue {:.6e}{:+.6e}i, whose "
-          "invariant pair is defective or ill-conditioned!\n",
+          "No valid eigenvector recovered for the converged eigenvalue {:.6e}{:+.6e}i; "
+          "its invariant pair may be inaccurate, defective, or ill-conditioned!\n",
           l.real(), l.imag());
       continue;
     }

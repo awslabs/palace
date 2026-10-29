@@ -859,6 +859,8 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
                                         const ComplexOperator &M,
                                         EigenvalueSolver::ScaleType type)
 {
+  MFEM_VERIFY(!(second_start && solved),
+              "SlepcPEPLinearSolver with a second start supports one problem!");
   // Construct shell matrices for the scaled linearized operators which define the block 2x2
   // eigenvalue problem.
   const bool first = (opK == nullptr);
@@ -941,23 +943,36 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
   // The start is y = [v; 0]: v0 also holds the last extracted eigenvector, so both blocks
-  // are written.
-  PalacePetscCall(VecZeroEntries(v0));
-  PalacePetscCall(ToPetscVec(v, v0, 0, 2));
+  // are written (with write access, the values not written are undefined).
+  ComplexVector zero(v.Size());
+  zero.UseDevice(true);
+  zero = 0.0;
+  PalacePetscCall(ToPetscVec(v, zero, v0));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
 }
 
+void SlepcPEPLinearSolver::SetSecondInitialSpace(const ComplexVector &v)
+{
+  v_second.SetSize(v.Size());
+  v_second.UseDevice(true);
+  v_second = v;
+  second_start = true;
+}
+
 int SlepcPEPLinearSolver::Solve()
 {
-  pooled = false;
-  pool_eig.clear();
-  pool_vec.clear();
-  const int num_first = SlepcEPSSolverBase::Solve();
-  if (v_second.Size() == 0)
+  if (!second_start)
   {
-    return num_first;
+    return SlepcEPSSolverBase::Solve();
   }
+  // A solved EPS returns at once from another solve, so a second Solve would pool the
+  // last solve twice.
+  MFEM_VERIFY(!solved, "SlepcPEPLinearSolver with a second start supports one Solve!");
+  MFEM_VERIFY(opK && opK->Height() == v_second.Size(),
+              "Invalid size of the second start of SlepcPEPLinearSolver!");
+  solved = true;
+  const int num_first = SlepcEPSSolverBase::Solve();
   // SLEPc keeps only the last solve's eigenpairs, so retain those of the first.
   auto Retain = [this](int num)
   {

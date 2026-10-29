@@ -18,6 +18,9 @@
 #include "linalg/ksp.hpp"
 #include "linalg/nleps.hpp"
 #include "linalg/rap.hpp"
+#if defined(PALACE_WITH_SLEPC)
+#include "linalg/slepc.hpp"
+#endif
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
@@ -581,9 +584,10 @@ TEST_CASE("Quasi-Newton eigenvectors of a nonnormal problem", "[nleps][Serial]")
 }
 
 // A Jordan block: with k₀ = k₁ and K(0, 1) = 0.3, T(λ) = [[0, 0.3], [0, 0]] at the root of
-// the first two dofs, which has one eigenvector e₀ (algebraic multiplicity two). No second,
-// independent field may be returned for it: every field returned there is e₀, with its
-// residual.
+// the first two dofs, which has one eigenvector e₀ (algebraic multiplicity two). Every
+// field returned at that root must be e₀, with its residual: there may be more than one
+// such (parallel) field, but no independent one. This does not exercise the warning of an
+// unrecovered field.
 TEST_CASE("Quasi-Newton eigenvectors of a Jordan block", "[nleps][Serial]")
 {
   const DiagonalLorentzProblem p({1.5 * 1.5, 1.5 * 1.5, 2.1 * 2.1}, 0.3);
@@ -602,4 +606,64 @@ TEST_CASE("Quasi-Newton eigenvectors of a Jordan block", "[nleps][Serial]")
     }
   }
   CHECK(found >= 1);
+}
+
+// The seed solver of the Hybrid method, solved from a second start: its eigenpairs are
+// those of both solves (here each the root ±1.5i of 2.25 + λ², the one nearest the shift
+// first), and it supports one Solve of one problem. One dof: with two processes one has no
+// local part of the problem and must still take part in the second solve.
+TEST_CASE("Seed solver with a second start", "[nleps][Serial][Parallel]")
+{
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("Requires SLEPc");
+#else
+  const DiagonalLorentzProblem p({2.25});
+  Vector zero(p.LocalSize());
+  zero = 0.0;
+  ComplexParOperator C(
+      std::make_unique<CoupledDiagonalOperator>(std::move(zero), -1, -1, 0.0), nullptr,
+      *p.fespace);
+  const std::complex<double> sigma(0.0, 1.4);
+  DiagonalComplexOperator P(
+      std::vector<std::complex<double>>(p.LocalSize(), 2.25 + sigma * sigma));
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-12);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  ksp.SetOperators(P, P);
+  auto Configure = [&](slepc::SlepcPEPLinearSolver &eps)
+  {
+    eps.SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    eps.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    eps.SetOperators(*p.K, C, *p.M, EigenvalueSolver::ScaleType::NONE);
+    eps.SetLinearSolver(ksp);
+    eps.SetShiftInvert(sigma);
+    eps.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
+    eps.SetNumModes(1, 2);
+    eps.SetTol(1.0e-10);
+    eps.SetMaxIter(100);
+    eps.SetInitialSpace(p.Unit(0));
+  };
+  slepc::SlepcPEPLinearSolver eps(Mpi::World(), 0);
+  Configure(eps);
+  eps.SetSecondInitialSpace(p.Unit(0, {0.3, 0.7}));
+  const int num = eps.Solve();
+  REQUIRE(num >= 2);
+  for (int i = 0; i < num; i++)
+  {
+    const auto l = eps.GetEigenvalue(i);
+    CAPTURE(i, l, eps.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE));
+    CHECK(std::abs(l * l + 2.25) <= 1.0e-8);
+    CHECK(eps.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE) <= 1.0e-8);
+  }
+  CHECK(std::abs(eps.GetEigenvalue(0) - std::complex<double>(0.0, 1.5)) <= 1.0e-8);
+  CHECK_THROWS(eps.Solve());
+  CHECK_THROWS(eps.SetOperators(*p.K, C, *p.M, EigenvalueSolver::ScaleType::NONE));
+
+  // A second start of another size than the problem.
+  slepc::SlepcPEPLinearSolver wrong(Mpi::World(), 0);
+  Configure(wrong);
+  wrong.SetSecondInitialSpace(ComplexVector(p.LocalSize() + 1));
+  CHECK_THROWS(wrong.Solve());
+#endif
 }
