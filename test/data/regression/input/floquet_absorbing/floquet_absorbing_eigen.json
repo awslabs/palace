@@ -52,7 +52,11 @@
     {
       "N": 3,
       "Tol": 1.0e-10,
-      "Target": 9.5,
+      "Target": 9.3,  // GHz. ARPACK does not rank the modes by their distance to the
+                      // target: for a target just below the lossy mode at
+                      // 9.52 + 0.34i GHz, it finds modes further above first. With
+                      // the target 0.2 GHz below it, ARPACK and SLEPc find the same
+                      // three modes.
       "Save": 0
     },
     "Linear":
