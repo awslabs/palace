@@ -14,12 +14,22 @@
 namespace palace
 {
 
+class FiniteElementSpace;
+
 // Parallel-capable interface identification in true-DOF space. Given the parent finite
 // element space and the region/environment domain attribute sets, mark each parent true DOF
 // touched by region element support, by environment support, and by both (the shared
 // interface). Works on any MPI partition: L-vector attribute marks are reduced to true DOFs
 // across ranks via the parallel prolongation. Returns the global interface true-DOF count.
 int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
+                          const mfem::Array<int> &region_attrs,
+                          const mfem::Array<int> &environment_attrs,
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
+                          mfem::Array<int> &interface_marker);
+
+// The same on a Palace space, which may be broken across interior boundaries: a version of
+// a DOF is marked by the elements reading it.
+int MarkInterfaceTrueDofs(const FiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
                           mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,

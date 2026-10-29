@@ -871,12 +871,6 @@ void IoData::CheckConfiguration()
             "current ports (SurfaceCurrent index "
                 << idx << ")!");
       }
-      // A two-sided film breaks the solution space across the film.
-      MFEM_VERIFY(std::none_of(boundaries.superconductor.begin(),
-                               boundaries.superconductor.end(),
-                               [](const auto &data) { return data.two_sided; }),
-                  "Magnetostatic substructuring does not support \"TwoSided\" "
-                  "superconductor boundaries yet!");
     }
     std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
     for (int a : sub.environment_attributes)

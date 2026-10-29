@@ -64,14 +64,14 @@ region and the environment are given by domain attributes, which together must c
     may be re-meshed between runs, as long as the environment and the interface are unchanged.
 
 An `"Offline"` run that saves a model also writes a mesh of the region next to it
-(`<model>_region.mesh` for `"SaveModel": "<model>.model"`), with the few environment elements
-along the boundary conditions of the environment that reach the interface and, in
-magnetostatics, at the surface currents and flux loops of the environment. An `"Online"` run on
-it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and partitions the region
-only. The environment is then that of the model, and its fingerprint is not checked; the
-interface is found from the saved interface DOFs, and the nondimensionalization is that of the
-model. Every excitation with sources in the environment must be in the model, the fields are
-written in the region and on the interface only, and adaptive refinement needs the full mesh. A
+(`<model>_region.mesh` for `"SaveModel": "<model>.model"`), with the few environment elements along
+the boundary conditions of the environment that reach the interface and, in magnetostatics, at the
+surface currents and flux loops of the environment (with both sides of the `"TwoSided"` films they
+touch). An `"Online"` run on it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads
+and partitions the region only. The environment is then that of the model, and its fingerprint is
+not checked; the interface is found from the saved interface DOFs, and the nondimensionalization is
+that of the model. Every excitation with sources in the environment must be in the model, the fields
+are written in the region and on the interface only, and adaptive refinement needs the full mesh. A
 redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
@@ -156,21 +156,22 @@ films are London sheets, as in a regular simulation: a film without a `"Supercon
 the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film its own. The sheet term
 of each film face is condensed with the part of the domain the face bounds, so films may lie in the
 region, in the environment, or cross the interface; so may the surface-current ports and their
-apertures. A saved model includes the condensed excitations of the environment, so an online run
-needs no environment solve as long as the excitations in the environment are unchanged; excitations
-inside the region, such as a port added or moved in a redesign, need none at all. A small mass
-regularization keeps the curl-curl operator definite; the extracted energies use the unregularized
-operator, in a form whose error is quadratic in the regularization. Each surface current must close:
-it has to start and end on `"PEC"` boundaries or superconducting films, as in a physical circuit. A
-current that does not close has no magnetostatic solution and is rejected.
+apertures. A [`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) film,
+across which the solution space is broken as in a regular simulation, must lie inside the region or
+the environment, away from the interface. The region and the environment must then be factored
+(both within `"DirectMaxSize"`), and the region of an adaptive refinement cannot hold one. A saved model includes the condensed excitations of the environment, so
+an online run needs no environment solve as long as the excitations in the environment are
+unchanged; excitations inside the region, such as a port added or moved in a redesign, need none at
+all. A small mass regularization keeps the curl-curl operator definite; the extracted energies use
+the unregularized operator, in a form whose error is quadratic in the regularization. Each surface
+current must close: it has to start and end on `"PEC"` boundaries or superconducting films, as in a
+physical circuit. A current that does not close has no magnetostatic solution and is rejected.
 
 !!! note
 
     With substructuring, inactive surface-current ports must be `"Open"` (see
     [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic-inactiveports)):
     every excitation is solved against the same condensed environment.
-    [`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) superconductor
-    films are not supported yet.
 
 ## Driven problems
 

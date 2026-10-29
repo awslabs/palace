@@ -77,9 +77,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     limit (`"DirectMaxSize"`). Magnetostatic substructuring supports `"FluxLoop"` and
     `"SurfaceCurrent"` excitations, alone or together (flux loops also grouped or held at
     zero fluxoid), with the films and `"Superconductor"` boundaries as London sheets
-    (kinetic inductance included). Adds substructuring examples in `examples/transmon` and
-    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops, on separate rings
-    and on one plate). SchemaVer 4-2-0.
+    (kinetic inductance included; `"TwoSided"` films inside the region or the environment).
+    Adds substructuring examples in `examples/transmon` and `examples/substructuring`
+    (5 x 5 lattices of qubits and of flux loops, on separate rings and on one plate).
+    SchemaVer 4-2-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
     uniform frequency sweeps condense the environment exactly at each frequency, with lumped
