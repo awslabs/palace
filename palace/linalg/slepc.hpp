@@ -329,7 +329,8 @@ public:
   // eigenpairs are those converged in both solves, the first solve's first, each in SLEPc's
   // order: a pool of initial guesses for a nonlinear refinement, which may hold the same
   // eigenpair twice, not a set of distinct eigenpairs. It must be set on every process
-  // (with the local part of the start, which may be empty), and supports one Solve.
+  // (with the local part of the start, which may be empty) before SetOperators; the solver
+  // then takes one SetOperators and one Solve.
   void SetSecondInitialSpace(const ComplexVector &v);
 
   int Solve() override;

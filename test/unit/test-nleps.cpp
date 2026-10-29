@@ -631,22 +631,23 @@ TEST_CASE("Seed solver with a second start", "[nleps][Serial][Parallel]")
   gmres->SetMaxIter(100);
   ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
   ksp.SetOperators(P, P);
-  auto Configure = [&](slepc::SlepcPEPLinearSolver &eps)
+  auto Configure = [&](slepc::SlepcPEPLinearSolver &eps, const DiagonalLorentzProblem &q)
   {
     eps.SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
     eps.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    eps.SetOperators(*p.K, C, *p.M, EigenvalueSolver::ScaleType::NONE);
+    eps.SetOperators(*q.K, C, *q.M, EigenvalueSolver::ScaleType::NONE);
     eps.SetLinearSolver(ksp);
     eps.SetShiftInvert(sigma);
     eps.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
     eps.SetNumModes(1, 2);
     eps.SetTol(1.0e-10);
     eps.SetMaxIter(100);
-    eps.SetInitialSpace(p.Unit(0));
+    eps.SetInitialSpace(q.Unit(0));
   };
+  // The second start is set before the problem.
   slepc::SlepcPEPLinearSolver eps(Mpi::World(), 0);
-  Configure(eps);
   eps.SetSecondInitialSpace(p.Unit(0, {0.3, 0.7}));
+  Configure(eps, p);
   const int num = eps.Solve();
   REQUIRE(num >= 2);
   for (int i = 0; i < num; i++)
@@ -656,14 +657,32 @@ TEST_CASE("Seed solver with a second start", "[nleps][Serial][Parallel]")
     CHECK(std::abs(l * l + 2.25) <= 1.0e-8);
     CHECK(eps.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE) <= 1.0e-8);
   }
-  CHECK(std::abs(eps.GetEigenvalue(0) - std::complex<double>(0.0, 1.5)) <= 1.0e-8);
-  CHECK_THROWS(eps.Solve());
+  const auto first = eps.GetEigenvalue(0);
+  CHECK(std::abs(first - std::complex<double>(0.0, 1.5)) <= 1.0e-8);
+  if (Mpi::Size(Mpi::World()) > 1)
+  {
+    return;  // The errors of the protocol are checked on one process
+  }
+  // Another problem (of the same or of another size) or Solve is an error, and leaves the
+  // results.
   CHECK_THROWS(eps.SetOperators(*p.K, C, *p.M, EigenvalueSolver::ScaleType::NONE));
+  const DiagonalLorentzProblem q({2.25, 4.0});
+  CHECK_THROWS(eps.SetOperators(*q.K, *q.M, *q.M, EigenvalueSolver::ScaleType::NONE));
+  CHECK_THROWS(eps.Solve());
+  CHECK(eps.GetEigenvalue(0) == first);
+
+  // A second start set after the problem is an error, also after a solve of it.
+  slepc::SlepcPEPLinearSolver late(Mpi::World(), 0);
+  Configure(late, p);
+  CHECK_THROWS(late.SetSecondInitialSpace(p.Unit(0, {0.3, 0.7})));
+  REQUIRE(late.Solve() >= 1);
+  CHECK_THROWS(late.SetSecondInitialSpace(p.Unit(0, {0.3, 0.7})));
+  CHECK(std::abs(late.GetEigenvalue(0) - std::complex<double>(0.0, 1.5)) <= 1.0e-8);
 
   // A second start of another size than the problem.
   slepc::SlepcPEPLinearSolver wrong(Mpi::World(), 0);
-  Configure(wrong);
   wrong.SetSecondInitialSpace(ComplexVector(p.LocalSize() + 1));
+  Configure(wrong, p);
   CHECK_THROWS(wrong.Solve());
 #endif
 }

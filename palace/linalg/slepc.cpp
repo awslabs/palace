@@ -859,7 +859,7 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
                                         const ComplexOperator &M,
                                         EigenvalueSolver::ScaleType type)
 {
-  MFEM_VERIFY(!(second_start && solved),
+  MFEM_VERIFY(!(second_start && opK),
               "SlepcPEPLinearSolver with a second start supports one problem!");
   // Construct shell matrices for the scaled linearized operators which define the block 2x2
   // eigenvalue problem.
@@ -954,6 +954,8 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
 
 void SlepcPEPLinearSolver::SetSecondInitialSpace(const ComplexVector &v)
 {
+  MFEM_VERIFY(!opK, "The second start of SlepcPEPLinearSolver must be set before its "
+                    "problem (SetOperators)!");
   v_second.SetSize(v.Size());
   v_second.UseDevice(true);
   v_second = v;

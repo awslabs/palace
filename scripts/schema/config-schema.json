@@ -2357,7 +2357,7 @@
       "oneOf": [
         {
           "const": "Hybrid",
-          "description": "Use the hybrid nonlinear eigensolver strategy: quasi-Newton refinement of the eigenpairs of a polynomial seed. With a frequency-dependent permittivity, the seed takes the permittivity, and the first-order absorbing boundary coefficient next to it, at the target, and is solved from two starts, so that it can hold both modes of a degenerate pair. The seed gives initial guesses only: it does not guarantee that every eigenvalue near the target is found."
+          "description": "Use the hybrid nonlinear eigensolver strategy: quasi-Newton refinement of the eigenpairs of a polynomial seed. With a frequency-dependent permittivity, the seed takes the frequency-dependent volume terms (without the zero poles of conductivities, which are in the damping matrix) and the first-order absorbing boundary coefficient next to such materials at the target. With the SLEPc backend, `\"PEPLinear\": true` (the default), and `\"RefineNonlinear\": true`, the seed is also solved from a second start, so that it can hold both modes of a degenerate pair; with ARPACK, `\"PEPLinear\": false`, or without refinement it is solved once. The seed gives initial guesses only: it does not guarantee that every eigenvalue near the target is found."
         },
         {
           "const": "SLP",
