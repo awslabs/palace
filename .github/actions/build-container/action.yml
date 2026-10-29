@@ -141,7 +141,7 @@ runs:
     - name: Check Dockerfile
       shell: bash
       run: |
-        podman run --rm -i ghcr.io/hadolint/hadolint hadolint --failure-threshold error - < "$GITHUB_WORKSPACE/Dockerfile"
+        podman run --rm -i ghcr.io/hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint --failure-threshold error - < "$GITHUB_WORKSPACE/Dockerfile"
 
     - name: Authenticate to build cache
       shell: bash
@@ -230,7 +230,7 @@ runs:
 
     - name: Upload OCI image
       if: steps.name.outputs.publish_artifacts == 'true'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.name.outputs.image_name }}-oci
         path: ${{ steps.name.outputs.image_name }}.tar
@@ -241,7 +241,7 @@ runs:
 
     - name: Upload SIF image
       if: steps.name.outputs.publish_artifacts == 'true'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.name.outputs.image_name }}-sif
         path: ${{ steps.name.outputs.image_name }}.sif
@@ -257,7 +257,7 @@ runs:
       # matching the schema to the image's provenance (build-container has no AWS
       # access; publish.py does the upload). Arch-independent, but uploaded per
       # leg under a unique name so parallel matrix jobs don't collide.
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.name.outputs.image_name }}-schema
         path: scripts/schema/config-schema.json

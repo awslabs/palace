@@ -1103,13 +1103,15 @@ TEST_CASE("BoundaryModeOperator interior PEC on a nonconforming mesh",
 
 // BoundaryMode cross-section extracted from a nonconforming 3D mesh: the wave port of
 // cpw_wave_2dmode on the uncracked mesh, with the elements next to the port refined on
-// one side of the traces (as an adapted mesh can be). The 2D mesh must keep its boundary
-// elements through partitioning and uniform refinement, and the DoFs on the PEC edges
-// (master edges included) must be essential, and no others.
+// one side of the traces (as an adapted mesh can be), with straight or curved elements.
+// The 2D mesh must keep its boundary elements through partitioning and uniform refinement,
+// the sides of the traces must be identified for error estimation, and the DoFs on the PEC
+// edges (master edges included) must be essential, and no others.
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "BoundaryMode cross-section of a nonconforming 3D mesh",
                  "[boundarymodeoperator][Serial][Parallel]")
 {
+  const bool curved = GENERATE(false, true);
   MPI_Comm comm = Mpi::World();
   const auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
   auto buffer = PreprocessFile((cpw_dir / "cpw_wave_2dmode.json").string().c_str());
@@ -1140,6 +1142,27 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       }
     }
     REQUIRE(z_trace < mfem::infinity());
+    if (curved)
+    {
+      // Curve the elements in the plane of the cross-section with a smooth displacement
+      // along y and z, which keeps the planes x = const and the exterior boundaries. Its
+      // direction varies, such that the Jacobian determinant of the elements is quadratic.
+      mfem::Vector min, max;
+      smesh->GetBoundingBox(min, max);
+      smesh->SetCurvature(2);
+      auto &nodes = *smesh->GetNodes();
+      const auto &fes = *nodes.FESpace();
+      for (int i = 0; i < fes.GetNDofs(); i++)
+      {
+        const int iy = fes.DofToVDof(i, 1), iz = fes.DofToVDof(i, 2);
+        const double sy = (nodes(iy) - min(1)) / (max(1) - min(1)),
+                     sz = (nodes(iz) - min(2)) / (max(2) - min(2));
+        const double sin_z = std::sin(std::numbers::pi * sz);
+        nodes(iy) += 0.02 * (max(1) - min(1)) * std::sin(std::numbers::pi * sy) * sin_z;
+        nodes(iz) +=
+            0.02 * (max(2) - min(2)) * std::sin(2.0 * std::numbers::pi * sy) * sin_z;
+      }
+    }
     const auto &attrs = iodata.solver.boundary_mode.attributes;
     smesh->EnsureNCMesh(true);
     mfem::Array<int> marked;
@@ -1212,6 +1235,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(pmesh.Nonconforming());
   REQUIRE(pmesh.GetGlobalNE() == 4 * ne);
   CHECK(CountPEC(pmesh, nullptr) == std::array<int, 2>{2 * nbe_pec[0], 2 * nbe_pec[1]});
+  CHECK(mesh.back()->GetCrackSides(iodata.boundaries.GetSheetAttributes()).Any());
   MaterialOperator mat_op(iodata, *mesh.back());
   BoundaryModeOperator mode_op(iodata, mesh, mat_op);
 
@@ -1288,12 +1312,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       Check(dofs, OnPEC(x), false);
     }
   };
-  CheckDbcTDofs(mode_op.GetNDSpace(), mode_op.GetNDDbcTDofLists().back());
-  CheckDbcTDofs(mode_op.GetH1Space(), mode_op.GetH1DbcTDofLists().back());
-  Mpi::GlobalSum(3, counts, comm);
-  CHECK(counts[0] > 0);
-  CHECK(counts[1] > 0);
-  CHECK(counts[2] > 0);
+  if (!curved)
+  {
+    // The PEC edges are straight segments.
+    CheckDbcTDofs(mode_op.GetNDSpace(), mode_op.GetNDDbcTDofLists().back());
+    CheckDbcTDofs(mode_op.GetH1Space(), mode_op.GetH1DbcTDofLists().back());
+    Mpi::GlobalSum(3, counts, comm);
+    CHECK(counts[0] > 0);
+    CHECK(counts[1] > 0);
+    CHECK(counts[2] > 0);
+  }
 }
 
 TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")

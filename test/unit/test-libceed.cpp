@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -9,6 +11,7 @@
 #include <ceed/backend.h>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
@@ -18,11 +21,13 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/basis.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/omp.hpp"
@@ -413,10 +418,10 @@ void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOpera
 // integrator applied without cached quadrature data, which shares the coefficient and
 // geometry code paths but none of the layout logic.
 template <typename T>
-void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
-                            T AddIntegrators)
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &trial_fespace,
+                            const FiniteElementSpace &test_fespace, T AddIntegrators)
 {
-  BilinearForm a_test(fespace), a_ref(fespace);
+  BilinearForm a_test(trial_fespace, test_fespace), a_ref(trial_fespace, test_fespace);
   AddIntegrators(a_test);
   AddIntegrators(a_ref);
   a_test.AssembleQuadratureData();
@@ -434,6 +439,258 @@ void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
   REQUIRE(norm_ref > 0.0);
 
   TestCeedOperatorMult(*op_test, *op_ref, false);
+}
+
+template <typename T>
+void TestCeedQuadratureData(MPI_Comm comm, const FiniteElementSpace &fespace,
+                            T AddIntegrators)
+{
+  TestCeedQuadratureData(comm, fespace, fespace, AddIntegrators);
+}
+
+// Coefficient stored for max_attr attributes with two materials: a nonzero one on every
+// active_stride-th (libCEED, 1-based) attribute, and an exactly zero one everywhere else.
+// With active_stride = 0, every attribute is exactly zero.
+auto BuildZeroOutsideCoefficient(std::size_t max_attr, int active_stride, double value)
+{
+  mfem::Array<int> attr_mat(static_cast<int>(max_attr));
+  mfem::DenseTensor mat_coeff(1, 1, 2);
+  mat_coeff(0, 0, 0) = value;
+  mat_coeff(0, 0, 1) = 0.0;
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    attr_mat[i] = (active_stride > 0 && i % active_stride == 0) ? 0 : 1;
+  }
+  return MaterialPropertyCoefficient(attr_mat, mat_coeff);
+}
+
+void TestCeedActiveGeometryRestriction(MPI_Comm comm, const Mesh &mesh)
+{
+  long long count[4] = {0, 0, 0, 0};
+  for (auto ceed : ceed::internal::GetCeedObjects())
+  {
+    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
+    {
+      const bool use_bdr = (mfem::Geometry::Dimension[geom] != mesh.Dimension());
+      REQUIRE(std::is_sorted(data.active_indices.begin(), data.active_indices.end()));
+      REQUIRE(std::adjacent_find(data.active_indices.begin(), data.active_indices.end()) ==
+              data.active_indices.end());
+      for (auto i : data.active_indices)
+      {
+        REQUIRE(i >= 0);
+        REQUIRE(static_cast<std::size_t>(i) < data.indices.size());
+      }
+      count[2 * use_bdr] += data.active_indices.size();
+      count[2 * use_bdr + 1] += data.indices.size();
+
+      if (data.active_indices.empty() || data.active_indices.size() == data.indices.size())
+      {
+        REQUIRE(data.active_geom_data_restr == nullptr);
+        continue;
+      }
+      REQUIRE(data.active_geom_data_restr != nullptr);
+
+      // Transpose a constant E-vector through the offsets restriction. Geometry entries for
+      // selected full-list positions must be touched exactly once, and all others not at
+      // all, in whatever layout the backend stores the geometry vector.
+      CeedInt num_elem, num_qpts, num_comp, layout[3];
+      CeedSize l_size, geom_data_size;
+      PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(data.geom_data_restr, layout));
+      PalaceCeedCall(
+          ceed, CeedElemRestrictionGetNumElements(data.active_geom_data_restr, &num_elem));
+      PalaceCeedCall(
+          ceed, CeedElemRestrictionGetElementSize(data.active_geom_data_restr, &num_qpts));
+      PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(data.active_geom_data_restr,
+                                                               &num_comp));
+      PalaceCeedCall(
+          ceed, CeedElemRestrictionGetLVectorSize(data.active_geom_data_restr, &l_size));
+      PalaceCeedCall(ceed, CeedVectorGetLength(data.geom_data, &geom_data_size));
+      REQUIRE(num_elem == static_cast<CeedInt>(data.active_indices.size()));
+      REQUIRE(l_size == geom_data_size);
+
+      CeedVector l_vec, e_vec;
+      PalaceCeedCall(ceed, CeedElemRestrictionCreateVector(data.active_geom_data_restr,
+                                                           &l_vec, &e_vec));
+      PalaceCeedCall(ceed, CeedVectorSetValue(l_vec, 0.0));
+      PalaceCeedCall(ceed, CeedVectorSetValue(e_vec, 1.0));
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionApply(data.active_geom_data_restr, CEED_TRANSPOSE,
+                                              e_vec, l_vec, CEED_REQUEST_IMMEDIATE));
+      const CeedScalar *l_array;
+      PalaceCeedCall(ceed, CeedVectorGetArrayRead(l_vec, CEED_MEM_HOST, &l_array));
+      std::vector<bool> active(data.indices.size(), false);
+      for (auto i : data.active_indices)
+      {
+        active[i] = true;
+      }
+      for (std::size_t p = 0; p < data.indices.size(); p++)
+      {
+        for (CeedInt c = 0; c < num_comp; c++)
+        {
+          for (CeedInt q = 0; q < num_qpts; q++)
+          {
+            const CeedSize i = static_cast<CeedSize>(q) * layout[0] +
+                               static_cast<CeedSize>(c) * layout[1] +
+                               static_cast<CeedSize>(p) * layout[2];
+            CHECK(l_array[i] == (active[p] ? 1.0 : 0.0));
+          }
+        }
+      }
+      PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(l_vec, &l_array));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&l_vec));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&e_vec));
+    }
+  }
+  Mpi::GlobalSum(4, count, comm);
+  CHECK(count[0] > 0);
+  CHECK(count[0] < count[1]);
+  CHECK(count[2] > 0);
+  CHECK(count[2] < count[3]);
+}
+
+// Skipping elements whose contribution is exactly 0.0 cannot change a sum, so the operator
+// application is bit-identical, but only as long as the remaining contributions are
+// accumulated in the same order. Blocked libCEED backends (the default when libXSMM is
+// available) accumulate the element contributions of a block of block_size elements in
+// element-node-major order (CeedElemRestrictionApply*Transpose_Ref_Core), so dropping
+// elements regroups the blocks and reorders the sums for degrees of freedom shared by
+// elements which are no longer in the same block, GPU backends scatter shared degrees of
+// freedom from different launch shapes (the MAGMA backends are nondeterministic in any
+// case), and with several CPU Ceed contexts (OpenMP threads) ceed::Operator applies the
+// contexts concurrently into the shared output vector. Those sums can then differ in the
+// last bit. Only a single unblocked CPU backend preserves the accumulation order exactly.
+bool CeedBackendAccumulatesInOrder()
+{
+  const auto backend = ceed::Print();
+  return ceed::internal::NumCeeds() == 1 && backend.find("blocked") == std::string::npos &&
+         backend.find("/gpu/") == std::string::npos;
+}
+
+void TestVectorAgree(const Vector &y_ref, const Vector &y_test)
+{
+  REQUIRE(y_test.Size() == y_ref.Size());
+  const double tol = CeedBackendAccumulatesInOrder()
+                         ? 0.0
+                         : 8.0 * std::numeric_limits<double>::epsilon() * y_ref.Normlinf();
+  const auto *d_ref = y_ref.HostRead();
+  const auto *d_test = y_test.HostRead();
+  int num_diff = 0;
+  for (int i = 0; i < y_ref.Size(); i++)
+  {
+    // Written so that a NaN in either vector counts as a difference.
+    num_diff += !(std::abs(d_test[i] - d_ref[i]) <= tol);
+  }
+  REQUIRE(num_diff == 0);
+}
+
+// Compare two operators for agreeing application, transpose application and diagonal (see
+// TestVectorAgree), guarding against a vacuous comparison of two zero operators.
+void TestCeedOperatorMultAgree(MPI_Comm comm, const Operator &op_test,
+                               const Operator &op_ref)
+{
+  Vector x(op_ref.Width()), y_ref(op_ref.Height()), y_test(op_ref.Height());
+  x.UseDevice(true);
+  y_ref.UseDevice(true);
+  y_test.UseDevice(true);
+  x.Randomize(1);
+
+  op_ref.Mult(x, y_ref);
+  op_test.Mult(x, y_test);
+  double norm_ref = y_ref * y_ref;
+  Mpi::GlobalSum(1, &norm_ref, comm);
+  REQUIRE(norm_ref > 0.0);
+  TestVectorAgree(y_ref, y_test);
+
+  op_ref.MultTranspose(x, y_ref);
+  op_test.MultTranspose(x, y_test);
+  TestVectorAgree(y_ref, y_test);
+
+  Vector d_ref(op_ref.Height()), d_test(op_ref.Height());
+  d_ref.UseDevice(true);
+  d_test.UseDevice(true);
+  op_ref.AssembleDiagonal(d_ref);
+  op_test.AssembleDiagonal(d_test);
+  TestVectorAgree(d_ref, d_test);
+}
+
+void TestCeedOperatorUsesSharedGeometry(MPI_Comm comm, const Mesh &mesh,
+                                        const ceed::Operator &op)
+{
+  long long num_fields = 0;
+  for (std::size_t i = 0; i < op.Size(); i++)
+  {
+    // The mesh caches geometry data by the Palace-owned Ceed contexts, not by the delegate
+    // Ceed which CeedOperatorGetCeed reports for operators created through a delegate.
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+    CeedInt num_sub_ops;
+    CeedOperator *sub_ops;
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op[i], &num_sub_ops));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op[i], &sub_ops));
+    const auto &geom_data = mesh.GetCeedGeomFactorData(ceed);
+    for (CeedInt j = 0; j < num_sub_ops; j++)
+    {
+      CeedOperatorField field;
+      CeedVector field_vec;
+      CeedElemRestriction field_restr;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[j], "geom_data", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetElemRestriction(field, &field_restr));
+
+      // The subset operator must refer to the Mesh-owned full geometry vector, not a copied
+      // subset vector, through the matching offsets restriction.
+      const ceed::CeedGeomFactorData *matching_data = nullptr;
+      for (const auto &[geom, data] : geom_data)
+      {
+        if (field_vec == data.geom_data)
+        {
+          matching_data = &data;
+          break;
+        }
+      }
+      REQUIRE(matching_data != nullptr);
+      CHECK(field_restr ==
+            matching_data->GetGeomDataRestriction(ceed::CeedElementSubset::Active));
+      num_fields++;
+    }
+  }
+  Mpi::GlobalSum(1, &num_fields, comm);
+  REQUIRE(num_fields > 0);
+}
+
+// Assemble the same integrators over the full mesh and the shared lossy/active subsets, and
+// check that the two operators agree. Full assembly of the restricted operator has fewer
+// stored entries, which is why the subset is never used for a fully assembled matrix (the
+// sparsity pattern would depend on the coefficient values).
+template <typename T>
+void TestCeedSkipZeroCoefficientElements(MPI_Comm comm, const FiniteElementSpace &fespace,
+                                         bool assemble_q_data, T AddIntegrators,
+                                         bool test_shared_geometry = false)
+{
+  BilinearForm a_ref(fespace), a_skip(fespace);
+  AddIntegrators(a_ref);
+  AddIntegrators(a_skip);
+  a_skip.SkipZeroCoefficientElements();
+  if (assemble_q_data)
+  {
+    a_ref.AssembleQuadratureData();
+    a_skip.AssembleQuadratureData();
+  }
+  auto op_ref = a_ref.PartialAssemble();
+  auto op_skip = a_skip.PartialAssemble();
+  TestCeedOperatorMultAgree(comm, *op_skip, *op_ref);
+  if (test_shared_geometry)
+  {
+    REQUIRE(!assemble_q_data);
+    TestCeedOperatorUsesSharedGeometry(comm, fespace.GetMesh(), *op_skip);
+  }
+
+  constexpr bool skip_zeros = false;
+  auto mat_ref = BilinearForm::FullAssemble(*op_ref, skip_zeros);
+  auto mat_skip = BilinearForm::FullAssemble(*op_skip, skip_zeros);
+  long long nnz[2] = {static_cast<long long>(mat_ref->NNZ()),
+                      static_cast<long long>(mat_skip->NNZ())};
+  Mpi::GlobalSum(2, nnz, comm);
+  REQUIRE(nnz[1] < nnz[0]);
 }
 
 template <typename T1, typename T2, typename T3>
@@ -1158,6 +1415,71 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
   }
 
+  // Tests on L2 spaces of order p - 1, with VALUE (u = ̂u) and INTEGRAL (u = 1 / det(J) ̂u)
+  // map types, at MFEM's integration order for them. Boundary integrators do not apply.
+  SECTION("L2 Integrators")
+  {
+    mfem::H1_FECollection h1_fec(order, dim);
+    FiniteElementSpace h1_fespace(mesh, &h1_fec);
+    const bool add = !bdr_integ && coeff_type != CoeffType::Matrix;
+    SECTION("L2 Mass Integrator")
+    {
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = -2;
+      mesh.ResetCeedObjects();
+      for (const int map_type : {mfem::FiniteElement::VALUE, mfem::FiniteElement::INTEGRAL})
+      {
+        INFO("Map type: " << map_type);
+        mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                                     map_type);
+        FiniteElementSpace l2_fespace(mesh, &l2_fec);
+        BilinearForm a_test(l2_fespace);
+        mfem::BilinearForm a_ref(&l2_fespace.Get());
+        if (add && coeff_type == CoeffType::Const)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+        }
+        else if (add)
+        {
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                               Q_ref);
+        }
+        TestCeedOperator(a_test, a_ref);
+      }
+    }
+    SECTION("Mixed L2-H1 Mass Integrator")
+    {
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -1;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = -1;
+      mesh.ResetCeedObjects();
+      for (const int map_type : {mfem::FiniteElement::VALUE, mfem::FiniteElement::INTEGRAL})
+      {
+        INFO("Map type: " << map_type);
+        mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                                     map_type);
+        FiniteElementSpace l2_fespace(mesh, &l2_fec);
+        for (const bool l2_trial : {true, false})
+        {
+          INFO("L2 trial: " << l2_trial);
+          auto &trial_fespace = l2_trial ? l2_fespace : h1_fespace;
+          auto &test_fespace = l2_trial ? h1_fespace : l2_fespace;
+          BilinearForm a_test(trial_fespace, test_fespace);
+          mfem::MixedBilinearForm a_ref(&trial_fespace.Get(), &test_fespace.Get());
+          if (add && coeff_type == CoeffType::Const)
+          {
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
+          }
+          else if (add)
+          {
+            AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref,
+                                                                 Q, Q_ref);
+          }
+          TestCeedOperator(a_test, a_ref);
+        }
+      }
+    }
+  }
+
   // Tests on mixed H1-(H1)ᵈ spaces.
   SECTION("Mixed H1-Vector H1 Integrators")
   {
@@ -1600,22 +1922,29 @@ TEST_CASE("MFEM fixed arbitrary-rule bases", "[libCEED][Serial][Parallel][GPU]")
   }
 }
 
-TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel]")
+// One test case per mesh, so CTest can run the meshes in parallel. The mesh is the
+// template argument, so the case list is the mesh list and the case name shows the mesh.
+constexpr char StarQuad[] = "star-quad.mesh";
+constexpr char StarTri[] = "star-tri.mesh";
+constexpr char StarMixedP2[] = "star-mixed-p2.mesh";
+constexpr char FicheraHex[] = "fichera-hex.mesh";
+constexpr char FicheraTet[] = "fichera-tet.mesh";
+constexpr char FicheraMixedP2[] = "fichera-mixed-p2.mesh";
+
+TEMPLATE_TEST_CASE_SIG("2D libCEED Operators", "[libCEED][Serial][Parallel]",
+                       ((const char *Mesh), Mesh), StarQuad, StarTri, StarMixedP2)
 {
-  auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
-                         0, amr, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(Mesh), 0, amr, order);
 }
 
-TEST_CASE("3D libCEED Operators", "[libCEED][Serial][Parallel]")
+TEMPLATE_TEST_CASE_SIG("3D libCEED Operators", "[libCEED][Serial][Parallel]",
+                       ((const char *Mesh), Mesh), FicheraHex, FicheraTet, FicheraMixedP2)
 {
-  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
-                         0, amr, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(Mesh), 0, amr, order);
 }
 
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
@@ -1623,8 +1952,7 @@ TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedInterpolatorTests(
-      MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh, 0, amr, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
 }
 
 TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
@@ -1632,8 +1960,7 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
-  RunCeedInterpolatorTests(
-      MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh, 0, amr, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
 }
 
 // Test the 31 (SpaceDim=3, Dim=1) libCEED qfunctions for boundary integrators on a 2D
@@ -1643,8 +1970,7 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh");
   auto order = GENERATE(1, 2, 3);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
-                         0, false, order, true);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, false, order, true);
 }
 
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
@@ -1658,8 +1984,7 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
       GENERATE("star-quad.mesh", "star-tri.mesh", "fichera-hex.mesh", "fichera-tet.mesh");
   auto order = GENERATE(1, 2);
   const auto comm = MPI_COMM_WORLD;
-  auto mesh =
-      Initialize(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
   const int dim = mesh.Dimension();
 
   // Match MFEM's default integration orders.
@@ -1677,7 +2002,10 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
 
   mfem::ND_FECollection nd_fec(order, dim);
   mfem::H1_FECollection h1_fec(order, dim);
-  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  mfem::L2_FECollection l2_fec(order - 1, dim, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec),
+      l2_fespace(mesh, &l2_fec);
 
   SECTION("Domain Curl-Curl + Mass")
   {
@@ -1715,6 +2043,18 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
   {
     TestCeedQuadratureData(comm, h1_fespace, [&](BilinearForm &a)
                            { a.AddDomainIntegrator<DiffusionIntegrator>(MQ); });
+  }
+  // L2 spaces with INTEGRAL map type: the 2D curl space and the flux projection of its
+  // error estimator.
+  SECTION("L2 Mass")
+  {
+    TestCeedQuadratureData(comm, l2_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<MassIntegrator>(Q); });
+  }
+  SECTION("Mixed L2-H1 Mass")
+  {
+    TestCeedQuadratureData(comm, l2_fespace, h1_fespace, [&](BilinearForm &a)
+                           { a.AddDomainIntegrator<MassIntegrator>(Q); });
   }
 }
 
@@ -1876,7 +2216,9 @@ struct ComplexPreconditionerFixture
   Units units{1.0, 1.0};
   std::vector<std::unique_ptr<Mesh>> meshes;
 
-  ComplexPreconditionerFixture(int order, bool amr, int ref_levels = 0) : settings(order)
+  ComplexPreconditionerFixture(int order, bool amr, int ref_levels = 0,
+                               bool partial_lossy = false)
+    : settings(order)
   {
     // Coaxial-example dielectric, with an unshifted complex fine operator.
     REQUIRE_FALSE(solver.linear.pc_mat_real);
@@ -1905,6 +2247,17 @@ struct ComplexPreconditionerFixture
       refine[0] = 0;
       smesh.GeneralRefinement(refine);
     }
+    if (partial_lossy)
+    {
+      // Half of the elements get a second, lossless material, so that the imaginary terms
+      // cover only part of the mesh. Interleaved by element index to give every process a
+      // chance of holding both sets.
+      for (int i = 0; i < smesh.GetNE(); i++)
+      {
+        smesh.SetAttribute(i, 1 + (i % 2));
+      }
+      smesh.SetAttributes();
+    }
     meshes.push_back(std::make_unique<Mesh>(Mpi::World(), smesh));
     config::MaterialData material;
     material.attributes = {1};
@@ -1912,6 +2265,14 @@ struct ComplexPreconditionerFixture
     material.tandelta = 4.0e-4;
     domains.attributes = {1};
     domains.materials = {material};
+    if (partial_lossy)
+    {
+      config::MaterialData lossless;
+      lossless.attributes = {2};
+      lossless.epsilon_r = 1.5;
+      domains.attributes = {1, 2};
+      domains.materials = {material, lossless};
+    }
     boundaries.pec.attributes = {1};
     boundaries.farfield.attributes = {2};
   }
@@ -1940,21 +2301,26 @@ TEST_CASE("libCEED packed complex QData application",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric] =
-      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool>(
+  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset] =
+      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool, bool>(
           {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
-            false},
+            false, false},
            {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
-            false, false},
+            false, false, false},
            {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
-            false, false},
+            false, false, false},
            {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
-            true, false},
+            true, false, false},
            {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
-            true, false, false, true},
-           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false},
-           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false},
-           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false}}));
+            true, false, false, true, false},
+           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false,
+            false},
+           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false},
+           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false},
+           {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
+            true},
+           {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
+            true, false, false, true}}));
   CAPTURE(name);
   // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
   // therefore exercises forward application only.
@@ -1964,8 +2330,7 @@ TEST_CASE("libCEED packed complex QData application",
   {
     if (mesh_file)
     {
-      return Initialize(Mpi::World(),
-                        std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh_file, 0, false);
+      return Initialize(Mpi::World(), TestMeshPath(mesh_file), 0, false);
     }
     // The mixed Fichera mesh has no pyramids. Use low-order elements on a small
     // generated mesh, with enough elements for every MPI rank and no AMR.
@@ -1984,7 +2349,8 @@ TEST_CASE("libCEED packed complex QData application",
   }
   FiniteElementSpace fespace(mesh, fec.get());
   auto real_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
-  auto imag_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto imag_mass = subset ? BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 2, 1.0)
+                          : BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
   auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
@@ -2011,7 +2377,18 @@ TEST_CASE("libCEED packed complex QData application",
   imag_mass *= 0.19;
   real_curl *= 1.37;
   bdr_mass *= -0.23;
+  if (subset)
+  {
+    std::vector<int> lossy_attr;
+    imag_mass.AddNonzeroAttributes(lossy_attr);
+    mesh.SetCeedActiveAttributes(std::move(lossy_attr), {});
+  }
   BilinearForm ar(fespace), ai(fespace);
+  if (subset)
+  {
+    ar.SkipZeroCoefficientElements();
+    ai.SkipZeroCoefficientElements();
+  }
   if (curl)
   {
     ar.AddDomainIntegrator<CurlCurlMassIntegrator>(real_curl, real_mass);
@@ -2034,6 +2411,19 @@ TEST_CASE("libCEED packed complex QData application",
   auto *original_real = real.get();
   auto *original_imag = imag.get();
   auto ref_real = ar.PartialAssemble(), ref_imag = ai.PartialAssemble();
+  if (subset)
+  {
+    long long num_subsets = 0;
+    for (const auto &[geom, data] :
+         mesh.GetCeedGeomFactorData(ceed::internal::GetCeedObjects()[0]))
+    {
+      num_subsets += (mfem::Geometry::Dimension[geom] == mesh.Dimension() &&
+                      !data.active_indices.empty() &&
+                      data.active_indices.size() < data.indices.size());
+    }
+    Mpi::GlobalSum(1, &num_subsets, Mpi::World());
+    REQUIRE(num_subsets > 0);
+  }
   if (mesh_file && std::string(mesh_file) == "fichera-mixed-p2.mesh" &&
       Mpi::Size(Mpi::World()) == 1)
   {
@@ -2065,18 +2455,27 @@ TEST_CASE("libCEED packed complex QData application",
     AddNestedRemainder(*ref_real);
   }
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
-  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag));
-  // Establish activation without exposing the private implementation or its decomposition.
-  REQUIRE_FALSE(IsOriginalComplexWrapper(*actual));
+  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
+  // A rank with no subset element has no local imaginary volume leaf to pair.
+  long long num_packed = !IsOriginalComplexWrapper(*actual);
+  Mpi::GlobalSum(1, &num_packed, Mpi::World());
+  if (subset)
+  {
+    REQUIRE(num_packed > 0);
+  }
+  else
+  {
+    REQUIRE(num_packed == Mpi::Size(Mpi::World()));
+  }
   if (mesh_file && std::string(mesh_file) == "fichera-tet.mesh" && !nested)
   {
     // Verify both restriction clone paths: ND face transformations and RT signs.
     Ceed ceed = ceed::internal::GetCeedObjects()[0];
     const auto &geom = mesh.GetCeedGeomFactorData(ceed).at(mfem::Geometry::TETRAHEDRON);
     CeedRestrictionType type;
-    REQUIRE(CeedElemRestrictionGetType(fespace.GetCeedElemRestriction(
-                                           ceed, mfem::Geometry::TETRAHEDRON, geom.indices),
-                                       &type) == 0);
+    REQUIRE(CeedElemRestrictionGetType(
+                fespace.GetCeedElemRestriction(ceed, mfem::Geometry::TETRAHEDRON, geom),
+                &type) == 0);
     REQUIRE(type == (curl ? CEED_RESTRICTION_CURL_ORIENTED : CEED_RESTRICTION_ORIENTED));
   }
   CheckPackedActions(*actual, reference, inherited);
@@ -2098,13 +2497,16 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, amr, lossy, real_pc] = GENERATE(table<const char *, bool, bool, bool>(
-      {{"Conforming lossy complex preconditioner", false, true, false},
-       {"Nonconforming lossy complex preconditioner", true, true, false},
-       {"Conforming lossless volume with absorbing boundary", false, false, false},
-       {"Conforming real-only preconditioner", false, true, true}}));
+  const auto [name, amr, lossy, real_pc, partial_lossy] =
+      GENERATE(table<const char *, bool, bool, bool, bool>(
+          {{"Conforming lossy complex preconditioner", false, true, false, false},
+           {"Nonconforming lossy complex preconditioner", true, true, false, false},
+           {"Conforming lossless volume with absorbing boundary", false, false, false,
+            false},
+           {"Conforming real-only preconditioner", false, true, true, false},
+           {"Conforming partially lossy preconditioner", false, true, false, true}}));
   CAPTURE(name);
-  ComplexPreconditionerFixture fixture(3, amr);
+  ComplexPreconditionerFixture fixture(3, amr, 0, partial_lossy);
   fixture.domains.materials[0].tandelta = lossy ? 4.0e-4 : 0.0;
   fixture.solver.linear.pc_mat_real = real_pc;
   auto space = fixture.MakeSpace();
@@ -2122,7 +2524,10 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
   REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
+  if (!partial_lossy)
+  {
+    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
+  }
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
@@ -2131,6 +2536,36 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
       dynamic_cast<const ComplexParOperator &>(ref_mg.GetFinestOperator()).LocalOperator();
   ComplexWrapperOperator local_reference(ref_local.Real(), ref_local.Imag());
   CheckPackedActions(local, local_reference);
+  if (partial_lossy)
+  {
+    long long num_subsets = 0;
+    const auto &mesh = space->GetNDSpace().GetMesh();
+    for (const auto &[geom, data] :
+         mesh.GetCeedGeomFactorData(ceed::internal::GetCeedObjects()[0]))
+    {
+      num_subsets += (mfem::Geometry::Dimension[geom] == mesh.Dimension() &&
+                      !data.active_indices.empty() &&
+                      data.active_indices.size() < data.indices.size());
+    }
+    Mpi::GlobalSum(1, &num_subsets, Mpi::World());
+    REQUIRE(num_subsets > 0);
+
+    long long num_packed = 0;
+    for (std::size_t l = 1; l < mg->GetNumLevels(); l++)
+    {
+      const auto &level =
+          dynamic_cast<const ComplexParOperator &>(mg->GetOperatorAtLevel(l))
+              .LocalOperator();
+      const auto &level_ref =
+          dynamic_cast<const ComplexParOperator &>(ref_mg.GetOperatorAtLevel(l))
+              .LocalOperator();
+      num_packed += !IsOriginalComplexWrapper(level);
+      ComplexWrapperOperator reference(level_ref.Real(), level_ref.Imag());
+      CheckPackedActions(level, reference);
+    }
+    Mpi::GlobalSum(1, &num_packed, Mpi::World());
+    REQUIRE(num_packed > 0);
+  }
 
   // Compare the RAP action, including PEC elimination and nonconforming/MPI maps,
   // against separate real/imaginary ParOperators (the existing four-real reference).
@@ -2183,8 +2618,8 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
            {"Real-only input", true, false, false, false, true}}));
   CAPTURE(name);
   PackedIntegrationSettings settings(3);
-  const char *file = tensor ? "/mesh/fichera-hex.mesh" : "/mesh/fichera-tet.mesh";
-  auto mesh = Initialize(Mpi::World(), std::string(PALACE_TEST_DATA_DIR) + file, 0, false);
+  const char *file = tensor ? "fichera-hex.mesh" : "fichera-tet.mesh";
+  auto mesh = Initialize(Mpi::World(), TestMeshPath(file), 0, false);
   mfem::ND_FECollection nd(3, 3);
   mfem::H1_FECollection h1(3, 3);
   FiniteElementSpace fespace(mesh, h1_space
@@ -2223,7 +2658,7 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
     imag.reset();
     ref_imag.reset();
   }
-  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag));
+  auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
   REQUIRE(IsOriginalComplexWrapper(*actual));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
@@ -2232,13 +2667,20 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
 TEST_CASE("libCEED packed complex empty local operators",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
+  // Empty composites are rejected before the space is consulted, but one is still required
+  // to construct the operator.
+  auto smesh = mfem::Mesh::MakeCartesian3D(Mpi::Size(Mpi::World()), 1, 1,
+                                           mfem::Element::TETRAHEDRON);
+  Mesh mesh(Mpi::World(), smesh);
+  mfem::ND_FECollection fec(1, 3);
+  FiniteElementSpace fespace(mesh, &fec);
   for (const int size : {0, 7})
   {
     auto real = std::make_unique<ceed::SymmetricOperator>(size, size);
     auto imag = std::make_unique<ceed::SymmetricOperator>(size, size);
     real->Finalize();
     imag->Finalize();
-    auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag));
+    auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
     REQUIRE(IsOriginalComplexWrapper(*actual));
     ComplexVector x(size), result(size), expected(size);
     x = std::complex<double>{0.7, -0.2};
@@ -2352,11 +2794,164 @@ TEST_CASE("CPU complex preconditioner benchmark",
   }
 }
 
+// Integrators whose coefficient support is contained by a configured shared support union
+// omit the elements outside that union (BilinearForm::SkipZeroCoefficientElements). Those
+// contributions are exactly 0.0, so the operator action, its transpose and its diagonal
+// must match assembly over all elements to backend rounding (see TestVectorAgree).
+TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parallel][GPU]")
+{
+  auto mesh_file = GENERATE("star-tri.mesh", "fichera-mixed-p2.mesh");
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
+  const int dim = mesh.Dimension();
+  constexpr int order = 2;
+
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  // Element skipping only applies to partially assembled operators (the default).
+  BilinearForm::pa_order_threshold = 1;
+
+  INFO("Mesh: " << mesh_file);
+
+  // Coefficients which are stored for every attribute but are exactly zero outside of every
+  // active_stride-th one, as for a material property (such as a loss tangent) which
+  // vanishes in part of the domain.
+  auto Q = BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 2, 2.0);
+  auto Q_mass = BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 3, 3.0);
+  auto Q_zero = BuildZeroOutsideCoefficient(mesh.MaxCeedAttribute(), 0, 4.0);
+  auto Q_bdr = BuildZeroOutsideCoefficient(mesh.MaxCeedBdrAttribute(), 3, 5.0);
+
+  // Configure the two shared support unions as index-list subsets in mesh order.
+  std::vector<int> lossy_attr, active_bdr_attr;
+  Q.AddNonzeroAttributes(lossy_attr);
+  Q_mass.AddNonzeroAttributes(lossy_attr);
+  Q_bdr.AddNonzeroAttributes(active_bdr_attr);
+  std::sort(lossy_attr.begin(), lossy_attr.end());
+  lossy_attr.erase(std::unique(lossy_attr.begin(), lossy_attr.end()), lossy_attr.end());
+  mesh.SetCeedActiveAttributes(std::move(lossy_attr), std::move(active_bdr_attr));
+  TestCeedActiveGeometryRestriction(comm, mesh);
+
+  mfem::ND_FECollection nd_fec(order, dim), nd_fec_coarse(order - 1, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+
+  // One 2D path is enough to exercise the dimension- and GPU-independent subset contract;
+  // the distinct boundary, coefficient-union, cache, and coarsening paths run in 3D below.
+  if (dim == 2)
+  {
+    TestCeedSkipZeroCoefficientElements(
+        comm, nd_fespace, false,
+        [&](BilinearForm &a) { a.AddDomainIntegrator<VectorFEMassIntegrator>(Q); }, true);
+    return;
+  }
+  SECTION("Boundary Mass")
+  {
+    TestCeedSkipZeroCoefficientElements(
+        comm, nd_fespace, false,
+        [&](BilinearForm &a) { a.AddBoundaryIntegrator<VectorFEMassIntegrator>(Q_bdr); });
+  }
+  SECTION("Domain Curl-Curl + Mass")
+  {
+    // The two coefficients have different zero attributes, so the assembled elements are
+    // the union of their nonzero ones.
+    TestCeedSkipZeroCoefficientElements(
+        comm, nd_fespace, false,
+        [&](BilinearForm &a) { a.AddDomainIntegrator<CurlCurlMassIntegrator>(Q, Q_mass); });
+  }
+  SECTION("Domain Mass with Cached Quadrature Data")
+  {
+    TestCeedSkipZeroCoefficientElements(
+        comm, nd_fespace, true,
+        [&](BilinearForm &a) { a.AddDomainIntegrator<VectorFEMassIntegrator>(Q); });
+  }
+  SECTION("Coefficient Zero on Every Attribute")
+  {
+    // No sub-operator is created at all: the operator is exactly zero, as it is with all
+    // elements assembled.
+    BilinearForm a_skip(nd_fespace);
+    a_skip.SkipZeroCoefficientElements();
+    a_skip.AddDomainIntegrator<VectorFEMassIntegrator>(Q_zero);
+    auto op_skip = a_skip.PartialAssemble();
+
+    // The composite operators must be empty (this is the whole-term skip of an exactly-zero
+    // coefficient), not merely zero-valued.
+    for (std::size_t i = 0; i < op_skip->Size(); i++)
+    {
+      Ceed ceed;
+      CeedInt nsub_ops;
+      PalaceCeedCallBackend(CeedOperatorGetCeed((*op_skip)[i], &ceed));
+      PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub((*op_skip)[i], &nsub_ops));
+      REQUIRE(nsub_ops == 0);
+    }
+
+    Vector x(op_skip->Width()), y(op_skip->Height()), d(op_skip->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    d.UseDevice(true);
+    x.Randomize(1);
+    op_skip->Mult(x, y);
+    op_skip->AssembleDiagonal(d);
+    REQUIRE(y.Norml2() == 0.0);
+    REQUIRE(d.Norml2() == 0.0);
+  }
+  SECTION("Multigrid Hierarchy")
+  {
+    // Levels which are not assembled directly reuse the quadrature data of another level
+    // (ceed::CeedOperatorCoarsen), which must use the same element subset.
+    FiniteElementSpaceHierarchy nd_fespaces(
+        std::make_unique<FiniteElementSpace>(mesh, &nd_fec_coarse));
+    nd_fespaces.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+    auto AddIntegrators = [&](BilinearForm &a)
+    { a.AddDomainIntegrator<CurlCurlMassIntegrator>(Q, Q_mass); };
+    constexpr bool skip_zeros = false;
+
+    BilinearForm a_ref(nd_fespaces.GetFinestFESpace()),
+        a_skip(nd_fespaces.GetFinestFESpace());
+    AddIntegrators(a_ref);
+    AddIntegrators(a_skip);
+    a_skip.SkipZeroCoefficientElements();
+    auto ops_ref = a_ref.Assemble(nd_fespaces, skip_zeros);
+    auto ops_skip = a_skip.Assemble(nd_fespaces, skip_zeros);
+    REQUIRE(ops_ref.size() == nd_fespaces.GetNumLevels());
+    REQUIRE(ops_skip.size() == ops_ref.size());
+    for (std::size_t l = 0; l < ops_ref.size(); l++)
+    {
+      TestCeedOperatorMultAgree(comm, *ops_skip[l], *ops_ref[l]);
+    }
+  }
+  SECTION("Reconfiguration After Geometry Data")
+  {
+    // Mesh levels retained across adaptive refinement iterations keep their geometry data
+    // and are reconfigured with the same sets by every new SpaceOperator: a no-op. Changing
+    // the sets after geometry data exists is a programming error and is rejected.
+    BilinearForm a(nd_fespace);
+    a.SkipZeroCoefficientElements();
+    a.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
+    auto op = a.PartialAssemble();
+    REQUIRE(op);
+    const auto lossy_attr = mesh.GetCeedActiveAttributes(false);
+    const auto active_bdr_attr = mesh.GetCeedActiveAttributes(true);
+    REQUIRE_NOTHROW(mesh.SetCeedActiveAttributes(lossy_attr, active_bdr_attr));
+    REQUIRE(mesh.GetCeedActiveAttributes(false) == lossy_attr);
+    REQUIRE(mesh.GetCeedActiveAttributes(true) == active_bdr_attr);
+    // Any other valid set: drop the first attribute, or use attribute 1 if the set is
+    // empty.
+    std::vector<int> other_attr(
+        lossy_attr.empty() ? std::vector<int>{1}
+                           : std::vector<int>(lossy_attr.begin() + 1, lossy_attr.end()));
+    REQUIRE(other_attr != lossy_attr);
+    REQUIRE_THROWS(mesh.SetCeedActiveAttributes(other_attr, active_bdr_attr));
+    REQUIRE(mesh.GetCeedActiveAttributes(false) == lossy_attr);
+  }
+}
+
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
-  RunCeedBenchmarks(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
-                    benchmark_ref_levels, false, benchmark_order);
+  RunCeedBenchmarks(MPI_COMM_WORLD, TestMeshPath(mesh), benchmark_ref_levels, false,
+                    benchmark_order);
 }
 
 }  // namespace palace

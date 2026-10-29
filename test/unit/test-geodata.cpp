@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <cmath>
+#include <fstream>
 #include <memory>
 #include <numbers>
 #include <sstream>
@@ -16,6 +18,7 @@
 
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
+#include "utils/iodata.hpp"
 
 #include "fem/interpolator.hpp"
 #include "models/materialoperator.hpp"
@@ -464,6 +467,296 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
   REQUIRE(mesh::DeterminePeriodicVertexMapping(
               mesh, boundary_torus.periodic.boundary_pairs.front())
               .empty());
+}
+
+TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
+{
+  // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
+  // spanning the domain (exterior boundary attributes 1-6).
+  auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[2] - 0.5) < 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-interior-sheet.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+  const int nv = mesh.GetNV(), nv_cut = nv + 9;  // 3 x 3 vertices on the sheet
+
+  auto LoadMesh = [&](const json &boundaries, const json &model, const fs::path &path)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    return mesh::Load(iodata, Mpi::World());
+  };
+  auto NumVertices = [&](const json &boundaries, const json &model)
+  { return LoadMesh(boundaries, model, mesh_path)->GetNV(); };
+  const json none = json::object();
+  const json legacy = {{"CrackInternalBoundaryElements", true}};
+  const json off = {{"CrackInternalBoundaryElements", false}};
+  auto Impedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Ls", 1.0e-12}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Impedance", {data}}};
+  };
+  auto Conductivity = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Conductivity", 1.0e7}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Conductivity", {data}}};
+  };
+  auto RationalImpedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"RationalImpedance", {data}}};
+  };
+
+  // Sheets with a surface impedance: thin film (not cracked) or thick conductor (cracked).
+  CHECK(NumVertices(Impedance(nullptr), none) == nv);
+  CHECK(NumVertices(Impedance(false), none) == nv);
+  CHECK(NumVertices(Impedance(true), none) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), none) == nv);
+  CHECK(NumVertices(Conductivity(true), none) == nv_cut);
+  CHECK(NumVertices(RationalImpedance(nullptr), none) == nv);
+  CHECK(NumVertices(RationalImpedance(true), none) == nv_cut);
+
+  // Perfect conductors are never cracked, one-sided boundary conditions always are.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, none) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, none) == nv_cut);
+
+  // Deprecated global option. Disabling mesh cracking contradicts boundaries which request
+  // it.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(false), legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(true), legacy) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), off) == nv);
+  CHECK(NumVertices(Impedance(false), off) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, off) == nv);
+  CHECK_THROWS(NumVertices(Impedance(true), off));
+  CHECK_THROWS(NumVertices(Conductivity(true), off));
+  CHECK_THROWS(NumVertices(RationalImpedance(true), off));
+
+  // Each face of a cracked impedance boundary has the given surface impedance, except with
+  // the deprecated global option, which splits it between the two faces.
+  auto SplitAttributes = [&](const json &boundaries, const json &model)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", mesh_path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    mesh::ReadMesh(iodata, Mpi::World());
+    REQUIRE(iodata.boundaries.cracked_attributes == std::unordered_set<int>{7});
+    return iodata.boundaries.split_impedance_attributes;
+  };
+  CHECK(SplitAttributes(Impedance(true), none).empty());
+  CHECK(SplitAttributes(RationalImpedance(true), none).empty());
+  CHECK(SplitAttributes(Impedance(false), legacy) == std::unordered_set<int>{7});
+  CHECK(SplitAttributes(Impedance(true), legacy) == std::unordered_set<int>{7});
+
+  // Refinement boxes make the hexahedral mesh nonconformal, which cannot be cracked.
+  const json box = {{"Refinement",
+                     {{"Boxes",
+                       {{{"Levels", 1},
+                         {"BoundingBoxMin", {0.0, 0.0, 0.0}},
+                         {"BoundingBoxMax", {0.5, 0.5, 1.0}}}}}}}};
+  CHECK_THROWS(NumVertices(Impedance(true), box));
+  CHECK_THROWS(NumVertices({{"PMC", {{"Attributes", {7}}}}}, box));
+  CHECK_NOTHROW(NumVertices(Impedance(false), box));
+  CHECK_NOTHROW(NumVertices(
+      {{"PMC", {{"Attributes", {7}}}}},
+      {{"CrackInternalBoundaryElements", false}, {"Refinement", box["Refinement"]}}));
+
+  // A nonconformal input mesh, for example from a previous adaptive simulation, cannot be
+  // cracked: it must already be cracked along the boundaries which are to be cracked.
+  // Refine the element below the sheet next to the origin, such that it has hanging faces.
+  auto WriteNonconformal = [](mfem::Mesh &&m, const fs::path &path)
+  {
+    m.EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < m.GetNE(); e++)
+    {
+      m.GetElementCenter(e, c);
+      if (c(0) < 0.5 && c(1) < 0.5 && c(2) < 0.5)
+      {
+        marked.Append(e);
+      }
+    }
+    REQUIRE(marked.Size() == 1);
+    m.GeneralRefinement(marked, 1, 0);
+    std::ofstream fo(path);
+    fo.precision(17);
+    m.Print(fo);
+    return m.GetNV();
+  };
+  const auto nc_path = fs::temp_directory_path() / "palace-test-interior-sheet-nc.mesh";
+  const auto nc_cut_path =
+      fs::temp_directory_path() / "palace-test-interior-sheet-nc-cracked.mesh";
+  WriteNonconformal(mfem::Mesh(mesh), nc_path);
+  const int nv_nc_cut = WriteNonconformal(
+      std::move(*LoadMesh(Impedance(true), none, mesh_path)), nc_cut_path);
+  CHECK_THROWS(LoadMesh(Impedance(true), none, nc_path));
+  CHECK_THROWS(LoadMesh(Conductivity(true), none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, legacy, nc_path));
+  CHECK_NOTHROW(LoadMesh(Impedance(false), none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, off, nc_path));
+  CHECK(LoadMesh(Impedance(true), none, nc_cut_path)->GetNV() == nv_nc_cut);
+  CHECK(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_cut_path)->GetNV() ==
+        nv_nc_cut);
+  fs::remove(nc_path);
+  fs::remove(nc_cut_path);
+  fs::remove(mesh_path);
+}
+
+// MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
+// three vertices on the crack front (at a corner of the crack) merges with its twin and the
+// crack closes there, unless the front vertices are numbered last.
+TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
+{
+  // Hexahedral mesh with an interior boundary (attribute 7) made of the four quadrilaterals
+  // of z = 0.5 around the center of the domain: each has three vertices on the crack front
+  // and one (the center) in its interior.
+  auto base = mfem::Mesh::MakeCartesian3D(4, 4, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      const double *x = base.GetVertex(v);
+      on_sheet = on_sheet && std::abs(x[2] - 0.5) < 1.0e-12 && x[0] > 0.25 - 1.0e-12 &&
+                 x[0] < 0.75 + 1.0e-12 && x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-crack-quad-corners.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+
+  // Crack the mesh along the interior boundary. Only the center vertex is duplicated.
+  json config = {
+      {"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Impedance", {{{"Attributes", {7}}, {"Ls", 1.0e-12}, {"Crack", true}}}}}},
+      {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  IoData iodata(config, false);
+  auto cracked = mesh::Load(iodata, Mpi::World());
+  REQUIRE(cracked);
+  CHECK(cracked->GetNV() == mesh.GetNV() + 1);
+
+  // Every boundary element of the crack must border a single element, on its own side.
+  // Without the renumbering, the quadrilateral whose center vertex has the largest number
+  // of its four merges with its twin, and its 2 boundary elements lie on the same face.
+  int n_crack = 0, n_merged = 0;
+  for (int be = 0; be < cracked->GetNBE(); be++)
+  {
+    if (cracked->GetBdrAttribute(be) != 7)
+    {
+      continue;
+    }
+    int e1, e2;
+    cracked->GetFaceElements(cracked->GetBdrElementFaceIndex(be), &e1, &e2);
+    n_crack++;
+    n_merged += (e2 >= 0);
+  }
+  CHECK(n_crack == 8);
+  CHECK(n_merged == 0);
+  fs::remove(mesh_path);
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

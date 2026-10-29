@@ -3,9 +3,16 @@
 
 #include "mesh.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <utility>
+#include <ceed/backend.h>
+#include "fem/brokenspace.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -137,7 +144,89 @@ auto GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int s
   return element_indices;
 }
 
+// Return a function mapping a local domain element index to its libCEED domain attribute.
+// For a boundary submesh using its parent mesh's attribute maps, the parent's boundary
+// attribute maps are used instead. The transformation objects are used as scratch space by
+// the returned function and must outlive it.
+std::function<int(int)> GetCeedDomainAttributeMap(
+    const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
+    const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr,
+    bool ceed_from_self, mfem::FaceElementTransformations &FET,
+    mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2)
+{
+  if (!ceed_from_self)
+  {
+    if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(&mesh))
+    {
+      MFEM_VERIFY(submesh->GetFrom() == mfem::SubMesh::From::Boundary,
+                  "Unexpected non-SubMesh object for BuildCeedGeomFactorData with Mesh "
+                  "with (dim, space_dim) = ("
+                      << mesh.Dimension() << ", " << mesh.SpaceDimension() << ")!");
+      return [&mesh, &loc_bdr_attr, submesh, &FET, &T1, &T2](int i)
+      {
+        // Mesh is a boundary submesh with parent-based CEED data, so we use the
+        // boundary attribute mappings from the parent mesh.
+        const int attr = mesh.GetAttribute(i);
+        const int nbr_attr = GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[i],
+                                                     *submesh->GetParent(), FET, T1, T2);
+        MFEM_ASSERT(loc_bdr_attr.contains(attr) && loc_bdr_attr.at(attr).contains(nbr_attr),
+                    "Missing libCEED boundary attribute for attribute " << attr << "!");
+        return loc_bdr_attr.at(attr).at(nbr_attr);
+      };
+    }
+  }
+  // Non-submesh mesh, or submesh with self-rebuilt CEED data: use loc_attr directly.
+  return [&mesh, &loc_attr](int i)
+  {
+    const int attr = mesh.GetAttribute(i);
+    MFEM_ASSERT(loc_attr.contains(attr),
+                "Missing libCEED domain attribute for attribute " << attr << "!");
+    return loc_attr.at(attr);
+  };
+}
+
+// Return a function mapping a local boundary element index to its libCEED boundary
+// attribute. The transformation objects are used as scratch space by the returned function
+// and must outlive it.
+std::function<int(int)> GetCeedBdrAttributeMap(
+    const mfem::ParMesh &mesh,
+    const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr,
+    mfem::FaceElementTransformations &FET, mfem::IsoparametricTransformation &T1,
+    mfem::IsoparametricTransformation &T2)
+{
+  return [&mesh, &loc_bdr_attr, &FET, &T1, &T2](int i)
+  {
+    const int attr = mesh.GetBdrAttribute(i);
+    const int nbr_attr = GetBdrNeighborAttribute(i, mesh, FET, T1, T2);
+    MFEM_ASSERT(loc_bdr_attr.contains(attr) && loc_bdr_attr.at(attr).contains(nbr_attr),
+                "Missing libCEED boundary attribute for attribute " << attr << "!");
+    return loc_bdr_attr.at(attr).at(nbr_attr);
+  };
+}
+
+auto GetElementAttributes(const std::vector<int> &indices,
+                          const std::function<int(int)> &GetCeedAttribute,
+                          const std::vector<int> &active_attr)
+{
+  // Gather each attribute once while recording active positions in the original
+  // geometry-type element list.
+  Vector elem_attr(indices.size());
+  std::vector<int> active_indices;
+  active_indices.reserve(indices.size());
+  for (std::size_t i = 0; i < indices.size(); i++)
+  {
+    const int attr = GetCeedAttribute(indices[i]);
+    elem_attr[i] = attr;
+    if (std::binary_search(active_attr.begin(), active_attr.end(), attr))
+    {
+      active_indices.push_back(static_cast<int>(i));
+    }
+  }
+  return std::make_pair(std::move(active_indices), std::move(elem_attr));
+}
+
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
+                          std::vector<int> &active_indices,
                           const mfem::GridFunction &mesh_nodes, const Vector &elem_attr)
 {
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
@@ -147,8 +236,8 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   data.dim = mfem::Geometry::Dimension[geom];
   data.space_dim = mesh.SpaceDimension();
   data.indices = std::move(indices);
+  data.active_indices = std::move(active_indices);
   const std::size_t num_elem = data.indices.size();
-
   // Construct mesh node element restriction and basis.
   CeedElemRestriction mesh_restr =
       FiniteElementSpace::BuildCeedElemRestriction(mesh_fespace, ceed, geom, data.indices);
@@ -163,31 +252,46 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   CeedBasis attr_basis;
   PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1, 1, num_elem,
                                                         CEED_STRIDES_BACKEND, &attr_restr));
-  {
-    // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-    mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
-    Bt = 1.0;
-    Gt = 0.0;
-    qX = 0.0;
-    qW = 0.0;
-    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_qpts,
-                                           Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                           qW.GetData(), &attr_basis));
-  }
+  ceed::InitConstantLineBasis(ceed, 1, num_qpts, &attr_basis);
   CeedVector elem_attr_vec;
   ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
 
-  // Allocate storage for geometry factor data (stored as attribute + quadrature weight +
-  // Jacobian, column-major).
+  // Allocate storage for geometry factor data (attribute + quadrature weight + Jacobian at
+  // each quadrature point). The vector is only ever written and read by libCEED operators
+  // on this Ceed context, so it is stored in the backend's own strided layout
+  // (CEED_STRIDES_BACKEND, as for the assembled quadrature data). Backends whose E-vector
+  // layout matches that layout (the GPU backends) then read the vector directly as the
+  // E-vector of every operator instead of gathering a copy of it per operator at setup.
   CeedInt geom_data_size = 2 + data.space_dim * data.dim;
-  PalaceCeedCall(
-      ceed,
-      CeedVectorCreate(ceed, static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size,
-                       &data.geom_data));
+  const CeedSize geom_data_length =
+      static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size;
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, geom_data_length, &data.geom_data));
   PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                           ceed, num_elem, num_qpts, geom_data_size,
-                           static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size,
+                           ceed, num_elem, num_qpts, geom_data_size, geom_data_length,
                            CEED_STRIDES_BACKEND, &data.geom_data_restr));
+  if (!data.active_indices.empty() && data.active_indices.size() < num_elem)
+  {
+    // Reuse the full geometry vector without copying any factors. Each offset addresses the
+    // first component at one quadrature point of an active element in the full vector; the
+    // component stride then selects the remaining components at that point. The vector
+    // layout is the backend's, queried from the strided restriction (as [nodes, components,
+    // elements] strides) rather than assumed.
+    CeedInt layout[3];
+    PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(data.geom_data_restr, layout));
+    std::vector<CeedInt> active_offsets(data.active_indices.size() * num_qpts);
+    for (std::size_t k = 0; k < data.active_indices.size(); k++)
+    {
+      const CeedInt elem_offset = data.active_indices[k] * layout[2];
+      for (CeedInt q = 0; q < num_qpts; q++)
+      {
+        active_offsets[k * num_qpts + q] = elem_offset + q * layout[0];
+      }
+    }
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                             ceed, data.active_indices.size(), num_qpts, geom_data_size,
+                             layout[1], geom_data_length, CEED_MEM_HOST, CEED_COPY_VALUES,
+                             active_offsets.data(), &data.active_geom_data_restr));
+  }
 
   // Compute the required geometry factors at quadrature points.
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
@@ -205,7 +309,8 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
 
 auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
-    const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr, Ceed ceed,
+    const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr,
+    const std::vector<int> &lossy_attr, const std::vector<int> &active_bdr_attr, Ceed ceed,
     bool ceed_from_self)
 {
   // Create a list of the element indices in the mesh corresponding to a given thread and
@@ -229,49 +334,15 @@ auto BuildCeedGeomFactorData(
     const int start = i * stride;
     const int stop = std::min(start + stride, num_elem);
     constexpr bool use_bdr = false;
+    auto GetCeedAttribute = GetCeedDomainAttributeMap(mesh, loc_attr, loc_bdr_attr,
+                                                      ceed_from_self, FET, T1, T2);
     auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
-    auto GetCeedAttribute = [&]() -> std::function<int(int)>
-    {
-      if (!ceed_from_self)
-      {
-        if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(&mesh))
-        {
-          MFEM_VERIFY(submesh->GetFrom() == mfem::SubMesh::From::Boundary,
-                      "Unexpected non-SubMesh object for BuildCeedGeomFactorData with Mesh "
-                      "with (dim, space_dim) = ("
-                          << mesh.Dimension() << ", " << mesh.SpaceDimension() << ")!");
-          return [&, submesh](int i)
-          {
-            // Mesh is a boundary submesh with parent-based CEED data, so we use the
-            // boundary attribute mappings from the parent mesh.
-            const int attr = mesh.GetAttribute(i);
-            const int nbr_attr = GetBdrNeighborAttribute(
-                submesh->GetParentElementIDMap()[i], *submesh->GetParent(), FET, T1, T2);
-            MFEM_ASSERT(loc_bdr_attr.contains(attr) &&
-                            loc_bdr_attr.at(attr).contains(nbr_attr),
-                        "Missing libCEED boundary attribute for attribute " << attr << "!");
-            return loc_bdr_attr.at(attr).at(nbr_attr);
-          };
-        }
-      }
-      // Non-submesh mesh, or submesh with self-rebuilt CEED data: use loc_attr directly.
-      return [&](int i)
-      {
-        const int attr = mesh.GetAttribute(i);
-        MFEM_ASSERT(loc_attr.contains(attr),
-                    "Missing libCEED domain attribute for attribute " << attr << "!");
-        return loc_attr.at(attr);
-      };
-    }();
     for (auto &[geom, indices] : element_indices)
     {
-      Vector elem_attr(indices.size());
-      for (std::size_t k = 0; k < indices.size(); k++)
-      {
-        elem_attr[k] = GetCeedAttribute(indices[k]);
-      }
-      geom_data_map.emplace(
-          geom, AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(), elem_attr));
+      auto [active_indices, elem_attr] =
+          GetElementAttributes(indices, GetCeedAttribute, lossy_attr);
+      geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
+                                                       *mesh.GetNodes(), elem_attr));
     }
   }
 
@@ -285,24 +356,14 @@ auto BuildCeedGeomFactorData(
     const int start = i * stride;
     const int stop = std::min(start + stride, nbe);
     constexpr bool use_bdr = true;
+    auto GetCeedAttribute = GetCeedBdrAttributeMap(mesh, loc_bdr_attr, FET, T1, T2);
     auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
-    auto GetCeedAttribute = [&](int i)
-    {
-      const int attr = mesh.GetBdrAttribute(i);
-      const int nbr_attr = GetBdrNeighborAttribute(i, mesh, FET, T1, T2);
-      MFEM_ASSERT(loc_bdr_attr.contains(attr) && loc_bdr_attr.at(attr).contains(nbr_attr),
-                  "Missing libCEED boundary attribute for attribute " << attr << "!");
-      return loc_bdr_attr.at(attr).at(nbr_attr);
-    };
     for (auto &[geom, indices] : element_indices)
     {
-      Vector elem_attr(indices.size());
-      for (std::size_t k = 0; k < indices.size(); k++)
-      {
-        elem_attr[k] = GetCeedAttribute(indices[k]);
-      }
-      geom_data_map.emplace(
-          geom, AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(), elem_attr));
+      auto [active_indices, elem_attr] =
+          GetElementAttributes(indices, GetCeedAttribute, active_bdr_attr);
+      geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
+                                                       *mesh.GetNodes(), elem_attr));
     }
   }
 
@@ -319,10 +380,40 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   auto &geom_data_map = it->second;
   if (geom_data_map.empty() && !loc_attr.empty())
   {
-    geom_data_map =
-        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed, ceed_from_self);
+    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, lossy_attr,
+                                            active_bdr_attr, ceed, ceed_from_self);
   }
   return geom_data_map;
+}
+
+void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
+                                   std::vector<int> active_bdr_attr_)
+{
+  auto Normalize = [](std::vector<int> &attr, std::size_t max_attr)
+  {
+    std::sort(attr.begin(), attr.end());
+    attr.erase(std::unique(attr.begin(), attr.end()), attr.end());
+    MFEM_VERIFY(attr.empty() || (attr.front() > 0 && attr.back() <= max_attr),
+                "Invalid process-local libCEED element-set attribute!");
+  };
+  Normalize(lossy_attr_, MaxCeedAttribute());
+  Normalize(active_bdr_attr_, MaxCeedBdrAttribute());
+  if (lossy_attr_ == lossy_attr && active_bdr_attr_ == active_bdr_attr)
+  {
+    // Reconfiguring with the same sets is a no-op. This happens for the mesh levels
+    // retained across adaptive refinement iterations, whose geometry data stays valid.
+    return;
+  }
+  // The element subsets are baked into the geometry data and into the finite element
+  // restrictions built from it, so the sets can only change before any geometry data exists
+  // (the sets depend only on the configuration, so this never happens within a run).
+  for (const auto &[ceed, geom_data_map] : geom_data)
+  {
+    MFEM_VERIFY(geom_data_map.empty(),
+                "Cannot change the libCEED element sets after geometry data is built!");
+  }
+  lossy_attr = std::move(lossy_attr_);
+  active_bdr_attr = std::move(active_bdr_attr_);
 }
 
 void Mesh::ResetCeedObjects()
@@ -333,6 +424,7 @@ void Mesh::ResetCeedObjects()
     {
       PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.geom_data_restr));
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.active_geom_data_restr));
     }
   }
   geom_data.clear();
@@ -354,7 +446,87 @@ void Mesh::Update()
   loc_bdr_attr.clear();
   loc_attr = BuildCeedAttributes(parent_mesh);
   loc_bdr_attr = BuildCeedBdrAttributes(parent_mesh);
+  lossy_attr.clear();
+  active_bdr_attr.clear();
   ResetCeedObjects();
+}
+
+const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
+{
+  std::vector<int> key(attr_list);
+  std::sort(key.begin(), key.end());
+  key.erase(std::unique(key.begin(), key.end()), key.end());
+  auto &entry = crack_sides[key];
+  if (entry.mesh == mesh.get() && entry.sequence == mesh->GetSequence())
+  {
+    return entry.sides;
+  }
+  const int bdr_attr_max = mesh->bdr_attributes.Size() ? mesh->bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  for (auto attr : key)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      marker[attr - 1] = 1;
+    }
+  }
+  if (!mesh::HasHangingEntities(*mesh))
+  {
+    entry.sides = mesh::ComputeCrackSides(*mesh, marker);
+  }
+  else
+  {
+    // The sides of the root elements of the mesh are computed once, and the sides of the
+    // elements of the mesh are inherited from them through any refinement and rebalancing.
+    if (entry.root_mesh != mesh.get())
+    {
+      entry.root_valid = mesh::ComputeRootCrackSides(*mesh, marker, entry.root_sides);
+      entry.root_mesh = mesh.get();
+      if (!entry.root_valid)
+      {
+        // For example a nonconforming mesh created from the elements of another one, whose
+        // refinement hierarchy is lost.
+        Mpi::Warning(mesh->GetComm(),
+                     "The sides of the interior boundaries cannot be identified on this "
+                     "nonconforming mesh, whose interior boundaries are not faces of the "
+                     "elements of the coarsest mesh of its refinement hierarchy, or whose "
+                     "coarsest mesh is nonconforming: error estimation will assume "
+                     "continuous fluxes across interior boundaries for the whole "
+                     "simulation, which overestimates the error next to them!\n");
+      }
+    }
+    if (entry.root_valid)
+    {
+      entry.sides = mesh::InheritRootCrackSides(*mesh, entry.root_sides);
+    }
+    else
+    {
+      entry.sides.Reset(mesh->GetNE());
+    }
+  }
+  entry.mesh = mesh.get();
+  entry.sequence = mesh->GetSequence();
+  return entry.sides;
+}
+
+void Mesh::InheritCrackSides(const std::vector<int> &attr_list,
+                             const Mesh &coarse_mesh) const
+{
+  // The parents of the coarse-to-fine transformations are checked against the number of
+  // coarse elements by mesh::InheritCrackSides.
+  MFEM_VERIFY(mesh->GetLastOperation() == mfem::Mesh::REFINE,
+              "Interior boundary sides can only be inherited from the mesh this mesh was "
+              "refined from!");
+  const auto &coarse_sides = coarse_mesh.GetCrackSides(attr_list);
+  std::vector<int> key(attr_list);
+  std::sort(key.begin(), key.end());
+  key.erase(std::unique(key.begin(), key.end()), key.end());
+  auto &entry = crack_sides[key];
+  entry.sides =
+      mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), coarse_sides);
+  entry.mesh = mesh.get();
+  entry.sequence = mesh->GetSequence();
 }
 
 void Mesh::RebuildCeedAttributes()
@@ -374,6 +546,8 @@ void Mesh::RebuildCeedAttributes()
     loc_bdr_attr = BuildCeedBdrAttributes(*mesh);
   }
   ceed_from_self = true;
+  lossy_attr.clear();
+  active_bdr_attr.clear();
   ResetCeedObjects();
 }
 

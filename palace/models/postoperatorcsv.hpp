@@ -284,7 +284,15 @@ protected:
   std::vector<std::size_t> ex_idx_v_all = {std::size_t(0)};
   bool HasSingleExIdx() const { return ex_idx_v_all.size() == 1; }
 
-  void MoveTableValidateReload(TableWithCSVFile &t_csv_base, Table &&t_ref);
+  // Validate a table reloaded from disk against a freshly built reference table for
+  // the current restart position, then move the reference in. Most tables append one row
+  // per measurement to the current excitation's column group; a table with a block of
+  // rows per measurement (the far-field table writes one row per far-field direction,
+  // and records the excitation in a column of its own instead) passes the block size as
+  // rows_per_measurement.
+  void
+  MoveTableValidateReload(TableWithCSVFile &t_csv_base, Table &&t_ref,
+                          std::optional<std::size_t> rows_per_measurement = std::nullopt);
   void WriteTable(TableWithCSVFile &table);
   void WriteTable(std::optional<TableWithCSVFile> &table);
 

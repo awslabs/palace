@@ -88,6 +88,10 @@ struct RegressionOptions
   std::function<void(const std::filesystem::path &)> after_setup, after_run;
 };
 
+// Column-wise diff of one CSV at the case tolerances. Exposed so a custom check can keep
+// the default reference comparison and add a reference-free assertion on top of it.
+void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts);
+
 // End-to-end case runner. Calls palace::Run on every rank; rank 0
 // diffs the live postpro/<subdir>/ tree against the reference tree.
 void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
