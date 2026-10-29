@@ -56,6 +56,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     discontinuous fields across interior boundaries without cracking the mesh. Mesh cracking
     is now a per-boundary physical modeling choice (see Interface Changes).
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Added `Boundaries.Superconductor[].TwoSided`, which models a London film as two coupled
+    coincident faces (the exact two-port response of a slab of thickness `d`), capturing
+    screening on both faces when `d` is comparable to `lambda`. With the same field on both
+    faces, the film reduces to `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. The
+    magnetostatic solution space is broken across the film, so the mesh is not cracked.
+    Requires a 3D mesh and an interior film. SchemaVer 4-1-0.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
 
 #### Interface Changes
 
@@ -126,6 +133,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
+    cracked face with three vertices on the crack front (at a corner of the crack) merged
+    with its twin and broke parallel mesh construction.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
   - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
     kinetic inductance makes the line modes slower than bulk waves, above the eigenvalue
     target of the port mode solve, which only sought modes below it. The port modes are
@@ -343,6 +354,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`NCMesh::GetRootTransforms`), used to identify the interior boundary sides of
     nonconforming meshes.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Added an MFEM patch for [mfem/mfem#5610](https://github.com/mfem/mfem/pull/5610),
+    which keeps host hypre matrix products from reading a device-resident row cache.
+    [PR 992](https://github.com/awslabs/palace/pull/992).
 
 ## [0.18.1] - 2026-09-21
 

@@ -478,6 +478,12 @@ public:
   // List of boundary attributes for this superconductor sheet.
   std::vector<int> attributes = {};
 
+  // Two-port (transfer-matrix) sheet: model the film as two coupled coincident faces so the
+  // tangential field can jump across it, capturing two-sided screening for d ≳ λ. When
+  // false the film is a single shared-A_t sheet. Requires (λ, d). The film is not cracked:
+  // the magnetostatic solution space is broken across it.
+  bool two_sided = false;
+
   SuperconductorData() = default;
   SuperconductorData(const json &boundary);
 };

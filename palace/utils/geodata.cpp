@@ -4186,6 +4186,59 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     }
   }
 
+  // MFEM identifies a face by its three smallest vertex numbers, so the two faces of a
+  // cracked quadrilateral with three vertices on the crack front (at a corner of the crack)
+  // would merge. Numbering the crack front vertices last puts each face's own vertex among
+  // its three.
+  if (std::any_of(crack_bdr_elem.begin(), crack_bdr_elem.end(), [&orig_mesh](int be)
+                  { return orig_mesh->GetBdrElement(be)->GetNVertices() == 4; }))
+  {
+    const int nv = new_mesh->GetNV(), sdim = new_mesh->SpaceDimension();
+    std::vector<bool> front(nv, false);
+    for (const auto &[v, vert_components] : crack_vert_duplicates)
+    {
+      front[v] = vert_components.empty();
+    }
+    std::vector<int> perm(nv);
+    int next = 0;
+    for (bool last : {false, true})
+    {
+      for (int v = 0; v < nv; v++)
+      {
+        if (front[v] == last)
+        {
+          perm[v] = next++;
+        }
+      }
+    }
+    std::vector<double> x(static_cast<std::size_t>(nv) * sdim);
+    for (int v = 0; v < nv; v++)
+    {
+      std::copy(new_mesh->GetVertex(v), new_mesh->GetVertex(v) + sdim,
+                x.begin() + v * sdim);
+    }
+    for (int v = 0; v < nv; v++)
+    {
+      std::copy(x.begin() + v * sdim, x.begin() + (v + 1) * sdim,
+                new_mesh->GetVertex(perm[v]));
+    }
+    auto renumber = [&perm](mfem::Element &el)
+    {
+      for (int j = 0; j < el.GetNVertices(); j++)
+      {
+        el.GetVertices()[j] = perm[el.GetVertices()[j]];
+      }
+    };
+    for (int e = 0; e < new_mesh->GetNE(); e++)
+    {
+      renumber(*new_mesh->GetElement(e));
+    }
+    for (int be = 0; be < new_mesh->GetNBE(); be++)
+    {
+      renumber(*new_mesh->GetBdrElement(be));
+    }
+  }
+
   // Finalize the new mesh topology, and copy mesh curvature information if needed. This
   // copies the nodes over correctly accounting for the element topology changes (the number
   // of elements in the mesh has not changed, just their connectivity has).

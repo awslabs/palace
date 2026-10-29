@@ -456,10 +456,10 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   std::vector<int> key(attr_list);
   std::sort(key.begin(), key.end());
   key.erase(std::unique(key.begin(), key.end()), key.end());
-  if (key == crack_attr_list && crack_mesh == mesh.get() &&
-      crack_sequence == mesh->GetSequence())
+  auto &entry = crack_sides[key];
+  if (entry.mesh == mesh.get() && entry.sequence == mesh->GetSequence())
   {
-    return crack_sides;
+    return entry.sides;
   }
   const int bdr_attr_max = mesh->bdr_attributes.Size() ? mesh->bdr_attributes.Max() : 0;
   mfem::Array<int> marker(bdr_attr_max);
@@ -473,18 +473,17 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
   }
   if (!mesh::HasHangingEntities(*mesh))
   {
-    crack_sides = mesh::ComputeCrackSides(*mesh, marker);
+    entry.sides = mesh::ComputeCrackSides(*mesh, marker);
   }
   else
   {
     // The sides of the root elements of the mesh are computed once, and the sides of the
     // elements of the mesh are inherited from them through any refinement and rebalancing.
-    if (key != root_crack_attr_list || root_crack_mesh != mesh.get())
+    if (entry.root_mesh != mesh.get())
     {
-      root_crack_valid = mesh::ComputeRootCrackSides(*mesh, marker, root_crack_sides);
-      root_crack_attr_list = key;
-      root_crack_mesh = mesh.get();
-      if (!root_crack_valid)
+      entry.root_valid = mesh::ComputeRootCrackSides(*mesh, marker, entry.root_sides);
+      entry.root_mesh = mesh.get();
+      if (!entry.root_valid)
       {
         // For example a nonconforming mesh created from the elements of another one, whose
         // refinement hierarchy is lost.
@@ -497,19 +496,37 @@ const CrackSides &Mesh::GetCrackSides(const std::vector<int> &attr_list) const
                      "simulation, which overestimates the error next to them!\n");
       }
     }
-    if (root_crack_valid)
+    if (entry.root_valid)
     {
-      crack_sides = mesh::InheritRootCrackSides(*mesh, root_crack_sides);
+      entry.sides = mesh::InheritRootCrackSides(*mesh, entry.root_sides);
     }
     else
     {
-      crack_sides.Reset(mesh->GetNE());
+      entry.sides.Reset(mesh->GetNE());
     }
   }
-  crack_attr_list = std::move(key);
-  crack_mesh = mesh.get();
-  crack_sequence = mesh->GetSequence();
-  return crack_sides;
+  entry.mesh = mesh.get();
+  entry.sequence = mesh->GetSequence();
+  return entry.sides;
+}
+
+void Mesh::InheritCrackSides(const std::vector<int> &attr_list,
+                             const Mesh &coarse_mesh) const
+{
+  // The parents of the coarse-to-fine transformations are checked against the number of
+  // coarse elements by mesh::InheritCrackSides.
+  MFEM_VERIFY(mesh->GetLastOperation() == mfem::Mesh::REFINE,
+              "Interior boundary sides can only be inherited from the mesh this mesh was "
+              "refined from!");
+  const auto &coarse_sides = coarse_mesh.GetCrackSides(attr_list);
+  std::vector<int> key(attr_list);
+  std::sort(key.begin(), key.end());
+  key.erase(std::unique(key.begin(), key.end()), key.end());
+  auto &entry = crack_sides[key];
+  entry.sides =
+      mesh::InheritCrackSides(*mesh, mesh->GetRefinementTransforms(), coarse_sides);
+  entry.mesh = mesh.get();
+  entry.sequence = mesh->GetSequence();
 }
 
 void Mesh::RebuildCeedAttributes()

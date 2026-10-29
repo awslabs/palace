@@ -1152,6 +1152,294 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
   }
 }
 
+TEST_CASE("Broken space boundary DOFs", "[brokenspace][Serial][Parallel]")
+{
+  // A boundary standing on one side of the interior boundary (the sheet y = 0.5 for
+  // x > x_crack, attribute 9, which meets the interior boundary along an edge) reads and
+  // makes essential the versions of that side only: each of its DOFs in the underlying
+  // space is essential in exactly one version of the broken space.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  constexpr int sheet_attr = 9;
+  auto base = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[1] - 0.5) < 1.0e-12 &&
+                 base.GetVertex(v)[0] > x_crack - 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(!sheet_faces.empty());
+  mfem::Mesh smesh(3, base.GetNV(), base.GetNE(),
+                   base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    smesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    smesh.AddElement(base.GetElement(e)->Duplicate(&smesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    smesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&smesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&smesh);
+    el->SetAttribute(sheet_attr);
+    smesh.AddBdrElement(el);
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const auto &sides = mesh.GetCrackSides({crack_attr});
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  FiniteElementSpace nd_broken(nd_fespace, sides);
+  mfem::Array<int> marker(mesh.Get().bdr_attributes.Max());
+  marker = 0;
+  marker[sheet_attr - 1] = 1;
+
+  // The boundary element DOFs are those read by the adjacent element.
+  mfem::Array<int> bdofs, edofs;
+  mfem::DofTransformation dof_trans;
+  int num_bdr = 0;
+  for (int be = 0; be < mesh.Get().GetNBE(); be++)
+  {
+    if (mesh.Get().GetBdrAttribute(be) != sheet_attr)
+    {
+      continue;
+    }
+    int e, info;
+    mesh.Get().GetBdrElementAdjacentElement(be, e, info);
+    nd_broken.GetBdrElementDofs(be, bdofs, dof_trans);
+    nd_broken.GetElementDofs(e, edofs, dof_trans);
+    for (auto d : bdofs)
+    {
+      const int l = (d >= 0) ? d : -1 - d;
+      bool found = false;
+      for (auto ed : edofs)
+      {
+        found = found || ((ed >= 0) ? ed : -1 - ed) == l;
+      }
+      CHECK(found);
+    }
+    num_bdr++;
+  }
+  Mpi::GlobalSum(1, &num_bdr, comm);
+  CHECK(num_bdr == static_cast<int>(sheet_faces.size()));
+
+  // One version per essential DOF of the underlying space, and only the versions of the
+  // sheet side: the elements on the other side read no essential L-DOF (the sheet's DOFs on
+  // the interior boundary are split, since the interior boundary spans the domain there).
+  mfem::Array<int> ess_u, ess_b;
+  nd_fespace.GetEssentialTrueDofs(marker, ess_u);
+  nd_broken.GetEssentialTrueDofs(marker, ess_b);
+  int sizes[2] = {ess_u.Size(), ess_b.Size()};
+  Mpi::GlobalSum(2, sizes, comm);
+  CHECK(sizes[0] == sizes[1]);
+  int num_split = 0;
+  for (auto t : ess_u)
+  {
+    num_split += (nd_broken.GetNumVersions(t) > 1);
+  }
+  Mpi::GlobalSum(1, &num_split, comm);
+  CHECK(num_split > 0);
+  Vector ess_t(nd_broken.GetTrueVSize()), ess_l(nd_broken.GetVSize());
+  ess_t.UseDevice(false);
+  ess_l.UseDevice(false);
+  ess_t = 0.0;
+  for (auto t : ess_b)
+  {
+    ess_t(t) = 1.0;
+  }
+  nd_broken.GetProlongationMatrix()->Mult(ess_t, ess_l);
+  int num_wrong = 0;
+  for (int e = 0; e < mesh.Get().GetNE(); e++)
+  {
+    mfem::Vector c;
+    mesh.Get().GetElementCenter(e, c);
+    if (c(0) > x_crack)
+    {
+      continue;
+    }
+    nd_broken.GetElementDofs(e, edofs, dof_trans);
+    for (auto d : edofs)
+    {
+      num_wrong += (ess_l((d >= 0) ? d : -1 - d) != 0.0);
+    }
+  }
+  Mpi::GlobalSum(1, &num_wrong, comm);
+  CHECK(num_wrong == 0);
+}
+
+TEST_CASE("Broken space interpolators", "[brokenspace][Serial][Parallel]")
+{
+  // The discrete gradient, curl, and p-prolongation between spaces broken with the same
+  // sides, which are assembled from the interpolators between the underlying spaces (see
+  // FiniteElementSpace::BuildBrokenInterpolator), including on a mesh with hanging
+  // entities on the interior boundary, where some copies are read only through the
+  // constraints.
+  const auto comm = MPI_COMM_WORLD;
+  const int order = GENERATE(1, 2);
+  const bool nonconforming = GENERATE(false, true);
+  const bool free_edge = GENERATE(false, true);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto smesh = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON, free_edge ? 0.5 : 1.0);
+  if (nonconforming)
+  {
+    smesh.EnsureNCMesh(true);
+  }
+  auto part = Partition(smesh, Mpi::Size(comm));
+  auto mesh = MakeParMesh(comm, smesh, part);
+  const std::vector<int> attr_list = {crack_attr};
+  if (nonconforming)
+  {
+    mesh.GetCrackSides(attr_list);
+    RefineWhere(mesh, [](const mfem::Vector &c)
+                { return c(0) > x_crack && c(0) < x_crack + 0.25 && c(1) < 0.5; });
+    mesh.Update();
+    REQUIRE(mesh::HasHangingEntities(mesh.Get()));
+  }
+  const auto &sides = mesh.GetCrackSides(attr_list);
+  mfem::H1_FECollection h1_fec(order, 3);
+  mfem::ND_FECollection nd_fec(order, 3), nd_fec_coarse(std::max(order - 1, 1), 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3), rt_fec_coarse(std::max(order - 2, 0), 3);
+  FiniteElementSpace h1_fespace(mesh, &h1_fec), nd_fespace(mesh, &nd_fec),
+      rt_fespace(mesh, &rt_fec), nd_fespace_coarse(mesh, &nd_fec_coarse),
+      rt_fespace_coarse(mesh, &rt_fec_coarse);
+  FiniteElementSpace h1_broken(h1_fespace, sides), nd_broken(nd_fespace, sides),
+      rt_broken(rt_fespace, sides);
+  FiniteElementSpaceHierarchy nd_hierarchy, rt_hierarchy;
+  nd_hierarchy.AddLevel(std::make_unique<FiniteElementSpace>(nd_fespace_coarse, sides));
+  nd_hierarchy.AddLevel(std::make_unique<FiniteElementSpace>(nd_fespace, sides));
+  rt_hierarchy.AddLevel(std::make_unique<FiniteElementSpace>(rt_fespace_coarse, sides));
+  rt_hierarchy.AddLevel(std::make_unique<FiniteElementSpace>(rt_fespace, sides));
+  const Operator &G = nd_broken.GetDiscreteInterpolator(h1_broken);
+  const Operator &C = rt_broken.GetDiscreteInterpolator(nd_broken);
+  const Operator &P_nd = nd_hierarchy.GetProlongationAtLevel(0);
+  const Operator &P_rt = rt_hierarchy.GetProlongationAtLevel(0);
+  const Operator &C_coarse = rt_hierarchy.GetFESpaceAtLevel(0).GetDiscreteInterpolator(
+      nd_hierarchy.GetFESpaceAtLevel(0));
+  CHECK(dynamic_cast<const mfem::HypreParMatrix *>(&G));
+  CHECK(G.Height() == nd_broken.GetTrueVSize());
+  CHECK(G.Width() == h1_broken.GetTrueVSize());
+
+  std::mt19937 gen(Mpi::Rank(comm) + 1);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  auto Random = [&](int n)
+  {
+    Vector v(n);
+    for (int i = 0; i < n; i++)
+    {
+      v(i) = dist(gen);
+    }
+    return v;
+  };
+  auto MaxAbs = [&](const Vector &v)
+  {
+    double max = v.Normlinf();
+    Mpi::GlobalMax(1, &max, comm);
+    return max;
+  };
+
+  // A field of the underlying space, copied to all versions, is interpolated as by the
+  // interpolator of the underlying spaces.
+  FiniteElementSpaceHierarchy nd_hierarchy_u;
+  nd_hierarchy_u.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec_coarse));
+  nd_hierarchy_u.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+  auto CheckCopies = [&](const FiniteElementSpace &trial, const FiniteElementSpace &test,
+                         const Operator &G_u, const Operator &G_b)
+  {
+    auto Y_trial = trial.BuildVersionMap(FiniteElementSpace::VersionMap::ALL),
+         Y_test = test.BuildVersionMap(FiniteElementSpace::VersionMap::ALL);
+    Vector x = Random(G_u.Width()), y(G_u.Height()), xb(G_b.Width()), yb(G_b.Height()),
+           zb(G_b.Height());
+    G_u.Mult(x, y);
+    Y_trial->MultTranspose(x, xb);
+    G_b.Mult(xb, yb);
+    Y_test->MultTranspose(y, zb);
+    zb -= yb;
+    CHECK(MaxAbs(zb) <= 1.0e-12 * MaxAbs(yb));
+  };
+  CheckCopies(h1_broken, nd_broken, nd_fespace.GetDiscreteInterpolator(h1_fespace), G);
+  CheckCopies(nd_broken, rt_broken, rt_fespace.GetDiscreteInterpolator(nd_fespace), C);
+  CheckCopies(nd_hierarchy.GetFESpaceAtLevel(0), nd_broken,
+              nd_hierarchy_u.GetProlongationAtLevel(0), P_nd);
+
+  // The de Rham complex of the broken spaces: the curl of a gradient of any broken field
+  // (with different values on the two sides) is zero, and the curl of the p-prolongation
+  // of a broken field is the p-prolongation of its curl.
+  {
+    Vector x = Random(G.Width()), g(G.Height()), c(C.Height());
+    G.Mult(x, g);
+    C.Mult(g, c);
+    CHECK(MaxAbs(c) <= 1.0e-12 * MaxAbs(g));
+  }
+  {
+    Vector x = Random(P_nd.Width()), px(P_nd.Height()), cpx(C.Height()),
+           cx(C_coarse.Height()), pcx(P_rt.Height());
+    P_nd.Mult(x, px);
+    C.Mult(px, cpx);
+    C_coarse.Mult(x, cx);
+    P_rt.Mult(cx, pcx);
+    pcx -= cpx;
+    CHECK(MaxAbs(pcx) <= 1.0e-12 * MaxAbs(cpx));
+  }
+
+  // Two mesh levels: the fine mesh is a uniform refinement of the mesh, with the sides
+  // inherited from it, and the h-prolongations of broken hierarchies are assembled from
+  // MFEM's transfer operators. The curl of the h-prolongation of a broken field is the
+  // h-prolongation of its curl.
+  if (!nonconforming)
+  {
+    Mesh fine_mesh(std::make_unique<mfem::ParMesh>(mesh.Get()));
+    fine_mesh.Get().UniformRefinement();
+    fine_mesh.InheritCrackSides(attr_list, mesh);
+    const auto &fine_sides = fine_mesh.GetCrackSides(attr_list);
+    FiniteElementSpace nd_fine(fine_mesh, &nd_fec), rt_fine(fine_mesh, &rt_fec);
+    FiniteElementSpaceHierarchy nd_h, rt_h, nd_h_u;
+    nd_h.AddLevel(std::make_unique<FiniteElementSpace>(nd_fespace, sides));
+    nd_h.AddLevel(std::make_unique<FiniteElementSpace>(nd_fine, fine_sides));
+    rt_h.AddLevel(std::make_unique<FiniteElementSpace>(rt_fespace, sides));
+    rt_h.AddLevel(std::make_unique<FiniteElementSpace>(rt_fine, fine_sides));
+    nd_h_u.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+    nd_h_u.AddLevel(std::make_unique<FiniteElementSpace>(fine_mesh, &nd_fec));
+    CHECK(nd_h.GetFESpaceAtLevel(1).GlobalTrueVSize() > nd_fine.GlobalTrueVSize());
+    const Operator &Ph_nd = nd_h.GetProlongationAtLevel(0);
+    const Operator &Ph_rt = rt_h.GetProlongationAtLevel(0);
+    CHECK(dynamic_cast<const mfem::HypreParMatrix *>(&Ph_nd));
+    CheckCopies(nd_h.GetFESpaceAtLevel(0), nd_h.GetFESpaceAtLevel(1),
+                nd_h_u.GetProlongationAtLevel(0), Ph_nd);
+    const Operator &C_fine =
+        rt_h.GetFESpaceAtLevel(1).GetDiscreteInterpolator(nd_h.GetFESpaceAtLevel(1));
+    const Operator &C_c =
+        rt_h.GetFESpaceAtLevel(0).GetDiscreteInterpolator(nd_h.GetFESpaceAtLevel(0));
+    Vector x = Random(Ph_nd.Width()), px(Ph_nd.Height()), cpx(C_fine.Height()),
+           cx(C_c.Height()), pcx(Ph_rt.Height());
+    Ph_nd.Mult(x, px);
+    C_fine.Mult(px, cpx);
+    C_c.Mult(x, cx);
+    Ph_rt.Mult(cx, pcx);
+    pcx -= cpx;
+    CHECK(MaxAbs(pcx) <= 1.0e-12 * MaxAbs(cpx));
+  }
+}
+
 TEST_CASE("Broken space error estimators",
           "[brokenspace][errorestimator][Serial][Parallel]")
 {
