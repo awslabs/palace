@@ -10978,7 +10978,7 @@ TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
     CHECK_THAT(summary["PartialStretch"]["OwnedLength"].get<double>(),
                WithinAbs(2.0 * 2.7, 1.0e-12));
     CHECK(summary["PartialStretch"]["SubcellCells"] == 0);
-    CHECK(summary["PartialStretch"]["ForeignEdgeStraddlingCells"] == 0);
+    CHECK(summary["PartialStretch"]["ForeignEdgeCells"] == 0);
     int flagged_entries = 0;
     for (const auto &cell : summary["OwnedCells"])
     {
@@ -11041,54 +11041,79 @@ TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
       Untouched(patches[i], before[i]);
     }
   }
-  SECTION("(d) a partially inside stretch on a Chain: false piece: the inside cell drops "
-          "its domain correction as before, the straddling cell is RECORDED and untouched "
-          "(OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE)")
+  SECTION(
+      "(d) a partially inside stretch on a Chain: false piece (984 Q1 / Q3 (a)): every "
+      "cell inside the box or straddling the face is RECORDED and untouched - weight AND "
+      "domain correction kept (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE); the decision-553 "
+      "domain drop stays with wholly inside stretches")
   {
-    std::vector<Patch> patches = {Spatial(0.0), Cell(25, 0, -1.0, 0.0, -1.5),
-                                  Cell(25, 0, 0.0, 0.9, -1.5), Cell(25, 0, 0.9, 2.1, -1.5),
-                                  Cell(25, 0, 2.1, 3.3, -1.5)};
+    // Stretch (25, 0) along the Chain: false piece y = -1.5: cells [-1.0, 0.0] and [0.0,
+    // 0.9] inside, [0.9, 2.1] straddling the face x = 1.5, [2.1, 3.3] outside; stretch (26,
+    // 0) wholly inside on the same piece ([-2.0, -1.0], [-1.0, -0.3]): the 553 class,
+    // domain dropped as before.
+    std::vector<Patch> patches = {Spatial(0.0),
+                                  Cell(25, 0, -1.0, 0.0, -1.5),
+                                  Cell(25, 0, 0.0, 0.9, -1.5),
+                                  Cell(25, 0, 0.9, 2.1, -1.5),
+                                  Cell(25, 0, 2.1, 3.3, -1.5),
+                                  Cell(26, 0, -2.0, -1.0, -1.5),
+                                  Cell(26, 0, -1.0, -0.3, -1.5)};
     const auto before = patches;
     const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0)};
     const auto partial = FindTranslationalStretchPartiallyInsideSpatialSupport(
         patches, supports, 3, tolerance);
     REQUIRE(partial.size() == 1);
+    CHECK(partial[0].feature == 25);
     CHECK(partial[0].cells_on_excluded_edges == 3);
     CHECK(partial[0].straddling_cells_on_excluded_edges == 1);
     CHECK(partial[0].cells_on_chain_edges == 0);
     CHECK(partial[0].treated_cells_on_chain_edges == 0);
     const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
     CHECK(ownership.cells.empty());
+    // The wholly inside stretch (26, 0): domain dropped as before decision 984.
     REQUIRE(ownership.foreign_excluded_cells.size() == 2);
-    CHECK(ownership.foreign_excluded_cells[0].patch == 1);
-    CHECK(ownership.foreign_excluded_cells[1].patch == 2);
-    CHECK(patches[1].domain_weight == 0.0);
-    CHECK(patches[2].domain_weight == 0.0);
-    CHECK_THAT(patches[1].weight, WithinAbs(before[1].weight, 1.0e-15));
-    REQUIRE(ownership.partial_stretch_foreign_edge_cells.size() == 1);
-    CHECK(ownership.partial_stretch_foreign_edge_cells[0].patch == 3);
-    CHECK(ownership.partial_stretch_foreign_edge_cells[0].feature == 25);
-    CHECK(ownership.partial_stretch_foreign_edge_cells[0].owners ==
-          std::vector<std::size_t>{0});
-    CHECK_THAT(ownership.partial_stretch_foreign_edge_length, WithinAbs(1.2, 1.0e-12));
-    Untouched(patches[3], before[3]);
-    Untouched(patches[4], before[4]);
+    CHECK(ownership.foreign_excluded_cells[0].patch == 5);
+    CHECK(ownership.foreign_excluded_cells[1].patch == 6);
+    CHECK(patches[5].domain_weight == 0.0);
+    CHECK(patches[6].domain_weight == 0.0);
+    CHECK_THAT(patches[5].weight, WithinAbs(before[5].weight, 1.0e-15));
+    // The partially inside stretch (25, 0): its three cells on the piece recorded,
+    // untouched.
+    REQUIRE(ownership.partial_stretch_foreign_edge_cells.size() == 3);
+    for (std::size_t i = 0; i < 3; i++)
+    {
+      const auto &cell = ownership.partial_stretch_foreign_edge_cells[i];
+      CHECK(cell.patch == i + 1);
+      CHECK(cell.feature == 25);
+      CHECK(cell.owners == std::vector<std::size_t>{0});
+    }
+    CHECK_THAT(ownership.partial_stretch_foreign_edge_cells[0].inside_length,
+               WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_foreign_edge_cells[2].inside_length,
+               WithinAbs(0.6, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_foreign_edge_length,
+               WithinAbs(1.0 + 0.9 + 1.2, 1.0e-12));
+    for (std::size_t i = 1; i <= 4; i++)
+    {
+      Untouched(patches[i], before[i]);
+    }
     data.patches = patches;
     const auto description = DescribeTranslationalPartialStretchRecords(
         partial, supports, data, 1.0, &ownership);
     CHECK(description["RecordedOnly"] == 1);
     CHECK(description["OwnedInsidePart"] == 0);
+    CHECK(description["CellsOnExcludedEdges"] == 3);
     CHECK(description["StraddlingCellsOnExcludedEdges"] == 1);
     CHECK(description["Records"][0]["Treatment"] == "RecordedOnly");
     const auto summary = DescribeContinuationOwnership(ownership, supports, data, 1.0);
     REQUIRE(summary.contains("PartialStretch"));
     CHECK(summary["PartialStretch"]["Cells"] == 0);
-    CHECK(summary["PartialStretch"]["ForeignEdgeStraddlingCells"] == 1);
-    CHECK_THAT(summary["PartialStretch"]["ForeignEdgeStraddlingLength"].get<double>(),
-               WithinAbs(1.2, 1.0e-12));
-    CHECK(summary["PartialStretch"]["ForeignEdgeStraddlingRecords"][0]["Patch"] == 3);
+    CHECK(summary["PartialStretch"]["ForeignEdgeCells"] == 3);
+    CHECK_THAT(summary["PartialStretch"]["ForeignEdgeLength"].get<double>(),
+               WithinAbs(3.1, 1.0e-12));
+    CHECK(summary["PartialStretch"]["ForeignEdgeRecords"][2]["Patch"] == 3);
     CHECK(DescribeContinuationOwnershipSummary(summary).find(
-              "1 straddling ForeignEdge cell(s)") != std::string::npos);
+              "3 ForeignEdge cell(s) of partial stretches") != std::string::npos);
   }
   SECTION("(e) a box strictly inside ONE cell (OI-T5-PARTIAL-STRETCH-SUBCELL, 984 Q2): the "
           "run completes, the cell stays, the record is written")
