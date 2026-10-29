@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <limits>
 #include <set>
+#include "fem/fespace.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/outputdir.hpp"
@@ -16,7 +17,14 @@
 namespace palace
 {
 
-int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
+namespace
+{
+
+// MarkInterfaceTrueDofs for the element DOFs given by element_dofs(e, dofs) into an
+// L-vector of size vsize, with the prolongation P.
+template <typename ElementDofs>
+int MarkInterfaceTrueDofs(const mfem::ParMesh &mesh, int vsize,
+                          const mfem::HypreParMatrix &P, const ElementDofs &element_dofs,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
                           mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
@@ -35,20 +43,19 @@ int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
   };
 
   // L-vector attribute markers over element DOFs.
-  mfem::Vector reg_l(parent_fespace.GetVSize()), env_l(parent_fespace.GetVSize());
+  mfem::Vector reg_l(vsize), env_l(vsize);
   reg_l = 0.0;
   env_l = 0.0;
   mfem::Array<int> dofs;
-  auto *mesh = parent_fespace.GetParMesh();
-  for (int e = 0; e < mesh->GetNE(); e++)
+  for (int e = 0; e < mesh.GetNE(); e++)
   {
-    const int attr = mesh->GetAttribute(e);
+    const int attr = mesh.GetAttribute(e);
     const bool is_reg = in(region_attrs, attr), is_env = in(environment_attrs, attr);
     if (!is_reg && !is_env)
     {
       continue;
     }
-    parent_fespace.GetElementDofs(e, dofs);
+    element_dofs(e, dofs);
     for (int i = 0; i < dofs.Size(); i++)
     {
       const int d = dofs[i] >= 0 ? dofs[i] : -1 - dofs[i];
@@ -64,11 +71,10 @@ int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
   }
 
   // Reduce to true DOFs with cross-rank accumulation via |P|^T.
-  const mfem::HypreParMatrix *P = parent_fespace.Dof_TrueDof_Matrix();
-  const int nt = parent_fespace.GetTrueVSize();
+  const int nt = P.Width();
   mfem::Vector reg_t(nt), env_t(nt);
-  P->AbsMultTranspose(1.0, reg_l, 0.0, reg_t);
-  P->AbsMultTranspose(1.0, env_l, 0.0, env_t);
+  P.AbsMultTranspose(1.0, reg_l, 0.0, reg_t);
+  P.AbsMultTranspose(1.0, env_l, 0.0, env_t);
 
   region_marker.SetSize(nt);
   env_marker.SetSize(nt);
@@ -83,8 +89,39 @@ int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
     local_iface += interface_marker[i];
   }
   int global_iface = 0;
-  MPI_Allreduce(&local_iface, &global_iface, 1, MPI_INT, MPI_SUM, parent_fespace.GetComm());
+  MPI_Allreduce(&local_iface, &global_iface, 1, MPI_INT, MPI_SUM, mesh.GetComm());
   return global_iface;
+}
+
+}  // namespace
+
+int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
+                          const mfem::Array<int> &region_attrs,
+                          const mfem::Array<int> &environment_attrs,
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
+                          mfem::Array<int> &interface_marker)
+{
+  auto element_dofs = [&](int e, mfem::Array<int> &dofs)
+  { parent_fespace.GetElementDofs(e, dofs); };
+  return MarkInterfaceTrueDofs(*parent_fespace.GetParMesh(), parent_fespace.GetVSize(),
+                               *parent_fespace.Dof_TrueDof_Matrix(), element_dofs,
+                               region_attrs, environment_attrs, region_marker, env_marker,
+                               interface_marker);
+}
+
+int MarkInterfaceTrueDofs(const FiniteElementSpace &parent_fespace,
+                          const mfem::Array<int> &region_attrs,
+                          const mfem::Array<int> &environment_attrs,
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
+                          mfem::Array<int> &interface_marker)
+{
+  mfem::DofTransformation dof_trans;
+  auto element_dofs = [&](int e, mfem::Array<int> &dofs)
+  { parent_fespace.GetElementDofs(e, dofs, dof_trans); };
+  return MarkInterfaceTrueDofs(parent_fespace.GetParMesh(), parent_fespace.GetVSize(),
+                               *parent_fespace.Dof_TrueDof_Matrix(), element_dofs,
+                               region_attrs, environment_attrs, region_marker, env_marker,
+                               interface_marker);
 }
 
 namespace

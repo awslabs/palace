@@ -155,21 +155,22 @@ films are London sheets, as in a regular simulation: a film without a `"Supercon
 the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film its own. The sheet term
 of each film face is condensed with the part of the domain the face bounds, so films may lie in the
 region, in the environment, or cross the interface; so may the surface-current ports and their
-apertures. A saved model includes the condensed excitations of the environment, so an online run
-needs no environment solve as long as the excitations in the environment are unchanged; excitations
-inside the region, such as a port added or moved in a redesign, need none at all. A small mass
-regularization keeps the curl-curl operator definite; the extracted energies use the unregularized
-operator, in a form whose error is quadratic in the regularization. Each surface current must close:
-it has to start and end on `"PEC"` boundaries or superconducting films, as in a physical circuit. A
-current that does not close has no magnetostatic solution and is rejected.
+apertures. A [`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) film,
+across which the solution space is broken as in a regular simulation, must lie inside the region or
+the environment, away from the interface. The region and the environment must then be factored
+(both within `"DirectMaxSize"`), and the region of an adaptive refinement cannot hold one. A saved model includes the condensed excitations of the environment, so
+an online run needs no environment solve as long as the excitations in the environment are
+unchanged; excitations inside the region, such as a port added or moved in a redesign, need none at
+all. A small mass regularization keeps the curl-curl operator definite; the extracted energies use
+the unregularized operator, in a form whose error is quadratic in the regularization. Each surface
+current must close: it has to start and end on `"PEC"` boundaries or superconducting films, as in a
+physical circuit. A current that does not close has no magnetostatic solution and is rejected.
 
 !!! note
 
     With substructuring, inactive surface-current ports must be `"Open"` (see
     [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic-inactiveports)):
     every excitation is solved against the same condensed environment.
-    [`"TwoSided"`](../config/reference.md#config-boundaries-superconductor-twosided) superconductor
-    films are not supported yet.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

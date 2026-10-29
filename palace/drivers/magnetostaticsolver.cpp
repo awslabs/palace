@@ -131,6 +131,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const bool mixed = curlcurl_op.GetSurfaceCurrentOp().Size() > 0 &&
                          curlcurl_op.GetSurfaceFluxOp().Size() > 0;
       Vector RHS, boundary_values;
+      // The apertures read the first version of B on the two-sided films, as the regular
+      // solve.
+      const auto first_version = (mixed && curlcurl_op.IsBroken())
+                                     ? curlcurl_op.GetSolutionCurlSpace().BuildVersionMap(
+                                           FiniteElementSpace::VersionMap::FIRST)
+                                     : nullptr;
       for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
       {
         curlcurl_op.GetCurrentExcitationVector(idx, RHS);
@@ -148,6 +154,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                   FluxThroughSurfaceFunctional(curlcurl_op.GetRTSpace(),
                                                elem.aperture->attributes,
                                                elem.aperture->direction));
+          }
+          if (first_version)
+          {
+            Vector fb(first_version->Width());
+            first_version->MultTranspose(f, fb);
+            f = std::move(fb);
           }
           curlcurl_op.GetCurlMatrix().MultTranspose(f, l);
           apertures.push_back(std::move(l));

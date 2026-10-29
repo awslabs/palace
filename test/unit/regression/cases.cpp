@@ -1409,6 +1409,51 @@ TEST_CASE("substructuring_magnetostatic_mixed_london",
                                   "magnetostatic_mixed_london.json", "mixed_london", opts);
 }
 
+// As above with a two-sided (two-port) London disk at d > λ (λ = 0.1 μm, d = 0.2 μm) in the
+// environment, on the parent space broken across the film. The references are regular
+// simulations.
+TEST_CASE("substructuring_magnetostatic_two_sided", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided.json", "two_sided", opts);
+}
+
+// An online run on the mesh of the region written by the offline run of the two-sided case
+// (which holds the flux-loop film), against its references.
+TEST_CASE("substructuring_magnetostatic_two_sided_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_online_region.json",
+                                  "two_sided_online_region", opts);
+}
+
+// The two-sided case with the region and the environment swapped, so the film lies in the
+// region.
+TEST_CASE("substructuring_magnetostatic_two_sided_swapped",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_swapped.json",
+                                  "two_sided_swapped", opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and
