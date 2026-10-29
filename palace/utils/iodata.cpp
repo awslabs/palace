@@ -869,11 +869,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
     config::Nondimensionalize(units, data);
   }
 
-  // Center coordinates for surface flux.
+  // Center coordinates for surface flux and far-field extraction.
   for (auto &[idx, data] : boundaries.postpro.flux)
   {
     config::Nondimensionalize(units, data);
   }
+  config::Nondimensionalize(units, boundaries.postpro.farfield);
 
   // Mode impedance voltage and current path coordinates.
   for (auto &[idx, data] : boundaries.postpro.impedance)

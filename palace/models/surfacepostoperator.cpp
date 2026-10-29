@@ -216,6 +216,47 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
 {
   // Store boundary attributes for this postprocessing boundary.
   attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
+  if (attr_list.Size() == 0)
+  {
+    return;
+  }
+
+  // An interior integration surface (for example around a radiator or scatterer inside a
+  // PML) has no outward normal of its own: orient it away from a center point, as for the
+  // surface flux. External boundaries keep their outward normal unless a center is given.
+  const auto marker = mesh::AttrToMarker(bdr_attr_marker.Size(), attr_list);
+  bool interior = false;
+  for (int i = 0; i < mesh.GetNBE() && !interior; i++)
+  {
+    if (!marker[mesh.GetBdrAttribute(i) - 1])
+    {
+      continue;
+    }
+    int f, o;
+    mesh.GetBdrElementFace(i, &f, &o);
+    interior = !mesh.GetFaceInformation(f).IsBoundary();
+  }
+  Mpi::GlobalOr(1, &interior, mesh.GetComm());
+  orient = interior || !data.no_center;
+  if (orient)
+  {
+    MFEM_VERIFY(mesh.SpaceDimension() == 3,
+                "Far-field extraction on interior surfaces requires a 3D mesh!");
+    center.SetSize(mesh.SpaceDimension());
+    if (data.no_center)
+    {
+      mfem::Vector bbmin, bbmax;
+      mesh::GetAxisAlignedBoundingBox(mesh, marker, true, bbmin, bbmax);
+      for (int d = 0; d < mesh.SpaceDimension(); d++)
+      {
+        center(d) = 0.5 * (bbmin(d) + bbmax(d));
+      }
+    }
+    else
+    {
+      std::copy_n(data.center.begin(), mesh.SpaceDimension(), center.begin());
+    }
+  }
 }
 
 SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro,
@@ -484,7 +525,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   if (use_ceed && (!farfield_func || farfield_func_dirs != r_naughts))
   {
     farfield_func = std::make_unique<SurfaceFunctional>(
-        mat_op.GetMesh(), attr_marker, *E.ParFESpace(), *B.ParFESpace(), mat_op, r_naughts);
+        mat_op.GetMesh(), attr_marker, *E.ParFESpace(), *B.ParFESpace(), mat_op, r_naughts,
+        farfield.orient, farfield.center);
     farfield_func_dirs = r_naughts;
   }
   if (use_ceed && farfield_func && farfield_func->IsValid())
@@ -495,6 +537,10 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   {
     RequireCeedSurfaceFunctional(farfield_func.get(), "3D far-field postprocessing");
   }
+
+  MFEM_VERIFY(!farfield.orient,
+              "Far-field extraction on interior surfaces or with a \"Center\" requires "
+              "complex-valued fields (libCEED path)!");
 
   // Integrate. Each MPI process computes its contribution and we will reduce
   // everything at the end. We make them std::vector<std::array<double, 3>>

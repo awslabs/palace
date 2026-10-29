@@ -471,14 +471,16 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
 // (models/strattonchu.cpp): for each observation direction r0,
 //   I = (ik/4pi) [n x E - r0 x (n x ZH)] e^{ik r0.r'} dS,  ZH = c0 B, k = omega/c0,
 // with complex omega and fields. The context is a CeedIntScalar array: [0].second =
-// normal sign, [1].second = omega_re, [2].second = omega_im, [3].first = number of
-// directions N, [4].first = B-field Piola map (0 = H(curl), 1 = H(div)),
-// [5..5+3N).second = directions, followed by the (isotropic) light speed material
-// property context. The B-field Piola map matches GridFunction::GetVectorValue for the
-// supplied B space. Output: 6N components per element (Re I, Im I per direction, 3
-// each).
-// Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 = E_re, E_im, B_re, B_im
-// (external boundaries only).
+// normal sign (times 1/2 for each side of an interior surface), [1].second = omega_re,
+// [2].second = omega_im, [3].first = number of directions N, [4].first = B-field Piola map
+// (0 = H(curl), 1 = H(div)), [5].first = orientation flag, [6..8].second = orientation
+// center x0, [9..9+3N).second = directions, followed by the (isotropic) light speed
+// material property context. When the orientation flag is set, the normal is oriented per
+// point away from x0 (interior surfaces, whose boundary element normal has no outward
+// meaning). The B-field Piola map matches GridFunction::GetVectorValue for the supplied B
+// space. Output: 6N components per element (Re I, Im I per direction, 3 each).
+// Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 = E_re, E_im, B_re, B_im (one side;
+// interior surfaces use one operator per side).
 CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                                          const CeedScalar *const *in,
                                          CeedScalar *const *out)
@@ -488,8 +490,8 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                    *u_er = in[5], *u_ei = in[6], *u_br = in[7], *u_bi = in[8];
   CeedScalar *v = out[0];
   const CeedScalar s_n = ctx[0].second, omega_re = ctx[1].second, omega_im = ctx[2].second;
-  const CeedInt N = ctx[3].first, b_hdiv = ctx[4].first;
-  const CeedIntScalar *dirs = ctx + 5, *mat = ctx + 5 + 3 * N;
+  const CeedInt N = ctx[3].first, b_hdiv = ctx[4].first, orient = ctx[5].first;
+  const CeedIntScalar *dirs = ctx + 9, *mat = ctx + 9 + 3 * N;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -500,6 +502,18 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
     n[0] *= s_n;
     n[1] *= s_n;
     n[2] *= s_n;
+    if (orient)
+    {
+      // Orient the normal away from the given center (interior surfaces).
+      const CeedScalar dx[3] = {x[i + Q * 0] - ctx[6].second, x[i + Q * 1] - ctx[7].second,
+                                x[i + Q * 2] - ctx[8].second};
+      if (dx[0] * n[0] + dx[1] * n[1] + dx[2] * n[2] < 0.0)
+      {
+        n[0] = -n[0];
+        n[1] = -n[1];
+        n[2] = -n[2];
+      }
+    }
     SurfHcurlField32(i, Q, J_v, u_er, E_r);
     SurfHcurlField32(i, Q, J_v, u_ei, E_i);
     if (b_hdiv)
