@@ -68,6 +68,67 @@ palace::test::CustomCheck TestFarfield(double rtol)
   };
 }
 
+// Far field of a z-directed Hertzian dipole (I l = 1 A m). Check the result against the
+// closed form r E = i eta k I l sin(theta) / (4 pi) theta_hat, which does not depend on the
+// reference data: the co-polar magnitude |r E . theta_hat| and the residual (cross-polar
+// and radial) components, relative to the maximum eta k I l / (4 pi). The magnitude
+// comparison with the reference data (as in TestFarfield) has an absolute floor relative to
+// the same maximum, since the field vanishes on the dipole axis and the values there are
+// numerical noise, which depends on the partitioning.
+palace::test::CustomCheck TestFarfieldDipole(double rtol, double tol_dipole)
+{
+  return
+      [rtol, tol_dipole](palace::Table &a, palace::Table &r, const std::filesystem::path &)
+  {
+    REQUIRE(a.n_cols() >= 8);
+    REQUIRE(a.n_cols() == r.n_cols());
+    constexpr double c0 = 299792458.0;      // m/s
+    constexpr double eta0 = 376.730313668;  // Ohm
+    const std::size_t e0 = a.n_cols() - 6, it = e0 - 2, ip = e0 - 1;
+    for (std::size_t i = 0; i < a.n_rows(); ++i)
+    {
+      const double k = 2.0 * std::numbers::pi * a[0].data[i] * 1.0e9 / c0;
+      const double amax = eta0 * k / (4.0 * std::numbers::pi);
+      const double theta = a[it].data[i] * std::numbers::pi / 180.0;
+      const double phi = a[ip].data[i] * std::numbers::pi / 180.0;
+      const double st = std::sin(theta), ct = std::cos(theta);
+      const double sp = std::sin(phi), cp = std::cos(phi);
+      const double th[3] = {ct * cp, ct * sp, -st};
+      std::complex<double> E[3], e_th = 0.0;
+      double res = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        E[d] = {a[e0 + 2 * d].data[i], a[e0 + 2 * d + 1].data[i]};
+        e_th += E[d] * th[d];
+      }
+      for (int d = 0; d < 3; d++)
+      {
+        res += std::norm(E[d] - e_th * th[d]);
+      }
+      INFO("row " << i + 1 << ": theta = " << a[it].data[i] << ", phi = " << a[ip].data[i]
+                  << ", |r E_theta| = " << std::abs(e_th) << ", closed form = "
+                  << amax * std::abs(st) << ", residual = " << std::sqrt(res));
+      CHECK(std::abs(std::abs(e_th) - amax * std::abs(st)) <= tol_dipole * amax);
+      CHECK(std::sqrt(res) <= tol_dipole * amax);
+      if (i < r.n_rows())
+      {
+        auto mag = [i, e0](palace::Table &t)
+        {
+          double m = 0.0;
+          for (std::size_t j = e0; j < e0 + 6; j++)
+          {
+            m += t[j].data[i] * t[j].data[i];
+          }
+          return std::sqrt(m);
+        };
+        const double m_a = mag(a), m_r = mag(r);
+        INFO("|r E| actual = " << m_a << ", reference = " << m_r);
+        CHECK(std::abs(m_a - m_r) <= rtol * std::max(m_a, m_r) + 1.0e-6 * amax);
+      }
+    }
+  };
+}
+
 // Generalised comparison for any CSV with paired "Re{X} (unit)" / "Im{X} (unit)" complex
 // columns. For each Re column it pairs the matching Im (looked up by header_text), then
 // compares either the magnitudes |X| = sqrt(Re^2 + Im^2), or the complex values with a
@@ -1535,6 +1596,17 @@ TEST_CASE("antenna_halfwave_dipole_surfacecurrent", "[Serial][Parallel][GPU][Reg
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_surfacecurrent.json",
                                   "antenna_halfwave_dipole_surfacecurrent", opts);
+}
+
+TEST_CASE("farfield_interior", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 5.0e-9;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.custom_checks["farfield-rE.csv"] = TestFarfieldDipole(opts.rtol, 1.0e-2);
+  palace::test::RunRegressionCase("farfield_interior", "farfield_interior.json",
+                                  "farfield_interior", opts);
 }
 
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---
