@@ -3195,23 +3195,49 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "differ from the recorded build"):
                 refreezer.refreeze(stale_production, stale_calibration, check_only=True,
                                    adapter=adapter)
-            # The Julia launcher is machine-bound likewise: --julia-runtime refreezes the
-            # Julia runtime roles of both manifests together.
-            launcher = root / "julialauncher"; launcher.write_bytes(b"julia launcher")
+            # The Julia runtime is machine-bound likewise: --julia-runtime names the Julia
+            # command (a launcher) and refreezes the Julia runtime roles of both manifests
+            # together to the digest of the BINARY it resolves to (decision 1014): a launcher
+            # replaced by a juliaup self-update leaves the pin current; a Julia version
+            # change (another binary) makes it stale.
+            binary = root / "julia-9.9.9" / "bin" / "julia"; binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"julia binary")
+            launcher = root / "julialauncher"
+            launcher.write_text(f"#!/bin/sh\nprintf '%s\\n9.9.9\\n' '{binary}'\n"); launcher.chmod(0o755)
             changes, _ = refreezer.refreeze(stale_production, stale_calibration, check_only=False,
                                             julia_runtime=launcher)
             self.assertEqual(sorted(name for name, _, _ in changes),
                              sorted([f"{stage}/{role}" for stage, role in refreezer.JULIA_RUNTIME_ROLES
                                      if stage in production["StageToolSHA256"]] +
                                     ["geometry-independence-calibration-ma.json seed-generation/runtime"]))
+            self.assertNotEqual(sha256(binary), sha256(launcher))
             for manifest_path in (stale_production, stale_calibration):
                 frozen = json.loads(manifest_path.read_text())["StageToolSHA256"]
                 for stage, role in refreezer.JULIA_RUNTIME_ROLES:
                     if stage in frozen:
-                        self.assertEqual(frozen[stage][role], sha256(launcher))
+                        self.assertEqual(frozen[stage][role], sha256(binary))
+            launcher.write_text(f"#!/bin/sh\n# self-updated launcher\nprintf '%s\\n9.9.9\\n' '{binary}'\n")
+            self.assertEqual(refreezer.refreeze(stale_production, stale_calibration, check_only=True,
+                                                julia_runtime=launcher), ([], False))
+            binary.write_bytes(b"julia binary of another version")
+            changes, _ = refreezer.refreeze(stale_production, stale_calibration, check_only=True,
+                                            julia_runtime=launcher)
+            self.assertEqual(sorted(name for name, _, _ in changes),
+                             sorted([f"{stage}/{role}" for stage, role in refreezer.JULIA_RUNTIME_ROLES
+                                     if stage in production["StageToolSHA256"]] +
+                                    ["geometry-independence-calibration-ma.json seed-generation/runtime"]))
+            self.assertEqual({new for _, _, new in changes}, {sha256(binary)})
             with self.assertRaisesRegex(ValueError, "does not exist"):
                 refreezer.refreeze(stale_production, stale_calibration, check_only=True,
                                    julia_runtime=root / "missing")
+            launcher.write_text(f"#!/bin/sh\nprintf '%s\\n9.9.9\\n' '{root / 'absent'}'\n")
+            with self.assertRaisesRegex(ValueError, "missing executable"):
+                refreezer.refreeze(stale_production, stale_calibration, check_only=True,
+                                   julia_runtime=launcher)
+            launcher.write_text("#!/bin/sh\nexit 3\n")
+            with self.assertRaisesRegex(ValueError, "did not report"):
+                refreezer.refreeze(stale_production, stale_calibration, check_only=True,
+                                   julia_runtime=launcher)
             # The committed record names the committed source and the frozen adapter digest.
             committed = json.loads((HERE / "testdata" / "adapter-build.json").read_text())
             self.assertEqual(committed["SourceSHA256"], sha256(HERE / "adapt_edge_metric.cpp"))

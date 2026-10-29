@@ -55,6 +55,7 @@ sys.path.insert(0, str(HERE))
 from estimate_build_cost import gate as estimate_gate  # noqa: E402
 from general_mesh_manifest import (FABRICATED_CASE_KEY, THIN_RECIPE_KEY, case_gates, case_kind,  # noqa: E402
                                    minimum_qualified_rings, thin_build_options)
+from julia_runtime import resolve_julia_runtime  # noqa: E402
 from mesh_stage_contract import scope_guard_in_text  # noqa: E402
 from verify_canonical_case_entries import verification_time_bound  # noqa: E402
 BUILD_SUMMARY = "build-summary.json"
@@ -131,7 +132,9 @@ def main():
     parser.add_argument("case_id")
     parser.add_argument("--manifest", type=Path, default=HERE / "geometry-independence-suite.json")
     parser.add_argument("--root", type=Path)
-    parser.add_argument("--julia", default=shutil.which("julia"))
+    parser.add_argument("--julia", default=shutil.which("julia"),
+                        help="Julia command (default: the PATH julia); the Julia stages run and record "
+                             "the binary it resolves to, not a juliaup launcher (decision 1014)")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--julia-project", default="test/examples",
                         help="Julia project (relative to the repository root)")
@@ -182,6 +185,14 @@ def main():
     python, julia = args.python, args.julia
     if julia is None:
         parser.error("--julia is required")
+    # The Julia stages' runtime tool is the resolved Julia binary (its digest is the
+    # manifests' machine-bound runtime pin); the juliaup launcher only dispatches to it.
+    try:
+        julia_executable, julia_version = resolve_julia_runtime(julia)
+    except ValueError as error:
+        parser.error(str(error))
+    julia = str(julia_executable)
+    print(f"JULIA_RUNTIME {julia} (julia {julia_version})", flush=True)
     tools = {name: HERE / name for name in (
         "transform_coupon_source_contract.py", "mesh_spatial_coupon.jl",
         "relabel_frozen_interface_mesh.jl", "publish_rigid_coupon_mesh.py",

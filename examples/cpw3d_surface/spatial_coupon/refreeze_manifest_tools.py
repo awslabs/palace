@@ -22,7 +22,10 @@ machine-bound too (a build of `adapt_edge_metric.cpp`, never committed): its
 (`testdata/adapter-build.json`: command, compiler, source/exe/dylib SHA-256, rpath)
 whose source digest is the repository's `adapt_edge_metric.cpp`.  The Julia runtime
 roles (JULIA_RUNTIME_ROLES) are machine-bound likewise and change only through an
-explicit `--julia-runtime PATH` naming the launcher executable actually run.  Every calibration
+explicit `--julia-runtime PATH` naming the Julia command actually run (the PATH
+launcher); the frozen digest is that of the Julia BINARY the command resolves to
+(`julia_runtime.resolve_julia_runtime`, the version printed), never of a juliaup
+launcher, which self-updates without changing the runtime (decision 1014).  Every calibration
 manifest must carry exactly the production tool digests (asserted by
 `test_general_mesh_manifest.py`), so the manifests are always refrozen together.
 `--check` reports stale digests or a stale mirror without writing (exit 1).
@@ -34,6 +37,8 @@ from pathlib import Path
 import sys
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from julia_runtime import resolve_julia_runtime  # noqa: E402
 PRODUCTION_MANIFEST = HERE / "geometry-independence-suite.json"
 CALIBRATION_MANIFEST = HERE / "geometry-independence-calibration-ma.json"
 # The labeled calibration manifests: the legacy MMG edge-layer study and the
@@ -57,7 +62,8 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-# Stage tool roles whose identity is the Julia launcher executable of this machine.
+# Stage tool roles whose identity is the Julia binary of this machine (the executable
+# the `julia` command resolves to, not a juliaup launcher).
 JULIA_RUNTIME_ROLES = (("seed-generation", "runtime"), ("gmsh-build", "runtime"),
                        ("canonical-gmsh-publication", "runtime"),
                        ("proper-rigid-publication", "ownership-runtime"))
@@ -80,19 +86,16 @@ def adapter_digest(adapter, manifest_path):
     return digest
 
 
-def refrozen_production(manifest, manifest_path, adapter=None, julia_runtime=None):
+def refrozen_production(manifest, manifest_path, adapter=None, julia_executable=None):
     """The manifest with current repository-tool digests over the stages it freezes
     (the recorded adapter digest when `adapter` is given and the manifest freezes the
-    MMG stage, the Julia launcher digest when `julia_runtime` is given) and the list
-    of `(name, old, new)` changes."""
+    MMG stage, the digest of the resolved Julia binary `julia_executable` when it is
+    given) and the list of `(name, old, new)` changes."""
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
     stage_tools = manifest["StageToolSHA256"]
     changes = []
-    if julia_runtime is not None:
-        launcher = Path(julia_runtime).resolve()
-        if not launcher.is_file():
-            raise ValueError(f"Julia runtime executable does not exist: {launcher}")
-        current = sha256(launcher)
+    if julia_executable is not None:
+        current = sha256(julia_executable)
         for stage, role in JULIA_RUNTIME_ROLES:
             if stage in stage_tools and stage_tools[stage][role] != current:
                 changes.append((f"{stage}/{role}", stage_tools[stage][role], current))
@@ -126,14 +129,17 @@ def refreeze(production_path, *calibration_paths, check_only, adapter=None, juli
     """Refreeze the production manifest and every calibration manifest (or only
     report); returns (changes, mirror_was_stale).  A calibration manifest's own stages
     (the legacy stages) are refrozen from the repository; its `Tools` and the stages
-    shared with production are mirrored from production."""
+    shared with production are mirrored from production.  `julia_runtime` (a Julia
+    command, the launcher) is resolved once to the binary it runs."""
     production = json.loads(production_path.read_text())
     calibrations = [json.loads(path.read_text()) for path in calibration_paths]
-    production, changes = refrozen_production(production, production_path, adapter, julia_runtime)
+    julia_executable = (resolve_julia_runtime(julia_runtime)[0] if julia_runtime is not None
+                        else None)
+    production, changes = refrozen_production(production, production_path, adapter, julia_executable)
     mirror_stale = False
     for calibration_path, calibration in zip(calibration_paths, calibrations):
         calibration, calibration_changes = refrozen_production(calibration, calibration_path, adapter,
-                                                               julia_runtime)
+                                                               julia_executable)
         # The calibration manifest's own stage roles (its legacy stages); its `Tools`
         # and shared stages are mirrored below.
         shared = shared_stages(production, calibration)
@@ -163,10 +169,14 @@ def main():
                         help="executable of the recorded adapter build whose digest becomes "
                              "the native-adaptation-mmg/adapter-mmg stage tool")
     parser.add_argument("--julia-runtime", type=Path,
-                        help="Julia launcher executable of this machine whose digest becomes "
-                             "the Julia runtime stage tools (seed, publisher, ownership)")
+                        help="Julia command of this machine (the PATH launcher); the digest of the "
+                             "Julia binary it resolves to becomes the Julia runtime stage tools "
+                             "(seed, mesher, publisher, ownership)")
     args = parser.parse_args()
     try:
+        if args.julia_runtime is not None:
+            executable, version = resolve_julia_runtime(args.julia_runtime)
+            print(f"julia runtime: {executable} (julia {version}) sha256 {sha256(executable)}")
         changes, mirror_stale = refreeze(args.production, *args.calibration,
                                          check_only=args.check, adapter=args.adapter_mmg,
                                          julia_runtime=args.julia_runtime)
