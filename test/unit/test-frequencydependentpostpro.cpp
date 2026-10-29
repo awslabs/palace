@@ -1201,7 +1201,10 @@ TEST_CASE("Flux error estimator without a total energy normalization",
     const auto *b = established.Local().HostRead();
     for (int i = 0; i < with_omega.Local().Size(); i++)
     {
-      CHECK(a[i] == b[i]);
+      // Two evaluations of the same indicators with the same scale, equal up to roundoff:
+      // device reductions (CUDA/MAGMA) are not bitwise repeatable, and differ by 1-2 ULPs.
+      CAPTURE(i, a[i], b[i]);
+      CHECK_THAT(a[i], Catch::Matchers::WithinULP(b[i], 4));
     }
   }
 }
