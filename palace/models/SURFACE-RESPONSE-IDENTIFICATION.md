@@ -1106,9 +1106,55 @@ smaller endpoint.
    (OI-SCP-BOXGROW, decision 972) and refuses a version-19 cache, which a pre-T5 binary may
    have written with the UNGROWN model of a cluster the T5 binary grows once the library
    carries the grown one - a placement divergence the cache's patch content cannot show).
+   PARTIALLY INSIDE STRETCHES (decision 983 (1) / 984, 2026-10-29, OI-T5-PARTIAL-STRETCH-
+   CONTEXT; the boxgrow V7 diagnosis (A), decision 982): the foreign-context treatment above
+   reached only stretches WHOLLY inside the box, so a stretch that enters the box on a
+   `Chain: true` context piece and runs on outside it kept its inside cells at full weight
+   beside the coupon's within-R energy (the transmon island side edges x = +-12 um, device y
+   13.9 -> 17.7 um, inside the grown jjsa box: 6 isolated-edge cells on the V5 final mesh,
+   +0.95 / +0.77 / +0.76 pt on the transmon MA_sharp / SA / MS; the decision-236 sentence
+   "the first cells of every stack portion adjacent to a cluster lie inside its box
+   legitimately" holds for metal the context does not list, never for a context piece). Now
+   `ClassifyForeignContextStretches` reads every (stretch, contract-3 support) pair whose
+   stretch ENTERS the box (some cell has an inside interval, `StretchEntersBox`) without
+   continuing one of its claims, and `ClassifyForeignContext` tests each cell on its INSIDE
+   interval (`ClassifyCellContainment`: a cell wholly inside is tested at its own ends and
+   midpoint as before, bitwise; a cell outside is on no piece; a cell STRADDLING a box face
+   is tested at the inside interval's ends and midpoint). The treatment, per cell: a
+   `Chain: true` cell inside the box is owned as above; a `Chain: true` cell straddling a
+   face is RE-CUT at the face exactly as the continuation pass clips a continuing cell
+   (`ClipLongitudinalCell`: the inside part owned, the outside part kept with the weight and
+   quadrature weight x kept / cell, the origin at the kept midpoint, the Maxwell anchors
+   moved; the same Patch / Feature / Stretch / Segment / S0 / S1); a cell inside two coupons'
+   boxes owns the UNION of the inside intervals once (contiguous and touching a cell end),
+   every owner listed, the owned length split equally. Recorded and left untouched: a
+   straddling cell whose inside interval touches NEITHER cell end — the box strictly inside
+   one coarse cell (OI-T5-PARTIAL-STRETCH-SUBCELL, decision 984 Q2: never an abort) — and
+   every `Chain: false` cell of a partially inside stretch, inside the box or straddling a
+   face (984 Q1: the rule reaches `Chain: true` pieces only; a single scalar `domain_weight`
+   has no exact partial analogue; OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE, 984 Q3 (a)); the
+   decision-553 domain drop stays with the cells of WHOLLY inside stretches. Claims stay
+   with the continuation criterion (decision 252: a parallel stretch alongside a claim is not owned).
+   Records: the NEW `Diagnostics.TranslationalStretchesPartiallyInsideSpatialSupport`
+   (`FindTranslationalStretchPartiallyInsideSpatialSupport`, read on the intact patches like
+   the wholly-inside records; written ONLY when it has records: per (stretch, support) the
+   cell counts by containment — wholly inside / straddling / subcell / outside — and by piece
+   class, `InsideLength`, `OwnedLength`, `Treatment` `OwnedInsidePart` or `RecordedOnly`,
+   with a warning line per record); every `ContinuationOwnership.OwnedCells` entry the rule
+   produced carries `PartialStretch: true` (the manifest leaf per cut; absent elsewhere) and
+   a `ContinuationOwnership.PartialStretch` block (`Cells`, `ClippedCells`, `OwnedLength`,
+   the `SubcellRecords` and `ForeignEdgeRecords` with their lengths) appears only
+   when the rule owned, clipped or recorded a cell, so a placement without a partial stretch
+   keeps its manifest bytes; the existing leaves and `Rule` strings are unchanged. A
+   placement rule, not an identification rule: keys, signatures, boxes, `Match`,
+   `Requirements`, `Counts` and the geometry cache (version 20: the UNPLACED patches;
+   `ApplyPlacementOwnership` runs on every load, the preflight never reads the cache) are
+   untouched. Unit: `SurfaceResponseOperatorPartialStretchContextOwnership`
+   ([partialstretch]; its section (a) fails on the pre-984 code).
    The Maxwell operator path
-   (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
-   inert there (it multiplies the Maxwell domain terms for uniformity only). The record
+   (`ConfigureMaxwellResponse`) runs the same `ApplyPlacementOwnership` pass (so the
+   ownership rules above, the partial-stretch rule included, and the `domain_weight` factor
+   act on the Maxwell domain terms exactly as on the electrostatic ones). The record
    runs in the operator constructor (metadata
    `SurfaceResponse.Diagnostics`, with the warning) and in the preflight on the spatial
    models whose basis points the library provides (manifest `Identification.Diagnostics`

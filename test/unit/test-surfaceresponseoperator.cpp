@@ -10710,6 +10710,683 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
   }
 }
 
+// BEGIN decision-984 new-API case (the failing-first script cuts this block: the case reads
+// the records and fields decision 984 added, which do not compile against main's headers).
+TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
+          "[surfaceresponseoperator][partialstretch][Serial]")
+{
+  // Decision 983 (1) / 984 (OI-T5-PARTIAL-STRETCH-CONTEXT; the boxgrow V7 diagnosis (A),
+  // decision 982): a translational stretch that ENTERS a Box + Context coupon's box without
+  // lying wholly inside it and without continuing a claim is judged PER CELL on the cell's
+  // inside interval against the coupon's context pieces. A Chain: true cell inside the box
+  // is owned (weight 0); a Chain: true cell STRADDLING a box face is RE-CUT at the face
+  // exactly as the continuation pass clips a continuing cell (the inside part owned, the
+  // outside part kept at weight x kept / cell, the origin at the kept midpoint); a cell
+  // outside the box stays. Recorded, never treated: a straddling cell whose inside interval
+  // touches neither cell end (the box strictly inside one cell, OI-T5-PARTIAL-STRETCH-
+  // SUBCELL) and a Chain: false cell straddling a face
+  // (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE). FAILS on the code before decision 984: the
+  // partially inside stretch's cells stay at full weight (the containment was judged per
+  // stretch, wholly inside only), no record exists. Geometry: the decision-553 / 559
+  // fixture's coupon (R = 1.5; the spatial patch 0 at the origin with the identity frame;
+  // box x in [-2, 1] R = [-3, 1.5], |y| <= 3; claims y = 0 from x = -2.5 to 0 and x = -2.5
+  // from y = 0 to 1) with a Chain: true piece along y = 1.5 from x = -1.5 to the +x box
+  // face (P = [-1, 1, 1, 1] R) and a Chain: false piece along y = -1.5 from x = -2.25 to
+  // the +x face (P = [-1.5, -1, 1, -1] R). Translational cells run along +x (AxisU = +y,
+  // AxisW = +x) with weight 0.1 x length.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.5;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  auto Cell = [](int feature, int stretch, double begin, double end, double y)
+  {
+    Patch patch;
+    patch.model = 1;
+    patch.origin = {0.5 * (begin + end), y, 0.0};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.weight = 0.1 * (end - begin);
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    patch.provenance.s0 = 0.0;
+    patch.provenance.s1 = 8.0;
+    patch.provenance.quadrature_weight = (end - begin) / 8.0;
+    patch.maxwell_conductor_anchors = {patch.origin};
+    return patch;
+  };
+  auto Spatial = [&](double origin_x)
+  {
+    Patch patch;
+    patch.model = 2;
+    patch.origin = {origin_x, 0.0, 0.0};
+    patch.axis_u = {1.0, 0.0, 0.0};
+    patch.axis_v = {0.0, 1.0, 0.0};
+    patch.axis_w = {0.0, 0.0, 1.0};
+    patch.weight = 1.0;
+    patch.provenance.feature = 8;
+    patch.provenance.claims = {
+        Claim{3, {origin_x - 2.5, 0.0, 0.0}, {origin_x, 0.0, 0.0}},
+        Claim{5, {origin_x - 2.5, 0.0, 0.0}, {origin_x - 2.5, 1.0, 0.0}}};
+    patch.provenance.has_support_box = true;
+    patch.provenance.support_box = {-2.0, -2.0, 1.0, 2.0};
+    patch.provenance.chain = {{-1.0, 1.0, 1.0, 1.0}};
+    patch.provenance.foreign = {{-1.5, -1.0, 1.0, -1.0}};
+    return patch;
+  };
+  auto Support = [&](const Patch &spatial, std::size_t index)
+  {
+    SpatialSupportBounds support;
+    support.patch = index;
+    const double x = spatial.origin[0];
+    support.SetMeshAlignedBox({x - 3.0, -3.0, -2.0}, {x + 1.5, 3.0, 2.0});
+    support.claims = spatial.provenance.claims;
+    support.has_support_box = spatial.provenance.has_support_box;
+    support.support_box = spatial.provenance.support_box;
+    support.chain = spatial.provenance.chain;
+    support.foreign = spatial.provenance.foreign;
+    support.matching_radius = R;
+    return support;
+  };
+  auto Untouched = [](const Patch &a, const Patch &b)
+  {
+    CHECK_THAT(a.weight, WithinAbs(b.weight, 1.0e-15));
+    CHECK_THAT(a.domain_weight, WithinAbs(1.0, 1.0e-15));
+    CHECK_THAT(a.provenance.quadrature_weight,
+               WithinAbs(b.provenance.quadrature_weight, 1.0e-15));
+    CHECK(a.longitudinal_cell == b.longitudinal_cell);
+    CHECK(a.origin == b.origin);
+  };
+  auto Owned = [](const Patch &a)
+  {
+    CHECK(a.weight == 0.0);
+    CHECK(a.provenance.quadrature_weight == 0.0);
+    CHECK(a.longitudinal_cell == std::array<double, 2>{0.0, 0.0});
+    CHECK_THAT(a.domain_weight, WithinAbs(1.0, 1.0e-15));
+  };
+  config::ElectrostaticSolverData::ResponseCorrectionData data;
+  data.matching_radius = R;
+  data.models.emplace_back().idx = 1;
+  data.models.back().name = "isolated-edge";
+  data.models.back().topology = "isolated edge";
+  data.models.emplace_back().idx = 2;
+  data.models.back().name = "cluster";
+  data.models.back().topology = "spatial edge cluster";
+  data.models.back().spatial_basis = true;
+  SECTION("(a) a stretch partially inside on a Chain: true piece: the inside cells owned, "
+          "the straddling cell re-cut at the box face, the outside cell untouched; a "
+          "manifest leaf per cut (failing-first on the pre-984 code)")
+  {
+    // Patch 0 the coupon; 1-4 stretch (20, 0) along y = 1.5: [-1.2, -0.2] and [-0.2, 0.9]
+    // wholly inside, [0.9, 2.1] straddling the face x = 1.5, [2.1, 3.3] outside; 5-6
+    // stretch (21, 0) wholly outside on the piece's line beyond the face ([1.6, 2.6],
+    // [2.6, 3.6]: a control); 7-8 stretch (22, 0) wholly inside on the piece ([-1.2, -0.2],
+    // [-0.2, 0.6]: the decision-553 class, bitwise as before, no PartialStretch flag).
+    std::vector<Patch> patches = {Spatial(0.0),
+                                  Cell(20, 0, -1.2, -0.2, 1.5),
+                                  Cell(20, 0, -0.2, 0.9, 1.5),
+                                  Cell(20, 0, 0.9, 2.1, 1.5),
+                                  Cell(20, 0, 2.1, 3.3, 1.5),
+                                  Cell(21, 0, 1.6, 2.6, 1.5),
+                                  Cell(21, 0, 2.6, 3.6, 1.5),
+                                  Cell(22, 0, -1.2, -0.2, 1.5),
+                                  Cell(22, 0, -0.2, 0.6, 1.5)};
+    const auto before = patches;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0)};
+    // The records (read on the intact patches): ONE partial record (20, 0); the wholly
+    // inside records unchanged (22, 0) ForeignContextEdge; the outside stretch nowhere.
+    const auto partial = FindTranslationalStretchPartiallyInsideSpatialSupport(
+        patches, supports, 3, tolerance);
+    REQUIRE(partial.size() == 1);
+    CHECK(partial[0].feature == 20);
+    CHECK(partial[0].stretch == 0);
+    CHECK(partial[0].first_patch == 1);
+    CHECK(partial[0].patch_count == 4);
+    CHECK(partial[0].spatial_patch == 0);
+    CHECK(partial[0].cells_wholly_inside == 2);
+    CHECK(partial[0].cells_straddling == 1);
+    CHECK(partial[0].cells_subcell == 0);
+    CHECK(partial[0].cells_outside == 1);
+    CHECK(partial[0].cells_on_chain_edges == 3);
+    CHECK(partial[0].cells_on_excluded_edges == 0);
+    CHECK(partial[0].treated_cells_on_chain_edges == 3);
+    CHECK_THAT(partial[0].length, WithinAbs(4.5, 1.0e-12));
+    CHECK_THAT(partial[0].inside_length, WithinAbs(1.0 + 1.1 + 0.6, 1.0e-12));
+    const auto wholly =
+        FindTranslationalStretchInsideSpatialSupport(patches, supports, 3, tolerance);
+    REQUIRE(wholly.size() == 1);
+    CHECK(wholly[0].feature == 22);
+    CHECK(wholly[0].foreign_context == ForeignContextClass::CONTEXT_EDGE);
+    // The treatment.
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    REQUIRE(ownership.cells.size() == 5);
+    CHECK(ownership.foreign_context_cells == 5);
+    CHECK(ownership.wholly_owned_cells == 4);
+    CHECK(ownership.clipped_cells == 1);
+    CHECK(ownership.shared_cells == 0);
+    CHECK(ownership.partial_stretch_cells == 3);
+    CHECK(ownership.partial_stretch_clipped_cells == 1);
+    CHECK_THAT(ownership.partial_stretch_owned_length, WithinAbs(2.7, 1.0e-12));
+    CHECK(ownership.partial_stretch_subcells.empty());
+    CHECK(ownership.partial_stretch_foreign_edge_cells.empty());
+    CHECK_THAT(ownership.owned_length, WithinAbs(2.7 + 1.8, 1.0e-12));
+    CHECK_THAT(ownership.foreign_context_length, WithinAbs(2.7 + 1.8, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(20, 0, std::size_t{0})),
+               WithinAbs(2.7, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(22, 0, std::size_t{0})),
+               WithinAbs(1.8, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(4.5, 1.0e-12));
+    // Cells 1-2: owned wholly, flagged partial_stretch.
+    Owned(patches[1]);
+    Owned(patches[2]);
+    CHECK(patches[1].origin == before[1].origin);
+    // Cell 3: re-cut at x = 1.5: kept [1.5, 2.1], origin 1.8, cell +-0.3, weight 0.1 x 0.6,
+    // quadrature weight 0.6 / 8, the Maxwell anchor moved with the origin, domain weight 1.
+    CHECK_THAT(patches[3].origin[0], WithinAbs(1.8, 1.0e-12));
+    CHECK_THAT(patches[3].origin[1], WithinAbs(1.5, 1.0e-12));
+    CHECK_THAT(patches[3].longitudinal_cell[0], WithinAbs(-0.3, 1.0e-12));
+    CHECK_THAT(patches[3].longitudinal_cell[1], WithinAbs(0.3, 1.0e-12));
+    CHECK_THAT(patches[3].weight, WithinAbs(0.06, 1.0e-12));
+    CHECK_THAT(patches[3].provenance.quadrature_weight, WithinAbs(0.6 / 8.0, 1.0e-12));
+    CHECK_THAT(patches[3].maxwell_conductor_anchors[0][0], WithinAbs(1.8, 1.0e-12));
+    CHECK_THAT(patches[3].domain_weight, WithinAbs(1.0, 1.0e-15));
+    CHECK(patches[3].provenance.segment == 7);
+    CHECK(patches[3].provenance.s0 == 0.0);
+    CHECK(patches[3].provenance.s1 == 8.0);
+    // Cell 4 (outside) and the outside stretch (21, 0): untouched.
+    Untouched(patches[4], before[4]);
+    Untouched(patches[5], before[5]);
+    Untouched(patches[6], before[6]);
+    // The wholly inside stretch (22, 0): as before decision 984 (no partial flag).
+    Owned(patches[7]);
+    Owned(patches[8]);
+    int flagged = 0;
+    for (const auto &cell : ownership.cells)
+    {
+      CHECK(cell.foreign_context);
+      CHECK(cell.owners == std::vector<std::size_t>{0});
+      if (cell.partial_stretch)
+      {
+        flagged++;
+        CHECK(cell.feature == 20);
+      }
+      else
+      {
+        CHECK(cell.feature == 22);
+        CHECK_THAT(cell.owned_length, WithinAbs(cell.cell_length, 1.0e-12));
+      }
+      REQUIRE(cell.attributed_intervals.size() == 1);
+      CHECK_THAT(cell.attributed_intervals.front()[0][1], WithinAbs(1.5, 1.0e-12));
+      CHECK_THAT(cell.attributed_intervals.front()[1][1], WithinAbs(1.5, 1.0e-12));
+    }
+    CHECK(flagged == 3);
+    const auto clipped = std::find_if(ownership.cells.begin(), ownership.cells.end(),
+                                      [](const auto &cell) { return cell.patch == 3; });
+    REQUIRE(clipped != ownership.cells.end());
+    CHECK_THAT(clipped->cell_length, WithinAbs(1.2, 1.0e-12));
+    CHECK_THAT(clipped->owned_length, WithinAbs(0.6, 1.0e-12));
+    CHECK_THAT(clipped->attributed.front(), WithinAbs(0.6, 1.0e-12));
+    // The owned own-edge interval of the clipped cell: x from 0.9 to the face 1.5 on y
+    // = 1.5.
+    CHECK_THAT(clipped->attributed_intervals.front()[0][0], WithinAbs(0.9, 1.0e-12));
+    CHECK_THAT(clipped->attributed_intervals.front()[1][0], WithinAbs(1.5, 1.0e-12));
+    // Idempotent: a second pass owns nothing more (the clipped cell has left the box).
+    auto again = patches;
+    const auto repeat = ApplyContinuationOwnership(again, supports, 3, tolerance, R);
+    CHECK(repeat.cells.empty());
+    CHECK(repeat.owned_length == 0.0);
+    CHECK(repeat.partial_stretch_cells == 0);
+    // The Diagnostics: the new leaf (records + the Rule), the per-cut flag on OwnedCells,
+    // the PartialStretch counters, the warning and the summary line.
+    data.patches = patches;
+    const auto description = DescribeTranslationalPartialStretchRecords(
+        partial, supports, data, 2.0, &ownership);
+    CHECK(description["Count"] == 1);
+    CHECK(description["OwnedInsidePart"] == 1);
+    CHECK(description["RecordedOnly"] == 0);
+    CHECK(description["CellsWhollyInside"] == 2);
+    CHECK(description["CellsStraddling"] == 1);
+    CHECK(description["CellsSubcell"] == 0);
+    CHECK(description["CellsOutside"] == 1);
+    CHECK(description["StraddlingCellsOnExcludedEdges"] == 0);
+    CHECK_THAT(description["OwnedLength"].get<double>(), WithinAbs(2.0 * 2.7, 1.0e-12));
+    CHECK_THAT(description["InsideLength"].get<double>(), WithinAbs(2.0 * 2.7, 1.0e-12));
+    CHECK_THAT(description["Length"].get<double>(), WithinAbs(2.0 * 4.5, 1.0e-12));
+    REQUIRE(description["Records"].size() == 1);
+    CHECK(description["Records"][0]["Feature"] == 20);
+    CHECK(description["Records"][0]["Model"] == "isolated-edge");
+    CHECK(description["Records"][0]["SpatialModel"] == "cluster");
+    CHECK(description["Records"][0]["Treatment"] == "OwnedInsidePart");
+    CHECK(description["Records"][0]["TreatedCellsOnChainEdges"] == 3);
+    CHECK_THAT(description["Records"][0]["OwnedLength"].get<double>(),
+               WithinAbs(2.0 * 2.7, 1.0e-12));
+    CHECK(description["Rule"].get<std::string>().find("OI-T5-PARTIAL-STRETCH-CONTEXT") !=
+          std::string::npos);
+    const std::string warning = DescribeTranslationalPartialStretchWarning(description);
+    CHECK(warning.find("1 translational response-correction stretch(es) lie PARTIALLY "
+                       "inside") != std::string::npos);
+    CHECK(warning.find("2 inside / 1 straddling (0 subcell) / 1 outside cell(s)") !=
+          std::string::npos);
+    CHECK(warning.find("OwnedInsidePart") != std::string::npos);
+    const auto summary = DescribeContinuationOwnership(ownership, supports, data, 2.0);
+    CHECK(summary["Cells"] == 5);
+    CHECK(summary["WhollyOwnedCells"] == 4);
+    CHECK(summary["ClippedCells"] == 1);
+    REQUIRE(summary.contains("PartialStretch"));
+    CHECK(summary["PartialStretch"]["Cells"] == 3);
+    CHECK(summary["PartialStretch"]["ClippedCells"] == 1);
+    CHECK_THAT(summary["PartialStretch"]["OwnedLength"].get<double>(),
+               WithinAbs(2.0 * 2.7, 1.0e-12));
+    CHECK(summary["PartialStretch"]["SubcellCells"] == 0);
+    CHECK(summary["PartialStretch"]["ForeignEdgeCells"] == 0);
+    int flagged_entries = 0;
+    for (const auto &cell : summary["OwnedCells"])
+    {
+      if (cell.contains("PartialStretch"))
+      {
+        flagged_entries++;
+        CHECK(cell["PartialStretch"] == true);
+        CHECK(cell["Feature"] == 20);
+      }
+      else
+      {
+        CHECK(cell["Feature"] == 22);
+      }
+    }
+    CHECK(flagged_entries == 3);
+    const std::string line = DescribeContinuationOwnershipSummary(summary);
+    CHECK(line.find("5 translational cell(s)") != std::string::npos);
+    CHECK(line.find("4 wholly, 1 clipped at a box face") != std::string::npos);
+    CHECK(line.find("partial-stretch ownership (decision 984") != std::string::npos);
+    CHECK(line.find("3 context-edge cell(s) some partially inside stretch pair contains") !=
+          std::string::npos);
+    CHECK(line.find("(1 re-cut at a box face") != std::string::npos);
+  }
+  SECTION("(b) a wholly outside stretch and a stretch touching the face from outside stay "
+          "untouched and unrecorded")
+  {
+    std::vector<Patch> patches = {Spatial(0.0), Cell(21, 0, 1.6, 2.6, 1.5),
+                                  Cell(21, 0, 2.6, 3.6, 1.5), Cell(23, 0, 1.5, 2.5, 1.5)};
+    const auto before = patches;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0)};
+    CHECK(FindTranslationalStretchPartiallyInsideSpatialSupport(patches, supports, 3,
+                                                                tolerance)
+              .empty());
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    CHECK(ownership.cells.empty());
+    CHECK(ownership.partial_stretch_cells == 0);
+    for (std::size_t i = 1; i < patches.size(); i++)
+    {
+      Untouched(patches[i], before[i]);
+    }
+    // A description without a partial stretch carries no PartialStretch block (the manifest
+    // bytes of a placement without one are unchanged).
+    data.patches = patches;
+    const auto summary = DescribeContinuationOwnership(ownership, supports, data, 1.0);
+    CHECK(!summary.contains("PartialStretch"));
+  }
+  SECTION("(c) a partially inside stretch on metal the context does not list stays "
+          "(decision 236: the first cells of a stack adjacent to a cluster are legitimate)")
+  {
+    std::vector<Patch> patches = {Spatial(0.0), Cell(24, 0, -1.2, -0.2, 2.4),
+                                  Cell(24, 0, -0.2, 0.9, 2.4), Cell(24, 0, 0.9, 2.1, 2.4)};
+    const auto before = patches;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0)};
+    CHECK(FindTranslationalStretchPartiallyInsideSpatialSupport(patches, supports, 3,
+                                                                tolerance)
+              .empty());
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    CHECK(ownership.cells.empty());
+    for (std::size_t i = 1; i < patches.size(); i++)
+    {
+      Untouched(patches[i], before[i]);
+    }
+  }
+  SECTION(
+      "(d) a partially inside stretch on a Chain: false piece (984 Q1 / Q3 (a)): every "
+      "cell inside the box or straddling the face is RECORDED and untouched - weight AND "
+      "domain correction kept (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE); the decision-553 "
+      "domain drop stays with wholly inside stretches")
+  {
+    // Stretch (25, 0) along the Chain: false piece y = -1.5: cells [-1.0, 0.0] and [0.0,
+    // 0.9] inside, [0.9, 2.1] straddling the face x = 1.5, [2.1, 3.3] outside; stretch (26,
+    // 0) wholly inside on the same piece ([-2.0, -1.0], [-1.0, -0.3]): the 553 class,
+    // domain dropped as before.
+    std::vector<Patch> patches = {Spatial(0.0),
+                                  Cell(25, 0, -1.0, 0.0, -1.5),
+                                  Cell(25, 0, 0.0, 0.9, -1.5),
+                                  Cell(25, 0, 0.9, 2.1, -1.5),
+                                  Cell(25, 0, 2.1, 3.3, -1.5),
+                                  Cell(26, 0, -2.0, -1.0, -1.5),
+                                  Cell(26, 0, -1.0, -0.3, -1.5)};
+    const auto before = patches;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0)};
+    const auto partial = FindTranslationalStretchPartiallyInsideSpatialSupport(
+        patches, supports, 3, tolerance);
+    REQUIRE(partial.size() == 1);
+    CHECK(partial[0].feature == 25);
+    CHECK(partial[0].cells_on_excluded_edges == 3);
+    CHECK(partial[0].straddling_cells_on_excluded_edges == 1);
+    CHECK(partial[0].cells_on_chain_edges == 0);
+    CHECK(partial[0].treated_cells_on_chain_edges == 0);
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    CHECK(ownership.cells.empty());
+    // The wholly inside stretch (26, 0): domain dropped as before decision 984.
+    REQUIRE(ownership.foreign_excluded_cells.size() == 2);
+    CHECK(ownership.foreign_excluded_cells[0].patch == 5);
+    CHECK(ownership.foreign_excluded_cells[1].patch == 6);
+    CHECK(patches[5].domain_weight == 0.0);
+    CHECK(patches[6].domain_weight == 0.0);
+    CHECK_THAT(patches[5].weight, WithinAbs(before[5].weight, 1.0e-15));
+    // The partially inside stretch (25, 0): its three cells on the piece recorded,
+    // untouched.
+    REQUIRE(ownership.partial_stretch_foreign_edge_cells.size() == 3);
+    for (std::size_t i = 0; i < 3; i++)
+    {
+      const auto &cell = ownership.partial_stretch_foreign_edge_cells[i];
+      CHECK(cell.patch == i + 1);
+      CHECK(cell.feature == 25);
+      CHECK(cell.owners == std::vector<std::size_t>{0});
+    }
+    CHECK_THAT(ownership.partial_stretch_foreign_edge_cells[0].inside_length,
+               WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_foreign_edge_cells[2].inside_length,
+               WithinAbs(0.6, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_foreign_edge_length,
+               WithinAbs(1.0 + 0.9 + 1.2, 1.0e-12));
+    for (std::size_t i = 1; i <= 4; i++)
+    {
+      Untouched(patches[i], before[i]);
+    }
+    data.patches = patches;
+    const auto description = DescribeTranslationalPartialStretchRecords(
+        partial, supports, data, 1.0, &ownership);
+    CHECK(description["RecordedOnly"] == 1);
+    CHECK(description["OwnedInsidePart"] == 0);
+    CHECK(description["CellsOnExcludedEdges"] == 3);
+    CHECK(description["StraddlingCellsOnExcludedEdges"] == 1);
+    CHECK(description["Records"][0]["Treatment"] == "RecordedOnly");
+    const auto summary = DescribeContinuationOwnership(ownership, supports, data, 1.0);
+    REQUIRE(summary.contains("PartialStretch"));
+    CHECK(summary["PartialStretch"]["Cells"] == 0);
+    CHECK(summary["PartialStretch"]["ForeignEdgeCells"] == 3);
+    CHECK_THAT(summary["PartialStretch"]["ForeignEdgeLength"].get<double>(),
+               WithinAbs(3.1, 1.0e-12));
+    CHECK(summary["PartialStretch"]["ForeignEdgeRecords"][2]["Patch"] == 3);
+    CHECK(DescribeContinuationOwnershipSummary(summary).find(
+              "3 ForeignEdge cell(s) of partial stretches") != std::string::npos);
+  }
+  SECTION("(e) a box strictly inside ONE cell (OI-T5-PARTIAL-STRETCH-SUBCELL, 984 Q2): the "
+          "run completes, the cell stays, the record is written")
+  {
+    // A coarse cell [-3.5, 2.0] along y = 1.5 spans both faces x = -3 and x = 1.5: its
+    // inside interval [-3, 1.5] touches neither cell end. The chain piece spans the whole
+    // box width (P = [-2, 1, 1, 1] R) so that the inside interval's ends and midpoint lie
+    // on it (a cell is classed by its own inside interval): CHAIN_EDGE, subcell ->
+    // untouched and recorded; the next cell [2.0, 3.0] is outside.
+    std::vector<Patch> patches = {Spatial(0.0), Cell(26, 0, -3.5, 2.0, 1.5),
+                                  Cell(26, 0, 2.0, 3.0, 1.5)};
+    patches[0].provenance.chain = {{-2.0, 1.0, 1.0, 1.0}};
+    const auto before = patches;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0)};
+    const auto partial = FindTranslationalStretchPartiallyInsideSpatialSupport(
+        patches, supports, 3, tolerance);
+    REQUIRE(partial.size() == 1);
+    CHECK(partial[0].cells_straddling == 1);
+    CHECK(partial[0].cells_subcell == 1);
+    CHECK(partial[0].cells_on_chain_edges == 1);
+    CHECK(partial[0].treated_cells_on_chain_edges == 0);
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    CHECK(ownership.cells.empty());
+    CHECK(ownership.partial_stretch_cells == 0);
+    REQUIRE(ownership.partial_stretch_subcells.size() == 1);
+    CHECK(ownership.partial_stretch_subcells[0].patch == 1);
+    CHECK_THAT(ownership.partial_stretch_subcells[0].cell_length, WithinAbs(5.5, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_subcells[0].inside_length,
+               WithinAbs(4.5, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_subcell_length, WithinAbs(5.5, 1.0e-12));
+    Untouched(patches[1], before[1]);
+    Untouched(patches[2], before[2]);
+    data.patches = patches;
+    const auto description = DescribeTranslationalPartialStretchRecords(
+        partial, supports, data, 1.0, &ownership);
+    CHECK(description["Records"][0]["Treatment"] == "RecordedOnly");
+    CHECK(description["CellsSubcell"] == 1);
+    const auto summary = DescribeContinuationOwnership(ownership, supports, data, 1.0);
+    REQUIRE(summary.contains("PartialStretch"));
+    CHECK(summary["PartialStretch"]["SubcellCells"] == 1);
+    CHECK(summary["PartialStretch"]["SubcellRecords"][0]["Patch"] == 1);
+    CHECK(DescribeContinuationOwnershipSummary(summary).find("1 subcell(s)") !=
+          std::string::npos);
+  }
+  SECTION(
+      "(f) two boxes: a cell straddling coupon A's face and wholly inside coupon B on "
+      "both chain pieces is owned once, shared by both (the owned length split equally)")
+  {
+    // Coupon A at the origin (box x in [-3, 1.5]; its chain piece y = 1.5 over x in
+    // [-1.5, 1.5]), coupon B at x = 3 (box x in [0, 4.5]; its chain piece P = [-2, 1, 1, 1]
+    // R in B's frame = y = 1.5 over x in [0, 4.5], the whole box width). One stretch (27,
+    // 0) along y = 1.5 crosses both boxes.
+    std::vector<Patch> patches = {Spatial(0.0),
+                                  Spatial(3.0),
+                                  Cell(27, 0, -0.2, 0.9, 1.5),
+                                  Cell(27, 0, 0.9, 2.1, 1.5),
+                                  Cell(27, 0, 2.1, 3.3, 1.5),
+                                  Cell(27, 0, 3.3, 5.0, 1.5)};
+    patches[1].provenance.chain = {{-2.0, 1.0, 1.0, 1.0}};
+    patches[1].provenance.feature = 9;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0),
+                                                        Support(patches[1], 1)};
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    // Cell 2 [-0.2, 0.9]: wholly inside A on A's piece, straddling B's face x = 0 on B's
+    // piece (inside part [0, 0.9]) -> the union is the whole cell: owned wholly, owners
+    // A + B, split equally. Cell 3 [0.9, 2.1]: straddles A's face 1.5 (inside [0.9, 1.5])
+    // and lies wholly inside B -> owned wholly, owners A + B. Cell 4 [2.1, 3.3]: wholly
+    // inside B only. Cell 5 [3.3, 5.0]: straddles B's face 4.5 -> re-cut, kept [4.5, 5.0]
+    // (origin 4.75, weight 0.1 x 0.5).
+    REQUIRE(ownership.cells.size() == 4);
+    CHECK(ownership.shared_cells == 2);
+    for (const auto &cell : ownership.cells)
+    {
+      if (cell.patch == 2 || cell.patch == 3)
+      {
+        CHECK(cell.owners == std::vector<std::size_t>{0, 1});
+        CHECK_THAT(cell.owned_length, WithinAbs(cell.cell_length, 1.0e-12));
+        CHECK_THAT(cell.attributed[0], WithinAbs(0.5 * cell.cell_length, 1.0e-12));
+        CHECK_THAT(cell.attributed[1], WithinAbs(0.5 * cell.cell_length, 1.0e-12));
+      }
+      else if (cell.patch == 4)
+      {
+        CHECK(cell.owners == std::vector<std::size_t>{1});
+        CHECK_THAT(cell.owned_length, WithinAbs(1.2, 1.0e-12));
+      }
+      else
+      {
+        CHECK(cell.patch == 5);
+        CHECK(cell.owners == std::vector<std::size_t>{1});
+        CHECK_THAT(cell.owned_length, WithinAbs(1.2, 1.0e-12));
+        CHECK_THAT(patches[5].origin[0], WithinAbs(4.75, 1.0e-12));
+        CHECK_THAT(patches[5].weight, WithinAbs(0.05, 1.0e-12));
+      }
+    }
+    Owned(patches[2]);
+    Owned(patches[3]);
+    Owned(patches[4]);
+    CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(0.5 * (1.1 + 1.2), 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(1),
+               WithinAbs(0.5 * (1.1 + 1.2) + 1.2 + 1.2, 1.0e-12));
+  }
+  SECTION("(g) two boxes from opposite faces: a cell straddling coupon A's face AND coupon "
+          "B's face, neither box containing it, whose inside intervals together cover the "
+          "cell is owned WHOLLY (counted wholly, not clipped), shared by both")
+  {
+    // Coupon A at the origin (box x in [-3, 1.5]; its chain piece y = 1.5 over x in
+    // [-1.5, 1.5]), coupon B at x = 3 (box x in [0, 4.5]; its chain piece over the whole
+    // box width). One stretch (28, 0) along y = 1.5: [-1.4, -0.5] wholly inside A only,
+    // [-0.5, 2.0] straddling A's face 1.5 (inside [-0.5, 1.5]) and B's face 0 (inside
+    // [0, 2.0]), [2.0, 3.3] wholly inside B only, [3.3, 5.0] straddling B's face 4.5.
+    std::vector<Patch> patches = {Spatial(0.0),
+                                  Spatial(3.0),
+                                  Cell(28, 0, -1.4, -0.5, 1.5),
+                                  Cell(28, 0, -0.5, 2.0, 1.5),
+                                  Cell(28, 0, 2.0, 3.3, 1.5),
+                                  Cell(28, 0, 3.3, 5.0, 1.5)};
+    patches[1].provenance.chain = {{-2.0, 1.0, 1.0, 1.0}};
+    patches[1].provenance.feature = 9;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0),
+                                                        Support(patches[1], 1)};
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    REQUIRE(ownership.cells.size() == 4);
+    CHECK(ownership.wholly_owned_cells == 3);
+    CHECK(ownership.clipped_cells == 1);
+    CHECK(ownership.shared_cells == 1);
+    CHECK(ownership.partial_stretch_cells == 4);
+    CHECK(ownership.partial_stretch_clipped_cells == 1);
+    CHECK_THAT(ownership.partial_stretch_owned_length,
+               WithinAbs(0.9 + 2.5 + 1.3 + 1.2, 1.0e-12));
+    CHECK(ownership.partial_stretch_subcells.empty());
+    const auto covered = std::find_if(ownership.cells.begin(), ownership.cells.end(),
+                                      [](const auto &cell) { return cell.patch == 3; });
+    REQUIRE(covered != ownership.cells.end());
+    CHECK(covered->partial_stretch);
+    CHECK(covered->owners == std::vector<std::size_t>{0, 1});
+    CHECK_THAT(covered->cell_length, WithinAbs(2.5, 1.0e-12));
+    CHECK_THAT(covered->owned_length, WithinAbs(2.5, 1.0e-12));
+    REQUIRE(covered->attributed.size() == 2);
+    CHECK_THAT(covered->attributed[0], WithinAbs(1.25, 1.0e-12));
+    CHECK_THAT(covered->attributed[1], WithinAbs(1.25, 1.0e-12));
+    // The attributed own-edge intervals: A's half x in [-0.5, 0.75], B's [0.75, 2.0].
+    CHECK_THAT(covered->attributed_intervals[0][0][0], WithinAbs(-0.5, 1.0e-12));
+    CHECK_THAT(covered->attributed_intervals[0][1][0], WithinAbs(0.75, 1.0e-12));
+    CHECK_THAT(covered->attributed_intervals[1][0][0], WithinAbs(0.75, 1.0e-12));
+    CHECK_THAT(covered->attributed_intervals[1][1][0], WithinAbs(2.0, 1.0e-12));
+    Owned(patches[2]);
+    Owned(patches[3]);
+    Owned(patches[4]);
+    CHECK_THAT(patches[5].origin[0], WithinAbs(4.75, 1.0e-12));
+    CHECK_THAT(patches[5].weight, WithinAbs(0.05, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(0.9 + 1.25, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(1), WithinAbs(1.25 + 1.3 + 1.2, 1.0e-12));
+    data.patches = patches;
+    const auto summary = DescribeContinuationOwnership(ownership, supports, data, 1.0);
+    CHECK(summary["WhollyOwnedCells"] == 3);
+    CHECK(summary["ClippedCells"] == 1);
+    REQUIRE(summary.contains("PartialStretch"));
+    CHECK(summary["PartialStretch"]["Cells"] == 4);
+    CHECK(summary["PartialStretch"]["ClippedCells"] == 1);
+  }
+  SECTION("(h) two disjoint boxes strictly inside ONE cell: the subcell record carries the "
+          "UNION of the inside intervals, not their span")
+  {
+    // Coupon A at the origin (box x in [-3, 1.5]) and coupon B at x = 6 (box x in
+    // [3, 7.5]), both chain pieces over the whole box width; one coarse cell [-3.5, 8.0]
+    // along y = 1.5 spans both boxes (inside [-3, 1.5] and [3, 7.5], a gap between them);
+    // the next cell [8.0, 9.0] is outside both.
+    std::vector<Patch> patches = {Spatial(0.0), Spatial(6.0), Cell(29, 0, -3.5, 8.0, 1.5),
+                                  Cell(29, 0, 8.0, 9.0, 1.5)};
+    patches[0].provenance.chain = {{-2.0, 1.0, 1.0, 1.0}};
+    patches[1].provenance.chain = {{-2.0, 1.0, 1.0, 1.0}};
+    patches[1].provenance.feature = 9;
+    const auto before = patches;
+    const std::vector<SpatialSupportBounds> supports = {Support(patches[0], 0),
+                                                        Support(patches[1], 1)};
+    const auto partial = FindTranslationalStretchPartiallyInsideSpatialSupport(
+        patches, supports, 3, tolerance);
+    REQUIRE(partial.size() == 2);
+    CHECK(partial[0].cells_subcell == 1);
+    CHECK(partial[1].cells_subcell == 1);
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
+    CHECK(ownership.cells.empty());
+    CHECK(ownership.partial_stretch_cells == 0);
+    REQUIRE(ownership.partial_stretch_subcells.size() == 1);
+    CHECK(ownership.partial_stretch_subcells[0].patch == 2);
+    CHECK(ownership.partial_stretch_subcells[0].owners == std::vector<std::size_t>{0, 1});
+    CHECK_THAT(ownership.partial_stretch_subcells[0].cell_length, WithinAbs(11.5, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_subcells[0].inside_length,
+               WithinAbs(4.5 + 4.5, 1.0e-12));
+    CHECK_THAT(ownership.partial_stretch_subcell_length, WithinAbs(11.5, 1.0e-12));
+    Untouched(patches[2], before[2]);
+    Untouched(patches[3], before[3]);
+  }
+}
+// END decision-984 new-API case
+
+TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership (decision 984, "
+          "failing-first)",
+          "[surfaceresponseoperator][partialstretch][failingfirst][Serial]")
+{
+  // The section-(a) fixture of the case above through main's interfaces only
+  // (ApplyContinuationOwnership and the patch fields): compiles against the pre-984 sources
+  // and FAILS there - the partially inside stretch's cells keep their weight (the
+  // containment was judged per stretch, wholly inside only). Decision 983 (1) / 984.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.5;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  auto Cell = [](int feature, int stretch, double begin, double end, double y)
+  {
+    Patch patch;
+    patch.model = 1;
+    patch.origin = {0.5 * (begin + end), y, 0.0};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.weight = 0.1 * (end - begin);
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    patch.provenance.s0 = 0.0;
+    patch.provenance.s1 = 8.0;
+    patch.provenance.quadrature_weight = (end - begin) / 8.0;
+    patch.maxwell_conductor_anchors = {patch.origin};
+    return patch;
+  };
+  Patch spatial;
+  spatial.model = 2;
+  spatial.origin = {0.0, 0.0, 0.0};
+  spatial.axis_u = {1.0, 0.0, 0.0};
+  spatial.axis_v = {0.0, 1.0, 0.0};
+  spatial.axis_w = {0.0, 0.0, 1.0};
+  spatial.weight = 1.0;
+  spatial.provenance.feature = 8;
+  spatial.provenance.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+                               Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
+  spatial.provenance.has_support_box = true;
+  spatial.provenance.support_box = {-2.0, -2.0, 1.0, 2.0};
+  spatial.provenance.chain = {{-1.0, 1.0, 1.0, 1.0}};
+  spatial.provenance.foreign = {{-1.5, -1.0, 1.0, -1.0}};
+  SpatialSupportBounds support;
+  support.patch = 0;
+  support.SetMeshAlignedBox({-3.0, -3.0, -2.0}, {1.5, 3.0, 2.0});
+  support.claims = spatial.provenance.claims;
+  support.has_support_box = true;
+  support.support_box = spatial.provenance.support_box;
+  support.chain = spatial.provenance.chain;
+  support.foreign = spatial.provenance.foreign;
+  support.matching_radius = R;
+  // Stretch (20, 0) along the Chain: true piece y = 1.5: two cells inside the box
+  // (x in [-3, 1.5]), one straddling the face x = 1.5, one outside.
+  std::vector<Patch> patches = {spatial, Cell(20, 0, -1.2, -0.2, 1.5),
+                                Cell(20, 0, -0.2, 0.9, 1.5), Cell(20, 0, 0.9, 2.1, 1.5),
+                                Cell(20, 0, 2.1, 3.3, 1.5)};
+  const auto before = patches;
+  const auto ownership = ApplyContinuationOwnership(patches, {support}, 3, tolerance, R);
+  CHECK(ownership.cells.size() == 3);
+  CHECK(ownership.clipped_cells == 1);
+  CHECK(ownership.wholly_owned_cells == 2);
+  CHECK_THAT(ownership.owned_length, WithinAbs(2.7, 1.0e-12));
+  CHECK(patches[1].weight == 0.0);
+  CHECK(patches[2].weight == 0.0);
+  CHECK_THAT(patches[3].origin[0], WithinAbs(1.8, 1.0e-12));
+  CHECK_THAT(patches[3].weight, WithinAbs(0.06, 1.0e-12));
+  CHECK_THAT(patches[3].provenance.quadrature_weight, WithinAbs(0.6 / 8.0, 1.0e-12));
+  CHECK_THAT(patches[4].weight, WithinAbs(before[4].weight, 1.0e-15));
+  CHECK(patches[4].origin == before[4].origin);
+}
+
 TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
           "[surfaceresponseoperator][Serial]")
 {
