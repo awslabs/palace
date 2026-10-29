@@ -1,5 +1,5 @@
 diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
-index 10dd69af..9d1097b3 100644
+index 10dd69af..c4262546 100644
 --- a/repos/spack_repo/builtin/packages/mfem/package.py
 +++ b/repos/spack_repo/builtin/packages/mfem/package.py
 @@ -6,14 +6,15 @@ import os
@@ -641,7 +641,7 @@ index 10dd69af..9d1097b3 100644
      def all_headers(self, root_spec):
          all_hdrs = HeaderList([])
          for dep in root_spec.traverse(deptype="link"):
-@@ -1607,3 +1650,159 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1607,3 +1650,161 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              except NoHeadersError:
                  pass
          return all_hdrs
@@ -734,7 +734,7 @@ index 10dd69af..9d1097b3 100644
 +        # Static MUMPS and STRUMPACK need their dependencies on the link line
 +        for name, prefix in (("mumps", "MUMPS"), ("strumpack", "STRUMPACK")):
 +            if f"+{name}" in self.spec and "~shared" in self.spec[name]:
-+                libs = self.static_link_libs(self.spec[name])
++                libs = self.static_link_libs(name)
 +                args.append(self.define(f"{prefix}_REQUIRED_LIBRARIES", libs.libraries))
 +
 +        if "+netcdf" in self.spec:
@@ -769,16 +769,18 @@ index 10dd69af..9d1097b3 100644
 +
 +        return args
 +
-+    def static_link_libs(self, spec):
-+        """Return the libraries of the link dependencies of spec in link order, including
-+        the Fortran runtime"""
++    def static_link_libs(self, name):
++        """Return the libraries of the link dependencies of the dependency name in link
++        order, including the Fortran runtime"""
++        # Traverse the dependency node itself: self.spec[name] is a build interface wrapper
++        (node,) = self.spec.dependencies(name)
 +        libs = LibraryList([])
-+        for dep in spec.traverse(order="topo", deptype="link", root=False):
++        for dep in node.traverse(order="topo", deptype="link", root=False):
 +            try:
-+                libs += spec[dep.name].libs
++                libs += self.spec[dep.name].libs
 +            except NoLibrariesError:
 +                pass
-+        return libs + self.pkg.extra_fortran_lib(spec)
++        return libs + self.pkg.extra_fortran_lib(self.spec[name])
 +
 +    @run_after("build")
 +    def check_or_test(self) -> None:
