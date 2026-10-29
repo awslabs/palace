@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
 #include <numbers>
 #include <vector>
 #include <Eigen/Dense>
@@ -59,7 +60,6 @@ class RomOperatorTest : public RomOperator
 public:
   using RomOperator::AddAuxBlockDirections;
   using RomOperator::ApplyComplexPolynomialFitCorrections;
-  using RomOperator::ApplyPolynomialFitCorrections;
   using RomOperator::AugmentedPencil;
   using RomOperator::BuildAugmentedPencil;
   using RomOperator::CalculateNormalizedPROMMatrices;
@@ -1341,50 +1341,39 @@ TEST_CASE("RomOperator-Synthesis-WavePortExcludedExcitedRejected", "[romoperator
                     Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
 }
 
-// The polynomial dispersion correction helpers are the sign bridge between a scalar
+// The polynomial dispersion correction helper is the sign bridge between a scalar
 // frequency-dependent boundary multiplier and the quadratic pencil K + iωC - ω²M. Lock
 // this down directly: evaluating the corrected pencil must reproduce
-// (α₀ + α₁ω + α₂ω²) Mp_r for real wave-port fits and complex scalar-dispersion fits.
+// (α₀ + α₁ω + α₂ω²) Mp_r for real coefficients (a lossless wave port) and complex ones (a
+// lossy wave port, or a scalar-dispersion fit of another BC), also at complex ω (the
+// synthesized eigenvalues).
 TEST_CASE("RomOperator-PolynomialFitCorrections", "[romoperator][Serial]")
 {
   Eigen::MatrixXcd Mp_r(2, 2);
   Mp_r << std::complex<double>(0.0, 2.0), std::complex<double>(0.0, -0.3),
       std::complex<double>(0.0, -0.3), std::complex<double>(0.0, 0.7);
 
-  RomOperatorTest::WavePortDispersionFit fit;
-  fit.alpha0 = 1.2;
-  fit.alpha1 = -0.4;
-  fit.alpha2 = 0.05;
-
-  Eigen::MatrixXcd Kr = Eigen::MatrixXcd::Zero(2, 2);
-  Eigen::MatrixXcd Cr = Eigen::MatrixXcd::Zero(2, 2);
-  Eigen::MatrixXcd Mr = Eigen::MatrixXcd::Zero(2, 2);
-  RomOperatorTest::ApplyPolynomialFitCorrections(fit, Mp_r, Kr, Cr, Mr);
-
-  for (double omega : {0.2, 1.5, 3.0})
+  for (const auto &[alpha0, alpha1, alpha2] :
+       {std::array<std::complex<double>, 3>{1.2, -0.4, 0.05},
+        std::array<std::complex<double>, 3>{std::complex<double>(0.4, -0.2),
+                                            std::complex<double>(-0.1, 0.3),
+                                            std::complex<double>(0.02, -0.04)}})
   {
-    const Eigen::MatrixXcd got =
-        Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
-    const Eigen::MatrixXcd want =
-        (fit.alpha0 + fit.alpha1 * omega + fit.alpha2 * omega * omega) * Mp_r;
-    CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
-  }
-
-  const std::complex<double> alpha0(0.4, -0.2);
-  const std::complex<double> alpha1(-0.1, 0.3);
-  const std::complex<double> alpha2(0.02, -0.04);
-  Kr.setZero();
-  Cr.setZero();
-  Mr.setZero();
-  RomOperatorTest::ApplyComplexPolynomialFitCorrections(alpha0, alpha1, alpha2, Mp_r, Kr,
-                                                        Cr, Mr);
-
-  for (double omega : {0.2, 1.5, 3.0})
-  {
-    const Eigen::MatrixXcd got =
-        Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
-    const Eigen::MatrixXcd want = (alpha0 + alpha1 * omega + alpha2 * omega * omega) * Mp_r;
-    CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
+    Eigen::MatrixXcd Kr = Eigen::MatrixXcd::Zero(2, 2);
+    Eigen::MatrixXcd Cr = Eigen::MatrixXcd::Zero(2, 2);
+    Eigen::MatrixXcd Mr = Eigen::MatrixXcd::Zero(2, 2);
+    RomOperatorTest::ApplyComplexPolynomialFitCorrections(alpha0, alpha1, alpha2, Mp_r, Kr,
+                                                          Cr, Mr);
+    for (std::complex<double> omega :
+         {std::complex<double>(0.2, 0.0), std::complex<double>(1.5, 0.0),
+          std::complex<double>(3.0, 0.0), std::complex<double>(1.5, 0.4)})
+    {
+      const Eigen::MatrixXcd got =
+          Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
+      const Eigen::MatrixXcd want =
+          (alpha0 + alpha1 * omega + alpha2 * omega * omega) * Mp_r;
+      CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
+    }
   }
 }
 

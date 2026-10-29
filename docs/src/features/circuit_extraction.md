@@ -69,9 +69,10 @@ of the driven solver as well as the following additional files:
     ``\mathrm{Im}~\widehat{\bm{C}}``, but these imaginary parts can also arise from the dispersion fit of
     a frequency-dependent boundary condition: as described in [Synthesizing Frequency-Dependent
     Boundary Conditions](#Synthesizing-Frequency-Dependent-Boundary-Conditions) below, the constant
-    term of the fit contributes to ``\mathrm{Im}~\widehat{\bm{L}}^{-1}`` and its quadratic term to
-    ``\mathrm{Im}~\widehat{\bm{C}}``. These terms may seem unfamiliar, since in "textbook" circuits
-    ``\widehat{\bm{L}}``, ``\widehat{\bm{R}}``, ``\widehat{\bm{C}}`` are real.
+    term of a real fit contributes to ``\mathrm{Im}~\widehat{\bm{L}}^{-1}`` and its quadratic term to
+    ``\mathrm{Im}~\widehat{\bm{C}}``, and a complex fit, for example of a lossy wave port mode,
+    also contributes to ``\mathrm{Im}~\widehat{\bm{R}}^{-1}``. These terms may seem unfamiliar, since
+    in "textbook" circuits ``\widehat{\bm{L}}``, ``\widehat{\bm{R}}``, ``\widehat{\bm{C}}`` are real.
   - `rom-orthogonalization-matrix-R.csv`. The Gram–Schmidt ``R`` factor of the synthesized circuit
     modes. This is very useful in advanced circuit postprocessing, but can be ignored by most users.
   - `rom-port-reference.csv`. The matched reference admittance $Y_{\mathrm{ref}}$ and impedance
@@ -315,7 +316,8 @@ First, the mode itself is not a prescribed analytic field. The wave-port modal f
 the solution of the two-dimensional cross-section eigenproblem on the port boundary, evaluated at a
 reference frequency taken as the center of the sweep band. This field is generally complex, so —
 unlike a lumped port — it contributes up to two columns to the basis (its real and imaginary parts,
-each retained only if it survives the orthogonalization tolerance).
+each retained only if it survives the orthogonalization tolerance). A mode with a uniform phase, such
+as a TEM mode, also in a lossy line, is rotated to be real and contributes a single column.
 
 Second, the unit-power normalization is imposed slightly differently. The cross-section eigensolve
 already normalizes ``\bm{w}_p`` to carry unit power (``|\bm{E}\times\bm{H}^*|`` integrated over the
@@ -365,11 +367,12 @@ dispersion differs per boundary type:
     (the reference admittance reported in `rom-port-reference.csv` additionally includes the low-rank
     modal correction $\bm{W}$; see above).
     The fitted scalar is ``k_n(\omega)``, obtained by re-solving the small cross-section eigenproblem
-    at a set of fit frequencies. For the synthesis only the real, propagating part of ``k_n`` is
-    fit; the imaginary part (line attenuation of a lossy port mode, which the underlying driven
-    sweep includes in the wave port boundary condition) is dropped, with a warning when it is not
-    negligible, so a wave port contributes to ``\widehat{\bm{R}}^{-1}`` through the *dispersion*
-    of ``k_n``, not through attenuation.
+    at a set of fit frequencies. It is real for a lossless port mode, so a lossless port line
+    contributes to ``\widehat{\bm{R}}^{-1}`` through the *dispersion* of ``k_n``. For a lossy port
+    mode, for example with `Conductivity` or `Impedance` boundaries on the port boundary or a
+    lossy dielectric, ``k_n`` is complex and its imaginary part, the attenuation of the mode, is
+    fit along with its real part (unless it is below the fit tolerance), so the synthesized port
+    load carries the attenuation of the port line like the driven solver.
   - **Second-order absorbing (farfield) boundary.** Here ``f(\omega) = 0.5/\omega``, which is exactly
     a single pole at ``\omega = 0`` with residue ``0.5``. This is injected analytically — no fit is
     needed.
@@ -388,7 +391,7 @@ quadratic fit against `"AdaptiveTol"`:
 
 **Polynomial regime.** If $f(\omega) \approx \alpha_0 + \alpha_1\omega + \alpha_2\omega^2$ meets the
 tolerance, no rows or columns are added. With $\bm{M}_b^r = i\,\bm{M}_{\mathrm{proj}}$, real
-coefficients, as in the wave-port fit, map as
+coefficients, as in the fit of a lossless wave port, map as
 
 ```math
 \alpha_0 \;\to\; \mathrm{Im}~\widehat{\bm{L}}^{-1}, \qquad
@@ -396,8 +399,9 @@ coefficients, as in the wave-port fit, map as
 -\alpha_2 \;\to\; \mathrm{Im}~\widehat{\bm{C}} .
 ```
 
-Surface-conductivity and rational-impedance fits can have complex coefficients. In that case, their
-real and imaginary parts contribute to both components of the corresponding circuit matrices.
+Surface-conductivity and rational-impedance fits, and wave-port fits of a lossy port mode, can have
+complex coefficients. In that case, their real and imaginary parts contribute to both components of
+the corresponding circuit matrices.
 
 **Augmented regime.** When the generic quadratic residual exceeds `"AdaptiveTol"`, *Palace* fits the
 leftover residual with an AAA rational approximation [7],

@@ -148,9 +148,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     power normalization, with a phase such that their unconjugated reaction is real. The
     characteristic impedance `Z_PV` of a lossy port mode is now complex, `|V|² / P*` with the
     complex power `P` of the mode, consistent with the total-field impedance in `port-Z.csv`.
-    Results are unchanged for lossless port modes. Circuit synthesis still models the wave
-    port lines as lossless, and now warns when the attenuation of the port mode is not
-    negligible.
+    Results are unchanged for lossless port modes. Circuit synthesis now also fits the
+    complex propagation constant of a lossy port mode, so that the synthesized port loads
+    carry the attenuation of the port lines.
     [Issue 1109](https://github.com/awslabs/palace/issues/1109).
   - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
     cracked face with three vertices on the crack front (at a corner of the crack) merged
