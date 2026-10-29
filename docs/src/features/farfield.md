@@ -45,9 +45,10 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
      3. does not cross anisotropic materials
 
     An interior surface (for example a box around the radiating structure, inside the
-    physical region terminated by a PML) has no outward direction of its own: its normal
-    is oriented away from `"Center"`, by default the centroid of the bounding box of the
-    surface, which must then lie inside it. The fields of the two sides are averaged.
+    physical region terminated by a PML) has no normal direction of its own: its normal
+    is oriented from `"Center"`, a point inside the surface (by default the centroid of
+    the bounding box of the surface, which must then lie inside it). The fields of the
+    two sides are averaged.
 
 ## Setup
 

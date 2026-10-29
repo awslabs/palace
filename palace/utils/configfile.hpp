@@ -785,7 +785,7 @@ public:
   std::vector<std::pair<double, double>> thetaphis = {};
 
   // Coordinates of a point inside the integration surface, used to orient the surface
-  // normal outward on interior surfaces [m].
+  // normal on interior surfaces [m].
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
 
   // Flag which indicates whether or not the center point was specified.

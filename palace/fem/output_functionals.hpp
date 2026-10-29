@@ -305,9 +305,10 @@ public:
 
   // Construct a Stratton-Chu far-field functional for the given observation directions
   // (see AddStrattonChuIntegrandAtElement). On an interior surface, the traces of both
-  // sides are averaged and, when orient is true, the surface normal is oriented per point
-  // away from x0 (as for the surface flux); otherwise the outward normal of the external
-  // boundary is used.
+  // sides are averaged. When orient is true, the surface normal is oriented per point
+  // toward x0, a point inside the surface, which matches the normal used on external
+  // boundaries (pointing into the computational domain, toward the sources); interior
+  // surfaces require it.
   SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &nd_fespace,
                     const mfem::ParFiniteElementSpace &rt_fespace,

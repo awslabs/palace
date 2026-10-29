@@ -1922,7 +1922,7 @@
         },
         "Center": {
           "$ref": "#/$defs/Vector3",
-          "description": "Point inside the integration surface used to orient the surface normal outward, in mesh length units. Used for interior surfaces, whose normal has no outward direction of its own. If not specified, the point is the centroid of the axis-aligned bounding box of the surface. For external boundaries, the outward normal of the boundary is used unless a center is given."
+          "description": "Point inside the integration surface (on the side of the sources and scatterers) used to orient the surface normal, in mesh length units. Used for interior surfaces, whose normal has no direction of its own. If not specified, the point is the centroid of the axis-aligned bounding box of the surface. For external boundaries, the normal of the boundary is used unless a center is given."
         },
         "NSample": {
           "type": "integer",
