@@ -2119,9 +2119,9 @@ OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchDat
 // With `geometry_ledger` (readiness hardening H4a): a same-class pair whose boxes
 // interior-overlap without ownership (two clusters with a claim inside the other's claims
 // hull per `margin_overlaps`, or two vertex coupons) yields (subordinate, owner) in
-// `overlap_excluded` (the subordinate = the smaller claimed length, ties by the larger patch
-// index: the operator's rule) with an OverlapExcluded record; the subordinate is owned from
-// then on. Without the ledger the same-class pairs are skipped as before.
+// `overlap_excluded` (the subordinate = the smaller claimed length, ties by the larger
+// patch index: the operator's rule) with an OverlapExcluded record; the subordinate is
+// owned from then on. Without the ledger the same-class pairs are skipped as before.
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
@@ -2132,8 +2132,8 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
 // The H4a subordinate of two overlapping same-class patches: the smaller claimed length
 // (provenance claims + raw claims), ties by the larger patch index.
 std::size_t OverlapExcludedSubordinate(
-    const config::ElectrostaticSolverData::ResponseCorrectionData &config, std::size_t first,
-    std::size_t second);
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    std::size_t first, std::size_t second);
 
 // The dropped coupons' raw claims (provenance raw_claims: the arms' R windows) clipped by
 // ClipUncoveredPortionsBySpatialSupport against every matched cluster's box; the kept

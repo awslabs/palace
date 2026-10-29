@@ -23783,7 +23783,8 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
             "Three-dimensional response-correction matching volumes for patches {:d} and "
             "{:d} overlap without complete spatial-cluster ownership{}",
             first + 1, second + 1,
-            first_cluster ? " (a claim of one cluster lies inside the other's claims)" : "");
+            first_cluster ? " (a claim of one cluster lies inside the other's claims)"
+                          : "");
         entry.what = "patch";
         entry.patches = {static_cast<int>(subordinate), static_cast<int>(owner)};
         entry.models = {models.at(config.patches[subordinate].model)->name,
@@ -24798,7 +24799,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         // SpatialClusterPriority coupon (weight 0, owned) and its claims OUTSIDE the
         // owner's box stay RAW (the geometry-fallback portions, F-DB-a) with the record
         // OverlapExcluded; the former abort is the FailClosed summary's.
-        const std::size_t subordinate_patch = OverlapExcludedSubordinate(config, first, second);
+        const std::size_t subordinate_patch =
+            OverlapExcludedSubordinate(config, first, second);
         const bool drop_second = subordinate_patch == second;
         const std::size_t owner_patch = drop_second ? first : second;
         spatially_owned_patches.insert(subordinate_patch);
