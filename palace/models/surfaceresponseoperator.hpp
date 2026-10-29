@@ -1409,6 +1409,43 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
     const std::vector<SpatialSupportBounds> &supports, int dimension,
     double continuation_tolerance);
 
+// The records of the stretches PARTIALLY inside a contract-3 support's box (decision 983
+// (1) / 984, OI-T5-PARTIAL-STRETCH-CONTEXT): every (stretch, support) pair whose stretch
+// enters the box without lying wholly inside it, continues none of the support's claims and
+// has at least one inside cell on a context piece. Per record the cell counts by
+// containment (wholly inside / straddling a face / outside; the straddling cells whose
+// inside interval touches neither end = subcells) and by piece class on the inside parts,
+// and the treatment the placement applies: OwnedInsidePart (Chain: true cells: the inside
+// cells owned, the straddling ones re-cut at the face) or RecordedOnly (every inside cell
+// on a Chain: false piece straddles, or every straddling cell is a subcell). Read on the
+// INTACT patches like the wholly-inside records; (feature, stretch, spatial patch) order.
+struct PartialStretchOwnershipRecord
+{
+  int feature = -1;
+  int stretch = -1;
+  std::size_t first_patch = 0;
+  std::size_t patch_count = 0;
+  std::size_t spatial_patch = 0;
+  double length = 0.0;               // sum of the stretch's cell lengths
+  std::array<double, 3> lo{}, hi{};  // extent of the stretch's cell ends
+  std::size_t cells_wholly_inside = 0;
+  std::size_t cells_straddling = 0;
+  std::size_t cells_subcell = 0;
+  std::size_t cells_outside = 0;
+  std::size_t cells_on_chain_edges = 0;
+  std::size_t cells_on_excluded_edges = 0;
+  std::size_t straddling_cells_on_excluded_edges = 0;
+  // Chain: true cells the placement owns or re-cuts (inside, or straddling but no subcell).
+  std::size_t treated_cells_on_chain_edges = 0;
+  double inside_length = 0.0;  // the inside intervals of the cells on a context piece
+};
+std::vector<PartialStretchOwnershipRecord>
+FindTranslationalStretchPartiallyInsideSpatialSupport(
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double continuation_tolerance);
+
 // The Diagnostics "Class" of a record: Continuation, Foreign, ForeignExcludedEdge or
 // ForeignContextEdge.
 const char *TranslationalOwnershipClassName(const TranslationalOwnershipRecord &record);
@@ -1438,6 +1475,15 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
 
 // The warning logged for a non-empty Diagnostics entry (one line per record).
 std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnostics);
+
+// The Diagnostics entry `TranslationalStretchesPartiallyInsideSpatialSupport` (decision
+// 984; written only when it has records) and its warning (one line per record).
+nlohmann::json DescribeTranslationalPartialStretchRecords(
+    const std::vector<PartialStretchOwnershipRecord> &records,
+    const std::vector<SpatialSupportBounds> &supports,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale, const ContinuationOwnership *ownership = nullptr);
+std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &diagnostics);
 
 // Continuation ownership at placement (decisions 236 (2) / 244): a translational cell of a
 // stretch that continues a claim of a spatial support (the Continuation criterion of the
@@ -1476,6 +1522,21 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
 // domain-dropped) and lists every support of that class as an owner (ascending spatial
 // patch; the owned length split equally): deterministic in the support order. A cell
 // already at weight 0 (owned by the continuation pass) is skipped. Lengths in patch units.
+// PARTIAL STRETCHES (decision 983 (1) / 984, OI-T5-PARTIAL-STRETCH-CONTEXT): the
+// foreign-context treatment reaches every stretch that ENTERS a contract-3 support's box
+// without continuing its claims, wholly inside or not (the decision-236 premise "the first
+// cells of a stack portion adjacent to a cluster lie inside its box legitimately" holds for
+// metal the context does not list, never for a CONTEXT piece: the coupon's twins contain
+// that metal with its within-R surfaces). Per cell, on its inside interval: a Chain: true
+// cell inside the box is owned as above; a Chain: true cell STRADDLING a box face is RE-CUT
+// at the face exactly as the continuation pass clips a continuing cell (the inside part
+// owned, the outside part kept at weight x kept / cell, the origin at the kept midpoint);
+// a straddling cell whose inside interval touches neither end (the box strictly inside one
+// cell) and a Chain: false cell straddling a face are left untouched and RECORDED
+// (`partial_stretch_subcells`, `partial_stretch_foreign_edge_cells`). Every cell the rule
+// owns or clips carries `partial_stretch`. Keys, boxes and the identification are untouched
+// (a placement rule); the geometry cache (version 20) stores the unplaced patches and this
+// pass runs on every load, so no cache version change.
 struct ContinuationOwnership
 {
   struct Cell
@@ -1494,6 +1555,10 @@ struct ContinuationOwnership
     // The cell is owned as a ForeignContextEdge cell (decision 553 sub-class (ii)), not
     // as the continuation of a claim.
     bool foreign_context = false;
+    // The cell belongs to a stretch PARTIALLY inside the owner's box (decision 983 (1) /
+    // 984, OI-T5-PARTIAL-STRETCH-CONTEXT): owned wholly (a cell inside the box) or clipped
+    // at the box face (owned_length < cell_length); the manifest leaf per cut.
+    bool partial_stretch = false;
   };
   std::vector<Cell> cells;  // in patch order
   // Cells on an excluded ForeignEdge (decision 553 sub-class (i)): weight kept,
@@ -1512,6 +1577,26 @@ struct ContinuationOwnership
   double foreign_excluded_length = 0.0;
   double foreign_context_length = 0.0;  // the ForeignContextEdge part of owned_length
   int foreign_context_cells = 0;
+  // The partial-stretch rule (decision 984): the cells it owned or clipped (listed under
+  // `cells` with partial_stretch), and the two recorded-only classes — a straddling cell
+  // whose inside interval touches neither end (OI-T5-PARTIAL-STRETCH-SUBCELL) and a Chain:
+  // false cell straddling a face (OI-T5-PARTIAL-STRETCH-FOREIGN-EDGE) — left untouched.
+  struct PartialStretchCell
+  {
+    std::size_t patch = 0;
+    int feature = -1;
+    int stretch = -1;
+    std::vector<std::size_t> owners;  // spatial patches whose box the cell enters
+    double cell_length = 0.0;
+    double inside_length = 0.0;  // the inside interval's union (0 when not read)
+  };
+  int partial_stretch_cells = 0;          // owned or clipped by the partial rule
+  int partial_stretch_clipped_cells = 0;  // of those, clipped at a box face
+  double partial_stretch_owned_length = 0.0;
+  std::vector<PartialStretchCell> partial_stretch_subcells;  // in patch order
+  double partial_stretch_subcell_length = 0.0;
+  std::vector<PartialStretchCell> partial_stretch_foreign_edge_cells;  // in patch order
+  double partial_stretch_foreign_edge_length = 0.0;
   // Owned length per (feature, stretch, spatial patch) and per spatial patch.
   std::map<std::tuple<int, int, std::size_t>, double> owned_by_stretch;
   std::map<std::size_t, double> owned_by_support;
