@@ -10710,6 +10710,8 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
   }
 }
 
+// BEGIN decision-984 new-API case (the failing-first script cuts this block: the case reads
+// the records and fields decision 984 added, which do not compile against main's headers).
 TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
           "[surfaceresponseoperator][partialstretch][Serial]")
 {
@@ -11215,6 +11217,81 @@ TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
     CHECK_THAT(ownership.owned_by_support.at(1),
                WithinAbs(0.5 * (1.1 + 1.2) + 1.2 + 1.2, 1.0e-12));
   }
+}
+// END decision-984 new-API case
+
+TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership (decision 984, "
+          "failing-first)",
+          "[surfaceresponseoperator][partialstretch][failingfirst][Serial]")
+{
+  // The section-(a) fixture of the case above through main's interfaces only
+  // (ApplyContinuationOwnership and the patch fields): compiles against the pre-984 sources
+  // and FAILS there - the partially inside stretch's cells keep their weight (the
+  // containment was judged per stretch, wholly inside only). Decision 983 (1) / 984.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.5;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  auto Cell = [](int feature, int stretch, double begin, double end, double y)
+  {
+    Patch patch;
+    patch.model = 1;
+    patch.origin = {0.5 * (begin + end), y, 0.0};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.weight = 0.1 * (end - begin);
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    patch.provenance.s0 = 0.0;
+    patch.provenance.s1 = 8.0;
+    patch.provenance.quadrature_weight = (end - begin) / 8.0;
+    patch.maxwell_conductor_anchors = {patch.origin};
+    return patch;
+  };
+  Patch spatial;
+  spatial.model = 2;
+  spatial.origin = {0.0, 0.0, 0.0};
+  spatial.axis_u = {1.0, 0.0, 0.0};
+  spatial.axis_v = {0.0, 1.0, 0.0};
+  spatial.axis_w = {0.0, 0.0, 1.0};
+  spatial.weight = 1.0;
+  spatial.provenance.feature = 8;
+  spatial.provenance.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+                               Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
+  spatial.provenance.has_support_box = true;
+  spatial.provenance.support_box = {-2.0, -2.0, 1.0, 2.0};
+  spatial.provenance.chain = {{-1.0, 1.0, 1.0, 1.0}};
+  spatial.provenance.foreign = {{-1.5, -1.0, 1.0, -1.0}};
+  SpatialSupportBounds support;
+  support.patch = 0;
+  support.SetMeshAlignedBox({-3.0, -3.0, -2.0}, {1.5, 3.0, 2.0});
+  support.claims = spatial.provenance.claims;
+  support.has_support_box = true;
+  support.support_box = spatial.provenance.support_box;
+  support.chain = spatial.provenance.chain;
+  support.foreign = spatial.provenance.foreign;
+  support.matching_radius = R;
+  // Stretch (20, 0) along the Chain: true piece y = 1.5: two cells inside the box
+  // (x in [-3, 1.5]), one straddling the face x = 1.5, one outside.
+  std::vector<Patch> patches = {spatial, Cell(20, 0, -1.2, -0.2, 1.5),
+                                Cell(20, 0, -0.2, 0.9, 1.5), Cell(20, 0, 0.9, 2.1, 1.5),
+                                Cell(20, 0, 2.1, 3.3, 1.5)};
+  const auto before = patches;
+  const auto ownership = ApplyContinuationOwnership(patches, {support}, 3, tolerance, R);
+  CHECK(ownership.cells.size() == 3);
+  CHECK(ownership.clipped_cells == 1);
+  CHECK(ownership.wholly_owned_cells == 2);
+  CHECK_THAT(ownership.owned_length, WithinAbs(2.7, 1.0e-12));
+  CHECK(patches[1].weight == 0.0);
+  CHECK(patches[2].weight == 0.0);
+  CHECK_THAT(patches[3].origin[0], WithinAbs(1.8, 1.0e-12));
+  CHECK_THAT(patches[3].weight, WithinAbs(0.06, 1.0e-12));
+  CHECK_THAT(patches[3].provenance.quadrature_weight, WithinAbs(0.6 / 8.0, 1.0e-12));
+  CHECK_THAT(patches[4].weight, WithinAbs(before[4].weight, 1.0e-15));
+  CHECK(patches[4].origin == before[4].origin);
 }
 
 TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
