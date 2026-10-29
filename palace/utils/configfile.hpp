@@ -1205,9 +1205,8 @@ public:
 
   // Preconditioner-only gauge shift for the London magnetostatic operator: adds
   // london_pc_shift · (1/µ) ∫|A|² to the preconditioner matrix only (operator, solution and
-  // extracted inductance unchanged) to lift the shifted-penalty operator's residual
-  // gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet is
-  // present.
+  // extracted inductance unchanged) to lift the residual gradient null space so AMS is
+  // SPD-solvable in parallel. Ignored without superconductor sheets or London domains.
   double london_pc_shift = 1.0e-1;
 
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
