@@ -474,7 +474,7 @@ TEST_CASE("AddSubMeshInternalBoundaryElements after parallel nonconforming refin
 TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
           "[geodata][Serial][Parallel]")
 {
-  auto mesh_path = std::string(PALACE_TEST_DATA_DIR) + "/mesh/nc-boundary-submesh.mesh";
+  auto mesh_path = std::string(PALACE_TEST_DATA_DIR) + "/nc-boundary-submesh.mesh";
   mfem::Mesh serial_mesh(mesh_path.c_str(), 1, 1, true);
   REQUIRE(serial_mesh.Nonconforming());
   auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
