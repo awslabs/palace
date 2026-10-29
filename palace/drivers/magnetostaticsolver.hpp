@@ -13,6 +13,7 @@
 namespace palace
 {
 
+class CurlCurlOperator;
 class ErrorIndicator;
 class Mesh;
 template <ProblemType>
@@ -48,6 +49,13 @@ private:
   // Whether each excitation column has reciprocal mutuals (current ports Open when
   // inactive, and every flux loop).
   std::vector<bool> ReciprocalColumns(const std::vector<int> &current_idx, int n) const;
+
+  // Report the stored energy and imposed loop fluxoids of each excitation, when grouped
+  // flux loop excitations leave no inductance matrix.
+  void PostprocessExcitations(const CurlCurlOperator &curlcurl_op,
+                              const std::vector<Vector> &london_ah,
+                              const std::vector<double> &domain_energy,
+                              const std::vector<double> &london_kinetic) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

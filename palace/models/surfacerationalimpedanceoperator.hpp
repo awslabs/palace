@@ -63,14 +63,14 @@ private:
   std::vector<RationalImpedanceData> boundaries;
 
   void SetUpBoundaryProperties(const std::vector<config::RationalImpedanceData> &impedance,
-                               const std::unordered_set<int> &cracked_attributes,
+                               const std::unordered_set<int> &split_attributes,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
 public:
   SurfaceRationalImpedanceOperator(
       const std::vector<config::RationalImpedanceData> &impedance,
-      const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+      const std::unordered_set<int> &split_attributes, ProblemType problem_type,
       const Units &units, const MaterialOperator &mat_op, const mfem::ParMesh &mesh);
   SurfaceRationalImpedanceOperator(const IoData &iodata, const MaterialOperator &mat_op,
                                    const mfem::ParMesh &mesh);

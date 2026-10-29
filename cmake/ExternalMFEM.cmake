@@ -471,6 +471,29 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   7d39edc1f76e05242a30f42a2cd17f8d76bf5d657c1c0a66d251b2024e4601e7
 )
 
+# https://github.com/mfem/mfem/pull/5639
+# Consistent order of the shared entities of ParSubMesh groups across ranks.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5639.diff
+  "https://github.com/mfem/mfem/commit/864d476acf25135d2059d3379d208e635823f26c.diff"
+  9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03
+)
+# https://github.com/mfem/mfem/pull/5698
+# NCMesh::GetRootTransforms and NCMesh::GetElementCornerNodes, for the interior boundary
+# sides of nonconforming meshes computed on their root elements.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5698.diff
+  "https://github.com/mfem/mfem/commit/e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff"
+  eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f
+)
+# https://github.com/mfem/mfem/pull/5610
+# Host hypre matrix products no longer read hypre's device-resident row cache.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5610.diff
+  "https://github.com/mfem/mfem/commit/e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff"
+  917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964
+)
+
 include(ExternalProject)
 ExternalProject_Add(mfem
   DEPENDS           ${MFEM_DEPENDENCIES}
@@ -481,10 +504,11 @@ ExternalProject_Add(mfem
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/mfem-cmake
   UPDATE_COMMAND    ""
+  # Upstream commits can also edit MFEM's CHANGELOG, which differs from the release.
   PATCH_COMMAND
     git reset --hard &&
     git clean -fd &&
-    git apply "${MFEM_PATCH_FILES}"
+    git apply --exclude=CHANGELOG "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
   TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
 )

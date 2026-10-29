@@ -3,6 +3,7 @@
 
 #include "errorestimator.hpp"
 
+#include <algorithm>
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -101,6 +102,32 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
   return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
+}
+
+// Construct a single-level view of the finest space of the hierarchy, which is broken
+// (discontinuous) across the interior boundaries formed by the given boundary attributes.
+// Returns nullptr when the mesh has no such interior boundaries. Without the coarser
+// levels, the projection on a broken space uses Jacobi preconditioning also when multigrid
+// is requested, rather than assembling the high-order mass matrix for AMG.
+std::unique_ptr<FiniteElementSpaceHierarchy>
+BuildBrokenRecoverySpace(FiniteElementSpaceHierarchy &fespaces,
+                         const std::vector<int> &crack_attr_list)
+{
+  if (crack_attr_list.empty())
+  {
+    return nullptr;
+  }
+  auto &fespace = fespaces.GetFinestFESpace();
+  auto &mesh = fespace.GetMesh();
+  const auto &sides = mesh.GetCrackSides(crack_attr_list);
+  int broken = sides.Any();
+  Mpi::GlobalMax(1, &broken, fespace.GetComm());
+  if (!broken)
+  {
+    return nullptr;
+  }
+  return std::make_unique<FiniteElementSpaceHierarchy>(
+      std::make_unique<FiniteElementSpace>(fespace, sides));
 }
 
 }  // namespace
@@ -282,11 +309,15 @@ template <typename VecType>
 GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg)
-  : nd_fespace(nd_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
+    bool use_mg, const std::vector<int> &crack_attr_list)
+  : broken_rt_fespaces(BuildBrokenRecoverySpace(rt_fespaces, crack_attr_list)),
+    nd_fespace(nd_fespace),
+    rt_fespace(broken_rt_fespaces ? broken_rt_fespaces->GetFinestFESpace()
+                                  : rt_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetPermittivityReal()),
-              rt_fespaces, nd_fespace, tol, max_it, print, use_mg),
+              broken_rt_fespaces ? *broken_rt_fespaces : rt_fespaces, nd_fespace, tol,
+              max_it, print, use_mg && !broken_rt_fespaces),
     integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
     E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
 {
@@ -332,10 +363,8 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
                                data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
-      CeedElemRestriction nd_restr =
-          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedElemRestriction rt_restr =
-          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction nd_restr = nd_fespace.GetCeedElemRestriction(ceed, geom, data);
+      CeedElemRestriction rt_restr = rt_fespace.GetCeedElemRestriction(ceed, geom, data);
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
 
@@ -405,11 +434,15 @@ template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
     FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
-    bool use_mg)
-  : rt_fespace(rt_fespace), nd_fespace(nd_fespaces.GetFinestFESpace()),
+    bool use_mg, const std::vector<int> &crack_attr_list)
+  : broken_nd_fespaces(BuildBrokenRecoverySpace(nd_fespaces, crack_attr_list)),
+    rt_fespace(rt_fespace),
+    nd_fespace(broken_nd_fespaces ? broken_nd_fespaces->GetFinestFESpace()
+                                  : nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetCurlCurlInvPermeability()),
-              nd_fespaces, rt_fespace, tol, max_it, print, use_mg),
+              broken_nd_fespaces ? *broken_nd_fespaces : nd_fespaces, rt_fespace, tol,
+              max_it, print, use_mg && !broken_nd_fespaces),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
 {
@@ -420,6 +453,10 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
   // Construct the libCEED operator used for integrating the element-wise error. The
   // discontinuous flux is μ⁻¹ B ≃ μ⁻¹ ∇ × E.
   const auto &mesh = rt_fespace.GetMesh();
+  MFEM_VERIFY(mesh.Dimension() == 3 ||
+                  rt_fespace.GetFEColl().GetMapType(mesh.Dimension()) ==
+                      mfem::FiniteElement::INTEGRAL,
+              "CurlFluxErrorEstimator in 2D requires an L2 space with INTEGRAL map type!");
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
@@ -455,10 +492,8 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
                                data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
-      CeedElemRestriction rt_restr =
-          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedElemRestriction nd_restr =
-          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction rt_restr = rt_fespace.GetCeedElemRestriction(ceed, geom, data);
+      CeedElemRestriction nd_restr = nd_fespace.GetCeedElemRestriction(ceed, geom, data);
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
 
@@ -497,6 +532,10 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
                      << ") for CurlFluxErrorEstimator!");
       }
       info.trial_ops = info.test_ops = ceed::EvalMode::Interp;
+      if (scalar_curl)
+      {
+        info.trial_ops |= ceed::EvalMode::Weight;
+      }
 
       CeedOperator sub_op;
       ceed::AssembleCeedElementErrorIntegrator(
@@ -532,11 +571,11 @@ template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg)
+    bool use_mg, const std::vector<int> &crack_attr_list)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg),
+                   use_mg, crack_attr_list),
     curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print,
-                   use_mg)
+                   use_mg, crack_attr_list)
 {
 }
 
@@ -563,10 +602,11 @@ BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
     FiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it, int print,
-    bool use_mg)
+    bool use_mg, const std::vector<int> &crack_attr_list)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg),
-    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg)
+                   use_mg, crack_attr_list),
+    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg,
+                   crack_attr_list)
 {
 }
 

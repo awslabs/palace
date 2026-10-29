@@ -337,6 +337,79 @@ TEST_CASE("Config Domain Postprocessing", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
+{
+  // Sheets (for error estimation and interface dielectric postprocessing) and the
+  // attributes along which the mesh is cracked, by default and with the deprecated global
+  // option.
+  json boundaries = {
+      {"PEC", {{"Attributes", {1}}}},
+      {"PMC", {{"Attributes", {2}}}},
+      {"Absorbing", {{"Attributes", {3}}}},
+      {"Impedance",
+       {{{"Attributes", {4}}, {"Ls", 1.0e-12}},
+        {{"Attributes", {5}}, {"Ls", 1.0e-12}, {"Crack", true}}}},
+      {"Conductivity",
+       {{{"Attributes", {6}}, {"Conductivity", 1.0e7}},
+        {{"Attributes", {7}}, {"Conductivity", 1.0e7}, {"Crack", true}}}},
+      {"RationalImpedance",
+       {{{"Attributes", {8}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}}}},
+      {"LumpedPort",
+       {{{"Index", 1}, {"Attributes", {9}}, {"R", 50.0}, {"Direction", "+X"}}}},
+      {"SurfaceCurrent", {{{"Index", 2}, {"Attributes", {10}}, {"Direction", "+X"}}}},
+      {"WavePortPEC", {{"Attributes", {11}}}}};
+  config::BoundaryData data(boundaries);
+  CHECK_FALSE(data.impedance[0].crack);
+  CHECK(data.impedance[1].crack);
+  CHECK_FALSE(data.conductivity[0].crack);
+  CHECK(data.conductivity[1].crack);
+  CHECK_FALSE(data.rational_impedance[0].crack);
+  CHECK(data.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
+  // All impedance sheets are sheets, including purely capacitive ones.
+  boundaries["Impedance"][0].erase("Ls");
+  boundaries["Impedance"][0]["Cs"] = 1.0e-15;
+  config::BoundaryData data_cs(boundaries);
+  CHECK(data_cs.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
+  CHECK(data.GetMeshCrackAttributes(std::nullopt) == std::vector<int>{2, 3, 5, 7});
+  CHECK(data.GetMeshCrackAttributes(false).empty());
+  CHECK(data.GetMeshCrackAttributes(true) ==
+        std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 10, 11});
+
+  // Superconductor sheets and flux loop films carry surface currents, but are never
+  // cracked (thin films), and flux loop holes are not sheets.
+  json sc_boundaries = {
+      {"PEC", {{"Attributes", {1}}}},
+      {"Superconductor", {{{"Attributes", {12}}, {"KineticInductance", 1.0e-12}}}},
+      {"FluxLoop",
+       {{{"Index", 1},
+         {"FilmAttributes", {13}},
+         {"HoleAttributes", {14}},
+         {"FluxAmounts", {1.0}}}}}};
+  config::BoundaryData sc_data(sc_boundaries);
+  CHECK(sc_data.GetSheetAttributes() == std::vector<int>{1, 12, 13});
+  CHECK(sc_data.GetMeshCrackAttributes(std::nullopt).empty());
+  CHECK(sc_data.GetMeshCrackAttributes(true) == std::vector<int>{1});
+
+  // The option is not available for boundaries which are never cracked.
+  json config = {{"Problem", {{"Type", "Eigenmode"}}},
+                 {"Model", {{"Mesh", "mesh.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", {{"PEC", {{"Attributes", {1}}}}}},
+                 {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  std::string err = ValidateConfig(config);
+  INFO("schema validation error: " << err);
+  CHECK(err.empty());
+  config["Boundaries"]["PEC"]["Crack"] = true;
+  CHECK_FALSE(ValidateConfig(config).empty());
+  config["Boundaries"]["PEC"].erase("Crack");
+  config["Problem"]["Type"] = "Magnetostatic";
+  config["Boundaries"]["Superconductor"] = {
+      {{"Attributes", {2}}, {"KineticInductance", 1.0e-12}}};
+  CHECK(ValidateConfig(config).empty());
+  config["Boundaries"]["Superconductor"][0]["Crack"] = true;
+  CHECK_FALSE(ValidateConfig(config).empty());
+}
+
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
   SECTION("Basic passing config with bool excitation")
@@ -365,6 +438,9 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
                        {"PEC", {{"Attributes", {3}}}},
                        {"Absorbing", {{"Attributes", {4}}}}};
     config::BoundaryData boundary_ex_bool(boundaries);
+    CHECK(boundary_ex_bool.waveport.at(4).target == 0.0);
+    CHECK(config::WavePortData(json{{"Index", 7}, {"Attributes", {19}}, {"Target", 3.1}})
+              .target == 3.1);
 
     CHECK(boundary_ex_bool.lumpedport.at(1).active);
     CHECK(boundary_ex_bool.lumpedport.at(3).active == false);
@@ -679,6 +755,134 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     REQUIRE(boundary_data.current.at(1).elements.at(0).aperture);
     CHECK(boundary_data.current.at(1).elements.at(0).aperture->attributes ==
           std::vector<int>{7});
+  }
+
+  SECTION("FluxLoop excitation defaults to the loop index")
+  {
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.fluxloop.at(1).excitation == 1);
+    CHECK(boundary_data.fluxloop.at(3).excitation == 3);
+  }
+
+  SECTION("FluxLoop shared excitation groups the loops")
+  {
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {-0.5}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.fluxloop.at(1).excitation == 2);
+    CHECK(boundary_data.fluxloop.at(3).excitation == 2);
+  }
+
+  SECTION("FluxLoop bool excitation upgrades to the loop index")
+  {
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", false}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", true}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    CHECK(boundary_data.fluxloop.at(1).excitation == 0);
+    CHECK(boundary_data.fluxloop.at(3).excitation == 3);
+  }
+
+  SECTION("FluxLoop mislabeled single excitation fails validation")
+  {
+    json boundaries = {{"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+  }
+
+  SECTION("Grouped FluxLoop excitation must not collide with a SurfaceCurrent index")
+  {
+    json boundaries = {{"SurfaceCurrent",
+                        {{{"Attributes", {6}},
+                          {"Index", 2},
+                          {"Direction", "+X"},
+                          {"Aperture", {{"Attributes", {7}}, {"Direction", "+Z"}}}}}},
+                       {"FluxLoop",
+                        {{{"Index", 1},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {9}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}},
+                         {{"Index", 3},
+                          {"FilmAttributes", {8}},
+                          {"HoleAttributes", {10}},
+                          {"FluxAmounts", {1.0}},
+                          {"Direction", "+Z"},
+                          {"Excitation", 2}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+    boundaries["SurfaceCurrent"][0]["Index"] = 4;
+    CHECK(!config::Validate(config::BoundaryData(boundaries)).has_value());
+    // A lone loop under a foreign excitation index next to the group collides too.
+    boundaries["FluxLoop"].push_back({{"Index", 5},
+                                      {"FilmAttributes", {8}},
+                                      {"HoleAttributes", {11}},
+                                      {"FluxAmounts", {1.0}},
+                                      {"Direction", "+Z"},
+                                      {"Excitation", 4}});
+    auto error = config::Validate(config::BoundaryData(boundaries));
+    REQUIRE(error.has_value());
+    CHECK_THAT(*error,
+               Catch::Matchers::ContainsSubstring("FluxLoop \"Excitation\" 4 collides"));
+  }
+
+  SECTION("Excited FluxLoop must have a nonzero FluxAmounts")
+  {
+    json loop = {{"Index", 1},
+                 {"FilmAttributes", {8}},
+                 {"HoleAttributes", {9}},
+                 {"FluxAmounts", {0.0}},
+                 {"Direction", "+Z"}};
+    CHECK_THROWS(config::FluxLoopData(loop));
+    loop["Excitation"] = 0;
+    CHECK(config::FluxLoopData(loop).excitation == 0);
   }
 
   SECTION("SurfaceCurrent Aperture is element-owned, sorted, and normalized")
@@ -1730,6 +1934,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata2.boundaries.impedance[0].Rs == iodata1.boundaries.impedance[0].Rs);
     CHECK(iodata2.boundaries.impedance[0].Ls == iodata1.boundaries.impedance[0].Ls);
     CHECK(iodata2.boundaries.impedance[0].Cs == iodata1.boundaries.impedance[0].Cs);
+    CHECK(iodata2.boundaries.impedance[0].crack == iodata1.boundaries.impedance[0].crack);
+    CHECK(iodata2.boundaries.conductivity[0].crack ==
+          iodata1.boundaries.conductivity[0].crack);
     REQUIRE(iodata1.boundaries.rational_impedance.size() == 1);
     REQUIRE(iodata2.boundaries.rational_impedance.size() == 1);
     CHECK(iodata2.boundaries.rational_impedance[0].attributes ==
@@ -1770,8 +1977,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     // Coverage gates. Each schema scope this fixture exercises is checked here so a
     // future schema addition without matching Concretize emission fails this section.
+    // CrackInternalBoundaryElements is deprecated and only emitted when specified.
     auto model_gaps = SchemaCoverageGaps("/properties/Model", config["Model"],
-                                         /*skip=*/{"Lc"});
+                                         /*skip=*/{"Lc", "CrackInternalBoundaryElements"});
     INFO("Model missing keys: " << json(model_gaps).dump());
     CHECK(model_gaps.empty());
 
@@ -1917,6 +2125,45 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(trans_gaps.empty());
   }
 
+  SECTION("Round-trip: Magnetostatic and FluxLoop defaulted fields are reproducible")
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries",
+                    {{"FluxLoop",
+                      {{{"Index", 3},
+                        {"FilmAttributes", {8}},
+                        {"HoleAttributes", {9}},
+                        {"FluxAmounts", {1.0}},
+                        {"Direction", "+Z"}}}}}},
+                   {"Solver", json::object()}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    // The default excitation is the loop index, written out as such.
+    CHECK(config["Boundaries"]["FluxLoop"][0]["Excitation"] == 3);
+    IoData iodata2(config, false);
+    CHECK(iodata2.boundaries.fluxloop.at(3).excitation ==
+          iodata1.boundaries.fluxloop.at(3).excitation);
+    CHECK(iodata2.boundaries.fluxloop.at(3).pec_lperp ==
+          iodata1.boundaries.fluxloop.at(3).pec_lperp);
+
+    auto ms_gaps = SchemaCoverageGaps("/properties/Solver/properties/Magnetostatic",
+                                      config["Solver"]["Magnetostatic"], /*skip=*/{});
+    INFO("Solver.Magnetostatic missing keys: " << json(ms_gaps).dump());
+    CHECK(ms_gaps.empty());
+    auto loop_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/FluxLoop/items",
+                                        config["Boundaries"]["FluxLoop"][0], /*skip=*/{});
+    INFO("Boundaries.FluxLoop[] missing keys: " << json(loop_gaps).dump());
+    CHECK(loop_gaps.empty());
+  }
+
   SECTION("Round-trip: BoundaryMode defaulted fields are reproducible")
   {
     // Freq is required at parse; only defaulted fields need verification.
@@ -1989,7 +2236,6 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(w2.eig_tol == w1.eig_tol);
     CHECK(w2.max_size == w1.max_size);
     CHECK(w2.verbose == w1.verbose);
-    CHECK(w2.n_samples == w1.n_samples);
 
     // Coverage gate. VoltagePath is an opt-in coordinate path for line integral
     // postprocessing on the port face; absence means no voltage line integral.
@@ -1999,10 +2245,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // so they are deliberately not concretized. ComplexCoarseSolve is an opt-in per-port
     // override: an explicit value also takes precedence over Solver.Linear.PCMatReal, so
     // absence (inherit both global settings) has no equivalent explicit value to emit.
+    // Target is opt-in: absence means the eigenvalue target from the port materials.
     auto wp_gaps = SchemaCoverageGaps(
         "/properties/Boundaries/properties/WavePort/items",
         config["Boundaries"]["WavePort"][0],
-        /*skip=*/{"VoltagePath", "PolarityAttributes", "ComplexCoarseSolve"});
+        /*skip=*/{"VoltagePath", "PolarityAttributes", "ComplexCoarseSolve", "Target"});
     INFO("Boundaries.WavePort[] missing keys: " << json(wp_gaps).dump());
     CHECK(wp_gaps.empty());
   }

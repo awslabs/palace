@@ -40,10 +40,14 @@ GridFunction &GridFunction::operator=(std::complex<double> s)
 
 GridFunction &GridFunction::operator*=(double s)
 {
+  // The face-neighbor data is a cached copy of the field values on neighboring ranks,
+  // so it scales together with the field to stay consistent with it.
   Real() *= s;
+  Real().FaceNbrData() *= s;
   if (HasImag())
   {
     Imag() *= s;
+    Imag().FaceNbrData() *= s;
   }
   return *this;
 }

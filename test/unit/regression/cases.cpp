@@ -69,18 +69,17 @@ palace::test::CustomCheck TestFarfield(double rtol)
   };
 }
 
-// Generalised magnitude comparison for any CSV with paired
-// "Re{X} (unit)" / "Im{X} (unit)" complex columns. For each Re column
-// it pairs the matching Im (looked up by header_text), then compares
-// |X| = sqrt(Re^2 + Im^2) at the case's tolerances. Real-only columns
-// (frequency, V_inc, etc.) fall through to the same WithinRel ||
-// WithinAbs check the default comparator uses. Used for adaptive
-// frequency sweeps where the ROM-interpolated phase wobbles at zero
-// crossings but |X| tracks the converged response.
-palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
+// Generalised comparison for any CSV with paired "Re{X} (unit)" / "Im{X} (unit)" complex
+// columns. For each Re column it pairs the matching Im (looked up by header_text), then
+// compares either the magnitudes |X| = sqrt(Re^2 + Im^2), or the complex values with a
+// tolerance relative to |X| (|X_a - X_r| <= rtol * max(|X_a|, |X_r|)), at the case's
+// tolerances. Real-only columns (frequency, V_inc, etc.) fall through to the same
+// WithinRel || WithinAbs check the default comparator uses.
+palace::test::CustomCheck CompareComplexColumns(double rtol, double atol,
+                                                bool magnitude_only)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference,
-                      const std::filesystem::path &)
+  return [rtol, atol, magnitude_only](palace::Table &actual, palace::Table &reference,
+                                      const std::filesystem::path &)
   {
     auto find_by_header = [](palace::Table &t, const std::string &h) -> palace::Column *
     {
@@ -131,8 +130,18 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
           const double mag_a = std::sqrt(re_av * re_av + im_av * im_av);
           const double mag_r = std::sqrt(re_rv * re_rv + im_rv * im_rv);
           INFO("row " << r + 1 << " |" << hdr.substr(3, hdr.find('}', 3) - 3) << "|");
-          CHECK_THAT(mag_a, Catch::Matchers::WithinRel(mag_r, rtol) ||
-                                Catch::Matchers::WithinAbs(mag_r, atol));
+          if (magnitude_only)
+          {
+            CHECK_THAT(mag_a, Catch::Matchers::WithinRel(mag_r, rtol) ||
+                                  Catch::Matchers::WithinAbs(mag_r, atol));
+          }
+          else
+          {
+            const double diff = std::hypot(re_av - re_rv, im_av - im_rv);
+            INFO("actual = " << re_av << " + " << im_av << "i, reference = " << re_rv
+                             << " + " << im_rv << "i");
+            CHECK(diff <= std::max(atol, rtol * std::max(mag_a, mag_r)));
+          }
         }
         continue;
       }
@@ -147,6 +156,21 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
       }
     }
   };
+}
+
+// Compare the magnitudes of complex columns. Used for adaptive frequency sweeps where the
+// ROM-interpolated phase wobbles at zero crossings but |X| tracks the converged response.
+palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
+{
+  return CompareComplexColumns(rtol, atol, true);
+}
+
+// Compare complex columns as complex values, relative to their magnitude. Used for probed
+// field components, whose real or imaginary part can be much smaller than their magnitude
+// (near a zero crossing), where the relative error of that part alone is not meaningful.
+palace::test::CustomCheck CompareComplexValues(double rtol, double atol)
+{
+  return CompareComplexColumns(rtol, atol, false);
 }
 
 // Compare port-S.csv as complex scattering amplitudes rather than separately comparing
@@ -321,6 +345,66 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
         CHECK_THAT(ac.data[r], Catch::Matchers::WithinRel(rc.data[r], rtol) ||
                                    Catch::Matchers::WithinAbs(rc.data[r], atol));
       }
+    }
+  };
+}
+
+// Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
+// port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
+// implied by the reflection coefficient in the sibling port-S.csv,
+//   Z_PV (1 + S_ii) / (1 - S_ii).
+// V and P are integrals of the total field while S_ii is a modal overlap, so the two
+// agree only with the correct conjugation of P: a flipped Im{Z} is off by O(1) and cannot
+// be hidden by regenerating the reference data. The reference diff of port-Z.csv still
+// runs first at the case tolerances; the same rtol bounds |Z - Z_S| / |Z_S|.
+palace::test::CustomCheck TestWavePortInputImpedance(int port,
+                                                     palace::test::RegressionOptions opts)
+{
+  return [port, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+
+    auto find_header = [](palace::Table &table,
+                          const std::string &header) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+    palace::TableWithCSVFile s_file((actual_path.parent_path() / "port-S.csv").string(),
+                                    /*load_existing_file=*/true);
+    const std::string ii = "[" + std::to_string(port) + "][" + std::to_string(port) + "]";
+    palace::Column *re_z = find_header(actual, "Re{Z" + ii + "} (Ohm)");
+    palace::Column *im_z = find_header(actual, "Im{Z" + ii + "} (Ohm)");
+    palace::Column *re_z_pv =
+        find_header(actual, "Re{Z_PV[" + std::to_string(port) + "]} (Ohm)");
+    palace::Column *im_z_pv =
+        find_header(actual, "Im{Z_PV[" + std::to_string(port) + "]} (Ohm)");
+    palace::Column *abs_s = find_header(s_file.table, "|S" + ii + "| (dB)");
+    palace::Column *arg_s = find_header(s_file.table, "arg(S" + ii + ") (deg.)");
+    REQUIRE(re_z != nullptr);
+    REQUIRE(im_z != nullptr);
+    REQUIRE(re_z_pv != nullptr);
+    REQUIRE(im_z_pv != nullptr);
+    REQUIRE(abs_s != nullptr);
+    REQUIRE(arg_s != nullptr);
+    REQUIRE(s_file.table.n_rows() == actual.n_rows());
+    for (std::size_t r = 0; r < actual.n_rows(); r++)
+    {
+      const std::complex<double> Z(re_z->data[r], im_z->data[r]);
+      const std::complex<double> Z_PV(re_z_pv->data[r], im_z_pv->data[r]);
+      const std::complex<double> S = std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                                                arg_s->data[r] * std::numbers::pi / 180.0);
+      const std::complex<double> Z_S = Z_PV * (1.0 + S) / (1.0 - S);
+      INFO("row " << r + 1 << ": Z" << ii << " = " << Z
+                  << ", Z_PV (1 + S) / (1 - S) = " << Z_S);
+      CHECK(std::abs(Z - Z_S) <= opts.rtol * std::abs(Z_S));
     }
   };
 }
@@ -936,6 +1020,64 @@ TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// Two-sided (two-port) London film at d > λ, on a solution space broken across the film.
+// Locks the sheet terms of the two sides and their consistent use in the stiffness, flux
+// RHS, and inductance postprocessing.
+TEST_CASE("circular_hole_london_two_sided", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole_two_sided.json",
+                                  "two_sided", opts);
+}
+
+// Two-sided film under nonconformal AMR. Locks the broken space on hanging and shared DOFs
+// (film faces refined on one side only) and the generator projection (the cut meets hanging
+// film edges). Omits [GPU] like the other adaptive cases.
+TEST_CASE("circular_hole_london_two_sided_nc_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_two_sided_nc_amr.json", "two_sided_nc_amr",
+                                  opts);
+}
+
+// Two-sided film meeting the PEC walls on three edges. Locks the elimination of the sheet
+// terms at the essential DOFs of both sides (without it CG nearly stalls and L is off by
+// 1e-3).
+TEST_CASE("two_sided_london_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("two_sided_london", "two_sided_pec.json", "pec", opts);
+}
+
+// Two-sided square washer with quadrilateral faces, on a mesh mirror-symmetric about the
+// film, where L equals the common-mode sheet ½μ₀λ·coth(d/2λ).
+TEST_CASE("two_sided_london_hex", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("two_sided_london", "two_sided_hex.json", "hex", opts);
+}
+
 // Two London holes on a shared film, each an independent flux loop. Locks the London-London
 // off-diagonal cross-energy correction: a bare AᵀM_mag A mutual corrupts the inverted
 // selves.
@@ -947,7 +1089,22 @@ TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
   opts.linear_solver_policy = force_default_solver;
-  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "", opts);
+  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "base", opts);
+}
+
+// The same two holes driven together as one excitation (loop 1 at fluxoid 1, loop 3 at
+// -0.5), so there is no inductance matrix: terminal-Phi.csv reports the excitation's stored
+// energy, E = ½ΦᵀM⁻¹Φ of the swept matrix above, and the fluxoid imposed on each loop. The
+// field is written under the excitation index.
+TEST_CASE("double_hole_london_flux_excitation", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("double_hole_london", "double_hole_excitation.json",
+                                  "excitation", opts);
 }
 
 // Narrow London ring vs the analytic thin-ring L = L_geom + L_ksq*2*pi*r/w: the extracted
@@ -1019,10 +1176,9 @@ TEST_CASE("microstrip_superconductor", "[Serial][Parallel][GPU][Regression]")
                                   "superconductor", opts);
 }
 
-// London flux film under non-conformal AMR. Locks the NC-safe cut generator (a_h = Grad ψ -
-// a_angle): Grad ψ survives the true-DOF round trip exactly, so the fluxoid and
-// curl-free-on-Σ gauge hold on the refined mesh and L converges upward (5.16 -> 5.33 pH
-// after one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
+// London flux film under non-conformal AMR. Locks the curl-free projection of the cut
+// generator on the hanging-edge mesh, so L converges upward (15.1643 -> 15.1644 pH after
+// one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
 // awslabs/palace#375).
 TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 {
@@ -1034,6 +1190,21 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("circular_hole_london", "circular_hole_nc_amr.json",
                                   "nc_amr", opts);
+}
+
+// As above with two refinements, each followed by a forced rebalance, so the film, the cut
+// and the hole are split differently across ranks at each solve.
+TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
+                                  opts);
 }
 
 // Region-condensed (substructuring) electrostatic solve: the environment (attr 2) is
@@ -1501,6 +1672,8 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  // Wave port 2 at its own excitation: Z[2][2] against Z_PV (1 + S22) / (1 - S22).
+  opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(2, opts);
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
                                   opts);
 }
@@ -1569,7 +1742,37 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
+  opts.custom_checks["probe-E.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["probe-B.csv"] = CompareComplexValues(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_uniform.json", "lumped_uniform", opts);
+}
+
+// The cpw_lumped_uniform model with a copper trace instead of a PEC one, at two
+// frequencies: an interior conductivity sheet modeled as a single sheet with the admittance
+// of both faces ("Crack": false), or as two independent faces ("Crack": true), which carry
+// different currents and so give a higher conductor loss.
+TEST_CASE("cpw_lumped_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conductivity.json",
+                                  "lumped_conductivity", opts);
+}
+
+TEST_CASE("cpw_lumped_conductivity_crack", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conductivity_crack.json",
+                                  "lumped_conductivity_crack", opts);
 }
 
 TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
@@ -1827,7 +2030,11 @@ TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum", "Minimum"};
+  // Without volume currents, the 2D magnetic flux density is uniform, so the error
+  // estimate is set by the linear solver tolerance: bound it rather than compare it.
+  opts.custom_checks["error-indicators.csv"] =
+      [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  { CHECK(actual[0].data[0] < 1.0e-7); };
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_magnetostatic.json",
                                   "magnetostatic", opts);
@@ -1843,30 +2050,34 @@ TEST_CASE("cavity2d_transient", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cavity2d", "cavity2d_transient.json", "transient", opts);
 }
 
-// cpw2d boundary-mode cases: reltol=1e-2 because impedance depends on
-// voltage path integration (cross-platform reproducibility).
+// cpw2d boundary-mode cases: the coordinate-path line integrals are exact for the discrete
+// field, so Z_PV only varies with the eigensolver (below 1e-4 across process counts).
 TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-2;
+  opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;  // abstol from the preceding cavity2d block
   opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
                            "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   opts.custom_checks["mode-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thin.json", "thin", opts);
 }
 
 TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-2;
+  opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;
   opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
                            "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_impedance.json", "thick_impedance",
                                   opts);
 }
@@ -1880,5 +2091,7 @@ TEST_CASE("cpw_wave_2dmode", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw", "cpw_wave_2dmode.json", "wave_2dmode", opts);
 }

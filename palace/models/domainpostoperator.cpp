@@ -77,6 +77,10 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetPermittivityReal());
       epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
       BilinearForm m(nd_fespace);
+      // The coefficient is exactly zero outside of the postprocessing domain and the
+      // operator is only ever applied, never assembled as a matrix, so a postprocessing
+      // domain inside the shared lossy-domain set is assembled over that subset only.
+      m.SkipZeroCoefficientElements();
       m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
       M_elec_i = m.PartialAssemble();
     }
@@ -87,6 +91,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetCurlCurlInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(rt_fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<MassIntegrator>(muinv_func);
         M_mag_i = m.PartialAssemble();
       }
@@ -96,6 +101,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(rt_fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
         M_mag_i = m.PartialAssemble();
       }
@@ -137,6 +143,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                  mat_op.GetPermittivityReal());
         epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
         M_elec_i = m.PartialAssemble();
       }
@@ -167,6 +174,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                                mat_op.GetCurlCurlInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(fespace);
+        m.SkipZeroCoefficientElements();
         m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
         M_mag_i = m.PartialAssemble();
       }
@@ -211,6 +219,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
                                                mat_op.GetPermittivityReal());
       epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
       BilinearForm m(nd_fespace);
+      m.SkipZeroCoefficientElements();
       m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
       M_elec_i = m.PartialAssemble();
     }
@@ -295,6 +304,34 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
     dot += linalg::LocalDot(B.Imag(), H);
   }
   Mpi::GlobalSum(1, &dot, B.GetComm());
+  return 0.5 * dot;
+}
+
+double DomainPostOperator::GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm comm) const
+{
+  if (!M_mag)
+  {
+    return 0.0;
+  }
+  M_mag->Mult(a_l, H);
+  double dot = linalg::LocalDot(a_l, H);
+  Mpi::GlobalSum(1, &dot, comm);
+  return 0.5 * dot;
+}
+
+double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx, const Vector &a_l,
+                                                        MPI_Comm comm) const
+{
+  auto it = M_i.find(idx);
+  MFEM_VERIFY(it != M_i.end(),
+              "Invalid domain index when postprocessing domain magnetic field energy!");
+  if (!it->second.second)
+  {
+    return 0.0;
+  }
+  it->second.second->Mult(a_l, H);
+  double dot = linalg::LocalDot(a_l, H);
+  Mpi::GlobalSum(1, &dot, comm);
   return 0.5 * dot;
 }
 

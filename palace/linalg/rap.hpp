@@ -42,6 +42,9 @@ private:
   // deleted.
   mutable std::unique_ptr<mfem::HypreParMatrix> RAP;
 
+  // Optional assembled true-dof term added to RAP, with the essential true dofs eliminated.
+  std::unique_ptr<mfem::HypreParMatrix> B;
+
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
@@ -93,6 +96,13 @@ public:
   // Get the diagonal policy that was most recently used. If there are no essential dofs,
   // and thus no valid policy, will error.
   DiagonalPolicy GetDiagonalPolicy() const;
+
+  // Add an assembled true-dof matrix to the operator, for terms which are not assembled
+  // with libCEED (such as the sheet terms of two-sided superconductor films on a broken
+  // space). Its rows and columns at the essential true dofs are eliminated, so call after
+  // SetEssentialTrueDofs. The term is applied with the operator, added to its diagonal, and
+  // added to the assembled matrix.
+  void AddParallelMatrix(const mfem::HypreParMatrix &B_);
 
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
   // condition values in x.
@@ -271,6 +281,25 @@ std::unique_ptr<std::conditional_t<std::is_base_of_v<ComplexOperator, OperType>,
                                    ComplexParOperator, ParOperator>>
 BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
                     bool set_essential = true);
+
+namespace linalg
+{
+
+// Construct a HypreParMatrix with only a diagonal block, which it takes ownership of, and
+// the given global sizes and partitions of rows and columns (in the format of
+// mfem::ParFiniteElementSpace::GetDofOffsets, referenced by the matrix).
+std::unique_ptr<mfem::HypreParMatrix>
+BlockDiagonalParMatrix(MPI_Comm comm, HYPRE_BigInt global_rows, HYPRE_BigInt global_cols,
+                       HYPRE_BigInt *row_starts, HYPRE_BigInt *col_starts,
+                       std::unique_ptr<mfem::SparseMatrix> &&diag);
+
+// Pᵀ A P, computed as Pᵀ (A P), which unlike hypre_ParCSRMatrixRAPKT supports processes
+// with more columns of P than rows of A and no off-diagonal columns of A P (as for the
+// true DOFs of broken spaces).
+std::unique_ptr<mfem::HypreParMatrix> RAP(const mfem::HypreParMatrix &A,
+                                          const mfem::HypreParMatrix &P);
+
+}  // namespace linalg
 
 }  // namespace palace
 

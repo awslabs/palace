@@ -17,6 +17,7 @@
 #include "fem/boundary_physical_trace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/lineintegrator.hpp"
 #include "fem/point_field_evaluator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -189,6 +190,9 @@ protected:
   std::optional<CeedParaViewDataCollection> paraview;
   std::optional<CeedParaViewDataCollection> paraview_bdr;
 
+  // Largest cycle written, so the final save never overwrites a step written out of order.
+  int paraview_max_cycle = -1;
+
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
   const std::size_t pad_digits_default = 6;
@@ -285,7 +289,11 @@ protected:
 
   // Helper classes that actually do some measurements that will be saved to csv files.
 
-  DomainPostOperator dom_post_op;    // Energy in bulk
+  DomainPostOperator dom_post_op;  // Energy in bulk
+
+  // L-vector of a magnetostatic solution on a broken space (empty otherwise), for the
+  // domain energies.
+  Vector a_l;
   SurfacePostOperator surf_post_op;  // Dielectric Interface Energy, Flux, and FarField
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
@@ -304,10 +312,10 @@ protected:
     mfem::Array<int> current_marker;
     std::vector<mfem::Vector> voltage_path;
     std::vector<mfem::Vector> current_path;
-    int n_samples = 100;
     bool has_voltage_coordinates = false;
     bool has_current_path = false;
     bool has_current = false;
+    std::shared_ptr<fem::LineIntegrator> voltage_integrator, current_integrator;
   };
   std::map<int, ImpedancePostproConfig> impedance_postpro;
 
@@ -316,8 +324,8 @@ protected:
   {
     mfem::Array<int> voltage_marker;
     std::vector<mfem::Vector> voltage_path;
-    int n_samples = 100;
     bool has_coordinates = false;
+    std::shared_ptr<fem::LineIntegrator> voltage_integrator;
   };
   std::map<int, VoltagePostproConfig> voltage_postpro;
 
@@ -545,6 +553,17 @@ public:
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
+
+  // The L-vector of a magnetostatic solution, on the space of the domain energy operators
+  // (broken across two-sided superconductor films, if any).
+  void GetSolutionLVector(const Vector &a, Vector &a_l_out) const
+    requires(solver_t == ProblemType::MAGNETOSTATIC)
+  {
+    const auto &nd_fespace = fem_op->GetSolutionNDSpace();
+    a_l_out.SetSize(nd_fespace.GetVSize());
+    a_l_out.UseDevice(true);
+    nd_fespace.GetProlongationMatrix()->Mult(a, a_l_out);
+  }
 
   // Expose MPI communicator from fem_op for electrostatic & magnetostatic matrix processing
   // (see above).

@@ -183,8 +183,12 @@ public:
   bool clean_unused_elements = true;
 
   // Split, or "crack", boundary elements lying on internal boundaries to decouple the
-  // elements on either side.
-  bool crack_bdr_elements = true;
+  // elements on either side. If unset, interior boundaries with boundary conditions which
+  // apply to each side separately (PMC and absorbing) are cracked, as well as impedance,
+  // rational impedance, and conductivity boundaries with "Crack" enabled. If true, all
+  // interior boundaries with boundary conditions except lumped ports are cracked (legacy
+  // behavior, deprecated). If false, no boundaries are cracked.
+  std::optional<bool> crack_bdr_elements = std::nullopt;
 
   // When required, refine elements neighboring a split or crack in order to enable the
   // decoupling.
@@ -394,6 +398,14 @@ public:
   // Optional flag for an external boundary surface, relevant for the thickness correction.
   bool external = false;
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the skin depth), with
+  // the surface impedance of the conductor on each face. If false, the boundary is a thin
+  // sheet with a single tangential electric field on it and the admittance of both faces
+  // (a film thinner than the skin depth).
+  bool crack = false;
+
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
 
@@ -412,6 +424,14 @@ public:
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
+
   ImpedanceData() = default;
   ImpedanceData(const json &boundary);
 };
@@ -427,6 +447,14 @@ public:
 
   // List of boundary attributes for this rational impedance boundary condition.
   std::vector<int> attributes = {};
+
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
 
   RationalImpedanceData() = default;
   RationalImpedanceData(const json &boundary);
@@ -449,6 +477,12 @@ public:
 
   // List of boundary attributes for this superconductor sheet.
   std::vector<int> attributes = {};
+
+  // Two-port (transfer-matrix) sheet: model the film as two coupled coincident faces so the
+  // tangential field can jump across it, capturing two-sided screening for d ≳ λ. When
+  // false the film is a single shared-A_t sheet. Requires (λ, d). The film is not cracked:
+  // the magnetostatic solution space is broken across it.
+  bool two_sided = false;
 
   SuperconductorData() = default;
   SuperconductorData(const json &boundary);
@@ -543,6 +577,10 @@ public:
   // Port offset for de-embedding [m].
   double d_offset = 0.0;
 
+  // Target effective index for the boundary mode eigenvalue solver. When zero, the target
+  // lies just above the bulk propagation constants of the port materials.
+  double target = 0.0;
+
   // Eigenvalue solver type for boundary mode calculation.
   EigenSolverBackend eigen_solver = EigenSolverBackend::DEFAULT;
 
@@ -589,10 +627,9 @@ public:
   // Optional coordinate path for voltage line integral on the port face.
   // When non-empty, enables GetVoltage(). List of points [x, y, z].
   std::vector<std::vector<double>> voltage_path = {};
-  int n_samples = 100;
 
   // Optional pair of parent-mesh boundary attributes [high, low] (signal terminal first,
-  // ground terminal second) used solely to fix the mode polarity (no GSLIB / no Z_PV).
+  // ground terminal second) used solely to fix the mode polarity (no Z_PV).
   // The mode is flipped if needed so that the modal E-field on the port face points from
   // the high-attribute (signal) terminal toward the low-attribute (ground) terminal,
   // matching the lumped-port `Direction` convention and the VoltagePath ordering. A
@@ -724,11 +761,6 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
   std::vector<std::vector<double>> current_path = {};
 
-  // Quadrature order for the coordinate-based line integral. Higher values give more
-  // integration points and better accuracy near field singularities at conductor edges.
-  // Default 100 gives ~50 Gauss-Legendre points, sufficient for typical geometries.
-  int n_samples = 100;
-
   ModeImpedanceData() = default;
   ModeImpedanceData(const json &imp);
 };
@@ -743,9 +775,6 @@ public:
   // attributes). A list of points [x, y(, z)]. The voltage is integrated along the open
   // path V = integral of E . dl from first to last point.
   std::vector<std::vector<double>> voltage_path = {};
-
-  // Quadrature order for the coordinate-based line integral.
-  int n_samples = 100;
 
   ModeVoltageData() = default;
   ModeVoltageData(const json &volt);
@@ -803,6 +832,12 @@ public:
   // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet).
   double pec_lperp = 1.0e-4;
 
+  // Excitation index, as for ports: loops sharing a positive index are driven together
+  // (each at its own flux_amounts) in one magnetostatic solve, 0 holds the loop at zero
+  // fluxoid in every excitation. Defaults to the loop index, so each loop is its own
+  // excitation and the inductance matrix is extracted.
+  int excitation = 0;
+
   FluxLoopData() = default;
   FluxLoopData(const json &fluxloop);
 };
@@ -815,6 +850,13 @@ public:
 
   // List of all boundary attributes affected by mesh cracking.
   std::unordered_set<int> cracked_attributes = {};
+
+  // Cracked boundary attributes whose surface impedance is split between the two faces of
+  // the crack (twice the impedance on each face). This is only the case with the deprecated
+  // config["Model"]["CrackInternalBoundaryElements"] = true, to keep the results of
+  // previous versions: otherwise, each face of a cracked boundary has the given surface
+  // impedance.
+  std::unordered_set<int> split_impedance_attributes = {};
 
   // Boundary objects.
   PecBoundaryData pec = {};
@@ -833,6 +875,18 @@ public:
   PeriodicBoundaryData periodic = {};
   std::map<int, FluxLoopData> fluxloop = {};
   BoundaryPostData postpro = {};
+
+  // Return the boundary attributes of boundary conditions which model sheets carrying a
+  // surface current or charge (conductors, impedance and superconductor sheets, flux loop
+  // films, lumped ports, and surface current sources), across which the fields are
+  // discontinuous when interior. For these, the error estimator allows discontinuous
+  // recovered fluxes, and interface dielectric energies sum the contributions of both faces
+  // (when cracked, the faces are exterior boundaries anyway).
+  std::vector<int> GetSheetAttributes() const;
+
+  // Return the boundary attributes for which the mesh is cracked when interior, given the
+  // value of config::ModelData::crack_bdr_elements.
+  std::vector<int> GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const;
 
   BoundaryData() = default;
   BoundaryData(const json &boundaries);

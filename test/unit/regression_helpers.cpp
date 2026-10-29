@@ -263,9 +263,12 @@ bool SkipNumericComparison(const RegressionOptions &opts)
   return std::isinf(opts.rtol) && std::isinf(opts.atol);
 }
 
+}  // namespace
+
 // Column-wise diff using Catch2's WithinRel + WithinAbs matchers.
 //   |a - b| <= max(atol, rtol * max(|a|, |b|))
 // is the "either condition" form: WithinRel(ref, rtol) || WithinAbs(ref, atol).
+// Declared in the header so custom checks can run it before their own assertions.
 void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts)
 {
   if (!ValidateCSVTables(actual, reference, opts) || SkipNumericComparison(opts))
@@ -311,6 +314,9 @@ void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &o
     }
   }
 }
+
+namespace
+{
 
 // RAII: per-case staging directory. Symlinks the example inputs into
 // `stage_root / <example>/ <label>` and chdirs in so palace::Run writes
