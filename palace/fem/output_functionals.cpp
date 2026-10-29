@@ -1137,8 +1137,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     else if (kind == KernelKind::FARFIELD && two_sided)
     {
       // The Stratton-Chu integrand is linear in the traces: average the two (local) sides
-      // with two one-sided operators (normal scale 1/2 each, the sign is fixed in the
-      // kernel by the orientation center).
+      // with two one-sided operators (normal scale 1/2 each, the sign is set in the kernel
+      // from the orientation center).
       AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
                false, mfem::Geometry::INVALID, {}, {}, 1.0, 0.5);
       AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
