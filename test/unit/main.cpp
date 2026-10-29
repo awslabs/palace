@@ -105,6 +105,7 @@ int main(int argc, char *argv[])
   mfem::Device device(
       device_str.c_str(),
       palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount()));
+  device.SetGPUAwareMPI(palace::utils::QueryGPUAwareMPI());
 
   // Initialize HYPRE with correct memory location based on device.
   // TODO: Create a palace::Device class that takes care of all of this.

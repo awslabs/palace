@@ -15,6 +15,10 @@ int GetDeviceCount();
 // Assign devices round-robin over MPI ranks.
 int GetDeviceId(MPI_Comm comm, int ngpu);
 
+// Return whether MPI can communicate CUDA or HIP device buffers, as reported by the MPI
+// library (false for CPU builds).
+bool QueryGPUAwareMPI();
+
 }  // namespace palace::utils
 
 #endif  // DEVICE_HPP

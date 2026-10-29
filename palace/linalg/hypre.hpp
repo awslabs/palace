@@ -12,11 +12,12 @@ namespace palace::hypre
 {
 
 // Helper function to initialize HYPRE and control use of GPU at runtime. This will call
-// HYPRE_SetMemoryLocation and HYPRE_SetExecutionPolicy to match the mfem::Device
-// configuration.
+// HYPRE_SetMemoryLocation, HYPRE_SetExecutionPolicy, and HYPRE_SetGpuAwareMPI to match the
+// mfem::Device configuration.
 inline void Initialize()
 {
   mfem::Hypre::Init();
+  HYPRE_SetGpuAwareMPI(mfem::Device::GetGPUAwareMPI());
   // HYPRE_SetSpGemmUseCusparse(1);  // MFEM sets to zero, so leave as is for now
 }
 

@@ -443,9 +443,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
-        # GPU-aware MPI
+        # GPU-aware MPI. From 0.19, Palace enables it at runtime when MPI supports it, this
+        # only sets hypre's default (and lets MFEM compile its GPU-aware hypre communication).
+        depends_on("hypre+gpu-aware-mpi", when="@0.19:")
         for var in ["openmpi", "mpich", "mvapich-plus"]:
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+cuda")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.18 ^[virtuals=mpi] {var}+cuda")
 
         # We need https://github.com/llnl/blt/pull/735, which is not available
         # in blt <= 0.7.1
@@ -467,9 +469,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
 
     with when("+rocm"):
+        # GPU-aware MPI, as for CUDA
+        depends_on("hypre+gpu-aware-mpi", when="@0.19:")
         for var in ["openmpi@5:", "mpich", "mvapich-plus"]:
-            # GPU-aware MPI
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+rocm")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.18 ^[virtuals=mpi] {var}+rocm")
 
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"

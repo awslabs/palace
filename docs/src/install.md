@@ -196,9 +196,7 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_64BIT_INT [OFF]` :  Build with 64-bit integer support
   - `PALACE_WITH_OPENMP [OFF]` :  Use OpenMP for shared-memory parallelism
   - `PALACE_WITH_CUDA [OFF]` :  Use CUDA for NVIDIA GPU support
-  - `PALACE_WITH_HIP [OFF]` :  Use HIP for AMD or NVIDIA GPU support. For CUDA and HIP
-    builds, HYPRE and *Palace* use GPU-aware MPI if the Open MPI or MPICH (4.0 or later)
-    found at configure time supports it.
+  - `PALACE_WITH_HIP [OFF]` :  Use HIP for AMD or NVIDIA GPU support
   - `PALACE_WITH_SUPERLU [ON]` :  Build with SuperLU_DIST sparse direct solver
   - `PALACE_WITH_STRUMPACK [OFF]` :  Build with STRUMPACK sparse direct solver
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
