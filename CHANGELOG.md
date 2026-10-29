@@ -173,17 +173,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with Floquet periodic boundary conditions (`"FloquetWaveVector"`): the surface curl in
     its second-order term did not include the Floquet wave vector, so that, for example,
     the condition reduced to the first-order one for an obliquely incident plane wave.
-    [Issue 1108](https://github.com/awslabs/palace/issues/1108).
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
   - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
     vector (`"FloquetWaveVector"`), as it already did Floquet ports: the phase shift across
     the periodic boundaries makes the problem non-reciprocal, and the synthesized L⁻¹, R⁻¹,
     and C matrices were not symmetric. The description of `"AdaptiveCircuitSynthesis"` in the
     configuration schema now lists these restrictions, its other requirements, and the
     frequency-dependent boundary conditions it supports. SchemaVer 4-2-1
-    [Issue 1108](https://github.com/awslabs/palace/issues/1108).
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
   - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
     which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
     the stiffness matrix as if it were symmetric.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
 #### Build system
 
