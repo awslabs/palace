@@ -643,6 +643,24 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
   moment = source.at("Moment");                               // Required
 }
 
+PlaneWaveData::PlaneWaveData(const json &source)
+{
+  attributes = source.at("Attributes").get<std::vector<int>>();  // Required
+  std::ranges::sort(attributes);
+  auto ParseDirection = [](const json &dir)
+  {
+    if (dir.is_array())
+    {
+      return dir.get<std::array<double, 3>>();
+    }
+    return ParseStringAsDirection(dir.get<std::string>()).first;
+  };
+  direction = ParseDirection(source.at("Direction"));        // Required
+  polarization = ParseDirection(source.at("Polarization"));  // Required
+  amplitude = source.value("Amplitude", amplitude);
+  origin = source.value("Origin", origin);
+}
+
 DomainData::DomainData(const json &domains)
 {
   for (const auto &d : domains.at("Materials"))
@@ -651,6 +669,8 @@ DomainData::DomainData(const json &domains)
   }
   current_dipole = ParseOptionalMap<CurrentDipoleData>(domains, "CurrentDipole",
                                                        "\"CurrentDipole\" source");
+  plane_wave =
+      ParseOptionalMap<PlaneWaveData>(domains, "PlaneWave", "\"PlaneWave\" source");
   postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
   if (auto it = domains.find("PML"); it != domains.end())
   {
@@ -2339,6 +2359,11 @@ void Nondimensionalize(const Units &units, ProbeData &data)
 void Nondimensionalize(const Units &units, CurrentDipoleData &data)
 {
   std::ranges::transform(data.center, data.center.begin(), LengthScaler(units));
+}
+
+void Nondimensionalize(const Units &units, PlaneWaveData &data)
+{
+  std::ranges::transform(data.origin, data.origin.begin(), LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, ConductivityData &data)

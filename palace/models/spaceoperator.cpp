@@ -65,6 +65,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back(), domains.pml,
            solver.order),
     current_dipole_op(domains.current_dipole, units, *mesh.back()),
+    plane_wave_op(domains.plane_wave, units, *mesh.back()),
     surface_terms(boundaries, problem_type, units, mat_op, *mesh.back()),
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
     wave_port_op(boundaries, domains, solver, problem_type, units, mat_op, GetNDSpace(),
@@ -73,7 +74,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                     mat_op, GetNDSpace().Get()),
     surf_j_op(boundaries.current, *mesh.back()),
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
-                           current_dipole_op)
+                           current_dipole_op, plane_wave_op)
 {
   // The PML is only available in 3D. MaterialOperator treats PML regions as regular
   // materials on 2D meshes (as is required for the wave port cross-section submeshes), and
@@ -481,6 +482,8 @@ void SpaceOperator::CheckExcitations(ProblemType problem_type) const
   }
   else if (problem_type == ProblemType::TRANSIENT)
   {
+    MFEM_VERIFY(plane_wave_op.Empty(),
+                "Plane wave excitations are only supported for driven problems!");
     MFEM_VERIFY(
         port_excitation_helper.Size() == 1,
         "Transient problems currently only support a single excitation per simulation!");
@@ -2884,6 +2887,19 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz1 || nnz2;
+}
+
+bool SpaceOperator::AddPlaneWaveExcitationVector(int excitation_idx, double omega,
+                                                 const ComplexOperator &A,
+                                                 ComplexVector &RHS)
+{
+  int nnz = plane_wave_op.AddExcitationVector(excitation_idx, omega, A, GetNDSpace(), RHS);
+  Mpi::GlobalMax(1, &nnz, GetComm());
+  if (nnz)
+  {
+    linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
+  }
+  return nnz;
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,

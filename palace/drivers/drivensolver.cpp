@@ -204,6 +204,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
+      space_op.AddPlaneWaveExcitationVector(excitation_idx, omega, *A, RHS);
       if (E_prev.Size() > 1)
       {
         BlockTimer bt(Timer::KSP_INITIAL_GUESS);
@@ -277,6 +278,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
 ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 {
+  MFEM_VERIFY(space_op.GetPlaneWaveOp().Empty(),
+              "Plane wave excitations are not supported with the adaptive frequency sweep "
+              "yet!");
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
   // Initialize postprocessing for measurement and printers.
