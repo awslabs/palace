@@ -710,30 +710,22 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
   }
 }
 
-auto CompareGridFunctions(std::vector<mfem::ParGridFunction> &gf1,
-                          std::vector<mfem::ParGridFunction> &gf2,
-                          const std::vector<double> &expected_ratios, double rtol)
-{
-  CHECK(gf1.size() == gf2.size());
-  CHECK(gf1.size() == expected_ratios.size());
-  for (auto i = 0; i < gf1.size(); i++)
-  {
-    // Get the gridfunction data.
-    Vector v1 = gf1[i].GetTrueVector();
-    Vector v2 = gf2[i].GetTrueVector();
-    v2 /= v1;
-    // Get the min/max of the ratio.
-    double min = v2.Min();
-    double max = v2.Max();
-    // Check that min == max == expected_ratio.
-    CHECK_THAT(min, Catch::Matchers::WithinRel(max, rtol));
-    CHECK_THAT(min, Catch::Matchers::WithinRel(expected_ratios[i], rtol));
-  }
-}
-
 TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
 {
-  constexpr double rtol = 1.0e-10;
+  // The output of the fields redimensionalizes the mesh, undoes the effect of the mesh
+  // scaling on the fields mapped from the reference element (ScaleGridFunctions), and
+  // scales the fields to SI units (DimensionalizeGridFunctions). The field values at fixed
+  // reference points, including in the face-neighbor elements owned by other processes,
+  // must then be the nondimensional ones times the unit scale factors, independent of the
+  // mesh length unit. The spaces are those of the PostOperator: E and A in H(curl), V in
+  // H1, and B in H(div) in 3D or the scalar out-of-plane field in L2 with INTEGRAL map type
+  // in 2D. The energy densities and Poynting vector projected from the dimensional
+  // coefficients are checked the same way.
+  constexpr double rtol = 1.0e-12;
+  constexpr int order = 2;
+  const int dim = GENERATE(2, 3);
+  const bool simplex = GENERATE(true, false);
+  CAPTURE(dim, simplex);
 
   // Create iodata.
   Units units(0.496, 1.453);
@@ -741,54 +733,70 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   iodata.domains.materials.emplace_back().attributes = {1};
 
   // Create serial mesh.
-  int resolution = 3;
-  double length = 12.2;
-  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian3D(resolution, resolution, resolution,
-                                  mfem::Element::TETRAHEDRON, length, length, length));
+  constexpr int resolution = 3;
+  constexpr double length = 12.2;
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      (dim == 2) ? mfem::Mesh::MakeCartesian2D(resolution, resolution,
+                                               simplex ? mfem::Element::TRIANGLE
+                                                       : mfem::Element::QUADRILATERAL,
+                                               true, length, length)
+                 : mfem::Mesh::MakeCartesian3D(resolution, resolution, resolution,
+                                               simplex ? mfem::Element::TETRAHEDRON
+                                                       : mfem::Element::HEXAHEDRON,
+                                               length, length, length));
+  serial_mesh->EnsureNodes();
 
   // Create parallel mesh.
   auto comm = Mpi::World();
-  int size = Mpi::Size(comm);
   iodata.model.Lc = mesh::ComputeReferenceLength(serial_mesh, comm);
   iodata.NondimensionalizeInputs(serial_mesh);
-  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  Mesh mesh(std::move(par_mesh));
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
+  auto &pmesh = mesh.Get();
+  const auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
+  CAPTURE(mesh_Lc0);
+  REQUIRE(std::abs(mesh_Lc0 - 1.0) > 0.1);
+  if (Mpi::Size(comm) > 1)
+  {
+    // Each process has elements on other processes neighboring its own.
+    int num_face_nbr = pmesh.GetNFaceNeighborElements();
+    Mpi::GlobalMin(1, &num_face_nbr, comm);
+    REQUIRE(num_face_nbr > 0);
+  }
 
   // Create gridfunctions.
-  int order = 1;
-  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
-  mfem::ParFiniteElementSpace h1_fespace(&mesh.Get(), &h1_fec);
-  mfem::ParGridFunction Ue_gf(&h1_fespace), Um_gf(&h1_fespace);
-
-  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
-  mfem::ParFiniteElementSpace nd_fespace(&mesh.Get(), &nd_fec);
-
-  mfem::RT_FECollection rt_fec(order, mesh.Dimension());
-  mfem::ParFiniteElementSpace rt_fespace(&mesh.Get(), &rt_fec);
-  mfem::ParGridFunction S_gf(&rt_fespace);
+  mfem::H1_FECollection h1_fec(order, dim);
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  std::unique_ptr<mfem::FiniteElementCollection> b_fec;
+  if (dim == 2)
+  {
+    b_fec = std::make_unique<mfem::L2_FECollection>(
+        order - 1, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL);
+  }
+  else
+  {
+    b_fec = std::make_unique<mfem::RT_FECollection>(order - 1, dim);
+  }
+  mfem::ParFiniteElementSpace h1_fespace(&pmesh, &h1_fec), nd_fespace(&pmesh, &nd_fec),
+      rt_fespace(&pmesh, &rt_fec), b_fespace(&pmesh, b_fec.get());
+  mfem::ParGridFunction Ue_gf(&h1_fespace), Um_gf(&h1_fespace), S_gf(&rt_fespace);
 
   std::unique_ptr<GridFunction> E, B, V, A;
   E = std::make_unique<GridFunction>(nd_fespace, true);
-  B = std::make_unique<GridFunction>(rt_fespace, true);
-  A = std::make_unique<GridFunction>(nd_fespace);
+  B = std::make_unique<GridFunction>(b_fespace, true);
   V = std::make_unique<GridFunction>(h1_fespace);
+  A = std::make_unique<GridFunction>(nd_fespace);
 
-  // Create fields, initialize them to random values, and set the corresponding
-  // gridfunctions.
-  ComplexVector e(nd_fespace.GetTrueVSize()), b(rt_fespace.GetTrueVSize());
-  Vector a(nd_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
-  linalg::SetRandom(comm, e);
-  linalg::SetRandom(comm, b);
-  linalg::SetRandom(comm, a);
-  linalg::SetRandom(comm, v);
-
-  E->Real().SetFromTrueDofs(e.Real());
-  E->Imag().SetFromTrueDofs(e.Imag());
-  B->Real().SetFromTrueDofs(b.Real());
-  B->Imag().SetFromTrueDofs(b.Imag());
-  A->Real().SetFromTrueDofs(a);
-  V->Real().SetFromTrueDofs(v);
+  // Initialize the fields to random values, and make them ready for evaluation on shared
+  // faces as in PostOperator.
+  int seed = 1;
+  for (auto *gf : {&E->Real(), &E->Imag(), &B->Real(), &B->Imag(), &V->Real(), &A->Real()})
+  {
+    Vector x(gf->ParFESpace()->GetTrueVSize());
+    linalg::SetRandom(comm, x, seed++);
+    gf->SetFromTrueDofs(x);
+    gf->ExchangeFaceNbrData();
+  }
 
   // Create some coefficients.
   MaterialOperator mat_op(iodata, mesh);
@@ -813,81 +821,115 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
       *B, mat_op, scaling);
   S_dim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, scaling);
 
-  // Expected scalings (including both units dimensionalization and mesh scaling Lc0 =
-  // Lc/L0). See comment in ScaleGridFunctions() in postoperator.cpp for mesh scaling
-  // factor.
-  auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
-  // E [V/m], H(curl) requires * L.
-  auto scaling_E = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) * mesh_Lc0;
-  // B [Wb/m²], H(div) requires * L^2.
-  auto scaling_B =
-      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 * mesh_Lc0;
-  // V [V], H1 requires no mesh scaling.
-  auto scaling_V = iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
-  // A [A/m], H(curl) requires * L.
-  auto scaling_A = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(1.0) * mesh_Lc0;
-  // U_e = 1/2 Dᴴ E, H1 requires no mesh scaling.
-  auto scaling_Ue = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) *
-                    iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
-  // U_m = 1/2 Hᴴ B, H1 requires no mesh scaling.
-  auto scaling_Um = iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) *
-                    iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
-  // S = Re{E x H⋆}, H(div) requires * L^2.
-  auto scaling_S = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
-                   iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) * mesh_Lc0 *
-                   mesh_Lc0;
-  std::vector<double> expected_scaling = {scaling_E,  scaling_E,  scaling_B,
-                                          scaling_B,  scaling_V,  scaling_A,
-                                          scaling_Ue, scaling_Um, scaling_S};
-
   auto update_coeff_gridfunctions = [&](bool dimensional)
   {
-    Ue_gf = 0.0;
-    Um_gf = 0.0;
-    S_gf = 0.0;
-    if (dimensional)
-    {
-      Ue_gf.ProjectCoefficient(*Ue_dim.get());
-      Um_gf.ProjectCoefficient(*Um_dim.get());
-      S_gf.ProjectCoefficient(*S_dim.get());
-    }
-    else
-    {
-      Ue_gf.ProjectCoefficient(*Ue_nondim.get());
-      Um_gf.ProjectCoefficient(*Um_nondim.get());
-      S_gf.ProjectCoefficient(*S_nondim.get());
-    }
+    Ue_gf.ProjectCoefficient(dimensional ? *Ue_dim : *Ue_nondim);
+    Um_gf.ProjectCoefficient(dimensional ? *Um_dim : *Um_nondim);
+    S_gf.ProjectCoefficient(dimensional ? *S_dim : *S_nondim);
   };
 
-  auto copy_gridfunctions = [&]()
+  // Fields with their units scale factors. The coefficient grid functions are only
+  // evaluated in local elements, since their face-neighbor data is not exchanged.
+  struct Field
   {
-    mfem::ParGridFunction Er_copy(E->Real()), Ei_copy(E->Imag()), Br_copy(B->Real()),
-        Bi_copy(B->Real()), V_copy(V->Real()), A_copy(A->Real()), Ue_copy(Ue_gf),
-        Um_copy(Um_gf), S_copy(S_gf);
-    return std::vector<mfem::ParGridFunction>(
-        {Er_copy, Ei_copy, Br_copy, Bi_copy, V_copy, A_copy, Ue_copy, Um_copy, S_copy});
+    std::string name;
+    const mfem::ParGridFunction *gf;
+    double scale;
+    bool face_nbr;
+  };
+  const auto scale_E = iodata.units.GetScaleFactor<Units::ValueType::FIELD_E>();
+  const auto scale_B = iodata.units.GetScaleFactor<Units::ValueType::FIELD_B>();
+  const auto scale_D = iodata.units.GetScaleFactor<Units::ValueType::FIELD_D>();
+  const auto scale_H = iodata.units.GetScaleFactor<Units::ValueType::FIELD_H>();
+  const std::vector<Field> fields = {
+      {"E_real", &E->Real(), scale_E, true},
+      {"E_imag", &E->Imag(), scale_E, true},
+      {"B_real", &B->Real(), scale_B, true},
+      {"B_imag", &B->Imag(), scale_B, true},
+      {"V", &V->Real(), iodata.units.GetScaleFactor<Units::ValueType::VOLTAGE>(), true},
+      {"A", &A->Real(), iodata.units.GetScaleFactor<Units::ValueType::CURRENT>(), true},
+      {"U_e", &Ue_gf, scale_D * scale_E, false},
+      {"U_m", &Um_gf, scale_H * scale_B, false},
+      {"S", &S_gf, scale_E * scale_H, false}};
+
+  // Evaluate the fields at a set of reference points in every local and face-neighbor
+  // element.
+  auto Sample = [&]()
+  {
+    std::vector<std::vector<double>> values(fields.size());
+    mfem::IsoparametricTransformation T_nbr;
+    mfem::Vector val;
+    auto SampleElement =
+        [&](mfem::ElementTransformation &T, mfem::Geometry::Type geom, bool face_nbr)
+    {
+      const auto &ir = mfem::IntRules.Get(geom, 2 * order);
+      for (int q = 0; q < ir.GetNPoints(); q++)
+      {
+        const auto &ip = ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        for (std::size_t i = 0; i < fields.size(); i++)
+        {
+          if (face_nbr && !fields[i].face_nbr)
+          {
+            continue;
+          }
+          fields[i].gf->GetVectorValue(T, ip, val);
+          values[i].insert(values[i].end(), val.begin(), val.end());
+        }
+      }
+    };
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      SampleElement(*pmesh.GetElementTransformation(e), pmesh.GetElementGeometry(e), false);
+    }
+    for (int e = 0; e < pmesh.GetNFaceNeighborElements(); e++)
+    {
+      pmesh.GetFaceNbrElementTransformation(e, T_nbr);
+      SampleElement(T_nbr, pmesh.face_nbr_elements[e]->GetGeometryType(), true);
+    }
+    return values;
   };
 
-  // Copy gridfunctions before dimensionalizing.
+  // Check that values = scale * ref for each field, with scale its units scale factor if
+  // dimensional and one otherwise.
+  auto Compare = [&](const std::vector<std::vector<double>> &ref,
+                     const std::vector<std::vector<double>> &values, bool dimensional)
+  {
+    for (std::size_t i = 0; i < fields.size(); i++)
+    {
+      REQUIRE(ref[i].size() == values[i].size());
+      const double scale = dimensional ? fields[i].scale : 1.0;
+      double max_ref = 0.0, max_diff = 0.0;
+      for (std::size_t j = 0; j < ref[i].size(); j++)
+      {
+        max_ref = std::max(max_ref, std::abs(scale * ref[i][j]));
+        max_diff = std::max(max_diff, std::abs(values[i][j] - scale * ref[i][j]));
+      }
+      Mpi::GlobalMax(1, &max_ref, comm);
+      Mpi::GlobalMax(1, &max_diff, comm);
+      CAPTURE(fields[i].name, dimensional, max_ref, max_diff);
+      CHECK(max_ref > 0.0);
+      CHECK(max_diff <= rtol * max_ref);
+    }
+  };
+
+  // Sample the fields before dimensionalizing.
   update_coeff_gridfunctions(false);
-  std::vector<mfem::ParGridFunction> gf_before = copy_gridfunctions();
+  const auto values_before = Sample();
 
   // Dimensionalize.
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  mesh::DimensionalizeMesh(pmesh, mesh_Lc0);
+  ScaleGridFunctions(mesh_Lc0, {E.get(), B.get(), V.get(), A.get()});
   DimensionalizeGridFunctions(iodata.units, E, B, V, A);
   update_coeff_gridfunctions(true);
-  std::vector<mfem::ParGridFunction> gf_dim = copy_gridfunctions();
-  CompareGridFunctions(gf_before, gf_dim, expected_scaling, rtol);
+  Compare(values_before, Sample(), true);
 
   // Nondimensionalize.
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  mesh::NondimensionalizeMesh(pmesh, mesh_Lc0);
+  ScaleGridFunctions(1.0 / mesh_Lc0, {E.get(), B.get(), V.get(), A.get()});
   NondimensionalizeGridFunctions(iodata.units, E, B, V, A);
   update_coeff_gridfunctions(false);
-  std::vector<mfem::ParGridFunction> gf_after = copy_gridfunctions();
-  CompareGridFunctions(gf_before, gf_after, std::vector<double>(gf_after.size(), 1.0),
-                       rtol);
+  Compare(values_before, Sample(), false);
 }
 
 TEST_CASE("GridFunction scaling keeps face-neighbor data consistent",

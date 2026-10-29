@@ -216,18 +216,16 @@ void GetTrueDofs(const GridFunction &gf, ComplexVector &x)
 void DimensionalizeForPostOperatorOutput(const Units &units, GridFunction &E,
                                          GridFunction &B)
 {
-  // Reproduce the temporary mesh and Piola scaling performed by WriteParaviewFields so
+  // Reproduce the temporary mesh and field scaling performed by WriteParaviewFields so
   // legacy coefficient references and emitted Points are compared in input coordinates.
+  // That the mesh scaling preserves the physical field values is checked separately by
+  // "Dimensional field output".
   auto &mesh = *E.ParFESpace()->GetParMesh();
   const double L = units.GetMeshLengthRelativeScale();
   mesh::DimensionalizeMesh(mesh, L);
-
-  const double e_scale = L * units.GetScaleFactor<Units::ValueType::FIELD_E>();
-  E *= e_scale;
-
-  const double b_scale =
-      std::pow(L, mesh.Dimension() - 1) * units.GetScaleFactor<Units::ValueType::FIELD_B>();
-  B *= b_scale;
+  ScaleGridFunctions(L, {&E, &B});
+  units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(E);
+  units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(B);
 }
 
 struct ErrorStats
