@@ -356,6 +356,16 @@ struct SurfaceResponseFiles
   CheckPlacedModelEdges(const json &feature, const json &identification,
                         const std::vector<std::vector<std::string>> &patch_rows,
                         const json &model_edges, double tolerance);
+  // The geometry-fallback invariant (readiness hardening DESIGN section 4, U-INV; USER
+  // decision 1000 (b), supervisor 1001 / 1008): the preflight manifest's
+  // Identification.Diagnostics.GeometryFallbacks.Entries (P) and the operator's
+  // GetGeometryFallbackRecord() Entries (S; null without a record) agree on (Class,
+  // Features, Patches, Models, Length to 1e-12: one unit on both records) for every
+  // geometry class; the solve-only NoMatchedFeature (A10.1) has no entry in P and is
+  // predicted by Summary.Counts (Exact + Interpolated + LegacyContract + QuantumNearMatched
+  // == 0), which is asserted when S carries it. Returns the number of entries compared.
+  static std::size_t CheckGeometryFallbackInvariant(const json &manifest,
+                                                    const json &solve_record);
 };
 
 // Shared helpers of the electrostatic surface-response tests: a whole electrostatic run of

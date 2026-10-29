@@ -489,3 +489,138 @@ TEST_CASE("Geometry fallback H6 ContinuationUnresolved: a gap inside a continued
     CHECK(ownership.cells.front().patch == 1);
   }
 }
+
+// U-INV (DESIGN section 4; decisions 1001 / 1008): the preflight predicts the solve's
+// geometry fallbacks. For the same (mesh, config, library) the manifest written by
+// WriteSurfaceResponseRequirements under the explicit RecordRaw leaf (P) and the operator's
+// record (S) agree on (Class, Features, Patches, Models, Length) for every geometry class.
+// H1 is the A10.1 form (P has no entry; Summary.Counts matched == 0 predicts the raw run).
+// H8 fires end to end on the island with the convex library keyed on SA only (the
+// domainboundary fixture's form) whose every model's BasisPoints are widened beyond the
+// unit domain (the isolated edge at +-2.0, the corner's 12 points scaled 30x): every placed
+// coupon leaves the mesh on the dry run and on the operator
+// (the same FindDomainBoundaryExclusions on the same patch table), so both record ONE
+// AllPatchesOutside entry over the same patches. H4a / H5 / H6 / H13-I1 and H7a: no
+// end-to-end fixture here (H4a / H6 are exercised on the shared dry-run functions, A10.9 /
+// A10.10; H5 is GUARDED by construction, A10.8; H13-I1 needs a metal-free perimeter; H7a's
+// invariant is the role-swap alias case of test-surfaceresponseoperator.cpp).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Geometry fallback invariant U-INV: the preflight predicts the solve's "
+    "geometry fallbacks (H1 by Counts, H8 by the entry; decisions 1001 / 1008)",
+    "[surfaceresponseoperator][geometryfallback][invariant][domainboundary]"
+    "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  // The preflight (the RecordRaw leaf: the complete prediction with no abort) and the
+  // operator (the solve default) on the same configuration and mesh.
+  auto Preflight = [&](json config, const fs::path &dir)
+  {
+    config["Problem"]["Output"] = dir.string();
+    config["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "RecordRaw";
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    MakeOutputFolder(iodata, comm);
+    Mesh mesh(MakeIslandMesh());
+    const fs::path manifest_path = dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(comm);
+    return ReadJson(manifest_path);
+  };
+  auto Solve = [&](const json &config)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    return std::make_pair(response.IsRawFallback(), response.GetGeometryFallbackRecord());
+  };
+
+  SECTION("H1 NoMatchedFeature: no entry on the preflight, Counts predict the raw run")
+  {
+    json config = ConvexIslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["Library"] = spatial_cluster_library_3d_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction.erase("PatchConstruction");
+    correction["CorrectionMode"] = "PostprocessOnly";
+    const json manifest = Preflight(config, temp.temp_dir / "uinv-h1");
+    const auto [raw, record] = Solve(config);
+    CHECK(raw);
+    REQUIRE(!record.is_null());
+    CHECK(record.at("Classes").at("NoMatchedFeature").get<int>() == 1);
+    CHECK(CheckGeometryFallbackInvariant(manifest, record) == 0);
+  }
+
+  SECTION("H8 AllPatchesOutside: the same entry over the same patches on both")
+  {
+    const fs::path wide_points = temp.temp_dir / "uinv-wide-basis-points.csv";
+    const fs::path wide_corner_points = temp.temp_dir / "uinv-wide-corner-points.csv";
+    const fs::path wide_library = temp.temp_dir / "fabrication-process-convex-3d-wide.json";
+    if (Mpi::Root(comm))
+    {
+      {
+        std::ofstream output(wide_points);
+        output << "x,y,z\n-2.0,-2.0,0.0\n2.0,-2.0,0.0\n2.0,2.0,0.0\n-2.0,2.0,0.0\n";
+      }
+      {
+        // The fixture's corner points (0.02 / 0.08 in plane, z = -0.02 / 0 / 0.02) x 30:
+        // the normal offset +-0.6 alone puts every point of the two outer rings outside
+        // the unit box; the middle ring's 0.6 / 2.4 in-plane offsets leave it too.
+        std::ofstream output(wide_corner_points);
+        output << "x,y,z\n";
+        for (const double z : {-0.6, 0.0, 0.6})
+        {
+          output << "0.6,0.6," << z << "\n2.4,0.6," << z << "\n2.4,2.4," << z
+                 << "\n0.6,2.4," << z << "\n";
+        }
+      }
+      json library = ReadJson(convex_library_3d_path);
+      library["Name"] = "unit-test-process-convex-3d-wide";
+      for (auto &model : library["Models"])
+      {
+        // Keyed on SA only like the island's features (the domainboundary fixture's form).
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = model["Topology"] == "IsolatedEdge"
+                                   ? wide_points.string()
+                                   : wide_corner_points.string();
+      }
+      std::ofstream output(wide_library);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(comm);
+    json config = ConvexIslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["Library"] = wide_library.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction.erase("PatchConstruction");
+    correction["TraceCoupling"] = "SurfaceMortar";
+    const json manifest = Preflight(config, temp.temp_dir / "uinv-h8");
+    const auto &preflight_record =
+        manifest.at("Identification").at("Diagnostics").at("GeometryFallbacks");
+    REQUIRE(preflight_record.at("Count").get<int>() == 1);
+    CHECK(preflight_record.at("Classes").at("AllPatchesOutside").get<int>() == 1);
+    CHECK(preflight_record.at("Policy") == "RecordRaw");
+    const auto &entry = preflight_record.at("Entries").front();
+    CHECK(entry.at("What") == "run");
+    CHECK(entry.at("Patches").size() == manifest.at("Identification")
+                                            .at("Diagnostics")
+                                            .at("DomainBoundaryExclusions")
+                                            .at("TestedPatches")
+                                            .get<std::size_t>());
+    CHECK(entry.at("Patches").size() > 1);
+    const auto [raw, record] = Solve(config);
+    CHECK(raw);
+    REQUIRE(!record.is_null());
+    CHECK(record.at("Classes").at("AllPatchesOutside").get<int>() == 1);
+    CHECK(record.at("RawShareByEnergy").at("SA").at("Share").get<double>() == 1.0);
+    CHECK(CheckGeometryFallbackInvariant(manifest, record) == 1);
+  }
+#endif
+}

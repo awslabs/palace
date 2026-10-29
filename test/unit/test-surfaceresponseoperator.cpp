@@ -12631,6 +12631,204 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// U-INV H7a (readiness hardening DESIGN section 4; decisions 1001 / 1008): the preflight
+// predicts the solve's KeyMismatch. The U4 plan in role 1 (the claw tied to the pad)
+// against the test library whose LegacyContractAlias carries the role-1 KEY but a WRONG
+// ContextDigest (a mis-keyed alias: USER decision 283's fail-closed check). On the
+// preflight under the explicit RecordRaw leaf the alias is not applied: the cluster stays
+// Missing with the KeyMismatch record in Identification.Diagnostics.GeometryFallbacks; the
+// operator (the solve default) runs the SAME matching on the same identification and
+// records the same entry (Class, Features, Patches, Models, Length), then places the other
+// features of the plan as usual (UnmatchedPolicy Warn). Serial + MPI-2 (the matching runs
+// on every rank after the identification broadcast).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback invariant U-INV H7a: a mis-keyed legacy alias records "
+                 "the same KeyMismatch on the preflight and the operator (decisions 1001 / "
+                 "1008)",
+                 "[surfaceresponseoperator][geometryfallback][invariant][3d][signature]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  auto ReadJson = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  // The U4 plans (the comment of the role-swap case above): the claims-only plan keys the
+  // legacy model, the tied plan (role 1) keys the alias.
+  const std::vector<PlanRectangle> claims_only_plan = {{0.5, 1.2, 4.5, 2.0},
+                                                       {2.4, 2.0, 2.6, 4.5}};
+  std::vector<PlanRectangle> tied_plan = claims_only_plan;
+  tied_plan.push_back({0.5, 2.5, 1.9, 4.5});
+  tied_plan.push_back({0.5, 2.0, 1.0, 2.5});
+  auto MakeMesh = [&](const std::vector<PlanRectangle> &plan)
+  {
+    mfem::Mesh serial = MakeSheetPlanMesh(5.0, 5.0, plan);
+    return std::make_unique<mfem::ParMesh>(comm, serial);
+  };
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");
+  auto Preflight = [&](const std::vector<PlanRectangle> &plan, const fs::path &library,
+                       const std::string &stem)
+  {
+    json run = config;
+    run["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] = library.string();
+    run["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "RecordRaw";
+    const fs::path out_dir = temp.temp_dir / stem;
+    if (Mpi::Root(comm))
+    {
+      fs::create_directories(out_dir);
+    }
+    Mpi::Barrier(comm);
+    run["Problem"]["Output"] = out_dir.string();
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto mesh = MakeMesh(plan);
+    const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+    Mpi::Barrier(comm);
+    return ReadJson(requirements_path);
+  };
+  auto JunctionCluster = [](const json &manifest) -> json
+  {
+    json found;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "SpatialEdgeCluster")
+      {
+        continue;
+      }
+      const auto &vertices = feature["Signature"]["Vertices"];
+      if (std::any_of(vertices.begin(), vertices.end(),
+                      [](const json &vertex) { return vertex["Type"] == "ConcaveCorner"; }))
+      {
+        REQUIRE(found.is_null());
+        found = feature;
+      }
+    }
+    REQUIRE(found.is_object());
+    return found;
+  };
+
+  // 1. The keys from the fixture library: the claims-only Signature (the legacy model's)
+  //    and the role-1 Hash (the alias key); both Missing, no fallback recorded.
+  const json claims_only_manifest =
+      Preflight(claims_only_plan, spatial_cluster_library_3d_path, "uinv-h7a-claims-only");
+  const json tied_probe_manifest =
+      Preflight(tied_plan, spatial_cluster_library_3d_path, "uinv-h7a-tied-probe");
+  CHECK(
+      !claims_only_manifest["Identification"]["Diagnostics"].contains("GeometryFallbacks"));
+  CHECK(
+      !tied_probe_manifest["Identification"]["Diagnostics"].contains("GeometryFallbacks"));
+  const json claims_only_feature = JunctionCluster(claims_only_manifest);
+  const json tied_probe_feature = JunctionCluster(tied_probe_manifest);
+  REQUIRE(claims_only_feature["Match"]["Status"] == "Missing");
+  REQUIRE(tied_probe_feature["Match"]["Status"] == "Missing");
+  const std::string alias_key = tied_probe_feature["Hash"].get<std::string>();
+  const std::string digest =
+      tied_probe_feature["SpatialSupport"]["ContextDigest"].get<std::string>();
+  REQUIRE(digest.size() == 64);
+  // The wrong digest: the recorded one with its first hex digit moved.
+  std::string wrong_digest = digest;
+  wrong_digest[0] = wrong_digest[0] == '0' ? '1' : '0';
+
+  // 2. The test library: the U4 legacy model with the alias keyed in role 1 but carrying
+  //    the wrong context digest.
+  const fs::path library_path = temp.temp_dir / "fabrication-process-uinv-h7a-3d.json";
+  const std::string model_name = "uinv-h7a-claims-only-junction";
+  if (Mpi::Root(comm))
+  {
+    json library = ReadJson(spatial_cluster_library_3d_path);
+    library["Name"] = "unit-test-process-uinv-h7a-3d";
+    for (auto &other : library["Models"])
+    {
+      // The isolated-edge / convex-corner models keyed on SA only like the plan's features
+      // (the domainboundary fixture's form): the rest of the plan is placed, so the
+      // KeyMismatch is a placement-time fallback of a run that goes on corrected.
+      if (other["Topology"] != "SpatialEdgeCluster")
+      {
+        other["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      }
+    }
+    auto &model = library["Models"].back();
+    model["Name"] = model_name;
+    model["Signature"] = claims_only_feature["Signature"];
+    model.erase("Edges");
+    model["PlanViewBoundary"] = {{{"Conductor", 1},
+                                  {"Segments",
+                                   {{{-100000000, 0, 0}, {100000000, 0, 0}},
+                                    {{-100000000, 0, 0}, {-100000000, 1000000000, 0}},
+                                    {{100000000, 0, 0}, {100000000, 1000000000, 0}}}}}};
+    model["LegacyContractAliases"] = {
+        {{"Key", alias_key},
+         {"ContextDigest", wrong_digest},
+         {"Reason", "unit test U-INV H7a: the role-1 key with a wrong context digest"},
+         {"Context",
+          {{"Box", tied_probe_feature["Signature"]["Box"]},
+           {"Context", tied_probe_feature["Signature"]["Context"]}}}}};
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+
+  // 3. P: the preflight on the tied plan records KeyMismatch and leaves the cluster
+  //    Missing (rc 0 under the explicit RecordRaw leaf).
+  const json manifest = Preflight(tied_plan, library_path, "uinv-h7a-tied");
+  const json tied_feature = JunctionCluster(manifest);
+  CHECK(tied_feature["Hash"] == alias_key);
+  CHECK(tied_feature["Match"]["Status"] == "Missing");
+  CHECK(!tied_feature["Match"].contains("LegacyContract"));
+  REQUIRE(manifest["Identification"]["Diagnostics"].contains("GeometryFallbacks"));
+  const auto &preflight_record =
+      manifest["Identification"]["Diagnostics"]["GeometryFallbacks"];
+  CHECK(preflight_record["Policy"] == "RecordRaw");
+  CHECK(preflight_record["Run"] == "Preflight");
+  REQUIRE(preflight_record["Classes"].contains("KeyMismatch"));
+  CHECK(preflight_record["Classes"]["KeyMismatch"].get<int>() >= 1);
+  CHECK(preflight_record["Classes"].size() == 1);
+  for (const auto &entry : preflight_record["Entries"])
+  {
+    CHECK(entry["Class"] == "KeyMismatch");
+    CHECK(entry["Features"] == json::array({tied_feature["Id"]}));
+    CHECK(entry["Models"][0] == model_name);
+  }
+  CHECK(manifest["Summary"]["GeometryFallbacks"]["Count"] == preflight_record["Count"]);
+
+  // 4. S: the operator on the same mesh and library (the solve default RecordRaw) records
+  //    the same entries and is not a whole-run fallback (the plan's isolated edges and
+  //    convex corners are placed).
+  json solve_config = config;
+  solve_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      library_path.string();
+  solve_config["Problem"]["Output"] = (temp.temp_dir / "uinv-h7a-solve").string();
+  IoData iodata(solve_config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeMesh(tied_plan)));
+  LaplaceOperator laplace(iodata, meshes);
+  SurfaceResponseOperator response(iodata, laplace);
+  CHECK(!response.IsRawFallback());
+  CHECK(response.GetPatchCount() > 0);
+  CHECK(manifest["Summary"]["Counts"]["Exact"].get<int>() > 0);
+  const json record = response.GetGeometryFallbackRecord();
+  REQUIRE(!record.is_null());
+  CHECK(record["Classes"]["KeyMismatch"] == preflight_record["Classes"]["KeyMismatch"]);
+  CHECK(CheckGeometryFallbackInvariant(manifest, record) ==
+        preflight_record["Count"].get<std::size_t>());
+  // The banner names the class and the length share of the SA type.
+  const std::string banner = GeometryFallbackBanner(record, "palace.json");
+  CHECK_THAT(banner,
+             ContainsSubstring("LOW CONFIDENCE") && ContainsSubstring("KeyMismatch"));
+#endif
+}
+
 // Decision 899 B1 mechanism (B) / 900 MINOR-5 (OI-CTX-ARC-ADAPT), test U5: the Box +
 // Context key of a cluster whose box holds EXCLUDED perimeter segments is the root's on a
 // locally refined nonconforming mesh. The U4 claw (bar + finger) under a ceiling the finger
