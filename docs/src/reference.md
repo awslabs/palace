@@ -321,9 +321,28 @@ Numeric wave ports assume a field with known normal-direction dependence
 ``\bm{E}(\bm{x}) = \bm{e}(\bm{x}_t)e^{ik_n x_n}`` where ``k_n`` is the propagation constant. For each operating
 frequency ``\omega``, a two-dimensional eigenvalue problem is solved on the port yielding the mode
 shapes ``\bm{e}_m`` and associated propagation constants ``k_{n,m}``. These are used in the full 3D
-model where the Robin port boundary condition has coefficient
-``\gamma = i\text{Re}\{k_{n,m}\}/\mu_r`` and the computed mode is used to compute the incident field in the
-source term ``\bm{U}^{inc}`` at excited ports.
+model where the Robin port boundary condition has coefficient ``\gamma = i k_{n,m}/\mu_r`` and the
+computed mode is used to compute the incident field in the source term ``\bm{U}^{inc}`` at excited
+ports. When the port cross-section is lossy, for example with
+[`"Conductivity"`](config/reference.md#config-boundaries-conductivity) or
+[`"Impedance"`](config/reference.md#config-boundaries-impedance) boundaries or lossy dielectrics on
+the port boundary, the propagation constant ``k_{n,m}`` is complex, and its imaginary
+part (the attenuation of the port mode) is kept in the boundary condition and in the incident field,
+so that the port is matched to its own mode.
+
+The modes of a lossy cross-section are orthogonal under the unconjugated (reciprocity) pairing
+``\int_\Gamma (\bm{E}_m\times\bm{H}_k)\cdot\bm{n}\,dS``, and not under the power pairing
+``\int_\Gamma (\bm{E}_m\times\bm{H}_k^*)\cdot\bm{n}\,dS`` [[11]](#References). Wave port modes are
+normalized to unit power, ``\vert P^{inc} \vert = 1~\mathrm{W}`` as above, with the phase of the mode
+chosen such that its reaction
+
+```math
+R^{inc} = \int_\Gamma (\bm{E}^{inc}\times\bm{H}^{inc})\cdot\bm{n}\,dS
+```
+
+is real and positive. For a lossless propagating mode, ``R^{inc} = P^{inc} = 1~\mathrm{W}``. For a
+lossy mode, the complex power ``P^{inc}`` has a phase, and ``R^{inc}`` is close to, but not exactly,
+unity.
 
 For more information on the implementation of numeric wave ports, see [[3]](#References).
 
@@ -375,7 +394,10 @@ where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`
 peak-phasor power flux through the port cross-section, equal to twice the time-averaged power. For
 TEM modes with a voltage path between the two conductors, ``Z_{PV}`` reduces to the conventional TEM
 characteristic impedance. For wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
-specified.
+specified, as ``Z_{PV} = |V|^2 / P^*`` with the complex power
+``P = \int_\Gamma (\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` of the port mode: this is real
+for a lossless propagating mode, and complex for a lossy one, consistent with the total-field
+impedance ``|V|^2 / P^*`` of the port.
 
 As a diagnostic, boundary-mode impedance postprocessing also reports the *voltage-current*
 impedance magnitude when a current path is specified:
@@ -442,6 +464,25 @@ waves (an ``R = 0`` port supports no incident traveling wave).
 
 In the time domain, the time histories of the port voltages can be Fourier-transformed to
 get their frequency domain representation for scattering parameter calculation.
+
+For wave ports, the scattering parameters are the modal amplitudes of the computed field at each
+port, obtained from its reaction with the port mode, normalized as described in
+[Wave ports](#Wave-ports):
+
+```math
+S_{ij} = \frac{\displaystyle\int_{\Gamma_i}(\bm{E}\times\bm{H}^{inc}_i)\cdot\bm{n}\,dS}
+    {\displaystyle\int_{\Gamma_i}(\bm{E}^{inc}_i\times\bm{H}^{inc}_i)\cdot\bm{n}\,dS} - \delta_{ij} \,.
+```
+
+For a lossless propagating port mode, this is the projection
+``\int_{\Gamma_i}(\bm{E}\times[\bm{H}^{inc}_i]^*)\cdot\bm{n}\,dS`` onto the unit-power mode, and
+the scattering parameters have the standard power-wave interpretation. For a lossy port mode, the
+unconjugated reaction separates the incident and reflected modal amplitudes, also from those of
+other modes of the port cross-section, and the scattering parameters are those of the pseudo-waves
+of the port modes [[11]](#References). A uniform line between two ports with the same cross-section
+has ``S_{11} = S_{22} = 0`` and ``S_{21} = S_{12} = e^{-ik_n L}``, and the scattering matrix of a
+reciprocal structure is symmetric, up to the small differences in ``R^{inc}`` between lossy ports of
+different cross-sections.
 
 For wave ports, since the propagation constants are known, we allow additional de-embedding by
 specifying an offset distance ``d`` for each wave port:

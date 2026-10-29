@@ -164,19 +164,36 @@ std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
                                GridFunction &E0n, mfem::LinearForm &sr,
                                mfem::LinearForm &si)
 {
-  // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
-  // n, integrated over the port surface (+n is the outward mesh normal). The n x H
-  // coefficients are updated implicitly as they only store references to the Et, En grid
-  // functions. We choose a (rather arbitrary) phase constraint to at least make results for
-  // the same port consistent between frequencies/meshes.
+  // Normalize grid functions to unit power, |E x H⋆| ⋅ n, integrated over the port surface
+  // (+n is the outward mesh normal), and a chosen phase and polarization direction. The
+  // phase is chosen so that the unconjugated reaction (E x H) ⋅ n, under which the modes of
+  // a reciprocal cross-section are orthogonal also when they are lossy, is real and
+  // positive: it is then unity for a lossless propagating mode, and close to unity for a
+  // lossy mode, whose complex power has a phase. The n x H coefficients are updated
+  // implicitly as they only store references to the Et, En grid functions. We choose a
+  // (rather arbitrary) sign constraint to at least make results for the same port
+  // consistent between frequencies/meshes.
 
-  // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|. This also updates the n x H coefficients depending on
-  // Et, En. Update linear forms for postprocessing too.
-  std::complex<double> dot[2] = {
+  // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)| and (E x H) ⋅ n = -E ⋅ (n x H): with the power P = -sᴴe
+  // and the reaction R = sᵀe, scale such that |scale|² |P| = 1 and scale² R < 0. This also
+  // updates the n x H coefficients depending on Et, En. Update linear forms for
+  // postprocessing too.
+  std::complex<double> dot[3] = {
       {sr * S0t.Real(), si * S0t.Real()},
-      {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())}};
-  Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
-  auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1])));
+      {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())},
+      {(sr * E0t.Real()) - (si * E0t.Imag()), (sr * E0t.Imag()) + (si * E0t.Real())}};
+  Mpi::GlobalSum(3, dot, S0t.ParFESpace()->GetComm());
+  MFEM_VERIFY(std::abs(dot[1]) > 0.0,
+              "Wave port mode with zero power cannot be normalized!");
+  std::complex<double> scale = 1.0 / std::sqrt(std::abs(dot[1]));
+  if (std::abs(dot[2]) > 0.0)
+  {
+    scale *= std::sqrt(-std::abs(dot[2]) / dot[2]);
+  }
+  if ((scale * dot[0]).real() < 0.0)
+  {
+    scale = -scale;
+  }
   ComplexVector::AXPBY(scale, E0t.Real(), E0t.Imag(), 0.0, E0t.Real(), E0t.Imag());
   ComplexVector::AXPBY(scale, E0n.Real(), E0n.Imag(), 0.0, E0n.Real(), E0n.Imag());
   ComplexVector::AXPBY(scale, sr, si, 0.0, sr, si);
@@ -372,10 +389,10 @@ public:
 
     // Compute U = -1/i (ik_n Eₜ + ∇ₜ Eₙ) = -kₙEₜ + i∇ₜEₙ (t-gradient in boundary element).
     // The ∇ₜEₙ term is omitted when IncludeGradient=false (scalar-admittance-only n×H). kₙ
-    // is the full (complex) propagation constant on the eigenmode path (holomorphic in ω,
-    // matches the i·kₙ·M mass); the driven path passes Re{kₙ} to stay consistent with its
-    // i·Re{kₙ}·M mass (Im{kₙ} line attenuation carried by the sparse mass, not the modal
-    // shape). ω may be complex, so carry both parts of U: with Eₜ = Etr + i·Eti, -kₙEₜ =
+    // is the full (complex) propagation constant of the mode, matching the i·kₙ·M boundary
+    // mass of the port: for a lossy port mode it carries the line attenuation, which the
+    // mode must carry for the port to be matched. ω may be complex (eigenmode nonlinear
+    // solve), so carry both parts of U: with Eₜ = Etr + i·Eti, -kₙEₜ =
     // -(kr·Etr - ki·Eti) - i·(kr·Eti + ki·Etr), and i∇ₜEₙ = -∇ₜEni + i·∇ₜEnr.
     const double kr = kn.real(), ki = kn.imag();
     double Etr_data[3], Eti_data[3];
@@ -432,14 +449,15 @@ public:
 // ∇ₜEₙ longitudinal-gradient term) and the scalar-admittance n×H (−kₙEₜ only), real and
 // imaginary parts, in a single sweep over the port submesh elements. Equivalent to
 // assembling four LinearForms with VectorFEDomainLFIntegrator and
-// BdrSubmeshHVectorCoefficient<REAL/IMAG, true/false> at real kₙ and ω, but evaluates the
-// mode field, transformation, and shape functions once per quadrature point instead of
-// once per form (the per-call overhead of the generic grid function evaluation dominates
-// the per-frequency wave port refresh on GPU builds).
+// BdrSubmeshHVectorCoefficient<REAL/IMAG, true/false> at complex kₙ and real ω, but
+// evaluates the mode field, transformation, and shape functions once per quadrature point
+// instead of once per form (the per-call overhead of the generic grid function evaluation
+// dominates the per-frequency wave port refresh on GPU builds).
 void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
                        const MaterialOperator &mat_op, const mfem::ParSubMesh &submesh,
-                       double kn, double omega, mfem::LinearForm &sr, mfem::LinearForm &si,
-                       mfem::LinearForm &sr_scalar, mfem::LinearForm &si_scalar)
+                       std::complex<double> kn, double omega, mfem::LinearForm &sr,
+                       mfem::LinearForm &si, mfem::LinearForm &sr_scalar,
+                       mfem::LinearForm &si_scalar)
 {
   const mfem::ParFiniteElementSpace &nd_fes = *Et.Real().ParFESpace();
   const mfem::ParFiniteElementSpace &h1_fes = *En.Real().ParFESpace();
@@ -537,10 +555,11 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
       T.InverseJacobian().MultTranspose(gh, dUi);
 
       // U = -kₙEₜ + i∇ₜEₙ (full) and U = -kₙEₜ (scalar-admittance), then n×H = μ⁻¹U/ω.
+      // With Eₜ = Etr + i·Eti, -kₙEₜ = -(kr·Etr - ki·Eti) - i·(kr·Eti + ki·Etr).
       for (int d = 0; d < sdim; d++)
       {
-        U[2][d] = -kn * Etr[d];
-        U[3][d] = -kn * Eti[d];
+        U[2][d] = -(kn.real() * Etr[d] - kn.imag() * Eti[d]);
+        U[3][d] = -(kn.real() * Eti[d] + kn.imag() * Etr[d]);
         U[0][d] = U[2][d] - dUi[d];
         U[1][d] = U[3][d] + dUr[d];
       }
@@ -1054,7 +1073,8 @@ void WavePortData::Initialize(double omega)
 
   // Configure the linear forms for computing S-parameters (projection of the field onto the
   // port mode). Normalize the mode for a chosen polarization direction and unit power,
-  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal).
+  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal), with a
+  // real unconjugated reaction (E x H) ⋅ n.
   {
     BlockTimer bt(Timer::WAVE_PORT_POSTPRO);
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
@@ -1067,10 +1087,11 @@ void WavePortData::Initialize(double omega)
     }
     // Full modal n×H forms (s = sr + i·si) for the excitation, S-parameter projection, and
     // modal reaction, and scalar-admittance forms (∇ₜEₙ dropped) for the scalar reaction,
-    // all from the unnormalized mode. The forms are linear in the mode field, so the
-    // normalization and polarity fix below apply to them as well.
-    AssembleModeForms(*port_E0t, *port_E0n, mat_op, port_submesh, kn0.real(), omega0,
-                      *port_sr, *port_si, *port_sr_scalar, *port_si_scalar);
+    // all from the unnormalized mode with its complex propagation constant. The forms are
+    // linear in the mode field, so the normalization and polarity fix below apply to them
+    // as well.
+    AssembleModeForms(*port_E0t, *port_E0n, mat_op, port_submesh, kn0, omega0, *port_sr,
+                      *port_si, *port_sr_scalar, *port_si_scalar);
     const auto scale = Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
     ComplexVector::AXPBY(scale, *port_sr_scalar, *port_si_scalar, 0.0, *port_sr_scalar,
                          *port_si_scalar);
@@ -1106,11 +1127,20 @@ void WavePortData::Initialize(double omega)
     // Unconjugated modal reaction R = sᵀe = ∫_Γ (n×H_mode)·E_mode, which scales the rank-1
     // terms of the modal correction W = (−iω/R) s sᵀ. Computed from the same normalized,
     // sign-fixed submesh forms/field that define the excitation n×H, so R matches the 3D-
-    // assembled s. Distinct from Normalize's conjugated power sᴴe. Sign-flip invariant (s
-    // and E both flip). s = (sr + i·si), e = (E0t.Re + i·E0t.Im).
+    // assembled s. Real and negative by the normalization, with R = -1 for a lossless
+    // propagating mode. Sign-flip invariant (s and E both flip). s = (sr + i·si), e =
+    // (E0t.Re + i·E0t.Im).
     modal_reaction = {(*port_sr) * port_E0t->Real() - (*port_si) * port_E0t->Imag(),
                       (*port_sr) * port_E0t->Imag() + (*port_si) * port_E0t->Real()};
     Mpi::GlobalSum(1, &modal_reaction, port_nd_fespace->GetComm());
+    WarnReaction();
+
+    // Complex power of the normalized mode, P = ∫_Γ (E_mode x H_mode⋆)·n = -sᴴe, for the
+    // characteristic impedance: unity for a lossless propagating mode, and complex (of
+    // unit magnitude) for a lossy one.
+    modal_power = {-((*port_sr) * port_E0t->Real()) - ((*port_si) * port_E0t->Imag()),
+                   -((*port_sr) * port_E0t->Imag()) + ((*port_si) * port_E0t->Real())};
+    Mpi::GlobalSum(1, &modal_power, port_nd_fespace->GetComm());
 
     // Scalar-admittance reaction R_scalar = s_scalarᵀe from the scalar-only n×H (∇ₜEₙ
     // dropped), scaling the W_scalar term that cancels the local boundary mass's modal
@@ -1240,6 +1270,24 @@ void WavePortData::WarnEvanescent(std::complex<double> kn, std::complex<double> 
                fmt::join(attr_list, ", "), n_eff.real(), n_eff.imag());
 }
 
+void WavePortData::WarnReaction()
+{
+  // The unconjugated reaction of the unit-power mode is unity for a lossless propagating
+  // mode and close to unity for a lossy one, and only small for a (nearly) circularly
+  // polarized combination of degenerate modes, which the S-parameter projection cannot
+  // separate from its partner. The reaction is the same on all ranks.
+  if (warned_reaction || std::abs(modal_reaction) >= 0.5)
+  {
+    return;
+  }
+  warned_reaction = true;
+  Mpi::Warning("Wave port with attributes {} selected a mode with a small unconjugated "
+               "reaction |∫ (E x H) ⋅ n dS| = {:.3e} for unit power, such as an "
+               "elliptically polarized combination of degenerate modes: the S-parameters "
+               "of the port are ill-conditioned!\n",
+               fmt::join(attr_list, ", "), std::abs(modal_reaction));
+}
+
 std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
 {
   // Complex-frequency propagation constant, from the shared cached EVP solve. Used by the
@@ -1279,12 +1327,11 @@ WavePortData::ComputeComplexReactions(std::complex<double> omega)
     {
       GridFunction Et0(*port_nd_fespace, true), En0(*port_h1_fespace, true);
       DistributeModeField(e0, nd, h1, Et0, En0);
-      R_full_ref =
-          AssembleReaction<true>(Et0, En0, mat_op, submesh, submesh_parent_elems,
-                                 kn0.real(), omega0, port_nd_fespace->Get(), port_comm);
+      R_full_ref = AssembleReaction<true>(Et0, En0, mat_op, submesh, submesh_parent_elems,
+                                          kn0, omega0, port_nd_fespace->Get(), port_comm);
       R_scalar_ref =
-          AssembleReaction<false>(Et0, En0, mat_op, submesh, submesh_parent_elems,
-                                  kn0.real(), omega0, port_nd_fespace->Get(), port_comm);
+          AssembleReaction<false>(Et0, En0, mat_op, submesh, submesh_parent_elems, kn0,
+                                  omega0, port_nd_fespace->Get(), port_comm);
       ref_reaction_omega0 = omega0;
     }
 
@@ -1334,7 +1381,7 @@ WavePortData::GetModeExcitationCoefficientReal(bool include_gradient) const
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return MakeModeHCoefficient<ValueType::REAL>(include_gradient, attr_list, *port_E0t,
                                                *port_E0n, mat_op, port_submesh,
-                                               submesh_parent_elems, kn0.real(), omega0);
+                                               submesh_parent_elems, kn0, omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
@@ -1343,7 +1390,7 @@ WavePortData::GetModeExcitationCoefficientImag(bool include_gradient) const
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return MakeModeHCoefficient<ValueType::IMAG>(include_gradient, attr_list, *port_E0t,
                                                *port_E0n, mat_op, port_submesh,
-                                               submesh_parent_elems, kn0.real(), omega0);
+                                               submesh_parent_elems, kn0, omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
@@ -1385,7 +1432,7 @@ WavePortData::GetModeFieldCoefficientImag(double scaling) const
 double WavePortData::GetExcitationPower() const
 {
   // The computed port modes are normalized such that the power integrated over the port is
-  // 1: ∫ (E_inc x H_inc⋆) ⋅ n dS = 1.
+  // 1: |∫ (E_inc x H_inc⋆) ⋅ n dS| = 1.
   return HasExcitation() ? 1.0 : 0.0;
 }
 
@@ -1483,17 +1530,27 @@ WavePortData::ModePairing WavePortData::LocalModePairing(const mfem::Vector &e_p
 
 std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
 {
-  // Compute port S-parameter, or the projection of the field onto the port mode:
-  // (E x H_inc⋆) ⋅ n = E ⋅ (-n x H_inc⋆), integrated over the port surface.
+  // Compute port S-parameter, or the projection of the field onto the port mode: the
+  // unconjugated reaction (E x H_inc) ⋅ n = E ⋅ (-n x H_inc) of the field with the mode,
+  // integrated over the port surface, relative to that of the mode itself, -R. The modes of
+  // a reciprocal port cross-section are orthogonal under this pairing, also when they are
+  // lossy, unlike under the conjugated (power) pairing (E x H_inc⋆) ⋅ n, which gives the
+  // same result for a lossless propagating mode (R = -1, P = 1).
   MFEM_VERIFY(E.HasImag(),
               "Wave ports expect complex-valued E and B fields in port S-parameter "
               "calculation!");
   port_nd_transfer->Transfer(E.Real(), port_E->Real());
   port_nd_transfer->Transfer(E.Imag(), port_E->Imag());
-  std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
-                           -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
-  Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
-  return dot;
+  std::complex<double> dot[2] = {
+      {((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
+       ((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real())},
+      {-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
+       -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real())}};
+  Mpi::GlobalSum(2, dot, port_nd_fespace->GetComm());
+  // The unconjugated reaction of the mode with itself only vanishes for a circularly
+  // polarized combination of degenerate modes: fall back to the power projection, exact
+  // for a field of this mode only.
+  return (std::abs(modal_reaction) > 0.0) ? dot[0] / modal_reaction : dot[1] / modal_power;
 }
 
 int WavePortData::GetModePolaritySign(int high_attr, int low_attr) const
@@ -1622,17 +1679,17 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
 
 std::complex<double> WavePortData::GetCharacteristicImpedance() const
 {
-  // Z_PV = (V·V*) / P_mode, where P_mode = ∫(E_mode × H_mode*)·n dS is the full
-  // complex Poynting integral of the mode field over the port boundary. The driven
-  // solver's Normalize() function normalizes the mode so that |P_mode| = 1, with the
-  // mode polarity fixed (via VoltagePath when configured) so that P_mode is real-
-  // positive for a propagating mode. Therefore P_mode = 1 and Z_PV reduces to V·V*.
+  // Z_PV = (V·V*) / P_mode*, where P_mode = ∫(E_mode × H_mode*)·n dS is the full complex
+  // Poynting integral of the mode field over the port boundary, consistent with the
+  // total-field impedance |V|² / P* of the port. The mode is normalized to |P_mode| = 1,
+  // with P_mode = 1 and Z_PV = V·V* for a lossless propagating mode, while P_mode and Z_PV
+  // are complex for a lossy mode.
   auto V = GetExcitationVoltage();
-  if (std::abs(V) == 0.0)
+  if (std::abs(V) == 0.0 || std::abs(modal_power) == 0.0)
   {
     return 0.0;
   }
-  return V * std::conj(V);
+  return V * std::conj(V) / std::conj(modal_power);
 }
 
 WavePortOperator::WavePortOperator(const config::BoundaryData &boundaries,
@@ -1924,13 +1981,13 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
                                                      MaterialPropertyCoefficient &fbr,
                                                      MaterialPropertyCoefficient &fbi)
 {
-  // Real-ω wave-port BC (driven / boundary-mode path). The contribution looks a lot like
-  // the lumped port boundary, except the iω / Z_s coefficient goes to i·k_n / μ where k_n
-  // is specific to the port mode at the operating frequency. Only the real (propagating)
-  // part of k_n is used here: a real-ω driven/boundary-mode solve models a lossless,
-  // energy- carrying port line, so the line-attenuation Im(k_n) is intentionally dropped.
-  // (The eigenmode nonlinear solve uses the full complex k_n via the complex overload
-  // below.)
+  // Real-ω wave-port BC (driven path). The contribution looks a lot like the lumped port
+  // boundary, except the iω / Z_s coefficient goes to i·k_n / μ where k_n is specific to
+  // the port mode at the operating frequency. The full complex k_n = β + iα is used, so
+  // that the port is matched to its mode also when the mode is lossy (finite-conductivity,
+  // impedance, or lossy dielectric port cross-sections): i·(β + iα) = −α + iβ puts the
+  // line attenuation −α·M on the real part (fbr) and the propagating term β·M on the
+  // imaginary part (fbi), as in the complex-ω overload below.
   Initialize(omega);
   for (const auto &[idx, data] : ports)
   {
@@ -1938,6 +1995,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
     {
       continue;
     }
+    AddBoundaryMassBdrCoefficients(idx, fbr, -data.kn0.imag());
     AddBoundaryMassBdrCoefficients(idx, fbi, data.kn0.real());
   }
 }
@@ -1953,8 +2011,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // the propagating term β·M on the imaginary slot (fbi). SolveKnComplex is
   // side-effect-free (does NOT cache, leaving omega0/kn0/port_E0t untouched), so the real-ω
   // driven/postpro state is preserved. For real ω (imag = 0, α from cross-section loss)
-  // this matches the physics of the double overload but additionally carries the
-  // attenuation on fbr.
+  // this matches the double overload.
   for (auto &[idx, data] : ports)
   {
     if (!data.active)
@@ -1998,13 +2055,13 @@ void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
                     scale);
 }
 
-double WavePortOperator::GetWavePortKn(int port_idx, double omega)
+std::complex<double> WavePortOperator::GetWavePortKn(int port_idx, double omega)
 {
   auto it = ports.find(port_idx);
   MFEM_VERIFY(it != ports.end(),
               "GetWavePortKn called with unknown port index " << port_idx << "!");
   it->second.Initialize(omega);
-  return it->second.kn0.real();
+  return it->second.kn0;
 }
 
 std::complex<double> WavePortOperator::GetWavePortKnComplex(int port_idx,

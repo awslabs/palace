@@ -1895,7 +1895,10 @@ void PostOperator<solver_t>::MeasureSParameter() const
     //
     // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
     //   - Lumped: ∫E·(E_inc/R_ref) dS = V/V_inc, where V_inc encodes R_ref
-    //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
+    //   - Wave:   ∫(E×H_mode)·n dS / ∫(E_mode×H_mode)·n dS, the modal reaction overlap,
+    //             which separates the incident and reflected modal amplitudes also for a
+    //             lossy port mode, and is the power overlap ∫(E×H_mode⋆)·n dS for a
+    //             lossless one
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
 
     // Get information about excited port.

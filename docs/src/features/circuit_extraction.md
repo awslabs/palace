@@ -365,10 +365,11 @@ dispersion differs per boundary type:
     (the reference admittance reported in `rom-port-reference.csv` additionally includes the low-rank
     modal correction $\bm{W}$; see above).
     The fitted scalar is ``k_n(\omega)``, obtained by re-solving the small cross-section eigenproblem
-    at a set of fit frequencies. For the synthesis (and the underlying driven sweep) only the real,
-    propagating part of ``k_n`` is used; the imaginary part (line attenuation) is dropped, so a
-    wave port contributes to ``\widehat{\bm{R}}^{-1}`` through the *dispersion* of ``k_n``, not
-    through attenuation.
+    at a set of fit frequencies. For the synthesis only the real, propagating part of ``k_n`` is
+    fit; the imaginary part (line attenuation of a lossy port mode, which the underlying driven
+    sweep includes in the wave port boundary condition) is dropped, with a warning when it is not
+    negligible, so a wave port contributes to ``\widehat{\bm{R}}^{-1}`` through the *dispersion*
+    of ``k_n``, not through attenuation.
   - **Second-order absorbing (farfield) boundary.** Here ``f(\omega) = 0.5/\omega``, which is exactly
     a single pole at ``\omega = 0`` with residue ``0.5``. This is injected analytically — no fit is
     needed.
