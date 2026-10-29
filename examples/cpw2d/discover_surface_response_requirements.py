@@ -39,6 +39,43 @@ import device_coupons  # noqa: E402
 # (decisions 664 / 669 (3) (c): the R4 39e4 attempt-2 stall on 4 mirror-formed CurvedEdge keys).
 UNPLACEABLE_DECLARATION = "no mirror placement in this version"
 
+# The two discovery-side RECORD classes of the readiness hardening-2 lane (USER decision
+# 1000 (b), decisions 1012 / 1013 F-2 / F-4a, 1018): a Missing requirement that can get no
+# placeholder is recorded by name and the closure continues (RAW-BY-FALLBACK: no coupon is
+# built for it, the library is built for the rest) instead of the discovery dying.
+#  - UNBOXABLE_METHOD: the key is an UnboxableFeature signature ("Unboxable": true, decision
+#    282: no box satisfies the face rules), which no builder makes and the library reader
+#    refuses to serve (surfaceresponseoperator.cpp ReadProcessLibrary); the census F-2.
+#  - UNBUILDABLE_METHOD: the generator's own geometry refuses the key by name
+#    (cluster_signature_geometry.SignatureGeometryError: an arc joint in neither built range
+#    of the coupon mesher, decision 673 JointTurnGap; the census F-4a / F-4b).
+UNBOXABLE_METHOD = "Unboxable"
+UNBUILDABLE_METHOD = "UnbuildableJoint"
+UNBOXABLE_RULE = ("decision 282 / 1018: an UnboxableFeature signature (\"Unboxable\": true) is a Missing "
+                  "placeholder no builder makes and no library may serve; the discovery gives it no "
+                  "placeholder, lists it RAW-BY-FALLBACK and continues")
+UNBUILDABLE_RULE = ("decision 673 / 1018: the coupon generator refuses the key by name (SignatureGeometryError); "
+                    "the discovery records the refusal, gives it no placeholder, lists it RAW-BY-FALLBACK and "
+                    "continues (the mesher's joint classes: OI-MESHER-JOINT-CLASS-GAP / OI-MESHER-BUILT-JOINT-TILT)")
+
+
+def unboxable_requirement(requirement):
+    """True for a version-2 requirement keyed by an UnboxableFeature signature."""
+    signature = requirement.get("Signature")
+    return isinstance(signature, dict) and bool(signature.get("Unboxable", False))
+
+
+def requirement_record(requirement, **extra):
+    record = {
+        "Hash": requirement["Hash"],
+        "Topology": requirement["Topology"],
+        "Count": requirement.get("Count"),
+        "Instances": requirement.get("Instances"),
+        "TotalEdgeLength": requirement.get("TotalEdgeLength"),
+    }
+    record.update(extra)
+    return record
+
 
 def unplaceable_declaration(requirement):
     """The binary's Note declaring the requirement unplaceable in this version (None when the
@@ -239,6 +276,18 @@ def placeholder_model(requirement, matching_radius, fabrication=None):
             edges, record = mirror_formed_placeholder_edges(requirement, float(matching_radius))
             model["Edges"] = edges
             model["MirrorFormed"] = record
+            # The reader's rule (ReadProcessLibrary: one conductor reference per canonical
+            # conductor label of the model's Edges and PlanViewBoundary components; decision
+            # 1018 Q2, the census F-3): the placeholder carries no PlanViewBoundary, so its
+            # references follow its Edges, not the signature's Context (a context-only
+            # conductor is the generator's business: it writes the PlanViewBoundary the
+            # reader counts, decision 649 (1)).
+            edge_conductors = max(int(edge["Conductor"]) for edge in edges)
+            model.pop("ConductorReferences", None)
+            if edge_conductors > 1:
+                model["ConductorReferences"] = [
+                    [0.0, 0.0, -float(matching_radius) * (k + 1)] for k in range(edge_conductors)
+                ]
             model["FabricatedSurfaceMatrix"] = "__preflight_dummy_fabricated_surface.csv"
             model["ThinSurfaceMatrix"] = "__preflight_dummy_thin_surface.csv"
             model["Interfaces"] = unique_interfaces(requirement)
@@ -461,6 +510,8 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
     placeholder_requirements = {}
     omitted = {}
     unplaceable = {}
+    unboxable = {}
+    unbuildable = {}
     history = []
     final_manifest = None
     for pass_index in range(1, max_passes + 1):
@@ -529,11 +580,41 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
                         },
                     )
                     continue
-                digest, model = placeholder_model(
-                    requirement,
-                    float(current_manifest["Library"]["MatchingRadius"]),
-                    virtual_library.get("Fabrication", {}),
-                )
+                if unboxable_requirement(requirement):
+                    # F-2 (decision 1018 Q3): no placeholder exists for an Unboxable key (the
+                    # reader refuses one); recorded, never a stall.
+                    unboxable.setdefault(
+                        requirement["Hash"],
+                        requirement_record(
+                            requirement,
+                            EdgeCount=requirement.get("Signature", {}).get("EdgeCount"),
+                            MirrorFormed=requirement.get("MirrorFormed"),
+                            OutOfScope=UNBOXABLE_METHOD,
+                            Rule=UNBOXABLE_RULE,
+                            Pass=pass_index,
+                        ),
+                    )
+                    continue
+                if requirement["Hash"] in unbuildable:
+                    continue
+                try:
+                    digest, model = placeholder_model(
+                        requirement,
+                        float(current_manifest["Library"]["MatchingRadius"]),
+                        virtual_library.get("Fabrication", {}),
+                    )
+                except cluster_signature_geometry.SignatureGeometryError as error:
+                    # F-4a / F-4b (decision 1018 Q3): the generator refuses the key by name;
+                    # recorded with the message, no placeholder, never a stall.
+                    unbuildable[requirement["Hash"]] = requirement_record(
+                        requirement,
+                        MirrorFormed=requirement.get("MirrorFormed"),
+                        OutOfScope=UNBUILDABLE_METHOD,
+                        Error=str(error),
+                        Rule=UNBUILDABLE_RULE,
+                        Pass=pass_index,
+                    )
+                    continue
                 if digest in known:
                     if digest not in placed_before_pass:
                         continue
@@ -615,6 +696,31 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
                 f"can close it ({record['Declaration']})"
             )
     final_manifest["UnplaceableRequirements"] = unplaceable_records
+    unboxable_records = [unboxable[key] for key in sorted(unboxable)]
+    unbuildable_records = [unbuildable[key] for key in sorted(unbuildable)]
+    for requirement in final_manifest["Requirements"]:
+        if requirement["Status"] != "Missing":
+            continue
+        record = unboxable.get(requirement.get("Hash"))
+        if record is not None:
+            requirement["OutOfScope"] = UNBOXABLE_METHOD
+            requirement["Reason"] = f"{UNBOXABLE_METHOD}: {UNBOXABLE_RULE}"
+        record = unbuildable.get(requirement.get("Hash"))
+        if record is not None:
+            requirement["OutOfScope"] = UNBUILDABLE_METHOD
+            requirement["Reason"] = f"{UNBUILDABLE_METHOD}: {record['Error']}"
+    if unboxable_records:
+        final_manifest["UnboxableRequirements"] = unboxable_records
+        final_manifest["Summary"]["UnboxableRequirements"] = {
+            "Count": len(unboxable_records),
+            "TotalEdgeLength": sum(float(r.get("TotalEdgeLength") or 0.0) for r in unboxable_records),
+        }
+    if unbuildable_records:
+        final_manifest["UnbuildableRequirements"] = unbuildable_records
+        final_manifest["Summary"]["UnbuildableRequirements"] = {
+            "Count": len(unbuildable_records),
+            "TotalEdgeLength": sum(float(r.get("TotalEdgeLength") or 0.0) for r in unbuildable_records),
+        }
     manifest_path = output / "surface-response-requirements.json"
     write_json(manifest_path, final_manifest)
     geometry_fallbacks = geometry_fallbacks_record(final_manifest)
@@ -628,11 +734,42 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
         "UnplaceableRequirements": unplaceable_records,
         "CompleteAgainstSourceLibrary": final_manifest["Complete"],
     }
+    if unboxable_records:
+        closure_history["UnboxableRequirements"] = unboxable_records
+    if unbuildable_records:
+        closure_history["UnbuildableRequirements"] = unbuildable_records
+    if unboxable_records or unbuildable_records:
+        print(describe_discovery_fallbacks(unboxable_records, unbuildable_records), flush=True)
     if geometry_fallbacks is not None:
         closure_history["GeometryFallbacks"] = geometry_fallbacks
         print(describe_geometry_fallbacks(geometry_fallbacks), flush=True)
     write_json(output / "closure-history.json", closure_history)
     return final_manifest
+
+
+def describe_discovery_fallbacks(unboxable_records, unbuildable_records):
+    """The RAW-BY-FALLBACK listing of the requirements the DISCOVERY itself could give no
+    placeholder (decision 1018: Unboxable keys, generator-refused keys): printed with the
+    closure beside the binary's GeometryFallbacks listing (never silent, USER 1000 (b))."""
+    records = [(UNBOXABLE_METHOD, r) for r in unboxable_records] + [
+        (UNBUILDABLE_METHOD, r) for r in unbuildable_records
+    ]
+    lines = [
+        f"DISCOVERY FALLBACKS: {len(records)} Missing requirement(s) got NO placeholder and stay "
+        "RAW-BY-FALLBACK (no coupon is built for them; the library is built for the rest)"
+    ]
+    for method, record in records:
+        lines.append(
+            "  RAW-BY-FALLBACK {method} {hash} ({topology}; instances {count}; length {length:.6e})".format(
+                method=method,
+                hash=record["Hash"],
+                topology=record.get("Topology"),
+                count=record.get("Count"),
+                length=float(record.get("TotalEdgeLength") or 0.0),
+            )
+            + (f": {record['Error']}" if "Error" in record else "")
+        )
+    return "\n".join(lines)
 
 
 def geometry_fallbacks_record(manifest):
