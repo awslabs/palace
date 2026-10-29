@@ -1036,6 +1036,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
     config::Nondimensionalize(units, data);
   }
 
+  // Plane wave phase reference points.
+  for (auto &[idx, data] : domains.plane_wave)
+  {
+    config::Nondimensionalize(units, data);
+  }
+
   // Finite conductivity boundaries.
   for (auto &data : boundaries.conductivity)
   {

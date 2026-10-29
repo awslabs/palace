@@ -168,6 +168,14 @@
             "$ref": "#/$defs/CurrentDipole"
           }
         },
+        "PlaneWave": {
+          "type": "array",
+          "description": "Array of incident plane wave excitations (prototype). The plane wave is injected on the boundary of a total-field region (total-field/scattered-field formulation): the solution is the total field inside the region and the scattered field outside.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PlaneWave"
+          }
+        },
         "Postprocessing": {
           "$ref": "#/$defs/DomainPostprocessing"
         }
@@ -906,6 +914,58 @@
               "$ref": "#/$defs/Vector3"
             }
           ]
+        }
+      }
+    },
+    "PlaneWave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes",
+        "Direction",
+        "Polarization"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Excitation index of this plane wave."
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Volume attributes of the total-field region. The elements outside of it which touch its boundary must be vacuum."
+        },
+        "Direction": {
+          "description": "Propagation direction, as a keyword (`\"+X\"`, ..., `\"-Z\"`) or an array of three values.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "Polarization": {
+          "description": "Polarization of the incident electric field, as a keyword or an array of three values (the component along the propagation direction is removed).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "Amplitude": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Amplitude of the incident electric field, V/m."
+        },
+        "Origin": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Point where the incident field has zero phase, in mesh length units. Defaults to the origin."
         }
       }
     },
