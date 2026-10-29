@@ -762,6 +762,22 @@ int QuasiNewtonSolver::Solve()
                      "({:.3e}{:+.3e}i).\n",
                      k, it, eig.real(), eig.imag());
         }
+        // A column which is itself an eigenvector of T(eig) is appended without coupling:
+        // R([X, x], diag(H, eig)) = [R(X, H), T(eig) x]. Its coupling v2 is not determined
+        // when eig is already on the diagonal of H (the extended residual then does not
+        // depend on it), and a nonzero v2 would there make a false Jordan block of H, from
+        // which the extraction would return the same field twice.
+        ComplexVector Tv(v.Size());
+        Tv.UseDevice(true);
+        opK->Mult(v, Tv);
+        if (opC)
+        {
+          opC->AddMult(v, Tv, eig);
+        }
+        opM->AddMult(v, Tv, eig * eig);
+        A2n->AddMult(v, Tv, 1.0);
+        const bool eigenvector =
+            nleps::AcceptsInvariantColumn(linalg::Norml2(GetComm(), Tv), norm_v, rtol);
         // Update the invariant pair with normalization.
         const auto scale = norm_v;
         v *= 1.0 / scale;
@@ -770,7 +786,10 @@ int QuasiNewtonSolver::Solve()
         X.resize(k + 1);
         X[k] = v;
         H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        H.col(k).head(k) = v2 / scale;
+        if (!eigenvector)
+        {
+          H.col(k).head(k) = v2 / scale;
+        }
         H(k, k) = eig;
         k++;
         // If the eigenvalue is inside the desired range, increment initial guess index
@@ -968,37 +987,57 @@ int QuasiNewtonSolver::Solve()
     return 0;
   }
 
-  // Eigenpair extraction from the invariant pair (X, H).
-  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-  eps.compute(H);
-  // H eigenvectors are ordered arbitrarily, need to match them to order of X.
-  std::vector<int> order(nev), order_eigen(nev), order2(nev);
-  std::iota(order.begin(), order.end(), 0);
-  std::iota(order_eigen.begin(), order_eigen.end(), 0);
-  std::iota(order2.begin(), order2.end(), 0);
-  std::ranges::sort(order, [&](auto l, auto r) { return eigs[l].imag() < eigs[r].imag(); });
-  std::ranges::sort(order_eigen, [&epseig = eps.eigenvalues()](auto l, auto r)
-                    { return epseig(l).imag() < epseig(r).imag(); });
-  std::ranges::sort(order2, [&](auto l, auto r) { return order[l] < order[r]; });
-
-  // Sort Eigen eigenvectors.
-  std::vector<Eigen::VectorXcd> Xeig;
-  for (int i = 0; i < nev; i++)
-  {
-    Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
-  }
-
-  // Recover the eigenvectors in the target range.
+  // Eigenpair extraction from the invariant pair (X, H): column i of X and H(i, i) =
+  // eigs[i] were stored together. X[i] is the eigenvector if it is one of T(eigs[i]);
+  // otherwise it is X y for the eigenvector y = [a; 1; 0] of the upper triangular H, with
+  // (eigs[i] I - H₀₀) a = H(0:i, i). Either is accepted only with the residual criterion
+  // of the iteration: a defective or ill-conditioned pair gives no field, rather than a
+  // generalized vector or a copy of another field.
   eigenvalues.clear();
   eigenvectors.clear();
+  ComplexVector r(X.empty() ? 0 : X[0].Size());
+  r.UseDevice(true);
+  auto Valid = [&](std::complex<double> l, const ComplexVector &x)
+  {
+    const double norm_x = linalg::Norml2(GetComm(), x);
+    return std::isfinite(norm_x) && norm_x > 0.0 &&
+           nleps::AcceptsInvariantColumn(GetResidualNorm(l, x, r), norm_x, rtol);
+  };
   for (int i = 0; i < nev; i++)
   {
-    if (eigs[i].imag() > sigma.imag())
+    const std::complex<double> l = eigs[i];
+    if (l.imag() <= sigma.imag())
     {
-      ComplexVector eigv = MatVecMult(X, Xeig[order2[i]]);
-      eigenvalues.push_back(eigs[i]);
-      eigenvectors.push_back(eigv);
+      continue;
     }
+    ComplexVector x = X[i];
+    bool valid = Valid(l, x);
+    if (!valid && i > 0)
+    {
+      const Eigen::MatrixXcd S =
+          l * Eigen::MatrixXcd::Identity(i, i) - H.topLeftCorner(i, i);
+      const Eigen::VectorXcd h = H.col(i).head(i);
+      const Eigen::VectorXcd a =
+          (S.diagonal().array() != 0.0).all()
+              ? Eigen::VectorXcd(S.triangularView<Eigen::Upper>().solve(h))
+              : Eigen::VectorXcd(S.fullPivLu().solve(h));
+      for (int j = 0; j < i; j++)
+      {
+        x.AXPY(a(j), X[j]);
+      }
+      valid = Valid(l, x);
+    }
+    if (!valid)
+    {
+      Mpi::Warning(
+          GetComm(),
+          "No eigenvector found for the converged eigenvalue {:.6e}{:+.6e}i, whose "
+          "invariant pair is defective or ill-conditioned!\n",
+          l.real(), l.imag());
+      continue;
+    }
+    eigenvalues.push_back(l);
+    eigenvectors.push_back(std::move(x));
   }
   nev = eigenvalues.size();
 

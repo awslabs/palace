@@ -198,17 +198,49 @@ public:
   void RescaleEigenvectors(int) override {}
 };
 
+// The diagonal plus c at row i0, column i1 (local indices; no coupling if either is -1).
+class CoupledDiagonalOperator : public Operator
+{
+  Vector d;
+  int i0, i1;
+  double c;
+
+public:
+  CoupledDiagonalOperator(Vector &&d, int i0, int i1, double c)
+    : Operator(d.Size()), d(std::move(d)), i0(i0), i1(i1), c(c)
+  {
+  }
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    const auto *hd = d.HostRead();
+    const auto *hx = x.HostRead();
+    auto *hy = y.HostWrite();
+    for (int i = 0; i < d.Size(); i++)
+    {
+      hy[i] = hd[i] * hx[i];
+    }
+    if (i0 >= 0 && i1 >= 0)
+    {
+      hy[i0] += c * hx[i1];
+    }
+  }
+};
+
 struct DiagonalLorentzProblem
 {
   std::vector<double> k;  // Global, by element
+  double coupling;        // K(0, 1), one process only
+
   std::unique_ptr<Mesh> mesh;
   mfem::L2_FECollection fec;
   std::unique_ptr<FiniteElementSpace> fespace;
   std::vector<long long> gid;  // Global index of each local dof
   std::unique_ptr<ComplexParOperator> K, M;
 
-  explicit DiagonalLorentzProblem(std::vector<double> k_) : k(std::move(k_)), fec(0, 2)
+  explicit DiagonalLorentzProblem(std::vector<double> k_, double coupling = 0.0)
+    : k(std::move(k_)), coupling(coupling), fec(0, 2)
   {
+    REQUIRE((coupling == 0.0 || Mpi::Size(Mpi::World()) == 1));
     auto smesh = mfem::Mesh::MakeCartesian2D(static_cast<int>(k.size()), 1,
                                              mfem::Element::QUADRILATERAL, false,
                                              static_cast<double>(k.size()), 1.0);
@@ -224,7 +256,9 @@ struct DiagonalLorentzProblem
       md(i) = 1.0;
     }
     K = std::make_unique<ComplexParOperator>(
-        std::make_unique<DiagonalOperator>(std::move(kd)), nullptr, *fespace);
+        std::make_unique<CoupledDiagonalOperator>(std::move(kd), coupling != 0.0 ? 0 : -1,
+                                                  coupling != 0.0 ? 1 : -1, coupling),
+        nullptr, *fespace);
     M = std::make_unique<ComplexParOperator>(
         std::make_unique<DiagonalOperator>(std::move(md)), nullptr, *fespace);
   }
@@ -282,7 +316,12 @@ struct DiagonalLorentzProblem
     for (int i = 0; i < LocalSize(); i++)
     {
       const std::complex<double> xv(xr[i], xi[i]);
-      rr += std::norm((k.at(gid[i]) + l * l * (1.0 + Chi(l))) * xv);
+      std::complex<double> tx = (k.at(gid[i]) + l * l * (1.0 + Chi(l))) * xv;
+      if (coupling != 0.0 && gid[i] == 0)
+      {
+        tx += coupling * std::complex<double>(xr[1], xi[1]);  // One process: local = global
+      }
+      rr += std::norm(tx);
       xx += std::norm(xv);
     }
     Mpi::GlobalSum(1, &rr, Mpi::World());
@@ -498,21 +537,69 @@ TEST_CASE("Quasi-Newton deflation of a degenerate pair", "[nleps][Serial][Parall
   CheckEigenpairs(p, SolveDegeneratePair(p, target, tol), expected, tol);
 }
 
-// Known limitation: both modes of an exactly degenerate pair are returned with the same
-// eigenvector (normalized overlap 1), although their eigenvalues and backward errors are
-// correct. The eigenvectors are extracted from the invariant pair (X, H) through the
-// eigenvectors of H, as on main; a repeated eigenvalue of H with the deflation coupling
-// would give a single eigenvector, which is the likely cause. [!shouldfail] reports this
-// test as passing while it fails, and as failing once the limitation is fixed.
+// Both modes of an exactly degenerate pair, each an eigenvector, must be returned as two
+// independent fields with their own residuals. The second mode was locked with the same
+// eigenvalue and an undetermined coupling to the first, a false Jordan block of H, and
+// both were returned with the same field (normalized overlap 1).
 TEST_CASE("Quasi-Newton eigenvectors of a degenerate pair are independent",
-          "[nleps][Serial][Parallel][!shouldfail]")
+          "[nleps][Serial][Parallel]")
 {
   const DiagonalLorentzProblem p({1.5 * 1.5, 1.5 * 1.5, 2.1 * 2.1});
   constexpr double target = 0.3, tol = 1.0e-10;
   const auto result = SolveDegeneratePair(p, target, tol);
+  CheckEigenpairs(p, result, TargetSideRoots(p, target), tol);
   REQUIRE(result.x.size() == 3);
   const auto overlap = std::abs(linalg::Dot(Mpi::World(), result.x[0], result.x[1])) /
                        (linalg::Norml2(Mpi::World(), result.x[0]) *
                         linalg::Norml2(Mpi::World(), result.x[1]));
   CHECK(overlap < 1.0 - 1.0e-6);
+}
+
+namespace
+{
+
+double Overlap(const ComplexVector &x, const ComplexVector &y)
+{
+  return std::abs(linalg::Dot(Mpi::World(), x, y)) /
+         (linalg::Norml2(Mpi::World(), x) * linalg::Norml2(Mpi::World(), y));
+}
+
+}  // namespace
+
+// T(λ) = K + λ² (1 + χ(λ)) I with K upper triangular, K(0, 1) = 0.4: the eigenvector of
+// the roots of the second dof, [0.4 / (k₁ - k₀), 1, 0], is not orthogonal to that of the
+// first, e₀, while the invariant basis X is. Its field is X y for the eigenvector y of H.
+TEST_CASE("Quasi-Newton eigenvectors of a nonnormal problem", "[nleps][Serial]")
+{
+  const DiagonalLorentzProblem p({1.5 * 1.5, 1.8 * 1.8, 2.1 * 2.1}, 0.4);
+  constexpr double target = 0.3, tol = 1.0e-10;
+  const auto result = SolveDegeneratePair(p, target, tol);
+  CheckEigenpairs(p, result, TargetSideRoots(p, target), tol);
+  REQUIRE(result.x.size() == 3);
+  CAPTURE(Overlap(result.x[1], p.Unit(0)));
+  CHECK(Overlap(result.x[1], p.Unit(0)) > 0.1);
+}
+
+// A Jordan block: with k₀ = k₁ and K(0, 1) = 0.3, T(λ) = [[0, 0.3], [0, 0]] at the root of
+// the first two dofs, which has one eigenvector e₀ (algebraic multiplicity two). No second,
+// independent field may be returned for it: every field returned there is e₀, with its
+// residual.
+TEST_CASE("Quasi-Newton eigenvectors of a Jordan block", "[nleps][Serial]")
+{
+  const DiagonalLorentzProblem p({1.5 * 1.5, 1.5 * 1.5, 2.1 * 2.1}, 0.3);
+  constexpr double target = 0.3, tol = 1.0e-10;
+  const auto result = SolveDegeneratePair(p, target, tol);
+  const auto root = TargetSideRoots(p, target).front();
+  int found = 0;
+  for (std::size_t i = 0; i < result.lambda.size(); i++)
+  {
+    CAPTURE(i, result.lambda[i], result.backward_error[i]);
+    CHECK(p.BackwardError(result.lambda[i], result.x[i]) <= 10.0 * tol);
+    if (std::abs(result.lambda[i] - root) <= 1.0e-6 * std::abs(root))
+    {
+      found++;
+      CHECK(Overlap(result.x[i], p.Unit(0)) > 1.0 - 1.0e-6);
+    }
+  }
+  CHECK(found >= 1);
 }
