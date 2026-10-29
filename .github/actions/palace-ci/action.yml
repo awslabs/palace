@@ -301,45 +301,42 @@ runs:
       run: |
         set +e
         . /opt/intel/oneapi/setvars.sh > /dev/null 2>&1
-        icpx --version
-        dpkg -l | grep -i 'intel-oneapi-compiler' | awk '{print $2, $3}'
-        apt-cache policy intel-oneapi-compiler-dpcpp-cpp | head -20
-        apt-cache madison intel-oneapi-compiler-dpcpp-cpp | head -20
-        for f in /tmp/*/spack-stage/spack-stage-slate-*/spack-build-out.txt; do
-          echo "=== $f"
-          grep -n -B2 -A60 "Stack dump" "$f" | head -150
-          break
-        done
-        sh=$(ls /tmp/icpx-*/generate_matrix_ge-*.sh 2>/dev/null | head -1)
-        [ -n "$sh" ] || { echo "no reproducer found"; ls -d /tmp/icpx-* ; exit 0; }
-        echo "=== $sh"; head -c 8000 "$sh"; echo
-        cd "$(dirname "$sh")"
+        sh=$(ls -t /tmp/icpx-*/generate_matrix_ge-*.sh 2>/dev/null | head -1)
+        [ -n "$sh" ] || { echo "no reproducer found"; exit 0; }
+        d=$(dirname "$sh"); cpp=$(ls "$d"/generate_matrix_ge-*.cpp | head -1)
+        cd "$d"
         cmd=$(grep -v '^#' "$sh" | grep -- '-cc1' | tail -1)
         cmd=$(printf '%s' "$cmd" | sed -E 's/"-o" "[^"]*"/"-o" "\/dev\/null"/')
         try() {
-          local name="$1"; shift; local c="$cmd"
-          for s in "$@"; do c=$(printf '%s' "$c" | sed -E "$s"); done
-          echo "--- variant ${name}"
-          ( eval "timeout 600 $c" ) > "/tmp/variant-${name}.log" 2>&1
-          echo "rc=$?"
-          grep -m12 -E "^[0-9]+\.\s|error:" "/tmp/variant-${name}.log"
+          local name="$1"; local extra="$2"
+          echo "--- cc1 variant ${name}: ${extra}"
+          ( eval "timeout 900 $cmd $extra" ) > "/tmp/variant-${name}.log" 2>&1
+          echo "rc=$?"; grep -m6 -E "^[0-9]+\.\s|error:" "/tmp/variant-${name}.log"
         }
-        GEN='s/"-target-feature" "[^"]*" ?//g'
-        try base
-        try O2 's/"-O3"/"-O2"/'
-        try O1 's/"-O3"/"-O1"/'
-        try O0 's/"-O3"/"-O0"/'
-        try novec 's/"-vectorize-loops" ?//; s/"-vectorize-slp" ?//'
-        try noslp 's/"-vectorize-slp" ?//'
-        try noloopvec 's/"-vectorize-loops" ?//'
-        try x86-64 's/"-target-cpu" "[^"]*"/"-target-cpu" "x86-64"/' "$GEN"
-        try x86-64-v3 's/"-target-cpu" "[^"]*"/"-target-cpu" "x86-64-v3"/' "$GEN"
-        try x86-64-v4 's/"-target-cpu" "[^"]*"/"-target-cpu" "x86-64-v4"/' "$GEN"
-        try icelake 's/"-target-cpu" "[^"]*"/"-target-cpu" "icelake-server"/' "$GEN"
-        try noomp 's/"-fopenmp[^"]*" ?//g'
-        try fpmodel 's/"-ffp-contract=[^"]*" ?//'
-        echo "=== base variant full head"
-        head -80 /tmp/variant-base.log
+        dtry() {
+          local name="$1"; shift
+          echo "--- icpx variant ${name}: $*"
+          timeout 900 icpx -march=sapphirerapids -mtune=sapphirerapids -fPIC -fiopenmp -c "$cpp" -o /dev/null "$@" > "/tmp/dvariant-${name}.log" 2>&1
+          echo "rc=$?"; grep -m6 -E "^[0-9]+\.\s|error:" "/tmp/dvariant-${name}.log"
+        }
+        try base ''
+        try nohoist '"-mllvm" "-disable-spill-hoist"'
+        try rabasic '"-mllvm" "-regalloc=basic"'
+        try nosplit '"-mllvm" "-split-spill-mode=default"'
+        dtry O3 -O3
+        dtry O3-O2 -O3 -O2
+        dtry O3-nohoist -O3 -mllvm -disable-spill-hoist
+        dtry O3-rabasic -O3 -mllvm -regalloc=basic
+        dtry O3-precise -O3 -fp-model=precise
+        dtry O3-noinline -O3 -fno-inline-functions
+        dtry O2 -O2
+        # Find every slate source that crashes the compiler.
+        cd "$GITHUB_WORKSPACE"
+        b=$(ls -d /tmp/*/spack-stage/spack-stage-slate-*/spack-build-* | head -1)
+        echo "=== make -k in $b"
+        spack -e . build-env slate -- make -k -j "$(nproc)" -C "$b" > /tmp/slate-makek.log 2>&1
+        echo "make rc=$?"
+        grep -E "Error [0-9]|frontend command failed" /tmp/slate-makek.log | sort | uniq -c | head -40
 
     - name: Print @develop commit hashes
       if: inputs.use-develop-deps == 'true'
