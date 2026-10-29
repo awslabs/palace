@@ -377,6 +377,26 @@ public:
   CurrentDipoleData(const json &source);
 };
 
+struct PlaneWaveData
+{
+public:
+  // Volume attributes of the total-field region, inside the Huygens surface. The plane wave
+  // is injected on the boundary of this region, which must be surrounded by vacuum.
+  std::vector<int> attributes = {};
+
+  // Propagation direction and polarization of the electric field (normalized; the
+  // polarization is made orthogonal to the propagation direction).
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+  std::array<double, 3> polarization{{0.0, 0.0, 0.0}};
+
+  // Electric field amplitude [V/m] and phase reference point (zero phase at this point).
+  double amplitude = 1.0;
+  std::array<double, 3> origin{{0.0, 0.0, 0.0}};
+
+  PlaneWaveData() = default;
+  PlaneWaveData(const json &source);
+};
+
 struct DomainData
 {
 public:
@@ -386,6 +406,7 @@ public:
   // Domain objects.
   std::vector<MaterialData> materials = {};
   std::map<int, CurrentDipoleData> current_dipole = {};
+  std::map<int, PlaneWaveData> plane_wave = {};
   DomainPostData postpro = {};
 
   DomainData() = default;
@@ -1387,6 +1408,7 @@ void Nondimensionalize(const Units &units, RefinementData &data);
 void Nondimensionalize(const Units &units, MaterialData &data);
 void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
+void Nondimensionalize(const Units &units, PlaneWaveData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
 void Nondimensionalize(const Units &units, SuperconductorData &data);
