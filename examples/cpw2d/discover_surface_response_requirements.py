@@ -397,6 +397,12 @@ def restore_source_status(manifest, source_library, placeholder_requirements):
         counts[status] += int(requirement["Count"])
         lengths[status] += float(requirement.get("TotalEdgeLength", 0.0))
     result["Summary"] = {"Counts": counts, "TotalEdgeLengths": lengths}
+    if "GeometryFallbacks" in manifest.get("Summary", {}):
+        # The geometry fallbacks of the final preflight (USER decision 1000 (b)) survive the
+        # status restoration: the designer's manifest names its RAW-BY-FALLBACK features.
+        result["Summary"]["GeometryFallbacks"] = copy.deepcopy(
+            manifest["Summary"]["GeometryFallbacks"]
+        )
     result["Complete"] = counts["Missing"] == 0
     return result
 
@@ -467,6 +473,13 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
         pass_response = response_section(pass_config)
         pass_response["Library"] = str(library_path)
         pass_response["UnmatchedPolicy"] = "Warn"
+        # Geometry fallbacks (USER decision 1000 (b), supervisor 1001 Q2): the discovery
+        # preflights run with the EXPLICIT RecordRaw leaf, so a design with a geometry
+        # fallback (a feature the placement refuses, an alias key mismatch, ...) still
+        # closes: the fallback is RECORDED (Summary.GeometryFallbacks, listed RAW-BY-FALLBACK
+        # below) and the library is built for the rest; a bare preflight (FailClosed default)
+        # would exit non-zero instead. One bad feature never kills a whole library build.
+        pass_response["GeometryFailurePolicy"] = "RecordRaw"
         pass_config_path = pass_root / "config.json"
         write_json(pass_config_path, pass_config)
         run_preflight(palace, pass_config_path, pass_root / "preflight.log")
@@ -480,6 +493,7 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
         production_config["Problem"]["Output"] = str(pass_root / "production-postpro")
         production_response = response_section(production_config)
         production_response["UnmatchedPolicy"] = "Error"
+        production_response["GeometryFailurePolicy"] = "RecordRaw"
         production_config_path = pass_root / "production-config.json"
         write_json(production_config_path, production_config)
         run_preflight(
@@ -560,6 +574,7 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
                 "DiscoverySummary": manifest["Summary"],
                 "ProductionSummary": production_manifest["Summary"],
                 "AddedPlaceholders": added,
+                "GeometryFallbacks": geometry_fallbacks_record(production_manifest),
             }
         )
         if not added:
@@ -602,20 +617,62 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
     final_manifest["UnplaceableRequirements"] = unplaceable_records
     manifest_path = output / "surface-response-requirements.json"
     write_json(manifest_path, final_manifest)
-    write_json(
-        output / "closure-history.json",
-        {
-            "Version": 1,
-            "SourceConfig": str(config_path),
-            "SourceLibrary": str(source_path),
-            "Passes": history,
-            "PlaceholderCount": len(placeholder_names),
-            "OmittedRequirements": omitted_records,
-            "UnplaceableRequirements": unplaceable_records,
-            "CompleteAgainstSourceLibrary": final_manifest["Complete"],
-        },
-    )
+    geometry_fallbacks = geometry_fallbacks_record(final_manifest)
+    closure_history = {
+        "Version": 1,
+        "SourceConfig": str(config_path),
+        "SourceLibrary": str(source_path),
+        "Passes": history,
+        "PlaceholderCount": len(placeholder_names),
+        "OmittedRequirements": omitted_records,
+        "UnplaceableRequirements": unplaceable_records,
+        "CompleteAgainstSourceLibrary": final_manifest["Complete"],
+    }
+    if geometry_fallbacks is not None:
+        closure_history["GeometryFallbacks"] = geometry_fallbacks
+        print(describe_geometry_fallbacks(geometry_fallbacks), flush=True)
+    write_json(output / "closure-history.json", closure_history)
     return final_manifest
+
+
+def geometry_fallbacks_record(manifest):
+    """The manifest's GeometryFallbacks record (Identification.Diagnostics, with the Summary
+    leaf's RawShareByLength) or None when no converted site fired (the normal case)."""
+    record = manifest.get("Identification", {}).get("Diagnostics", {}).get("GeometryFallbacks")
+    if record is None:
+        return None
+    return {
+        "Count": record.get("Count"),
+        "Classes": record.get("Classes", {}),
+        "RawShareByLength": record.get("RawShareByLength", {}),
+        "Entries": record.get("Entries", []),
+    }
+
+
+def describe_geometry_fallbacks(record):
+    """The RAW-BY-FALLBACK listing printed with the closure (USER decision 1000 (b): never
+    silent): every feature the preflight recorded as a geometry fallback, with its class."""
+    lines = [
+        f"GEOMETRY FALLBACKS (RecordRaw): {record['Count']} recorded; the listed features are "
+        "RAW-BY-FALLBACK (no coupon is built for them; the library is built for the rest)"
+    ]
+    for entry in record["Entries"]:
+        lines.append(
+            "  {cls} ({what}; features {features}; models {models}; length {length:.6e}): "
+            "{reason}".format(
+                cls=entry.get("Class"),
+                what=entry.get("What"),
+                features=entry.get("Features", []),
+                models=entry.get("Models", []),
+                length=float(entry.get("Length", 0.0)),
+                reason=entry.get("Reason", ""),
+            )
+        )
+    for type_name, share in sorted(record.get("RawShareByLength", {}).items()):
+        lines.append(
+            f"  raw share by length {type_name}: {100.0 * float(share.get('Share', 0.0)):.3f} %"
+        )
+    return "\n".join(lines)
 
 
 def main():

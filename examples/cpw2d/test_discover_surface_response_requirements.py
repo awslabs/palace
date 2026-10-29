@@ -160,8 +160,11 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
              {"Conductor": 1, "GapSide": -1, "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}", "OffsetOverR": 2.105263}]}},
     ]
 
-    def fake_device(self, tmp):
-        """A device config + source library + an executable fake Palace (geometry preflight only)."""
+    def fake_device(self, tmp, geometry_fallback=False):
+        """A device config + source library + an executable fake Palace (geometry preflight only).
+        The fake asserts the explicit RecordRaw leaf of decision 1001 Q2 on every pass config;
+        with geometry_fallback it writes one KeyMismatch GeometryFallbacks record into the
+        manifest (the form the binary writes when a converted site fires)."""
         requirements = tmp / "fake-requirements.json"
         requirements.write_text(json.dumps(self.FAKE_REQUIREMENTS))
         library = tmp / "process-library.json"
@@ -177,6 +180,7 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
             assert sys.argv[1] == "--surface-response-preflight"
             config = json.load(open(sys.argv[2]))
             response = config["Solver"]["Electrostatic"]["ResponseCorrection"]
+            assert response.get("GeometryFailurePolicy") == "RecordRaw", response
             library = json.load(open(response["Library"]))
             names = {{model["Name"] for model in library["Models"]}}
             requirements = json.load(open({str(requirements)!r}))
@@ -196,6 +200,17 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
                         "Library": {{"Name": library["Name"], "Path": response["Library"],
                                     "MatchingRadius": library["MatchingRadius"]}},
                         "Summary": {{"Counts": counts, "TotalEdgeLengths": lengths}}}}
+            if {geometry_fallback!r}:
+                record = {{"Version": 1, "Policy": "RecordRaw", "Run": "Preflight", "Count": 1,
+                          "Classes": {{"KeyMismatch": 1}},
+                          "Entries": [{{"Class": "KeyMismatch", "Site": "H7a/ResolveLegacyContractAlias:context-digest",
+                                       "Reason": "fake alias digest mismatch", "What": "feature", "Features": [7],
+                                       "Patches": [], "Models": ["legacy-model", "a" * 64], "Length": 3.5,
+                                       "ExampleOrigin": [0.0, 0.0, 0.0], "Interfaces": [4], "Topology": "SpatialEdgeCluster"}}],
+                          "RawShareByLength": {{"SA": {{"FallbackLength": 3.5, "TypeLength": 70.0, "Share": 0.05}}}}}}
+                manifest["Identification"] = {{"Diagnostics": {{"GeometryFallbacks": record}}}}
+                manifest["Summary"]["GeometryFallbacks"] = {{"Count": 1, "Classes": record["Classes"],
+                                                            "RawShareByLength": record["RawShareByLength"]}}
             (output / "surface-response-requirements.json").write_text(json.dumps(manifest))
             """))
         palace.chmod(palace.stat().st_mode | stat.S_IXUSR)
@@ -244,6 +259,44 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
                 DISCOVERY.discover(config, tmp / "typo", palace, omit_requirements=["cccccccc"])
             with self.assertRaises(ValueError):
                 DISCOVERY.discover(config, tmp / "empty", palace, omit_requirements=[""])
+
+    def test_geometry_fallbacks_are_carried_into_the_closure_and_listed(self):
+        """Decision 1001 Q2: every pass config carries GeometryFailurePolicy RecordRaw (the fake
+        asserts it); a manifest with a GeometryFallbacks record closes (no stall), the record reaches
+        closure-history.json (per pass and at the top) and the final manifest, and the RAW-BY-FALLBACK
+        listing names the feature with its class; without a record nothing is added (the normal case)."""
+        with tempfile.TemporaryDirectory(prefix="discover-fallback-") as tmp:
+            tmp = Path(tmp)
+            config, palace = self.fake_device(tmp, geometry_fallback=True)
+            manifest = DISCOVERY.discover(config, tmp / "fallback", palace)
+            record = manifest["Identification"]["Diagnostics"]["GeometryFallbacks"]
+            self.assertEqual(record["Count"], 1)
+            self.assertEqual(manifest["Summary"]["GeometryFallbacks"]["Classes"], {"KeyMismatch": 1})
+            history = json.loads((tmp / "fallback" / "closure-history.json").read_text())
+            self.assertEqual(history["GeometryFallbacks"]["Classes"], {"KeyMismatch": 1})
+            self.assertEqual(history["GeometryFallbacks"]["Entries"][0]["Features"], [7])
+            for entry in history["Passes"]:
+                self.assertEqual(entry["GeometryFallbacks"]["Count"], 1)
+            listing = DISCOVERY.describe_geometry_fallbacks(history["GeometryFallbacks"])
+            self.assertIn("GEOMETRY FALLBACKS (RecordRaw): 1 recorded", listing)
+            self.assertIn("KeyMismatch (feature; features [7]; models ['legacy-model'", listing)
+            self.assertIn("RAW-BY-FALLBACK", listing)
+            self.assertIn("raw share by length SA: 5.000 %", listing)
+            # The normal case: no record anywhere, the leaf on every pass config.
+            plain = tmp / "plain"
+            plain.mkdir()
+            config, palace = self.fake_device(plain, geometry_fallback=False)
+            manifest = DISCOVERY.discover(config, plain / "out", palace)
+            self.assertNotIn("Identification", manifest)
+            self.assertNotIn("GeometryFallbacks", manifest["Summary"])
+            history = json.loads((plain / "out" / "closure-history.json").read_text())
+            self.assertNotIn("GeometryFallbacks", history)
+            self.assertIsNone(history["Passes"][0]["GeometryFallbacks"])
+            self.assertIsNone(DISCOVERY.geometry_fallbacks_record(manifest))
+            for pass_dir in ("pass-01", "pass-02"):
+                for name in ("config.json", "production-config.json"):
+                    pass_config = json.loads((plain / "out" / pass_dir / name).read_text())
+                    self.assertEqual(pass_config["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"], "RecordRaw")
 
     def test_restore_source_status_marks_only_placeholders_missing(self):
         manifest = {
