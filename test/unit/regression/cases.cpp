@@ -1501,6 +1501,44 @@ TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
                                   "order2", opts);
 }
 
+// Circuit synthesis of the shorted guide of cylinder_driven_wave_tm_adaptive with a lossy
+// fill. The TM01 port mode (E_n != 0, so the modal correction W is folded into the
+// synthesized circuit) is lossy, and the synthesized port load must carry its attenuation
+// Im{k_n}: the coupled round-trip reconstructs S11 from the synthesized pencil to ~1e-8 of
+// the live field-derived port-S, which a fit of Re{k_n} only misses by up to 8e-3. The
+// synthesized eigenvalue estimates are not converged HDM eigenpairs here, so they are
+// presence-checked only.
+TEST_CASE("cylinder_driven_wave_tm_lossy_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
+                         "error-indicators.csv", "domain-E.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-6),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-7)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_lossy_synth.json",
+                                  "driven_wave_tm_lossy_synth", opts);
+}
+
 // Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port
 // iris-coupled slab-loaded guide carry the hybrid/LSM mode (Mode 3), so the modal
 // correction W is rank>=2 and enters the nonlinear eigensolver on the LHS. Dropping or
@@ -1689,6 +1727,44 @@ TEST_CASE("coaxial_wave_conductivity", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(1, opts_z);
   palace::test::RunRegressionCase("coaxial", "wave_conductivity.json", "wave_conductivity",
                                   opts);
+}
+
+// Circuit synthesis of the uniform coaxial line of finite-conductivity conductors between
+// two wave ports of coaxial_wave_conductivity. The synthesized port loads must carry the
+// attenuation of the lossy quasi-TEM port modes, Im{k_n}: the coupled round-trip
+// reconstructs the 2x2 S from the synthesized pencil to ~1e-5 of the live field-derived
+// port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2. The
+// synthesized eigenvalues are the far, nonphysical poles of the matched line (Q < 1), so
+// they are presence-checked only.
+TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
+                         "error-indicators.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-4),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-5)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("coaxial", "wave_conductivity_synth.json",
+                                  "wave_conductivity_synth", opts);
 }
 
 // Mixed lumped + wave port circuit synthesis. Validates that the exported coupling maps

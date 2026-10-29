@@ -1608,50 +1608,50 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   auto fit_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
   auto dense_omegas = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_dense);
 
-  // Sample kₙ,p on the fit grid. Each call triggers (or hits the cache of)
-  // WavePortData::Initialize. Cheap because the cross-section EVP is small. The synthesized
-  // port load models the port line as lossless: only the real (propagating) part of kₙ is
-  // fit, while the full and reduced-order models include the attenuation Im{kₙ} of a lossy
-  // port mode in the wave-port boundary condition.
-  Eigen::VectorXcd y_fit(n_fit);
-  double max_atten = 0.0;
+  // Sample kₙ,p on the fit and validation grids. Each call triggers (or hits the cache of)
+  // WavePortData::Initialize. Cheap because the cross-section EVP is small. kₙ is complex
+  // for a lossy port mode: its imaginary part, the attenuation of the mode, is fit along
+  // with the real part so the synthesized port load carries it like the full and
+  // reduced-order models. For a lossless port mode, the imaginary part is roundoff: drop it
+  // when it is below the fit tolerance, so that a lossless port line keeps a real fit (and
+  // real-valued port load matrices).
+  Eigen::VectorXcd y_fit(n_fit), y_dense(n_dense);
   for (int i = 0; i < n_fit; i++)
   {
-    const std::complex<double> kn =
-        space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
-    y_fit(i) = kn.real();
-    if (std::abs(kn) > 0.0)
-    {
-      max_atten = std::max(max_atten, std::abs(kn.imag()) / std::abs(kn));
-    }
+    y_fit(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
   }
-  if (max_atten > 1.0e-3)
+  for (int i = 0; i < n_dense; i++)
   {
-    Mpi::Warning("Wave port {:d}: circuit synthesis models the port line as lossless, "
-                 "neglecting the attenuation of the lossy port mode (|Im{{kₙ}}| / |kₙ| up "
-                 "to {:.3e} in the band)!\n",
-                 port_idx, max_atten);
+    y_dense(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, dense_omegas[i]);
   }
+  const double max_abs_kn =
+      std::max(y_fit.cwiseAbs().maxCoeff(), y_dense.cwiseAbs().maxCoeff());
+  const double max_abs_imag =
+      std::max(y_fit.imag().cwiseAbs().maxCoeff(), y_dense.imag().cwiseAbs().maxCoeff());
+  if (max_abs_imag <= waveport_synthesis_tol * max_abs_kn)
+  {
+    y_fit = y_fit.real().cast<std::complex<double>>();
+    y_dense = y_dense.real().cast<std::complex<double>>();
+  }
+  const double max_abs_truth = y_dense.cwiseAbs().maxCoeff();
+
   // LSQ polynomial fit at order 2 in ω. Higher orders cannot be absorbed into the
-  // K + iωC − ω²M synthesis structure (cf. design notes). The samples are real, so the
-  // complex LSQ returns real coefficients (imaginary parts exactly zero).
+  // K + iωC − ω²M synthesis structure (cf. design notes). Real samples give real
+  // coefficients (imaginary parts exactly zero).
   Eigen::Vector3cd coeffs = FitQuadratic(fit_omegas, y_fit);
-  fit.alpha0 = coeffs(0).real();
-  fit.alpha1 = coeffs(1).real();
-  fit.alpha2 = coeffs(2).real();
+  fit.alpha0c = coeffs(0);
+  fit.alpha1c = coeffs(1);
+  fit.alpha2c = coeffs(2);
 
   // Residual on the dense grid: relative error on kₙ. The 1/(ωμ) factor in the
   // wave-port admittance Y_p(ω) = kₙ,p(ω)/(iωμ) cancels in the ratio, so kₙ is the
   // right proxy for the user-visible synthesis accuracy (no HDM data required).
-  double max_rel = 0.0, max_abs_truth = 0.0;
+  double max_rel = 0.0;
   for (int i = 0; i < n_dense; i++)
   {
-    const double w = dense_omegas[i];
-    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w).real();
     // fit.aux is still empty here, so EvaluateWavePortKnFit returns the bare polynomial.
-    const double poly = EvaluateWavePortKnFit(fit, w);
-    max_abs_truth = std::max(max_abs_truth, std::abs(truth));
-    max_rel = std::max(max_rel, std::abs(poly - truth));
+    max_rel = std::max(max_rel,
+                       std::abs(EvaluateWavePortKnFit(fit, dense_omegas[i]) - y_dense(i)));
   }
   fit.rel_err_polynomial = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
   fit.rel_err_augmented = fit.rel_err_polynomial;
@@ -1661,14 +1661,11 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
 
   if (fit.regime == WavePortRegime::Polynomial)
   {
-    if (meets_tol)
-    {
-      Mpi::Print(
-          " Wave port {:d}: polynomial synthesis residual {:.3e} (tol {:.3e}, α₀={:.3e}, "
-          "α₁={:.3e}, α₂={:.3e})\n",
-          port_idx, fit.rel_err_polynomial, waveport_synthesis_tol, fit.alpha0, fit.alpha1,
-          fit.alpha2);
-    }
+    Mpi::Print(" Wave port {:d}: polynomial synthesis residual {:.3e} (tol {:.3e}, "
+               "α₀={:.3e}{:+.3e}i, α₁={:.3e}{:+.3e}i, α₂={:.3e}{:+.3e}i)\n",
+               port_idx, fit.rel_err_polynomial, waveport_synthesis_tol, fit.alpha0c.real(),
+               fit.alpha0c.imag(), fit.alpha1c.real(), fit.alpha1c.imag(),
+               fit.alpha2c.real(), fit.alpha2c.imag());
     return fit;
   }
 
@@ -1677,20 +1674,15 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   Eigen::VectorXcd F_aaa(n_fit);
   for (int i = 0; i < n_fit; i++)
   {
-    const double w = fit_omegas[i];
-    F_aaa(i) = y_fit(i) - (fit.alpha0 + fit.alpha1 * w + fit.alpha2 * w * w);
+    F_aaa(i) = y_fit(i) - EvaluateWavePortKnFit(fit, fit_omegas[i]);
   }
   auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, max_abs_truth,
                              waveport_synthesis_order_max);
 
   // Fold any polynomial quotient from the barycentric-to-pole conversion into the base
-  // quadratic. Real wave-port samples produce a real quotient up to roundoff.
-  std::complex<double> alpha0 = fit.alpha0, alpha1 = fit.alpha1, alpha2 = fit.alpha2;
-  FoldAAAPolynomialIntoQuadratic(pr, alpha0, alpha1, alpha2);
-  fit.alpha0 = alpha0.real();
-  fit.alpha1 = alpha1.real();
-  fit.alpha2 = alpha2.real();
-  const double aaa_q0 = pr.polynomial.size() > 0 ? pr.polynomial(0).real() : 0.0;
+  // quadratic.
+  FoldAAAPolynomialIntoQuadratic(pr, fit.alpha0c, fit.alpha1c, fit.alpha2c);
+  const std::complex<double> aaa_q0 = pr.polynomial.size() > 0 ? pr.polynomial(0) : 0.0;
 
   auto [poles, residues] = ToPoleResidueVectors(pr);
 
@@ -1704,13 +1696,12 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   fit.aux = std::move(blk);
 
   // Re-evaluate residual on the dense grid using the augmented model, via the shared
-  // evaluator (α-polynomial + Σ Re(rₖ/(ω−pₖ))).
+  // evaluator (α-polynomial + Σ rₖ/(ω−pₖ)).
   max_rel = 0.0;
   for (int i = 0; i < n_dense; i++)
   {
-    const double w = dense_omegas[i];
-    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w).real();
-    max_rel = std::max(max_rel, std::abs(EvaluateWavePortKnFit(fit, w) - truth));
+    max_rel = std::max(max_rel,
+                       std::abs(EvaluateWavePortKnFit(fit, dense_omegas[i]) - y_dense(i)));
   }
   fit.rel_err_augmented = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
 
@@ -1719,11 +1710,13 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   const std::size_t aux_per_port = n_poles * rank_used;
   Mpi::Print(" Wave port {:d}: augmented synthesis residual {:.3e} → {:.3e} "
              "(tol {:.3e}, {:d} pole{} × rank-{:d} mass = +{:d} aux state{}, "
-             "α₀={:.3e}, α₁={:.3e}, α₂={:.3e}, q₀={:.3e})\n",
+             "α₀={:.3e}{:+.3e}i, α₁={:.3e}{:+.3e}i, α₂={:.3e}{:+.3e}i, "
+             "q₀={:.3e}{:+.3e}i)\n",
              port_idx, fit.rel_err_polynomial, fit.rel_err_augmented,
              waveport_synthesis_tol, n_poles, n_poles == 1 ? "" : "s", rank_used,
-             aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0, fit.alpha1, fit.alpha2,
-             aaa_q0);
+             aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0c.real(),
+             fit.alpha0c.imag(), fit.alpha1c.real(), fit.alpha1c.imag(), fit.alpha2c.real(),
+             fit.alpha2c.imag(), aaa_q0.real(), aaa_q0.imag());
   if (fit.rel_err_augmented > waveport_synthesis_tol)
   {
     Mpi::Warning("Wave port {:d}: augmented synthesis residual {:.3e} exceeds "
@@ -1734,39 +1727,23 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   return fit;
 }
 
-double RomOperator::EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega)
+std::complex<double> RomOperator::EvaluateWavePortKnFit(const WavePortDispersionFit &fit,
+                                                        std::complex<double> omega)
 {
-  // Real wave-port dispersion model: kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ Re(rₖ/(ω−pₖ)). The pole
-  // sum is present only in the Augmented regime (fit.aux holds the AAA poles/residues); in
-  // the Polynomial regime fit.aux is empty and this reduces to the quadratic. This is the
-  // analytic continuation evaluated on the real axis — the same expression the synthesis
-  // pencil realizes via Kr/Cr/Mr (α-part) plus aux states (pole part).
-  double kn = fit.alpha0 + fit.alpha1 * omega + fit.alpha2 * omega * omega;
+  // Wave-port dispersion model: kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ rₖ/(ω−pₖ). The pole sum is
+  // present only in the Augmented regime (fit.aux holds the AAA poles/residues); in the
+  // Polynomial regime fit.aux is empty and this reduces to the quadratic. This is the same
+  // analytic expression the synthesis pencil realizes via Kr/Cr/Mr (α-part) plus aux states
+  // (pole part).
+  std::complex<double> kn = fit.alpha0c + fit.alpha1c * omega + fit.alpha2c * omega * omega;
   if (fit.aux)
   {
-    const std::complex<double> wc(omega, 0.0);
     for (std::size_t k = 0; k < fit.aux->poles.size(); k++)
     {
-      kn += (fit.aux->residues[k] / (wc - fit.aux->poles[k])).real();
+      kn += fit.aux->residues[k] / (omega - fit.aux->poles[k]);
     }
   }
   return kn;
-}
-
-void RomOperator::ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
-                                                const Eigen::MatrixXcd &Mp_r,
-                                                Eigen::MatrixXcd &Kr_corr,
-                                                Eigen::MatrixXcd &Cr_corr,
-                                                Eigen::MatrixXcd &Mr_corr)
-{
-  // Mp_r is purely imaginary (= i·M_proj). Multiplying by α₀ folds α₀·M_proj into the
-  // imaginary part of Kr (which becomes Im(L⁻¹)); +α₁·M_proj appears in the real part
-  // of Cr (Re(R⁻¹), since iω·(α₁·M_proj) supplies the i); and -α₂·M_proj adds to the
-  // imaginary part of Mr (Im(C)). Signs are set so the sum recovers
-  // i·(α₀+α₁ω+α₂ω²)·M_proj·v in Aᵣ(ω).
-  Kr_corr += std::complex<double>(fit.alpha0, 0.0) * Mp_r;
-  Cr_corr += std::complex<double>(0.0, -fit.alpha1) * Mp_r;
-  Mr_corr += std::complex<double>(-fit.alpha2, 0.0) * Mp_r;
 }
 
 void RomOperator::ApplyComplexPolynomialFitCorrections(
@@ -1774,11 +1751,12 @@ void RomOperator::ApplyComplexPolynomialFitCorrections(
     const Eigen::MatrixXcd &Mp_r, Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr,
     Eigen::MatrixXcd &Mr_corr)
 {
-  // Complex-α generalization of ApplyPolynomialFitCorrections. Mp_r = i·M_proj. The target
-  // contribution to Aᵣ(ω) is i·(α₀+α₁ω+α₂ω²)·M_proj·v = (α₀+α₁ω+α₂ω²)·Mp_r·v, matched into
-  // K + iωC − ω²M by: α₀ → Kr (constant), α₁ → Cr via iω·(α₁/i)·Mp_r so Cr_corr gets
-  // -i·α₁·Mp_r, and α₂ → Mr via −ω²·(−α₂)·Mp_r so Mr_corr gets −α₂·Mp_r. (Identical sign
-  // structure to the real-α version, now carrying the full complex coefficients.)
+  // Mp_r = i·M_proj. The target contribution to Aᵣ(ω) is i·(α₀+α₁ω+α₂ω²)·M_proj·v =
+  // (α₀+α₁ω+α₂ω²)·Mp_r·v, matched into K + iωC − ω²M by: α₀ → Kr (constant), α₁ → Cr via
+  // iω·(α₁/i)·Mp_r so Cr_corr gets -i·α₁·Mp_r, and α₂ → Mr via −ω²·(−α₂)·Mp_r so Mr_corr
+  // gets −α₂·Mp_r. For real α (a lossless wave port), α₀·M_proj lands in the imaginary part
+  // of Kr (which becomes Im(L⁻¹)), α₁·M_proj in the real part of Cr (Re(R⁻¹)), and
+  // −α₂·M_proj in the imaginary part of Mr (Im(C)).
   Kr_corr += alpha0 * Mp_r;
   Cr_corr += std::complex<double>(0.0, -1.0) * alpha1 * Mp_r;
   Mr_corr += (-alpha2) * Mp_r;
@@ -1872,13 +1850,10 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
 {
   // Generalized scalar-dispersion fit for a non-wave-port frequency-dependent BC. Mirrors
   // FitWavePortDispersion but samples an arbitrary (generally complex) scalar f(ω) instead
-  // of the real wave-port kₙ(ω), and carries complex polynomial coefficients. The aux block
-  // (when augmenting) is built from Mp_r via MakeAuxBlock. NOTE: this routine only sets the
-  // fit metadata (regime + residuals) and the aux block; the polynomial part is applied by
-  // the caller via ApplyComplexPolynomialFitCorrections using the complex coefficients
-  // stored in alpha0c/alpha1c/alpha2c below (returned through the fit's real α fields is
-  // not possible since those are real, so the caller reads the complex coeffs from the
-  // returned struct's *_c members — see WavePortDispersionFit).
+  // of the wave-port kₙ(ω). The aux block (when augmenting) is built from Mp_r via
+  // MakeAuxBlock. NOTE: this routine only sets the fit metadata (regime + residuals), the
+  // complex coefficients alpha0c/alpha1c/alpha2c, and the aux block; the polynomial part is
+  // applied by the caller via ApplyComplexPolynomialFitCorrections.
   WavePortDispersionFit fit;
   fit.port_idx = -1;  // not a wave port
 
@@ -2161,8 +2136,9 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
 
   // Wave-port dispersion handling. Online, SolvePROM assembles
   //   Ar(ω) = Kr + iω Cr − ω² Mr + Σₚ kₙ,ₚ(ω)·Mp_r,
-  // where Mp_r is purely imaginary. For circuit synthesis we replace kₙ,ₚ(ω) with an
-  // approximation that fits inside a quadratic-in-ω pencil:
+  // where Mp_r is purely imaginary and kₙ,ₚ(ω) is complex for a lossy port mode. For
+  // circuit synthesis we replace kₙ,ₚ(ω) with an approximation that fits inside a
+  // quadratic-in-ω pencil, with complex coefficients:
   //
   //   • Polynomial regime: kₙ,ₚ(ω) ≈ α₀ + α₁ω + α₂ω², absorbed into Kr/Cr/Mr.
   //   • Augmented regime: residual δkₙ(ω) = kₙ(ω) − (α₀+α₁ω+α₂ω²) fit by an AAA
@@ -2205,13 +2181,14 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       port_load.Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-      ApplyPolynomialFitCorrections(fit, Mp_r, port_load.Kr_corr, port_load.Cr_corr,
-                                    port_load.Mr_corr);
+      ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_r,
+                                           port_load.Kr_corr, port_load.Cr_corr,
+                                           port_load.Mr_corr);
       if (port_data.active)
       {
         // Active ports also load the total pencil and carry their dispersion aux states.
-        ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr,
-                                      Mr_total_corr);
+        ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_r,
+                                             Kr_total_corr, Cr_total_corr, Mr_total_corr);
         if (fit.aux)
         {
           aux_blocks_total.push_back(*fit.aux);
