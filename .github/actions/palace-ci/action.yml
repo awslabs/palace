@@ -332,7 +332,7 @@ runs:
         dtry O2 -O2
         # Find every slate source that crashes the compiler.
         cd "$GITHUB_WORKSPACE"
-        b=$(ls -d /tmp/*/spack-stage/spack-stage-slate-*/spack-build-* | head -1)
+        b=$(ls -d /tmp/*/spack-stage/spack-stage-slate-*/spack-build-*/ | head -1)
         echo "=== make -k in $b"
         spack -e . build-env slate -- make -k -j "$(nproc)" -C "$b" > /tmp/slate-makek.log 2>&1
         echo "make rc=$?"
