@@ -17,6 +17,11 @@
 #include <StrumpackConfig.hpp>
 #endif
 
+// The tests catch the exceptions MFEM throws on errors instead of aborting
+#if !defined(MFEM_USE_EXCEPTIONS)
+#error "The unit tests require MFEM built with exceptions (mfem+exceptions in Spack)"
+#endif
+
 using namespace palace;
 
 // Global test options configurable from command line.

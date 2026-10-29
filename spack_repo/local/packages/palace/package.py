@@ -367,7 +367,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mfem~sundials", when="~sundials")
         depends_on("mfem+gslib", when="+gslib")
         depends_on("mfem~gslib", when="~gslib")
-        # Palace tests require mfem+exceptions, checked at build time.
+        # Palace tests require mfem+exceptions, checked when compiling them.
         # TODO: depends_on("mfem+exceptions", type="test") should work but
         # the concretizer enables +exceptions even for non-test builds:
         # https://github.com/spack/spack/issues/51775
@@ -491,11 +491,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         args = [
             self.define_from_variant("CMAKE_CXX_STANDARD", "cxxstd"),
             self.define_from_variant("BUILD_SHARED_LIBS", "shared"),
-            self.define_from_variant("PALACE_WITH_64BIT_INT", "int64"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
             self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
             self.define_from_variant("PALACE_WITH_HIP", "rocm"),
-            self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
@@ -563,7 +561,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
         elif self.spec.satisfies("@:0.15"):
-            args.append(self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests))
+            # The superbuild builds MFEM and its dependencies before 0.16
+            args.extend(
+                [
+                    self.define_from_variant("PALACE_WITH_64BIT_INT", "int64"),
+                    self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
+                    self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
+                ]
+            )
             # Pass libraries down to the ExternalMFEM cmake file. Needed only
             # before 0.16 because we compile MFEM with Spack afterwards.
             hypre_packages = ["LAPACK", "BLAS"]
@@ -744,11 +749,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     def build(self, spec, prefix):
         with working_dir(self.build_directory):
             if self.run_tests:
-                if spec.satisfies("^mfem~exceptions"):
-                    raise InstallError(
-                        "Palace tests require mfem+exceptions. "
-                        "Reinstall with: spack install palace ^mfem+exceptions"
-                    )
                 make("palace-tests")
             else:
                 make()
