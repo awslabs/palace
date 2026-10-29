@@ -180,6 +180,12 @@ public:
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
 
+  // Whether the stiffness matrix K is complex symmetric. It is not with a Floquet wave
+  // vector which does not depend on frequency, which adds the Hermitian domain Floquet
+  // terms, nor with one which does and a second-order absorbing boundary, which adds its
+  // antisymmetric mixed boundary curl terms.
+  bool HasSymmetricStiffnessMatrix() const;
+
   // Access to underlying BC operator objects for postprocessing.
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }

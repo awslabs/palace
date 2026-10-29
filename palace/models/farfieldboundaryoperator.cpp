@@ -3,7 +3,11 @@
 
 #include "farfieldboundaryoperator.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <numbers>
+#include <string>
 #include "linalg/densematrix.hpp"
 #include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
@@ -20,6 +24,7 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
                                                    const mfem::ParMesh &mesh)
   : FarfieldBoundaryOperator(iodata.boundaries.farfield, iodata.problem.type, mat_op, mesh)
 {
+  CheckFloquetPassivity(iodata.solver, iodata.problem.type, iodata.units, mesh);
 }
 
 FarfieldBoundaryOperator::FarfieldBoundaryOperator(
@@ -34,6 +39,7 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(
     std::ranges::sort(farfield_attr);
     utils::PrettyPrint(farfield_attr);
   }
+  SetUpCurlCurlCoefficients();
 }
 
 mfem::Array<int> FarfieldBoundaryOperator::SetUpBoundaryProperties(
@@ -120,26 +126,109 @@ mfem::DenseTensor ScaledMaterialProperties(const mfem::DenseTensor &c,
   return mat_coeff;
 }
 
-// Matrices k kᵀ and [k x] of the Floquet wave vector k, for the rotated boundary mass and
-// mixed boundary curl terms of the second-order absorbing BC.
-void GetFloquetMatrices(const MaterialOperator &mat_op, mfem::DenseMatrix &kkT,
-                        mfem::DenseMatrix &kx)
+}  // namespace
+
+void FarfieldBoundaryOperator::SetUpCurlCurlCoefficients()
 {
+  if (!farfield_attr.Size() || order < 2)
+  {
+    return;
+  }
+  const auto muinvc0_func = GetCurlCurlCoefficient(mat_op, farfield_attr);
+  curlcurl_attr_mat = muinvc0_func.GetAttributeToMaterial();
+  curlcurl_mat = muinvc0_func.GetMaterialProperties();
+
+  // Matrices k kᵀ and [k x] of the Floquet wave vector k (k₀ with frequency scaling), for
+  // the rotated boundary mass and mixed boundary curl terms. The cross product matrix is
+  // the one of the domain Floquet terms.
+  if (!mat_op.HasWaveVector())
+  {
+    return;
+  }
   const auto &k = mat_op.GetWaveVector();
   MFEM_VERIFY(k.Size() == 3, "Floquet periodicity is only available in 3D!");
-  kkT.SetSize(3);
+  mfem::DenseMatrix kkT(3);
   mfem::MultVVt(k, kkT);
-  kx.SetSize(3);
-  kx = 0.0;
-  kx(0, 1) = -k(2);
-  kx(0, 2) = k(1);
-  kx(1, 0) = k(2);
-  kx(1, 2) = -k(0);
-  kx(2, 0) = -k(1);
-  kx(2, 1) = k(0);
+  curlcurl_kkT_mat = ScaledMaterialProperties(curlcurl_mat, kkT);
+  curlcurl_kx_mat = ScaledMaterialProperties(curlcurl_mat, mat_op.GetWaveVectorCross());
 }
 
-}  // namespace
+void FarfieldBoundaryOperator::CheckFloquetPassivity(const config::SolverData &solver,
+                                                     ProblemType problem_type,
+                                                     const Units &units,
+                                                     const mfem::ParMesh &mesh) const
+{
+  if (!farfield_attr.Size() || order < 2 || !mat_op.HasWaveVector() ||
+      mesh.SpaceDimension() != 3)
+  {
+    return;
+  }
+
+  // Lowest angular frequency of the simulation, where the wavenumber k is smallest.
+  double omega_min = 0.0;
+  if (problem_type == ProblemType::DRIVEN && !solver.driven.sample_f.empty())
+  {
+    omega_min = *std::ranges::min_element(solver.driven.sample_f);
+  }
+  else if (problem_type == ProblemType::EIGENMODE)
+  {
+    omega_min = solver.eigenmode.target;
+  }
+  const bool scaling = mat_op.HasFloquetFrequencyScaling();
+  if (!scaling && omega_min <= 0.0)
+  {
+    return;
+  }
+
+  // Largest tangential part of the wave vector on the absorbing boundary elements, and
+  // largest light speed of the materials next to them (with frequency scaling, the wave
+  // vector is k₀ = k / ω).
+  const auto &k = mat_op.GetWaveVector();
+  const auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), farfield_attr);
+  mfem::IsoparametricTransformation T;
+  mfem::Vector normal(3);
+  double kt_c_max[2] = {0.0, 0.0};  // |k_t|, c
+  for (int i = 0; i < mesh.GetNBE(); i++)
+  {
+    if (!marker[mesh.GetBdrAttribute(i) - 1])
+    {
+      continue;
+    }
+    mesh.GetBdrElementTransformation(i, &T);
+    T.SetIntPoint(&mfem::Geometries.GetCenter(T.GetGeometryType()));
+    mfem::CalcOrtho(T.Jacobian(), normal);
+    const double k_n = (k * normal) / normal.Norml2();
+    kt_c_max[0] = std::max(kt_c_max[0], std::sqrt(std::max(k * k - k_n * k_n, 0.0)));
+  }
+  const auto bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
+  for (auto attr : mat_op.GetCeedBdrAttributes(farfield_attr))
+  {
+    if (const int mat = bdr_attr_mat[attr - 1]; mat >= 0)
+    {
+      kt_c_max[1] = std::max(kt_c_max[1], mat_op.GetLightSpeedMax()[mat]);
+    }
+  }
+  Mpi::GlobalMax(2, kt_c_max, mesh.GetComm());
+
+  // k_t / k, with k = ω / c.
+  const double ratio = kt_c_max[0] * kt_c_max[1] / (scaling ? 1.0 : omega_min);
+  if (ratio > std::sqrt(2.0))
+  {
+    const std::string where =
+        scaling ? std::string("at every frequency")
+                : fmt::format("at {:.3e} GHz, the lowest frequency of the simulation",
+                              units.Dimensionalize<Units::ValueType::FREQUENCY>(omega_min) /
+                                  (2.0 * std::numbers::pi));
+    Mpi::Warning(
+        "The second-order absorbing boundary condition is not passive with this Floquet "
+        "wave vector: its part tangential to the absorbing boundary is {:.3f} times the "
+        "wavenumber k in the material at the boundary {}, above √2. For TE fields, the "
+        "condition imposes the effective wavenumber k - k_t²/(2k), which is then "
+        "negative, and the boundary injects energy (for example, into growing eigenmodes). "
+        "The first-order absorbing boundary condition is passive.\n",
+        ratio, where);
+  }
+}
 
 void FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients(
     std::complex<double> a, MaterialPropertyCoefficient &dfr,
@@ -162,20 +251,18 @@ void FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients(
   {
     return;
   }
-  const auto muinvc0_func = GetCurlCurlCoefficient(mat_op, farfield_attr);
 
   // a (C + T + i (X - Xᵀ)) = a_r (C + T) - a_i (X - Xᵀ) + i (a_i (C + T) + a_r (X - Xᵀ)),
   // for the curl-curl term C, the rotated boundary mass term T, and the mixed boundary curl
   // term X.
-  const auto &attr_mat = muinvc0_func.GetAttributeToMaterial();
-  const auto &mat_c = muinvc0_func.GetMaterialProperties();
+  const auto &attr_mat = curlcurl_attr_mat;
   if (a.real() != 0.0)
   {
-    dfr.AddCoefficient(attr_mat, mat_c, a.real());
+    dfr.AddCoefficient(attr_mat, curlcurl_mat, a.real());
   }
   if (a.imag() != 0.0)
   {
-    dfi.AddCoefficient(attr_mat, mat_c, a.imag());
+    dfi.AddCoefficient(attr_mat, curlcurl_mat, a.imag());
   }
 
   // Floquet periodicity, E = E_p exp(-i k·x): the surface curl of E is
@@ -186,24 +273,20 @@ void FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients(
   {
     return;
   }
-  mfem::DenseMatrix kkT, kx;
-  GetFloquetMatrices(mat_op, kkT, kx);
-  const auto mat_ckkT = ScaledMaterialProperties(mat_c, kkT);
-  const auto mat_ckx = ScaledMaterialProperties(mat_c, kx);
   if (a.real() != 0.0)
   {
-    frr.AddCoefficient(attr_mat, mat_ckkT, a.real());
+    frr.AddCoefficient(attr_mat, curlcurl_kkT_mat, a.real());
     if (fpi)
     {
-      fpi->AddCoefficient(attr_mat, mat_ckx, a.real());
+      fpi->AddCoefficient(attr_mat, curlcurl_kx_mat, a.real());
     }
   }
   if (a.imag() != 0.0)
   {
-    fri.AddCoefficient(attr_mat, mat_ckkT, a.imag());
+    fri.AddCoefficient(attr_mat, curlcurl_kkT_mat, a.imag());
     if (fpr)
     {
-      fpr->AddCoefficient(attr_mat, mat_ckx, -a.imag());
+      fpr->AddCoefficient(attr_mat, curlcurl_kx_mat, -a.imag());
     }
   }
 }
@@ -243,12 +326,7 @@ void FarfieldBoundaryOperator::AddDampingFloquetBdrCoefficients(
   {
     return;
   }
-  mfem::DenseMatrix kkT, kx;
-  GetFloquetMatrices(mat_op, kkT, kx);
-  const auto muinvc0_func = GetCurlCurlCoefficient(mat_op, farfield_attr);
-  frb.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
-                     ScaledMaterialProperties(muinvc0_func.GetMaterialProperties(), kkT),
-                     -0.5 * coeff);
+  frb.AddCoefficient(curlcurl_attr_mat, curlcurl_kkT_mat, -0.5 * coeff);
 }
 
 void FarfieldBoundaryOperator::AddStiffnessFloquetBdrCoefficients(
@@ -261,12 +339,7 @@ void FarfieldBoundaryOperator::AddStiffnessFloquetBdrCoefficients(
   {
     return;
   }
-  mfem::DenseMatrix kkT, kx;
-  GetFloquetMatrices(mat_op, kkT, kx);
-  const auto muinvc0_func = GetCurlCurlCoefficient(mat_op, farfield_attr);
-  fpb.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
-                     ScaledMaterialProperties(muinvc0_func.GetMaterialProperties(), kx),
-                     0.5 * coeff);
+  fpb.AddCoefficient(curlcurl_attr_mat, curlcurl_kx_mat, 0.5 * coeff);
 }
 
 }  // namespace palace

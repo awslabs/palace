@@ -144,7 +144,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`)
     with Floquet periodic boundary conditions (`"FloquetWaveVector"`): the surface curl in
     its second-order term did not include the Floquet wave vector, so that, for example,
-    the condition reduced to the first-order one for an obliquely incident plane wave.
+    the condition reduced to the first-order one for an obliquely incident TE plane wave.
+    For TM plane waves, the second-order condition is still the first-order one, as the
+    term depending on the divergence of the tangential field is not included. *Palace* now
+    warns when the tangential part of the Floquet wave vector exceeds √2 times the
+    wavenumber at the absorbing boundary, where the second-order condition is not passive.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
   - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
     vector (`"FloquetWaveVector"`), as it already did Floquet ports: the phase shift across

@@ -13,11 +13,13 @@ namespace palace
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
+class Units;
 
 namespace config
 {
 
 struct FarfieldBoundaryData;
+struct SolverData;
 
 }  // namespace config
 
@@ -38,9 +40,18 @@ private:
   // First- or second-order absorbing boundary condition.
   int order;
 
+  // Coefficient μ⁻¹c₀ of the second-order absorbing BC on the farfield attributes, as a map
+  // from the libCEED boundary attributes to materials and the material properties, and with
+  // a Floquet wave vector k (or k₀ with frequency scaling), its products with k kᵀ and [k
+  // x]. Built once, when order >= 2.
+  mfem::Array<int> curlcurl_attr_mat;
+  mfem::DenseTensor curlcurl_mat, curlcurl_kkT_mat, curlcurl_kx_mat;
+
   mfem::Array<int> SetUpBoundaryProperties(const config::FarfieldBoundaryData &farfield,
                                            ProblemType problem_type,
                                            const mfem::ParMesh &mesh);
+
+  void SetUpCurlCurlCoefficients();
 
 public:
   FarfieldBoundaryOperator(const config::FarfieldBoundaryData &farfield,
@@ -54,6 +65,13 @@ public:
 
   // Returns order of absorbing BC approximation.
   int GetOrder() const { return order; }
+
+  // Warn when the tangential part k_t of the Floquet wave vector makes the second-order
+  // absorbing BC non-passive: for TE fields, it imposes the effective wavenumber
+  // k - k_t²/(2k), which is negative for k_t > √2 k, with k the wavenumber of the material
+  // at the boundary at the lowest frequency of the simulation.
+  void CheckFloquetPassivity(const config::SolverData &solver, ProblemType problem_type,
+                             const Units &units, const mfem::ParMesh &mesh) const;
 
   // Add contributions to system matrices from first- or second-order absorbing boundary
   // condition.
