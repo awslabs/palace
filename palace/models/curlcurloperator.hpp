@@ -139,6 +139,10 @@ private:
   // penalty ½∫_Σ (1/L_ksq)|A_t − a_h|². Lazily assembled in GetFluxExcitationVector.
   mutable std::unique_ptr<Operator> M_sheet_;
 
+  // Cached London domain mass M_L = ∫ (μλ²)⁻¹ A·v, with AᵀM_L·A twice the supercurrent
+  // kinetic energy. Lazily assembled in ApplyLondonMass.
+  mutable std::unique_ptr<Operator> M_london_;
+
   // Fluxoid circulation functional c = Curlᵀ·f_hole per London flux loop (f_hole the RT
   // hole-cap flux functional), so cᵀA = ∮_∂hole A·dl by Stokes. Used to normalize the
   // cohomology generator to cᵀa_h = Φ (the imposed fluxoid) and to measure cᵀA. Zeroed on
@@ -150,12 +154,13 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
-  // Add the stiffness coefficients: curl-curl (μ⁻¹) and the kinetic sheet term (1/L_ksq,
-  // unbroken spaces only).
+  // Add the stiffness coefficients: curl-curl (μ⁻¹), London domains ((μλ²)⁻¹), and the
+  // kinetic sheet term (1/L_ksq, unbroken spaces only).
   void AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
+                                MaterialPropertyCoefficient &f,
                                 MaterialPropertyCoefficient &fb) const;
 
-  // True if a superconductor film is present and the shift is positive.
+  // True if a superconductor (film or London domain) is present and the shift is positive.
   bool HasShiftedPreconditioner() const;
 
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
@@ -253,12 +258,15 @@ public:
   // interior gives the shifted-penalty operator a residual 1-D gradient null space.
   bool HasLondonFluxLoops() const { return !london_flux_loops_.empty(); }
 
+  // True if any domain has a London depth, adding (μλ²)⁻¹ A·v to the stiffness operator.
+  bool HasLondonDomains() const { return mat_op.HasLondonDepth(); }
+
   // Construct the preconditioner matrix for the London magnetostatic path: the stiffness
   // matrix plus a small reluctance-weighted volume mass (london_pc_shift_ · (1/µ) ∫|A|²)
   // that lifts the residual gradient null space so AMS is SPD-solvable in parallel. This
   // shift is applied ONLY to the preconditioner, so the operator, solution, and extracted
-  // inductance are unchanged. Returns nullptr when there is no London flux film or the
-  // shift is non-positive, signaling that the stiffness matrix itself should be used as
+  // inductance are unchanged. Returns nullptr when there is no superconductor or the shift
+  // is non-positive, signaling that the stiffness matrix itself should be used as
   // preconditioner.
   std::unique_ptr<Operator> GetPreconditionerMatrix();
 
@@ -295,6 +303,9 @@ public:
     EnsureSheetMass();
     M_sheet_->Mult(x, y);
   }
+
+  // Apply the London domain mass M_L, for the kinetic energy AᵀM_L·A of the domains.
+  void ApplyLondonMass(const Vector &x, Vector &y);
 
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.

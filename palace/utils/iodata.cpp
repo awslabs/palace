@@ -652,16 +652,23 @@ void IoData::CheckConfiguration()
       solver.linear.pc_mat_shifted = 0;
     }
   }
+  // Magnetostatic superconducting domains, with a London depth.
+  const bool london_domains =
+      problem.type == ProblemType::MAGNETOSTATIC &&
+      std::any_of(domains.materials.begin(), domains.materials.end(),
+                  [](const auto &data) { return std::abs(data.lambda_L) > 0.0; });
   // The preconditioner matrix symmetry for sparse direct solvers is a derived runtime
   // property; it is computed at Ksp construction (see GetPreconditionerMatrixSymmetry)
   // rather than stored on LinearSolverData.
   if (solver.linear.mg_smooth_aux < 0)
   {
-    // A London sheet's shifted preconditioner lifts the gradients off the curl-curl kernel,
-    // so they need the distributive relaxation that the pure curl-curl problem does not.
-    const bool london_pc =
-        problem.type == ProblemType::MAGNETOSTATIC && solver.linear.london_pc_shift > 0.0 &&
-        (!boundaries.superconductor.empty() || !boundaries.fluxloop.empty());
+    // A London sheet's or domain's shifted preconditioner lifts the gradients off the
+    // curl-curl kernel, so they need the distributive relaxation that the pure curl-curl
+    // problem does not.
+    const bool london_pc = problem.type == ProblemType::MAGNETOSTATIC &&
+                           solver.linear.london_pc_shift > 0.0 &&
+                           (!boundaries.superconductor.empty() ||
+                            !boundaries.fluxloop.empty() || london_domains);
     if (london_pc)
     {
       solver.linear.mg_smooth_aux = 1;
@@ -711,12 +718,12 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.ams_singular_op < 0)
   {
-    // A Superconductor sheet's (1/L_ksq) M_sheet penalty leaves a residual gradient null
-    // space, so K̃ is not the pure singular curl-curl operator; use full AMS (G-space
-    // corrections) rather than singular-AMS, which stalls in parallel.
+    // A Superconductor sheet's (1/L_ksq) M_sheet penalty, or a London domain's mass, leaves
+    // a residual gradient null space, so K̃ is not the pure singular curl-curl operator; use
+    // full AMS (G-space corrections) rather than singular-AMS, which stalls in parallel.
     const bool has_london_film = !boundaries.superconductor.empty();
     solver.linear.ams_singular_op =
-        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film);
+        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film && !london_domains);
   }
   if (solver.linear.amg_agg_coarsen < 0)
   {
