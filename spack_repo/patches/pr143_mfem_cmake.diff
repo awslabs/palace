@@ -1,5 +1,5 @@
 diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
-index 10dd69af..933fcedb 100644
+index 10dd69af..0d3e2478 100644
 --- a/repos/spack_repo/builtin/packages/mfem/package.py
 +++ b/repos/spack_repo/builtin/packages/mfem/package.py
 @@ -6,14 +6,15 @@ import os
@@ -70,7 +70,7 @@ index 10dd69af..933fcedb 100644
  
      depends_on("mpi", when="+mpi")
      depends_on("hipsparse", when="@4.4.0:+rocm")
-@@ -612,6 +629,184 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -612,6 +629,208 @@ class Mfem(Package, CudaPackage, ROCmPackage):
      # PR: https://github.com/mfem/mfem/pull/5224
      patch("mfem-4.9.patch", when="@4.9.0")
  
@@ -184,6 +184,30 @@ index 10dd69af..933fcedb 100644
 +        using_nvcc = "+cuda" in self.spec and "+enzyme" not in self.spec
 +        return "-Wl," if not using_nvcc else "-Xlinker="
 +
++    def extra_fortran_lib(self, spec):
++        ef_libs = LibraryList([])
++        if "+shared" in spec:
++            return ef_libs
++        if "+mpi" in spec:
++            mpi = spec["mpi"]
++            mpi_lib_name = None
++            if ("^mpich" in spec) or ("^mvapich2" in spec):
++                mpi_lib_name = "libmpifort"
++            elif "^openmpi" in spec:
++                mpi_lib_name = "libmpi_mpifh"
++            elif "^spectrum-mpi" in spec:
++                mpi_lib_name = "libmpi_ibm_mpifh"
++            if mpi_lib_name:
++                ef_libs += find_libraries(mpi_lib_name, root=mpi.prefix, recursive=True)
++        if os.path.basename(env["FC"]) == "gfortran":
++            gfortran = Executable(env["FC"])
++            libext = "dylib" if sys.platform == "darwin" else "so"
++            libfile = os.path.abspath(
++                gfortran("-print-file-name=libgfortran.%s" % libext, output=str).strip()
++            )
++            ef_libs += LibraryList(libfile)
++        return ef_libs
++
 +    examples_src_dir = "examples"
 +    examples_data_dir = "data"
 +
@@ -255,7 +279,7 @@ index 10dd69af..933fcedb 100644
      phases = ["configure", "build", "install"]
  
      def setup_build_environment(self, env: EnvironmentModifications) -> None:
-@@ -624,16 +819,9 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -624,16 +843,9 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              env.set("OMPI_CXX", spack_cxx)
              env.set("MPICXX_CXX", spack_cxx)
  
@@ -273,7 +297,7 @@ index 10dd69af..933fcedb 100644
  
          using_nvcc = "+cuda" in spec and "+enzyme" not in spec
          xcompiler = "" if not using_nvcc else "-Xcompiler="
-@@ -728,42 +916,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -728,42 +940,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
          if spec.satisfies("@4.7.0:"):
              options += ["MFEM_PRECISION=%s" % spec.variants["precision"].value]
  
@@ -318,7 +342,7 @@ index 10dd69af..933fcedb 100644
  
          cuda_arch = None
          if "+cuda" in spec:
-@@ -775,8 +934,8 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -775,8 +958,8 @@ class Mfem(Package, CudaPackage, ROCmPackage):
  
          if cxxflags:
              # Add opt/debug flags if they are not present in global cxx flags
@@ -329,7 +353,7 @@ index 10dd69af..933fcedb 100644
  
              if "+debug" in spec:
                  if not debug_flag_found:
-@@ -829,7 +988,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -829,7 +1012,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
          if "~static" in spec:
              options += ["STATIC=NO"]
          if "+shared" in spec:
@@ -338,7 +362,16 @@ index 10dd69af..933fcedb 100644
  
          if "+mpi" in spec:
              options += ["MPICXX=%s" % spec["mpi"].mpicxx]
-@@ -904,7 +1063,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -896,7 +1079,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             sp_lib = [ld_flags_from_library_list(strumpack.libs)]
+             # Parts of STRUMPACK use fortran, so we need to link with the
+             # fortran library and also the MPI fortran library:
+-            extra_fortran_lib = self.extra_fortran_lib(strumpack)
++            extra_fortran_lib = self.pkg.extra_fortran_lib(strumpack)
+             if extra_fortran_lib:
+                 sp_lib += [ld_flags_from_library_list(extra_fortran_lib)]
+             if "+openmp" in strumpack:
+@@ -904,7 +1087,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
                  # OpenMP; if not found, we should not add any flags -- how do
                  # we figure out if strumpack found OpenMP?
                  if not self.spec.satisfies("%apple-clang"):
@@ -347,7 +380,7 @@ index 10dd69af..933fcedb 100644
              if "^parmetis" in strumpack:
                  parmetis = strumpack["parmetis"]
                  sp_opt += [parmetis.headers.cpp_flags]
-@@ -943,14 +1102,14 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -943,14 +1126,14 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              ]
  
          if "+suite-sparse" in spec:
@@ -364,7 +397,7 @@ index 10dd69af..933fcedb 100644
              options += [
                  "SUNDIALS_OPT=%s" % spec[sun_spec].headers.cpp_flags,
                  "SUNDIALS_LIB=%s" % ld_flags_from_library_list(spec[sun_spec].libs),
-@@ -1059,7 +1218,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1059,7 +1242,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              ]
  
          if "+openmp" in spec:
@@ -373,7 +406,7 @@ index 10dd69af..933fcedb 100644
  
          if "+cuda" in spec:
              if using_nvcc:
-@@ -1251,10 +1410,9 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1251,10 +1434,9 @@ class Mfem(Package, CudaPackage, ROCmPackage):
                  "UMPIRE_LIB=%s" % ld_flags_from_library_list(umpire_libs),
              ]
  
@@ -385,7 +418,7 @@ index 10dd69af..933fcedb 100644
  
          if "+conduit" in spec:
              conduit = spec["conduit"]
-@@ -1346,7 +1504,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1346,11 +1528,11 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              mumps_lib = mumps.libs
              if "+openmp" in mumps:
                  if not self.spec.satisfies("%apple-clang"):
@@ -394,7 +427,12 @@ index 10dd69af..933fcedb 100644
              if "^scalapack" in mumps:
                  scalapack = mumps["scalapack"]
                  mumps_lib += scalapack.libs
-@@ -1366,19 +1524,19 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+-            mumps_lib += self.extra_fortran_lib(mumps)
++            mumps_lib += self.pkg.extra_fortran_lib(mumps)
+             options += [
+                 "MUMPS_OPT=%s" % " ".join(mumps_opt),
+                 "MUMPS_LIB=%s" % ld_flags_from_library_list(mumps_lib),
+@@ -1366,19 +1548,19 @@ class Mfem(Package, CudaPackage, ROCmPackage):
  
          return options
  
@@ -417,7 +455,7 @@ index 10dd69af..933fcedb 100644
              # check we can build ex1 (~mpi) or ex1p (+mpi).
              make("-C", "examples", "ex1p" if ("+mpi" in self.spec) else "ex1", parallel=False)
              # make('check', parallel=False)
-@@ -1386,7 +1544,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1386,7 +1568,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              make("all")
              make("test", parallel=False)
  
@@ -426,7 +464,7 @@ index 10dd69af..933fcedb 100644
          make("install", parallel=False)
  
          # TODO: The way the examples and miniapps are being installed is not
-@@ -1421,116 +1579,6 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1421,116 +1603,6 @@ class Mfem(Package, CudaPackage, ROCmPackage):
          if install_em:
              install_tree("data", join_path(prefix_share, "data"))
  
@@ -543,7 +581,7 @@ index 10dd69af..933fcedb 100644
      # See also find_system_libraries in lib/spack/llnl/util/filesystem.py
      # where the similar list of paths is used.
      sys_lib_paths = [
-@@ -1546,18 +1594,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1546,18 +1618,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
      def is_sys_lib_path(self, dir):
          return dir in self.sys_lib_paths
  
@@ -563,7 +601,7 @@ index 10dd69af..933fcedb 100644
              for dir in libs_list.directories
              if not self.is_sys_lib_path(dir)
          ]
-@@ -1567,7 +1610,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1567,7 +1634,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
  
      def ld_flags_from_dirs(self, pkg_dirs_list, pkg_libs_list):
          flags = [
@@ -572,7 +610,38 @@ index 10dd69af..933fcedb 100644
              for dir in pkg_dirs_list
              if not self.is_sys_lib_path(dir)
          ]
-@@ -1607,3 +1650,142 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1575,30 +1642,6 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+         flags += ["-l%s" % lib for lib in pkg_libs_list]
+         return " ".join(flags)
+ 
+-    def extra_fortran_lib(self, spec):
+-        ef_libs = LibraryList([])
+-        if "+shared" in spec:
+-            return ef_libs
+-        if "+mpi" in spec:
+-            mpi = spec["mpi"]
+-            mpi_lib_name = None
+-            if ("^mpich" in spec) or ("^mvapich2" in spec):
+-                mpi_lib_name = "libmpifort"
+-            elif "^openmpi" in spec:
+-                mpi_lib_name = "libmpi_mpifh"
+-            elif "^spectrum-mpi" in spec:
+-                mpi_lib_name = "libmpi_ibm_mpifh"
+-            if mpi_lib_name:
+-                ef_libs += find_libraries(mpi_lib_name, root=mpi.prefix, recursive=True)
+-        if os.path.basename(env["FC"]) == "gfortran":
+-            gfortran = Executable(env["FC"])
+-            libext = "dylib" if sys.platform == "darwin" else "so"
+-            libfile = os.path.abspath(
+-                gfortran("-print-file-name=libgfortran.%s" % libext, output=str).strip()
+-            )
+-            ef_libs += LibraryList(libfile)
+-        return ef_libs
+-
+     def all_headers(self, root_spec):
+         all_hdrs = HeaderList([])
+         for dep in root_spec.traverse(deptype="link"):
+@@ -1607,3 +1650,159 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              except NoHeadersError:
                  pass
          return all_hdrs
@@ -662,6 +731,12 @@ index 10dd69af..933fcedb 100644
 +        if "+strumpack" in self.spec:
 +            args.append(self.define("STRUMPACK_REQUIRED_PACKAGES", "MPI"))
 +
++        # Static MUMPS and STRUMPACK need their dependencies on the link line
++        for name, prefix in (("mumps", "MUMPS"), ("strumpack", "STRUMPACK")):
++            if f"+{name}" in self.spec and "~shared" in self.spec[name]:
++                libs = self.static_link_libs(self.spec[name])
++                args.append(self.define(f"{prefix}_REQUIRED_LIBRARIES", libs.libraries))
++
 +        if "+netcdf" in self.spec:
 +            args.append(self.define("NetCDF_REQUIRED_PACKAGES", ""))
 +
@@ -693,6 +768,17 @@ index 10dd69af..933fcedb 100644
 +            args.append(self.define("MPFR_FOUND", True))
 +
 +        return args
++
++    def static_link_libs(self, spec):
++        """Return the libraries of the link dependencies of spec in link order, including
++        the Fortran runtime"""
++        libs = LibraryList([])
++        for dep in spec.traverse(order="topo", deptype="link", root=False):
++            try:
++                libs += dep.libs
++            except NoLibrariesError:
++                pass
++        return libs + self.pkg.extra_fortran_lib(spec)
 +
 +    @run_after("build")
 +    def check_or_test(self) -> None:
