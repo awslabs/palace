@@ -1,5 +1,5 @@
 diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
-index 10dd69af..0d3e2478 100644
+index 10dd69af..9d1097b3 100644
 --- a/repos/spack_repo/builtin/packages/mfem/package.py
 +++ b/repos/spack_repo/builtin/packages/mfem/package.py
 @@ -6,14 +6,15 @@ import os
@@ -775,7 +775,7 @@ index 10dd69af..0d3e2478 100644
 +        libs = LibraryList([])
 +        for dep in spec.traverse(order="topo", deptype="link", root=False):
 +            try:
-+                libs += dep.libs
++                libs += spec[dep.name].libs
 +            except NoLibrariesError:
 +                pass
 +        return libs + self.pkg.extra_fortran_lib(spec)
