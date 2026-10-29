@@ -150,6 +150,14 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
+  // Add the stiffness coefficients: curl-curl (μ⁻¹) and the kinetic sheet term (1/L_ksq,
+  // unbroken spaces only).
+  void AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
+                                MaterialPropertyCoefficient &fb) const;
+
+  // True if a superconductor film is present and the shift is positive.
+  bool HasShiftedPreconditioner() const;
+
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
   // given per-level essential DOFs (from attributes pc_dbc_attr); preconditioner-only, so
   // the extracted inductance is unchanged. The auxiliary H1 essential DOFs are written to
