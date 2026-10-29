@@ -476,8 +476,9 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
 // (0 = H(curl), 1 = H(div)), [5].first = orientation flag, [6..8].second = orientation
 // center x0, [9..9+3N).second = directions, followed by the (isotropic) light speed
 // material property context. When the orientation flag is set, the normal is oriented per
-// point away from x0 (interior surfaces, whose boundary element normal has no outward
-// meaning). The B-field Piola map matches GridFunction::GetVectorValue for the supplied B
+// point toward x0, a point inside the surface (interior surfaces, whose boundary element
+// normal has no meaningful direction), consistently with the normal used on external
+// boundaries. The B-field Piola map matches GridFunction::GetVectorValue for the supplied B
 // space. Output: 6N components per element (Re I, Im I per direction, 3 each).
 // Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 = E_re, E_im, B_re, B_im (one side;
 // interior surfaces use one operator per side).
@@ -504,10 +505,12 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
     n[2] *= s_n;
     if (orient)
     {
-      // Orient the normal away from the given center (interior surfaces).
+      // Orient the normal toward the given center inside the surface, which matches the
+      // normal used on external boundaries (pointing into the computational domain, see
+      // AddStrattonChuIntegrandAtElement).
       const CeedScalar dx[3] = {x[i + Q * 0] - ctx[6].second, x[i + Q * 1] - ctx[7].second,
                                 x[i + Q * 2] - ctx[8].second};
-      if (dx[0] * n[0] + dx[1] * n[1] + dx[2] * n[2] < 0.0)
+      if (dx[0] * n[0] + dx[1] * n[1] + dx[2] * n[2] > 0.0)
       {
         n[0] = -n[0];
         n[1] = -n[1];

@@ -222,8 +222,9 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
   }
 
   // An interior integration surface (for example around a radiator or scatterer inside a
-  // PML) has no outward normal of its own: orient it away from a center point, as for the
-  // surface flux. External boundaries keep their outward normal unless a center is given.
+  // PML) has no normal direction of its own: orient it from a center point inside the
+  // surface, consistently with external boundaries, which keep their own normal unless a
+  // center is given.
   const auto marker = mesh::AttrToMarker(bdr_attr_marker.Size(), attr_list);
   bool interior = false;
   for (int i = 0; i < mesh.GetNBE() && !interior; i++)
