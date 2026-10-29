@@ -940,20 +940,75 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
+  // The start is y = [v; 0]: v0 also holds the last extracted eigenvector, so both blocks
+  // are written.
+  PalacePetscCall(VecZeroEntries(v0));
   PalacePetscCall(ToPetscVec(v, v0, 0, 2));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+}
+
+int SlepcPEPLinearSolver::Solve()
+{
+  pooled = false;
+  pool_eig.clear();
+  pool_vec.clear();
+  const int num_first = SlepcEPSSolverBase::Solve();
+  if (v_second.Size() == 0)
+  {
+    return num_first;
+  }
+  // SLEPc keeps only the last solve's eigenpairs, so retain those of the first.
+  auto Retain = [this](int num)
+  {
+    for (int i = 0; i < num; i++)
+    {
+      pool_eig.push_back(SlepcEPSSolverBase::GetEigenvalue(i));
+      auto &x = pool_vec.emplace_back(v_second.Size());
+      x.UseDevice(true);
+      GetSolveEigenvector(i, x);
+    }
+  };
+  Retain(num_first);
+  const int num_mult = opInv->NumTotalMult();
+  SetInitialSpace(v_second);
+  const int num_second = SlepcEPSSolverBase::Solve();
+  Retain(num_second);
+  pooled = true;
+  RescaleEigenvectors(static_cast<int>(pool_eig.size()));
+  Mpi::Print(GetComm(),
+             " Second solve from another start: {:d} + {:d} eigenpairs, {:d} more linear "
+             "solves\n",
+             num_first, num_second, opInv->NumTotalMult() - num_mult);
+  return static_cast<int>(pool_eig.size());
+}
+
+std::complex<double> SlepcPEPLinearSolver::GetEigenvalue(int i) const
+{
+  return pooled ? pool_eig[i] : SlepcEPSSolverBase::GetEigenvalue(i);
+}
+
+void SlepcPEPLinearSolver::GetSolveEigenvector(int i, ComplexVector &x) const
+{
+  MFEM_VERIFY(
+      v0,
+      "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
+  PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));
+  PalacePetscCall(FromPetscVec(v0, x, 0, 2));
 }
 
 void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
 {
   // Select the most accurate x for y = [x₁; x₂] from the linearized eigenvalue problem. Or,
   // just take x = x₁.
-  MFEM_VERIFY(
-      v0,
-      "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
-  PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));
-  PalacePetscCall(FromPetscVec(v0, x, 0, 2));
+  if (pooled)
+  {
+    x = pool_vec[i];
+  }
+  else
+  {
+    GetSolveEigenvector(i, x);
+  }
   if (xscale.get()[i] > 0.0)
   {
     x *= xscale.get()[i];

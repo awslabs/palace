@@ -510,7 +510,7 @@ public:
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.
-  void GetRandomInitialVector(ComplexVector &v);
+  void GetRandomInitialVector(ComplexVector &v, int seed = 0);
   void GetConstantInitialVector(ComplexVector &v);
 
   // Get the associated MPI communicator.

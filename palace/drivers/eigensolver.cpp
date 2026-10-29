@@ -252,8 +252,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         }
         else
         {
-          slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
-                                                                iodata.problem.verbose);
+          auto pep_linear = std::make_unique<slepc::SlepcPEPLinearSolver>(
+              space_op.GetComm(), iodata.problem.verbose);
+          if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
+              space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
+          {
+            // The seed solve from one start can miss one mode of a degenerate pair, which
+            // Quasi-Newton then replaces by another mode: solve once more from a second
+            // random start (another seed than the first start's).
+            ComplexVector v;
+            space_op.GetRandomInitialVector(v, 1);
+            pep_linear->SetSecondInitialSpace(v);
+          }
+          slepc = std::move(pep_linear);
           slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
         }
       }

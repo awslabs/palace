@@ -1990,11 +1990,11 @@ void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
   linalg::SetSubVector(v.Real(), nd_dbc_tdof_lists.back(), 0.0);
 }
 
-void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
+void SpaceOperator::GetRandomInitialVector(ComplexVector &v, int seed)
 {
   v.SetSize(GetNDSpace().GetTrueVSize());
   v.UseDevice(true);
-  linalg::SetRandom(GetNDSpace().GetComm(), v);
+  linalg::SetRandom(GetNDSpace().GetComm(), v, seed);
   linalg::SetSubVector(v, nd_dbc_tdof_lists.back(), 0.0);
 }
 

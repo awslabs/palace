@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -322,7 +323,31 @@ public:
 
   void SetInitialSpace(const ComplexVector &v) override;
 
+  // A second start for Solve, which then solves the same problem again from it. A Krylov
+  // solve from one start finds only one direction of an exactly degenerate eigenspace (in
+  // exact arithmetic), so one of a degenerate pair can be missing. With a second start the
+  // eigenpairs are those converged in both solves, the first solve's first, each in SLEPc's
+  // order: a pool of initial guesses for a nonlinear refinement, which may hold the same
+  // eigenpair twice, not a set of distinct eigenpairs.
+  void SetSecondInitialSpace(const ComplexVector &v) { v_second = v; }
+
+  int Solve() override;
+
+  std::complex<double> GetEigenvalue(int i) const override;
+
   void GetEigenvector(int i, ComplexVector &x) const override;
+
+private:
+  ComplexVector v_second;
+
+  // Eigenpairs of both solves (the vectors before the normalization by xscale), used by
+  // the getters once both solves are done.
+  std::vector<std::complex<double>> pool_eig;
+  std::vector<ComplexVector> pool_vec;
+  bool pooled = false;
+
+  // The physical block of the i-th eigenvector of the last SLEPc solve, unnormalized.
+  void GetSolveEigenvector(int i, ComplexVector &x) const;
 };
 
 // Base class for SLEPc's PEP problem type.
