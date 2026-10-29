@@ -1,0 +1,1094 @@
+diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
+index 10dd69af..933fcedb 100644
+--- a/repos/spack_repo/builtin/packages/mfem/package.py
++++ b/repos/spack_repo/builtin/packages/mfem/package.py
+@@ -6,14 +6,15 @@ import os
+ import shutil
+ import sys
+ 
++from spack_repo.builtin.build_systems.cmake import CMakeBuilder, CMakePackage
+ from spack_repo.builtin.build_systems.cuda import CudaPackage
+-from spack_repo.builtin.build_systems.generic import Package
++from spack_repo.builtin.build_systems.generic import GenericBuilder, Package
+ from spack_repo.builtin.build_systems.rocm import ROCmPackage
+ 
+ from spack.package import *
+ 
+ 
+-class Mfem(Package, CudaPackage, ROCmPackage):
++class Mfem(Package, CMakePackage, CudaPackage, ROCmPackage):
+     """Free, lightweight, scalable C++ library for finite element methods."""
+ 
+     tags = ["fem", "finite-elements", "high-order", "amr", "hpc", "radiuss", "e4s"]
+@@ -25,6 +26,11 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+ 
+     test_requires_compiler = True
+ 
++    build_system("generic", "cmake", default="generic")
++    # The CMake build is supported in spack starting with mfem v4.9.0
++    # See comment from v-dobrev https://github.com/spack/spack-packages/pull/143
++    conflicts("build_system=cmake", when="@:4.8")
++
+     # Recommended mfem builds to test when updating this file: see the shell
+     # script 'test_builds.sh' in the same directory as this file.
+ 
+@@ -224,7 +230,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     variant("gslib", default=False, description="Enable functionality based on GSLIB")
+     variant("mpfr", default=False, description="Enable precise, 1D quadrature rules")
+     variant("lapack", default=False, description="Use external blas/lapack routines")
+-    variant("debug", default=False, description="Build debug instead of optimized version")
++    # CMake package has build_type variant instead
++    variant(
++        "debug",
++        default=False,
++        description="Build debug instead of optimized version",
++        when="build_system=generic",
++    )
+     variant("netcdf", default=False, description="Enable Cubit/Genesis reader")
+     variant("conduit", default=False, description="Enable binary data I/O using Conduit")
+     variant("zlib", default=True, description="Support zip'd streams for I/O")
+@@ -271,6 +283,8 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     )
+ 
+     conflicts("~static~shared")
++    # CMake only handles one build mode at a time
++    conflicts("+shared+static", when="build_system=cmake")
+     conflicts("~threadsafe", when="@:3+openmp")
+     requires("+threadsafe", when="+openmp")
+ 
+@@ -337,9 +351,12 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     conflicts("+mumps", when="~mpi")
+ 
+     depends_on("cxx", type="build")
++    # Even with CMake, the C compiler is only needed in some configurations.
++    depends_on("c", type="build", when="build_system=cmake")
+     depends_on("fortran", type="build", when="+strumpack")
+     depends_on("fortran", type="build", when="+mumps")
+-    depends_on("gmake", type="build")
++
++    depends_on("gmake", type="build", when="build_system=generic")
+ 
+     depends_on("mpi", when="+mpi")
+     depends_on("hipsparse", when="@4.4.0:+rocm")
+@@ -612,6 +629,184 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     # PR: https://github.com/mfem/mfem/pull/5224
+     patch("mfem-4.9.patch", when="@4.9.0")
+ 
++    @property
++    def suitesparse_components(self):
++        """Return the SuiteSparse components needed by MFEM."""
++        ss_comps = "umfpack,cholmod,colamd,amd,camd,ccolamd,suitesparseconfig"
++        if self.spec.satisfies("@3.2:"):
++            ss_comps = "klu,btf," + ss_comps
++        return ss_comps
++
++    @property
++    def sundials_components(self):
++        """Return the SUNDIALS components needed by MFEM."""
++        spec = self.spec
++        sun_comps = "arkode,cvodes,nvecserial,kinsol"
++        if "+mpi" in spec:
++            if spec.satisfies("@4.2:"):
++                sun_comps += ",nvecparallel,nvecmpiplusx"
++            else:
++                sun_comps += ",nvecparhyp,nvecparallel"
++        if "+cuda" in spec and "+cuda" in spec["sundials"]:
++            sun_comps += ",nveccuda"
++        if "+rocm" in spec and "+rocm" in spec["sundials"]:
++            sun_comps += ",nvechip"
++        return sun_comps
++
++    @property
++    def headers(self):
++        """Export the main mfem header, mfem.hpp."""
++        hdrs = HeaderList(find(self.prefix.include, "mfem.hpp", recursive=False))
++        return hdrs or None
++
++    @property
++    def libs(self):
++        """Export the mfem library file."""
++        # With the MSVC-compatible ABI, the CMake build installs 'mfem.lib'
++        name = "mfem" if self.spec.satisfies("platform=windows build_system=cmake") else "libmfem"
++        libs = find_libraries(
++            name,
++            root=self.prefix.lib,
++            shared=("+shared" in self.spec),
++            recursive=False,
++            runtime=False,
++        )
++        return libs or None
++
++    @property
++    def config_mk(self):
++        """Export the location of the config.mk file.
++        This property can be accessed using pkg["mfem"].config_mk
++        """
++        dirs = [self.prefix, self.prefix.share.mfem]
++        for d in dirs:
++            f = join_path(d, "config.mk")
++            if os.access(f, os.R_OK):
++                return FileList(f)
++        return FileList(find(self.prefix, "config.mk", recursive=True))
++
++    @property
++    def test_mk(self):
++        """Export the location of the test.mk file.
++        This property can be accessed using pkg["mfem"].test_mk.
++        In version 3.3.2 and newer, the location of test.mk is also defined
++        inside config.mk, variable MFEM_TEST_MK.
++        """
++        dirs = [self.prefix, self.prefix.share.mfem]
++        for d in dirs:
++            f = join_path(d, "test.mk")
++            if os.access(f, os.R_OK):
++                return FileList(f)
++        return FileList(find(self.prefix, "test.mk", recursive=True))
++
++    @property
++    def cxxstd(self):
++        """Return the C++ standard to use, or None for the compiler default."""
++        spec = self.spec
++        cxxstd = None
++        if spec.satisfies("@4.0.0:"):
++            cxxstd = "11"
++        if spec.satisfies("^raja@2022.03.0:"):
++            cxxstd = "14"
++        if spec.satisfies("^umpire@2022.03.0:"):
++            cxxstd = "14"
++        if spec.satisfies("^sundials@6.4.0:"):
++            cxxstd = "14"
++        # When rocPRIM is used (e.g. by PETSc + ROCm) we need C++14:
++        if spec.satisfies("^rocprim@5.5.0:"):
++            cxxstd = "14"
++        if spec.satisfies("^ginkgo@1.4.0:1.8"):
++            cxxstd = "14"
++        if spec.satisfies("^ginkgo@1.9.0:"):
++            cxxstd = "17"
++        if spec.satisfies("^umpire@2025.09.0:"):
++            cxxstd = "17"
++        if spec.satisfies("@4.9.0:"):
++            cxxstd = "17"
++        if spec.satisfies("^raja@2026.07.0:"):
++            cxxstd = "20"
++        if spec.satisfies("^umpire@2026.07:"):
++            cxxstd = "20"
++        cxxstd_req = spec.variants["cxxstd"].value
++        if cxxstd_req != "auto":
++            # Constraints for valid standard level should be imposed during
++            # concretization based on 'conflicts' or other directives.
++            cxxstd = cxxstd_req
++        return cxxstd
++
++    @property
++    def xlinker(self):
++        using_nvcc = "+cuda" in self.spec and "+enzyme" not in self.spec
++        return "-Wl," if not using_nvcc else "-Xlinker="
++
++    examples_src_dir = "examples"
++    examples_data_dir = "data"
++
++    def test_ex10(self):
++        """build and run ex10(p)"""
++        # MFEM has many examples to serve as a suitable smoke check. ex10
++        # was chosen arbitrarily among the examples that work both with
++        # MPI and without it
++        test_dir = join_path(self.test_suite.current_test_cache_dir, self.examples_src_dir)
++
++        mesh = join_path("..", self.examples_data_dir, "beam-quad.mesh")
++        test_exe = "ex10p" if ("+mpi" in self.spec) else "ex10"
++
++        with working_dir(test_dir):
++            make = which("make", required=True)
++            make(f"CONFIG_MK={self.config_mk}", test_exe, parallel=False)
++
++            ex10 = which(test_exe, required=True)
++            ex10("--mesh", mesh)
++
++    # this patch is only needed for mfem 4.1, where a few
++    # released files include byte order marks
++    @when("@4.1.0")
++    def patch(self):
++        # Remove the byte order mark since it messes with some compilers
++        files_with_bom = [
++            "fem/gslib.hpp",
++            "fem/gslib.cpp",
++            "linalg/hiop.hpp",
++            "miniapps/gslib/field-diff.cpp",
++            "miniapps/gslib/findpts.cpp",
++            "miniapps/gslib/pfindpts.cpp",
++        ]
++        bom = "\ufeff"
++        for f in files_with_bom:
++            filter_file(bom, "", f)
++
++
++def str_to_timerid(timer_type):
++    timer_ids = {"auto": "-1", "std": "0", "posix": "2", "mac": "4", "mpi": "6"}
++    return timer_ids[timer_type]
++
++
++class AnyBuilder(BaseBuilder):
++    @run_after("install")
++    def cache_test_sources(self):
++        """Copy the example source files after the package is installed to an
++        install test subdirectory for use during `spack test run`."""
++        # Clean the 'examples' directory -- at least one example is always built
++        # and we do not want to cache executables.
++        make("examples/clean", parallel=False)
++        extra_install_tests = [self.pkg.examples_src_dir, self.pkg.examples_data_dir]
++        cache_extra_test_sources(self.pkg, extra_install_tests)
++
++
++# Without splitting the cache_test_sources into AnyBuilder,
++# cache_extra_test_sources was not available in the GenericBuilder.
++# This idea was taken from the superlu package.
++class GenericBuilder(AnyBuilder, GenericBuilder):
++    #
++    # Note: Although MFEM does support CMake configuration, MFEM development
++    # team indicates that vanilla GNU Make is the preferred mode of
++    # configuration of MFEM and the mode most likely to be up to date in
++    # supporting *all* of MFEM's configuration options. The CMake build system
++    # can also be used via the CmakeBuilder defined below by specifying the
++    # variant build_system=cmake, however, not all variants are guaranteed to be
++    # supported.
++    #
+     phases = ["configure", "build", "install"]
+ 
+     def setup_build_environment(self, env: EnvironmentModifications) -> None:
+@@ -624,16 +819,9 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             env.set("OMPI_CXX", spack_cxx)
+             env.set("MPICXX_CXX", spack_cxx)
+ 
+-    #
+-    # Note: Although MFEM does support CMake configuration, MFEM
+-    # development team indicates that vanilla GNU Make is the
+-    # preferred mode of configuration of MFEM and the mode most
+-    # likely to be up to date in supporting *all* of MFEM's
+-    # configuration options. So, don't use CMake
+-    #
+     def get_make_config_options(self, spec, prefix):
+         def yes_no(varstr):
+-            return "YES" if varstr in self.spec else "NO"
++            return "YES" if varstr in spec else "NO"
+ 
+         using_nvcc = "+cuda" in spec and "+enzyme" not in spec
+         xcompiler = "" if not using_nvcc else "-Xcompiler="
+@@ -728,42 +916,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+         if spec.satisfies("@4.7.0:"):
+             options += ["MFEM_PRECISION=%s" % spec.variants["precision"].value]
+ 
+-        # Determine C++ standard to use:
+-        cxxstd = None
+-        if self.spec.satisfies("@4.0.0:"):
+-            cxxstd = "11"
+-        if self.spec.satisfies("^raja@2022.03.0:"):
+-            cxxstd = "14"
+-        if self.spec.satisfies("^umpire@2022.03.0:"):
+-            cxxstd = "14"
+-        if self.spec.satisfies("^sundials@6.4.0:"):
+-            cxxstd = "14"
+-        # When rocPRIM is used (e.g. by PETSc + ROCm) we need C++14:
+-        if self.spec.satisfies("^rocprim@5.5.0:"):
+-            cxxstd = "14"
+-        if self.spec.satisfies("^ginkgo@1.4.0:1.8"):
+-            cxxstd = "14"
+-        if self.spec.satisfies("^ginkgo@1.9.0:"):
+-            cxxstd = "17"
+-        if self.spec.satisfies("^umpire@2025.09.0:"):
+-            cxxstd = "17"
+-        if self.spec.satisfies("@4.9.0:"):
+-            cxxstd = "17"
+-        if self.spec.satisfies("^raja@2026.07.0:"):
+-            cxxstd = "20"
+-        if self.spec.satisfies("^umpire@2026.07:"):
+-            cxxstd = "20"
+-        cxxstd_req = spec.variants["cxxstd"].value
+-        if cxxstd_req != "auto":
+-            # Constraints for valid standard level should be imposed during
+-            # concretization based on 'conflicts' or other directives.
+-            cxxstd = cxxstd_req
++        cxxstd = self.pkg.cxxstd
+         cxxstd_flag = None
+         if cxxstd:
+             if using_nvcc:
+                 cxxstd_flag = "-std=c++" + cxxstd
+             else:
+-                cxxstd_flag = self["cxx"].standard_flag(language="cxx", standard=cxxstd)
++                cxxstd_flag = self.pkg["cxx"].standard_flag(language="cxx", standard=cxxstd)
+ 
+         cuda_arch = None
+         if "+cuda" in spec:
+@@ -775,8 +934,8 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+ 
+         if cxxflags:
+             # Add opt/debug flags if they are not present in global cxx flags
+-            opt_flag_found = any(f in self["cxx"].opt_flags for f in cxxflags)
+-            debug_flag_found = any(f in self["cxx"].debug_flags for f in cxxflags)
++            opt_flag_found = any(f in self.pkg["cxx"].opt_flags for f in cxxflags)
++            debug_flag_found = any(f in self.pkg["cxx"].debug_flags for f in cxxflags)
+ 
+             if "+debug" in spec:
+                 if not debug_flag_found:
+@@ -829,7 +988,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+         if "~static" in spec:
+             options += ["STATIC=NO"]
+         if "+shared" in spec:
+-            options += ["SHARED=YES", f"PICFLAG={xcompiler + self['cxx'].pic_flag}"]
++            options += ["SHARED=YES", f"PICFLAG={xcompiler + self.pkg['cxx'].pic_flag}"]
+ 
+         if "+mpi" in spec:
+             options += ["MPICXX=%s" % spec["mpi"].mpicxx]
+@@ -904,7 +1063,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+                 # OpenMP; if not found, we should not add any flags -- how do
+                 # we figure out if strumpack found OpenMP?
+                 if not self.spec.satisfies("%apple-clang"):
+-                    sp_opt += [xcompiler + self["cxx"].openmp_flag]
++                    sp_opt += [xcompiler + self.pkg["cxx"].openmp_flag]
+             if "^parmetis" in strumpack:
+                 parmetis = strumpack["parmetis"]
+                 sp_opt += [parmetis.headers.cpp_flags]
+@@ -943,14 +1102,14 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             ]
+ 
+         if "+suite-sparse" in spec:
+-            ss_spec = "suite-sparse:" + self.suitesparse_components
++            ss_spec = "suite-sparse:" + self.pkg.suitesparse_components
+             options += [
+                 "SUITESPARSE_OPT=-I%s" % spec[ss_spec].prefix.include,
+                 "SUITESPARSE_LIB=%s" % ld_flags_from_library_list(spec[ss_spec].libs),
+             ]
+ 
+         if "+sundials" in spec:
+-            sun_spec = "sundials:" + self.sundials_components
++            sun_spec = "sundials:" + self.pkg.sundials_components
+             options += [
+                 "SUNDIALS_OPT=%s" % spec[sun_spec].headers.cpp_flags,
+                 "SUNDIALS_LIB=%s" % ld_flags_from_library_list(spec[sun_spec].libs),
+@@ -1059,7 +1218,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             ]
+ 
+         if "+openmp" in spec:
+-            options += ["OPENMP_OPT=%s" % (xcompiler + self["cxx"].openmp_flag)]
++            options += ["OPENMP_OPT=%s" % (xcompiler + self.pkg["cxx"].openmp_flag)]
+ 
+         if "+cuda" in spec:
+             if using_nvcc:
+@@ -1251,10 +1410,9 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+                 "UMPIRE_LIB=%s" % ld_flags_from_library_list(umpire_libs),
+             ]
+ 
+-        timer_ids = {"std": "0", "posix": "2", "mac": "4", "mpi": "6"}
+         timer = spec.variants["timer"].value
+         if timer != "auto":
+-            options += ["MFEM_TIMER_TYPE=%s" % timer_ids[timer]]
++            options += ["MFEM_TIMER_TYPE=%s" % str_to_timerid(timer)]
+ 
+         if "+conduit" in spec:
+             conduit = spec["conduit"]
+@@ -1346,7 +1504,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             mumps_lib = mumps.libs
+             if "+openmp" in mumps:
+                 if not self.spec.satisfies("%apple-clang"):
+-                    mumps_opt += [xcompiler + self["cxx"].openmp_flag]
++                    mumps_opt += [xcompiler + self.pkg["cxx"].openmp_flag]
+             if "^scalapack" in mumps:
+                 scalapack = mumps["scalapack"]
+                 mumps_lib += scalapack.libs
+@@ -1366,19 +1524,19 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+ 
+         return options
+ 
+-    def configure(self, spec, prefix):
++    def configure(self, pkg, spec, prefix):
+         options = self.get_make_config_options(spec, prefix)
+         make("config", *options, parallel=False)
+         make("info", parallel=False)
+ 
+-    def build(self, spec, prefix):
++    def build(self, pkg, spec, prefix):
+         make("lib")
+ 
+     @run_after("build")
+     def check_or_test(self):
+         # Running 'make check' or 'make test' may fail if MFEM_MPIEXEC or
+         # MFEM_MPIEXEC_NP are not set appropriately.
+-        if not self.run_tests:
++        if not self.pkg.run_tests:
+             # check we can build ex1 (~mpi) or ex1p (+mpi).
+             make("-C", "examples", "ex1p" if ("+mpi" in self.spec) else "ex1", parallel=False)
+             # make('check', parallel=False)
+@@ -1386,7 +1544,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             make("all")
+             make("test", parallel=False)
+ 
+-    def install(self, spec, prefix):
++    def install(self, pkg, spec, prefix):
+         make("install", parallel=False)
+ 
+         # TODO: The way the examples and miniapps are being installed is not
+@@ -1421,116 +1579,6 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+         if install_em:
+             install_tree("data", join_path(prefix_share, "data"))
+ 
+-    examples_src_dir = "examples"
+-    examples_data_dir = "data"
+-
+-    @run_after("install")
+-    def cache_test_sources(self):
+-        """Copy the example source files after the package is installed to an
+-        install test subdirectory for use during `spack test run`."""
+-        # Clean the 'examples' directory -- at least one example is always built
+-        # and we do not want to cache executables.
+-        make("examples/clean", parallel=False)
+-        cache_extra_test_sources(self, [self.examples_src_dir, self.examples_data_dir])
+-
+-    def test_ex10(self):
+-        """build and run ex10(p)"""
+-        # MFEM has many examples to serve as a suitable smoke check. ex10
+-        # was chosen arbitrarily among the examples that work both with
+-        # MPI and without it
+-        test_dir = join_path(self.test_suite.current_test_cache_dir, self.examples_src_dir)
+-
+-        mesh = join_path("..", self.examples_data_dir, "beam-quad.mesh")
+-        test_exe = "ex10p" if ("+mpi" in self.spec) else "ex10"
+-
+-        with working_dir(test_dir):
+-            make = which("make", required=True)
+-            make(f"CONFIG_MK={self.config_mk}", test_exe, parallel=False)
+-
+-            ex10 = which(test_exe, required=True)
+-            ex10("--mesh", mesh)
+-
+-    # this patch is only needed for mfem 4.1, where a few
+-    # released files include byte order marks
+-    @when("@4.1.0")
+-    def patch(self):
+-        # Remove the byte order mark since it messes with some compilers
+-        files_with_bom = [
+-            "fem/gslib.hpp",
+-            "fem/gslib.cpp",
+-            "linalg/hiop.hpp",
+-            "miniapps/gslib/field-diff.cpp",
+-            "miniapps/gslib/findpts.cpp",
+-            "miniapps/gslib/pfindpts.cpp",
+-        ]
+-        bom = "\ufeff"
+-        for f in files_with_bom:
+-            filter_file(bom, "", f)
+-
+-    @property
+-    def suitesparse_components(self):
+-        """Return the SuiteSparse components needed by MFEM."""
+-        ss_comps = "umfpack,cholmod,colamd,amd,camd,ccolamd,suitesparseconfig"
+-        if self.spec.satisfies("@3.2:"):
+-            ss_comps = "klu,btf," + ss_comps
+-        return ss_comps
+-
+-    @property
+-    def sundials_components(self):
+-        """Return the SUNDIALS components needed by MFEM."""
+-        spec = self.spec
+-        sun_comps = "arkode,cvodes,nvecserial,kinsol"
+-        if "+mpi" in spec:
+-            if spec.satisfies("@4.2:"):
+-                sun_comps += ",nvecparallel,nvecmpiplusx"
+-            else:
+-                sun_comps += ",nvecparhyp,nvecparallel"
+-        if "+cuda" in spec and "+cuda" in spec["sundials"]:
+-            sun_comps += ",nveccuda"
+-        if "+rocm" in spec and "+rocm" in spec["sundials"]:
+-            sun_comps += ",nvechip"
+-        return sun_comps
+-
+-    @property
+-    def headers(self):
+-        """Export the main mfem header, mfem.hpp."""
+-        hdrs = HeaderList(find(self.prefix.include, "mfem.hpp", recursive=False))
+-        return hdrs or None
+-
+-    @property
+-    def libs(self):
+-        """Export the mfem library file."""
+-        libs = find_libraries(
+-            "libmfem", root=self.prefix.lib, shared=("+shared" in self.spec), recursive=False
+-        )
+-        return libs or None
+-
+-    @property
+-    def config_mk(self):
+-        """Export the location of the config.mk file.
+-        This property can be accessed using pkg["mfem"].config_mk
+-        """
+-        dirs = [self.prefix, self.prefix.share.mfem]
+-        for d in dirs:
+-            f = join_path(d, "config.mk")
+-            if os.access(f, os.R_OK):
+-                return FileList(f)
+-        return FileList(find(self.prefix, "config.mk", recursive=True))
+-
+-    @property
+-    def test_mk(self):
+-        """Export the location of the test.mk file.
+-        This property can be accessed using pkg["mfem"].test_mk.
+-        In version 3.3.2 and newer, the location of test.mk is also defined
+-        inside config.mk, variable MFEM_TEST_MK.
+-        """
+-        dirs = [self.prefix, self.prefix.share.mfem]
+-        for d in dirs:
+-            f = join_path(d, "test.mk")
+-            if os.access(f, os.R_OK):
+-                return FileList(f)
+-        return FileList(find(self.prefix, "test.mk", recursive=True))
+-
+     # See also find_system_libraries in lib/spack/llnl/util/filesystem.py
+     # where the similar list of paths is used.
+     sys_lib_paths = [
+@@ -1546,18 +1594,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     def is_sys_lib_path(self, dir):
+         return dir in self.sys_lib_paths
+ 
+-    @property
+-    def xlinker(self):
+-        using_nvcc = "+cuda" in self.spec and "+enzyme" not in self.spec
+-        return "-Wl," if not using_nvcc else "-Xlinker="
+-
+     # Similar to spec[pkg].libs.ld_flags but prepends rpath flags too.
+     # Also does not add system library paths as defined by 'sys_lib_paths'
+     # above -- this is done to avoid issues like this:
+     # https://github.com/mfem/mfem/issues/1088.
+     def ld_flags_from_library_list(self, libs_list):
+         flags = [
+-            "%s-rpath,%s" % (self.xlinker, dir)
++            "%s-rpath,%s" % (self.pkg.xlinker, dir)
+             for dir in libs_list.directories
+             if not self.is_sys_lib_path(dir)
+         ]
+@@ -1567,7 +1610,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+ 
+     def ld_flags_from_dirs(self, pkg_dirs_list, pkg_libs_list):
+         flags = [
+-            "%s-rpath,%s" % (self.xlinker, dir)
++            "%s-rpath,%s" % (self.pkg.xlinker, dir)
+             for dir in pkg_dirs_list
+             if not self.is_sys_lib_path(dir)
+         ]
+@@ -1607,3 +1650,142 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             except NoHeadersError:
+                 pass
+         return all_hdrs
++
++
++class CMakeBuilder(CMakeBuilder):
++    @run_after("install")
++    def cache_test_sources(self):
++        """Copy the example source files after the package is installed to an
++        install test subdirectory for use during `spack test run`."""
++        extra_install_tests = [self.pkg.examples_src_dir, self.pkg.examples_data_dir]
++        cache_extra_test_sources(self.pkg, extra_install_tests)
++
++    def cmake_args(self):
++        args = [
++            self.define_from_variant("MFEM_USE_MPI", "mpi"),
++            self.define_from_variant("MFEM_USE_METIS", "metis"),
++            self.define_from_variant("MFEM_USE_OPENMP", "openmp"),
++            self.define_from_variant("MFEM_USE_OCCA", "occa"),
++            self.define_from_variant("MFEM_USE_RAJA", "raja"),
++            self.define_from_variant("MFEM_USE_CEED", "libceed"),
++            self.define_from_variant("MFEM_USE_UMPIRE", "umpire"),
++            self.define_from_variant("MFEM_USE_AMGX", "amgx"),
++            self.define_from_variant("MFEM_THREAD_SAFE", "threadsafe"),
++            self.define_from_variant("MFEM_USE_SUPERLU", "superlu-dist"),
++            self.define_from_variant("MFEM_USE_STRUMPACK", "strumpack"),
++            self.define_from_variant("MFEM_USE_SUITESPARSE", "suite-sparse"),
++            self.define_from_variant("MFEM_USE_PETSC", "petsc"),
++            self.define_from_variant("MFEM_USE_MUMPS", "mumps"),
++            self.define_from_variant("MFEM_USE_SLEPC", "slepc"),
++            self.define_from_variant("MFEM_USE_SUNDIALS", "sundials"),
++            self.define_from_variant("MFEM_USE_PUMI", "pumi"),
++            self.define_from_variant("MFEM_USE_GSLIB", "gslib"),
++            self.define_from_variant("MFEM_USE_MPFR", "mpfr"),
++            self.define_from_variant("MFEM_USE_LAPACK", "lapack"),
++            self.define_from_variant("MFEM_USE_NETCDF", "netcdf"),
++            self.define_from_variant("MFEM_USE_CONDUIT", "conduit"),
++            self.define_from_variant("MFEM_USE_ZLIB", "zlib"),
++            self.define_from_variant("MFEM_USE_GNUTLS", "gnutls"),
++            self.define_from_variant("MFEM_USE_LIBUNWIND", "libunwind"),
++            self.define_from_variant("MFEM_USE_FMS", "fms"),
++            self.define_from_variant("MFEM_USE_GINKGO", "ginkgo"),
++            self.define_from_variant("MFEM_USE_HIOP", "hiop"),
++            self.define_from_variant("MFEM_USE_CUDA", "cuda"),
++            self.define_from_variant("MFEM_USE_HIP", "rocm"),
++            self.define_from_variant("MFEM_USE_ENZYME", "enzyme"),
++            self.define_from_variant("MFEM_USE_CUDSS", "cudss"),
++            self.define_from_variant("MFEM_USE_CALIPER", "caliper"),
++            self.define_from_variant("MFEM_ENABLE_EXAMPLES", "examples"),
++            self.define_from_variant("MFEM_ENABLE_MINIAPPS", "miniapps"),
++            self.define_from_variant("MFEM_USE_EXCEPTIONS", "exceptions"),
++            self.define_from_variant("MFEM_PRECISION", "precision"),
++            self.define("MFEM_ENABLE_TESTING", True),
++        ]
++        if "+shared" in self.spec:
++            args.append(self.define("BUILD_SHARED_LIBS", True))
++        else:
++            args.append(self.define("BUILD_SHARED_LIBS", False))
++
++        # CMakeBuilder.std_args() does not forward cuda_arch or amdgpu_target
++        if "+cuda" in self.spec:
++            args.append(self.define_cuda_architectures(self.pkg))
++        if "+rocm" in self.spec:
++            args.append(self.define_hip_architectures(self.pkg))
++
++        cxxstd = self.pkg.cxxstd
++        if cxxstd:
++            args.append(self.define("CMAKE_CXX_STANDARD", cxxstd))
++
++        # As in the generic build, use the BLAS/LAPACK from the spec instead of the
++        # libraries FindBLAS/FindLAPACK pick first
++        if "+lapack" in self.spec:
++            args.append(self.define("BLAS_LIBRARIES", self.spec["blas"].libs.joined(";")))
++            args.append(self.define("LAPACK_LIBRARIES", self.spec["lapack"].libs.joined(";")))
++
++        timer = self.spec.variants["timer"].value
++        if timer != "auto":
++            args.append(self.define("MFEM_TIMER_TYPE", str_to_timerid(timer)))
++
++        if "+petsc" in self.spec:
++            args.append(self.define("PETSC_DIR", self.spec["petsc"].prefix))
++            args.append(self.define("PETSC_ARCH", ""))
++
++        if "+mumps" in self.spec:
++            args.append(self.define("MUMPS_REQUIRED_PACKAGES", ""))
++
++        if "+strumpack" in self.spec:
++            args.append(self.define("STRUMPACK_REQUIRED_PACKAGES", "MPI"))
++
++        if "+netcdf" in self.spec:
++            args.append(self.define("NetCDF_REQUIRED_PACKAGES", ""))
++
++        if "+pumi" in self.spec:
++            args.append(self.define("PUMI_DIR", self.spec["pumi"].prefix))
++
++        if "+cudss" in self.spec:
++            cudss = self.spec["cudss"]
++            args.append(self.define("CUDSS_DIR", cudss.prefix))
++            # As in the generic build, use the communication layer that cudss+mpi
++            # builds against the same MPI instead of NVIDIA's Open MPI binary.
++            if "+mpi" in self.spec:
++                comm_libs = find_libraries(
++                    "libcudss_commlayer_mpi", cudss.prefix.lib, shared=True, recursive=True
++                )
++                if not comm_libs:
++                    raise InstallError("Required cuDSS MPI communication layer not found")
++                args.append(self.define("MFEM_CUDSS_COMM_LIB", comm_libs[0]))
++
++        if "+caliper" in self.spec:
++            args.append(self.define("CALIPER_DIR", self.spec["caliper"].prefix))
++            if "+adiak" in self.spec["caliper"]:
++                args.append(self.define("ADIAK_DIR", self.spec["adiak"].prefix))
++
++        if "+mpfr" in self.spec:
++            mpfr = self.spec["mpfr"]
++            args.append(self.define("MPFR_INCLUDE_DIRS", mpfr.headers.directories))
++            args.append(self.define("MPFR_LIBRARIES", mpfr.libs.libraries))
++            args.append(self.define("MPFR_FOUND", True))
++
++        return args
++
++    @run_after("build")
++    def check_or_test(self) -> None:
++        # Similar to the 'check' method in the base class, use
++        # generator-specific commands.
++        bld_cmd = self.pkg.module.make
++        if self.generator == "Ninja":
++            bld_cmd = self.pkg.module.ninja
++        with working_dir(self.build_directory):
++            if not self.pkg.run_tests:
++                # check we can build ex1 (~mpi) or ex1p (+mpi).
++                target = "ex1p" if ("+mpi" in self.spec) else "ex1"
++                bld_cmd(target)
++                # bld_cmd("check")
++            else:
++                bld_cmd("exec")
++                bld_cmd("test")
++
++    def check(self) -> None:
++        """Override the default with empty implementation. We use the method
++        ``check_or_test`` instead.
++        """
+diff --git a/repos/spack_repo/builtin/packages/mfem/test_builds.sh b/repos/spack_repo/builtin/packages/mfem/test_builds.sh
+index 862c5a2a..45a44fe5 100755
+--- a/repos/spack_repo/builtin/packages/mfem/test_builds.sh
++++ b/repos/spack_repo/builtin/packages/mfem/test_builds.sh
+@@ -11,12 +11,17 @@ compiler=''
+ cuda_arch="90"
+ rocm_arch="gfx942"
+ 
++# Build system to use: e.g. 'build_system=cmake generator=ninja'
++build_system=''
++# build_system='build_system=cmake'
++build_system_suffix=${build_system:+ ${build_system}}
++
+ spack_jobs=''
+ # spack_jobs='-j 128'
+ 
+-mfem='mfem@4.10.0'${compiler}
+-# mfem_dev='mfem@develop'${compiler}
+-mfem_dev='mfem@4.10.0'${compiler}
++mfem='mfem@4.10.0'${compiler}${build_system_suffix}
++# mfem_dev='mfem@develop'${compiler}${build_system_suffix}
++mfem_dev='mfem@4.10.0'${compiler}${build_system_suffix}
+ 
+ backends='+occa+raja+libceed'
+ backends_specs='^occa~cuda ^raja~openmp'
+@@ -44,29 +49,29 @@ fms_spec='^libfms+conduit'
+ 
+ builds=(
+     # preferred version:
+-    ${mfem}
+-    ${mfem}'~mpi~metis~zlib'
++    "${mfem}"
++    "${mfem}"' -mpi~metis~zlib'
+     # TODO: add back "+fms $fms_spec" when the FMS unit test is fixed
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem}"$backends"'+superlu-dist+strumpack+mumps+suite-sparse+petsc+slepc \
++    "${mfem} $backends"'+superlu-dist+strumpack+mumps+suite-sparse+petsc+slepc \
+         +gslib+sundials+pumi+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         +hiop \
+         '"$backends_specs $superlu_spec $strumpack_spec $petsc_spec"' \
+         '"$conduit_spec"
+     # TODO: add back "+fms $fms_spec" when the FMS unit test is fixed
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem}'~mpi \
++    "${mfem}"' -mpi \
+         '"$backends"'+suite-sparse+sundials+gslib+netcdf \
+         +zlib+gnutls+libunwind+conduit+ginkgo+hiop \
+         '"$backends_specs $conduit_spec"' ^sundials~mpi'
+-    ${mfem}' precision=single +mumps+petsc '"$petsc_spec"
++    "${mfem}"' precision=single +mumps+petsc '"$petsc_spec"
+ 
+     # develop version, shared builds:
+-    ${mfem_dev}'+shared~static'
+-    ${mfem_dev}'+shared~static~mpi~metis~zlib'
++    "${mfem_dev}"' +shared~static'
++    "${mfem_dev}"' +shared~static~mpi~metis~zlib'
+     # TODO: add back "+fms $fms_spec" when the FMS unit test is fixed
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem_dev}'+shared~static \
++    "${mfem_dev}"' +shared~static \
+         '"$backends"'+superlu-dist+strumpack+mumps+suite-sparse+petsc+slepc \
+         +gslib+sundials+pumi+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         +hiop \
+@@ -74,105 +79,105 @@ builds=(
+         '"$conduit_spec"
+     # TODO: add back "+fms $fms_spec" when the FMS unit test is fixed
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem_dev}'+shared~static~mpi \
++    "${mfem_dev}"' +shared~static~mpi \
+         '"$backends"'+suite-sparse+sundials+gslib+netcdf \
+         +zlib+gnutls+libunwind+conduit+ginkgo+hiop \
+         '"$backends_specs $conduit_spec"' ^sundials~mpi'
+-    ${mfem_dev}'+shared~static precision=single +mumps+petsc '"$petsc_spec"
++    "${mfem_dev}"' +shared~static precision=single +mumps+petsc '"$petsc_spec"
+ )
+ 
+ builds2=(
+     # preferred version
+-    ${mfem}"$backends $backends_specs"
+-    ${mfem}' precision=single'
+-    ${mfem}'+superlu-dist'" $superlu_spec"
+-    ${mfem}'+strumpack'" $strumpack_spec"
+-    ${mfem}'+mumps'" $mumps_spec"
+-    ${mfem}'+suite-sparse~mpi'
+-    ${mfem}'+suite-sparse'
+-    ${mfem}'+sundials~mpi ^sundials~mpi'
+-    ${mfem}'+sundials'
+-    ${mfem}'+pumi'
+-    ${mfem}'+gslib'
+-    ${mfem}'+netcdf~mpi'
+-    ${mfem}'+netcdf'
++    "${mfem} $backends $backends_specs"
++    "${mfem}"' precision=single'
++    "${mfem}"' +superlu-dist'" $superlu_spec"
++    "${mfem}"' +strumpack'" $strumpack_spec"
++    "${mfem}"' +mumps'" $mumps_spec"
++    "${mfem}"' +suite-sparse~mpi'
++    "${mfem}"' +suite-sparse'
++    "${mfem}"' +sundials~mpi ^sundials~mpi'
++    "${mfem}"' +sundials'
++    "${mfem}"' +pumi'
++    "${mfem}"' +gslib'
++    "${mfem}"' +netcdf~mpi'
++    "${mfem}"' +netcdf'
+     # TODO: uncomment next line when PR #5534 is merged
+-    # ${mfem}'+mpfr'
+-    ${mfem}'+gnutls'
+-    ${mfem}'+conduit~mpi'" $conduit_spec"
+-    ${mfem}'+conduit'" $conduit_spec"
++    # "${mfem}"' +mpfr'
++    "${mfem}"' +gnutls'
++    "${mfem}"' +conduit~mpi'" $conduit_spec"
++    "${mfem}"' +conduit'" $conduit_spec"
+     # TODO: uncomment next line when the FMS unit test is fixed
+-    # ${mfem}'+fms'" $fms_spec"
+-    ${mfem}'+umpire'
+-    ${mfem}'+petsc'" $petsc_spec"
+-    ${mfem}'+petsc+slepc'" $petsc_spec"
+-    ${mfem}'+ginkgo'
+-    ${mfem}'+hiop'
+-    ${mfem}'+threadsafe'
++    # "${mfem}"' +fms'" $fms_spec"
++    "${mfem}"' +umpire'
++    "${mfem}"' +petsc'" $petsc_spec"
++    "${mfem}"' +petsc+slepc'" $petsc_spec"
++    "${mfem}"' +ginkgo'
++    "${mfem}"' +hiop'
++    "${mfem}"' +threadsafe'
+     # hypre+int64 requires 64-bit blas+lapack
+-    # ${mfem}' ^hypre+int64'
+-    ${mfem}' ^hypre+mixedint'
++    # "${mfem}"' ^hypre+int64'
++    "${mfem}"' ^hypre+mixedint'
+     #
+     # develop version
+-    ${mfem_dev}"$backends $backends_specs"
+-    ${mfem_dev}' precision=single'
+-    ${mfem_dev}'+superlu-dist'" $superlu_spec"
+-    ${mfem_dev}'+strumpack'" $strumpack_spec"
+-    ${mfem_dev}'+mumps'" $mumps_spec"
+-    ${mfem_dev}'+suite-sparse~mpi'
+-    ${mfem_dev}'+suite-sparse'
+-    ${mfem_dev}'+sundials~mpi ^sundials~mpi'
+-    ${mfem_dev}'+sundials'
+-    ${mfem_dev}'+pumi'
+-    ${mfem_dev}'+gslib'
+-    ${mfem_dev}'+netcdf~mpi'
+-    ${mfem_dev}'+netcdf'
++    "${mfem_dev} $backends $backends_specs"
++    "${mfem_dev}"' precision=single'
++    "${mfem_dev}"' +superlu-dist'" $superlu_spec"
++    "${mfem_dev}"' +strumpack'" $strumpack_spec"
++    "${mfem_dev}"' +mumps'" $mumps_spec"
++    "${mfem_dev}"' +suite-sparse~mpi'
++    "${mfem_dev}"' +suite-sparse'
++    "${mfem_dev}"' +sundials~mpi ^sundials~mpi'
++    "${mfem_dev}"' +sundials'
++    "${mfem_dev}"' +pumi'
++    "${mfem_dev}"' +gslib'
++    "${mfem_dev}"' +netcdf~mpi'
++    "${mfem_dev}"' +netcdf'
+     # TODO: uncomment next line when PR #5534 is merged
+-    # ${mfem_dev}'+mpfr'
+-    ${mfem_dev}'+gnutls'
+-    ${mfem_dev}'+conduit~mpi'" $conduit_spec"
+-    ${mfem_dev}'+conduit'" $conduit_spec"
++    # "${mfem_dev}"' +mpfr'
++    "${mfem_dev}"' +gnutls'
++    "${mfem_dev}"' +conduit~mpi'" $conduit_spec"
++    "${mfem_dev}"' +conduit'" $conduit_spec"
+     # TODO: uncomment next line when the FMS unit test is fixed
+-    # ${mfem_dev}'+fms'" $fms_spec"
+-    ${mfem_dev}'+umpire'
+-    ${mfem_dev}'+petsc'" $petsc_spec"
+-    ${mfem_dev}'+petsc+slepc'" $petsc_spec"
+-    ${mfem_dev}'+ginkgo'
+-    ${mfem_dev}'+hiop'
+-    ${mfem_dev}'+threadsafe'
++    # "${mfem_dev}"' +fms'" $fms_spec"
++    "${mfem_dev}"' +umpire'
++    "${mfem_dev}"' +petsc'" $petsc_spec"
++    "${mfem_dev}"' +petsc+slepc'" $petsc_spec"
++    "${mfem_dev}"' +ginkgo'
++    "${mfem_dev}"' +hiop'
++    "${mfem_dev}"' +threadsafe'
+     # hypre+int64 requires 64-bit blas+lapack
+-    # ${mfem_dev}' ^hypre+int64'
+-    ${mfem_dev}' ^hypre+mixedint'
++    # "${mfem_dev}"' ^hypre+int64'
++    "${mfem_dev}"' ^hypre+mixedint'
+ )
+ 
+ 
+ builds_cuda=(
+     # hypre without cuda:
+-    ${mfem}'+cuda cuda_arch='"${cuda_arch}"
++    "${mfem}"' +cuda cuda_arch='"${cuda_arch}"
+ 
+     # hypre with cuda:
+-    ${mfem}'+cuda cuda_arch='"${cuda_arch} ^hypre+cuda"
++    "${mfem}"' +cuda cuda_arch='"${cuda_arch} ^hypre+cuda"
+ 
+     # hypre with cuda:
+     # TODO: restore '+libceed' when the libCEED CUDA unit tests take less time.
+-    ${mfem}'+cuda+raja+occa cuda_arch='"${cuda_arch}"' \
++    "${mfem}"' +cuda+raja+occa cuda_arch='"${cuda_arch}"' \
+         ^raja+cuda~openmp ^hypre+cuda'
+ 
+     # hypre without cuda:
+     # NOTE: PETSc tests may need PETSC_OPTIONS="-use_gpu_aware_mpi 0"
+     # TODO: restore '+libceed' when the libCEED CUDA unit tests take less time.
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem}'+cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
++    "${mfem}"' +cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
+         +superlu-dist+strumpack+suite-sparse+gslib+petsc+slepc \
+         +sundials+pumi+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         ^raja+cuda+openmp'" $strumpack_cuda_spec"' \
+         '"$superlu_cuda_spec $petsc_spec_cuda $conduit_spec"
+ 
+-    ${mfem}'+cuda cuda_arch='"${cuda_arch}"' +raja+umpire'
++    "${mfem}"' +cuda cuda_arch='"${cuda_arch}"' +raja+umpire'
+ 
+     # hiop needs older versions of raja, umpire, etc
+     # TODO: combine this spec with the above spec when the combined spec works.
+-    ${mfem}'+cuda cuda_arch='"${cuda_arch}"' +hiop'
++    "${mfem}"' +cuda cuda_arch='"${cuda_arch}"' +hiop'
+ 
+     # hypre with cuda:
+     # TODO: restore '+libceed' when the libCEED CUDA unit tests take less time.
+@@ -180,113 +185,114 @@ builds_cuda=(
+     # NOTE: PETSc tests may need PETSC_OPTIONS="-use_gpu_aware_mpi 0"
+     # TODO: add back "+sundials" when it's supported with '^hypre+cuda'.
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem}'+cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
++    "${mfem}"' +cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
+         +superlu-dist+strumpack+suite-sparse+gslib \
+         +pumi+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         ^raja+cuda+openmp ^hypre+cuda \
+         '" $strumpack_cuda_spec $superlu_cuda_spec $conduit_spec"
+ 
+-    ${mfem}'+cuda cuda_arch='"${cuda_arch}"' +raja+umpire ^hypre+cuda'
++    "${mfem}"' +cuda cuda_arch='"${cuda_arch}"' +raja+umpire ^hypre+cuda'
+ 
+     # hiop needs older versions of raja, umpire, etc
+     # TODO: combine this spec with the above spec when the combined spec works.
+-    ${mfem}'+cuda cuda_arch='"${cuda_arch}"' +hiop ^hypre+cuda'
++    "${mfem}"' +cuda cuda_arch='"${cuda_arch}"' +hiop ^hypre+cuda'
+ 
+-    ${mfem}' precision=single +cuda cuda_arch='"${cuda_arch}"' ^hypre+cuda'
++    "${mfem}"' precision=single +cuda cuda_arch='"${cuda_arch}"' ^hypre+cuda'
+ 
+     #
+     # same builds as above with ${mfem_dev}
+     #
+ 
+     # hypre without cuda:
+-    ${mfem_dev}'+cuda cuda_arch='"${cuda_arch}"
++    "${mfem_dev}"' +cuda cuda_arch='"${cuda_arch}"
+ 
+     # hypre with cuda:
+-    ${mfem_dev}'+cuda cuda_arch='"${cuda_arch} ^hypre+cuda"
++    "${mfem_dev}"' +cuda cuda_arch='"${cuda_arch} ^hypre+cuda"
+ 
+     # hypre with cuda:
+     # TODO: restore '+libceed' when the libCEED CUDA unit tests take less time.
+-    ${mfem_dev}'+cuda+raja+occa cuda_arch='"${cuda_arch}"' \
++    "${mfem_dev}"' +cuda+raja+occa cuda_arch='"${cuda_arch}"' \
+         ^raja+cuda~openmp ^hypre+cuda'
+ 
+     # hypre without cuda:
+     # NOTE: PETSc tests may need PETSC_OPTIONS="-use_gpu_aware_mpi 0"
+     # TODO: restore '+libceed' when the libCEED CUDA unit tests take less time.
+-    ${mfem_dev}'+cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
++    "${mfem_dev}"' +cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
+         +superlu-dist+strumpack+suite-sparse+gslib+petsc+slepc \
+         +sundials+pumi+mpfr+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         ^raja+cuda+openmp'" $strumpack_cuda_spec"' \
+         '"$superlu_cuda_spec $petsc_spec_cuda $conduit_spec"
+ 
+-    ${mfem_dev}'+cuda cuda_arch='"${cuda_arch}"' +raja+umpire'
++    "${mfem_dev}"' +cuda cuda_arch='"${cuda_arch}"' +raja+umpire'
+ 
+     # hiop needs older versions of raja, umpire, etc
+     # TODO: combine this spec with the above spec when the combined spec works.
+-    ${mfem_dev}'+cuda cuda_arch='"${cuda_arch}"' +hiop'
++    "${mfem_dev}"' +cuda cuda_arch='"${cuda_arch}"' +hiop'
+ 
+     # hypre with cuda:
+     # TODO: restore '+libceed' when the libCEED CUDA unit tests take less time.
+     # TODO: add back "+petsc+slepc $petsc_spec_cuda" when it works.
+     # NOTE: PETSc tests may need PETSC_OPTIONS="-use_gpu_aware_mpi 0"
+     # TODO: add back "+sundials" when it's supported with '^hypre+cuda'.
+-    ${mfem_dev}'+cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
++    "${mfem_dev}"' +cuda+openmp+raja+occa cuda_arch='"${cuda_arch}"' \
+         +superlu-dist+strumpack+suite-sparse+gslib \
+         +pumi+mpfr+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         ^raja+cuda+openmp ^hypre+cuda \
+         '"$strumpack_cuda_spec $superlu_cuda_spec $conduit_spec"
+ 
+-    ${mfem_dev}'+cuda cuda_arch='"${cuda_arch}"' +raja+umpire ^hypre+cuda'
++    "${mfem_dev}"' +cuda cuda_arch='"${cuda_arch}"' +raja+umpire ^hypre+cuda'
+ 
+     # hiop needs older versions of raja, umpire, etc
+     # TODO: combine this spec with the above spec when the combined spec works.
+-    ${mfem_dev}'+cuda cuda_arch='"${cuda_arch}"' +hiop ^hypre+cuda'
++    "${mfem_dev}"' +cuda cuda_arch='"${cuda_arch}"' +hiop ^hypre+cuda'
+ 
+-    ${mfem_dev}' precision=single +cuda cuda_arch='"${cuda_arch}"' ^hypre+cuda'
++    "${mfem_dev}"' precision=single +cuda cuda_arch='"${cuda_arch}"' ^hypre+cuda'
+ )
+ 
+ 
+ builds_rocm=(
+     # hypre without rocm:
+-    ${mfem}'+rocm amdgpu_target='"${rocm_arch}"
++    "${mfem}"' +rocm amdgpu_target='"${rocm_arch}"
+ 
+     # hypre with rocm:
+-    ${mfem}'+rocm amdgpu_target='"${rocm_arch} ^hypre+rocm"
++    "${mfem}"' +rocm amdgpu_target='"${rocm_arch} ^hypre+rocm"
+ 
+     # hypre with rocm:
+-    ${mfem}'+rocm+raja+occa+libceed amdgpu_target='"${rocm_arch}"' \
++    "${mfem}"' +rocm+raja+occa+libceed amdgpu_target='"${rocm_arch}"' \
+         ^raja+rocm~openmp ^occa~cuda~openmp ^hypre+rocm'
+ 
+     # hypre without rocm:
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem}'+rocm+openmp+raja+occa+libceed amdgpu_target='"${rocm_arch}"' \
++    "${mfem}"' +rocm+openmp+raja+occa+libceed amdgpu_target='"${rocm_arch}"' \
+         +superlu-dist+strumpack+suite-sparse+gslib+petsc+slepc \
+         +sundials+pumi+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         ^raja+rocm~openmp ^occa~cuda'" $strumpack_rocm_spec"' \
+         '"$superlu_rocm_spec $petsc_spec_rocm $conduit_spec"
+ 
+-    ${mfem}'+rocm amdgpu_target='"${rocm_arch}"' +raja+umpire'
++    "${mfem}"' +rocm amdgpu_target='"${rocm_arch}"' +raja+umpire'
+ 
+     # hiop needs older versions of raja, umpire, etc
+     # TODO: combine this spec with the above spec when the combined spec works.
+-    ${mfem}'+rocm amdgpu_target='"${rocm_arch}"' +hiop'
++    "${mfem}"' +rocm amdgpu_target='"${rocm_arch}"' +hiop'
+ 
+     # hypre with rocm:
+     # TODO: add back "+petsc+slepc $petsc_spec_rocm" when it works.
+     # TODO: add back "+sundials" when it's supported with '^hypre+rocm'.
+     # TODO: add back "+mpfr" when PR #5534 is merged
+-    ${mfem}'+rocm+openmp+raja+occa+libceed amdgpu_target='"${rocm_arch}"' \
++    "${mfem}"' +rocm+openmp+raja+occa+libceed amdgpu_target='"${rocm_arch}"' \
+         +superlu-dist+strumpack+suite-sparse+gslib \
+         +pumi+netcdf+zlib+gnutls+libunwind+conduit+ginkgo \
+         ^raja+rocm~openmp ^occa~cuda ^hypre+rocm \
+         '"$strumpack_rocm_spec $superlu_rocm_spec $conduit_spec"
+ 
+-    ${mfem}'+rocm amdgpu_target='"${rocm_arch}"' +raja+umpire ^hypre+rocm'
++    "${mfem}"' +rocm amdgpu_target='"${rocm_arch}"' +raja+umpire ^hypre+rocm'
+ 
+     # hiop needs older versions of raja, umpire, etc
+     # TODO: combine this spec with the above spec when the combined spec works.
+-    ${mfem}'+rocm amdgpu_target='"${rocm_arch}"' +hiop ^hypre+rocm'
++    "${mfem}"' +rocm amdgpu_target='"${rocm_arch}"' +hiop ^hypre+rocm'
+ 
+-    ${mfem}' precision=single +rocm amdgpu_target='"${rocm_arch}"' ^hypre+rocm'
++    "${mfem}"' precision=single +rocm amdgpu_target='"${rocm_arch}"' \
++        ^hypre+rocm'
+ 
+     #
+     # same builds as above with ${mfem_dev}
+@@ -302,6 +308,8 @@ SEP='=========================================================================='
+ sep='--------------------------------------------------------------------------'
+ 
+ run_builds=("${builds[@]}" "${builds2[@]}")
++# run_builds=("${builds[@]}")
++# run_builds=("${builds2[@]}")
+ # run_builds=("${builds_cuda[@]}")
+ # run_builds=("${builds_rocm[@]}")
+ 

@@ -371,6 +371,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
+  - The Spack package now builds MFEM with CMake
+    ([spack/spack-packages#143](https://github.com/spack/spack-packages/pull/143)), and
+    *Palace* links HYPRE, METIS, the sparse direct solvers, SUNDIALS, GSLIB, Umpire, and
+    zlib through MFEM's CMake package instead of finding them itself. The `palace/` CMake
+    project no longer has the `PALACE_WITH_SUPERLU`, `PALACE_WITH_STRUMPACK`,
+    `PALACE_WITH_MUMPS`, `PALACE_WITH_CUDSS`, `PALACE_WITH_SUNDIALS`, and
+    `PALACE_WITH_GSLIB` options or the `*_DIR` options for these libraries: it follows
+    the MFEM build. The superbuild options are unchanged.
+  - The unit tests read the MFEM example meshes from MFEM's installed `data/` folder
+    instead of copies in `test/data/mesh`.
 
 ## [0.19.0] - 2026-11-02
 
