@@ -111,6 +111,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     complex propagation constant of a lossy port mode, so that the synthesized port loads
     carry the attenuation of the port lines.
     [Issue 1109](https://github.com/awslabs/palace/issues/1109).
+  - Fixed a crash of circuit synthesis (`"AdaptiveCircuitSynthesis"`) when several wave
+    ports share a boundary, for example inactive wave ports extracting the S-parameters of
+    a second mode at the boundaries of the active ports.
+    [Issue 1109](https://github.com/awslabs/palace/issues/1109).
 
 #### Build system
 
