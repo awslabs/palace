@@ -1187,12 +1187,28 @@ void NewtonInterpolationOperator::AddFrozenPole(
     const std::function<std::complex<double>(std::complex<double>)> &f,
     std::complex<double> lambda_target)
 {
+  AddFrozenTerm(std::move(M), f, lambda_target, 0);
+}
+
+void NewtonInterpolationOperator::AddFrozenTerm(
+    std::unique_ptr<ComplexOperator> M,
+    const std::function<std::complex<double>(std::complex<double>)> &f,
+    std::complex<double> lambda_target, int frozen_order)
+{
   if (!M)
   {
     return;
   }
   MFEM_VERIFY(!points.empty() && !coeffs.empty(),
-              "AddFrozenPole requires a prior Interpolate() call!");
+              "Freezing an A2 term requires a prior Interpolate() call!");
+  MFEM_VERIFY(frozen_order >= 0 && frozen_order < num_points,
+              "Frozen A2 term order " << frozen_order << " is not in [0, " << num_points
+                                      << ")!");
+  MFEM_VERIFY(frozen_order == 0 || lambda_target != 0.0,
+              "A frozen A2 term of order " << frozen_order << " needs a nonzero target!");
+  MFEM_VERIFY(M->Height() == rhs.Size() && M->Width() == rhs.Size(),
+              "Frozen A2 term has size " << M->Height() << " x " << M->Width() << ", not "
+                                         << rhs.Size() << "!");
 
   // Per-order multiplier of M: remove the interpolated pole at every order (the scalar
   // Newton interpolant of f through the same nodes as the operator path), then re-add the
@@ -1206,10 +1222,13 @@ void NewtonInterpolationOperator::AddFrozenPole(
   for (int order = 0; order < num_points; order++)
   {
     std::complex<double> corr = -q[order];
-    if (order == 0)
+    if (order == frozen_order)
     {
-      corr += f(lambda_target);
+      corr += (order == 0) ? f(lambda_target)
+                           : f(lambda_target) / std::pow(lambda_target, order);
     }
+    MFEM_VERIFY(std::isfinite(corr.real()) && std::isfinite(corr.imag()),
+                "Frozen A2 term has a non-finite order-" << order << " coefficient!");
     pencil_coeffs[order].push_back(corr);
     pencil_ops[order].push_back(M_raw);
   }

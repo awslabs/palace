@@ -36,7 +36,7 @@ namespace
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// A 1 x 0.8 x 0.6 cm box of 2 x 2 x 2 hexahedra (L0 = 1 cm), without degenerate modes.
+// A 1 x 0.8 x 0.6 cm box of 2 x 2 x 2 hexahedra (L0 = 1 cm).
 // Boundary attributes of mfem::Mesh::MakeCartesian3D: 1 (z = 0), 2 (y = 0), 3 (x = 1), 4 (y
 // = 1), 5 (x = 0), 6 (z = 1).
 fs::path WriteBoxMesh(const fs::path &dir)
@@ -224,6 +224,41 @@ TEST_CASE_METHOD(test::SharedTempDir,
   CHECK(matched.front() == 0);
 }
 
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: Hybrid seed of a Lorentz-filled PEC box",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("Requires the SLEPc eigensolver");
+#endif
+  // The Hybrid seed freezes the permittivity at the target in its λ² block. In a PEC box
+  // filled with one material, its eigenvalues are then exactly the discrete constant modes
+  // f_h of ε∞ rescaled to ε(target): f = f_h √(ε∞ / ε(target)). With RefineNonlinear =
+  // false these seeds are the output, before Quasi-Newton refines them. A permittivity
+  // interpolated across the resonance (here at 14 GHz, between the nodes 8, 16, and 24 GHz)
+  // gives other seeds, about 18 GHz for the lowest.
+  const auto mesh = WriteBoxMesh(temp_dir);
+  const json pec = {{"PEC", {{"Attributes", {1, 2, 3, 4, 5, 6}}}}};
+  const auto constant =
+      RunEigenmode(BoxConfig(mesh, eps_inf, pec, 16, 8.0, ""), temp_dir, "constant");
+  auto config = BoxConfig(mesh, LorentzPermittivityConfig(), pec, 6, 8.0, "");
+  config["Solver"]["Eigenmode"]["RefineNonlinear"] = false;
+  config["Solver"]["Eigenmode"]["LinearTol"] = 1.0e-10;
+  const auto seed = RunEigenmode(config, temp_dir, "seed");
+  REQUIRE(seed.f.size() >= 6);
+  const auto scale = std::sqrt(eps_inf / LorentzPermittivity(8.0));
+  for (const auto f : seed.f)
+  {
+    CAPTURE(f);
+    double rel = std::numeric_limits<double>::infinity();
+    for (const auto f_h : constant.f)
+    {
+      rel = std::min(rel, std::abs(f - f_h * scale) / std::abs(f_h * scale));
+    }
+    CHECK(rel <= 1.0e-7);
+  }
+}
+
 TEST_CASE_METHOD(
     test::SharedTempDir,
     "Eigenmode driver: second-order absorbing boundaries next to a Debye medium",
@@ -264,6 +299,54 @@ TEST_CASE_METHOD(
   const std::complex<double> lowest(19.108678, 2.399168);
   CHECK(std::ranges::any_of(hybrid.f, [&](auto f)
                             { return std::abs(f - lowest) <= 1.0e-6 * std::abs(lowest); }));
+}
+
+TEST_CASE_METHOD(
+    test::SharedTempDir,
+    "Eigenmode driver: second-order absorbing boundaries next to a Lorentz medium",
+    "[eigenmodedriver][Serial][Parallel]")
+{
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("Requires the SLEPc eigensolver");
+#endif
+  // The faces x = 0 and x = 1 are second-order absorbing boundaries next to the Lorentz
+  // medium, and the others PEC, with the target below the resonance. The Hybrid seed
+  // freezes the permittivity and the first-order absorbing boundary coefficient at the
+  // target: interpolated across the resonance, they gave seeds that were boundary gradients
+  // of the absorbing faces, from which Quasi-Newton found no mode. The requested modes must
+  // be the lowest found independently by the SLP solver, which does not use the seed, and
+  // match the reference values (backward errors below 1e-10).
+  const auto mesh = WriteBoxMesh(temp_dir);
+  const json boundaries = {{"PEC", {{"Attributes", {1, 2, 4, 6}}}},
+                           {"Absorbing", {{"Attributes", {3, 5}}, {"Order", 2}}}};
+  constexpr int n = 4;
+  const auto hybrid = RunEigenmode(
+      BoxConfig(mesh, LorentzPermittivityConfig(), boundaries, n, 8.0, "Hybrid"), temp_dir,
+      "hybrid");
+  const auto slp = RunEigenmode(
+      BoxConfig(mesh, LorentzPermittivityConfig(), boundaries, 2 * n, 8.0, "SLP"), temp_dir,
+      "slp");
+  REQUIRE(hybrid.f.size() >= n);
+  REQUIRE(slp.f.size() >= n);
+  auto by_frequency = [](auto a, auto b) { return a.real() < b.real(); };
+  auto found = hybrid.f, lowest = slp.f;
+  std::ranges::sort(found, by_frequency);
+  std::ranges::sort(lowest, by_frequency);
+  const std::vector<std::complex<double>> reference = {{13.37300, 0.5602253},
+                                                       {13.70413, 0.2946123},
+                                                       {13.82612, 0.2657585},
+                                                       {13.83002, 0.2586597}};
+  for (std::size_t i = 0; i < n; i++)
+  {
+    CAPTURE(i, found[i], lowest[i], reference[i]);
+    CHECK(std::abs(found[i] - lowest[i]) <= 1.0e-6 * std::abs(lowest[i]));
+    CHECK(std::abs(found[i] - reference[i]) <= 1.0e-6 * std::abs(reference[i]));
+  }
+  for (std::size_t i = 0; i < hybrid.f.size(); i++)
+  {
+    CAPTURE(hybrid.f[i]);
+    CHECK(hybrid.backward_error[i] <= 1.0e-8);
+  }
 }
 
 }  // namespace palace

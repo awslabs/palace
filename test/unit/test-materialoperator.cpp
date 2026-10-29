@@ -34,6 +34,7 @@
 namespace palace
 {
 using namespace Catch;
+using namespace std::complex_literals;
 
 namespace
 {
@@ -1391,6 +1392,138 @@ TEST_CASE("Second-order absorbing boundary pole terms",
     z -= y;
     CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-10 * seed_norm);
   }
+}
+
+TEST_CASE("Hybrid seed with the frequency-dependent terms frozen at the target",
+          "[materialoperator][Serial][Parallel]")
+{
+  // A damped Lorentz medium (x < 1) next to vacuum, with second-order absorbing boundaries
+  // on both ends. As the eigenmode solver builds its seed, the volume term g_m(λ) is frozen
+  // at the target in the λ² coefficient, the first-order boundary term ω r(ω) next to the
+  // medium in the λ coefficient, and the second-order terms in the constant one. These are
+  // all of A2 here, so the seed pencil at any λ must be exactly the sum of these frozen
+  // terms, and A2(λ) less the exact terms must vanish (the scalar laws and the
+  // imaginary-slot matrices agree with A2). A term in the wrong order of λ fails.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(i, center);
+    serial_mesh->SetAttribute(i, center(0) < 1.0 ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh)));
+  config::SolverData solver;
+  solver.order = 2;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+  Units units(1.0, 1.0);
+  config::MaterialData dispersive, vacuum;
+  dispersive.attributes = {1};
+  dispersive.epsilon_r.s = {2.0, 2.0, 2.0};
+  dispersive.permittivity_terms.push_back(config::LorentzData{0.7, 3.0, 0.4});
+  vacuum.attributes = {2};
+  config::DomainData domains;
+  domains.materials = {dispersive, vacuum};
+  config::BoundaryData boundaries;
+  boundaries.farfield.attributes = {3, 5};
+  boundaries.farfield.order = 2;
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::EIGENMODE, units, mesh);
+  const auto &mat_op = space_op.GetMaterialOp();
+  const auto &farfield_op = space_op.GetFarfieldOp();
+  // Material 0 is the Lorentz medium; the vacuum has no frequency-dependent term (and a
+  // null mass matrix, which freezing skips).
+  REQUIRE(mat_op.NumFrequencyDependentPermittivityMaterials() == 2);
+  REQUIRE(!space_op.GetFrequencyDependentPermittivityMassMatrix(1, Operator::DIAG_ZERO));
+  REQUIRE(farfield_op.NumDispersiveMaterials() == 1);
+  auto f_vol = [&mat_op](std::complex<double> l)
+  { return mat_op.EvaluateFrequencyDependentPermittivityA2(0, l) / 1i; };
+  auto f_damp = [&farfield_op](std::complex<double> l)
+  { return (l / 1i) * farfield_op.GetDispersiveScale(0, l / 1i); };
+
+  const double target = 1.0, target_max = 3.0;
+  const std::complex<double> sigma = 1i * target;
+  const int size = space_op.GetNDSpace().GetTrueVSize();
+  NewtonInterpolationOperator interp(
+      [&space_op](std::complex<double> l)
+      { return space_op.GetExtraSystemMatrix(l / 1i, Operator::DIAG_ZERO); }, size);
+  interp.Interpolate(sigma, 1i * target_max);
+  for (auto &[M, g] : space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO))
+  {
+    interp.AddFrozenPole(std::move(M), g, sigma);
+  }
+  interp.AddFrozenTerm(
+      space_op.GetFrequencyDependentPermittivityMassMatrix(0, Operator::DIAG_ZERO), f_vol,
+      sigma, 2);
+  interp.AddFrozenTerm(
+      space_op.GetFrequencyDependentPermittivityMassMatrix(1, Operator::DIAG_ZERO), f_vol,
+      sigma, 2);  // Null: no-op
+  interp.AddFrozenTerm(space_op.GetFarfieldDispersiveDampingMatrix(0, Operator::DIAG_ZERO),
+                       f_damp, sigma, 1);
+
+  ComplexVector x(size), y(size), z(size), r(size), t(size);
+  for (auto *v : {&x, &y, &z, &r, &t})
+  {
+    v->UseDevice(true);
+  }
+  linalg::SetRandom(Mpi::World(), x);
+  const auto B =
+      space_op.GetFrequencyDependentPermittivityMassMatrix(0, Operator::DIAG_ZERO);
+  const auto D = space_op.GetFarfieldDispersiveDampingMatrix(0, Operator::DIAG_ZERO);
+  const auto poles = space_op.GetFarfieldPoleTerms(Operator::DIAG_ZERO);
+  REQUIRE(B);
+  REQUIRE(D);
+  REQUIRE(poles.size() == 2);
+  for (const std::complex<double> l :
+       {std::complex<double>(-0.2, 1.37), std::complex<double>(0.1, 2.6)})
+  {
+    CAPTURE(l);
+    // Seed pencil Σ λᵖ P_p x.
+    y = 0.0;
+    std::complex<double> lp = 1.0;
+    for (int order = 0; order < 3; order++, lp *= l)
+    {
+      interp.AddMult(order, x, y, lp);
+    }
+    // Intended pencil, and A2(λ) less its exact terms.
+    space_op.GetExtraSystemMatrix(l / 1i, Operator::DIAG_ZERO)->Mult(x, r);
+    const double a2_norm = linalg::Norml2(Mpi::World(), r);
+    z = 0.0;
+    B->Mult(x, t);
+    z.Add((l * l) / (sigma * sigma) * f_vol(sigma), t);
+    r.Add(-f_vol(l), t);
+    D->Mult(x, t);
+    z.Add(l / sigma * f_damp(sigma), t);
+    r.Add(-f_damp(l), t);
+    for (const auto &[M, g] : poles)
+    {
+      M->Mult(x, t);
+      z.Add(g(sigma), t);
+      r.Add(-g(l), t);
+    }
+    CHECK(linalg::Norml2(Mpi::World(), r) <= 1.0e-12 * a2_norm);
+    const double seed_norm = linalg::Norml2(Mpi::World(), z);
+    REQUIRE(seed_norm > 0.0);
+    y -= z;
+    CHECK(linalg::Norml2(Mpi::World(), y) <= 1.0e-12 * seed_norm);
+  }
+
+  // Preconditions: a valid order, a nonzero target for p > 0, and matching dimensions.
+  struct WrongSize : ComplexOperator
+  {
+    using ComplexOperator::ComplexOperator;
+    void Mult(const ComplexVector &, ComplexVector &) const override {}
+  };
+  CHECK_THROWS(interp.AddFrozenTerm(
+      space_op.GetFarfieldDispersiveDampingMatrix(0, Operator::DIAG_ZERO), f_damp, sigma,
+      3));
+  CHECK_THROWS(interp.AddFrozenTerm(
+      space_op.GetFarfieldDispersiveDampingMatrix(0, Operator::DIAG_ZERO), f_damp, 0.0, 1));
+  CHECK_THROWS(
+      interp.AddFrozenTerm(std::make_unique<WrongSize>(size + 1), f_damp, sigma, 1));
 }
 
 TEST_CASE("Real preconditioner of absorbing boundaries below the plasma frequency",

@@ -341,6 +341,14 @@ public:
                      const std::function<std::complex<double>(std::complex<double>)> &f,
                      std::complex<double> lambda_target);
 
+  // As AddFrozenPole, for a term f(λ)·M of A2 that the pencil should carry in its order-p
+  // coefficient with f frozen at the target: the interpolated contribution is removed from
+  // every order and (λ/lambda_target)ᵖ·f(lambda_target)·M is added. p = 0 is AddFrozenPole;
+  // p > 0 requires lambda_target ≠ 0, which a positive eigenmode target ensures.
+  void AddFrozenTerm(std::unique_ptr<ComplexOperator> M,
+                     const std::function<std::complex<double>(std::complex<double>)> &f,
+                     std::complex<double> lambda_target, int order);
+
   // Decide between fitting and freezing a scalar coefficient f_full(λ) of a term
   // f_full(λ)·M of A2, where f_full = P + f_frozen with P a polynomial of degree ≤ 2
   // (exactly representable in the seed pencil, so only f_frozen would be frozen). Compares

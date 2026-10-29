@@ -135,6 +135,30 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       interp->AddFrozenPole(std::move(M_ff), g, 1i * target);
     }
+    // Interpolated across a material resonance between the nodes, the frequency-dependent
+    // permittivity and the first-order absorbing boundary coefficient r_k next to it give
+    // the seed spurious modes: boundary gradients of the absorbing faces, near the target
+    // but far from every root. Freeze both at the target with their powers of λ, as the
+    // seed of a constant material with ε(target) would have them: the volume term g_m(λ)
+    // (zero poles excluded, as they are folded into C) in the λ² block, and the absorbing
+    // boundary term ω r_k(ω) in the λ block. Both matrices are on the imaginary slot.
+    const auto &mat_op = space_op.GetMaterialOp();
+    for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      interp->AddFrozenTerm(
+          space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO),
+          [&mat_op, m](std::complex<double> l)
+          { return mat_op.EvaluateFrequencyDependentPermittivityA2(m, l) / 1i; },
+          1i * target, 2);
+    }
+    const auto &farfield_op = space_op.GetFarfieldOp();
+    for (std::size_t k = 0; k < farfield_op.NumDispersiveMaterials(); k++)
+    {
+      interp->AddFrozenTerm(
+          space_op.GetFarfieldDispersiveDampingMatrix(k, Operator::DIAG_ZERO),
+          [&farfield_op, k](std::complex<double> l)
+          { return (l / 1i) * farfield_op.GetDispersiveScale(k, l / 1i); }, 1i * target, 1);
+    }
     // Fit-or-freeze seed for rational impedance boundaries. Each boundary contributes
     // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ). The polynomial part
     // P is exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
