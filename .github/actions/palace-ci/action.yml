@@ -295,6 +295,52 @@ runs:
         done
         end_timer "Build Dependencies"
 
+    - name: Diagnose slate oneAPI crash
+      if: failure() && inputs.toolchain == 'intel-oneapi'
+      shell: bash
+      run: |
+        set +e
+        . /opt/intel/oneapi/setvars.sh > /dev/null 2>&1
+        icpx --version
+        dpkg -l | grep -i 'intel-oneapi-compiler' | awk '{print $2, $3}'
+        apt-cache policy intel-oneapi-compiler-dpcpp-cpp | head -20
+        apt-cache madison intel-oneapi-compiler-dpcpp-cpp | head -20
+        for f in /tmp/*/spack-stage/spack-stage-slate-*/spack-build-out.txt; do
+          echo "=== $f"
+          grep -n -B2 -A60 "Stack dump" "$f" | head -150
+          break
+        done
+        sh=$(ls /tmp/icpx-*/generate_matrix_ge-*.sh 2>/dev/null | head -1)
+        [ -n "$sh" ] || { echo "no reproducer found"; ls -d /tmp/icpx-* ; exit 0; }
+        echo "=== $sh"; head -c 8000 "$sh"; echo
+        cd "$(dirname "$sh")"
+        cmd=$(grep -v '^#' "$sh" | grep -- '-cc1' | tail -1)
+        cmd=$(printf '%s' "$cmd" | sed -E 's/"-o" "[^"]*"/"-o" "\/dev\/null"/')
+        try() {
+          local name="$1"; shift; local c="$cmd"
+          for s in "$@"; do c=$(printf '%s' "$c" | sed -E "$s"); done
+          echo "--- variant ${name}"
+          ( eval "timeout 600 $c" ) > "/tmp/variant-${name}.log" 2>&1
+          echo "rc=$?"
+          grep -m12 -E "^[0-9]+\.\s|error:" "/tmp/variant-${name}.log"
+        }
+        GEN='s/"-target-feature" "[^"]*" ?//g'
+        try base
+        try O2 's/"-O3"/"-O2"/'
+        try O1 's/"-O3"/"-O1"/'
+        try O0 's/"-O3"/"-O0"/'
+        try novec 's/"-vectorize-loops" ?//; s/"-vectorize-slp" ?//'
+        try noslp 's/"-vectorize-slp" ?//'
+        try noloopvec 's/"-vectorize-loops" ?//'
+        try x86-64 's/"-target-cpu" "[^"]*"/"-target-cpu" "x86-64"/' "$GEN"
+        try x86-64-v3 's/"-target-cpu" "[^"]*"/"-target-cpu" "x86-64-v3"/' "$GEN"
+        try x86-64-v4 's/"-target-cpu" "[^"]*"/"-target-cpu" "x86-64-v4"/' "$GEN"
+        try icelake 's/"-target-cpu" "[^"]*"/"-target-cpu" "icelake-server"/' "$GEN"
+        try noomp 's/"-fopenmp[^"]*" ?//g'
+        try fpmodel 's/"-ffp-contract=[^"]*" ?//'
+        echo "=== base variant full head"
+        head -80 /tmp/variant-base.log
+
     - name: Print @develop commit hashes
       if: inputs.use-develop-deps == 'true'
       shell: bash
