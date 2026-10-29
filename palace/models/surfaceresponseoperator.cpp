@@ -13440,6 +13440,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       continue;
     }
+    // H2 (readiness hardening, DESIGN 3.2 / A10.6): UNREACHABLE. A candidate joins the
+    // component only if LengthLess(dist, k D) holds against EVERY member (k = 1, or 4 in
+    // the exhaustive closure), so every pairwise quantized distance is < Length(k D) <=
+    // Length(4 D) and the diameter (the maximum pairwise distance) satisfies LengthAtMost
+    // on the same quantizer. LEGACY-path only (comparison branch; the device path returns
+    // at the FEATURES branch's end).
     const double maximum_global_event_diameter = 4.0 * global_interaction_distance;
     MFEM_VERIFY(
         global_quantizer.LengthAtMost(event_diameter, maximum_global_event_diameter),
@@ -14089,6 +14095,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                                 spatial_events[event_component[j]].center));
         }
       }
+      // H2 (readiness hardening, DESIGN 3.2 / A10.6): UNREACHABLE by the same argument
+      // as the cross-interface pass above (every member pair < Length(k D) <= Length(4 D)
+      // on this quantizer). LEGACY-path only.
       const double maximum_event_diameter = 4.0 * interaction_distance;
       MFEM_VERIFY(quantizer.LengthAtMost(event_diameter, maximum_event_diameter),
                   "Spatial-event clustering produced an oversized component. Split the "
@@ -14736,6 +14745,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           {
             continue;
           }
+          // H3 (readiness hardening, DESIGN 3.2 / A10.6): GUARDED. The chains are the
+          // identification's physical_chain partition, whose BuildRuns aborts first on a
+          // vertex with > 2 segments of one chain (H13-I2: the branching chain is to be
+          // excluded there, C4). LEGACY-path only.
           MFEM_VERIFY(!next_segment,
                       "Metal physical chain branches within a spatial coupon interval!");
           next_segment = local->second;
@@ -14924,6 +14937,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           {
             continue;
           }
+          // H3 (readiness hardening, DESIGN 3.2 / A10.6): GUARDED as the spatial coupon
+          // interval walk above (the identification's BuildRuns aborts first; H13-I2).
+          // LEGACY-path only.
           MFEM_VERIFY(!next_segment,
                       "Metal physical chain branches within a vertex neighborhood!");
           next_segment = local->second;
@@ -18721,26 +18737,6 @@ void GeometryFallbackLedger::Enforce(const std::string &where) const
              << " (" << where << ")!");
 }
 
-namespace
-{
-
-const char *GeometryFallbackTypeName(InterfaceDielectric type)
-{
-  switch (type)
-  {
-    case InterfaceDielectric::MA:
-      return "MA";
-    case InterfaceDielectric::MS:
-      return "MS";
-    case InterfaceDielectric::SA:
-      return "SA";
-    default:
-      return "Default";
-  }
-}
-
-}  // namespace
-
 nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
                                          GeometryFailurePolicy policy, bool preflight,
                                          double coordinate_scale,
@@ -18758,8 +18754,7 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
   for (const auto &[interface, type] : types)
   {
     const auto length = type_lengths.find(interface);
-    total_length[GeometryFallbackTypeName(type)] +=
-        length == type_lengths.end() ? 0.0 : length->second;
+    total_length[ToString(type)] += length == type_lengths.end() ? 0.0 : length->second;
   }
   nlohmann::json list = nlohmann::json::array();
   for (const auto &entry : entries)
@@ -18794,7 +18789,7 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
       const auto type = types.find(interface);
       if (type != types.end())
       {
-        entry_types.insert(GeometryFallbackTypeName(type->second));
+        entry_types.insert(ToString(type->second));
       }
     }
     for (const auto &name : entry_types)
@@ -18819,12 +18814,13 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
       "GeometryFailurePolicy RecordRaw excludes the affected feature / patch / segment, "
       "keeps "
       "its raw within-R energy in the raw term and records one entry here (Site = the "
-      "conversion id / source line of record; Length in mesh length units); "
+      "conversion id / source line of record; every Length in mesh length units x the mesh "
+      "length relative scale, the manifest's units, on the preflight and the solve alike); "
       "RawShareByLength "
       "= the entries' length over the selected perimeter length per interface type (a "
       "whole-run fallback counts on every type); the solve adds RawShareByEnergy from "
       "surface-response-geometry-fallbacks.csv. Under FailClosed the same entries are "
-      "recorded and the run aborts at the end of the configuration.";
+      "recorded and the run aborts once the placement is complete.";
   return record;
 }
 
@@ -18860,6 +18856,18 @@ std::string GeometryFallbackBanner(const nlohmann::json &record, const std::stri
           fmt::format("{:.2f} % of the length", 100.0 * share.at("Share").get<double>());
     }
     shares += (shares.empty() ? "" : ", ") + text;
+  }
+  if (shares.empty())
+  {
+    // No selected interface type (NoPerimeter: no perimeter segment carries a type): a
+    // whole-run fallback (an entry whose What is "run") is 100 % on every type by
+    // definition; otherwise there is nothing to share (named rather than left blank).
+    const auto &entries = record.at("Entries");
+    const bool whole_run = std::any_of(entries.begin(), entries.end(), [](const auto &entry)
+                                       { return entry.at("What") == "run"; });
+    shares = whole_run
+                 ? "every Type 100 % (no correction applied; no interface type selected)"
+                 : "(no interface type selected)";
   }
   return fmt::format(
       "\n*** LOW CONFIDENCE (GeometryFailurePolicy {}): {:d} geometry fallback(s) "
@@ -24796,9 +24804,10 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         // H4a (readiness hardening, USER decision 1000 (b) / 1001): two same-class
         // supports overlap without ownership -> the SUBORDINATE patch (the smaller
         // claimed length; ties by the larger patch index) is dropped like a
-        // SpatialClusterPriority coupon (weight 0, owned) and its claims OUTSIDE the
-        // owner's box stay RAW (the geometry-fallback portions, F-DB-a) with the record
-        // OverlapExcluded; the former abort is the FailClosed summary's.
+        // SpatialClusterPriority coupon (weight 0, owned) and its claims OUTSIDE every
+        // OTHER support's box (the owner's included) stay RAW (the geometry-fallback
+        // portions, F-DB-a) with the record OverlapExcluded; the former abort is the
+        // FailClosed summary's.
         const std::size_t subordinate_patch =
             OverlapExcludedSubordinate(config, first, second);
         const bool drop_second = subordinate_patch == second;
@@ -25130,7 +25139,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         // after this pass; the driver resets the operator after saving the record);
         // FailClosed aborts here with the summary.
         raw_fallback = true;
-        geometry_ledger.Enforce("electrostatic surface-response configuration");
+        geometry_ledger.Enforce(maxwell ? "Maxwell surface-response configuration"
+                                        : "electrostatic surface-response configuration");
       }
       ownership_diagnostics["DomainBoundaryExclusions"] =
           DescribeDomainBoundaryExclusions(exclusions, config, coordinate_scale);
@@ -25141,9 +25151,11 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           config.matching_radius);
       if (!overlap_excluded_pairs.empty())
       {
-        // H4a: the dropped patches' claims (the DomainBoundary rule) clipped by the OTHER
-        // matched clusters' boxes (the owner corrects the inside), labelled by the class;
-        // kept raw with the DomainBoundary portions and measured separately for the share.
+        // H4a: the dropped patches' claims (the DomainBoundary rule) clipped by every OTHER
+        // support's box (the owner corrects the inside of its box; a part inside another
+        // dropped support's box is corrected by nobody: the 922 SCP add-back form),
+        // labelled by the class; kept raw with the DomainBoundary portions and measured
+        // separately for the share.
         geometry_fallback_portions = CollectGeometryFallbackPortions(
             overlap_excluded_pairs, "OverlapExcluded", placed_patches, config, ownership,
             uncovered_spatial_support_clipping, boxes, dimension, config.matching_radius);
@@ -25428,6 +25440,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   geometry_failure_policy = ResolveGeometryFailurePolicy(*request, false);
   geometry_fallback_interface_lengths = config->geometry_fallback_interface_lengths;
   geometry_fallback_interface_types = config->geometry_fallback_interface_types;
+  geometry_fallback_coordinate_scale = coordinate_scale;
   GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
                                          geometry_fallbacks);
   if (request->IsAutomatic() && !geometry_fallbacks.empty() &&
@@ -25997,6 +26010,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
   }
+  // Every placement-time record (H4a / H6 / H8) is in by now: a FailClosed run stops here,
+  // before the mortar / matrices (a no-op under RecordRaw or with an empty ledger).
+  geometry_ledger.Enforce("electrostatic surface-response configuration");
   const auto &placed_patches = placement.placed_patches;
   const auto &spatially_owned_patches = placement.owned_patches;
 
@@ -26792,6 +26808,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   geometry_failure_policy = ResolveGeometryFailurePolicy(*request, false);
   geometry_fallback_interface_lengths = config.geometry_fallback_interface_lengths;
   geometry_fallback_interface_types = config.geometry_fallback_interface_types;
+  geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
                                          geometry_fallbacks);
   if (!geometry_fallbacks.empty() && (config.models.empty() || config.patches.empty()))
@@ -27029,6 +27046,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
   }
+  // Every placement-time record (H4a / H6 / H8) is in by now: a FailClosed run stops here,
+  // before the line quadrature / loop fit (a no-op under RecordRaw or with an empty
+  // ledger).
+  geometry_ledger.Enforce("Maxwell surface-response configuration");
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
@@ -30588,7 +30609,8 @@ nlohmann::json SurfaceResponseOperator::GetGeometryFallbackRecord() const
     return nlohmann::json();
   }
   auto record = DescribeGeometryFallbacks(geometry_fallbacks, geometry_failure_policy,
-                                          false, 1.0, geometry_fallback_interface_lengths,
+                                          false, geometry_fallback_coordinate_scale,
+                                          geometry_fallback_interface_lengths,
                                           geometry_fallback_interface_types);
   if (raw_fallback)
   {

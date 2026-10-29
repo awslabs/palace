@@ -319,7 +319,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 // the same rule): the S1p pair of the margin-overlap case (decision 244) with B's claim
 // reaching into A's claims hull. Without the ledger the same-class pair is skipped (the
 // record of decision 244, the operator aborts); with it the SUBORDINATE (the smaller
-// claimed length: B, 10.05 vs 15.55) is owned with the OverlapExcluded record naming both
+// claimed length: B, 13.675 vs 15.475) is owned with the OverlapExcluded record naming both
 // patches / models; a margins-only pair records nothing. The operator's branch shares
 // OverlapExcludedSubordinate.
 TEST_CASE(

@@ -1054,8 +1054,8 @@ the electrostatic path, by within-R energy), the rows of
 `surface-response-geometry-fallbacks.csv`, and a `*** LOW CONFIDENCE ... ***` banner closing
 the run summary with the raw share per type. A whole-run fallback (no model or patch
 applies) runs the thin solve without the correction and reports 100 % per type. Under
-`FailClosed` the same entries are collected and the run aborts at the end of the
-configuration with their summary; the preflight writes `surface-response-requirements.json`
+`FailClosed` the same entries are collected and the run aborts with their summary once the
+placement is complete (before the operator's matrices); the preflight writes `surface-response-requirements.json`
 (with `Identification.Diagnostics.GeometryFallbacks` and `Summary.GeometryFallbacks`) before
 it aborts, so the manifest predicts every geometry fallback of the solve (a Missing-only
 manifest is the normal discovery state: a solve with no matched feature is predicted by

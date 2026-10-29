@@ -1085,12 +1085,40 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       return;
     }
+    // The entries of a class touching a type (an entry naming no interface counts on every
+    // type: the record's rule) and their summed Length in metres (DESIGN 2 (c)).
+    std::map<std::string, std::map<std::string, std::pair<int, double>>>
+        entries_by_class_type;
+    for (const auto &entry : response_correction->GetGeometryFallbacks())
+    {
+      std::set<std::string> entry_types;
+      if (entry.interfaces.empty())
+      {
+        for (const auto &[name, within] : within_by_type)
+        {
+          (void)within;
+          entry_types.insert(name);
+        }
+      }
+      for (const int interface : entry.interfaces)
+      {
+        const auto type = types.find(interface);
+        entry_types.insert(type == types.end() ? "Default" : ToString(type->second));
+      }
+      for (const auto &name : entry_types)
+      {
+        auto &[count, length] = entries_by_class_type[entry.cls][name];
+        count++;
+        length += entry.length;
+      }
+    }
     if (!geometry_fallback_csv)
     {
       geometry_fallback_csv = std::make_unique<std::ofstream>(
           post_dir / "surface-response-geometry-fallbacks.csv");
       *geometry_fallback_csv
-          << "source,class,type,raw energy (J),within-R energy (J),share\n"
+          << "source,class,type,count,length (m),raw energy (J),within-R "
+             "energy (J),share\n"
           << std::setprecision(17);
     }
     for (const auto &[cls, by_type] : fallback_by_class_type)
@@ -1098,8 +1126,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       for (const auto &[name, energy] : by_type)
       {
         const double within = within_by_type[name];
+        const auto [count, length] = entries_by_class_type[cls][name];
         *geometry_fallback_csv
-            << source << "," << cls << "," << name << ","
+            << source << "," << cls << "," << name << "," << count << ","
+            << iodata.units.Dimensionalize<Units::ValueType::LENGTH>(length) << ","
             << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy) << ","
             << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(within) << ","
             << (within > 0.0 ? energy / within : 0.0) << "\n";

@@ -618,7 +618,8 @@ private:
   // run's effective policy; the whole-run raw fallback flag (NoMatchedFeature /
   // AllPatchesOutside / NoPerimeter: the drivers then run the thin solve without the
   // operator after saving its record). The denominators of RawShareByLength come with the
-  // configuration.
+  // configuration; the record's lengths are mesh units x the mesh length relative scale
+  // (the manifest's units: one unit in both records).
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFallbackData>
       geometry_fallbacks;
   config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFailurePolicy
@@ -626,6 +627,7 @@ private:
           GeometryFailurePolicy::RECORD_RAW;
   std::map<int, double> geometry_fallback_interface_lengths;
   std::map<int, InterfaceDielectric> geometry_fallback_interface_types;
+  double geometry_fallback_coordinate_scale = 1.0;
   bool raw_fallback = false;
   // RawShareByEnergy per interface type (SA / MS / MA -> share), set by the driver from the
   // fallback portions' raw within-R energy of the last evaluation; empty until then.
@@ -1083,10 +1085,11 @@ public:
     return domain_boundary_portions;
   }
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the raw claims of the patches a
-  // converted site excluded (OverlapExcluded: the subordinate's claims outside the owner's
-  // box), labelled by class in `topology`. They are ALSO appended to the DomainBoundary
-  // portions (F-DB-a: kept raw in the corrected interface energies, no new energy term);
-  // this copy is the drivers' measurement for RawShareByEnergy and the fallback CSV.
+  // converted site excluded (OverlapExcluded: the subordinate's claims outside every OTHER
+  // support's box, the owner's included), labelled by class in `topology`. They are ALSO
+  // appended to the DomainBoundary portions (F-DB-a: kept raw in the corrected interface
+  // energies, no new energy term); this copy is the drivers' measurement for
+  // RawShareByEnergy and the fallback CSV.
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetGeometryFallbackPortions() const
@@ -1253,11 +1256,12 @@ public:
 };
 
 // The Diagnostics entry "GeometryFallbacks" (the manifest's Identification.Diagnostics and
-// palace.json's SurfaceResponse.Diagnostics; lengths in mesh length units x
-// coordinate_scale): Version, Policy, Run, Count, Classes, Entries and the raw share by
-// LENGTH per interface type (the fallback entries' length over the selected perimeter
-// length of the interfaces of that type; `type_lengths` = the selected length per target
-// interface, `types` = the interface type per target interface).
+// palace.json's SurfaceResponse.Diagnostics; every length = mesh length units x
+// `coordinate_scale`, the mesh length relative scale on both records): Version, Policy,
+// Run, Count, Classes, Entries and the raw share by LENGTH per interface type (the fallback
+// entries' length over the selected perimeter length of the interfaces of that type;
+// `type_lengths` = the selected length per target interface, `types` = the interface type
+// per target interface).
 nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
                                          GeometryFailurePolicy policy, bool preflight,
                                          double coordinate_scale,
@@ -1265,7 +1269,9 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
                                          const std::map<int, InterfaceDielectric> &types);
 // The LOW-confidence banner (one line) printed by the run summary whenever the ledger is
 // non-empty: the raw share per type by energy (the record's RawShareByEnergy where present:
-// a whole-run fallback reads "100 % (no correction applied)") and by length.
+// a whole-run fallback reads "100 % (no correction applied)") and by length; with no
+// selected interface type (RawShareByLength empty: NoPerimeter) the whole-run text names
+// every Type.
 std::string GeometryFallbackBanner(const nlohmann::json &record, const std::string &where);
 
 // The response-geometry cache (PALACE_RESPONSE_GEOMETRY_CACHE): the automatically
