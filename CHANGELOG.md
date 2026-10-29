@@ -147,13 +147,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with its twin and broke parallel mesh construction.
     [PR 992](https://github.com/awslabs/palace/pull/992).
   - Fixed the second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`)
-    with Floquet periodic boundary conditions (`"FloquetWaveVector"`): the surface curl in
-    its second-order term did not include the Floquet wave vector, so that, for example,
-    the condition reduced to the first-order one for an obliquely incident TE plane wave.
-    For TM plane waves, the second-order condition is still the first-order one, as the
-    term depending on the divergence of the tangential field is not included. *Palace* now
-    warns when the tangential part of the Floquet wave vector exceeds √2 times the
-    wavenumber at the absorbing boundary, where the second-order condition is not passive.
+    with Floquet periodic boundary conditions (`"FloquetWaveVector"`). Previously the
+    absorbing boundaryn reduced to first-order for an obliquely incident TE plane wave.
+    For TM plane waves, the second-order condition is still the first-order one.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
   - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
     which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
