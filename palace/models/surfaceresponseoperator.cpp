@@ -23894,6 +23894,77 @@ std::size_t OverlapExcludedSubordinate(const ResponseCorrectionData &config,
   return std::max(first, second);
 }
 
+OrientedSupportBox OrientedBoxOf(const SpatialSupportBounds &support)
+{
+  OrientedSupportBox box;
+  box.axes = support.axes;
+  box.min = support.frame_min;
+  box.max = support.frame_max;
+  return box;
+}
+
+bool OrientedBoxesInteriorOverlap(const OrientedSupportBox &a, const OrientedSupportBox &b,
+                                  int dimension)
+{
+  // The separating-axis test: the boxes are disjoint iff some axis among the face normals
+  // of both (and, in 3D, the cross products of their frame axes) separates the projected
+  // centres by at least the sum of the projected half extents (within the tolerance).
+  double scale = 1.0;
+  for (int k = 0; k < dimension; k++)
+  {
+    scale = std::max({scale, std::abs(a.min[k]), std::abs(a.max[k]), std::abs(b.min[k]),
+                      std::abs(b.max[k])});
+  }
+  const double tolerance = 1.0e-12 * scale;
+  Point3D centre_a{}, centre_b{};
+  std::array<double, 3> half_a{}, half_b{};
+  for (int k = 0; k < dimension; k++)
+  {
+    half_a[k] = 0.5 * (a.max[k] - a.min[k]);
+    half_b[k] = 0.5 * (b.max[k] - b.min[k]);
+    centre_a = Add(centre_a, Scale(0.5 * (a.min[k] + a.max[k]), a.axes[k]));
+    centre_b = Add(centre_b, Scale(0.5 * (b.min[k] + b.max[k]), b.axes[k]));
+  }
+  const Point3D d = Subtract(centre_a, centre_b);
+  auto Separates = [&](Point3D axis)
+  {
+    const double length = Norm(axis);
+    if (length <= 1.0e-12)
+    {
+      return false;  // parallel frame axes: their cross product is no direction
+    }
+    axis = Scale(1.0 / length, axis);
+    double reach = 0.0;
+    for (int k = 0; k < dimension; k++)
+    {
+      reach += half_a[k] * std::abs(Dot(a.axes[k], axis)) +
+               half_b[k] * std::abs(Dot(b.axes[k], axis));
+    }
+    return std::abs(Dot(d, axis)) >= reach - tolerance;
+  };
+  for (int k = 0; k < dimension; k++)
+  {
+    if (Separates(a.axes[k]) || Separates(b.axes[k]))
+    {
+      return false;
+    }
+  }
+  if (dimension == 3)
+  {
+    for (int i = 0; i < 3; i++)
+    {
+      for (int j = 0; j < 3; j++)
+      {
+        if (Separates(Cross(a.axes[i], b.axes[j])))
+        {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
     const std::set<std::size_t> &owned_patches, int dimension,
@@ -23953,6 +24024,13 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
       if (first_cluster == second_cluster)
       {
         if (!geometry_ledger)
+        {
+          continue;
+        }
+        // B2 (decision 1018 Q1): the mesh-aligned boxes overlap; the ORIENTED boxes (the
+        // coupon domains) decide the same-class pair.
+        if (!OrientedBoxesInteriorOverlap(OrientedBoxOf(supports[i]),
+                                          OrientedBoxOf(supports[j]), dimension))
         {
           continue;
         }
@@ -24866,7 +24944,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   struct SpatialSupport
   {
     std::size_t patch = 0;
-    ElementBox box;
+    ElementBox box;               // mesh-aligned (the SpatialClusterPriority test)
+    OrientedSupportBox oriented;  // frame-aligned (the same-class test, B2)
   };
   std::vector<SpatialSupport> spatial_supports;
   std::set<std::size_t> spatially_owned_patches;
@@ -24926,9 +25005,15 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       auto &support = spatial_supports.emplace_back();
       support.patch = patch_idx;
+      // The oriented box (B2): the patch frame and the extremes of the placed points'
+      // projections on it (the same arithmetic as CollectSpatialSupports' frame box).
+      support.oriented.axes = {patch_config.axis_u, patch_config.axis_v,
+                               patch_config.axis_w};
+      bool first_point = true;
       for (const auto &local : basis_points[model_it->second])
       {
         ElementBox point_box;
+        Point3D point{};
         for (int d = 0; d < dimension; d++)
         {
           const double coordinate =
@@ -24937,8 +25022,18 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                local[2] * patch_config.axis_w[d]) /
                   coordinate_scale;
           point_box.min[d] = point_box.max[d] = coordinate;
+          point[d] = coordinate;
         }
         support.box.Add(point_box);
+        for (int k = 0; k < 3; k++)
+        {
+          const double projection = Dot(point, support.oriented.axes[k]);
+          support.oriented.min[k] =
+              first_point ? projection : std::min(support.oriented.min[k], projection);
+          support.oriented.max[k] =
+              first_point ? projection : std::max(support.oriented.max[k], projection);
+        }
+        first_point = false;
       }
     }
     for (std::size_t i = 0; i < spatial_supports.size(); i++)
@@ -24978,6 +25073,14 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           spatial_cluster_priority_pairs.emplace_back(
               spatial_supports[subordinate].patch,
               spatial_supports[first_cluster ? i : j].patch);
+          continue;
+        }
+        // B2 (readiness hardening-2 (iv), decision 1018 Q1): the mesh-aligned boxes
+        // overlap; two same-class supports whose ORIENTED boxes (the coupon domains) are
+        // disjoint do not overlap (the S1b-rc concave pair): both stay applied, no record.
+        if (!OrientedBoxesInteriorOverlap(spatial_supports[i].oriented,
+                                          spatial_supports[j].oriented, 3))
+        {
           continue;
         }
         // Two clusters (decision 244): a margins-only overlap (no claim of either inside

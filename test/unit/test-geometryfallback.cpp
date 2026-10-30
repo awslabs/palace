@@ -4,6 +4,7 @@
 #include "fixtures.hpp"
 #include "surfaceresponse-fixtures.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -797,6 +798,155 @@ TEST_CASE(
               .empty());
     CHECK(overlap_excluded.empty());
     CHECK(entries.empty());
+  }
+}
+
+// (iv) B2 (readiness hardening-2, decision 1018 Q1; decision 1007 / findings-from-exec-B
+// F-B1, the S1b-rc concave pair 2.018 R apart): the same-class overlap test decides on the
+// ORIENTED boxes (the coupon domains) once the mesh-aligned boxes overlap. A 2 x 0.4 x 1
+// coupon box rotated 45 deg in the plane (A) and a mesh-aligned 0.8 x 0.8 x 1 box (B) whose
+// mesh-aligned boxes overlap: B at (1, -1) lies 1.414 along A's short axis beyond A's 0.2
+// and B's 0.566 reach (disjoint: no overlap, no record); B at (0.5, -0.5) reaches A
+// (overlap: OverlapExcluded as H4a). Mesh-aligned frames reproduce InteriorOverlaps
+// (touching faces are no interior overlap).
+TEST_CASE("Geometry fallback B2 oriented overlap: a same-class pair whose oriented boxes "
+          "are disjoint is no overlap (decision 1018 Q1)",
+          "[surfaceresponseoperator][geometryfallback][Serial]")
+{
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  using Model = config::ElectrostaticSolverData::ResponseCorrectionModelData;
+  const double c = std::sqrt(0.5);
+  OrientedSupportBox a;
+  a.axes = {{{c, c, 0.0}, {-c, c, 0.0}, {0.0, 0.0, 1.0}}};
+  a.min = {-1.0, -0.2, -0.5};
+  a.max = {1.0, 0.2, 0.5};
+  auto MeshAligned =
+      [](const std::array<double, 3> &centre, const std::array<double, 3> &half)
+  {
+    OrientedSupportBox box;
+    for (int k = 0; k < 3; k++)
+    {
+      box.min[k] = centre[k] - half[k];
+      box.max[k] = centre[k] + half[k];
+    }
+    return box;
+  };
+  const OrientedSupportBox far = MeshAligned({1.0, -1.0, 0.0}, {0.4, 0.4, 0.5});
+  const OrientedSupportBox near = MeshAligned({0.5, -0.5, 0.0}, {0.4, 0.4, 0.5});
+  // The mesh-aligned boxes: A's is +-(1 + 0.2) / sqrt(2) in x and y; both pairs overlap.
+  struct Aabb
+  {
+    std::array<double, 3> min{}, max{};
+  };
+  const double a_reach = 1.2 * c;
+  const Aabb a_aabb = {{-a_reach, -a_reach, -0.5}, {a_reach, a_reach, 0.5}};
+  const Aabb far_aabb = {far.min, far.max};
+  const Aabb near_aabb = {near.min, near.max};
+  auto AabbInteriorOverlap = [](const Aabb &p, const Aabb &q)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      if (std::min(p.max[d], q.max[d]) - std::max(p.min[d], q.min[d]) <= 1.0e-12)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  REQUIRE(AabbInteriorOverlap(a_aabb, far_aabb));
+  REQUIRE(AabbInteriorOverlap(a_aabb, near_aabb));
+  CHECK(!OrientedBoxesInteriorOverlap(a, far, 3));
+  CHECK(!OrientedBoxesInteriorOverlap(far, a, 3));
+  CHECK(OrientedBoxesInteriorOverlap(a, near, 3));
+  CHECK(OrientedBoxesInteriorOverlap(near, a, 3));
+  // Mesh-aligned frames: the separating-axis test is the mesh-aligned test (overlapping,
+  // touching along a face, disjoint), in 3D and in 2D.
+  const OrientedSupportBox unit = MeshAligned({0.5, 0.5, 0.5}, {0.5, 0.5, 0.5});
+  CHECK(
+      OrientedBoxesInteriorOverlap(unit, MeshAligned({0.9, 0.5, 0.5}, {0.5, 0.5, 0.5}), 3));
+  CHECK(!OrientedBoxesInteriorOverlap(unit, MeshAligned({1.5, 0.5, 0.5}, {0.5, 0.5, 0.5}),
+                                      3));
+  CHECK(!OrientedBoxesInteriorOverlap(unit, MeshAligned({2.5, 0.5, 0.5}, {0.5, 0.5, 0.5}),
+                                      3));
+  CHECK(
+      OrientedBoxesInteriorOverlap(unit, MeshAligned({0.9, 0.5, 7.0}, {0.5, 0.5, 0.5}), 2));
+  CHECK(!OrientedBoxesInteriorOverlap(unit, MeshAligned({0.5, 1.5, 0.5}, {0.5, 0.5, 0.5}),
+                                      2));
+  // A rotated box inside a mesh-aligned one overlaps it on every axis.
+  CHECK(OrientedBoxesInteriorOverlap(a, MeshAligned({0.0, 0.0, 0.0}, {3.0, 3.0, 3.0}), 3));
+
+  // The dry run's same-class branch (FindSpatialClusterPriorityExclusions) on two corner
+  // supports with these boxes: the far pair records nothing under the ledger, the near
+  // pair the OverlapExcluded record of H4a (B, the shorter claims, the subordinate).
+  auto Support = [&](std::size_t patch, const OrientedSupportBox &box, const Aabb &aabb,
+                     const std::vector<Claim> &claims)
+  {
+    SpatialSupportBounds support;
+    support.patch = patch;
+    support.min = aabb.min;
+    support.max = aabb.max;
+    support.axes = box.axes;
+    support.frame_min = box.min;
+    support.frame_max = box.max;
+    support.claims = claims;
+    return support;
+  };
+  const std::vector<Claim> a_claims = {Claim{1, {-c, -c, 0.0}, {c, c, 0.0}}};
+  const std::vector<Claim> b_claims = {Claim{2, {0.5, -0.9, 0.0}, {0.5, -0.1, 0.0}}};
+  config::ElectrostaticSolverData::ResponseCorrectionData config;
+  config.matching_radius = 1.0;
+  for (int k = 0; k < 2; k++)
+  {
+    Model model;
+    model.idx = k + 1;
+    model.name = k == 0 ? "corner-a" : "corner-b";
+    model.topology = "convex corner";
+    model.spatial_basis = true;
+    config.models.push_back(model);
+    Patch patch;
+    patch.model = k + 1;
+    patch.weight = 1.0;
+    patch.provenance.feature = 20 + k;
+    patch.provenance.claims = k == 0 ? a_claims : b_claims;
+    config.patches.push_back(patch);
+  }
+  CHECK(OrientedBoxesInteriorOverlap(OrientedBoxOf(Support(0, a, a_aabb, a_claims)),
+                                     OrientedBoxOf(Support(1, near, near_aabb, b_claims)),
+                                     3));
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded;
+    const std::vector<SpatialSupportBounds> supports = {
+        Support(0, a, a_aabb, a_claims), Support(1, far, far_aabb, b_claims)};
+    CHECK(FindSpatialClusterPriorityExclusions(supports, config, {}, 3, nullptr, &ledger,
+                                               &overlap_excluded)
+              .empty());
+    CHECK(overlap_excluded.empty());
+    CHECK(entries.empty());
+  }
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded;
+    const std::vector<SpatialSupportBounds> supports = {
+        Support(0, a, a_aabb, a_claims), Support(1, near, near_aabb, b_claims)};
+    CHECK(FindSpatialClusterPriorityExclusions(supports, config, {}, 3, nullptr, &ledger,
+                                               &overlap_excluded)
+              .empty());
+    REQUIRE(overlap_excluded.size() == 1);
+    CHECK(overlap_excluded.front() == std::make_pair(std::size_t{1}, std::size_t{0}));
+    REQUIRE(entries.size() == 1);
+    CHECK(entries.front().cls == "OverlapExcluded");
+    CHECK(entries.front().patches == std::vector<int>{1, 0});
+    CHECK_THAT(entries.front().length, WithinAbs(0.8, 1.0e-12));
+  }
+  // Without a ledger the same-class pairs are skipped as of record, oriented or not.
+  {
+    const std::vector<SpatialSupportBounds> supports = {
+        Support(0, a, a_aabb, a_claims), Support(1, near, near_aabb, b_claims)};
+    CHECK(FindSpatialClusterPriorityExclusions(supports, config, {}, 3).empty());
   }
 }
 
