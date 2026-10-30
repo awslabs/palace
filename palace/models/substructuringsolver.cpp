@@ -1386,7 +1386,11 @@ struct SubstructuringSolver::Impl
       {
         A.reset(mfem::Add(1.0, *A, 1.0, *sheet->two_sided));
       }
-      return A;
+      // The transpose product Pᵀ (A P) can store zeros on one side only of the pattern of a
+      // broken space. The sparse direct solvers are given a symmetric pattern (STRUMPACK
+      // orders the graph of the pattern as it is): symmetrize.
+      std::unique_ptr<mfem::HypreParMatrix> At(A->Transpose());
+      return std::unique_ptr<mfem::HypreParMatrix>(mfem::Add(0.5, *A, 0.5, *At));
     }
     PWMatrixCoefficient coef(parent.Dimension(), coef_by_attr);
     mfem::ParBilinearForm a(&parent_fes);
