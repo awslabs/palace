@@ -1,0 +1,76 @@
+{
+  "Problem":
+  {
+    "Type": "BoundaryMode",
+    "Verbose": 2,
+    "Output": "postpro/thick_conductivity"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw2d_thick.msh",
+    "L0": 1.0e-6,
+    "Refinement":
+    {
+      "MaxIts": 0
+    }
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 11.47,
+        "LossTan": 1.2e-7
+      },
+      {
+        "Attributes": [2, 3],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Conductivity":
+    [
+      {
+        // A thin copper film (100 nm), lossy enough at 5 GHz that the characteristic
+        // impedance of the CPW mode has a phase of about -20 degrees.
+        "Attributes": [1],
+        "Conductivity": 5.8e7,
+        "Thickness": 0.1
+      }
+    ],
+    "Postprocessing":
+    {
+      "Impedance":
+      [
+        {
+          // Voltage across the right gap, and current on a loop around the center
+          // conductor in the gaps, for the independent Z_VI.
+          "Index": 1,
+          "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
+          "CurrentPath": [[501.5, -1.0], [520.5, -1.0], [520.5, 1.1], [501.5, 1.1]]
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "BoundaryMode":
+    {
+      "Freq": 5.0,
+      "N": 2,
+      "Save": 0,
+      "Target": 2.5,
+      "Tol": 1.0e-8
+    },
+    "Linear":
+    {
+      "Tol": 1e-9
+    }
+  }
+}

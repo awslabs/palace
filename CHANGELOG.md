@@ -156,6 +156,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     ports share a boundary, for example inactive wave ports extracting the S-parameters of
     a second mode at the boundaries of the active ports.
     [Issue 1109](https://github.com/awslabs/palace/issues/1109).
+  - Fixed the characteristic impedance `Z_PV` of lossy modes in 2D boundary-mode solves, for
+    example with `"Conductivity"` or `"Impedance"` boundaries on the conductors: the term of
+    the mode power with the longitudinal electric field was conjugated wrongly, which added a
+    spurious imaginary part to the power. This made `Z_PV` too low, by a factor of 3.2 for a
+    strongly lossy coplanar-strip line at 1 GHz, and the power normalization of lossy modes
+    wrong. Results are unchanged for lossless modes.
+    [Issue 1115](https://github.com/awslabs/palace/issues/1115).
   - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
