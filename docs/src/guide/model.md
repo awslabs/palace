@@ -150,8 +150,15 @@ frequency. The eigenmode divergence-free projection is disabled because
 longitudinal plasma modes can be physical. Eigenmodes of a region partially filled with a
 pole material accumulate at the material resonance, so choose the eigenmode `Target` away
 from material resonances; the eigensolver warns when it cannot resolve the requested modes.
-In adaptive circuit synthesis, pole terms are realized exactly, while `DjordjevicSarkar`
-terms are fit over the frequency sweep.
+In adaptive circuit synthesis, the pole terms of the volume permittivity are realized
+exactly by auxiliary states, in the reduced-basis directions that the synthesis rank
+cutoff retains. `DjordjevicSarkar` terms are fit over the frequency sweep, and so are
+wave ports and `Absorbing` boundaries next to the material: the real part of the
+wave-port propagation constant, and the absorbing-boundary scalars of the wave
+permittivity (``\epsilon(i\omega)`` with the material `Conductivity` included). These
+responses are in general not rational, and near a material resonance the fits may not
+meet `AdaptiveTol`. *Palace* prints each fit residual and warns when it exceeds the
+effective synthesis fit tolerance.
 
 ### Energy and postprocessing
 
