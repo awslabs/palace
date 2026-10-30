@@ -310,7 +310,7 @@ end
         end
     end
 
-    @testset "a hole outside its outer is a malformed face: refused before the fragment" begin
+    @testset "a hole outside its outer is a malformed face: refused" begin
         mktempdir() do directory
             # the island's single "hole" lies in the ground metal, as in the census CHR-012 set
             window = ring_island_window()
@@ -322,7 +322,8 @@ end
             catch caught
                 caught
             end
-            @test err isa ErrorException && occursin("malformed metal face for island", err.msg)
+            @test err isa ErrorException
+            @test occursin("malformed metal face for island", err.msg)
             @test !isfile(joinpath(directory, "hole_outside.msh2"))
             return gmsh.isInitialized() == 1 && gmsh.finalize()
         end

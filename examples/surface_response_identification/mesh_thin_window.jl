@@ -117,9 +117,9 @@ function check_face_area(face, polygon, label)
     net = polygon_net_area(polygon)
     area = gmsh.model.occ.getMass(2, face)
     abs(area - net) <= 1.0e-6 * max(net, 1.0) || error(
-        "malformed metal face for $(label): OCC area $(area) vs the polygon's net area $(net) " *
-        "(outer minus holes): a hole outside its outer, nested holes or a self-intersecting " *
-        "ring; no mesh written"
+        "malformed metal face for $(label): OCC area $(area) vs the polygon's net area " *
+        "$(net) (outer minus holes): a hole outside its outer, nested holes or a " *
+        "self-intersecting ring; no mesh written"
     )
     return area
 end
@@ -134,7 +134,8 @@ function shared_tool_images(domain_map, n_objects, tool_labels)
             push!(get!(owners, tag, String[]), "$(label) (plane $(k))")
         end
     end
-    return sort!([(tag, labels) for (tag, labels) in owners if length(labels) > 1]; by=first)
+    shared = [(tag, labels) for (tag, labels) in owners if length(labels) > 1]
+    return sort!(shared; by=first)
 end
 
 # The conformity gate on the fragment images of the metal sheets (decision 1022): every image must be
@@ -300,7 +301,8 @@ function mesh_thin_window(
     occ.synchronize()
     polygons = [polygon for plane in planes for polygon in plane["Polygons"]]
     for (i, (dim, face)) in enumerate(tools)
-        check_face_area(face, polygons[i], "$(tool_labels[i][2]) (plane $(tool_labels[i][1]))")
+        k, label = tool_labels[i]
+        check_face_area(face, polygons[i], "$(label) (plane $(k))")
     end
     objects = vcat(
         [(Int32(3), t) for t in substrate_boxes],
@@ -328,12 +330,13 @@ function mesh_thin_window(
     shared = shared_tool_images(domain_map, n_objects, tool_labels)
     if !isempty(shared)
         first_shared = [
-            "face $(tag) claimed by $(join(labels, ", "))" for (tag, labels) in shared[1:min(end, 5)]
+            "face $(tag) claimed by $(join(labels, ", "))" for
+            (tag, labels) in shared[1:min(end, 5)]
         ]
         error(
-            "conformity gate: $(length(shared)) fragment image(s) claimed by more than one metal " *
-            "sheet (coincident sheets would carry duplicate triangles); no mesh written. First: " *
-            join(first_shared, "; ")
+            "conformity gate: $(length(shared)) fragment image(s) claimed by more than " *
+            "one metal sheet (coincident sheets would carry duplicate triangles); no mesh " *
+            "written. First: " * join(first_shared, "; ")
         )
     end
     substrate_tags = [Int32[] for _ in planes]
