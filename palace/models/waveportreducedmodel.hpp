@@ -31,6 +31,12 @@ public:
     std::size_t offline_basis_rank = 0;
     std::size_t online_basis_cap = 0;
     double worst_residual = 0.0;
+    // Wall-clock times of the latest reduced solve and of a typical exact solve, compared
+    // when the reduced model is enabled with a cost check (zero otherwise), and whether
+    // the reduced model was retired because exact solves are cheaper.
+    double reduced_solve_time = 0.0;
+    double exact_solve_time = 0.0;
+    bool retired = false;
   };
 
   WavePortReducedModel(int num_modes, double eig_tol, int nd_size, int h1_size,
@@ -53,9 +59,27 @@ public:
 
   void ObserveExactEigenvectors(int num_converged, const EigenvalueSolver &eigen,
                                 const std::vector<int> &mode_perm);
-  void RecordExactSolve();
+  // Record an exact real-frequency solve and, once training is configured, its wall-clock
+  // time for the cost check of the reduced model.
+  void RecordExactSolve(double seconds);
+
+  // Forget the recorded exact solve times, when the cost of exact solves changes (with
+  // their tolerances).
+  void ResetExactSolveTimes() { exact_solve_times.clear(); }
+
+  // Typical (median) time of the recorded exact solves, or zero without any.
+  double GetTypicalExactSolveTime() const;
   void RecordReducedSolve();
   void RecordFallback() { stats.fallbacks++; }
+  void RecordSolveTimes(double reduced_time, double exact_time)
+  {
+    stats.reduced_solve_time = reduced_time;
+    stats.exact_solve_time = exact_time;
+  }
+
+  // Stop using and enriching the reduced model, because its solves cost at least as much
+  // as exact solves. The solution of the latest reduced solve remains available.
+  void Retire();
 
   const Stats &GetStats() const { return stats; }
   std::size_t GetBasisSize() const { return basis.size(); }
@@ -92,6 +116,7 @@ private:
   double tolerance = 0.0;
   Stats stats;
 
+  std::vector<double> exact_solve_times;
   std::vector<ComplexVector> basis;
   std::vector<std::complex<double>> eigenvalues;
   std::vector<ComplexVector> eigenvectors;

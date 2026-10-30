@@ -34,6 +34,7 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -167,6 +168,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 {
   sigma_cached = sigma;
   reduced_model->ResetSolution();
+  const auto t_start = Timer::Now();
 
   const bool real_frequency = (omega.imag() == 0.0);
   const bool local_solver_rank = (solver_comm != MPI_COMM_NULL);
@@ -186,13 +188,29 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     // not assemble the full finite-element operator.
     local_reduced_accepted = reduced_model->TrySolve(omega.real(), sigma);
   }
-  int reduced_rejected = (local_solver_rank && reduced_model->IsEnabled() &&
-                          !reduce_not_ready && !local_reduced_accepted)
-                             ? 1
-                             : 0;
-  Mpi::GlobalMax(1, &reduced_rejected, nd_fespace.GetComm());
+  // Port-solver ranks agree on whether the reduced solve is accepted and, for the cost
+  // check, on the wall-clock time of this reduced solve and of a typical exact solve
+  // (maxima over the ranks, since the non-port ranks wait for the port ranks).
+  const bool reduced_attempted = reduced_model->IsEnabled() && !reduce_not_ready;
+  const bool cost_check = reduced_attempted && reduced_cost_check;
+  double reduced_status[3] = {
+      (local_solver_rank && reduced_attempted && !local_reduced_accepted) ? 1.0 : 0.0,
+      Timer::Duration(Timer::Now() - t_start).count(),
+      cost_check ? reduced_model->GetTypicalExactSolveTime() : 0.0};
+  Mpi::GlobalMax(3, reduced_status, nd_fespace.GetComm());
+  const bool reduced_rejected = (reduced_status[0] > 0.0);
+  if (cost_check && reduced_status[2] > 0.0)
+  {
+    // Retire the reduced model when its solves are not cheaper than exact ones. An accepted
+    // reduced solution is still used for this solve.
+    reduced_model->RecordSolveTimes(reduced_status[1], reduced_status[2]);
+    if (!(reduced_status[1] < reduced_status[2]))
+    {
+      reduced_model->Retire();
+    }
+  }
 
-  if (reduced_model->IsEnabled() && !reduce_not_ready && !reduced_rejected)
+  if (reduced_attempted && !reduced_rejected)
   {
     if (local_solver_rank)
     {
@@ -210,6 +228,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 
   // Truth/fallback and all complex-frequency queries retain the original exact assembly.
   // All FE-space ranks reach this call together.
+  const auto t_exact = Timer::Now();
   AssembleFrequencyDependent(omega, sigma);
 
   // The sparse matrix sum and doubled-real block construction below are MPI-collective on
@@ -317,7 +336,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   int num_conv = eigen->Solve();
   if (real_frequency)
   {
-    reduced_model->RecordExactSolve();
+    reduced_model->RecordExactSolve(Timer::Duration(Timer::Now() - t_exact).count());
   }
 
   // Build a permutation sorted by proximity to the shift target so that mode ordering is
@@ -355,6 +374,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 void ModeEigenSolver::SetSynthesisTol(double eig_tol_new, double ksp_tol_new)
 {
   eig_tol = eig_tol_new;
+  // Exact solves at the previous tolerances do not represent the cost of the next ones.
+  reduced_model->ResetExactSolveTimes();
   if (eigen)
   {
     eigen->SetTol(eig_tol);
@@ -370,8 +391,9 @@ void ModeEigenSolver::ConfigureReducedModelTraining(std::size_t max_basis_size)
   reduced_model->ConfigureTraining(max_basis_size);
 }
 
-void ModeEigenSolver::EnableReducedModel(double adaptive_tol)
+void ModeEigenSolver::EnableReducedModel(double adaptive_tol, bool cost_check)
 {
+  reduced_cost_check = cost_check;
   int has_basis = reduced_model->HasBasis() ? 1 : 0;
   Mpi::GlobalMax(1, &has_basis, nd_fespace.GetComm());
   reduced_model->Enable(has_basis != 0, adaptive_tol, opA.get(), last_assembled_omega,

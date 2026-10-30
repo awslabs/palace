@@ -122,9 +122,31 @@ void WavePortReducedModel::Enable(bool enable, double adaptive_tol,
   }
 }
 
-void WavePortReducedModel::RecordExactSolve()
+void WavePortReducedModel::RecordExactSolve(double seconds)
 {
   stats.exact_solves++;
+  if (basis_cap > 0)
+  {
+    exact_solve_times.push_back(seconds);
+  }
+}
+
+double WavePortReducedModel::GetTypicalExactSolveTime() const
+{
+  if (exact_solve_times.empty())
+  {
+    return 0.0;
+  }
+  std::vector<double> times(exact_solve_times);
+  const auto median = times.begin() + static_cast<std::ptrdiff_t>(times.size() / 2);
+  std::ranges::nth_element(times, median);
+  return *median;
+}
+
+void WavePortReducedModel::Retire()
+{
+  enabled = false;
+  stats.retired = true;
 }
 
 void WavePortReducedModel::RecordReducedSolve()
@@ -336,7 +358,7 @@ void WavePortReducedModel::ObserveExactEigenvectors(int num_converged,
                                                     const EigenvalueSolver &eigen,
                                                     const std::vector<int> &mode_perm)
 {
-  if (num_converged <= 0 || basis_cap == 0)
+  if (num_converged <= 0 || basis_cap == 0 || stats.retired)
   {
     return;
   }

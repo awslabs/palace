@@ -72,7 +72,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                                  int reduced_evaluations = 1,
                                  std::size_t reduced_training_capacity = 16,
                                  std::vector<double> reduced_training_factors = {0.9, 1.1},
-                                 double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8)
+                                 double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8,
+                                 bool reduced_cost_check = false)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
@@ -159,7 +160,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     {
       solve_at(factor * omega);
     }
-    mode_solver.EnableReducedModel(adaptive_tol);
+    mode_solver.EnableReducedModel(adaptive_tol, reduced_cost_check);
   }
 
   auto result = solve_at(omega).first;
@@ -628,6 +629,43 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   {
     CHECK_THAT(reduced.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
     CHECK_THAT(reduced.kn[i].imag(), WithinAbs(exact.kn[i].imag(), 1.0e-8));
+  }
+}
+
+// With the cost check, the reduced model is retired at the first reduced solve that is not
+// cheaper than a typical exact solve, and the later solves are exact without enriching the
+// basis. The decision depends on timing, but it must be consistent across the ranks and
+// either way give the modes of the exact solve.
+TEST_CASE("ModeEigenSolver reduced model cost check",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  constexpr int num_modes = 3, num_evaluations = 4;
+  auto exact =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {});
+  REQUIRE(exact.num_converged >= num_modes);
+  auto checked = SolveRectangularModes(
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, num_evaluations, 16,
+      {0.9, 1.1}, 1.0e-3, 1.0e-8, true);
+  REQUIRE(checked.num_converged >= num_modes);
+  const auto &stats = checked.reduced_stats;
+  CHECK(stats.exact_solve_time > 0.0);
+  CHECK(stats.reduced_solve_time > 0.0);
+  CHECK(stats.retired == !(stats.reduced_solve_time < stats.exact_solve_time));
+  if (stats.retired)
+  {
+    CHECK(stats.reduced_solves == 1);
+    CHECK(stats.exact_solves == 2 + num_evaluations - 1);
+    CHECK(checked.reduced_basis_size == checked.first_target_basis_size);
+  }
+  else
+  {
+    CHECK(stats.reduced_solves == num_evaluations);
+    CHECK(stats.exact_solves == 2);
+  }
+  for (int i = 0; i < num_modes; i++)
+  {
+    CHECK_THAT(checked.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+    CHECK_THAT(checked.final_kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
   }
 }
 
