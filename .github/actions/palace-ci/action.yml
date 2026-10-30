@@ -263,31 +263,6 @@ runs:
         spack -e . concretize -f --test root
         end_timer "Concretize"
 
-    - name: Probe dependency build
-      if: inputs.toolchain == 'intel-oneapi'
-      shell: bash
-      run: |
-        set +e
-        spack -e . install --only-concrete --no-check-signature --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc) > /tmp/deps-install.log 2>&1 &
-        pid=$!
-        for i in $(seq 1 50); do
-          sleep 30
-          kill -0 $pid 2>/dev/null || break
-          echo "--- t=$((i*30))s: $(grep -E '\] [a-z0-9]{7} [a-z0-9-]+@' /tmp/deps-install.log | tail -1 | cut -c1-120)"
-          ps -eo etimes=,args= | grep -E '/compiler/20[0-9.]+/bin/(icpx|icx|compiler/clang)' | grep -v grep | grep -oE '^ *[0-9]+|-c [^ ]+' | paste -sd' ' | sed -E 's/ ([0-9]+) -c/\n\1s -c/g' | sed -E 's#/tmp/[^ ]*/spack-src/##' | head -20
-        done
-        if kill -0 $pid 2>/dev/null; then
-          echo "=== still running after 25 min; long-running compiles:"
-          ps -eo etimes=,args= | grep -E 'bin/(icpx|icx)' | grep -v grep | awk '$1 > 300' | cut -c1-2000
-          for r in /tmp/icpx*/icpxarg*; do [ -f "$r" ] && { echo "== $r"; grep -oE '"?-main-file-name"? "?[^ "]+' "$r"; grep -oE '"?-O[0-3s]"?' "$r" | sort | uniq -c; }; done
-          pkill -TERM -P $pid; kill $pid; sleep 5
-          tail -30 /tmp/deps-install.log | cut -c1-300
-          exit 1
-        fi
-        wait $pid; rc=$?
-        tail -30 /tmp/deps-install.log | cut -c1-300
-        exit $rc
-
     - name: Build Dependencies
       shell: bash
       run: |
@@ -325,43 +300,29 @@ runs:
       shell: bash
       run: |
         set +e
-        . /opt/intel/oneapi/setvars.sh > /dev/null 2>&1
-        sh=$(ls -t /tmp/icpx-*/generate_matrix_ge-*.sh 2>/dev/null | head -1)
-        [ -n "$sh" ] || { echo "no reproducer found"; exit 0; }
-        d=$(dirname "$sh"); cpp=$(ls "$d"/generate_matrix_ge-*.cpp | head -1)
-        cd "$d"
-        cmd=$(grep -v '^#' "$sh" | grep -- '-cc1' | tail -1)
-        cmd=$(printf '%s' "$cmd" | sed -E 's/"-o" "[^"]*"/"-o" "\/dev\/null"/')
-        try() {
-          local name="$1"; local extra="$2"
-          echo "--- cc1 variant ${name}: ${extra}"
-          ( eval "timeout 900 $cmd $extra" ) > "/tmp/variant-${name}.log" 2>&1
-          echo "rc=$?"; grep -m6 -E "^[0-9]+\.\s|error:" "/tmp/variant-${name}.log"
-        }
-        dtry() {
-          local name="$1"; shift
-          echo "--- icpx variant ${name}: $*"
-          timeout 900 icpx -march=sapphirerapids -mtune=sapphirerapids -fPIC -fiopenmp -c "$cpp" -o /dev/null "$@" > "/tmp/dvariant-${name}.log" 2>&1
-          echo "rc=$?"; grep -m6 -E "^[0-9]+\.\s|error:" "/tmp/dvariant-${name}.log"
-        }
-        try base ''
-        try nohoist '"-mllvm" "-disable-spill-hoist"'
-        try rabasic '"-mllvm" "-regalloc=basic"'
-        try nosplit '"-mllvm" "-split-spill-mode=default"'
-        dtry O3 -O3
-        dtry O3-O2 -O3 -O2
-        dtry O3-nohoist -O3 -mllvm -disable-spill-hoist
-        dtry O3-rabasic -O3 -mllvm -regalloc=basic
-        dtry O3-precise -O3 -fp-model=precise
-        dtry O3-noinline -O3 -fno-inline-functions
-        dtry O2 -O2
-        # Find every slate source that crashes the compiler.
-        cd "$GITHUB_WORKSPACE"
         b=$(ls -d /tmp/*/spack-stage/spack-stage-slate-*/spack-build-*/ | head -1)
-        echo "=== make -k in $b"
-        timeout 900 spack -e . build-env slate -- make -k -j "$(nproc)" -C "$b" > /tmp/slate-makek.log 2>&1
-        echo "make rc=$?"
-        grep -E "Error [0-9]|frontend command failed" /tmp/slate-makek.log | sort | uniq -c | head -40
+        echo "build dir: $b"
+        grep -h "^CXX_FLAGS" "$b"/CMakeFiles/slate.dir/flags.make "$b"/CMakeFiles/slate_matgen.dir/flags.make
+        base="-DNDEBUG -std=c++17 -fPIC -fiopenmp -Wno-error=missing-template-arg-list-after-template-kw"
+        be() { spack -e . build-env slate -- env SPACK_CXXFLAGS= "$@"; }
+        mk() {
+          local name="$1" tgt="$2"; shift 2
+          echo "--- ${name}: make ${tgt} CXX_FLAGS='$*'"
+          local t0=$(date +%s)
+          timeout 480 spack -e . build-env slate -- env SPACK_CXXFLAGS= make -k -j "$(nproc)" -C "$b" "$tgt" CXX_FLAGS="$* $base" > "/tmp/mk-${name}-${tgt}.log" 2>&1
+          local rc=$?
+          echo "rc=${rc} ($(( $(date +%s) - t0 ))s)"
+          grep -E "frontend command failed|Error [0-9]" "/tmp/mk-${name}-${tgt}.log" | sort | uniq -c | head -10
+          [ "$rc" = 124 ] && ps -eo etimes=,args= | grep -E 'bin/icpx' | grep -v grep | grep -oE '^ *[0-9]+|-c [^ ]+' | paste -sd' ' | head -c 600 && echo
+          pkill -f "spack-stage-slate" ; sleep 2
+        }
+        clean() { be make -C "$b" clean > /dev/null 2>&1; }
+        clean; mk O3 all -O3
+        clean; mk O3-rabasic all -O3 -mllvm -regalloc=basic
+        clean; mk O3 slate -O3; mk matgen-O2 slate_matgen -O2
+        clean; mk O3 slate -O3; mk matgen-rabasic slate_matgen -O3 -mllvm -regalloc=basic
+        clean; mk O3 slate -O3; mk matgen-O3-rapbqp slate_matgen -O3 -mllvm -regalloc=pbqp
+        clean; mk O3-fastra all -O3 -mllvm -regalloc=fast
 
     - name: Print @develop commit hashes
       if: inputs.use-develop-deps == 'true'
