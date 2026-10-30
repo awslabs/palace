@@ -130,6 +130,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     longer cracked gives the average of the fluxes on the two sides, instead of the sum of
     the fluxes of the two faces of the cracked mesh.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
+    vector (`"FloquetWaveVector"`), as it already did Floquet ports, instead of synthesizing
+    L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
+    matrices Hermitian rather than complex symmetric. Such configurations must be updated.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
 #### Bug Fixes
 
@@ -141,6 +146,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Fixed the second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`)
+    with Floquet periodic boundary conditions (`"FloquetWaveVector"`). Previously the
+    absorbing boundaryn reduced to first-order for an obliquely incident TE plane wave.
+    For TM plane waves, the second-order condition is still the first-order one.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - Fixed the reduced-order model of adaptive frequency sweeps with a Floquet wave vector
+    which does not depend on frequency (no `"FloquetReferenceFrequency"`), which projected
+    the stiffness matrix as if it were symmetric.
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
   - Fixed numeric wave ports on superconducting lines selecting an evanescent mode: the
     kinetic inductance makes the line modes slower than bulk waves, above the eigenvalue
     target of the port mode solve, which only sought modes below it. The port modes are
@@ -325,6 +339,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     reject configurations that never produced valid solver output are bug fixes
     (ADDITION), not breaking (MODEL) changes.
     [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Updated the configuration schema descriptions of `"AdaptiveCircuitSynthesis"`, which
+    listed frequency-dependent boundary conditions it supports as unsupported, and of the
+    absorbing boundary `"Order"`, and documented the limitations of the second-order
+    absorbing boundary condition: it only improves on the first-order one for TE fields, and
+    it is not passive for tangential wavenumbers above √2 times the wavenumber in the
+    material. SchemaVer 4-1-1
+    [PR 1112](https://github.com/awslabs/palace/pull/1112).
 
 #### Build system
 

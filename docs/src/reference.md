@@ -116,6 +116,21 @@ as
 \bm{B}_p = -\frac{1}{i\omega}\nabla\times\bm{E}_p + \frac{1}{\omega} \bm{k}_p \times \bm{E}_p \,.
 ```
 
+Likewise, boundary conditions involving the curl of the electric field on the boundary, like
+the [second-order absorbing boundary condition](#Other-boundary-conditions), apply to the
+full field ``\bm{E}``, whose surface curl is given in terms of the periodic field by
+
+```math
+\bm{n}\cdot\nabla\times\bm{E} = e^{-i \bm{k}_p \cdot \bm{x}} \,
+    \bm{n}\cdot(\nabla\times\bm{E}_p - i\bm{k}_p\times\bm{E}_p) \,.
+```
+
+For example, for a plane wave incident on a boundary of the periodic cell, the periodic
+field is uniform on the boundary and the surface curl is given entirely by the second term.
+The second-order absorbing boundary condition is then not passive for TE fields when the part
+of ``\bm{k}_p`` tangential to the boundary exceeds ``\sqrt{2}`` times the wavenumber in the
+material at the boundary (see [Other boundary conditions](#Other-boundary-conditions)).
+
 ## Time domain formulation
 
 A time-dependent formulation is also available to compute the electric field response
@@ -622,6 +637,20 @@ second-order absorbing boundary condition is
 
 where assuming an infinite radius of curvature ``\beta = \mu_r^{-1}c_0/(2i\omega)``, and the
 contribution depending on ``(\nabla\cdot\bm{E}_t)`` has been neglected.
+
+The remaining second-order term only acts on fields whose curl has a normal component on the
+boundary. For a plane wave, it improves on the first-order condition for TE polarization,
+with the electric field tangential to the boundary, while for TM polarization the condition
+is the first-order one: the neglected term would have improved it. For a TE plane wave with
+the tangential wavenumber ``k_t``, the condition imposes the normal wavenumber
+``k - k_t^2/(2k)`` instead of ``\sqrt{k^2 - k_t^2}``, where ``k = \omega\sqrt{\mu_r\varepsilon_r}``
+is the wavenumber in the material at the boundary. For ``k_t > \sqrt{2}k``, this normal
+wavenumber is negative: the second-order condition is not passive and injects energy into
+the field. This can happen for evanescent fields at the boundary, like guided modes below the
+light line or evanescent diffraction orders of a periodic structure, and in particular when
+the part of a [Floquet wave vector](#Floquet-periodic-boundary-conditions) tangential to the
+boundary exceeds ``\sqrt{2}k``, for which *Palace* prints a warning. The first-order
+condition is passive.
 
 Additionally, while metals with finite conductivity can be modeled using an impedance
 boundary condition with constant impedance ``Z_s``, a more accurate model taking into

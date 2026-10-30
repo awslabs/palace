@@ -1,0 +1,72 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/eigen"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/floquet_absorbing.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1, 2, 5]
+    },
+    "Periodic":
+    {
+      "FloquetWaveVector": [0.0, 1.0, 0.0],
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4]
+        }
+      ]
+    },
+    "Absorbing":
+    {
+      "Attributes": [6],
+      "Order": 2
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 3,
+      "Tol": 1.0e-10,
+      "Target": 9.3,  // GHz. ARPACK does not rank the modes by their distance to the
+                      // target: for a target just below the lossy mode at
+                      // 9.52 + 0.34i GHz, it finds modes further above first. With
+                      // the target 0.2 GHz below it, ARPACK and SLEPc find the same
+                      // three modes.
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-12,
+      "MaxIts": 200,
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

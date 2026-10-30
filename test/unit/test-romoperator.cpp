@@ -1123,11 +1123,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       {"Order", 1UL},
       {"Device", "CPU"},
       {"Driven",
-       {{"AdaptiveTol", 1.0e-3},
-        {"AdaptiveCircuitSynthesis", true},
-        {"MinFreq", 5.0},
-        {"MaxFreq", 10.0},
-        {"FreqStep", 5.0}}},
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 5.0}, {"MaxFreq", 10.0}, {"FreqStep", 5.0}}},
       {"Linear",
        {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}}}};
 
@@ -1339,6 +1335,51 @@ TEST_CASE("RomOperator-Synthesis-WavePortExcludedExcitedRejected", "[romoperator
 
   CHECK_THROWS_WITH((IoData{setup_json, false}),
                     Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
+}
+
+// A Floquet wave vector makes the periodic problem non-reciprocal, so that the synthesized
+// circuit matrices would not be symmetric: the configuration parser rejects circuit
+// synthesis with a nonzero wave vector, but not periodic boundaries without a phase shift.
+TEST_CASE("RomOperator-Synthesis-FloquetWaveVectorRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  const auto wave_vector =
+      GENERATE(json::array({0.0, 0.0, 0.0}), json::array({0.0, 0.1, 0.0}));
+  setup_json["Boundaries"] = {
+      {"Periodic",
+       {{"FloquetWaveVector", wave_vector},
+        {"BoundaryPairs",
+         json::array({json::object({{"DonorAttributes", json::array({1})},
+                                    {"ReceiverAttributes", json::array({2})}})})}}},
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  INFO("FloquetWaveVector: " << wave_vector.dump());
+  if (wave_vector[1] == 0.0)
+  {
+    CHECK_NOTHROW((IoData{setup_json, false}));
+  }
+  else
+  {
+    CHECK_THROWS_WITH((IoData{setup_json, false}),
+                      Catch::Matchers::ContainsSubstring("FloquetWaveVector"));
+  }
 }
 
 // The polynomial dispersion correction helpers are the sign bridge between a scalar
