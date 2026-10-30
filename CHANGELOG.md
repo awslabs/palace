@@ -94,9 +94,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     vector. Its projections and residual Gram matrix are now built with dense matrix products
     instead of one inner product per entry, a reduced solve checks the residuals of only the
     modes nearest to the target, and the reduced model is retired in favor of exact port
-    solves when those are cheaper. For the lossy microstrip of issue 1109, setting up the
-    reduced model takes 1 s instead of 35 s per port, and the online sweep 9 s instead of
-    115 s. [Issue 1109](https://github.com/awslabs/palace/issues/1109).
+    solves when those are cheaper.
+    [Issue 1109](https://github.com/awslabs/palace/issues/1109).
 
 #### Bug Fixes
 
