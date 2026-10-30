@@ -767,6 +767,9 @@ private:
   long long int point_receive_item_count = 0;
   long long int stencil_nonzero_count = 0;
   long long int contour_line_count = 0;
+  // R0-a: the conductor-consistency probes' legs among maxwell_lines (in no path, no fit):
+  // ContourLines counts the contour lines only, ProbeLines these.
+  long long int probe_line_count = 0;
   mutable long long int operator_mult_count = 0;
   mutable long long int eliminate_rhs_count = 0;
   mutable long long int trace_forward_count = 0;

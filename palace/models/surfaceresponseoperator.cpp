@@ -28538,6 +28538,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       if (line >= 0)
       {
         legs.emplace_back(line, 1.0);
+        probe_line_count++;
       }
     };
     if (!patch.conductor_probes.empty())
@@ -28700,22 +28701,25 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   }
   ConfigureMaxwellLoopFit();
   dbc_tdof_list = essential_tdofs;
-  contour_line_count = maxwell_lines.size();
-  int global_line_count = static_cast<int>(maxwell_lines.size());
+  contour_line_count = static_cast<long long int>(maxwell_lines.size()) - probe_line_count;
+  int global_line_count = static_cast<int>(contour_line_count);
   Mpi::GlobalSum(1, &global_line_count, fespace.GetComm());
+  int global_probe_line_count = static_cast<int>(probe_line_count);
+  Mpi::GlobalSum(1, &global_probe_line_count, fespace.GetComm());
 
   Mpi::Print("\nConfigured Maxwell surface response correction:\n"
              " Coupon models: {:d}\n"
              " Response patches: {:d}\n"
              " Total contour coefficients: {:d}\n"
-             " Contour line functionals: {:d}\n"
+             " Contour line functionals: {:d} (+ {:d} conductor-consistency probe legs)\n"
              " Minimum interface matched edge-length fraction: {:.6f}\n"
              " Maximum interface unmodeled corner-neighborhood fraction: {:.6f}\n"
              " Maximum R/rho: {:.3e}\n"
              " Maximum normalized library distance: {:.3e}\n",
              static_cast<int>(models.size()), global_patch_count, global_basis_size,
-             global_line_count, matched_length_fraction, corner_neighborhood_fraction,
-             maximum_curvature_ratio, maximum_library_distance);
+             global_line_count, global_probe_line_count, matched_length_fraction,
+             corner_neighborhood_fraction, maximum_curvature_ratio,
+             maximum_library_distance);
   Mpi::Print(" Interface-resolved geometric coverage:\n");
   for (const auto &[interface, matched_fraction] : matched_length_fraction_by_interface)
   {
@@ -31969,6 +31973,12 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
                           {"LocalPatches", Distribution(patches.size())},
                           {"LocalTraceCoefficients", Distribution(basis_size)},
                           {"ContourLines", Distribution(contour_line_count)}};
+  if (maxwell)
+  {
+    // R0-a: the conductor-consistency probes' legs (idfix DESIGN B.3 (d) / C.3), beside the
+    // contour lines they are not part of.
+    result["Correction"]["ProbeLines"] = Distribution(probe_line_count);
+  }
   const long long int stencil_rows =
       point_dof_offsets.empty() ? 0 : point_dof_offsets.size() - 1;
   result["Interpolation"] = {
