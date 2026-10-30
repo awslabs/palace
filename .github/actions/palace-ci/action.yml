@@ -295,34 +295,44 @@ runs:
         done
         end_timer "Build Dependencies"
 
-    - name: Diagnose slate oneAPI crash
+    - name: Diagnose oneAPI crash
       if: failure() && inputs.toolchain == 'intel-oneapi'
       shell: bash
       run: |
         set +e
-        b=$(ls -d /tmp/*/spack-stage/spack-stage-slate-*/spack-build-*/ | head -1)
-        echo "build dir: $b"
-        grep -h "^CXX_FLAGS" "$b"/CMakeFiles/slate.dir/flags.make "$b"/CMakeFiles/slate_matgen.dir/flags.make
-        base="-DNDEBUG -std=c++17 -fPIC -fiopenmp -Wno-error=missing-template-arg-list-after-template-kw"
-        be() { spack -e . build-env slate -- env SPACK_CXXFLAGS= "$@"; }
+        . /opt/intel/oneapi/setvars.sh > /dev/null 2>&1
+        st=$(ls -d /tmp/*/spack-stage/spack-stage-strumpack-*/ | grep -v -- '-[a-z0-9_]\{8\}/$' | head -1)
+        b=$(ls -d "$st"spack-build-*/ | head -1)
+        echo "stage: $st build: $b"
+        grep -n -A6 "Stack dump" "$st"spack-build-out.txt | head -20
+        grep -n -A3 "Stack dump" "$st"spack-build-out.txt | grep -oE "on function '[^']*'" | sort | uniq -c
+        sh=$(ls -t /tmp/icpx-*/*.sh 2>/dev/null | head -1)
+        if [ -n "$sh" ]; then
+          echo "=== reproducer $sh"
+          ( cd "$(dirname "$sh")"
+            cmd=$(grep -v '^#' "$sh" | grep -- '-cc1' | tail -1 | sed -E 's/"-o" "[^"]*"/"-o" "\/dev\/null"/')
+            for extra in '' '"-mllvm" "-regalloc=basic"' '"-O2"' '"-O1"'; do
+              echo "--- cc1 extra: ${extra}"; ( eval "timeout 600 $cmd $extra" ) > /tmp/v.log 2>&1; echo "rc=$?"
+              grep -m3 -E "^[3-5]\.\s" /tmp/v.log
+            done )
+        fi
         mk() {
-          local name="$1" tgt="$2"; shift 2
-          echo "--- ${name}: make ${tgt} CXX_FLAGS='$*'"
+          local name="$1" extra="$2"
+          spack -e . build-env strumpack -- make -C "$b" clean > /dev/null 2>&1
+          echo "--- strumpack make -k with extra cxxflags '${extra}'"
           local t0=$(date +%s)
-          timeout 480 spack -e . build-env slate -- env SPACK_CXXFLAGS= make -k -j "$(nproc)" -C "$b" "$tgt" CXX_FLAGS="$* $base" > "/tmp/mk-${name}-${tgt}.log" 2>&1
+          timeout 900 spack -e . build-env strumpack -- bash -c "SPACK_CXXFLAGS=\"\$SPACK_CXXFLAGS ${extra}\" make -k -j $(nproc) -C '$b'" > "/tmp/mk-${name}.log" 2>&1
           local rc=$?
           echo "rc=${rc} ($(( $(date +%s) - t0 ))s)"
-          grep -E "frontend command failed|Error [0-9]" "/tmp/mk-${name}-${tgt}.log" | sort | uniq -c | head -10
-          [ "$rc" = 124 ] && ps -eo etimes=,args= | grep -E 'bin/icpx' | grep -v grep | grep -oE '^ *[0-9]+|-c [^ ]+' | paste -sd' ' | head -c 600 && echo
-          pkill -f "spack-stage-slate" ; sleep 2
+          grep -E "build.make:[0-9]+: .*Error|frontend command failed" "/tmp/mk-${name}.log" | sed -E 's/.*\] (CMakeFiles[^ ]*).*/\1/' | sort | uniq -c | head -20
+          if [ "$rc" = 124 ]; then
+            ps -eo etimes=,args= | grep -E 'bin/icpx' | grep -v grep | grep -oE '^ *[0-9]+|-c [^ ]+' | paste -sd' ' | head -c 800; echo
+          fi
+          pkill -f "spack-stage-strumpack"; sleep 2
         }
-        clean() { be make -C "$b" clean > /dev/null 2>&1; }
-        clean; mk O3 all -O3
-        clean; mk O3-rabasic all -O3 -mllvm -regalloc=basic
-        clean; mk O3 slate -O3; mk matgen-O2 slate_matgen -O2
-        clean; mk O3 slate -O3; mk matgen-rabasic slate_matgen -O3 -mllvm -regalloc=basic
-        clean; mk O3 slate -O3; mk matgen-O3-rapbqp slate_matgen -O3 -mllvm -regalloc=pbqp
-        clean; mk O3-fastra all -O3 -mllvm -regalloc=fast
+        mk base ''
+        mk rabasic '-mllvm -regalloc=basic'
+        mk O2 '-O2'
 
     - name: Print @develop commit hashes
       if: inputs.use-develop-deps == 'true'
