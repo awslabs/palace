@@ -3,6 +3,8 @@
 
 #include "surfaceresponseidentification.hpp"
 
+#include "models/surfaceresponseorientedbox.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -40,6 +42,18 @@ constexpr double kDirectionQuantum = 1.0e-12;
 // lives with the perimeter extraction that classifies the vertices, so that the chains, the
 // identification (the arc rule's end-joint test) and the audit mirror read one value.
 constexpr double kInteractionDistanceOverRadius = 2.0;
+// Vertex-vertex interaction (the identification fix round, decisions 1058 MAJOR-3 / 1062
+// A.5 (a), C.2, C.7): two vertex sites of one plane are clustered iff the placement's own
+// oriented separating-axis test (surfaceresponseorientedbox.hpp, the ONE definition the
+// operator's same-class overlap test reads) says their +-R coupon cubes overlap — the cube
+// about each site in the site's feature frame (SiteFrameAxes: the frame the vertex coupon
+// is placed in). Below 2R two R-cubes always overlap, so the test is a strict superset of
+// the 2R rule and the only new events lie at 2R <= d < 2 sqrt(3) R (the reach beyond which
+// no two R-cubes overlap: parallel frames reach 2 sqrt(2) R along a face diagonal, frames
+// 45 deg apart 2.613 R along the bisector); the site-grid query reads that reach. Edge-edge
+// and edge-vertex interactions keep 2R (their domains are R-tubes: 2R is their exact
+// overlap condition).
+constexpr double kVertexPairCubeReachOverRadius = 3.4641016151377544;  // 2 sqrt(3)
 constexpr double kThroughVertexZoneOverRadius = 2.0;
 constexpr double kClusterBallOverRadius = 1.0;
 // One interaction distance (decision 82(1)): every join / candidate / cluster decision is
@@ -3889,6 +3903,61 @@ private:
     what << site.type << " site at (" << site.point[0] << ", " << site.point[1] << ", "
          << site.point[2] << ")";
     return FeatureProcessNormal(weighted, what.str());
+  }
+
+  // Frame of the vertex feature (the patch frame of the library model, design (b) 4): x =
+  // the first arm away from the site, y in the process plane, z = the site's OWN signed
+  // process normal n (substrate -> vacuum; decision 266 — not the sign-canonical n_ref,
+  // which turns a flipped plane's coupon upside down). Corner: the arms ordered so that the
+  // second is counterclockwise about n from the first (a corner is its own mirror image),
+  // y = n x x (right-handed); endpoint: y toward the gap; junction: x = the canonical first
+  // arm, y = +-(n x x) so that the canonical arm order proceeds counterclockwise in (x, y)
+  // (the arm angles are measured about the same n). Read by Assign (the feature's axes) and
+  // by the vertex-vertex interaction test of BuildClusters (the +-R cube in this frame).
+  std::array<Point3D, 3> SiteFrameAxes(const VertexFeatureSite &site,
+                                       nlohmann::json *signature = nullptr) const
+  {
+    const Point3D n_site = SiteProcessNormal(site);
+    std::array<Point3D, 3> axes = {Point3D{}, Point3D{}, n_site};
+    if (site.type == "ConvexCorner" || site.type == "ConcaveCorner")
+    {
+      if (signature)
+      {
+        *signature = CanonicalCornerSignature(site.interfaces, site.boundary_law,
+                                              site.angle_degrees, site.corner_radius / R);
+      }
+      Point3D first = site.arm_directions[0], second = site.arm_directions[1];
+      if (Dot(Cross(n_site, first), second) < 0.0)
+      {
+        std::swap(first, second);
+      }
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
+      axes[1] = Normalize(Cross(n_site, axes[0]));
+    }
+    else if (site.type == "Junction")
+    {
+      JunctionCanonicalOrder order;
+      const nlohmann::json junction = CanonicalJunctionSignature(
+          site.interfaces, site.boundary_law, site.arm_angles, site.arm_conductors, &order);
+      if (signature)
+      {
+        *signature = junction;
+      }
+      const Point3D first = site.arm_directions[order.first_arm];
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
+      axes[1] = Scale(order.reversed ? -1.0 : 1.0, Normalize(Cross(n_site, axes[0])));
+    }
+    else if (!site.arm_directions.empty())
+    {
+      const Point3D first = site.arm_directions.front();
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
+      axes[1] = Normalize(Cross(n_site, axes[0]));
+      if (Dot(axes[1], site.gap_direction) < 0.0)
+      {
+        axes[1] = Scale(-1.0, axes[1]);
+      }
+    }
+    return axes;
   }
 
   std::vector<std::size_t> RunsAtVertex(std::size_t v) const
@@ -9477,17 +9546,32 @@ void Identifier::BuildClusters()
   {
     site_grid.Insert(i, sites[i].point, sites[i].point);
   }
+  // Two vertex sites interact (decision 1062 A.5 (a)) iff the placement's oriented
+  // separating-axis test says their +-R coupon cubes (in the sites' feature frames)
+  // overlap: below 2R always (the 2R rule of record, kept as the first branch), beyond 2R
+  // up to 2 sqrt(3) R when the frames' orientation lets the cubes meet (the site-grid
+  // query reads that reach, C.7). Each event's two cores are one region by construction
+  // (united below: the core-core "< 2R" union would not reach a pair beyond 2R).
+  const double cube_reach = kVertexPairCubeReachOverRadius * R;
+  std::vector<OrientedSupportBox> site_cubes(sites.size());
+  for (std::size_t i = 0; i < sites.size(); i++)
+  {
+    site_cubes[i] = VertexCubeBox(sites[i].point, SiteFrameAxes(sites[i]), R);
+  }
+  std::vector<std::pair<std::size_t, std::size_t>> site_event_cores;
   for (std::size_t i = 0; i < sites.size(); i++)
   {
     for (const std::size_t j :
-         site_grid.Query(sites[i].point, sites[i].point, interaction + 2.0 * Tol()))
+         site_grid.Query(sites[i].point, sites[i].point, cube_reach + 2.0 * Tol()))
     {
       if (j <= i || SitePlane(sites[i]) != SitePlane(sites[j]))
       {
         continue;
       }
-      if (quantizer.Less(Distance(sites[i].point, sites[j].point), interaction))
+      if (quantizer.Less(Distance(sites[i].point, sites[j].point), interaction) ||
+          OrientedBoxesInteriorOverlap(site_cubes[i], site_cubes[j], 3))
       {
+        site_event_cores.emplace_back(cores.size(), cores.size() + 1);
         cores.push_back({std::numeric_limits<std::size_t>::max(),
                          {0.0, 0.0},
                          sites[i].point,
@@ -9525,6 +9609,10 @@ void Identifier::BuildClusters()
     core_grid.Insert(i, lo, hi);
   }
   UnionFind uf(cores.size());
+  for (const auto &[a, b] : site_event_cores)
+  {
+    uf.Union(a, b);  // a site-site event is one region (its sites may lie beyond 2R)
+  }
   for (std::size_t i = 0; i < cores.size(); i++)
   {
     Point3D lo, hi;
@@ -13879,47 +13967,9 @@ void Identifier::Assign(IdentificationResult &result)
     }
     nlohmann::json signature = {{"Interfaces", site.interfaces},
                                 {"Law", site.boundary_law}};
-    // Frame of the vertex feature (the patch frame of the library model, design (b) 4):
-    // x = the first arm away from the site, y in the process plane, z = the site's OWN
-    // signed process normal n (substrate -> vacuum; decision 266 — not the sign-canonical
-    // n_ref, which turns a flipped plane's coupon upside down). Corner: the arms ordered so
-    // that the second is counterclockwise about n from the first (a corner is its own
-    // mirror image), y = n x x (right-handed); endpoint: y toward the gap; junction: x =
-    // the canonical first arm, y = +-(n x x) so that the canonical arm order proceeds
-    // counterclockwise in (x, y) (the arm angles are measured about the same n).
-    const Point3D n_site = SiteProcessNormal(site);
-    std::array<Point3D, 3> axes = {Point3D{}, Point3D{}, n_site};
-    if (site.type == "ConvexCorner" || site.type == "ConcaveCorner")
-    {
-      signature = CanonicalCornerSignature(site.interfaces, site.boundary_law,
-                                           site.angle_degrees, site.corner_radius / R);
-      Point3D first = site.arm_directions[0], second = site.arm_directions[1];
-      if (Dot(Cross(n_site, first), second) < 0.0)
-      {
-        std::swap(first, second);
-      }
-      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
-      axes[1] = Normalize(Cross(n_site, axes[0]));
-    }
-    else if (site.type == "Junction")
-    {
-      JunctionCanonicalOrder order;
-      signature = CanonicalJunctionSignature(site.interfaces, site.boundary_law,
-                                             site.arm_angles, site.arm_conductors, &order);
-      const Point3D first = site.arm_directions[order.first_arm];
-      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
-      axes[1] = Scale(order.reversed ? -1.0 : 1.0, Normalize(Cross(n_site, axes[0])));
-    }
-    else if (!site.arm_directions.empty())
-    {
-      const Point3D first = site.arm_directions.front();
-      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
-      axes[1] = Normalize(Cross(n_site, axes[0]));
-      if (Dot(axes[1], site.gap_direction) < 0.0)
-      {
-        axes[1] = Scale(-1.0, axes[1]);
-      }
-    }
+    // The frame of the vertex feature (SiteFrameAxes; the corner / junction signature
+    // alongside).
+    const std::array<Point3D, 3> axes = SiteFrameAxes(site, &signature);
     const int feature = NewFeature(site.type, signature);
     site_feature[static_cast<std::size_t>(&site - sites.data())] = feature;
     features[feature].origin = site.point;
@@ -16015,6 +16065,22 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "compared on a 1e-9 relative grid); a bend arc merges the chains its absorbed "
          "corners separated"},
         {"InteractionDistanceOverR", kInteractionDistanceOverRadius},
+        {"VertexPairInteraction",
+         "oriented separating-axis test on the +-R vertex cubes (decision 1058): two "
+         "vertex sites of one plane are clustered iff the placement's own oriented-box "
+         "test "
+         "(OrientedBoxesInteriorOverlap, surfaceresponseorientedbox.hpp: the face normals "
+         "of both frames and their 9 cross products, tolerance 1e-12 x scale) says their "
+         "+-R coupon cubes in the sites' feature frames overlap — below 2R always (the "
+         "InteractionDistanceOverR rule), beyond 2R up to 2 sqrt(3) R where the frames' "
+         "orientation lets the cubes meet (parallel frames 2 sqrt(2) R along a face "
+         "diagonal, frames 45 deg apart 2.613 R along the bisector; the site-grid query "
+         "reads 2 sqrt(3) R); the two sites are one region by construction. Edge-edge and "
+         "edge-vertex interactions keep 2R (R-tubes: 2R is their exact overlap "
+         "condition). One criterion on both sides: the identification's clustering "
+         "decision equals the placement's same-class overlap verdict (hardening-2 B2 / "
+         "H4a), closing OI-VERTEX-PAIR-CUBE-OVERLAP (the identification fix round, "
+         "decision 1062 A.5 (a) / B.1 / C.2 / C.7)"},
         {"ThroughVertexZoneOverR", kThroughVertexZoneOverRadius},
         {"ClusterBallOverR", kClusterBallOverRadius},
         {"VertexJoinsClusterOverR", kVertexJoinsClusterOverRadius},

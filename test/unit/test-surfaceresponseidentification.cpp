@@ -8443,3 +8443,147 @@ TEST_CASE("SurfaceResponseIdentification frame minimisation orders the key text"
     CHECK(canonical->hash == Sha256Hex(canonical->key));
   }
 }
+
+// U-SAT-IDENT (the identification fix round, decisions 1058 MAJOR-3 / 1060 BLOCKER-1 / 1062
+// A.5 (a), B.1 (e), C.2, C.7): the identification's vertex-vertex clustering decision IS
+// the placement's oriented separating-axis verdict on the two sites' +-R coupon cubes.
+TEST_CASE("SurfaceResponseIdentificationVertexPairOrientedSat",
+          "[surfaceresponseidentification][Serial]")
+{
+  const double R = 1.9;
+  const double pi = std::acos(-1.0);
+  auto AxisBox = [&](const std::array<double, 3> &origin, double theta_deg, double w = 1.0)
+  {
+    const double t = theta_deg * pi / 180.0;
+    const std::array<std::array<double, 3>, 3> axes = {
+        {{std::cos(t), std::sin(t), 0.0},
+         {-std::sin(t) * w, std::cos(t) * w, 0.0},
+         {0.0, 0.0, w}}};
+    return VertexCubeBox(origin, axes, R);
+  };
+  // (1) The S1b-rc junction corners of record (hardening-2 local f3 / exec-B rrmeas J1; the
+  // frames of the patches CSV, plane z = 4.8 with w = -z): 1907f795ac80 (concave 158.743) /
+  // 041a034f3147 (concave 135) at 2.014 R, frames 21.3 deg apart, and 041a034f3147 /
+  // 3308d9541976 (concave 157.5) at 2.014 R, frames 45 deg apart, OVERLAP (= the record's
+  // H4a OverlapExcluded pairs, decision 1030); 3308d9541976 / 3a9773b1ff89 (91.15 deg) at
+  // 2.60 R, frames 22.5 deg apart, do NOT (the probe sat_scp_pairs_v1 of record).
+  {
+    auto Frame = [&](const std::array<double, 3> &origin, double ux, double uy)
+    {
+      const std::array<std::array<double, 3>, 3> axes = {
+          {{ux, uy, 0.0}, {uy, -ux, 0.0}, {0.0, 0.0, -1.0}}};  // y = n x x with n = -z
+      return VertexCubeBox(origin, axes, R);
+    };
+    const auto f79 = Frame({230.0, 0.0, 4.8}, -0.021692988272, 0.999764679442);
+    const auto f80 =
+        Frame({231.4644660941, -3.5355339059, 4.8}, -0.382683432365, 0.923879532511);
+    const auto f81 = Frame({235.0, -5.0, 4.8}, -0.923879532511, 0.382683432365);
+    const auto f82 = Frame({239.946975829, -5.0, 4.8}, -1.0, 0.0);
+    CHECK(OrientedBoxesInteriorOverlap(f79, f80, 3));
+    CHECK(OrientedBoxesInteriorOverlap(f80, f79, 3));
+    CHECK(OrientedBoxesInteriorOverlap(f80, f81, 3));
+    CHECK(!OrientedBoxesInteriorOverlap(f79, f81, 3));
+    CHECK(!OrientedBoxesInteriorOverlap(f81, f82, 3));
+    CHECK_THAT(std::hypot(231.4644660941 - 230.0, -3.5355339059) / R,
+               WithinAbs(2.014, 1.0e-3));
+  }
+  // (2) The reach of two R-cubes (decision 1062 C.2): parallel frames 2 R along an axis and
+  // 2 sqrt(2) R along the face diagonal (the review's diagonal case at 2.5 R overlaps);
+  // frames 45 deg apart (1 + sqrt 2) R = 2.414 R along a frame axis and 2.613 R along the
+  // 22.5-deg bisector; nothing beyond 2 sqrt(3) R.
+  {
+    const auto a = AxisBox({0.0, 0.0, 0.0}, 0.0);
+    auto At = [&](double d_over_R, double phi_deg, double theta_deg)
+    {
+      const double p = phi_deg * pi / 180.0;
+      return AxisBox({d_over_R * R * std::cos(p), d_over_R * R * std::sin(p), 0.0},
+                     theta_deg);
+    };
+    CHECK(OrientedBoxesInteriorOverlap(a, At(1.99, 0.0, 0.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.01, 0.0, 0.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.5, 45.0, 0.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.82, 45.0, 0.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.84, 45.0, 0.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.40, 0.0, 45.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.42, 0.0, 45.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.60, 22.5, 45.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.62, 22.5, 45.0), 3));
+    for (const double theta : {0.0, 10.0, 30.0, 45.0, 60.0})
+    {
+      for (const double phi : {0.0, 22.5, 45.0})
+      {
+        CHECK(!OrientedBoxesInteriorOverlap(
+            a, At(2.0 * std::sqrt(3.0) + 1.0e-3, phi, theta), 3));
+      }
+    }
+    // The cross-plane non-event (B.1 (e)): the review's S1 / S3p / S4 pairs overlap in 2D
+    // (d_xy 2.264 R, frames 45 deg apart) but sit on planes 4.8 um = 2.526 R apart.
+    const auto flipped = AxisBox({2.264 * R, 0.0, 4.8}, 45.0, -1.0);
+    CHECK(OrientedBoxesInteriorOverlap(a, AxisBox({2.264 * R, 0.0, 0.0}, 45.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, flipped, 3));
+  }
+  // (3) The identification's decision == the SAT verdict on a (d, theta) grid: two 30-um
+  // pads whose nearest convex corners face each other along the diagonal at centre
+  // distance d, the second pad rotated by theta about its corner (every edge >= d from the
+  // other pad: no edge-edge / edge-vertex event below 2R). Clustered (one
+  // SpatialEdgeCluster of the two corners, 6 free corners) iff the cubes overlap; else 8
+  // corners, 0 clusters.
+  auto RotatedPad = [&](double corner_x, double corner_y, double theta_deg)
+  {
+    const double t = theta_deg * pi / 180.0, s = 30.0;
+    std::vector<Point2> pts;
+    for (const Point2 &q : {Point2{0.0, 0.0}, Point2{s, 0.0}, Point2{s, s}, Point2{0.0, s}})
+    {
+      pts.push_back({corner_x + q[0] * std::cos(t) - q[1] * std::sin(t),
+                     corner_y + q[0] * std::sin(t) + q[1] * std::cos(t)});
+    }
+    return pts;
+  };
+  const std::vector<Point2> pad_a = Rectangle(-30.0, -30.0, 0.0, 0.0);
+  auto Counts = [](const IdentificationResult &result)
+  {
+    std::map<std::string, int> counts;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+    }
+    return counts;
+  };
+  int clustered = 0, separate = 0;
+  for (const double d_over_R : {2.05, 2.3, 2.5, 2.7, 2.9})
+  {
+    for (const double theta : {0.0, 15.0, 30.0, 45.0})
+    {
+      const double c = d_over_R * R / std::sqrt(2.0);
+      const bool overlap = OrientedBoxesInteriorOverlap(AxisBox({0.0, 0.0, 0.0}, 0.0),
+                                                        AxisBox({c, c, 0.0}, theta), 3);
+      const auto input = MakeInput({{pad_a, 0, 1.0}, {RotatedPad(c, c, theta), 1, 1.0}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      INFO("d / R " << d_over_R << " theta " << theta << " SAT " << overlap);
+      CheckPartition(input, result);
+      auto counts = Counts(result);
+      CHECK(counts["ConvexCorner"] == (overlap ? 6 : 8));
+      CHECK(counts["SpatialEdgeCluster"] == (overlap ? 1 : 0));
+      (overlap ? clustered : separate)++;
+    }
+  }
+  CHECK(clustered >=
+        5);  // the grid reaches both verdicts (2.05 R x 4; 2.3 / 2.5 at 0 deg...)
+  CHECK(separate >= 5);
+  // (4) The same pair across planes (the flipped top chip 4.8 um = 2.526 R above): no
+  // site-site event across planes (SitePlane) and the 3D cubes are disjoint — 8 corners.
+  {
+    const double c = 2.264 * R / std::sqrt(2.0);
+    LoopSpec top{RotatedPad(c, c, 45.0), 1, 1.0, 4.8};
+    top.normal_sign = -1.0;
+    const auto input = MakeInput({{pad_a, 0, 1.0}, top}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    auto counts = Counts(result);
+    CHECK(counts["ConvexCorner"] == 8);
+    CHECK(counts["SpatialEdgeCluster"] == 0);
+    const auto same_plane = IdentifyMetalPerimeter(
+        MakeInput({{pad_a, 0, 1.0}, {RotatedPad(c, c, 45.0), 1, 1.0}}, R));
+    CHECK(Counts(same_plane).at("ConvexCorner") == 6);
+  }
+}

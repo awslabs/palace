@@ -23912,68 +23912,6 @@ OrientedSupportBox OrientedBoxOf(const SpatialSupportBounds &support)
   return box;
 }
 
-bool OrientedBoxesInteriorOverlap(const OrientedSupportBox &a, const OrientedSupportBox &b,
-                                  int dimension)
-{
-  // The separating-axis test: the boxes are disjoint iff some axis among the face normals
-  // of both (and, in 3D, the cross products of their frame axes) separates the projected
-  // centres by at least the sum of the projected half extents (within the tolerance).
-  double scale = 1.0;
-  for (int k = 0; k < dimension; k++)
-  {
-    scale = std::max({scale, std::abs(a.min[k]), std::abs(a.max[k]), std::abs(b.min[k]),
-                      std::abs(b.max[k])});
-  }
-  const double tolerance = 1.0e-12 * scale;
-  Point3D centre_a{}, centre_b{};
-  std::array<double, 3> half_a{}, half_b{};
-  for (int k = 0; k < dimension; k++)
-  {
-    half_a[k] = 0.5 * (a.max[k] - a.min[k]);
-    half_b[k] = 0.5 * (b.max[k] - b.min[k]);
-    centre_a = Add(centre_a, Scale(0.5 * (a.min[k] + a.max[k]), a.axes[k]));
-    centre_b = Add(centre_b, Scale(0.5 * (b.min[k] + b.max[k]), b.axes[k]));
-  }
-  const Point3D d = Subtract(centre_a, centre_b);
-  auto Separates = [&](Point3D axis)
-  {
-    const double length = Norm(axis);
-    if (length <= 1.0e-12)
-    {
-      return false;  // parallel frame axes: their cross product is no direction
-    }
-    axis = Scale(1.0 / length, axis);
-    double reach = 0.0;
-    for (int k = 0; k < dimension; k++)
-    {
-      reach += half_a[k] * std::abs(Dot(a.axes[k], axis)) +
-               half_b[k] * std::abs(Dot(b.axes[k], axis));
-    }
-    return std::abs(Dot(d, axis)) >= reach - tolerance;
-  };
-  for (int k = 0; k < dimension; k++)
-  {
-    if (Separates(a.axes[k]) || Separates(b.axes[k]))
-    {
-      return false;
-    }
-  }
-  if (dimension == 3)
-  {
-    for (int i = 0; i < 3; i++)
-    {
-      for (int j = 0; j < 3; j++)
-      {
-        if (Separates(Cross(a.axes[i], b.axes[j])))
-        {
-          return false;
-        }
-      }
-    }
-  }
-  return true;
-}
-
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
     const std::set<std::size_t> &owned_patches, int dimension,
