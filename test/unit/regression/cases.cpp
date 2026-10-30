@@ -4,7 +4,8 @@
 // Regression cases: full Palace solves diffed against test data references.
 // Each case carries [Serial][Parallel][GPU][Regression] (the category
 // tag is orthogonal to execution style — every case is valid at any
-// rank count and on either CPU or GPU). [Long] modifies a regression
+// rank count and on either CPU or GPU), except the substructuring cases,
+// which are CPU-only (no [GPU]). [Long] modifies a regression
 // case to be skipped from the default sweep and run only under the
 // long-tests CI workflow.
 
@@ -1247,6 +1248,270 @@ TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regressio
   palace::test::RunRegressionCase("circular_hole_london",
                                   "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
                                   opts);
+}
+
+// Region-condensed (substructuring) electrostatic solve: the environment (attr 2) is
+// condensed to a Dirichlet-to-Neumann operator and the region (attr 1) is solved against
+// it, producing the terminal capacitance matrix. Exercises the SubstructuringSolver driver
+// path.
+TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;  // Solver.Electrostatic.Save defaults to 0
+  palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json",
+                                  "base", opts);
+}
+
+// An online run on the mesh of the region written by the offline run (the environment's
+// terminal is not in it), against the reference of the full mesh.
+TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  opts.setup_config = "electrostatic.json";
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_online_region.json", "online_region",
+                                  opts);
+}
+
+// The electrostatic case with "DirectMaxSize": 0: the environment (on its submesh) and the
+// region are solved by conjugate gradients with geometric multigrid.
+TEST_CASE("substructuring_electrostatic_iterative", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_iterative.json", "iterative", opts);
+}
+
+// Region-condensed (substructuring) magnetostatic solve on the mirror-split
+// double-circular- hole slab: the environment (right hole, attr 2) is condensed to a DtN
+// operator and the region (left hole, attr 1) is solved against it for each flux-loop
+// excitation, giving the 2x2 mutual-inductance matrix. The shared film is a London sheet
+// with the small PecPenetrationDepth, as in the native solver, which the result matches.
+TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic.json",
+                                  "base", opts);
+}
+
+// The flux loops of substructuring_magnetostatic in one excitation: the stored energy and
+// the fluxoids of the loops, without an inductance matrix. The references are regular
+// simulations.
+TEST_CASE("substructuring_magnetostatic_grouped", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_grouped.json", "grouped", opts);
+}
+
+// The same with the loop of the environment held at zero fluxoid instead: the inductance of
+// the region's loop, screened by the other.
+TEST_CASE("substructuring_magnetostatic_held", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic_held.json",
+                                  "held", opts);
+}
+
+// Magnetostatic substructuring with a finite-penetration-depth London film (λ = 0.4 μm,
+// d = 0.1 μm) shared by both flux loops and crossing the interface: the film is a free
+// London sheet in the condensation, and the total inductance includes the kinetic part.
+TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_london.json", "london", opts);
+}
+
+// Magnetostatic substructuring with surface currents across two square holes of a film
+// that crosses the interface, one hole in the region and one in the environment. The
+// references are regular simulations of the same configuration.
+TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current.json", "current", opts);
+}
+
+// The surface-current case with "DirectMaxSize": 0: the environment (on its submesh) and
+// the region are solved by conjugate gradients with AMS.
+TEST_CASE("substructuring_magnetostatic_current_iterative",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current_iterative.json",
+                                  "current_iterative", opts);
+}
+
+// As above with a finite-penetration-depth London film (λ = 0.4 μm, d = 0.1 μm), whose
+// supercurrent closes the port currents.
+TEST_CASE("substructuring_magnetostatic_current_london",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current_london.json", "current_london",
+                                  opts);
+}
+
+// Mixed surface-current and flux-loop extraction with substructuring on a small ring-disk
+// mesh: the region holds the ring terminal, and the ring's aperture crosses the interface.
+// The references are regular simulations of the same configurations.
+TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed.json", "mixed", opts);
+}
+
+// An online run on the mesh of the region written by the offline run of the mixed case
+// (with the environment elements at the surface current, its aperture and the flux-loop
+// film), against the references of the mixed case.
+TEST_CASE("substructuring_magnetostatic_mixed_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_mixed.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed_online_region.json",
+                                  "mixed_online_region", opts);
+}
+
+// Online adaptive refinement of the region of the mixed case (one iteration), with the
+// environment of the saved model. The marked elements depend on the partition (one element
+// more on 2 or 4 processes, a 4e-5 change of the inductances, against 4e-3 for the
+// refinement).
+TEST_CASE("substructuring_magnetostatic_mixed_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_mixed.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed_online_amr.json", "mixed_online_amr",
+                                  opts);
+}
+
+// As above with a finite-penetration-depth London disk (λ = 0.4 μm, d = 0.1 μm).
+TEST_CASE("substructuring_magnetostatic_mixed_london",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed_london.json", "mixed_london", opts);
+}
+
+// As above with a two-sided (two-port) London disk at d > λ (λ = 0.1 μm, d = 0.2 μm) in the
+// environment, on the parent space broken across the film. The references are regular
+// simulations.
+TEST_CASE("substructuring_magnetostatic_two_sided", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided.json", "two_sided", opts);
+}
+
+// An online run on the mesh of the region written by the offline run of the two-sided case
+// (which holds the flux-loop film), against its references.
+TEST_CASE("substructuring_magnetostatic_two_sided_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_online_region.json",
+                                  "two_sided_online_region", opts);
+}
+
+// The two-sided case with the region and the environment swapped, so the film lies in the
+// region.
+TEST_CASE("substructuring_magnetostatic_two_sided_swapped",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_swapped.json",
+                                  "two_sided_swapped", opts);
+}
+
+// An online run on the mesh of the region, for a surface-current port standing on a
+// two-sided film of the environment: the mesh holds the whole film, with both its sides.
+// The references are regular simulations.
+TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_port.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_port_online_region.json",
+                                  "two_sided_port_online_region", opts);
 }
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface

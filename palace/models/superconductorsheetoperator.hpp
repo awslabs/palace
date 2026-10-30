@@ -68,7 +68,7 @@ public:
   SuperconductorSheetOperator(const std::vector<config::SuperconductorData> &superconductor,
                               const std::unordered_set<int> &cracked_attributes,
                               const Units &units, const MaterialOperator &mat_op,
-                              const mfem::ParMesh &mesh);
+                              const mfem::ParMesh &mesh, bool print = true);
   SuperconductorSheetOperator(const IoData &iodata, const MaterialOperator &mat_op,
                               const mfem::ParMesh &mesh);
 

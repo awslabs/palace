@@ -18,10 +18,12 @@
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/substructuringsolver.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -101,9 +103,171 @@ void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
 
 }  // namespace
 
+void MagnetostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                                     MPI_Comm comm) const
+{
+  SubstructuringSolver::UseModelLength(iodata, comm);
+  BaseSolver::Preprocess(iodata, smesh, comm);
+}
+
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
+  // Substructuring: condense the environment, solve each excitation in the region against
+  // it, and form the inductance matrix from the energies as the regular solve.
+  if (iodata.solver.substructuring)
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    // Excitations of the surface currents (and their aperture flux functionals, for mixed
+    // extraction) and fluxoid generators of the flux loops, from the native operator,
+    // freed before the condensation.
+    std::vector<int> current_idx, flux_idx, loop_idx;
+    std::vector<Vector> J, apertures, a;
+    std::vector<double> I_inc, Phi_inc;
+    bool single_loops = true;
+    mfem::DenseMatrix fluxoid;
+    {
+      CurlCurlOperator curlcurl_op(iodata, mesh);
+      const bool mixed = curlcurl_op.GetSurfaceCurrentOp().Size() > 0 &&
+                         curlcurl_op.GetSurfaceFluxOp().Size() > 0;
+      Vector RHS, boundary_values;
+      // The apertures read the first version of B on the two-sided films, as the regular
+      // solve.
+      const auto first_version = (mixed && curlcurl_op.IsBroken())
+                                     ? curlcurl_op.GetSolutionCurlSpace().BuildVersionMap(
+                                           FiniteElementSpace::VersionMap::FIRST)
+                                     : nullptr;
+      for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+      {
+        curlcurl_op.GetCurrentExcitationVector(idx, RHS);
+        J.push_back(RHS);
+        current_idx.push_back(idx);
+        I_inc.push_back(data.GetExcitationCurrent());
+        if (mixed)
+        {
+          // l^T A = sum of the element aperture fluxes of B = Curl A, as the regular solve.
+          Vector f(curlcurl_op.GetRTSpace().GetTrueVSize()), l(RHS.Size());
+          f = 0.0;
+          for (const auto &elem : data.elements)
+          {
+            f.Add(elem.current_fraction,
+                  FluxThroughSurfaceFunctional(curlcurl_op.GetRTSpace(),
+                                               elem.aperture->attributes,
+                                               elem.aperture->direction));
+          }
+          if (first_version)
+          {
+            Vector fb(first_version->Width());
+            first_version->MultTranspose(f, fb);
+            f = std::move(fb);
+          }
+          curlcurl_op.GetCurlMatrix().MultTranspose(f, l);
+          apertures.push_back(std::move(l));
+        }
+      }
+      // A flux loop excitation drives its loops together, with the sum of their fluxoid
+      // generators (each normalized to its own loop's fluxoid); a loop held at zero fluxoid
+      // is a London sheet without a drive.
+      const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
+      single_loops = surf_flux_op.HasSingleLoopExcitations();
+      if (surf_flux_op.Size() > 0)
+      {
+        PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+        for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
+        {
+          Vector a_ex;
+          for (int loop : loops)
+          {
+            curlcurl_op.GetFluxExcitationVector(loop, RHS, post_op, &boundary_values);
+            if (a_ex.Size() == 0)
+            {
+              a_ex.SetSize(boundary_values.Size());
+              a_ex.UseDevice(true);
+              a_ex = 0.0;
+            }
+            a_ex += boundary_values;
+          }
+          a.push_back(std::move(a_ex));
+          flux_idx.push_back(idx);
+          Phi_inc.push_back((loops.size() == 1)
+                                ? surf_flux_op.GetSource(loops.front()).GetExcitationFlux()
+                                : std::numeric_limits<double>::quiet_NaN());
+        }
+        if (!single_loops)
+        {
+          // The fluxoids cᵀa_h that each excitation imposes on the loops, for the report of
+          // the excitation energies (zero for the surface currents).
+          const int nc = static_cast<int>(J.size());
+          fluxoid.SetSize(nc + static_cast<int>(a.size()),
+                          static_cast<int>(surf_flux_op.Size()));
+          fluxoid = 0.0;
+          for (const auto &[loop, data] : surf_flux_op)
+          {
+            loop_idx.push_back(loop);
+          }
+          for (std::size_t k = 0; k < a.size(); k++)
+          {
+            for (std::size_t j = 0; j < loop_idx.size(); j++)
+            {
+              fluxoid(nc + static_cast<int>(k), static_cast<int>(j)) =
+                  curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], a[k]);
+            }
+          }
+        }
+      }
+    }
+    const int nc = static_cast<int>(J.size()), nf = static_cast<int>(a.size());
+    MFEM_VERIFY(nc + nf > 0, "Magnetostatic substructuring requires flux-loop or "
+                             "surface-current excitations!");
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
+    Mpi::Print("\nSubstructuring inductance sweep: {:d} surface current{} and {:d} flux "
+               "loop excitation{}\n",
+               nc, (nc != 1) ? "s" : "", nf, (nf != 1) ? "s" : "");
+    // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
+    // Superconductor), as is every "Superconductor" boundary. Only the fields to be saved
+    // need the environment interior.
+    const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
+    const bool adapt = (iodata.model.refinement.max_it > 0);
+    std::vector<Vector> A, region_fields;
+    mfem::DenseMatrix linked_flux(nc, nf);
+    linked_flux = 0.0;
+    const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
+        current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
+        &A, n_save, adapt ? &region_fields : nullptr);
+    if (single_loops)
+    {
+      // Excitations in the layout of the regular solve (currents first, zero elsewhere).
+      I_inc.resize(nc + nf, 0.0);
+      Phi_inc.insert(Phi_inc.begin(), nc, 0.0);
+      PostprocessInductance(current_idx, flux_idx, E, I_inc, Phi_inc, linked_flux);
+    }
+    else
+    {
+      // The stored energy of each state is half its energy-matrix diagonal.
+      std::vector<int> excitation_idx(current_idx);
+      excitation_idx.insert(excitation_idx.end(), flux_idx.begin(), flux_idx.end());
+      std::vector<double> energy(nc + nf);
+      for (int i = 0; i < nc + nf; i++)
+      {
+        energy[i] = 0.5 * E(i, i);
+      }
+      PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
+    }
+    if (n_save > 0)
+    {
+      std::vector<int> ids(current_idx);
+      ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
+      ids.resize(n_save);
+      sub.WriteParaView(post_dir.string(), ids, A);
+    }
+    Mpi::Print("\nSubstructuring inductance sweep complete\n");
+    // Adaptive refinement of the region only (the indicators are zero on the environment).
+    ErrorIndicator indicator =
+        adapt ? sub.RegionErrorIndicator(region_fields, E) : ErrorIndicator();
+    return {indicator, sub.GlobalTrueVSize()};
+  }
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
@@ -524,35 +688,47 @@ void MagnetostaticSolver::PostprocessExcitations(
   const auto &surf_j_op = curlcurl_op.GetSurfaceCurrentOp();
   const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
   const int n = static_cast<int>(domain_energy.size());
-  std::vector<int> source_idx;
+  std::vector<int> excitation_idx, loop_idx;
   for (const auto &[idx, data] : surf_j_op)
   {
-    source_idx.push_back(idx);
+    excitation_idx.push_back(idx);
   }
   for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
   {
-    source_idx.push_back(idx);
+    excitation_idx.push_back(idx);
+  }
+  for (const auto &[idx, data] : surf_flux_op)
+  {
+    loop_idx.push_back(idx);
   }
   // The fluxoid functional is a collective dot product, so measure before the root write.
-  mfem::DenseMatrix fluxoid(n, static_cast<int>(surf_flux_op.Size()));
+  mfem::DenseMatrix fluxoid(n, static_cast<int>(loop_idx.size()));
   fluxoid = 0.0;
+  std::vector<double> energy(n);
   for (int i = 0; i < n; i++)
   {
-    int j = 0;
-    for (const auto &[loop_idx, data] : surf_flux_op)
+    energy[i] = domain_energy[i] + 0.5 * london_kinetic[i];
+    for (std::size_t j = 0; j < loop_idx.size(); j++)
     {
       if (london_ah[i].Size() > 0)
       {
-        fluxoid(i, j) = curlcurl_op.MeasureLondonHoleFlux(loop_idx, london_ah[i]);
+        fluxoid(i, static_cast<int>(j)) =
+            curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], london_ah[i]);
       }
-      j++;
     }
   }
+  PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
+}
+
+void MagnetostaticSolver::PrintExcitations(const std::vector<int> &excitation_idx,
+                                           const std::vector<int> &loop_idx,
+                                           const std::vector<double> &energy,
+                                           const mfem::DenseMatrix &fluxoid) const
+{
   if (!root)
   {
     return;
   }
-
   const double energy_scale = iodata.units.GetScaleFactor<Units::ValueType::ENERGY>();
   const double magnetic_flux_scale =
       iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>() *
@@ -560,20 +736,19 @@ void MagnetostaticSolver::PostprocessExcitations(
   TableWithCSVFile terminal_Phi(post_dir / "terminal-Phi.csv");
   terminal_Phi.table.insert(Column("i", "i", 0, 0, 2, ""));
   terminal_Phi.table.insert("E", "E (J)");
-  for (const auto &[loop_idx, data] : surf_flux_op)
+  for (int idx : loop_idx)
   {
-    terminal_Phi.table.insert(fmt::format("Phi{}", loop_idx),
-                              fmt::format("Phi_inc[{}] (Wb)", loop_idx));
+    terminal_Phi.table.insert(fmt::format("Phi{}", idx),
+                              fmt::format("Phi_inc[{}] (Wb)", idx));
   }
-  for (int i = 0; i < n; i++)
+  for (std::size_t i = 0; i < excitation_idx.size(); i++)
   {
-    terminal_Phi.table["i"] << double(source_idx[i]);
-    terminal_Phi.table["E"] << (domain_energy[i] + 0.5 * london_kinetic[i]) * energy_scale;
-    int j = 0;
-    for (const auto &[loop_idx, data] : surf_flux_op)
+    terminal_Phi.table["i"] << double(excitation_idx[i]);
+    terminal_Phi.table["E"] << energy[i] * energy_scale;
+    for (std::size_t j = 0; j < loop_idx.size(); j++)
     {
-      terminal_Phi.table[fmt::format("Phi{}", loop_idx)]
-          << fluxoid(i, j++) * magnetic_flux_scale;
+      terminal_Phi.table[fmt::format("Phi{}", loop_idx[j])]
+          << fluxoid(static_cast<int>(i), static_cast<int>(j)) * magnetic_flux_scale;
     }
   }
   terminal_Phi.WriteFullTableTrunc();
@@ -635,34 +810,18 @@ void MagnetostaticSolver::PostprocessTerminals(
   // well-defined and reciprocal. We therefore report self-inductances for all ports, but
   // mutual inductances only between ports that are Open when inactive; other off-diagonals
   // are set to NaN and Minv/Mm are computed over the Open-Open sub-block only.
-  int n_current = static_cast<int>(surf_j_op.Size());
-  int n_flux = static_cast<int>(surf_flux_op.GetExcitations().size());
-  int n = A.size();
-
-  // Mark which columns have a well-defined reciprocal mutual (Open-when-inactive ports).
-  // Flux loops always share one operator, so they are all reciprocal.
-  const InactivePortMode global_mode = iodata.solver.magnetostatic.inactive_port_mode;
-  std::vector<bool> reciprocal(n, true);
+  const int n = static_cast<int>(A.size());
+  std::vector<int> current_idx, flux_idx;
+  for (const auto &[idx, data] : surf_j_op)
   {
-    int col = 0;
-    for (const auto &[idx, data] : surf_j_op)
-    {
-      const auto &port_cfg = iodata.boundaries.current.at(idx);
-      // A single current port is never inactive during its own (only) solve, so its
-      // self-inductance is reciprocal regardless of the chosen mode.
-      reciprocal[col++] = n_current == 1 || port_cfg.inactive_port_mode.value_or(
-                                                global_mode) == InactivePortMode::OPEN;
-    }
-    // Remaining columns are flux loops (reciprocal), already initialized to true.
+    current_idx.push_back(idx);
   }
+  for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
+  {
+    flux_idx.push_back(idx);
+  }
+  const std::vector<bool> reciprocal = ReciprocalColumns(current_idx, n);
   auto reciprocal_pair = [&](int i, int j) { return reciprocal[i] && reciprocal[j]; };
-  const double nan = std::numeric_limits<double>::quiet_NaN();
-
-  // Allocate final result matrices
-  mfem::DenseMatrix M(n), Minv(n), Mm(n);
-  M = nan;
-  Minv = nan;
-  Mm = nan;
 
   // Compute cross-energy matrix and diagonals. Off-diagonals are only meaningful between
   // reciprocal (Open-Open) port pairs; other pairs are left as NaN.
@@ -682,7 +841,7 @@ void MagnetostaticSolver::PostprocessTerminals(
   };
 
   mfem::DenseMatrix cross_energy(n);
-  cross_energy = nan;
+  cross_energy = std::numeric_limits<double>::quiet_NaN();
   Vector A_gf;  // L-vector of the solution space (broken across two-sided films)
   for (int i = 0; i < n; i++)
   {
@@ -704,6 +863,48 @@ void MagnetostaticSolver::PostprocessTerminals(
           linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) + london_correction(i, j);
     }
   }
+
+  PostprocessInductance(current_idx, flux_idx, cross_energy, I_inc, Phi_inc, linked_flux);
+}
+
+std::vector<bool>
+MagnetostaticSolver::ReciprocalColumns(const std::vector<int> &current_idx, int n) const
+{
+  // Mark which columns have a well-defined reciprocal mutual (Open-when-inactive ports).
+  // Flux loops always share one operator, so they are all reciprocal.
+  const InactivePortMode global_mode = iodata.solver.magnetostatic.inactive_port_mode;
+  const int n_current = static_cast<int>(current_idx.size());
+  std::vector<bool> reciprocal(n, true);
+  for (int col = 0; col < n_current; col++)
+  {
+    const auto &port_cfg = iodata.boundaries.current.at(current_idx[col]);
+    // A single current port is never inactive during its own (only) solve, so its
+    // self-inductance is reciprocal regardless of the chosen mode.
+    reciprocal[col] = n_current == 1 || port_cfg.inactive_port_mode.value_or(global_mode) ==
+                                            InactivePortMode::OPEN;
+  }
+  return reciprocal;
+}
+
+void MagnetostaticSolver::PostprocessInductance(const std::vector<int> &current_idx,
+                                                const std::vector<int> &flux_idx,
+                                                const mfem::DenseMatrix &cross_energy,
+                                                const std::vector<double> &I_inc,
+                                                const std::vector<double> &Phi_inc,
+                                                const mfem::DenseMatrix &linked_flux) const
+{
+  // The inductance matrix from the cross-energies of the excitations (currents first; see
+  // PostprocessTerminals), and the reluctance and mutual matrices.
+  const int n_current = static_cast<int>(current_idx.size());
+  const int n_flux = static_cast<int>(flux_idx.size());
+  const int n = n_current + n_flux;
+  const std::vector<bool> reciprocal = ReciprocalColumns(current_idx, n);
+  auto reciprocal_pair = [&](int i, int j) { return reciprocal[i] && reciprocal[j]; };
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  mfem::DenseMatrix M(n), Minv(n), Mm(n);
+  M = nan;
+  Minv = nan;
+  Mm = nan;
 
   if (n_flux == n)
   {
@@ -903,10 +1104,10 @@ void MagnetostaticSolver::PostprocessTerminals(
   }
 
   // Write matrix data using existing pattern
-  auto PrintMatrix = [&surf_j_op, &surf_flux_op, this, n_current,
-                      n_flux](const std::string &file, const std::string &name,
-                              const std::string &unit, const mfem::DenseMatrix &mat,
-                              double scale)
+  auto PrintMatrix =
+      [&current_idx, &flux_idx, this](const std::string &file, const std::string &name,
+                                      const std::string &unit, const mfem::DenseMatrix &mat,
+                                      double scale)
   {
     TableWithCSVFile output(post_dir / file);
     output.table.insert(Column("i", "i", 0, 0, 2, ""));
@@ -923,13 +1124,11 @@ void MagnetostaticSolver::PostprocessTerminals(
       }
     };
 
-    // Add current sources
+    // Add current sources, then flux loops.
     int j = 0;
-    for (const auto &[idx, data] : surf_j_op)
+    for (int idx : current_idx)
       AddTerminal(idx, j++);
-
-    // Add flux loops (each its own excitation, so the excitation index is the loop index)
-    for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
+    for (int idx : flux_idx)
       AddTerminal(idx, j++);
 
     output.WriteFullTableTrunc();
@@ -947,7 +1146,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     terminal_I.table.insert(Column("i", "i", 0, 0, 2, ""));
     terminal_I.table.insert("Iinc", "I_inc[i] (A)");
     int i = 0;
-    for (const auto &[idx, data] : surf_j_op)
+    for (int idx : current_idx)
     {
       terminal_I.table["i"] << double(idx);
       terminal_I.table["Iinc"] << iodata.units.Dimensionalize<Units::ValueType::CURRENT>(
@@ -967,7 +1166,7 @@ void MagnetostaticSolver::PostprocessTerminals(
         iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>() *
         iodata.units.GetScaleFactor<Units::ValueType::CURRENT>();
     int i = n_current;
-    for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
+    for (int idx : flux_idx)
     {
       terminal_Phi.table["i"] << double(idx);
       terminal_Phi.table["Phiinc"] << Phi_inc[i] * magnetic_flux_scale;

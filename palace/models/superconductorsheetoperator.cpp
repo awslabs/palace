@@ -25,11 +25,14 @@ namespace palace
 SuperconductorSheetOperator::SuperconductorSheetOperator(
     const std::vector<config::SuperconductorData> &superconductor,
     const std::unordered_set<int> &cracked_attributes, const Units &units,
-    const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
+    const MaterialOperator &mat_op, const mfem::ParMesh &mesh, bool print)
   : mat_op(mat_op)
 {
   SetUpBoundaryProperties(superconductor, cracked_attributes, mesh);
-  PrintBoundaryInfo(units, mesh);
+  if (print)
+  {
+    PrintBoundaryInfo(units, mesh);
+  }
 }
 
 SuperconductorSheetOperator::SuperconductorSheetOperator(const IoData &iodata,

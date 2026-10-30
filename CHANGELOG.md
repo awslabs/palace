@@ -63,6 +63,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     magnetostatic solution space is broken across the film, so the mesh is not cracked.
     Requires a 3D mesh and an interior film. SchemaVer 4-1-0.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Added substructuring for electrostatic and magnetostatic simulations
+    (`config["Solver"]["Substructuring"]`): the environment of a region of interest is
+    condensed exactly onto their shared interface, and the region is solved against it. A
+    saved environment model is reused across runs, including after the region is re-meshed,
+    and the capacitance or inductance matrix of a reused model needs no environment solve.
+    The offline run also writes a mesh of the region, on which online runs read and
+    partition the region only, and in which `remesh_region.py` re-meshes a redesign. Online
+    runs can refine the region adaptively. Runs on CPUs and GPUs, with the direct
+    factorizations on the CPU. Includes optional block low-rank environment factorization
+    with MUMPS (`"FactorizationTol"`), hierarchical compression of the interface operator
+    (`"InterfaceOffdiagTol"`), and iterative environment and region solves above a size
+    limit (`"DirectMaxSize"`). Magnetostatic substructuring supports `"FluxLoop"` and
+    `"SurfaceCurrent"` excitations, alone or together (flux loops also grouped or held at
+    zero fluxoid), with the films and `"Superconductor"` boundaries as London sheets
+    (kinetic inductance included; `"TwoSided"` films inside the region or the environment).
+    Adds substructuring examples in `examples/transmon` and `examples/substructuring`
+    (5 x 5 lattices of qubits and of flux loops, on separate rings and on one plate).
+    SchemaVer 4-2-0.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes
 
@@ -361,6 +380,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added an MFEM patch for [mfem/mfem#5610](https://github.com/mfem/mfem/pull/5610),
     which keeps host hypre matrix products from reading a device-resident row cache.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - The superbuild and the Spack recipe patch MFEM with
+    [mfem/mfem#5518](https://github.com/mfem/mfem/pull/5518), which fixes the orientation of
+    some shared faces of a parallel `mfem::ParSubMesh`: spaces with several DOFs per face
+    (Nédélec of order 2 and above, H1 of order 4 and above) were wrong across processes, and
+    so were the region error indicators of substructuring.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 ## [0.18.1] - 2026-09-21
 
