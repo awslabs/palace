@@ -1,0 +1,1292 @@
+{
+ "dev_set_caveat": "the calibration set is the DEVELOPMENT set (gap G8): the LOO coverage is an in-sample-family estimate; the out-of-family test is stage E's blind windows (decision 1049)",
+ "families": {
+  "ES": {
+   "class_census": {
+    "ConvexCorner": 1,
+    "CurvedEdge": 1,
+    "IsolatedEdge": 20,
+    "ParallelEdgeCluster": 11,
+    "SameConductorGap": 1,
+    "SpatialEdgeCluster-9-20": 3,
+    "SpatialEdgeCluster-gt20": 7
+   },
+   "n": 20,
+   "types": {
+    "C": {
+     "H_pt": 0.17008689730154455,
+     "candidates": {
+      "M0": {
+       "H_pt": 0.16898990800169877,
+       "ci90": [
+        0.7383369536731332,
+        0.9663367764380952
+       ],
+       "coefficients": {
+        "beta0": 0.006363397308445373
+       },
+       "loo_coverage": 0.9,
+       "loo_half_width_pt": 0.17979898881499423
+      },
+      "M1": {
+       "H_pt": 0.17008689730154455,
+       "ci90": [
+        0.7383369536731332,
+        0.9663367764380952
+       ],
+       "coefficients": {
+        "beta0": 0.012415069590365091,
+        "beta1": -0.021739450513805415
+       },
+       "loo_coverage": 0.9,
+       "loo_half_width_pt": 0.1790411251392273
+      },
+      "M2": {
+       "H_pt": 0.16898990800169877,
+       "ci90": [
+        0.7383369536731332,
+        0.9663367764380952
+       ],
+       "coefficients": {
+        "beta0": 0.006363397308445373,
+        "beta1": 0.0,
+        "beta2": 0.0
+       },
+       "loo_coverage": 0.9,
+       "loo_half_width_pt": 0.17979898881499423
+      }
+     },
+     "coefficients": {
+      "beta0": 0.012415069590365091,
+      "beta1": -0.021739450513805415
+     },
+     "full_band_coverage_calibrate": 0.85,
+     "loo_coverage": {
+      "ci90": [
+       0.7383369536731332,
+       0.9663367764380952
+      ],
+      "coverage": 0.9,
+      "covered": 18,
+      "loo_half_width_pt": 0.1790411251392273,
+      "n": 20,
+      "widen_k": 1.0
+     },
+     "median_g": 0.0,
+     "median_residual_pt": 0.050506842677255755,
+     "model": "M1",
+     "n": 20,
+     "n_energy_mode": 0,
+     "widened": 1.0
+    },
+    "MA": {
+     "H_pt": 2.5538643981414366,
+     "candidates": {
+      "M0": {
+       "H_pt": 2.5538643981414366,
+       "ci90": [
+        0.7383369536731332,
+        0.9663367764380952
+       ],
+       "coefficients": {
+        "beta0": 0.6083440639893856
+       },
+       "loo_coverage": 0.9,
+       "loo_half_width_pt": 2.6310528919662124
+      },
+      "M1": {
+       "H_pt": 2.663635958353815,
+       "ci90": [
+        0.6781719243246932,
+        0.9384175895226318
+       ],
+       "coefficients": {
+        "beta0": 1.365140461121014,
+        "beta1": -1.5371837280125393
+       },
+       "loo_coverage": 0.85,
+       "loo_half_width_pt": 2.9569199911623025
+      },
+      "M2": {
+       "H_pt": 2.1605766823851096,
+       "ci90": [
+        0.5677982498398755,
+        0.8726228314796423
+       ],
+       "coefficients": {
+        "beta0": 2.170075959588142,
+        "beta1": -7.300013813755822,
+        "beta2": -13.897184025723854
+       },
+       "loo_coverage": 0.75,
+       "loo_half_width_pt": 2.6305384650012797
+      }
+     },
+     "coefficients": {
+      "beta0": 0.6083440639893856
+     },
+     "full_band_coverage_calibrate": 0.95,
+     "loo_coverage": {
+      "ci90": [
+       0.7383369536731332,
+       0.9663367764380952
+      ],
+      "coverage": 0.9,
+      "covered": 18,
+      "loo_half_width_pt": 2.6310528919662124,
+      "n": 20,
+      "widen_k": 1.0
+     },
+     "median_g": 1.6178164307343286,
+     "median_residual_pt": 1.173517713962552,
+     "model": "M0",
+     "n": 20,
+     "n_energy_mode": 20,
+     "widened": 1.0
+    },
+    "MS": {
+     "H_pt": 1.4140913491817262,
+     "candidates": {
+      "M0": {
+       "H_pt": 2.6508207322507915,
+       "ci90": [
+        0.7383369536731332,
+        0.9663367764380952
+       ],
+       "coefficients": {
+        "beta0": -0.8903663953561458
+       },
+       "loo_coverage": 0.9,
+       "loo_half_width_pt": 2.6643234212237243
+      },
+      "M1": {
+       "H_pt": 2.549149560301574,
+       "ci90": [
+        0.6781719243246932,
+        0.9384175895226318
+       ],
+       "coefficients": {
+        "beta0": -0.6217359981487881,
+        "beta1": 0.928575546396819
+       },
+       "loo_coverage": 0.85,
+       "loo_half_width_pt": 3.134627914120247
+      },
+      "M2": {
+       "H_pt": 1.4140913491817262,
+       "ci90": [
+        0.7383369536731332,
+        0.9663367764380952
+       ],
+       "coefficients": {
+        "beta0": 0.02977190067729154,
+        "beta1": 10.21555163919981,
+        "beta2": -43.0676274918256
+       },
+       "loo_coverage": 0.9,
+       "loo_half_width_pt": 1.5430005413989734
+      }
+     },
+     "coefficients": {
+      "beta0": 0.02977190067729154,
+      "beta1": 10.21555163919981,
+      "beta2": -43.0676274918256
+     },
+     "full_band_coverage_calibrate": 0.9,
+     "loo_coverage": {
+      "ci90": [
+       0.7383369536731332,
+       0.9663367764380952
+      ],
+      "coverage": 0.9,
+      "covered": 18,
+      "loo_half_width_pt": 1.5430005413989734,
+      "n": 20,
+      "widen_k": 1.0
+     },
+     "median_g": -0.1873749080177024,
+     "median_residual_pt": 0.4600143682410801,
+     "model": "M2",
+     "n": 20,
+     "n_energy_mode": 20,
+     "widened": 1.0
+    },
+    "SA": {
+     "H_pt": 0.9187866320840845,
+     "candidates": {
+      "M0": {
+       "H_pt": 0.9187866320840845,
+       "ci90": [
+        0.7383369536731332,
+        0.9663367764380952
+       ],
+       "coefficients": {
+        "beta0": -2.8854382576196826
+       },
+       "loo_coverage": 0.9,
+       "loo_half_width_pt": 0.9337602980902471
+      },
+      "M1": {
+       "H_pt": 0.9655626763747969,
+       "ci90": [
+        0.6781719243246932,
+        0.9384175895226318
+       ],
+       "coefficients": {
+        "beta0": -3.1609322074124044,
+        "beta1": 0.749076329340418
+       },
+       "loo_coverage": 0.85,
+       "loo_half_width_pt": 1.0384159539580105
+      },
+      "M2": {
+       "H_pt": 0.6836343757735817,
+       "ci90": [
+        0.6781719243246932,
+        0.9384175895226318
+       ],
+       "coefficients": {
+        "beta0": -2.4358139881292638,
+        "beta1": 0.8641689492893431,
+        "beta2": -21.60409569136188
+       },
+       "loo_coverage": 0.85,
+       "loo_half_width_pt": 0.7527690803476861
+      }
+     },
+     "coefficients": {
+      "beta0": -2.8854382576196826
+     },
+     "full_band_coverage_calibrate": 1.0,
+     "loo_coverage": {
+      "ci90": [
+       0.7383369536731332,
+       0.9663367764380952
+      ],
+      "coverage": 0.9,
+      "covered": 18,
+      "loo_half_width_pt": 0.9337602980902471,
+      "n": 20,
+      "widen_k": 1.0
+     },
+     "median_g": -0.10091387973582594,
+     "median_residual_pt": 0.21579784800624413,
+     "model": "M0",
+     "n": 20,
+     "n_energy_mode": 20,
+     "widened": 1.0
+    }
+   }
+  },
+  "Maxwell": {
+   "class_census": {
+    "ConvexCorner": 1,
+    "IsolatedEdge": 12,
+    "ParallelEdgeCluster": 8,
+    "SameConductorGap": 1,
+    "SpatialEdgeCluster-9-20": 3,
+    "SpatialEdgeCluster-gt20": 6
+   },
+   "n": 12,
+   "types": {
+    "C": {
+     "H_pt": 0.3295652655184389,
+     "candidates": {
+      "M0": {
+       "H_pt": 0.3295652655184389,
+       "ci90": [
+        0.6007930895844598,
+        0.9432194472505557
+       ],
+       "coefficients": {
+        "beta0": 0.14092812570289937
+       },
+       "loo_coverage": 0.8333333333333334,
+       "loo_half_width_pt": 0.40953698338819233
+      },
+      "M1": {
+       "H_pt": 0.3054001135755454,
+       "ci90": [
+        0.5126619681967507,
+        0.8953474344295108
+       ],
+       "coefficients": {
+        "beta0": 0.31503269813342916,
+        "beta1": -0.21809026233337603
+       },
+       "loo_coverage": 0.75,
+       "loo_half_width_pt": 0.3816917524086834
+      },
+      "M2": {
+       "H_pt": 0.3295652655184389,
+       "ci90": [
+        0.6007930895844598,
+        0.9432194472505557
+       ],
+       "coefficients": {
+        "beta0": 0.14092812570289937,
+        "beta1": 0.0,
+        "beta2": 0.0
+       },
+       "loo_coverage": 0.8333333333333334,
+       "loo_half_width_pt": 0.40953698338819233
+      }
+     },
+     "coefficients": {
+      "beta0": 0.14092812570289937
+     },
+     "full_band_coverage_calibrate": 0.9166666666666666,
+     "loo_coverage": {
+      "ci90": [
+       0.6988317205601311,
+       0.9811839504836382
+      ],
+      "coverage": 0.9166666666666666,
+      "covered": 11,
+      "loo_half_width_pt": 0.40953698338819233,
+      "n": 12,
+      "note": "WIDENED x 1.670",
+      "widen_k": 1.6698758562353375
+     },
+     "median_g": 0.0,
+     "median_residual_pt": 0.10921603399933755,
+     "model": "M0",
+     "n": 12,
+     "n_energy_mode": 0,
+     "widened": 1.6698758562353375
+    },
+    "MA": {
+     "H_pt": 2.0856945317021314,
+     "candidates": {
+      "M0": {
+       "H_pt": 2.0856945317021314,
+       "ci90": [
+        0.6007930895844598,
+        0.9432194472505557
+       ],
+       "coefficients": {
+        "beta0": 1.4216916035290073
+       },
+       "loo_coverage": 0.8333333333333334,
+       "loo_half_width_pt": 2.100518839862886
+      },
+      "M1": {
+       "H_pt": 2.0166766194924794,
+       "ci90": [
+        0.5126619681967507,
+        0.8953474344295108
+       ],
+       "coefficients": {
+        "beta0": 1.1539718192007884,
+        "beta1": 0.049449675417520246
+       },
+       "loo_coverage": 0.75,
+       "loo_half_width_pt": 2.2052903240924717
+      },
+      "M2": {
+       "H_pt": 1.8783376801691312,
+       "ci90": [
+        0.2855348543775254,
+        0.7144651456224747
+       ],
+       "coefficients": {
+        "beta0": 2.024538398083029,
+        "beta1": -6.053232580825475,
+        "beta2": -8.30748181170488
+       },
+       "loo_coverage": 0.5,
+       "loo_half_width_pt": 2.696352676086248
+      }
+     },
+     "coefficients": {
+      "beta0": 1.4216916035290073
+     },
+     "full_band_coverage_calibrate": 0.9166666666666666,
+     "loo_coverage": {
+      "ci90": [
+       0.6988317205601311,
+       0.9811839504836382
+      ],
+      "coverage": 0.9166666666666666,
+      "covered": 11,
+      "loo_half_width_pt": 2.100518839862886,
+      "n": 12,
+      "note": "WIDENED x 1.208",
+      "widen_k": 1.2076149972605659
+     },
+     "median_g": 1.6468462939702744,
+     "median_residual_pt": 1.158540246681472,
+     "model": "M0",
+     "n": 12,
+     "n_energy_mode": 11,
+     "widened": 1.2076149972605659
+    },
+    "MS": {
+     "H_pt": 3.1558741860538584,
+     "candidates": {
+      "M0": {
+       "H_pt": 3.1558741860538584,
+       "ci90": [
+        0.6007930895844598,
+        0.9432194472505557
+       ],
+       "coefficients": {
+        "beta0": -0.3985539509432867
+       },
+       "loo_coverage": 0.8333333333333334,
+       "loo_half_width_pt": 3.411343822213986
+      },
+      "M1": {
+       "H_pt": 2.975888929085068,
+       "ci90": [
+        0.4314916133433481,
+        0.8405146550741593
+       ],
+       "coefficients": {
+        "beta0": -1.0844195056595927,
+        "beta1": 1.606699842826088
+       },
+       "loo_coverage": 0.6666666666666666,
+       "loo_half_width_pt": 3.31559041987913
+      },
+      "M2": {
+       "H_pt": 1.4262743888565268,
+       "ci90": [
+        0.4314916133433481,
+        0.8405146550741593
+       ],
+       "coefficients": {
+        "beta0": -1.0343094856725348,
+        "beta1": 14.728651599566527,
+        "beta2": -53.127124536411436
+       },
+       "loo_coverage": 0.6666666666666666,
+       "loo_half_width_pt": 2.7965982194662318
+      }
+     },
+     "coefficients": {
+      "beta0": -0.3985539509432867
+     },
+     "full_band_coverage_calibrate": 0.9166666666666666,
+     "loo_coverage": {
+      "ci90": [
+       0.6988317205601311,
+       0.9811839504836382
+      ],
+      "coverage": 0.9166666666666666,
+      "covered": 11,
+      "loo_half_width_pt": 3.411343822213986,
+      "n": 12,
+      "note": "WIDENED x 1.241",
+      "widen_k": 1.2408606464172813
+     },
+     "median_g": -0.1713533522688736,
+     "median_residual_pt": 1.347337436841961,
+     "model": "M0",
+     "n": 12,
+     "n_energy_mode": 11,
+     "widened": 1.2408606464172813
+    },
+    "SA": {
+     "H_pt": 0.9653312203699413,
+     "candidates": {
+      "M0": {
+       "H_pt": 0.9653312203699413,
+       "ci90": [
+        0.6007930895844598,
+        0.9432194472505557
+       ],
+       "coefficients": {
+        "beta0": -3.0335375779491693
+       },
+       "loo_coverage": 0.8333333333333334,
+       "loo_half_width_pt": 0.9964799626024479
+      },
+      "M1": {
+       "H_pt": 0.995371784387606,
+       "ci90": [
+        0.5126619681967507,
+        0.8953474344295108
+       ],
+       "coefficients": {
+        "beta0": -3.300254984080617,
+        "beta1": 1.5408802733989115
+       },
+       "loo_coverage": 0.75,
+       "loo_half_width_pt": 1.1409633313503806
+      },
+      "M2": {
+       "H_pt": 1.1581049384059723,
+       "ci90": [
+        0.6007930895844598,
+        0.9432194472505557
+       ],
+       "coefficients": {
+        "beta0": -2.5506495031872976,
+        "beta1": -0.09368458568250419,
+        "beta2": -20.973462663193793
+       },
+       "loo_coverage": 0.8333333333333334,
+       "loo_half_width_pt": 1.4176947504482138
+      }
+     },
+     "coefficients": {
+      "beta0": -3.0335375779491693
+     },
+     "full_band_coverage_calibrate": 0.9166666666666666,
+     "loo_coverage": {
+      "ci90": [
+       0.6988317205601311,
+       0.9811839504836382
+      ],
+      "coverage": 0.9166666666666666,
+      "covered": 11,
+      "loo_half_width_pt": 0.9964799626024479,
+      "n": 12,
+      "note": "WIDENED x 1.000",
+      "widen_k": 1.0002786432958812
+     },
+     "median_g": -0.07167167016208163,
+     "median_residual_pt": 0.5508018784805391,
+     "model": "M0",
+     "n": 12,
+     "n_energy_mode": 11,
+     "widened": 1.0002786432958812
+    }
+   }
+  }
+ },
+ "fit_date": "2026-10-30",
+ "full_record": {
+  "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/calibration/coverage-bands-v1.json",
+  "sha256": "d54a4aa732d9d2da864644057fd0e2d35445826afbe9dff4e301e352ade0136b"
+ },
+ "provenance": {
+  "inputs": [
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/calibration/records-v1.json",
+    "sha256": "f44fe59c10bd83ceb3a9c937444af986cc57d5be7f72d526ebe1930502e80281"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/ctx003-C4-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "8efc26d0abe918afe41323d65a3271932ec01618a8f0ea291c1cd84c712d018e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/ctx003-C4-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "c870c8a6a6be234ba737b41fa4f3cdda4479a08ed30963ae6d938d648de77f3c"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/ctx003-C4-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "a931b63ffc6da2f008d5eb6e8730de6b3746330e5f73d065c5ee2207161de062"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/ctx003-C4-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "c86a2a2ed48c7f8838a82a275dfb4a91d1de4ec3e617f64efedc5e52c9dd2561"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/ctx003-C4-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "715b9e6d306307cf256074d90d031ff334f7685128d005f88e9ec75e158d1371"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/osc003-O2-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "78492d9f40698b5b194ac59787a8081008f4579eafbe8c0c0663bda5c3080f0a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O2-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "963f40622bbd877b963c15c5acba4f3278c35208db381ebb6f15ea76d81e3264"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O2-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "39d000b1eaa1cc8d548a768748a27e26e6ed9af1e642697e335c1182e7c66e72"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O2-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "d371968b1048f505f57b37ac8e93b159e2eae6dc4376fe925d41f4d1a56c02ee"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O2-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "d743beb90bb108e7879535a819aca1932bce9ff69a622f51bfc718e525e8236d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/sct002-S6-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "ea927142ea07f6644c4c3569f099e784764511e8030c09f85848418a9eb6ebb9"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S6-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "5285bfa7440404931145eb570c5760abf89ec763c01bd5d796a554be6f897a89"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S6-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "b626ef95271990d8d87a3d09080bc07a73aa51445e70310835a72e6016a4c32b"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S6-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "f1463d97e23777ab4abd0b6ef23550fc7c7b53603d22c8068e1bd93765422beb"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S6-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "e8203284de6a1d6563ac13b1f0c18ae05e974689a60f32c74616109c6649a18b"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/osc003-O4-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "0f8353fa034e01d75023da0be2130642cbe303e48a159e861468c5d0d43c0b9c"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O4-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "7a12753b95b0c57124255b55c0d2ab81f381e3adaadc0b4707cf17e4fa83906a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O4-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "181fa89d2ec9f9fe1ab960ae890d2ce4502a55f865203dc16193ad569a428349"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O4-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "1142abe0e928582278cc26eaee9063538dc8ce9f8470b0ed88899b44489b988a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O4-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "d216ad820fa0ae4af43c29cfa8ee82830075d8c676c85b32b9253b5e33eae738"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/osc003-O1-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "ad92e15134009856a81c7c37e4dca66c259b251713416e88acf0b13cbd39450d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O1-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "5838bef7afb431ed2b7a2f6598a2dd4dfb5660c07ee0e2bb2f316805d444fe5f"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O1-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "987e13f5f7afaea7cd172bfccc7ea40d7f56045d3a4e3f00cac1a5511cd17772"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O1-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "e7f58757122407adccf13f745167843f43448fdbe03a9520efc540957a4d3497"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O1-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "d8b65a3130c01a749b309816ca86e78bdb51b8328d35ab4ab5f66bbc77edf94f"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/sct002-S5-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "95a0a40ca80945781ea1e3aaa61a0bd27d6104fc3c12ed0e5d28c0b4451d71f1"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S5-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "2543e1c58ad9cf0aec9e0a580b5f0f5224f575329e9a6548aa8ed21360d5c2e0"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S5-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "21736495a080d469b714d51d14c0f044d91705c4891f6a21cfb1b5c66119c95a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S5-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "d5884fb3a554c5640d42c6b9cc42949758b355ff34e8890792516a63853ad3bb"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S5-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "c79fd34077650aeb668993fec17f84f6fe2d7f3283653defde748f314bbdb6bd"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/sct002-S7-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "2c9d2495a1285d408684b0f324e78d0b36ac2d600ed5ed43640d2fe088af0d22"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S7-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "f9d4420839e0f2f051618a5c3b5996a5c1c88a47e1a57ba241eceacd382dfe42"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S7-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "66f1279a983f5887f25766b73bce3d4de6ded58b98bca365a1f2a2c03f73ff81"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S7-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "51e133b2d16740563d1dd6bf077875a2ca52da5522d221371a14de657fe08cd9"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/sct002-S7-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "fabd24abecf7b794d400e57b7424c8536ff5dc1b836d24fa7577547d3131f8a6"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/osc003-O3-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "98b7dfc14fc03ceeba656bf5df139e53c242ac9510fa0dbd6aa750f9e74f3cf9"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O3-thin-P4-cov/postpro/surface-Q-corrected.csv",
+    "sha256": "a755355fed0fde6433740fbd84019aad6cf4e94d38f7e766ad3b779fa0a69fbe"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O3-thin-P4-cov/postpro/surface-Q-edge.csv",
+    "sha256": "3b4cd5442d6232d726e7d3d6a0e3efb4d43eb3010261768065de6ce8c1568d0e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O3-thin-P4-cov/postpro/surface-response-model-energy.csv",
+    "sha256": "f093e41ce174a646fcd428a3a339f7b1315c0675c8c33310770f5ad788182b2a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/runs/j2/osc003-O3-thin-P4-cov/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "ebd2c578124b7ad7b4f90adf091e6de95947ace57f115cc79a3ed662f6bcc8ba"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S4-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "bb5b48ba783c912f87da6f4a83104fb9d7361da06f066809ed3873406d9b953a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S4-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "db6eae888798fa731e4378a56d68904692056786cd125b3158c65abb19409b66"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S4-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "0626e2353f3efed26119dc07716d187aa16fff2fa55397bd4ab343a545ea6884"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S4-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "e7ab23be6b5b1340715d67c28347ee472986328ae559a0bec4af5dd0e66c07b6"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S4-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "c2ee9ad1df5fe8c507e2d2a47bf9ee3dfed663d80e458886b28ca3b11f81cd0b"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S2p-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "6bc67fdc66c293add4a84a9daf6deff016314b791b5de2655ce08d978a8b7da9"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S2p-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "2ae37d4bc09d6e0eb268c80e2ad8724a3c5aae344968a4d98582a8153ef49cab"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S2p-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "db6283cf02e57ba98ef401aec7b376817b03ac4c2650d0b4d4fe9351af39be9c"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S2p-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "fa02b4e966893f03dbefeee26fd3fcdb00de2c40f61b1015554c0e767b0d669e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S2p-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "5ec0533ccf9a4bfcbe51c3e4f17b95422a1b9d294cc885dbf87385888d285667"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S3p-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "03b6edd1b311d960d5e2a941891d2a02e9c2dc72cfb6907f81fa9c155e567538"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S3p-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "2e12cc7a997a9e7b505ceb8bcd93febd924c890f3e553079b4e291623e824bec"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S3p-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "a8167eaf17a06bfbcbde4284ea68d9ca317e3f0d3fb3c85f908f5b19744acd79"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S3p-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "e39589272e59c30b26fbf3e7878977a29796dadf3c86e2e8a16889226daabdba"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S3p-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "6eb782daf711bcbf4f2f01c7686df44c2204bfb87228e8d5a7487f85350c30de"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "aa303ecb5521ecc312e181552539f92f1bb537301f4c299c5a410dc0bb548c03"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "51e699e915b19cf161ff3dbf77f0607a29a15430c7e140a234f15b7b7c38b07f"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "da94b4d80dd7ee2e0bec1cdd3c7a5727d283f8759fa32c7e53b1e94063a5056d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "929b75d4d3119eea88d6bc616813886096ee315a94fb3e2c0ce86010442688ce"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "4fc301a6ac23eb7570ce6dc3bbf66af89cfb1d0173fb373261b5dbdaae85b9e5"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2p-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "83fec903a64c4122dcc836e0b727e6d81b2c7b4e67448b5a49317ccace09b038"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2p-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "23f90f74114597cfb28f9705f00f950778514b0eef3434153023d0970a2bec7c"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2p-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "7d7932ec9bc99b2a32a2453ebdb91565dba969494e57e2f35874ae3499f78687"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2p-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "19f08b6421b984cf62e7e2586368932d37161b63d56113dad9f835cc04164262"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2p-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "e7da0e54479b15daaef0ea294b4be254ec5147250443e4d2ed7d4b550a82b1f0"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "36f05753dd4899e98f949d1ac05889e06827f21ec8c9429ba08d582b0e255d6d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "e02caf7da6e023d261e236a502f8a3c648a6f38e3f44229fde4d6351fdf3d468"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "e06cffa2e5652b998e7398fdf2d3db7e848713e6367974cda49c78178bee47fc"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "77e916373ca075c72bdfe630c7cf26912021bbf5705ca82cf310cd10c391a644"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "d4f61b2f50b47ca771b4218bf51645d46b5cc195067589300e43cf0d7e3fa7fb"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1b-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "5a787fcc56d520710dddbb1a4fe0693664fef3cba67fe81edde335238cf31052"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1b-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "3d39616b8bf86f309f161dfbc84899b1f9b15bb591239c91893bc431b6bd290c"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1b-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "80997fdd58f9008d6e9a483f708675141aaa9e6d035de6c3a5145d5242c0564e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1b-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "50b8b5b60b7f30c45f71dc28c52cd2d5631b36e00f64e543594b72912aac6134"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1b-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "c30e8b87e210b825856b689c78ec6df8e5250fecc402cea0ece4aa48c3b09ea1"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C3-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "4a71bf571a6d162d494f8a8b2396b532e2a4737932d58a2e19720da1cee671ef"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C3-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "b1d83f8ea4054b6939dbeb84d1c9d6f46b1ed1150786b5707ff9c39aabf3e0b0"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C3-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "c2e77bd99b5a067e09181873fe98a227aa1007e8031e6aeea0b9aa1c4c9bcefa"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C3-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "ea8fc52a3169625a1df9b4f8411f4db34c8eb8d1074d8273ad76ec74492f1966"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C3-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "740e263373bc3ec4ca829b76f6fea6f05c890498ca4f959bc2d3ecc13ff1a451"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C1-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "2663fa607572539816259552fd8bf331e06d49822a0f64dad19deffd0794bdae"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C1-thin-P4-sfr/postpro/surface-Q-corrected.csv",
+    "sha256": "c681a883ec5ac44706ff20047ee6e5a6b69b54289958cd405a0a8ba559a3e103"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C1-thin-P4-sfr/postpro/surface-Q-edge.csv",
+    "sha256": "551a81abc77521c9779fe34a76c1a2a242542473836db1724a2195e45681095a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C1-thin-P4-sfr/postpro/surface-response-model-energy.csv",
+    "sha256": "6efdf0392c453f10d9ee3f6573f7c24a241cf4cee13674aa5afe61e2636ca32a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C1-thin-P4-sfr/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "cec310e7a0999818eb988c9e15be1b200592f666d527c25ba64907be1e0e2380"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S7rc-thin-preflight-rc2-j1/postpro/surface-response-requirements.json",
+    "sha256": "9f28c86f5cc4aaa3a7050addabe90585a2864d51ddce77df26ffa76024a17a71"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S7rc-thin-P4-rc2/postpro/surface-Q-corrected.csv",
+    "sha256": "15164655fc4753e52fb098126b5c7270c991644e75ee38536e73346d343c6518"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S7rc-thin-P4-rc2/postpro/surface-Q-edge.csv",
+    "sha256": "012bacd3c4646d3a990cd75b62d349e3adde10dc7d10aaa8a09a3d4a984dd6ba"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S7rc-thin-P4-rc2/postpro/surface-response-model-energy.csv",
+    "sha256": "bb0fceedcf8e90bad5495f03d4a16ebc236ebdf3a3143c10f20d41b1195b8e25"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S7rc-thin-P4-rc2/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "876c0ee1218173d8e2e35b0be7b63ecc6d9ea1e37c05faaeeebc1050dbb2a595"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S2prc-thin-preflight-rc-j1/postpro/surface-response-requirements.json",
+    "sha256": "f614b8ad2bb5f0e4c49646b68faee514957b1a9896c74bce3c8cf7966a34d175"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S2prc-thin-P4-rc/postpro/surface-Q-corrected.csv",
+    "sha256": "75e6b2845beb58c08a8c53bd913f6e74ebe13bc94d899366a6eeecc14cf8f9fe"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S2prc-thin-P4-rc/postpro/surface-Q-edge.csv",
+    "sha256": "0f5dc5e08df50c911352004b362c26fd75a0e1d1204c0a2a9fbfb0e6d42da8c1"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S2prc-thin-P4-rc/postpro/surface-response-model-energy.csv",
+    "sha256": "858a2bf85736078e14fda9d2a948a7721f0597a8dce2c1c53958f3b4a3e50772"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S2prc-thin-P4-rc/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "c06de1616f1993ea2e42e586b4284ba83ccb5b83fb570b697801409f43d6100c"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/sct002-S1b-rc-thin-preflight-rrmeas/postpro/surface-response-requirements.json",
+    "sha256": "67c776de99013ebe1f4f1f402a296d10885bfa54a857cd4e5466dc14712db510"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/sct002-S1b-rc-thin-P4-rrmeas/postpro/surface-Q-corrected.csv",
+    "sha256": "da8e27ae8acb9bbdaa67b527269c3e726fec5d10962e5b0ed9d71a2e7e561d06"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/sct002-S1b-rc-thin-P4-rrmeas/postpro/surface-Q-edge.csv",
+    "sha256": "b67aaa87ee26a1e963d246ddee17a1832264074f90e8ffe908804d9344d35d89"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/sct002-S1b-rc-thin-P4-rrmeas/postpro/surface-response-model-energy.csv",
+    "sha256": "0bc61851d98a3dbcbce722d060a5b322dc4ce7272ae246c08627dda8578f351e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/sct002-S1b-rc-thin-P4-rrmeas/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "2d130cebc2104c21d669678ad1eff12bb9deb6be060fad8cec6872c0bceff1c1"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix/mergeprep/device/runs/g1/transmon-jjsa-v3j-J2form-preflight/postpro/surface-response-requirements.json",
+    "sha256": "6a838838cdec8a70360768246479cef1275f2b77cd534f7ca3ce656e37994a48"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix/mergeprep/device/runs/g1/transmon-es-jjsa-v3j-J2form-stretchfixmp/postpro/surface-Q-corrected.csv",
+    "sha256": "42dffc40ab79cbe52e2c30f1c91e93e174a52cbfd160426123dd388b2d717a22"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix/mergeprep/device/runs/g1/transmon-es-jjsa-v3j-J2form-stretchfixmp/postpro/surface-Q-edge.csv",
+    "sha256": "1313e4c5e64bdb5dbc19662e03e575f46e56e3b811e6610bc82bec5d13ff2508"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix/mergeprep/device/runs/g1/transmon-es-jjsa-v3j-J2form-stretchfixmp/postpro/surface-response-model-energy.csv",
+    "sha256": "c8d24761bc764fca816ba5a4a4dfa27d7cdca9cb9debaeb036d5fc704cb43411"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix/mergeprep/device/runs/g1/transmon-es-jjsa-v3j-J2form-stretchfixmp/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "50788d71a5320d7cf8449a86d49ef78f41cdb4896afe7be48e10b559546c4d9f"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/ctx003-C4-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "8efc26d0abe918afe41323d65a3271932ec01618a8f0ea291c1cd84c712d018e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-ctx003-C4-driven-p4-1GHz-realport-pembed-follower-v3i-mxlf/postpro/surface-Q-corrected.csv",
+    "sha256": "a28759da1f10d81b660fa987ee06d95072afa933d677873a17e19fa4481af909"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-ctx003-C4-driven-p4-1GHz-realport-pembed-follower-v3i-mxlf/postpro/surface-Q-edge.csv",
+    "sha256": "71546a4bf5176371744a8e149a6c05216bacf49d6185f409298bd379b81e49d4"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-ctx003-C4-driven-p4-1GHz-realport-pembed-follower-v3i-mxlf/postpro/surface-response-model-energy.csv",
+    "sha256": "0120d75713fe75ab8b23d97f1525787669b1d49ea236c73a77c15118215e8fe8"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-ctx003-C4-driven-p4-1GHz-realport-pembed-follower-v3i-mxlf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "d99cf949a807e54818f3e7e71de8ce20798e4cdeee0c171b44709c71fac1e8ba"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/osc003-O2-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "78492d9f40698b5b194ac59787a8081008f4579eafbe8c0c0663bda5c3080f0a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-osc003-O2-driven-p4-1GHz-r2aport-pembed-follower-v3i-mxlf/postpro/surface-Q-corrected.csv",
+    "sha256": "595503b19bde42780a516e50c886de2c2162e84e30695d5d5c52676dd81efed7"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-osc003-O2-driven-p4-1GHz-r2aport-pembed-follower-v3i-mxlf/postpro/surface-Q-edge.csv",
+    "sha256": "69b2c327e4a18a923b552c8179dad0a0c78b8d8f0cb8d074f6f85ff633a3f01b"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-osc003-O2-driven-p4-1GHz-r2aport-pembed-follower-v3i-mxlf/postpro/surface-response-model-energy.csv",
+    "sha256": "ee0161098b0eeff1935ff079ad367a0a906979973ab5e1884534e3d31f9d83e5"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-osc003-O2-driven-p4-1GHz-r2aport-pembed-follower-v3i-mxlf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "86530eaf70c4e946e93183b343deb55ae9cf65da3da30e99f7569296f8116ac1"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S1-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "aa303ecb5521ecc312e181552539f92f1bb537301f4c299c5a410dc0bb548c03"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-corrected.csv",
+    "sha256": "e78040f8c1000cc4e916dad8fd4db669b1ea32dab6801d61efb775ef50b0ed93"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-edge.csv",
+    "sha256": "92298ad8ba32d38b75edbaf1c134fc54bfa06550a15e49c33fdee580d08f2d30"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-energy.csv",
+    "sha256": "846772a834aab8e11b1e1f4b0978c32cae982873e8112f16878b3cf072cdbeaf"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "99886c1d141c307f17dd19915cf01ecf3ed51345b6b5e6d6a453f92ff2bea646"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C1-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "2663fa607572539816259552fd8bf331e06d49822a0f64dad19deffd0794bdae"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-corrected.csv",
+    "sha256": "7b7c006ff3dbddb09cf2dbf6d66112655bcbf369838fb49bd1a67ce219e72276"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-edge.csv",
+    "sha256": "b6ade7d34360eeac214603dc850f33b8b7d55394b925368533bb619a904d10c3"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-energy.csv",
+    "sha256": "2ceaef6c1bfd8d5517bae11ec13e2aca8ef2c60b4963cd9bcec5eeed66b36e9a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C1-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "e042ddd3c364b4266ff9a1cfc1054f8916fdd14d7f72c4d0ec9e4b7cd5ee1114"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "36f05753dd4899e98f949d1ac05889e06827f21ec8c9429ba08d582b0e255d6d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-corrected.csv",
+    "sha256": "0c46308ff27721f7eea59afba74a906651139b49fe991cb43bd231c9dcbe0cca"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-edge.csv",
+    "sha256": "ee42f3ce25685a0e25532302932182a3f5bd59dc5e8acd9458f52e5cce1b704e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-energy.csv",
+    "sha256": "a6569aec60b1d8e394038f866ef12c69184944b1fc550b391d08913b6fb7be0e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "f947ce001231f9f758dda015b9271cf2848fc7b5cb2c42cf1a7401a0dc919f2e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C2p-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "83fec903a64c4122dcc836e0b727e6d81b2c7b4e67448b5a49317ccace09b038"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-corrected.csv",
+    "sha256": "2090145307b87d5c3929e725089d5739ba346e4f36060a0e2aa745c90cc420f2"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-edge.csv",
+    "sha256": "6c17fb5665643c3bb83f5c4e100f095791ffad43c8fec11f56707a0a80b81b25"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-energy.csv",
+    "sha256": "2fa801b1d07eacf00d202d0d02356a4712c36082cd4beb96e47e151d8236ecd0"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C2p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "09387ec8f5bd808341e7c4a874607d7f482a82c4d93c53b5d01b3d3acb04b0ed"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/ctx003-C3-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "4a71bf571a6d162d494f8a8b2396b532e2a4737932d58a2e19720da1cee671ef"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C3-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-corrected.csv",
+    "sha256": "d04b2cd2a83ad21c5767394354e1b47e6f8331e397e922b414a77d494aa64079"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C3-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-edge.csv",
+    "sha256": "9d046b1f5e9a2e049d0beed0c85bdab7c1532cb188d015ec6536bc6b1eedc5cb"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C3-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-energy.csv",
+    "sha256": "42e261ace70ff763ec7626542cdf1cff8959ea255a1dd5a1a182355091b1fd8a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-ctx003-C3-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "59e6c9398bcbd7e794d917970f5c2c663efeeb4cc1d204db8380f04f13b32de9"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S3p-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "03b6edd1b311d960d5e2a941891d2a02e9c2dc72cfb6907f81fa9c155e567538"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S3p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-corrected.csv",
+    "sha256": "2a6210a624e2899ac439b06a0f986c1af96c7a5c4efbae2d66085365240cd51e"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S3p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-edge.csv",
+    "sha256": "67a13b364d2d3dea29aceba1cdf4c087aed7f67d57a80549be78ff4da15f598d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S3p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-energy.csv",
+    "sha256": "40f86739aaf20164c14a10b7a3ea1a758b534817f6af537f34cb414bc54635cb"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S3p-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "0be2179d150e518680a4d98e00b2f77c91a7512cca42b80b700c355f81100126"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/runs/j2/sct002-S4-thin-preflight-sfr-j2/postpro/surface-response-requirements.json",
+    "sha256": "bb5b48ba783c912f87da6f4a83104fb9d7361da06f066809ed3873406d9b953a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S4-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-corrected.csv",
+    "sha256": "3572c9adcc12afbb3048d9e896687106ebff2b3210298463330a3715971a5bb5"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S4-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-Q-edge.csv",
+    "sha256": "ef5166eaeaf79f964e8a118a54e23565fc18d18cf5b363fe40a60bb747789b79"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S4-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-energy.csv",
+    "sha256": "9e81f114c95b34fda86244058b56a3a4778a5ec0ebf5d138e1cfa4710938a284"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/runs/mxp-sct002-S4-driven-p4-1GHz-jjdrive-follower-v3j-mxsf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "6d230a5b713f62f87feab5d158f2aca2e0c2e8f45418f368fb4165dbcd481ffb"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/sct002-S5-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "95a0a40ca80945781ea1e3aaa61a0bd27d6104fc3c12ed0e5d28c0b4451d71f1"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-sct002-S5-driven-p4-1GHz-realport-pembed-maxits8-follower-v3i-mxlf/postpro/surface-Q-corrected.csv",
+    "sha256": "bd79df877c517c8f7cfe7e7c47eda6c8088d1f652bf288aca76558b2fe3ecfc7"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-sct002-S5-driven-p4-1GHz-realport-pembed-maxits8-follower-v3i-mxlf/postpro/surface-Q-edge.csv",
+    "sha256": "775bd6b7c46ebf748e76d197f33f0c155ab2787d7f2e157e18251b4eb2fd9daa"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-sct002-S5-driven-p4-1GHz-realport-pembed-maxits8-follower-v3i-mxlf/postpro/surface-response-model-energy.csv",
+    "sha256": "f4a53827a65dbc1c75ffe2a91311e9cafc64506747949b906d61b7a54462063f"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-loopfix-rescore/runs/mxp-sct002-S5-driven-p4-1GHz-realport-pembed-maxits8-follower-v3i-mxlf/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "2f83b82e55893621c0573e8748f6a0061cee96640a6eb70bc42dcbea6c695433"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/sct002-S6-thin-preflight-bgc/postpro/surface-response-requirements.json",
+    "sha256": "ea927142ea07f6644c4c3569f099e784764511e8030c09f85848418a9eb6ebb9"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/loopfix/mergeprep/device/runs/mxp-sct002-S6-driven-p4-1GHz-r2aport-pembed-follower-patchenergy-loopfixmp/postpro/surface-Q-corrected.csv",
+    "sha256": "805adb9376ec2d32bd84740de5dadf82afc11515fa75d9f5843de38fbccf939d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/loopfix/mergeprep/device/runs/mxp-sct002-S6-driven-p4-1GHz-r2aport-pembed-follower-patchenergy-loopfixmp/postpro/surface-Q-edge.csv",
+    "sha256": "86c2a20393a5069a921be734b5e1167d6a5435a375576c8c74fb2e0c81219ce3"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/loopfix/mergeprep/device/runs/mxp-sct002-S6-driven-p4-1GHz-r2aport-pembed-follower-patchenergy-loopfixmp/postpro/surface-response-model-energy.csv",
+    "sha256": "19774c9a4fcdecf84f0b8e3b82a6be6ef74eb1fb3a6ecf047d3f5f268dbe03c2"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/loopfix/mergeprep/device/runs/mxp-sct002-S6-driven-p4-1GHz-r2aport-pembed-follower-patchenergy-loopfixmp/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "c2af1806f22b1a185219b5ba510d0846064219fc782a8995d59247d07b166118"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S2prc-thin-preflight-rc-j1/postpro/surface-response-requirements.json",
+    "sha256": "f614b8ad2bb5f0e4c49646b68faee514957b1a9896c74bce3c8cf7966a34d175"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/wave/mxp-sct002-S2prc-driven-p4-1GHz-jjdrive/postpro/surface-Q-corrected.csv",
+    "sha256": "938d1fc2f1315765d716e3b145ed4efef6bd9c1ccdfe6df78a9c3b293d154e9a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/wave/mxp-sct002-S2prc-driven-p4-1GHz-jjdrive/postpro/surface-Q-edge.csv",
+    "sha256": "5dde1806a7388efb40a148cd42d3af746c1aa717c20ae9bdb2a892041690dd4d"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/wave/mxp-sct002-S2prc-driven-p4-1GHz-jjdrive/postpro/surface-response-model-energy.csv",
+    "sha256": "21f3df4eb2b1353ae8a769ae40a66335b7e768cf089c78291e9ec3906ff2618b"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/j2/sct002-S7rc-thin-preflight-rc2-j1/postpro/surface-response-requirements.json",
+    "sha256": "9f28c86f5cc4aaa3a7050addabe90585a2864d51ddce77df26ffa76024a17a71"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/wave/mxp-sct002-S7rc-driven-p4-1GHz-r2aport-pembed/postpro/surface-Q-corrected.csv",
+    "sha256": "8f649d7d727cac2e22bfe550c5099d3ba952255e89260763fc670a641b51c2f2"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/wave/mxp-sct002-S7rc-driven-p4-1GHz-r2aport-pembed/postpro/surface-Q-edge.csv",
+    "sha256": "b2b8bdd8d0e507f2525f3dd0b64a02f2d32e60ba435f8dcd7b83f63df078a15c"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/runs/wave/mxp-sct002-S7rc-driven-p4-1GHz-r2aport-pembed/postpro/surface-response-model-energy.csv",
+    "sha256": "649fdd8d083fa2cf533f28f657debdc2b1aa6c29bfcfdfb3f515bb294268e266"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/sct002-S1b-rc-thin-preflight-rrmeas/postpro/surface-response-requirements.json",
+    "sha256": "67c776de99013ebe1f4f1f402a296d10885bfa54a857cd4e5466dc14712db510"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/mxp-sct002-S1b-rc-driven-p4-1GHz-jjdrive-follower-maxits2-rrmeas/postpro/surface-Q-corrected.csv",
+    "sha256": "32f4878b07681f06d22421f17126fb8fda687265ff4884af87f48967dbe5d220"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/mxp-sct002-S1b-rc-driven-p4-1GHz-jjdrive-follower-maxits2-rrmeas/postpro/surface-Q-edge.csv",
+    "sha256": "db9a4302769117ea70553c2e6dfd03ff497a054fbe3832af3af9e77fa6b5cb2a"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/mxp-sct002-S1b-rc-driven-p4-1GHz-jjdrive-follower-maxits2-rrmeas/postpro/surface-response-model-energy.csv",
+    "sha256": "9367f07414988dff0861b89098995d4033ce59132e8a5c5780fdf6762a13e2aa"
+   },
+   {
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/runs/thin-rrmeas/mxp-sct002-S1b-rc-driven-p4-1GHz-jjdrive-follower-maxits2-rrmeas/postpro/surface-response-model-raw-energy.csv",
+    "sha256": "da426a01c48c6b586737e297fc60a64f63e803ecbe2a298012630d9b2c3f3375"
+   },
+   {
+    "decision": 994,
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/stretchfix-regrade/results/scorecard-17windows-es-v3j-stretchfix.json",
+    "sha256": "0e454ac8e69f888c097575b3616dfe3576d0327f1a44f1367127e8a4e17b5d09"
+   },
+   {
+    "decision": 995,
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-stretchfix-rescore/results/scorecard-11windows-mx-v3j-stretchfix.json",
+    "sha256": "a7e323d56e4201734d0ea98c88ca9cb0cef7c04654f27c14971ec3cad42d460b"
+   },
+   {
+    "decision": 1037,
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-A/results/scorecard-recut-execA.json",
+    "sha256": "becfb5edb59805a261690ef0712d11bfcb4d614cd5e42fcea15e0ada6e9a6054"
+   },
+   {
+    "decision": 1047,
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/mx-recut/exec-B/results/scorecard-rcB-sct002-S1b-rc.json",
+    "sha256": "92e6aab6b661939f444ba310c77d0c4900ec05f38437b15531caf4d770a4d117"
+   }
+  ],
+  "n_per_family": {
+   "ES": 20,
+   "Maxwell": 12
+  }
+ },
+ "residual_quantile": 0.9,
+ "target_coverage": 0.9,
+ "tool": "coverage_calibration.py",
+ "version": "v1"
+}
