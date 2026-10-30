@@ -10,6 +10,7 @@
 #include <cmath>
 #include <complex>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -222,6 +223,34 @@ TEST_CASE("Complete frequency-dependent permittivity and stored energy",
                             periodic, ProblemType::DRIVEN, mesh);
   CHECK_THROWS_WITH(lossless.EvaluateFrequencyDependentPermittivity(0, {0.0, 1.0}),
                     ContainsSubstring("singular"));
+}
+
+TEST_CASE("Stored energy of a frequency-dependent material requires a finite frequency",
+          "[frequencydependent][Serial][Parallel]")
+{
+  // At ω = +∞ the Debye, Drude, and zero-pole energies are finite (zero), so the frequency
+  // itself is checked, not only the result: the same error for every model, and for a
+  // Debye alone.
+  auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
+  config::PeriodicBoundaryData periodic;
+  const double inf = std::numeric_limits<double>::infinity();
+  std::vector<std::vector<config::PermittivityTermData>> models = {
+      {config::DebyeData{3.0, 0.7}}};
+  for (const auto &model : Models())
+  {
+    models.push_back(model.terms);
+  }
+  for (std::size_t k = 0; k < models.size(); k++)
+  {
+    CAPTURE(k);
+    MaterialOperator mat_op({MakeMaterial({1, 2}, models[k])}, periodic,
+                            ProblemType::DRIVEN, mesh);
+    REQUIRE(mat_op.HasStoredElectricEnergy(0));
+    CHECK_THROWS_WITH(mat_op.GetFrequencyDependentStoredEnergySusceptibility(0, inf),
+                      ContainsSubstring("finite positive frequency"));
+    CHECK_THROWS_WITH(mat_op.GetFrequencyDependentStoredEnergyPermittivity(0, inf),
+                      ContainsSubstring("finite positive frequency"));
+  }
 }
 
 TEST_CASE("Frequency-dependent material identity and exterior wave speed",
@@ -946,7 +975,7 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
   }
 
   // A material without a stored electric energy, a RAW −0.5/(s + 1) compensated by a
-  // typed Debye 1/(1 + s) (passive, but the RAW block alone is not), weights its indicator
+  // typed Debye 1/(1 + s) (PoleResidue terms specify none), weights its indicator
   // by ε∞, a numerical weight, and not by a termwise W (here Re ε). Next to a constant
   // lossy material with the same complex ε(iω), the medium is homogeneous in ε, and every
   // element has η² = c |ε|² / weight η²_vacuum with one c > 0: the normalization is the
@@ -1131,8 +1160,8 @@ TEST_CASE("Gradient flux estimator of a layered medium with continuous normal D"
 TEST_CASE("Flux error estimator without a total energy normalization",
           "[frequencydependent][errorestimator][Serial][Parallel][GPU]")
 {
-  // Without a stored electric energy (a RAW block not passive alone, compensated by a
-  // typed Debye term) there is no total energy. The indicator then uses the energy norm of
+  // Without a stored electric energy (a RAW relaxation, compensated by a typed Debye
+  // term) there is no total energy. The indicator then uses the energy norm of
   // the recovered fluxes, 1/2 Σ (D*ᴴ W⁻¹ D* + H*ᴴ μ H*), a numerical norm, not 1, NaN, or a
   // rejection: positive, finite, and invariant to the scale of the fields, unlike a fixed
   // normalization.
@@ -1397,24 +1426,21 @@ RawTerms(const std::vector<config::PermittivityTermData> &terms)
   return raw;
 }
 
-// The energies of a field over the entire domain and the postprocessing domains, and the
-// gradient flux indicator, for comparison between materials.
+// The energies of a field over the entire domain and the postprocessing domains, for
+// comparison between materials.
 struct EnergyConsumers
 {
   Mesh &mesh;
   mfem::ND_FECollection nd_fec;
   mfem::RT_FECollection rt_fec;
   FiniteElementSpace nd_fespace, rt_fespace;
-  FiniteElementSpaceHierarchy rt_fespaces;
   config::DomainPostData postpro;
   GridFunction E;
   ComplexVector e;
 
   explicit EnergyConsumers(Mesh &mesh)
     : mesh(mesh), nd_fec(1, 3), rt_fec(0, 3), nd_fespace(mesh, &nd_fec),
-      rt_fespace(mesh, &rt_fec),
-      rt_fespaces(std::make_unique<FiniteElementSpace>(mesh, &rt_fec)), E(nd_fespace, true),
-      e(nd_fespace.GetTrueVSize())
+      rt_fespace(mesh, &rt_fec), E(nd_fespace, true), e(nd_fespace.GetTrueVSize())
   {
     postpro.energy[1].attributes = {2};
     postpro.energy[2].attributes = {1, 2};
@@ -1427,14 +1453,14 @@ struct EnergyConsumers
 
 }  // namespace
 
-TEST_CASE("Stored energy of single sections as typed or RAW terms",
-          "[frequencydependent][Serial][Parallel]")
+TEST_CASE("Single sections as typed or RAW terms", "[frequencydependent][Serial][Parallel]")
 {
   // A single Debye, Drude, or under- or overdamped Lorentz section has the same response
-  // and the same positive stored energy as typed terms and as RAW PoleResidue terms, also
-  // with the RAW terms reversed and split: the material, the domain energies (and so the
-  // total energy normalization (E_stored + E_Reε)/2), and the error indicator. A Drude
-  // and an overdamped Lorentz are RAW fits with a negative residue.
+  // as typed terms and as RAW PoleResidue terms, also with the RAW terms reversed and
+  // split, and so the same field energy at Re ε in the material and the domains. Only the
+  // typed terms specify a stored energy: the RAW terms specify a susceptibility, whose
+  // stored energy is not evaluated (an error, not a termwise value). A Drude and an
+  // overdamped Lorentz are RAW fits with a negative residue.
   test::IntegrationSettingsGuard guard;
   fem::DefaultIntegrationOrder::p_trial = 1;
   auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
@@ -1459,7 +1485,6 @@ TEST_CASE("Stored energy of single sections as typed or RAW terms",
     }
     std::vector<std::unique_ptr<MaterialOperator>> ops;
     std::vector<std::unique_ptr<DomainPostOperator>> posts;
-    std::vector<std::unique_ptr<GradFluxErrorEstimator<ComplexVector>>> estimators;
     const std::array<const std::vector<config::PermittivityTermData> *, 3> models = {
         &typed, &raw, &split};
     for (const auto *terms : models)
@@ -1468,58 +1493,42 @@ TEST_CASE("Stored energy of single sections as typed or RAW terms",
           std::vector<config::MaterialData>{MakeMaterial({1}, *terms),
                                             MakeMaterial({2}, *terms)},
           periodic, ProblemType::DRIVEN, mesh));
-      REQUIRE(ops.back()->HasStoredElectricEnergy());
-      REQUIRE(ops.back()->GetStoredElectricEnergyStatus(0) ==
-              permittivity::RawStorageStatus::CheckedAvailable);
+      const bool is_typed = (terms == &typed);
+      REQUIRE(ops.back()->HasStoredElectricEnergy() == is_typed);
       posts.push_back(std::make_unique<DomainPostOperator>(c.postpro, *ops.back(),
                                                            c.nd_fespace, c.rt_fespace));
-      REQUIRE(posts.back()->HasStoredElectricFieldEnergy());
-      estimators.push_back(std::make_unique<GradFluxErrorEstimator<ComplexVector>>(
-          *ops.back(), c.nd_fespace, c.rt_fespaces, 1.0e-14, 1000, 0, false));
+      REQUIRE(posts.back()->HasStoredElectricFieldEnergy() == is_typed);
     }
+    CHECK_THAT(ops[1]->GetStoredElectricEnergyReason(0),
+               ContainsSubstring("no stored-energy realization"));
     for (double omega : {0.3, 1.1, 4.0})
     {
       CAPTURE(omega);
       const auto eps = ops[0]->EvaluateFrequencyDependentPermittivity(0, {0.0, omega});
-      const double W = ops[0]->GetFrequencyDependentStoredEnergyPermittivity(0, omega);
-      CHECK(W > eps_inf);
-      ErrorIndicator ref;
-      estimators[0]->AddErrorIndicator(c.e, 1.0, omega, ref);
+      CHECK(ops[0]->GetFrequencyDependentStoredEnergyPermittivity(0, omega) > eps_inf);
       for (std::size_t i = 1; i < ops.size(); i++)
       {
         CAPTURE(i);
         const auto eps_i = ops[i]->EvaluateFrequencyDependentPermittivity(0, {0.0, omega});
         CHECK(std::abs(eps_i - eps) <= 1.0e-12 * std::abs(eps));
-        CHECK_THAT(ops[i]->GetFrequencyDependentStoredEnergyPermittivity(0, omega),
-                   WithinRel(W, 1.0e-10));
-        for (auto type : {ElectricEnergy::STORED, ElectricEnergy::MATERIAL})
+        CHECK_THROWS(ops[i]->GetFrequencyDependentStoredEnergyPermittivity(0, omega));
+        CHECK_THROWS(posts[i]->GetElectricFieldEnergy(c.E, omega, ElectricEnergy::STORED));
+        const auto type = ElectricEnergy::MATERIAL;
+        CHECK_THAT(posts[i]->GetElectricFieldEnergy(c.E, omega, type),
+                   WithinRel(posts[0]->GetElectricFieldEnergy(c.E, omega, type), 1.0e-10));
+        for (int idx : {1, 2})
         {
           CHECK_THAT(
-              posts[i]->GetElectricFieldEnergy(c.E, omega, type),
-              WithinRel(posts[0]->GetElectricFieldEnergy(c.E, omega, type), 1.0e-10));
-          for (int idx : {1, 2})
-          {
-            CHECK_THAT(
-                posts[i]->GetDomainElectricFieldEnergy(idx, c.E, omega, type),
-                WithinRel(posts[0]->GetDomainElectricFieldEnergy(idx, c.E, omega, type),
-                          1.0e-10));
-          }
-        }
-        ErrorIndicator ind;
-        estimators[i]->AddErrorIndicator(c.e, 1.0, omega, ind);
-        const auto *h = ind.Local().HostRead();
-        const auto *h_ref = ref.Local().HostRead();
-        for (int e = 0; e < ind.Local().Size(); e++)
-        {
-          CHECK_THAT(h[e], WithinRel(h_ref[e], 1.0e-8));
+              posts[i]->GetDomainElectricFieldEnergy(idx, c.E, omega, type),
+              WithinRel(posts[0]->GetDomainElectricFieldEnergy(idx, c.E, omega, type),
+                        1.0e-10));
         }
       }
     }
   }
 
-  // Two Debye terms 1/(s + 1) + 1/(s + 2) store 1/2 + 2/5 = 0.9 at ω = 1 as typed terms,
-  // and their available storage 0.8675444679663243 as a RAW block: the same χ need not
-  // store the same energy.
+  // Two Debye terms 1/(s + 1) + 1/(s + 2) store 1/2 + 2/5 = 0.9 at ω = 1 as typed terms.
+  // The same χ has realizations with other stored energies, so as RAW terms it has none.
   const std::vector<config::PermittivityTermData> debyes = {config::DebyeData{1.0, 1.0},
                                                             config::DebyeData{0.5, 0.5}};
   MaterialOperator typed_op({MakeMaterial({1, 2}, debyes)}, periodic, ProblemType::DRIVEN,
@@ -1528,41 +1537,39 @@ TEST_CASE("Stored energy of single sections as typed or RAW terms",
                           ProblemType::DRIVEN, mesh);
   CHECK_THAT(typed_op.GetFrequencyDependentStoredEnergyPermittivity(0, 1.0) - eps_inf,
              WithinRel(0.9, 1.0e-12));
-  CHECK_THAT(raw_op.GetFrequencyDependentStoredEnergyPermittivity(0, 1.0) - eps_inf,
-             WithinRel(0.8675444679663243, 1.0e-10));
+  CHECK_FALSE(raw_op.HasStoredElectricEnergy(0));
+  CHECK_THROWS(raw_op.GetFrequencyDependentStoredEnergyPermittivity(0, 1.0));
 }
 
 TEST_CASE("Frequency-dependent material without a stored electric energy",
           "[frequencydependent][Serial][Parallel]")
 {
   // A RAW −0.5/(s + 1) compensated by a typed Debye 1/(1 + s) or a native
-  // Djordjevic-Sarkar 2 log((s + 2)/(s + 1)) is passive, but its RAW block alone is not,
-  // and nearly coincident passive poles are not certified. Neither has gain, and neither
-  // has a stored electric energy: the material reports its status, the stored energy is
-  // not evaluated (an error, not a value), and so neither are the energies of the regions
-  // with it. Its response, the field energy at Re ε, and the regions without it are
-  // unaffected. The status is that of the configured model, the same on every process,
-  // also where the material (attribute 1, one element) has no elements.
+  // Djordjevic-Sarkar 2 log((s + 2)/(s + 1)) is passive, as are a RAW Debye 1/(s + 1) and
+  // nearly coincident RAW poles. None has gain, and none has a specified stored electric
+  // energy: the material states the reason, the stored energy is not evaluated (an error,
+  // not a value), and so neither are the energies of the regions with it. Its response, the
+  // field energy at Re ε, and the regions without it are unaffected. The status is that of
+  // the configured model, the same on every process, also where the material (attribute 1,
+  // one element) has no elements.
   test::IntegrationSettingsGuard guard;
   fem::DefaultIntegrationOrder::p_trial = 1;
   auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
   config::PeriodicBoundaryData periodic;
   EnergyConsumers c(mesh);
   using ElectricEnergy = DomainPostOperator::ElectricEnergy;
-  using Status = permittivity::RawStorageStatus;
   const double delta = 1.0e-9;
   std::vector<config::PermittivityTermData> close;
   for (int k = 0; k < 4; k++)
   {
     close.push_back(config::PermittivityPoleData{-1.0 - k * delta, 1.0});
   }
-  const std::vector<std::pair<std::vector<config::PermittivityTermData>, Status>> cases = {
-      {{config::DebyeData{1.0, 1.0}, config::PermittivityPoleData{-1.0, -0.5}},
-       Status::NonpassiveRaw},
-      {{config::DjordjevicSarkarData{2.0, 1.0, 2.0},
-        config::PermittivityPoleData{-1.0, -0.5}},
-       Status::NonpassiveRaw},
-      {close, Status::NumericalUnresolved}};
+  const std::vector<std::vector<config::PermittivityTermData>> cases = {
+      {config::DebyeData{1.0, 1.0}, config::PermittivityPoleData{-1.0, -0.5}},
+      {config::DjordjevicSarkarData{2.0, 1.0, 2.0},
+       config::PermittivityPoleData{-1.0, -0.5}},
+      {config::PermittivityPoleData{-1.0, 1.0}},
+      close};
   config::MaterialData constant;
   constant.attributes = {2};
   constant.epsilon_r.s = {3.0, 3.0, 3.0};
@@ -1575,12 +1582,12 @@ TEST_CASE("Frequency-dependent material without a stored electric energy",
   for (std::size_t k = 0; k < cases.size(); k++)
   {
     CAPTURE(k);
-    const auto &[terms, status] = cases[k];
+    const auto &terms = cases[k];
     CHECK(permittivity::FindDefects(eps_inf, terms).gain.empty());
     MaterialOperator mat_op({MakeMaterial({1}, terms), constant}, periodic,
                             ProblemType::DRIVEN, mesh);
-    CAPTURE(mat_op.GetStoredElectricEnergyReason(0));
-    CHECK(mat_op.GetStoredElectricEnergyStatus(0) == status);
+    CHECK_THAT(mat_op.GetStoredElectricEnergyReason(0),
+               ContainsSubstring("no stored-energy realization"));
     CHECK_FALSE(mat_op.HasStoredElectricEnergy(0));
     CHECK(mat_op.HasStoredElectricEnergy(1));
     CHECK_FALSE(mat_op.HasStoredElectricEnergy());
@@ -1632,10 +1639,11 @@ TEST_CASE("Frequency-dependent material without a stored electric energy",
 TEST_CASE("Electric energies at an exact lossless resonance",
           "[frequencydependent][Serial][Parallel]")
 {
-  // At the resonance ω₀ = 1 of a lossless Lorentz, typed or as a RAW conjugate pair, the
-  // stored energy and Re χ are not finite: the material weights and the full and regional
-  // energies (and the weights of the reduced energies) are an error, not inf or NaN. Near
-  // the resonance they are finite, the stored energy positive, and typed and RAW agree.
+  // At the resonance ω₀ = 1 of a lossless Lorentz, typed or as a RAW conjugate pair, Re χ
+  // and the typed stored energy are not finite: the material weights and the full and
+  // regional energies (and the weights of the reduced energies) are an error, not inf or
+  // NaN. Near the resonance they are finite, the typed stored energy positive, and the
+  // energies at Re ε of typed and RAW agree. The RAW pair specifies no stored energy.
   test::IntegrationSettingsGuard guard;
   fem::DefaultIntegrationOrder::p_trial = 1;
   auto mesh = MakeBoxMesh(3, 2, mfem::Element::HEXAHEDRON);
@@ -1651,7 +1659,7 @@ TEST_CASE("Electric energies at an exact lossless resonance",
     ops.push_back(std::make_unique<MaterialOperator>(
         std::vector<config::MaterialData>{MakeMaterial({1, 2}, terms)}, periodic,
         ProblemType::DRIVEN, mesh));
-    REQUIRE(ops.back()->HasStoredElectricEnergy(0));
+    REQUIRE(ops.back()->HasStoredElectricEnergy(0) == (ops.size() == 1));
     posts.push_back(std::make_unique<DomainPostOperator>(c.postpro, *ops.back(),
                                                          c.nd_fespace, c.rt_fespace));
   }
@@ -1661,13 +1669,18 @@ TEST_CASE("Electric energies at an exact lossless resonance",
     const auto &mat_op = *ops[i];
     const auto &post = *posts[i];
     const double omega = 1.0;
+    const auto stored = (i == 0) ? ContainsSubstring("singular")
+                                 : ContainsSubstring("no stored electric energy");
     CHECK_THROWS_WITH(mat_op.GetFrequencyDependentStoredEnergySusceptibility(0, omega),
-                      ContainsSubstring("singular"));
+                      stored);
     CHECK_THROWS_WITH(mat_op.GetFrequencyDependentStoredEnergyPermittivity(0, omega),
-                      ContainsSubstring("singular"));
+                      stored);
     CHECK_THROWS_WITH(mat_op.GetFrequencyDependentSusceptibilityReal(0, omega),
                       ContainsSubstring("singular"));
-    for (auto type : {ElectricEnergy::STORED, ElectricEnergy::MATERIAL})
+    const auto types = (i == 0)
+                           ? std::vector{ElectricEnergy::STORED, ElectricEnergy::MATERIAL}
+                           : std::vector{ElectricEnergy::MATERIAL};
+    for (auto type : types)
     {
       CAPTURE(static_cast<int>(type));
       CHECK_THROWS_WITH(post.GetFrequencyDependentEnergyWeight(0, omega, type),
@@ -1690,6 +1703,7 @@ TEST_CASE("Electric energies at an exact lossless resonance",
     if (type == ElectricEnergy::STORED)
     {
       CHECK(energy > 0.0);
+      continue;
     }
     CHECK_THAT(posts[1]->GetElectricFieldEnergy(c.E, near, type),
                WithinRel(energy, 1.0e-10));

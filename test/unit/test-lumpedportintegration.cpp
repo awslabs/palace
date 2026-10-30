@@ -1285,11 +1285,11 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "LumpedPort eigenmode outputs without a stored electric energy",
                  "[lumped_port][frequencydependent][Serial][Parallel]")
 {
-  // A material whose RAW PoleResidue block is not passive alone (−0.5/(s + 1/τ),
-  // compensated by a typed Debye 1/(1 + sτ)) has no stored electric energy, so no total
-  // energy normalizes the coupling rate κ, Q, or the participation of the port: they are
-  // omitted (not zero), with port-Q.csv and port-EPR.csv and the electric energy columns
-  // of domain-E.csv, while the port voltage and the magnetic and port energies are
+  // PoleResidue terms specify no stored electric energy, also for a RAW Debye
+  // 0.5/(s + 1/τ) or a RAW −0.5/(s + 1/τ) compensated by a typed Debye 1/(1 + sτ), so no
+  // total energy normalizes the coupling rate κ, Q, or the participation of the port: they
+  // are omitted (not zero), with port-Q.csv and port-EPR.csv and the electric energy
+  // columns of domain-E.csv, while the port voltage and the magnetic and port energies are
   // reported. A typed Debye with the same response is the positive control.
   ResistorLossCase c;
   c.mesh = std::make_unique<mfem::Mesh>(
@@ -1317,14 +1317,18 @@ TEST_CASE_METHOD(test::SharedTempDir,
   const json debye = {
       {"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 1.0}};
   const json raw = {{"Type", "PoleResidue"}, {"Pole", -1.0e9}, {"Residue", -0.5e9}};
-  json half = debye;
+  json half = debye, raw_half = raw;
   half["DeltaPermittivity"] = 0.5;
-  const bool stored = GENERATE(true, false);
-  CAPTURE(stored);
-  const json permittivity = {
-      {"HighFrequency", 2.0},
-      {"Terms", stored ? json::array({half}) : json::array({debye, raw})}};
-  const auto output = temp_dir / (stored ? "typed_debye" : "compensated_debye");
+  raw_half["Residue"] = 0.5e9;
+  const std::string model = GENERATE("typed_debye", "raw_debye", "compensated_debye");
+  CAPTURE(model);
+  const bool stored = (model == "typed_debye");
+  const json permittivity = {{"HighFrequency", 2.0},
+                             {"Terms", (model == "typed_debye") ? json::array({half})
+                                       : (model == "raw_debye")
+                                           ? json::array({raw_half})
+                                           : json::array({debye, raw})}};
+  const auto output = temp_dir / model;
   MPI_Comm comm = Mpi::World();
   if (Mpi::Root(comm))
   {

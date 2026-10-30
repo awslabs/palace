@@ -1300,10 +1300,10 @@ TEST_CASE_METHOD(test::SharedTempDir,
   // on the boundary (3D fused bundle, 2D independent kernels), U_e in the domain (ParaView
   // and grid function) use ε(iω) and the stored-energy permittivity W(ω) of the damped
   // Lorentz upper material at each write, next to the constant lossy lower material. The
-  // same Lorentz written as RAW PoleResidue terms has the same response and, as a single
-  // section, the same stored energy. A material whose RAW block is not passive alone (a
-  // negative relaxation compensated by a typed Debye term) has no stored electric energy:
-  // its U_e is omitted, at every frequency, while Q_s is written as before.
+  // same Lorentz written as RAW PoleResidue terms has the same response, but PoleResidue
+  // terms specify no stored electric energy, as for a negative relaxation compensated by
+  // a typed Debye term: U_e is omitted, at every frequency, while Q_s is written as
+  // before.
   MPI_Comm comm = MPI_COMM_WORLD;
   REQUIRE(Mpi::Size(comm) == 1);
   const int dim = GENERATE(3, 2);
@@ -1362,7 +1362,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
                                   config::PermittivityPoleData{-1.0, -0.5}};
       break;
   }
-  const bool stored = (model != Model::COMPENSATED);
+  const bool stored = (model == Model::TYPED);
 
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
   std::vector<std::unique_ptr<Mesh>> mesh;
@@ -1402,9 +1402,8 @@ TEST_CASE_METHOD(test::SharedTempDir,
 
     // References from the legacy coefficients with the material tables at Re ω.
     const double w = omega.real();
-    if (model == Model::RAW)
+    if (model == Model::TYPED)
     {
-      // The RAW single section stores the energy of the typed Lorentz.
       const double w2 = w * w;
       CHECK_THAT(mat_op.GetFrequencyDependentStoredEnergyPermittivity(1, w),
                  Catch::Matchers::WithinRel(2.5 + 1.5 * (w2 + 1.0) /

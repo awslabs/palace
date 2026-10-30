@@ -99,13 +99,20 @@ TEST_CASE("Permittivity model stored energy is that of each term's model",
     // Drude ω_p²/(s² + γs), with the kinetic energy of the carriers.
     Check(config::DrudeData{3.0, 0.2}, {true, 0.0, 0.2, 9.0, 0.0});
   }
-  SECTION("PoleResidue terms have no termwise energy")
+  SECTION("PoleResidue terms specify no stored energy")
   {
-    // The RAW block of a material stores its available storage as a whole
-    // (test-permittivitystorage.cpp); a termwise energy would depend on the split.
+    // A termwise energy would depend on how the susceptibility is split into poles.
     const std::vector<config::PermittivityTermData> terms = {
         config::DebyeData{1.5, 0.4}, config::PermittivityPoleData{{-0.7, 0.0}, {2.0, 0.0}}};
+    CHECK_FALSE(permittivity::HasStoredEnergy(terms));
     CHECK_THROWS(permittivity::StoredEnergySusceptibility(terms, omega));
+    CHECK(permittivity::HasStoredEnergy(
+        {config::DebyeData{1.5, 0.4}, config::DjordjevicSarkarData{0.2, 0.01, 100.0}}));
+    // An exact zero pole alone has zero additional stored energy, by convention.
+    const std::vector<config::PermittivityTermData> zero = {
+        config::PermittivityPoleData{{0.0, 0.0}, {2.0, 0.0}}};
+    CHECK(permittivity::HasStoredEnergy(zero));
+    CHECK(permittivity::StoredEnergySusceptibility(zero, omega) == 0.0);
   }
   SECTION("Djordjevic-Sarkar terms are a continuum of relaxations")
   {
@@ -191,7 +198,7 @@ TEST_CASE("Permittivity model defects", "[permittivitymodel][Serial]")
   SECTION("Gain is that of the whole response")
   {
     // A negative raw relaxation is compensated by a typed Debye term with the same rate:
-    // the RAW block alone is not passive, but the material has no gain.
+    // the PoleResidue term alone is not passive, but the material has no gain.
     const std::vector<config::PermittivityTermData> terms = {
         config::DebyeData{1.0, 1.0},
         config::PermittivityPoleData{{-1.0, 0.0}, {-0.5, 0.0}}};

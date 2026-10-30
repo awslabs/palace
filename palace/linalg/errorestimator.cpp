@@ -514,7 +514,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     {
       // The same on every process: the status is that of the configured model.
       Mpi::Warning(nd_fespace.GetComm(),
-                   "Material {:d} has no available stored electric energy ({}); its error "
+                   "Material {:d} has no stored electric energy ({}); its error "
                    "indicator weight is ε∞ = {:.3e}, and the indicators are normalized by "
                    "the energy norm of the recovered fluxes. These are numerical norms, "
                    "not physical energies!\n",

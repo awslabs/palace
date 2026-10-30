@@ -297,12 +297,11 @@ void IoData::WarnPermittivityModelDefects() const
 {
   // Typed permittivity terms are passive by construction. A PoleResidue term may not be,
   // which is allowed (a fit may only be meant for the requested frequencies), but warned.
-  // Two separate questions are diagnosed: gain of the whole response of the material, and
-  // whether its RAW block (all PoleResidue terms together) has an available stored energy.
-  // A RAW block which is not passive alone can be compensated by the typed terms, so it
-  // does not imply gain. Magnetostatics does not use the permittivity, so there is nothing
-  // to warn about. Electrostatics uses the static permittivity, with no stored energy of
-  // the harmonic polarization.
+  // Two separate conditions are stated: gain of the whole response of the material, and
+  // that its PoleResidue terms specify no stored energy (which is not gain).
+  // Magnetostatics does not use the permittivity, so there is nothing to warn about.
+  // Electrostatics uses the static permittivity, with no stored energy of the harmonic
+  // polarization.
   if (problem.type == ProblemType::MAGNETOSTATIC)
   {
     return;
@@ -375,35 +374,18 @@ void IoData::WarnPermittivityModelDefects() const
     {
       continue;
     }
-    // The status of the RAW block is a property of the configured model. The solver
-    // prepares its own in nondimensional units, for the materials on its mesh, which
-    // decides the omitted outputs and lists them; this diagnosis can only state the
-    // condition.
-    const permittivity::PreparedStorage storage(material.permittivity_terms);
-    const auto consequence =
-        "If this material is on the mesh and its storage is also unavailable after "
-        "nondimensionalization, Palace does not report the electric energy of the regions "
-        "with it, nor the outputs normalized by it; the runtime warning lists the actual "
-        "omissions. The field solve is unaffected.";
-    switch (storage.Status())
+    // A property of the configured model. The solver decides the omitted outputs for the
+    // materials on its mesh and lists them; this diagnosis can only state the condition.
+    if (!permittivity::HasStoredEnergy(material.permittivity_terms))
     {
-      case permittivity::RawStorageStatus::CheckedAvailable:
-        break;
-      case permittivity::RawStorageStatus::NonpassiveRaw:
-        Mpi::Warning("The PoleResidue terms of the frequency-dependent Permittivity of "
-                     "material {:d} (attributes {}), taken together, are not passive on "
-                     "their own: {}.\nThis alone does not show gain of the material, whose "
-                     "other terms may compensate it. {}\n",
-                     i + 1, material.attributes, storage.Reason(), consequence);
-        break;
-      case permittivity::RawStorageStatus::NumericalUnresolved:
-        Mpi::Warning("The available stored energy of the PoleResidue terms of the "
-                     "frequency-dependent Permittivity of material {:d} (attributes {}) "
-                     "could not be certified in double precision: {}.\nThis is not a "
-                     "statement of gain, of nonpassivity, or that the material stores no "
-                     "energy. {}\n",
-                     i + 1, material.attributes, storage.Reason(), consequence);
-        break;
+      Mpi::Warning("The PoleResidue terms of the frequency-dependent Permittivity of "
+                   "material {:d} (attributes {}) specify its susceptibility but no "
+                   "stored-energy realization. If this material is on the mesh, Palace "
+                   "does not report the electric energy of the regions with it, nor the "
+                   "outputs normalized by it; the runtime warning lists the actual "
+                   "omissions. The field solve is unaffected. Use Drude, Debye, or Lorentz "
+                   "terms where the stored energy is needed.\n",
+                   i + 1, material.attributes);
     }
   }
 }

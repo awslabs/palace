@@ -1435,29 +1435,26 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator reduced postprocessing matches full evaluation",
                  "[postoperator][romoperator][Serial][Parallel]")
 {
-  // The reduced energies are the full ones, also with the stored energy of a RAW Drude
-  // (a PoleResidue fit with a negative residue). Without a stored electric energy (a RAW
-  // relaxation compensated by a typed Debye), both omit the electric energies alike.
+  // The reduced energies are the full ones, also with the stored energy of a Drude.
+  // Without a stored electric energy (a RAW relaxation compensated by a typed Debye), both
+  // omit the electric energies alike.
   enum class Model
   {
     CONSTANT,
-    RAW_DRUDE,
+    DRUDE,
     COMPENSATED
   };
-  const auto model = GENERATE(Model::CONSTANT, Model::RAW_DRUDE, Model::COMPENSATED);
+  const auto model = GENERATE(Model::CONSTANT, Model::DRUDE, Model::COMPENSATED);
   CAPTURE(static_cast<int>(model));
   const bool stored = (model != Model::COMPENSATED);
   json permittivity = 1.0;
-  if (model == Model::RAW_DRUDE)
+  if (model == Model::DRUDE)
   {
-    // ω_p = 2π 10 GHz, γ = 2π 5 GHz: ω_p² / (s (s + γ)) = r/s − r/(s + γ), r = ω_p² / γ.
-    const double wp = 2.0 * std::numbers::pi * 1.0e10, gamma = 0.5 * wp,
-                 r = wp * wp / gamma;
-    permittivity = {
-        {"HighFrequency", 1.0},
-        {"Terms",
-         json::array({{{"Type", "PoleResidue"}, {"Pole", 0.0}, {"Residue", r}},
-                      {{"Type", "PoleResidue"}, {"Pole", -gamma}, {"Residue", -r}}})}};
+    // ω_p = 2π 10 GHz, γ = 2π 5 GHz.
+    permittivity = {{"HighFrequency", 1.0},
+                    {"Terms", json::array({{{"Type", "Drude"},
+                                            {"PlasmaFrequency", 10.0},
+                                            {"CollisionFrequency", 5.0}}})}};
   }
   else if (model == Model::COMPENSATED)
   {

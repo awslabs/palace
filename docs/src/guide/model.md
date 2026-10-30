@@ -121,30 +121,21 @@ terms together, has gain (a negative dissipated power), and whether they overlap
 requested band. The field solve uses the model as given. This interval search is sampled,
 not an all-frequency passivity certificate.
 
-All `PoleResidue` terms of a material form one rational block, and their stored energy is
-that of the block as a whole: its *available storage*, the largest energy the polarization
-current ``s\chi(s)`` of the block can return to the field, which is the smallest stored
-energy of any passive realization of it. A negative residue alone does not mean gain or a
-negative energy, and the energy does not depend on how the block is split into terms or
-their order. For a single Debye, Drude, or Lorentz section written as `PoleResidue` terms
-it equals the energy of the typed term. For a composite response it need not: the same
-susceptibility does not determine a unique microscopic stored energy. For example,
-``1/(s+1) + 1/(s+2)`` stores ``0.9`` at ``\omega = 1`` as two typed Debye terms, and
-``0.8675444679663243`` as `PoleResidue` terms. Typed and `DjordjevicSarkar` terms keep the
-energies of their models. An exact zero pole ``r/s`` alone is a current and stores no
-energy, but in a fit together with other poles, such as a Drude written as two
-`PoleResidue` terms, the block stores the kinetic energy of the carriers.
-
-The available storage is defined only for a block which is passive by itself. *Palace*
-computes it once per material in double precision, as a checked numerical approximation:
-residual checks of its defining equations accept it, but they do not bound the error of
-the energy itself, nor prove that it is the exact minimum for the given fit. If the block
-alone is shown not to be passive (it may still be compensated by the typed terms of the
-material, which is not gain), or if the check fails in double precision (for example for
-nearly coincident poles), *Palace* cannot report a stored electric energy for the
-material under this convention. A failed check does not mean that the material stores no
-energy. *Palace* warns about each case separately when it reads the configuration; neither
-is a statement that the material has gain, and neither changes the field solve.
+A `PoleResidue` term specifies a susceptibility, not a model of the polarization, and so
+not its stored energy: the same susceptibility has realizations with different stored
+energies, and a termwise energy would depend on how the response is split into poles. For
+example, ``1/(s+1) + 1/(s+2)`` stores ``0.9`` at ``\omega = 1`` as two typed Debye terms,
+and other energies in other realizations. A material with a `PoleResidue` term therefore has
+no stored electric energy, even for a single Debye, Drude, or Lorentz section written as
+`PoleResidue` terms, which has the response of the typed term. An exact zero pole ``r/s``
+with real ``r`` has zero additional stored energy, by convention, and does not remove the
+stored energy of the material: its harmonic current is non-reactive, and its signed power
+is dissipated (``r > 0``) or supplied (``r < 0``). It is assembled in conductivity form,
+but it remains configured polarization in ``\epsilon`` and ``\mathbf{D}``; a user
+`Conductivity` is separate and is added once. Use typed terms where the stored energy is
+needed. *Palace* warns about each material with no stored energy when it reads the
+configuration; this is not a statement that the material has gain, and it does not change
+the field solve.
 
 The object form requires scalar permittivity and cannot be combined with `LossTan`;
 ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
@@ -179,8 +170,8 @@ slower convergence of magnetic-field reconstruction and reduces to
 an approximation evaluated at the real frequency, not an exact complex-frequency energy
 identity.
 
-For a material on the mesh whose stored electric energy *Palace* cannot report (see
-above), it does not report a value in its place. It omits, for the whole simulation and
+For a material on the mesh with no stored electric energy (see above), *Palace* does not
+report a value in its place. It omits, for the whole simulation and
 with a warning that lists the actual omissions: the total
 electric energy ``E_\mathrm{elec}`` and the electric participations in `domain-E.csv`, the
 electric energy of each postprocessing domain that contains the material, the ``U_e``

@@ -1631,13 +1631,11 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
             (std::string(type) == "Electrostatic"));
     }
 
-    // Gain of the whole material is diagnosed apart from the stored energy of its RAW block
-    // (all PoleResidue terms). A RAW −0.5/(s + 1) compensated by a typed Debye 1/(1 + s)
-    // (τ = 1 s) is passive, so not gain, but has no available storage. Nearly coincident
-    // passive poles are not certified, which is neither gain nor nonpassivity. Neither is
+    // Gain of the whole material is diagnosed apart from the stored energy, which
+    // PoleResidue terms do not specify. A RAW −0.5/(s + 1) compensated by a typed Debye
+    // 1/(1 + s) (τ = 1 s) is passive, so not gain, but has no stored energy. Neither is
     // diagnosed for electrostatics, which uses the static permittivity.
-    const std::string gain = "has gain", nonpassive = "not passive on their own",
-                      uncertified = "could not be certified";
+    const std::string gain = "has gain", unspecified = "no stored-energy realization";
     auto WithTerms = [&](const json &terms, const char *type)
     {
       auto config = MakeConfig();
@@ -1651,29 +1649,25 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
     {
       const auto out = WithTerms(compensated, "Driven");
       CAPTURE(out);
-      CHECK(out.find(nonpassive) != std::string::npos);
-      CHECK(out.find("does not show gain") != std::string::npos);
+      CHECK(out.find(unspecified) != std::string::npos);
       // The runtime owns the actual omissions: the configuration can only state them as
       // conditional on the material being on the mesh.
       CHECK(out.find("If this material is on the mesh") != std::string::npos);
       CHECK(out.find(gain) == std::string::npos);
-      CHECK(out.find(uncertified) == std::string::npos);
-      CHECK(WithTerms(compensated, "Electrostatic").find(nonpassive) == std::string::npos);
+      CHECK(WithTerms(compensated, "Electrostatic").find(unspecified) == std::string::npos);
     }
     {
-      json close = json::array();
-      for (int k = 0; k < 4; k++)
-      {
-        close.push_back(
-            {{"Type", "PoleResidue"}, {"Pole", -1.0 - k * 1.0e-9}, {"Residue", 1.0}});
-      }
-      const auto out = WithTerms(close, "Driven");
+      // A passive PoleResidue Debye states the same, and a typed Debye does not.
+      const auto out = WithTerms(
+          {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 1.0}}}, "Driven");
       CAPTURE(out);
-      CHECK(out.find(uncertified) != std::string::npos);
-      CHECK(out.find("not a statement of gain") != std::string::npos);
-      CHECK(out.find("If this material is on the mesh") != std::string::npos);
+      CHECK(out.find(unspecified) != std::string::npos);
       CHECK(out.find(gain) == std::string::npos);
-      CHECK(out.find(nonpassive) == std::string::npos);
+      CHECK(
+          WithTerms(
+              {{{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 1.0e9}}},
+              "Driven")
+              .find(unspecified) == std::string::npos);
     }
     {
       // Gain is reported as such, without a claim that the field solution is invalid.

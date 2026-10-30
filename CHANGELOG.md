@@ -60,8 +60,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Frequency-domain operators,
     ports, postprocessing, energy/error estimates, adaptive sweeps, and circuit synthesis
     use the material model at the solution frequency. Compatible static limits are supported;
-    transient problems are not. General PoleResidue models remain usable with gain and
-    negative-energy warnings. Existing constant-permittivity inputs are unchanged.
+    transient problems are not. General PoleResidue models remain usable with gain
+    warnings; they specify no stored electric energy, so the electric energy outputs of a
+    material with them are omitted. Existing constant-permittivity inputs are unchanged.
     SchemaVer 4-1-0
     [PR 877](https://github.com/awslabs/palace/pull/877).
 

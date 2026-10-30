@@ -46,7 +46,7 @@ public:
   void CheckConfiguration();
 
   // Warn about frequencies where a material with PoleResidue permittivity terms has gain,
-  // and about a RAW block of PoleResidue terms without an available stored energy.
+  // and that PoleResidue terms specify no stored energy.
   void WarnPermittivityModelDefects() const;
 
   explicit IoData(const Units &units);

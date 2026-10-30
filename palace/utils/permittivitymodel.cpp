@@ -55,8 +55,9 @@ std::complex<double> TermSusceptibility(const config::PermittivityTermData &term
 // Time-averaged stored energy of a typed or Djordjevic-Sarkar term as a susceptibility
 // (see the header): a relaxation b₀/(s + a₀) stores a₀b₀/(ω² + a₀²) = Re χ, and an
 // oscillator b₀/(s² + a₁s + a₀) stores (b₀ω² + a₀b₀)/((a₀ − ω²)² + a₁²ω²), the averages
-// of W with ⟨x ẋ⟩ = 0. A PoleResidue term has no energy of its own: its stored energy is
-// that of the whole RAW block of the material (PreparedStorage).
+// of W with ⟨x ẋ⟩ = 0. A PoleResidue term specifies no stored energy (HasStoredEnergy),
+// except an exact zero pole, which has zero additional stored energy by convention (see
+// the header).
 double TermStoredEnergy(const config::PermittivityTermData &term, double omega)
 {
   const double w2 = omega * omega;
@@ -71,11 +72,12 @@ double TermStoredEnergy(const config::PermittivityTermData &term, double omega)
                    return t.delta * w0_2 * (w2 + w0_2) /
                           ((w0_2 - w2) * (w0_2 - w2) + t.gamma * t.gamma * w2);
                  },
-                 [](const config::PermittivityPoleData &) -> double
+                 [](const config::PermittivityPoleData &t) -> double
                  {
-                   MFEM_ABORT("A PoleResidue term has no stored energy of its own; use "
-                              "PreparedStorage for the RAW block of the material!");
-                   return 0.0;
+                   MFEM_VERIFY(t.pole == std::complex<double>(0.0, 0.0),
+                               "A PoleResidue term specifies no stored energy; check "
+                               "HasStoredEnergy before using it!");
+                   return 0.0;  // Zero additional stored energy, by convention
                  },
                  [w2](const config::DjordjevicSarkarData &t)
                  {
@@ -282,6 +284,19 @@ double StaticSusceptibility(const std::vector<config::PermittivityTermData> &ter
         term);
   }
   return chi;
+}
+
+bool HasStoredEnergy(const std::vector<config::PermittivityTermData> &terms)
+{
+  // An exact zero pole r/s (real r) has zero additional stored energy by convention: its
+  // harmonic current is non-reactive (see the header).
+  return std::ranges::none_of(terms,
+                              [](const auto &term)
+                              {
+                                const auto *pole =
+                                    std::get_if<config::PermittivityPoleData>(&term);
+                                return pole && pole->pole != std::complex<double>(0.0, 0.0);
+                              });
 }
 
 double StoredEnergySusceptibility(const std::vector<config::PermittivityTermData> &terms,

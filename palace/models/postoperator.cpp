@@ -341,9 +341,10 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       }
       Mpi::Warning(
           fem_op->GetComm(),
-          "Frequency-dependent material(s) {} have no available stored electric "
-          "energy!\nOmitted outputs: the total electric energy E_elec and the "
-          "electric participations p_elec, the electric energy density U_e, the "
+          "Frequency-dependent material(s) {} have no stored electric energy (their "
+          "PoleResidue terms specify none)!\nOmitted outputs: the total electric "
+          "energy E_elec and the electric participations p_elec, the electric energy "
+          "density U_e, the "
           "outputs normalized by the total energy (surface-Q.csv, port-Q.csv, "
           "port-EPR.csv){}. The field solution, S-parameters, port voltages, "
           "currents, and powers, fluxes, eigenvalues and their Q, and magnetic "
