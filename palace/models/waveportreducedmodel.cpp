@@ -19,6 +19,73 @@ extern "C"
 namespace palace
 {
 
+namespace
+{
+
+// Number of vectors copied at a time into the dense panels of LocalInnerProducts.
+constexpr std::size_t DENSE_PANEL_SIZE = 32;
+
+// Copy the local entries of the complex vectors get(first), ..., get(first + count - 1),
+// each of local size m, into the columns of the dense matrix X.
+template <typename GetVector>
+void CopyColumns(std::size_t first, std::size_t count, int m, const GetVector &get,
+                 Eigen::MatrixXcd &X)
+{
+  X.resize(m, static_cast<Eigen::Index>(count));
+  for (std::size_t j = 0; j < count; j++)
+  {
+    const ComplexVector &x = get(first + j);
+    MFEM_VERIFY(x.Size() == m,
+                "Invalid vector size for the dense wave-port PROM products!");
+    const double *xr = x.Real().HostRead();
+    const double *xi = x.Imag().HostRead();
+    for (int i = 0; i < m; i++)
+    {
+      X(i, static_cast<Eigen::Index>(j)) = std::complex<double>(xr[i], xi[i]);
+    }
+  }
+}
+
+// Local inner products X(i, j) = a(i)ᴴ b(j) of the complex vectors a(0), ..., a(p - 1) and
+// b(0), ..., b(q - 1), each of local size m, as dense matrix products of panels of the
+// vectors rather than one inner product per entry. The panels bound the temporary dense
+// copies to two panels of vectors. For the Gram matrix of a single list of vectors (gram,
+// with b = a), only the panels on and above the diagonal are computed.
+template <typename GetA, typename GetB>
+Eigen::MatrixXcd LocalInnerProducts(std::size_t p, const GetA &a, std::size_t q,
+                                    const GetB &b, int m, bool gram)
+{
+  Eigen::MatrixXcd X(static_cast<Eigen::Index>(p), static_cast<Eigen::Index>(q));
+  Eigen::MatrixXcd A, B;
+  for (std::size_t i0 = 0; i0 < p; i0 += DENSE_PANEL_SIZE)
+  {
+    const std::size_t ni = std::min(DENSE_PANEL_SIZE, p - i0);
+    CopyColumns(i0, ni, m, a, A);
+    for (std::size_t j0 = gram ? i0 : 0; j0 < q; j0 += DENSE_PANEL_SIZE)
+    {
+      const std::size_t nj = std::min(DENSE_PANEL_SIZE, q - j0);
+      auto block = X.block(static_cast<Eigen::Index>(i0), static_cast<Eigen::Index>(j0),
+                           static_cast<Eigen::Index>(ni), static_cast<Eigen::Index>(nj));
+      if (gram && j0 == i0)
+      {
+        block.noalias() = A.adjoint() * A;
+        continue;
+      }
+      CopyColumns(j0, nj, m, b, B);
+      block.noalias() = A.adjoint() * B;
+      if (gram)
+      {
+        X.block(static_cast<Eigen::Index>(j0), static_cast<Eigen::Index>(i0),
+                static_cast<Eigen::Index>(nj), static_cast<Eigen::Index>(ni)) =
+            block.adjoint();
+      }
+    }
+  }
+  return X;
+}
+
+}  // namespace
+
 WavePortReducedModel::WavePortReducedModel(
     int num_modes, double eig_tol, int nd_size, int h1_size, MPI_Comm solver_comm,
     bool wave_port, const mode_assembly::ModeOperatorModel &mode_op_model,
@@ -55,9 +122,31 @@ void WavePortReducedModel::Enable(bool enable, double adaptive_tol,
   }
 }
 
-void WavePortReducedModel::RecordExactSolve()
+void WavePortReducedModel::RecordExactSolve(double seconds)
 {
   stats.exact_solves++;
+  if (basis_cap > 0)
+  {
+    exact_solve_times.push_back(seconds);
+  }
+}
+
+double WavePortReducedModel::GetTypicalExactSolveTime() const
+{
+  if (exact_solve_times.empty())
+  {
+    return 0.0;
+  }
+  std::vector<double> times(exact_solve_times);
+  const auto median = times.begin() + static_cast<std::ptrdiff_t>(times.size() / 2);
+  std::ranges::nth_element(times, median);
+  return *median;
+}
+
+void WavePortReducedModel::Retire()
+{
+  enabled = false;
+  stats.retired = true;
 }
 
 void WavePortReducedModel::RecordReducedSolve()
@@ -108,13 +197,14 @@ void WavePortReducedModel::UpdateProjection(std::size_t old_basis_size)
     return;
   }
   const std::size_t n = basis.size();
+  const std::size_t n_families = 1 + components.size();
   MFEM_VERIFY(old_basis_size <= n, "Invalid old affine basis size!");
-  MFEM_VERIFY(n == 0 || n <= static_cast<std::size_t>(std::numeric_limits<int>::max()) / n,
+  MFEM_VERIFY(n == 0 || n <= static_cast<std::size_t>(std::numeric_limits<int>::max()) /
+                                 (n_families * n),
               "Affine projection matrix exceeds MPI count range!");
-  const int projection_count = static_cast<int>(n * n);
 
-  auto update = [&](const ComplexOperator &op, std::vector<ComplexVector> &actions,
-                    Eigen::MatrixXcd &projection)
+  // Actions of the operators on the new basis vectors.
+  auto update = [&](const ComplexOperator &op, std::vector<ComplexVector> &actions)
   {
     actions.resize(n);
     for (std::size_t j = old_basis_size; j < n; j++)
@@ -123,26 +213,39 @@ void WavePortReducedModel::UpdateProjection(std::size_t old_basis_size)
       actions[j].UseDevice(true);
       op.Mult(basis[j], actions[j]);
     }
-    projection.resize(n, n);
-    for (std::size_t j = 0; j < n; j++)
-    {
-      for (std::size_t i = 0; i < n; i++)
-      {
-        // LocalDot(x, y) = yᴴx, preserving basis[i]ᴴ actions[j].
-        projection(i, j) = linalg::LocalDot(actions[j], basis[i]);
-      }
-    }
-    if (projection_count > 0)
-    {
-      Mpi::GlobalSum(projection_count, projection.data(), solver_comm);
-    }
   };
-  update(opB, B_actions, B_projection);
+  update(opB, B_actions);
   for (auto &component : components)
   {
-    update(*component.source->op, component.actions, component.projection);
+    update(*component.source->op, component.actions);
+  }
+
+  // Projections basis[i]ᴴ actions[j] of all operators, as dense products.
+  const int m = (n > 0) ? basis[0].Size() : 0;
+  auto basis_vector = [this](std::size_t j) -> const ComplexVector & { return basis[j]; };
+  auto action = [this](std::size_t col) -> const ComplexVector & { return Action(col); };
+  Eigen::MatrixXcd projection =
+      LocalInnerProducts(n, basis_vector, n_families * n, action, m, false);
+  if (projection.size() > 0)
+  {
+    Mpi::GlobalSum(static_cast<int>(projection.size()), projection.data(), solver_comm);
+  }
+  const auto n_cols = static_cast<Eigen::Index>(n);
+  B_projection = projection.leftCols(n_cols);
+  for (std::size_t q = 0; q < components.size(); q++)
+  {
+    components[q].projection =
+        projection.middleCols(static_cast<Eigen::Index>(q + 1) * n_cols, n_cols);
   }
   BuildActionGram();
+}
+
+const ComplexVector &WavePortReducedModel::Action(std::size_t col) const
+{
+  // Column col of the actions of all operators, B first: B_actions, then the actions of
+  // each component, each family indexed by the basis vectors.
+  const std::size_t n = basis.size(), family = col / n, j = col % n;
+  return (family == 0) ? B_actions[j] : components[family - 1].actions[j];
 }
 
 void WavePortReducedModel::BuildActionGram()
@@ -160,23 +263,12 @@ void WavePortReducedModel::BuildActionGram()
                          std::sqrt(static_cast<double>(std::numeric_limits<int>::max()))),
               "Affine action Gram matrix exceeds MPI count range!");
 
-  auto action = [&](std::size_t family, std::size_t j) -> const ComplexVector &
-  { return (family == 0) ? B_actions[j] : components[family - 1].actions[j]; };
-
-  action_gram.resize(dim, dim);
-  for (std::size_t col = 0; col < dim; col++)
-  {
-    const std::size_t col_family = col / n, col_j = col % n;
-    for (std::size_t row = 0; row < dim; row++)
-    {
-      const std::size_t row_family = row / n, row_i = row % n;
-      // LocalDot(x,y) = yᴴx, so this is W_rowᴴ W_col.
-      action_gram(row, col) =
-          linalg::LocalDot(action(col_family, col_j), action(row_family, row_i));
-    }
-  }
+  // Gram matrix W_rowᴴ W_col of the actions, as dense products.
+  auto action = [this](std::size_t col) -> const ComplexVector & { return Action(col); };
+  action_gram = LocalInnerProducts(dim, action, dim, action, B_actions[0].Size(), true);
   Mpi::GlobalSum(static_cast<int>(dim * dim), action_gram.data(), solver_comm);
   action_gram = 0.5 * (action_gram + action_gram.adjoint()).eval();
+  action_gram_max = action_gram.cwiseAbs().maxCoeff();
   gram_direct_self_checked = false;
   gram_residual_trusted = true;
 }
@@ -266,7 +358,7 @@ void WavePortReducedModel::ObserveExactEigenvectors(int num_converged,
                                                     const EigenvalueSolver &eigen,
                                                     const std::vector<int> &mode_perm)
 {
-  if (num_converged <= 0 || basis_cap == 0)
+  if (num_converged <= 0 || basis_cap == 0 || stats.retired)
   {
     return;
   }
@@ -328,8 +420,7 @@ std::optional<double> WavePortReducedModel::EvaluateGramResidual(
   auto norm_from_gram = [&](const Eigen::VectorXcd &c) -> std::optional<double>
   {
     const std::complex<double> value = c.dot(action_gram * c);
-    const double scale =
-        std::max(1.0, c.squaredNorm() * action_gram.cwiseAbs().maxCoeff() * dim);
+    const double scale = std::max(1.0, c.squaredNorm() * action_gram_max * dim);
     const double roundoff = 256.0 * std::numeric_limits<double>::epsilon() * scale;
     if (!std::isfinite(value.real()) || !std::isfinite(value.imag()) ||
         std::abs(value.imag()) > roundoff || value.real() < -roundoff)
@@ -411,16 +502,18 @@ bool WavePortReducedModel::SolveFromGram(
     return false;
   }
 
-  struct Candidate
+  // Ritz pairs with a valid propagation constant, ranked with the same complex target
+  // distance as the exact solve (ModeEigenSolver::Solve), so that both select the same
+  // mode.
+  struct RitzPair
   {
+    int k;
     std::complex<double> lambda;
     std::complex<double> kn;
-    Eigen::VectorXcd coefficients;
-    double residual;
     double distance;
   };
-  std::vector<Candidate> candidates;
-  candidates.reserve(n);
+  std::vector<RitzPair> ritz_pairs;
+  ritz_pairs.reserve(n);
   const double kn_target = std::sqrt(-sigma);
   for (int k = 0; k < n; k++)
   {
@@ -438,8 +531,32 @@ bool WavePortReducedModel::SolveFromGram(
     {
       continue;
     }
+    ritz_pairs.push_back({k, lambda, kn, mode_assembly::TargetDistance(kn, kn_target)});
+  }
+  std::ranges::stable_sort(ritz_pairs, {}, &RitzPair::distance);
 
-    Eigen::VectorXcd y = vr.col(k);
+  // Check the residuals of the Ritz pairs in ascending target distance, and stop once one
+  // more pair than the selected modes is accepted: the selected modes and the gap check
+  // below are the same as when checking all pairs, while only the few pairs nearest to the
+  // target pay for a residual evaluation.
+  struct Candidate
+  {
+    std::complex<double> lambda;
+    std::complex<double> kn;
+    Eigen::VectorXcd coefficients;
+    double residual;
+    double distance;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(num_modes + 1);
+  for (const auto &pair : ritz_pairs)
+  {
+    if (candidates.size() > static_cast<std::size_t>(num_modes))
+    {
+      break;
+    }
+    const std::complex<double> lambda = pair.lambda;
+    Eigen::VectorXcd y = vr.col(pair.k);
     const double ynorm = y.norm();
     if (!(ynorm > 0.0))
     {
@@ -489,14 +606,9 @@ bool WavePortReducedModel::SolveFromGram(
     {
       continue;
     }
-    candidates.push_back(
-        {lambda, kn, std::move(y), eta, mode_assembly::TargetDistance(kn, kn_target)});
+    candidates.push_back({lambda, pair.kn, std::move(y), eta, pair.distance});
   }
 
-  // Rank with the same complex target distance as the exact solve (ModeEigenSolver::Solve)
-  // so that both select the same mode.
-  std::ranges::stable_sort(candidates, [](const Candidate &a, const Candidate &b)
-                           { return a.distance < b.distance; });
   if (candidates.size() < static_cast<std::size_t>(num_modes))
   {
     return false;

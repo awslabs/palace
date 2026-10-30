@@ -180,8 +180,9 @@ auto RandomMeasurement(int ndomain = 5)
   {
     // The first mode has no V/I impedance and the second no Z0, which must be left
     // unscaled.
-    cache.mode_data.impedance[i] = {(1 + randd(99)) / 100, (1 + randd(99)) / 100, i == 0,
-                                    i == 1};
+    cache.mode_data.impedance[i] = {std::complex((1 + randd(99)) / 100, -randd(100) / 100),
+                                    std::complex((1 + randd(99)) / 100, -randd(100) / 100),
+                                    i == 0, i == 1};
     cache.mode_data.voltage[i] = {std::complex((1 + randd(99)) / 100, randd(100) / 100)};
   }
 
@@ -436,12 +437,16 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   REQUIRE(ndm.impedance.size() == m.impedance.size());
   for (const auto &[idx, z] : m.impedance)
   {
-    CHECK_THAT(ndm.impedance.at(idx).Z0, Catch::Matchers::WithinRel(z.Z0));
-    CHECK_THAT(ndm.impedance.at(idx).Z_VI, Catch::Matchers::WithinRel(z.Z_VI));
-    CHECK_THAT(dm.impedance.at(idx).Z0,
-               Catch::Matchers::WithinRel(z.has_impedance ? z.Z0 * z_scale : z.Z0));
-    CHECK_THAT(dm.impedance.at(idx).Z_VI,
-               Catch::Matchers::WithinRel(z.has_vi_impedance ? z.Z_VI * z_scale : z.Z_VI));
+    CHECK_THAT(std::abs(ndm.impedance.at(idx).Z0 - z.Z0),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(z.Z0)));
+    CHECK_THAT(std::abs(ndm.impedance.at(idx).Z_VI - z.Z_VI),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(z.Z_VI)));
+    const auto Z0 = z.has_impedance ? z.Z0 * z_scale : z.Z0;
+    const auto Z_VI = z.has_vi_impedance ? z.Z_VI * z_scale : z.Z_VI;
+    CHECK_THAT(std::abs(dm.impedance.at(idx).Z0 - Z0),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(Z0)));
+    CHECK_THAT(std::abs(dm.impedance.at(idx).Z_VI - Z_VI),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(Z_VI)));
   }
 }
 

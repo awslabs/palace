@@ -1895,7 +1895,10 @@ void PostOperator<solver_t>::MeasureSParameter() const
     //
     // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
     //   - Lumped: ∫E·(E_inc/R_ref) dS = V/V_inc, where V_inc encodes R_ref
-    //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
+    //   - Wave:   ∫(E×H_mode)·n dS / ∫(E_mode×H_mode)·n dS, the modal reaction overlap,
+    //             which separates the incident and reflected modal amplitudes also for a
+    //             lossy port mode, and is the power overlap ∫(E×H_mode⋆)·n dS for a
+    //             lossless one
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
 
     // Get information about excited port.
@@ -2790,22 +2793,29 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
       filled_voltage_postpro.insert(idx);
     }
 
-    // Power-voltage impedance: Z_PV = |V|^2 / (2P).
+    // Power-voltage impedance Z_PV = |V|² / 2P* with the complex (time-averaged) power P of
+    // the mode: for a TEM mode, P = V I* / 2 and Z_PV = V / I is the complex characteristic
+    // impedance of the line, real for a lossless mode.
     if (std::abs(P) > 1e-30)
     {
-      std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
-      result.Z0 = Z0_nondim.real();
+      result.Z0 = (V * std::conj(V)) / (2.0 * std::conj(P));
       result.has_impedance = true;
     }
 
-    // V/I impedance: Z_VI = |V| / |I|.
+    // Voltage-current impedance Z_VI = V / I, oriented with the mode power (Re{V I* / P} >
+    // 0, as P = V I* / 2 for a TEM mode), so that it does not depend on the directions of
+    // the voltage path and of the current loop. For a TEM mode, Z_VI = Z_PV.
     if (cfg.has_current)
     {
       auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
                               cfg.current_integrator.get(), *Bt_inplane);
       if (std::abs(I) > 1e-30)
       {
-        result.Z_VI = std::abs(V) / std::abs(I);
+        result.Z_VI = V / I;
+        if ((V * std::conj(I) * std::conj(P)).real() < 0.0)
+        {
+          result.Z_VI = -result.Z_VI;
+        }
         result.has_vi_impedance = true;
       }
     }

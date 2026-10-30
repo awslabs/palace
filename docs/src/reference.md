@@ -321,9 +321,28 @@ Numeric wave ports assume a field with known normal-direction dependence
 ``\bm{E}(\bm{x}) = \bm{e}(\bm{x}_t)e^{ik_n x_n}`` where ``k_n`` is the propagation constant. For each operating
 frequency ``\omega``, a two-dimensional eigenvalue problem is solved on the port yielding the mode
 shapes ``\bm{e}_m`` and associated propagation constants ``k_{n,m}``. These are used in the full 3D
-model where the Robin port boundary condition has coefficient
-``\gamma = i\text{Re}\{k_{n,m}\}/\mu_r`` and the computed mode is used to compute the incident field in the
-source term ``\bm{U}^{inc}`` at excited ports.
+model where the Robin port boundary condition has coefficient ``\gamma = i k_{n,m}/\mu_r`` and the
+computed mode is used to compute the incident field in the source term ``\bm{U}^{inc}`` at excited
+ports. When the port cross-section is lossy, for example with
+[`"Conductivity"`](config/reference.md#config-boundaries-conductivity) or
+[`"Impedance"`](config/reference.md#config-boundaries-impedance) boundaries or lossy dielectrics on
+the port boundary, the propagation constant ``k_{n,m}`` is complex, and its imaginary
+part (the attenuation of the port mode) is kept in the boundary condition and in the incident field,
+so that the port is matched to its own mode.
+
+The modes of a lossy cross-section are orthogonal under the unconjugated (reciprocity) pairing
+``\int_\Gamma (\bm{E}_m\times\bm{H}_k)\cdot\bm{n}\,dS``, and not under the power pairing
+``\int_\Gamma (\bm{E}_m\times\bm{H}_k^*)\cdot\bm{n}\,dS`` [[11]](#References). Wave port modes are
+normalized to unit power, ``\vert P^{inc} \vert = 1~\mathrm{W}`` as above, with the phase of the mode
+chosen such that its reaction
+
+```math
+R^{inc} = \int_\Gamma (\bm{E}^{inc}\times\bm{H}^{inc})\cdot\bm{n}\,dS
+```
+
+is real and positive. For a lossless propagating mode, ``R^{inc} = P^{inc} = 1~\mathrm{W}``. For a
+lossy mode, the complex power ``P^{inc}`` has a phase, and ``R^{inc}`` is close to, but not exactly,
+unity.
 
 For more information on the implementation of numeric wave ports, see [[3]](#References).
 
@@ -368,24 +387,29 @@ field component on the port.
 **Impedance.** The *power-voltage* characteristic impedance is defined as
 
 ```math
-Z_{PV} = \frac{|V|^2}{P}
+Z_{PV} = \frac{|V|^2}{P^*}
 ```
 
-where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
-peak-phasor power flux through the port cross-section, equal to twice the time-averaged power. For
-TEM modes with a voltage path between the two conductors, ``Z_{PV}`` reduces to the conventional TEM
-characteristic impedance. For wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
-specified.
+where ``P = \int_\Gamma(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` is the complex power flux
+of the mode through the cross-section, with peak phasors (twice the time-averaged power). It is
+real for a lossless propagating mode, and complex for a lossy one. For a TEM mode with a voltage
+path between the two conductors, ``P = V I^*`` and ``Z_{PV} = V / I`` is the conventional complex
+characteristic impedance of the line, which has the phase of ``k_n`` for a quasi-TEM mode on a line
+with a lossless dielectric. Wave ports report ``Z_{PV}`` when `"VoltagePath"` is specified,
+consistent with the total-field impedance ``|V|^2 / P^*`` of the port, and boundary-mode solves
+with impedance postprocessing.
 
-As a diagnostic, boundary-mode impedance postprocessing also reports the *voltage-current*
-impedance magnitude when a current path is specified:
+As a diagnostic, boundary-mode impedance postprocessing also reports the complex
+*voltage-current* impedance when a current path is specified:
 
 ```math
-Z_{VI} = |V| / |I|
+Z_{VI} = V / I
 ```
 
-where ``V`` and ``I`` are computed independently from different paths. Note that independently
-specifying both voltage and current does not in general define a valid characteristic impedance [[11]](#References).
+where ``V`` and ``I`` are computed independently from different paths. Its sign is chosen such
+that ``\text{Re}\{V I^* / P\} > 0``, as for a TEM mode, so that it does not depend on the
+directions of the voltage path and of the current loop. Note that independently specifying both
+voltage and current does not in general define a valid characteristic impedance [[11]](#References).
 For TEM modes ``Z_{VI} = Z_{PV}``; for other modes they will generally differ.
 
 The normal convention ``+\hat{\bm{n}}`` is the outward mesh normal. The mode eigenvalue gives
@@ -442,6 +466,25 @@ waves (an ``R = 0`` port supports no incident traveling wave).
 
 In the time domain, the time histories of the port voltages can be Fourier-transformed to
 get their frequency domain representation for scattering parameter calculation.
+
+For wave ports, the scattering parameters are the modal amplitudes of the computed field at each
+port, obtained from its reaction with the port mode, normalized as described in
+[Wave ports](#Wave-ports):
+
+```math
+S_{ij} = \frac{\displaystyle\int_{\Gamma_i}(\bm{E}\times\bm{H}^{inc}_i)\cdot\bm{n}\,dS}
+    {\displaystyle\int_{\Gamma_i}(\bm{E}^{inc}_i\times\bm{H}^{inc}_i)\cdot\bm{n}\,dS} - \delta_{ij} \,.
+```
+
+For a lossless propagating port mode, this is the projection
+``\int_{\Gamma_i}(\bm{E}\times[\bm{H}^{inc}_i]^*)\cdot\bm{n}\,dS`` onto the unit-power mode, and
+the scattering parameters have the standard power-wave interpretation. For a lossy port mode, the
+unconjugated reaction separates the incident and reflected modal amplitudes, also from those of
+other modes of the port cross-section, and the scattering parameters are those of the pseudo-waves
+of the port modes [[11]](#References). A uniform line between two ports with the same cross-section
+has ``S_{11} = S_{22} = 0`` and ``S_{21} = S_{12} = e^{-ik_n L}``, and the scattering matrix of a
+reciprocal structure is symmetric, up to the small differences in ``R^{inc}`` between lossy ports of
+different cross-sections.
 
 For wave ports, since the propagation constants are known, we allow additional de-embedding by
 specifying an offset distance ``d`` for each wave port:
@@ -577,13 +620,20 @@ eigenpair ``(\lambda, \bm{x})`` is accepted only if its full-space backward resi
 is below a tolerance derived from the port eigensolver tolerance and `"AdaptiveTol"`.
 Otherwise, or whenever the reduced problem does not yield the requested number of
 well-separated modes, the exact eigenvalue problem is solved instead and its eigenvector
-enriches the basis, up to a fixed capacity above the offline rank. The port mode
-reconstructed from an accepted reduced eigenvector feeds the excitation, the modal
-correction, and the S-parameter postprocessing exactly as an exact mode would.
+enriches the basis, up to a fixed capacity above the offline rank. The reduced model is
+only used while its solves are cheaper than exact ones: a reduced solve that takes at least
+as long as a typical exact solve at the same tolerances (the median of the previous exact
+solves, such as those of the offline phase) retires it, and the port modes are then solved
+exactly for the rest of the sweep. This happens for a small port cross-section with a port
+mode whose shape changes with frequency, as for a lossy line, where every exact solve adds a
+basis vector. The port mode reconstructed from an accepted reduced eigenvector feeds the
+excitation, the modal correction, and the S-parameter postprocessing exactly as an exact
+mode would.
 Complex-frequency queries (from the eigenmode solver) and the cross-section samples taken
 for circuit synthesis always use the exact solver. At the end of the sweep,
 *Palace* prints per-port statistics: the basis size and capacity, the numbers of reduced
-and exact solves, the number of fallbacks, and the worst accepted residual.
+and exact solves, the number of fallbacks, the worst accepted residual, and the compared
+times of a reduced and an exact solve.
 
 The sample-selection interpolation is based on the quadratic linearization and does not
 fully represent arbitrary non-quadratic frequency dependence. If the non-quadratic

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -348,6 +349,100 @@ palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-1
   };
 }
 
+// S-parameter check for a driven run on a uniform line between two wave ports, whose port
+// modes are lossy (complex k_n). Reference-free guards:
+//   (1) Matched ports, |S_jj| <= atol: the port boundary condition and the modal projection
+//       must use the complex k_n and the unconjugated reaction of the lossy mode. With the
+//       real part of k_n in the boundary condition and the conjugated (power) projection,
+//       a matched lossy line shows a spurious reflection of the order of |Im{k_n}| /
+//       Re{k_n}.
+//   (2) Reciprocity, |S_ij - S_ji| <= atol, and passivity, Sum_i |S_ij|^2 <= 1.
+// The transmission columns are also diffed against the reference data at the case
+// tolerances, while the reflection columns, at the level of the discretization error, are
+// only checked by (1).
+palace::test::CustomCheck TestWavePortMatchedLine(double atol,
+                                                  palace::test::RegressionOptions opts)
+{
+  return [atol, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
+  {
+    // Complex S[i][j] by row from the "|S[i][j]| (dB)" and "arg(S[i][j]) (deg.)" columns.
+    std::map<std::pair<int, int>, std::vector<std::complex<double>>> S;
+    for (auto &c : actual)
+    {
+      const std::string &hdr = c.header_text;
+      int i = 0, j = 0;
+      if (std::sscanf(hdr.c_str(), "|S[%d][%d]| (dB)", &i, &j) != 2)
+      {
+        continue;
+      }
+      const std::string arg_hdr =
+          "arg(S[" + std::to_string(i) + "][" + std::to_string(j) + "]) (deg.)";
+      const palace::Column *arg = nullptr;
+      for (auto &c_arg : actual)
+      {
+        if (c_arg.header_text == arg_hdr)
+        {
+          arg = &c_arg;
+        }
+      }
+      REQUIRE(arg != nullptr);
+      auto &v = S[{i, j}];
+      for (std::size_t r = 0; r < c.data.size(); r++)
+      {
+        v.push_back(std::polar(std::pow(10.0, c.data[r] / 20.0),
+                               arg->data[r] * std::numbers::pi / 180.0));
+      }
+    }
+    REQUIRE(!S.empty());
+    std::vector<std::string> reflection_columns;
+    for (const auto &[ij, v] : S)
+    {
+      const auto [i, j] = ij;
+      for (std::size_t r = 0; r < v.size(); r++)
+      {
+        INFO("row " << r + 1 << ": S[" << i << "][" << j << "] = " << v[r]);
+        if (i == j)
+        {
+          CHECK(std::abs(v[r]) <= atol);
+        }
+        else if (S.contains({j, i}))
+        {
+          CHECK(std::abs(v[r] - S.at({j, i})[r]) <= atol);
+        }
+      }
+      if (i == j)
+      {
+        reflection_columns.push_back("S[" + std::to_string(i) + "][" + std::to_string(j) +
+                                     "]");
+      }
+    }
+    std::map<int, std::vector<double>> power;
+    for (const auto &[ij, v] : S)
+    {
+      auto &p = power[ij.second];
+      p.resize(v.size(), 0.0);
+      for (std::size_t r = 0; r < v.size(); r++)
+      {
+        p[r] += std::norm(v[r]);
+      }
+    }
+    for (const auto &[j, p] : power)
+    {
+      for (std::size_t r = 0; r < p.size(); r++)
+      {
+        INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
+                    << "]|^2 = " << p[r]);
+        CHECK(p[r] <= 1.0);
+      }
+    }
+    auto opts_tx = opts;
+    opts_tx.excluded_columns.insert(opts_tx.excluded_columns.end(),
+                                    reflection_columns.begin(), reflection_columns.end());
+    palace::test::CompareCSVFiles(actual, reference, opts_tx);
+  };
+}
+
 // Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
 // port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
 // implied by the reflection coefficient in the sibling port-S.csv,
@@ -405,6 +500,60 @@ palace::test::CustomCheck TestWavePortInputImpedance(int port,
                   << ", Z_PV (1 + S) / (1 - S) = " << Z_S);
       CHECK(std::abs(Z - Z_S) <= opts.rtol * std::abs(Z_S));
     }
+  };
+}
+
+// Reference-free check of the complex characteristic impedances of a lossy quasi-TEM
+// boundary mode in mode-Z.csv. The power-voltage impedance Z_PV = |V|² / 2P* of the mode
+// must match the voltage-current impedance Z_VI = V / I: P is a modal quantity, while V and
+// I are line integrals of the field. On a line with a lossless dielectric, the shunt
+// admittance per unit length is iωC with C real, so that the characteristic impedance
+// Z0 = kₙ / ωC also has the phase of kₙ (from the sibling mode-kn.csv). The reference diff
+// of mode-Z.csv still runs first at the case tolerances.
+palace::test::CustomCheck
+TestBoundaryModeLossyImpedance(int mode, palace::test::RegressionOptions opts)
+{
+  return [mode, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+
+    auto find_header = [](palace::Table &table,
+                          const std::string &header) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+    palace::TableWithCSVFile kn_file((actual_path.parent_path() / "mode-kn.csv").string(),
+                                     /*load_existing_file=*/true);
+    palace::Column *re_z_pv = find_header(actual, "Re{Z_PV[1]} (Ohm)");
+    palace::Column *im_z_pv = find_header(actual, "Im{Z_PV[1]} (Ohm)");
+    palace::Column *re_z_vi = find_header(actual, "Re{Z_VI[1]} (Ohm)");
+    palace::Column *im_z_vi = find_header(actual, "Im{Z_VI[1]} (Ohm)");
+    palace::Column *re_kn = find_header(kn_file.table, "Re{kn} (1/m)");
+    palace::Column *im_kn = find_header(kn_file.table, "Im{kn} (1/m)");
+    REQUIRE(re_z_pv != nullptr);
+    REQUIRE(im_z_pv != nullptr);
+    REQUIRE(re_z_vi != nullptr);
+    REQUIRE(im_z_vi != nullptr);
+    REQUIRE(re_kn != nullptr);
+    REQUIRE(im_kn != nullptr);
+    const auto r = static_cast<std::size_t>(mode - 1);
+    REQUIRE(r < actual.n_rows());
+    REQUIRE(r < kn_file.table.n_rows());
+    const std::complex<double> Z_PV(re_z_pv->data[r], im_z_pv->data[r]);
+    const std::complex<double> Z_VI(re_z_vi->data[r], im_z_vi->data[r]);
+    const std::complex<double> kn(re_kn->data[r], im_kn->data[r]);
+    INFO("mode " << mode << ": Z_PV = " << Z_PV << ", Z_VI = " << Z_VI << ", kn = " << kn);
+    CHECK(std::abs(std::arg(kn)) > 0.1);  // Lossy enough for the check to be meaningful
+    CHECK(std::abs(Z_PV - Z_VI) <= opts.rtol * std::abs(Z_VI));
+    CHECK(std::abs(std::arg(Z_PV) - std::arg(kn)) <= opts.rtol * std::abs(std::arg(kn)));
   };
 }
 
@@ -1406,6 +1555,44 @@ TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
                                   "order2", opts);
 }
 
+// Circuit synthesis of the shorted guide of cylinder_driven_wave_tm_adaptive with a lossy
+// fill. The TM01 port mode (E_n != 0, so the modal correction W is folded into the
+// synthesized circuit) is lossy, and the synthesized port load must carry its attenuation
+// Im{k_n}: the coupled round-trip reconstructs S11 from the synthesized pencil to ~1e-8 of
+// the live field-derived port-S, which a fit of Re{k_n} only misses by up to 8e-3. The
+// synthesized eigenvalue estimates are not converged HDM eigenpairs here, so they are
+// presence-checked only.
+TEST_CASE("cylinder_driven_wave_tm_lossy_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
+                         "error-indicators.csv", "domain-E.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-6),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-7)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_lossy_synth.json",
+                                  "driven_wave_tm_lossy_synth", opts);
+}
+
 // Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port
 // iris-coupled slab-loaded guide carry the hybrid/LSM mode (Mode 3), so the modal
 // correction W is rank>=2 and enters the nonlinear eigensolver on the LHS. Dropping or
@@ -1570,6 +1757,68 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(2, opts);
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
                                   opts);
+}
+
+// Uniform coaxial line of finite-conductivity conductors between two wave ports, whose port
+// modes are lossy (|Im{k_n}| / Re{k_n} = 0.04 to 0.065 in the band). The ports are matched
+// to the line, so S_11 = S_22 = 0 up to the discretization error (below 1e-5 here), where
+// the real part of k_n in the port boundary condition and the conjugated projection gave
+// |S_11| = 0.07 to 0.12, and S_21 = S_12 = exp(-i k_n L) (diffed against the reference).
+// The wave port characteristic impedance Z_PV = |V|^2 / P* is complex for the lossy mode
+// (Im{Z_PV} = -3.5 to -2.1 Ohm), and the total-field input impedance of the excited port
+// must match Z_PV (1 + S11) / (1 - S11) up to the discretization error of the total-field
+// power, which reaches 1.3% at 15 GHz (a real Z_PV would be off by 5%).
+TEST_CASE("coaxial_wave_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestWavePortMatchedLine(1.0e-4, opts);
+  auto opts_z = opts;
+  opts_z.rtol = 2.0e-2;
+  opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(1, opts_z);
+  palace::test::RunRegressionCase("coaxial", "wave_conductivity.json", "wave_conductivity",
+                                  opts);
+}
+
+// Circuit synthesis of the uniform coaxial line of finite-conductivity conductors between
+// two wave ports of coaxial_wave_conductivity. The synthesized port loads must carry the
+// attenuation of the lossy quasi-TEM port modes, Im{k_n}: the coupled round-trip
+// reconstructs the 2x2 S from the synthesized pencil to ~1e-5 of the live field-derived
+// port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2. The
+// synthesized eigenvalues are the far, nonphysical poles of the matched line (Q < 1), so
+// they are presence-checked only.
+TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
+                         "error-indicators.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-4),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-5)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("coaxial", "wave_conductivity_synth.json",
+                                  "wave_conductivity_synth", opts);
 }
 
 // Mixed lumped + wave port circuit synthesis. Validates that the exported coupling maps
@@ -1951,8 +2200,9 @@ TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;  // abstol from the preceding cavity2d block
-  opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
-                           "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
+  opts.excluded_columns = {"Maximum",       "Minimum",          "Mean",
+                           "Error (Bkwd.)", "Error (Abs.)",     "Im{kn} (1/m)",
+                           "Im{n_eff}",     "Im{Z_PV[1]} (Ohm)"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   opts.custom_checks["mode-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
@@ -1966,14 +2216,40 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
-                           "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
+  opts.excluded_columns = {"Maximum",       "Minimum",          "Mean",
+                           "Error (Bkwd.)", "Error (Abs.)",     "Im{kn} (1/m)",
+                           "Im{n_eff}",     "Im{Z_PV[1]} (Ohm)"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   // The energies are below atol, so compare them with the relative tolerance only.
   opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_impedance.json", "thick_impedance",
                                   opts);
+}
+
+// The CPW of cpw2d_thick_impedance with finite-conductivity conductors (a 100 nm copper
+// film), whose CPW mode (mode 2) is lossy at 5 GHz (arg kₙ = -24 degrees). Its complex
+// power-voltage impedance must match the voltage-current impedance of a current loop around
+// the center conductor, and have the phase of kₙ: with the longitudinal-field term of the
+// Poynting power conjugated wrongly, Re{Z_PV} was 4.8 times too low (issue 1115).
+TEST_CASE("cpw2d_thick_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-10;
+  // The current around the center conductor nearly vanishes for the other mode (mode 1), so
+  // its Z_VI is not reproducible: the Z_VI of mode 2 enters the impedance check instead.
+  opts.excluded_columns = {"Maximum",           "Minimum",       "Mean",
+                           "Error (Bkwd.)",     "Error (Abs.)",  "Re{Z_VI[1]} (Ohm)",
+                           "Im{Z_VI[1]} (Ohm)", "L_VI[1] (H/m)", "C_VI[1] (F/m)"};
+  opts.skip_rowcount = true;
+  opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
+  opts.custom_checks["mode-Z.csv"] = TestBoundaryModeLossyImpedance(2, opts);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_conductivity.json",
+                                  "thick_conductivity", opts);
 }
 
 // 2D mode analysis from a 3D mesh: back to reltol=1e-4, atol still 1e-10.

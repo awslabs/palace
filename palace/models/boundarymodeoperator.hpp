@@ -85,8 +85,8 @@ public:
   void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, ComplexVector &et,
                             ComplexVector &en) const;
 
-  // Poynting power P = (1/2) conj(kn)/omega · etᴴ Btt et + i/(2·omega) · etᴴ Atn En for
-  // physical (et, En). Used for mode power normalization and impedance postprocessing.
+  // Poynting power P = (1/2) conj(kn)/omega · etᴴ Btt et - i/(2·omega) · conj(etᴴ Atn En)
+  // for physical (et, En). Used for mode power normalization and impedance postprocessing.
   std::complex<double> ComputePoyntingPower(double omega, std::complex<double> kn,
                                             const ComplexVector &et,
                                             const ComplexVector &en) const;

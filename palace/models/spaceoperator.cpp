@@ -1482,9 +1482,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // all frequency-dependent boundary terms (2nd-order farfield ABC, surface conductivity,
   // rational surface impedance, numeric wave ports) are evaluated at the genuinely complex
   // frequency (ω = -i·λ) so the assembled A2(λ) is the exact analytic continuation. For
-  // real ω the operators' complex overloads reduce to their double overloads, except the
-  // wave-port term, which additionally carries the line attenuation -Im(k_n)·M on the
-  // real slot (the real-ω overload intentionally stamps only Re(k_n)).
+  // real ω the operators' complex overloads reduce to their double overloads.
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
@@ -1625,6 +1623,22 @@ void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_r
 
   linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
   linalg::SetSubVector(Et_primary.Imag(), GetNDDbcTDofLists().back(), 0.0);
+
+  // The phase of the port mode is fixed by its S-parameter normalization (a real
+  // unconjugated reaction), which leaves a lossy mode of uniform phase, such as a TEM mode
+  // of a lossy line, with a small nonzero phase φ. Remove it, with eᵀe = |e|² e^{2iφ} for
+  // e = |e| e^{iφ}, so that such a mode adds a single real vector to the synthesis basis
+  // rather than two parallel ones (the basis only depends on the span of the mode field).
+  const double rr = linalg::Dot(GetComm(), Et_primary.Real(), Et_primary.Real());
+  const double ii = linalg::Dot(GetComm(), Et_primary.Imag(), Et_primary.Imag());
+  const double ri = linalg::Dot(GetComm(), Et_primary.Real(), Et_primary.Imag());
+  const std::complex<double> ee(rr - ii, 2.0 * ri);
+  if (std::abs(ee) > 0.0)
+  {
+    const std::complex<double> rot = std::polar(1.0, -0.5 * std::arg(ee));
+    ComplexVector::AXPBY(rot, Et_primary.Real(), Et_primary.Imag(), 0.0, Et_primary.Real(),
+                         Et_primary.Imag());
+  }
 }
 
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
