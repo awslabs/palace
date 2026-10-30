@@ -440,6 +440,64 @@ std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMa
   return std::unique_ptr<mfem::HypreParMatrix>(mfem::ParAdd(&B, &I));
 }
 
+std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
+                                            const std::vector<int> &region_attributes)
+{
+  auto &pmesh = const_cast<mfem::ParMesh &>(mesh);
+  pmesh.ExchangeFaceNbrData();
+  auto in_region = [&](int a)
+  { return std::ranges::find(region_attributes, a) != region_attributes.end(); };
+  const int n = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::vector<int> count(2 * n, 0);  // per attribute: elements, those bordering others
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    int f, o, e1, e2, inf1, inf2;
+    mesh.GetBdrElementFace(be, &f, &o);
+    mesh.GetFaceElements(f, &e1, &e2);
+    mesh.GetFaceInfos(f, &inf1, &inf2);
+    // The second element of a face shared with another process is a face neighbor.
+    const int a2 = (e2 >= 0)     ? mesh.GetAttribute(e2)
+                   : (inf2 >= 0) ? pmesh.face_nbr_elements[-1 - e2]->GetAttribute()
+                                 : 0;
+    const int a = mesh.GetBdrAttribute(be) - 1;
+    count[2 * a]++;
+    count[2 * a + 1] += !in_region(mesh.GetAttribute(e1)) || (a2 > 0 && !in_region(a2));
+  }
+  Mpi::GlobalSum(2 * n, count.data(), mesh.GetComm());
+  std::vector<int> attrs;
+  for (int a = 0; a < n; a++)
+  {
+    if (count[2 * a] > 0 && count[2 * a + 1] == 0)
+    {
+      attrs.push_back(a + 1);
+    }
+  }
+  return attrs;
+}
+
+bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,
+                   const std::vector<int> &region_attributes)
+{
+  auto &pmesh = const_cast<mfem::ParMesh &>(mesh);
+  mfem::DenseMatrix point(pmesh.SpaceDimension(), 1);
+  for (int d = 0; d < pmesh.SpaceDimension(); d++)
+  {
+    point(d, 0) = x[d];
+  }
+  mfem::Array<int> elem;
+  mfem::Array<mfem::IntegrationPoint> ip;
+  pmesh.FindPoints(point, elem, ip, false);
+  int found[2] = {0, 0};  // anywhere, in the region
+  if (elem[0] >= 0)
+  {
+    found[0] = 1;
+    found[1] = std::ranges::find(region_attributes, pmesh.GetAttribute(elem[0])) !=
+               region_attributes.end();
+  }
+  Mpi::GlobalSum(2, found, mesh.GetComm());
+  return found[0] > 0 && found[1] == found[0];
+}
+
 std::string RegionMeshPath(const std::string &model_path)
 {
   std::filesystem::path p(model_path);

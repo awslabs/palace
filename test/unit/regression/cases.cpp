@@ -13,17 +13,22 @@
 #include <cmath>
 #include <complex>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <numbers>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include <Eigen/Dense>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "models/drivensubstructure.hpp"
 #include "regression_helpers.hpp"
+#include "utils/communication.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace
@@ -1513,6 +1518,304 @@ TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
                                   "magnetostatic_two_sided_port_online_region.json",
                                   "two_sided_port_online_region", opts);
 }
+
+#if defined(MFEM_USE_MUMPS)  // driven substructuring needs MUMPS
+
+// Driven substructuring with exact per-frequency condensation: lumped ports across two
+// holes of a PEC film crossing the interface, one in the region (lossy dielectric) and one
+// in the environment. The references are regular simulations of the same configuration.
+TEST_CASE("substructuring_driven", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_driven", "driven.json", "lumped", opts);
+}
+
+// The offline sweep of substructuring_driven, interrupted after three of its six results
+// (with the model halfway through its second record) and restarted from the fourth: the
+// references are those of the uninterrupted sweep, whose model it reproduces.
+TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regression]")
+{
+  namespace fs = std::filesystem;
+  using palace::DrivenSubstructureModel;
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  auto record_bytes = [](const DrivenSubstructureModel &m)
+  {
+    const auto sz = m.PartSizes();
+    return sizeof(std::complex<double>) * (sz[0] + sz[1] + sz[2] + sz[3]);
+  };
+  opts.after_setup = [&](const fs::path &dir)
+  {
+    if (!palace::Mpi::Root(palace::Mpi::World()))
+    {
+      return;
+    }
+    // The tables: the first row, and the second without the second excitation (the
+    // columns with its index last).
+    auto split = [](const std::string &line)
+    {
+      std::vector<std::string> cells;
+      std::stringstream ss(line);
+      for (std::string cell; std::getline(ss, cell, ',');)
+      {
+        cells.push_back(cell);
+      }
+      return cells;
+    };
+    for (const auto &entry : fs::directory_iterator(dir / "postpro" / "offline"))
+    {
+      if (entry.path().extension() != ".csv")
+      {
+        continue;
+      }
+      std::ifstream in(entry.path());
+      std::string header, first, second;
+      std::getline(in, header);
+      std::getline(in, first);
+      std::getline(in, second);
+      in.close();
+      const auto names = split(header);
+      auto cells = split(second);
+      std::string row;
+      for (std::size_t i = 0; i < cells.size(); i++)
+      {
+        const auto last = names[i].rfind('[');
+        if (last != std::string::npos && names[i].compare(last, 3, "[2]") == 0)
+        {
+          cells[i] = std::string(cells[i].size() - 4, ' ') + "NULL";
+        }
+        row += (i > 0 ? "," : "") + cells[i];
+      }
+      std::ofstream(entry.path()) << header << "\n" << first << "\n" << row << "\n";
+    }
+    // The model: its first record and half of its second.
+    const auto model = dir / "environment_model.bin";
+    fs::copy_file(model, dir / "environment_model_full.bin");
+    DrivenSubstructureModel m;
+    m.ReadHeader(model.string(), MPI_COMM_SELF);
+    const auto bytes = record_bytes(m);
+    fs::resize_file(model, fs::file_size(model) - 2 * bytes + bytes / 2);
+  };
+  opts.after_run = [&](const fs::path &dir)
+  {
+    if (!palace::Mpi::Root(palace::Mpi::World()))
+    {
+      return;
+    }
+    const auto path = (dir / "environment_model.bin").string(),
+               full = (dir / "environment_model_full.bin").string();
+    DrivenSubstructureModel m, ref;
+    m.ReadHeader(path, MPI_COMM_SELF);
+    ref.ReadHeader(full, MPI_COMM_SELF);
+    CHECK(m.SameHeader(ref, 1.0e-10));
+    CHECK(m.NumRecords(path) == 3);
+    CHECK(fs::file_size(path) == fs::file_size(full));
+    for (int j = 0; j < std::min(m.NumRecords(path), ref.NumRecords(full)); j++)
+    {
+      const auto x = m.ReadFlatRecord(path, j), y = ref.ReadFlatRecord(full, j);
+      double diff = 0.0, scale = 0.0;
+      for (std::size_t i = 0; i < x.size(); i++)
+      {
+        diff = std::max(diff, std::abs(x[i] - y[i]));
+        scale = std::max(scale, std::abs(y[i]));
+      }
+      CHECK(diff <= 1.0e-10 * scale);
+    }
+  };
+  palace::test::RunRegressionCase("substructuring_driven", "driven_offline_restart.json",
+                                  "offline", opts);
+}
+
+// Online driven substructuring: an offline sweep saves the environment model, and an online
+// sweep at two of its frequencies solves a redesigned region (permittivity 4 -> 5) against
+// it. Environment-port voltages come from the model; the region's energy is written, the
+// environment's (and the totals) are not. The references are a regular simulation of the
+// redesigned configuration, in the online run's columns.
+TEST_CASE("substructuring_driven_online", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online.json", "online",
+                                  opts);
+}
+
+// The online sweep of substructuring_driven_online with surface fluxes: the two the region
+// holds are written, and those in or crossing into the environment are skipped.
+TEST_CASE("substructuring_driven_online_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_flux.json",
+                                  "online_flux", opts);
+}
+
+// Adaptive driven substructuring: an offline adaptive sweep samples the environment
+// greedily for a rational model of its condensed data, and an online sweep at frequencies
+// between the samples solves the redesigned region of substructuring_driven_online against
+// it. The references are a regular simulation of the redesigned configuration, in the
+// online run's columns.
+TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_adaptive.json",
+                                  "online_adaptive", opts);
+}
+
+// Adaptive online driven substructuring: the redesigned region of
+// substructuring_driven_adaptive reduced by Galerkin projection onto its fields at greedily
+// chosen frequencies, against the saved rational model. The references are a regular
+// simulation of the redesigned configuration, in the online run's columns.
+TEST_CASE("substructuring_driven_adaptive_online", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_reduced.json",
+                                  "online_reduced", opts);
+}
+
+// Driven substructuring with a wave port (a TM mode of a shorted circular waveguide, whose
+// modal terms border the factored side), in the region; and in the environment, with an
+// online sweep of a redesigned region (permittivity 2.08 -> 2.3) against a saved model.
+// The references are regular simulations, in the substructured runs' columns.
+TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave.json", "wave",
+                                  opts);
+}
+
+TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_wave_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave_online.json",
+                                  "online", opts);
+}
+
+// An inactive wave port (without its modal terms, observed through its mode) in the
+// environment, with the active one in the region: the online sweep of a redesigned region
+// (permittivity 2.08 -> 2.3) against a saved model. The references are a regular
+// simulation, in the online run's columns.
+TEST_CASE("substructuring_driven_wave_inactive_online",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_wave_inactive_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_wave",
+                                  "driven_wave_inactive_online.json", "online_inactive",
+                                  opts);
+}
+
+// Online runs on the mesh of the region written by the offline run (with the environment's
+// ports), against the references of the online runs on the full mesh.
+TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_region.json",
+                                  "online_region", opts);
+}
+
+// Absorbing walls crossing Γ, of which the mesh of the region holds the region's part only:
+// an online run on it skips their surface fluxes, as the model records (and writes those
+// in the region). The references are a regular simulation, in the online run's columns.
+TEST_CASE("substructuring_driven_absorbing_region", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_absorbing.json";
+  palace::test::RunRegressionCase("substructuring_driven",
+                                  "driven_online_absorbing_region.json",
+                                  "online_absorbing_region", opts);
+}
+
+TEST_CASE("substructuring_driven_reduced_region", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven",
+                                  "driven_online_reduced_region.json",
+                                  "online_reduced_region", opts);
+}
+
+TEST_CASE("substructuring_driven_wave_region", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_wave_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_wave",
+                                  "driven_wave_online_region.json", "online_region", opts);
+}
+
+// A region strictly inside the box (its mesh is smaller than the model's reference length)
+// and a PEC sheet in the environment ending on an edge of Γ (Dirichlet DOFs of the region
+// from the environment), redesigned: against a regular simulation of the redesign. The
+// sheet is not cracked (the default for PEC): cracking it fails in the mesh preprocessing
+// on 24 or more processes, also without substructuring.
+TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_box", "driven_online_region.json",
+                                  "online_region", opts);
+}
+
+#endif
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature

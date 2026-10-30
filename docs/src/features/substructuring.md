@@ -14,8 +14,9 @@ an **environment** (everything else). The environment is condensed onto its inte
 region, once; each redesign then only solves the region against the condensed environment.
 
 Substructuring is available for [electrostatic](../guide/problem.md#Electrostatic-problems) capacitance
-extraction and [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction with
-flux-loop excitations.
+extraction, [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction, and
+[driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) frequency sweeps (see
+[Driven problems](#Driven-problems)).
 
 ## How it works
 
@@ -172,6 +173,71 @@ physical circuit. A current that does not close has no magnetostatic solution an
     [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic-inactiveports)):
     every excitation is solved against the same condensed environment.
 
+## Driven problems
+
+For a [driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) simulation the environment operator depends on
+the frequency, and substructuring condenses it exactly at each frequency of a uniform sweep
+(`"Solver"/"Driven"` with `"MinFreq"`, `"MaxFreq"` and `"FreqStep"`): one partial
+factorization of the environment gives ``\bm{S}_E(\omega)``, and the region is factored against
+it once for all excitations. Lumped ports, impedance, absorbing and conductivity boundaries, and
+lossy materials may lie in the region, in the environment, or on both sides, and wave ports
+inside either side, away from the interface (their modal terms border that side's
+factorization); the outputs are those of a regular simulation (port S-parameters, voltages and
+currents, domain energies and fields).
+
+With `"SaveModel"`, an offline sweep also saves, per frequency, ``\bm{S}_E(\omega)``, the
+condensation of the environment's sources onto the interface, and the condensed voltages of the
+environment's lumped ports and wave port overlaps. An `"Online"` sweep at saved frequencies (any subset of them, matched
+by value) then factors only the region, which may be redesigned (materials, re-meshing) and run
+on a different number of processes, as long as the environment, its excitations and the
+interface are unchanged. The online field is known in the region and on the interface only:
+
+  - S-parameters of all ports, voltages and currents of the lumped ports, and the energies of
+    lumped elements, are those of a regular simulation;
+  - domain energies are written for the `"Domains"/"Postprocessing"/"Energy"` entries inside
+    the region, without the total energies and participation ratios (and the power of the
+    environment's ports, and the voltage of its wave ports, are not available);
+  - surface fluxes (`"Boundaries"/"Postprocessing"/"SurfaceFlux"`) on boundaries that border only
+    region elements (on the mesh of the region, as the model records), and probes in the region, are
+    those of a regular simulation; the others are skipped;
+  - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
+
+The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also
+holds the environment elements at the environment's ports, whose excitations and outputs need
+them. On large designs, reading and partitioning the full mesh take most of an online sweep's
+time.
+
+A restarted sweep ([`"Restart": x`](../config/reference.md#config-solver-driven-restart)) continues
+in the order of its solves, all excitations at a frequency before the next one, after its first
+``x - 1`` results. An offline sweep continues the model it was saving, so it runs in the same
+configuration on as many processes.
+
+An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain) (nonzero
+`"AdaptiveTol"`) instead condenses the environment at frequencies chosen greedily, as the
+adaptive fast frequency sweep chooses its samples, for a rational model of the condensed data: a
+barycentric interpolant with one denominator for all of it. Sampling stops when the model
+predicts `"AdaptiveConvergenceMemory"` consecutive new samples to `"AdaptiveTol"` (relative to
+the condensed data), or at `"AdaptiveMaxSamples"` samples. The model's passivity is then checked
+between the samples (the imaginary part of the condensed environment operator, the power the
+environment absorbs, is positive semidefinite), and a violation beyond `"AdaptiveTol"` adds a
+sample there. The region is then reduced as the adaptive fast frequency sweep reduces a whole
+device, by Galerkin projection onto its fields at greedily chosen frequencies, which gives every
+frequency of the sweep with the outputs of an online sweep. Saved, such a model serves online
+sweeps at any frequency between its lowest and highest samples, reduced the same way with a
+nonzero `"AdaptiveTol"`, or solved frequency by frequency.
+
+A saved model needs the lumped ports away from the interface, since their excitation and
+voltage would then depend on both sides.
+
+!!! note
+
+    Driven substructuring needs MUMPS, which factors the environment and the region at any size.
+    Floquet ports and periodic boundaries (which make the system non-symmetric),
+    `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
+    supported yet, nor, from a model, interface dielectric and far-field postprocessing. The model
+    holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry
+    of its lower triangle).
+
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 
 The [transmon example](../examples/transmon.md) mesh contains a transmon island, a feedline, and
@@ -300,3 +366,32 @@ julia --project -e 'include("flux_sheet.jl"); generate_flux_sheet()'
 palace flux_sheet_offline.json
 palace flux_sheet_online.json
 ```
+
+## [Example: CPW resonator grid](@id substructuring-cpw-example)
+
+The script
+[`examples/substructuring/cpw_resonator_grid.jl`](https://github.com/awslabs/palace/blob/main/examples/substructuring/cpw_resonator_grid.jl)
+generates the mesh of a ``3 \times 4`` grid of open-ended CPW resonators with DeviceLayout.jl:
+the resonators of each row are coupled to a shared feedline with a lumped port at each end. The
+script
+[`examples/substructuring/cpw_resonator_grid_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/cpw_resonator_grid_substructuring.py)
+assigns the elements in a box around resonator 6, in the middle row, about 8% of the mesh, to the
+region. The middle feedline crosses the interface, and all ports are in the environment:
+
+```bash
+cd examples/substructuring
+julia --project -e 'include("cpw_resonator_grid.jl"); generate_cpw_resonator_grid()'
+python3 cpw_resonator_grid_substructuring.py
+palace cpw_resonator_grid.json           # regular sweep, for comparison
+palace cpw_resonator_grid_offline.json   # condense the environment, save the model
+palace cpw_resonator_grid_online.json    # reuse the model: only the region is solved
+palace cpw_resonator_grid_redesign.json  # region substrate permittivity 0.4% higher
+```
+
+The sweep resolves the resonance of resonator 6 near 18.29 GHz in the transmission between the
+ports of the middle feedline (`port-S.csv`), and the runs agree to the tolerance of the regular
+simulation's linear solver. The redesign moves the resonance to 18.255 GHz, as a regular
+simulation of the redesigned device does. Each online frequency factors only the region: on a
+192-core node, an online sweep is about 8 times faster than a regular one at the example's
+linear solver tolerance, 5 times at Palace's default. The mesh has about 1.7 million unknowns,
+so the runs are best on a cluster node.
