@@ -340,8 +340,8 @@ public:
              const std::string &message) override
   {
     const std::string path = ptr.to_string();
-    // These message strings are implementation details of json-schema-validator 2.4.0;
-    // update them when upgrading the dependency.
+    // These message strings are implementation details of json-schema-validator (checked
+    // against 2.4.0 and 2.4.1); update them when upgrading the dependency.
     const bool is_enum_failure =
         message.find("instance not found in required enum") != std::string::npos ||
         message.find("instance not const") != std::string::npos ||
