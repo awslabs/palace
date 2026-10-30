@@ -922,6 +922,7 @@ and `Patches` lists:
   "Library": "process-library.json",
   "TargetInterfaces": [1, 2, 3],
   "UnmatchedPolicy": "Warn",
+  "GeometryFailurePolicy": "RecordRaw",
   "PatchConstruction": "Features",
   "CorrectionMode": "Both",
   "TranslationalDomainCorrection": "FixedTrace",
@@ -1037,6 +1038,31 @@ missing cluster signatures, and unbracketed pair separations are unsupported. Wi
 `UnmatchedPolicy` set to `Warn`, Palace reports the unsupported topology and disables
 correction for the complete interface group, avoiding a partial correction. `Error`
 instead terminates the run.
+
+`GeometryFailurePolicy` (`"RecordRaw"` or `"FailClosed"`; absent = `RecordRaw` on a solve
+run and `FailClosed` on `--surface-response-preflight`) governs the former abort sites of
+the identification / placement that a valid configuration and library can still reach
+through the DEVICE GEOMETRY (a library matching no feature of the device, every coupon
+leaving the mesh, a metal perimeter that does not exist, two coupon supports overlapping
+without an owner, a refused placement, an alias whose key does not reproduce the
+identification's). Under `RecordRaw` the affected feature / patch is EXCLUDED, its raw
+within-R energy stays in the raw term exactly like a `DomainBoundary` claim (no new energy
+term), the run continues, and the fallback is NEVER silent: one entry per fired site under
+`SurfaceResponse.Diagnostics.GeometryFallbacks` in `palace.json` (class, site, reason,
+features / patches / models, length, the raw share per interface type by length and, on
+the electrostatic path, by within-R energy), the rows of
+`surface-response-geometry-fallbacks.csv`, and a `*** LOW CONFIDENCE ... ***` banner closing
+the run summary with the raw share per type. A whole-run fallback (no model or patch
+applies) runs the thin solve without the correction and reports 100 % per type by length
+and by energy on the preflight and the solve alike (its entry's length is the total
+selected perimeter length). Under `FailClosed` the same entries are collected and the run
+aborts with their summary once the placement is complete (before the operator's matrices);
+the preflight writes `surface-response-requirements.json`
+(with `Identification.Diagnostics.GeometryFallbacks` and `Summary.GeometryFallbacks`) before
+it aborts, so the manifest predicts every geometry fallback of the solve (a Missing-only
+manifest is the normal discovery state: a solve with no matched feature is predicted by
+`Summary.Counts`, not by a fallback entry). A configuration with fallbacks is never written
+to the response-geometry cache. Nothing is written when no site fires.
 
 In 3D, targets selecting the same automatically extracted physical metal segments form
 one interface group. Palace infers the process normal and the in-plane direction from

@@ -7826,16 +7826,55 @@ private:
 
 }  // namespace
 
+// H7a (readiness hardening, USER decision 1000 (b) / 1001): under a ledger a refused alias
+// (the context digest / the claims-only key of the feature differ from the alias's) is
+// recorded as KeyMismatch and the resolver returns null (the feature stays Missing: raw);
+// without a ledger (the library BUILD's callers of record) the former aborts stand.
+namespace
+{
+bool RecordKeyMismatch(GeometryFallbackLedger *geometry_ledger, const char *site,
+                       const std::string &model_name, const LegacyContractAlias &alias,
+                       const IdentifiedFeature &feature, const std::string &reason)
+{
+  if (!geometry_ledger)
+  {
+    return false;
+  }
+  GeometryFallbackData entry;
+  entry.cls = "KeyMismatch";
+  entry.site = site;
+  entry.reason = reason;
+  entry.what = "feature";
+  entry.features = {feature.id};
+  entry.models = {model_name, alias.key};
+  entry.length = feature.length;
+  entry.example_origin = feature.origin;
+  entry.topology = feature.type;
+  geometry_ledger->Record(std::move(entry));
+  return true;
+}
+}  // namespace
+
 nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                                           const nlohmann::json &model_signature,
                                           const LegacyContractAlias &alias,
-                                          const IdentifiedFeature &feature)
+                                          const IdentifiedFeature &feature,
+                                          GeometryFallbackLedger *geometry_ledger)
 {
   MFEM_VERIFY(feature.hash == alias.key,
               "Legacy-contract alias of model \""
                   << model_name << "\" resolved for a feature whose key " << feature.hash
                   << " is not the alias key " << alias.key << "!");
   const std::string digest = SpatialSupportContextDigest(feature.signature);
+  if (!(!digest.empty() && digest == alias.context_digest) &&
+      RecordKeyMismatch(geometry_ledger, "H7a/ResolveLegacyContractAlias:context-digest",
+                        model_name, alias, feature,
+                        "Legacy-contract alias " + alias.key + " of model \"" + model_name +
+                            "\": the feature's context digest " + digest +
+                            " does not match the alias's " + alias.context_digest))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!digest.empty() && digest == alias.context_digest,
               "Legacy-contract alias "
                   << alias.key << " of model \"" << model_name
@@ -7852,6 +7891,16 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
           : std::string{};
   const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
   (void)model_key;
+  if (!(!claims_hash.empty() && claims_hash == model_hash) &&
+      RecordKeyMismatch(geometry_ledger, "H7a/ResolveLegacyContractAlias:claims-key",
+                        model_name, alias, feature,
+                        "Legacy-contract alias " + alias.key + " of model \"" + model_name +
+                            "\": the feature's claims-only key " + claims_hash +
+                            " is not the legacy model's key " + model_hash +
+                            " (the alias names another geometry)"))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
               "Legacy-contract alias "
                   << alias.key << " of model \"" << model_name
@@ -7894,10 +7943,21 @@ std::string RoleInsensitiveContextDigest(const nlohmann::json &signature)
 
 nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
     const std::string &model_name, const nlohmann::json &model_signature,
-    const LegacyContractAlias &alias, const IdentifiedFeature &feature)
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature,
+    GeometryFallbackLedger *geometry_ledger)
 {
   const std::string digest = SpatialSupportContextDigest(feature.signature);
   const std::string role_insensitive = RoleInsensitiveContextDigest(feature.signature);
+  if (!(!role_insensitive.empty() &&
+        role_insensitive == RoleInsensitiveContextDigest(alias.context)) &&
+      RecordKeyMismatch(
+          geometry_ledger, "H7a/ResolveRoleInsensitiveLegacyContractAlias:context-digest",
+          model_name, alias, feature,
+          "Role-insensitive legacy-contract alias " + alias.key + " of model \"" +
+              model_name + "\": the role-insensitive context digests differ"))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!role_insensitive.empty() &&
                   role_insensitive == RoleInsensitiveContextDigest(alias.context),
               "Role-insensitive legacy-contract alias "
@@ -7909,6 +7969,16 @@ nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
           : std::string{};
   const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
   (void)model_key;
+  if (!(!claims_hash.empty() && claims_hash == model_hash) &&
+      RecordKeyMismatch(
+          geometry_ledger, "H7a/ResolveRoleInsensitiveLegacyContractAlias:claims-key",
+          model_name, alias, feature,
+          "Role-insensitive legacy-contract alias " + alias.key + " of model \"" +
+              model_name + "\": the feature's claims-only key " + claims_hash +
+              " is not the legacy model's key " + model_hash))
+  {
+    return nlohmann::json();
+  }
   MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
               "Role-insensitive legacy-contract alias "
                   << alias.key << " of model \"" << model_name
@@ -8150,7 +8220,7 @@ IdentificationResult RunGeometryIdentification(
     std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr,
     std::map<int, FeatureCornerMatch> *corner_matches = nullptr,
     const mfem::ParMesh *mesh = nullptr, const ResponseCorrectionData *request = nullptr,
-    MirrorBandResult *mirror = nullptr)
+    MirrorBandResult *mirror = nullptr, GeometryFallbackLedger *geometry_ledger = nullptr)
 {
   const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
@@ -8479,7 +8549,14 @@ IdentificationResult RunGeometryIdentification(
       // Legacy-contract alias (USER decision 283): the library lists this contract-3 key
       // explicitly for a legacy model; verified (digest, claims) or aborted, recorded.
       feature.legacy_contract = ResolveLegacyContractAlias(
-          alias->model, alias->model_signature, alias->alias, feature);
+          alias->model, alias->model_signature, alias->alias, feature, geometry_ledger);
+      if (feature.legacy_contract.is_null())
+      {
+        // H7a: the alias refused under the ledger (KeyMismatch recorded): Missing.
+        feature.match_note = "legacy contract alias of \"" + alias->model +
+                             "\" refused (KeyMismatch geometry fallback): Missing";
+        return false;
+      }
       // The legacy model's Edges and basis points live in the claims-only canonical frame:
       // the feature is placed in that frame (the contract-3 frame minimises Box + Context
       // and may differ by a rotation / reflection), so that the patches are the legacy
@@ -8504,7 +8581,15 @@ IdentificationResult RunGeometryIdentification(
       // Role-insensitive legacy alias (decision 899 B2, OI-ROLEKEY): recorded, placed in
       // the claims-only frame exactly as the exact alias.
       feature.legacy_contract = ResolveRoleInsensitiveLegacyContractAlias(
-          role_alias->model, role_alias->model_signature, role_alias->alias, feature);
+          role_alias->model, role_alias->model_signature, role_alias->alias, feature,
+          geometry_ledger);
+      if (feature.legacy_contract.is_null())
+      {
+        feature.match_note = "role-insensitive legacy contract alias of \"" +
+                             role_alias->model +
+                             "\" refused (KeyMismatch geometry fallback): Missing";
+        return false;
+      }
       feature.origin = feature.claims_origin;
       feature.axes = feature.claims_axes;
       feature.chirality = feature.claims_chirality;
@@ -10577,10 +10662,15 @@ FeaturePatchSummary BuildFeaturePatches(
     const std::map<int, FeatureCurvatureMatch> &curved_matches = {},
     const std::map<int, FeatureCornerMatch> &corner_matches = {},
     const std::vector<EdgeSegment3D> &image_segments = {},
-    const std::vector<MirrorPlane> &mirror_planes = {})
+    const std::vector<MirrorPlane> &mirror_planes = {},
+    GeometryFallbackLedger *geometry_ledger = nullptr)
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
+  // H5 (readiness hardening): the features whose placement was refused (the Context
+  // disagreement / the A10 context test) under a ledger: NOT placed, read as Missing by
+  // the uncovered-portion pass below (their perimeter stays raw).
+  std::set<int> placement_rejected;
   // The spatial cluster models' trace meshes, read once per library model (the probe snap).
   std::map<std::size_t, TraceMeshData> trace_meshes;
   std::map<std::size_t, const EdgeSegment3D *> framed;
@@ -11498,6 +11588,74 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto context_agreement = CompareClusterContexts(
             signature.value("Context", nlohmann::json::array()),
             feature.signature.value("Context", nlohmann::json(nullptr)));
+        // H5a / H5b (readiness hardening, USER decision 1000 (b) / 1001): a refused
+        // placement makes the feature Missing (raw) with the record PlacementRejected;
+        // the matched counters are rolled back; the former abort is the FailClosed
+        // summary's. The runtime model registered above stays (0 patches).
+        auto RejectPlacement = [&](const char *site, const std::string &reason)
+        {
+          summary.matched_features--;
+          summary.matched_length -= feature_length;
+          summary.unmatched_features++;
+          summary.unmatched_length += feature_length;
+          auto &entry = summary.unmatched_by_type[feature.type];
+          entry.first++;
+          entry.second += feature_length;
+          if (diagnostics)
+          {
+            for (const auto &portion : feature.portions)
+            {
+              if (IsImage(portion))
+              {
+                continue;
+              }
+              const double length = portion.s1 - portion.s0;
+              diagnostics->matched_length -= length;
+              for (const auto &[type, target] : framed.at(portion.segment)->targets)
+              {
+                (void)type;
+                diagnostics->matched_length_by_interface[target] -= length;
+              }
+            }
+          }
+          placement_rejected.insert(feature.id);
+          GeometryFallbackData record;
+          record.cls = "PlacementRejected";
+          record.site = site;
+          record.reason = reason;
+          record.what = "feature";
+          record.features = {feature.id};
+          record.models = {model.name};
+          record.length = feature_length;
+          record.example_origin = patch.origin;
+          record.topology = feature.type;
+          for (const auto &framed_portion : portions)
+          {
+            for (const auto &[type, target] : framed_portion.segment->targets)
+            {
+              (void)type;
+              if (std::find(record.interfaces.begin(), record.interfaces.end(), target) ==
+                  record.interfaces.end())
+              {
+                record.interfaces.push_back(target);
+              }
+            }
+          }
+          geometry_ledger->Record(std::move(record));
+        };
+        if (geometry_ledger &&
+            !(feature.signature.contains("Context") && context_agreement.agrees))
+        {
+          RejectPlacement(
+              "H5a/BuildFeaturePatches:context-beyond-near-match",
+              fmt::format(
+                  "The Context of model \"{}\" differs from the matched feature's "
+                  "beyond the cluster quantum near-match (max {:g} quanta over {:d} "
+                  "differing number(s), or another topology)",
+                  model.name, context_agreement.max_delta_quanta,
+                  context_agreement.differing_paths.size()));
+          continue;
+        }
         MFEM_VERIFY(
             feature.signature.contains("Context") && context_agreement.agrees,
             "The Context of model \""
@@ -11536,6 +11694,7 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto &support_box = patch.provenance.support_box;
         const double span_band =
             std::max(support_box[2] - support_box[0], support_box[3] - support_box[1]) * R;
+        std::optional<double> context_deviation;
         for (const auto &entry : signature.at("Context"))
         {
           const auto P = entry.at("P").get<std::array<double, 4>>();
@@ -11543,6 +11702,11 @@ FeaturePatchSummary BuildFeaturePatches(
           {
             const double distance = MirrorCompletePerimeterDistance(
                 identification, q, mirror_planes, span_band, tolerance);
+            if (geometry_ledger && distance > tolerance)
+            {
+              context_deviation = std::max(context_deviation.value_or(0.0), distance);
+              continue;
+            }
             MFEM_VERIFY(distance <= tolerance,
                         "Context piece of model \""
                             << model.name << "\" placed for feature " << feature.id
@@ -11551,6 +11715,17 @@ FeaturePatchSummary BuildFeaturePatches(
                                "mis-keyed library or a placement frame defect)!");
             checked++;
           }
+        }
+        if (context_deviation)
+        {
+          RejectPlacement(
+              "H5b/BuildFeaturePatches:context-piece-off-device-edge",
+              fmt::format(
+                  "Context piece of model \"{}\" placed for feature {:d} lies {:g} R "
+                  "from every device edge (A10 extended to the context: a mis-keyed "
+                  "library or a placement frame defect)",
+                  model.name, feature.id, *context_deviation / R));
+          continue;
         }
         summary.context_points_checked += checked;
       }
@@ -11657,7 +11832,8 @@ FeaturePatchSummary BuildFeaturePatches(
   result.uncovered_portions.clear();
   for (const auto &feature : identification.features)
   {
-    if (feature.matched_model || IsUnmergedMirrorConfiguration(feature))
+    if ((feature.matched_model && !placement_rejected.count(feature.id)) ||
+        IsUnmergedMirrorConfiguration(feature))
     {
       // A Missing mirror-formed configuration's real perimeter is the touched real
       // features' (decision 481 / 512 (c)): never listed twice.
@@ -11776,8 +11952,27 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             .count());
   };
   auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
-  MFEM_VERIFY(!geometry.Empty(),
-              "Fabrication-process response matching found no metal perimeter!");
+  const GeometryFailurePolicy geometry_policy =
+      ResolveGeometryFailurePolicy(request, requirements != nullptr);
+  if (geometry.Empty())
+  {
+    // H13-I1 (readiness hardening; the identification's "no perimeter runs" at
+    // ReferenceProcessNormal is guarded by this test): a device whose metal has no
+    // perimeter (closed shells; no metal boundary element) -> the whole run RAW with the
+    // record NoPerimeter (every type 100 %); the former abort stays the FailClosed text.
+    ResponseCorrectionData empty;
+    empty.unmatched_policy = request.unmatched_policy;
+    empty.matching_radius = library.matching_radius;
+    GeometryFallbackData entry;
+    entry.cls = "NoPerimeter";
+    entry.site = "H13-I1/BuildAutomaticResponseData3D:geometry.Empty";
+    entry.reason = "Fabrication-process response matching found no metal perimeter";
+    entry.what = "run";
+    GeometryFallbackLedger(geometry_policy, requirements != nullptr,
+                           empty.geometry_fallbacks)
+        .Record(std::move(entry));
+    return empty;
+  }
   if (!geometry.refinement_points.empty())
   {
     Mpi::Print("  Identification root-level perimeter: {:d} refinement vertices merged out"
@@ -11953,6 +12148,31 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.mortar_oversampling = request.mortar_oversampling;
   result.patch_energy = request.patch_energy;
   result.matching_radius = library.matching_radius;
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the matching-time ledger; the
+  // deferred FailClosed abort is the constructor's / the preflight's (after the manifest).
+  GeometryFallbackLedger geometry_ledger(geometry_policy, requirements != nullptr,
+                                         result.geometry_fallbacks);
+  // H1: a solve whose matching produced no model / patch runs RAW with the record
+  // NoMatchedFeature (the preflight lists every feature Missing and records the same).
+  auto RecordNoMatchedFeature = [&](const char *site)
+  {
+    if (!result.models.empty() && !result.patches.empty())
+    {
+      return;
+    }
+    GeometryFallbackData entry;
+    entry.cls = "NoMatchedFeature";
+    entry.site = site;
+    entry.reason =
+        "Fabrication-process response matching produced no usable correction patches";
+    entry.what = "run";
+    for (const auto &[target, length] : result.geometry_fallback_interface_lengths)
+    {
+      entry.interfaces.push_back(target);
+      entry.length = std::max(entry.length, length);
+    }
+    geometry_ledger.Record(std::move(entry));
+  };
   int next_model_index = 1;
   int next_interpolation_group = 1;
   int matched_intervals = 0;
@@ -12791,7 +13011,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       mesh.GetComm(), geometry, global_segments, library,
       requirements ? *requirements : law_describer, requirements, frame_normal_configured,
       request.span_cap_allowances, &curved_matches, &corner_matches, &mesh,
-      maxwell ? nullptr : &request, &mirror_band);
+      maxwell ? nullptr : &request, &mirror_band, &geometry_ledger);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (statistics)
@@ -12855,10 +13075,21 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
       }
     }
-    const auto summary = BuildFeaturePatches(
-        library, identification, global_segments, quadrature,
-        requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
-        curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes);
+    // The GeometryFallbacks record's RawShareByLength denominators (every run; written only
+    // when a fallback fires).
+    for (const auto &segment : global_segments)
+    {
+      for (const auto &[type, target] : segment.targets)
+      {
+        result.geometry_fallback_interface_lengths[target] += segment.length;
+        result.geometry_fallback_interface_types[target] = type;
+      }
+    }
+    const auto summary =
+        BuildFeaturePatches(library, identification, global_segments, quadrature,
+                            requirements ? *requirements : law_describer, diagnostics,
+                            result, coordinate_scale, curved_matches, corner_matches,
+                            mirror_band.image_frames, mirror_band.planes, &geometry_ledger);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     if (statistics)
     {
@@ -13044,9 +13275,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                    << " pair feature(s) are inconsistent (UnmatchedPolicy = Error)!");
       }
     }
-    MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),
-                "Fabrication-process response matching produced no usable correction "
-                "patches!");
+    if (!requirements)
+    {
+      RecordNoMatchedFeature("H1/BuildAutomaticResponseData3D:features");
+    }
     return result;
   }
   // Legacy per-group classification (comparison only): it reads fillets as runs of REGULAR
@@ -13208,6 +13440,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       continue;
     }
+    // H2 (readiness hardening, DESIGN 3.2 / A10.6): UNREACHABLE. A candidate joins the
+    // component only if LengthLess(dist, k D) holds against EVERY member (k = 1, or 4 in
+    // the exhaustive closure), so every pairwise quantized distance is < Length(k D) <=
+    // Length(4 D) and the diameter (the maximum pairwise distance) satisfies LengthAtMost
+    // on the same quantizer. LEGACY-path only (comparison branch; the device path returns
+    // at the FEATURES branch's end).
     const double maximum_global_event_diameter = 4.0 * global_interaction_distance;
     MFEM_VERIFY(
         global_quantizer.LengthAtMost(event_diameter, maximum_global_event_diameter),
@@ -13857,6 +14095,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                                 spatial_events[event_component[j]].center));
         }
       }
+      // H2 (readiness hardening, DESIGN 3.2 / A10.6): UNREACHABLE by the same argument
+      // as the cross-interface pass above (every member pair < Length(k D) <= Length(4 D)
+      // on this quantizer). LEGACY-path only.
       const double maximum_event_diameter = 4.0 * interaction_distance;
       MFEM_VERIFY(quantizer.LengthAtMost(event_diameter, maximum_event_diameter),
                   "Spatial-event clustering produced an oversized component. Split the "
@@ -14504,6 +14745,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           {
             continue;
           }
+          // H3 (readiness hardening, DESIGN 3.2 / A10.6): GUARDED. The chains are the
+          // identification's physical_chain partition, whose BuildRuns aborts first on a
+          // vertex with > 2 segments of one chain (H13-I2: the branching chain is to be
+          // excluded there, C4). LEGACY-path only.
           MFEM_VERIFY(!next_segment,
                       "Metal physical chain branches within a spatial coupon interval!");
           next_segment = local->second;
@@ -14692,6 +14937,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           {
             continue;
           }
+          // H3 (readiness hardening, DESIGN 3.2 / A10.6): GUARDED as the spatial coupon
+          // interval walk above (the identification's BuildRuns aborts first; H13-I2).
+          // LEGACY-path only.
           MFEM_VERIFY(!next_segment,
                       "Metal physical chain branches within a vertex neighborhood!");
           next_segment = local->second;
@@ -16372,9 +16620,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
   }
 
-  MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),
-              "Fabrication-process response matching produced no usable correction "
-              "patches!");
+  if (!requirements)
+  {
+    RecordNoMatchedFeature("H1/BuildAutomaticResponseData3D:legacy");
+  }
   Mpi::Print("\nAutomatic fabrication-process response matching:\n"
              " Library: {}\n"
              " Matched physical edge segments: {:d}\n"
@@ -18440,6 +18689,213 @@ double QuadraticForm(const mfem::DenseMatrix &matrix, const Vector &x, Vector &w
 
 }  // namespace
 
+GeometryFailurePolicy ResolveGeometryFailurePolicy(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request, bool preflight)
+{
+  if (request.geometry_failure_policy)
+  {
+    return *request.geometry_failure_policy;
+  }
+  return preflight ? GeometryFailurePolicy::FAIL_CLOSED : GeometryFailurePolicy::RECORD_RAW;
+}
+
+const char *GeometryFailurePolicyName(GeometryFailurePolicy policy)
+{
+  return policy == GeometryFailurePolicy::FAIL_CLOSED ? "FailClosed" : "RecordRaw";
+}
+
+void GeometryFallbackLedger::Record(GeometryFallbackData entry)
+{
+  Mpi::Print(
+      "Geometry fallback {} ({}; {}): {} [{} {:d} feature(s), {:d} patch(es), length "
+      "{:.6e}]\n",
+      entry.cls, entry.site, GeometryFailurePolicyName(policy), entry.reason, entry.what,
+      entry.features.size(), entry.patches.size(), entry.length);
+  entries.push_back(std::move(entry));
+}
+
+void GeometryFallbackLedger::Enforce(const std::string &where) const
+{
+  if (policy != GeometryFailurePolicy::FAIL_CLOSED || entries.empty())
+  {
+    return;
+  }
+  std::map<std::string, int> classes;
+  for (const auto &entry : entries)
+  {
+    classes[entry.cls]++;
+  }
+  std::string summary;
+  for (const auto &[cls, count] : classes)
+  {
+    summary += (summary.empty() ? "" : ", ") + cls + " " + std::to_string(count);
+  }
+  MFEM_ABORT("Surface-response GeometryFailurePolicy FailClosed: "
+             << entries.size() << " geometry fallback(s) recorded (" << summary << "); see "
+             << (preflight ? "Identification.Diagnostics.GeometryFallbacks of the manifest"
+                           : "SurfaceResponse.Diagnostics.GeometryFallbacks")
+             << " (" << where << ")!");
+}
+
+nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
+                                         GeometryFailurePolicy policy, bool preflight,
+                                         double coordinate_scale,
+                                         const std::map<int, double> &type_lengths,
+                                         const std::map<int, InterfaceDielectric> &types)
+{
+  nlohmann::json record = {{"Version", 1},
+                           {"Policy", GeometryFailurePolicyName(policy)},
+                           {"Run", preflight ? "Preflight" : "Solve"},
+                           {"Count", entries.size()}};
+  std::map<std::string, int> classes;
+  // Fallback length per interface TYPE. A whole-run fallback (an entry whose What is "run":
+  // NoMatchedFeature / AllPatchesOutside / NoPerimeter, no correction applied) counts the
+  // TOTAL selected length of EVERY type (100 % per type) whatever interfaces or length the
+  // site recorded, and its Length is that total; any other entry naming no interface counts
+  // its length on every type.
+  std::map<std::string, double> fallback_length, total_length;
+  for (const auto &[interface, type] : types)
+  {
+    const auto length = type_lengths.find(interface);
+    total_length[ToString(type)] += length == type_lengths.end() ? 0.0 : length->second;
+  }
+  double whole_run_length = 0.0;
+  for (const auto &[name, total] : total_length)
+  {
+    (void)name;
+    whole_run_length += total;
+  }
+  nlohmann::json list = nlohmann::json::array();
+  for (const auto &entry : entries)
+  {
+    classes[entry.cls]++;
+    const bool whole_run = entry.what == "run";
+    const double entry_length = whole_run ? whole_run_length : entry.length;
+    nlohmann::json item = {{"Class", entry.cls},
+                           {"Site", entry.site},
+                           {"Reason", entry.reason},
+                           {"What", entry.what},
+                           {"Features", entry.features},
+                           {"Patches", entry.patches},
+                           {"Models", entry.models},
+                           {"Length", entry_length * coordinate_scale},
+                           {"ExampleOrigin",
+                            {entry.example_origin[0] * coordinate_scale,
+                             entry.example_origin[1] * coordinate_scale,
+                             entry.example_origin[2] * coordinate_scale}},
+                           {"Interfaces", entry.interfaces},
+                           {"Topology", entry.topology}};
+    list.push_back(std::move(item));
+    if (whole_run)
+    {
+      for (const auto &[name, total] : total_length)
+      {
+        fallback_length[name] = total;
+      }
+      continue;
+    }
+    std::set<std::string> entry_types;
+    if (entry.interfaces.empty())
+    {
+      for (const auto &[name, length] : total_length)
+      {
+        (void)length;
+        entry_types.insert(name);
+      }
+    }
+    for (const int interface : entry.interfaces)
+    {
+      const auto type = types.find(interface);
+      if (type != types.end())
+      {
+        entry_types.insert(ToString(type->second));
+      }
+    }
+    for (const auto &name : entry_types)
+    {
+      fallback_length[name] += entry.length;
+    }
+  }
+  record["Classes"] = classes;
+  record["Entries"] = std::move(list);
+  nlohmann::json shares = nlohmann::json::object();
+  for (const auto &[name, total] : total_length)
+  {
+    const double fallback = std::min(fallback_length[name], total);
+    shares[name] = {{"FallbackLength", fallback * coordinate_scale},
+                    {"TypeLength", total * coordinate_scale},
+                    {"Share", total > 0.0 ? fallback / total : 1.0}};
+  }
+  record["RawShareByLength"] = std::move(shares);
+  record["Rule"] =
+      "USER decision 1000 (b) / supervisor 1001 (readiness hardening): every converted "
+      "former-abort site of the identification / placement that fires under "
+      "GeometryFailurePolicy RecordRaw excludes the affected feature / patch / segment, "
+      "keeps "
+      "its raw within-R energy in the raw term and records one entry here (Site = the "
+      "conversion id / source line of record; every Length in mesh length units x the mesh "
+      "length relative scale, the manifest's units, on the preflight and the solve alike); "
+      "RawShareByLength = the entries' length over the selected perimeter length per "
+      "interface type (a whole-run fallback, What = run, counts the total selected length "
+      "of every type: 100 % per type, and its Length is that total); the solve adds "
+      "RawShareByEnergy from surface-response-geometry-fallbacks.csv (a whole-run "
+      "fallback: 100 % per type, no correction applied). Under FailClosed the same entries "
+      "are recorded and the run aborts once the placement is complete.";
+  return record;
+}
+
+std::string GeometryFallbackBanner(const nlohmann::json &record, const std::string &where)
+{
+  std::string classes;
+  for (const auto &[cls, count] : record.at("Classes").items())
+  {
+    classes += (classes.empty() ? "" : ", ") + cls + " " + std::to_string(count.get<int>());
+  }
+  std::string shares;
+  const bool energy = record.contains("RawShareByEnergy");
+  for (const auto &[type, share] : record.at("RawShareByLength").items())
+  {
+    std::string text = type + " ";
+    if (energy && record.at("RawShareByEnergy").contains(type))
+    {
+      const auto &by_energy = record.at("RawShareByEnergy").at(type);
+      if (by_energy.contains("Note"))
+      {
+        text += "100 % (" + by_energy.at("Note").get<std::string>() + ")";
+      }
+      else
+      {
+        text += fmt::format("{:.2f} % of the within-R energy ({:.2f} % of the length)",
+                            100.0 * by_energy.at("Share").get<double>(),
+                            100.0 * share.at("Share").get<double>());
+      }
+    }
+    else
+    {
+      text +=
+          fmt::format("{:.2f} % of the length", 100.0 * share.at("Share").get<double>());
+    }
+    shares += (shares.empty() ? "" : ", ") + text;
+  }
+  if (shares.empty())
+  {
+    // No selected interface type (NoPerimeter: no perimeter segment carries a type): a
+    // whole-run fallback (an entry whose What is "run") is 100 % on every type by
+    // definition; otherwise there is nothing to share (named rather than left blank).
+    const auto &entries = record.at("Entries");
+    const bool whole_run = std::any_of(entries.begin(), entries.end(), [](const auto &entry)
+                                       { return entry.at("What") == "run"; });
+    shares = whole_run
+                 ? "every Type 100 % (no correction applied; no interface type selected)"
+                 : "(no interface type selected)";
+  }
+  return fmt::format(
+      "\n*** LOW CONFIDENCE (GeometryFailurePolicy {}): {:d} geometry fallback(s) "
+      "recorded - raw share per Type: {}; classes: {}; see {} ***\n",
+      record.at("Policy").get<std::string>(), record.at("Count").get<int>(), shares,
+      classes, where);
+}
+
 // The patch dry run: every automatically constructed 3D patch with its feature, model,
 // weights and the segment portion it integrates (lengths and coordinates in the manifest's
 // units), so that the audit can gate the construction against the manifest without a
@@ -18552,6 +19008,10 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     // provides (a signature placeholder of a Missing key has none), the margin overlaps
     // (decision 244) and the domain-boundary exclusions (decision 258).
     const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+    // The dry run's placement passes record their geometry fallbacks (H4a / H6 / H8) into
+    // the same ledger as the matching: the manifest predicts the solve.
+    GeometryFallbackLedger preflight_ledger(ResolveGeometryFailurePolicy(request, true),
+                                            true, patches.geometry_fallbacks);
     std::map<int, std::vector<std::array<double, 3>>> basis_points;
     std::map<int, bool> spatial_basis;
     std::map<int, std::string> model_names;
@@ -18595,15 +19055,23 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         spatial_cluster_priority_owned.insert(patch_idx);
       }
     }
+    // H4a on the dry run: the same-class overlaps the operator would drop, recorded into
+    // the preflight ledger (the margin-overlap record of decision 244 exempts a
+    // margins-only cluster pair, as in the operator).
+    const auto dry_run_margin_overlaps =
+        FindSpatialSupportMarginOverlaps(boxes, 3, continuation_tolerance);
+    std::vector<std::pair<std::size_t, std::size_t>> dry_run_overlap_excluded;
     const auto spatial_cluster_priority_pairs = FindSpatialClusterPriorityExclusions(
-        boxes, patches, spatial_cluster_priority_owned, 3);
+        boxes, patches, spatial_cluster_priority_owned, 3, &dry_run_margin_overlaps,
+        &preflight_ledger, &dry_run_overlap_excluded);
     // The placement's continuation ownership (decision 236 (2)) on the dry run: the
     // written patches are the placed ones (clipped cells, weight 0 inside the boxes). The
     // partial-stretch records (decision 984) are read on the intact patches like `records`.
     const auto partial_records = FindTranslationalStretchPartiallyInsideSpatialSupport(
         patches.patches, boxes, 3, continuation_tolerance);
-    const auto ownership = ApplyContinuationOwnership(
-        patches.patches, boxes, 3, continuation_tolerance, patches.matching_radius);
+    const auto ownership =
+        ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance,
+                                   patches.matching_radius, &preflight_ledger);
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
     // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of the
     // built patches: the dry run's cells are the trimmed ones; the uncovered portions are
@@ -18738,7 +19206,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         [&](int model_idx) { return model_names.at(model_idx); }, coordinate_scale,
         patches.matching_radius, {}, patches.mirror_planes,
         patches.mirror_band_over_radius * patches.matching_radius,
-        patches.mirror_unmerged_portions);
+        patches.mirror_unmerged_portions, &preflight_ledger);
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
     // F-DB-a (decisions 442 / 454): the excluded patches' raw claims, never dropped; the
@@ -18978,6 +19446,24 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       Mpi::Print("{}", DescribeDomainBoundaryExclusionSummary(exclusion_diagnostics));
     }
   }
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the record + the Summary leaf +
+  // the LOW-confidence banner ONLY when a converted site fired (a manifest without one
+  // keeps its bytes); under the preflight default FailClosed the abort follows the write.
+  const GeometryFailurePolicy geometry_policy = ResolveGeometryFailurePolicy(request, true);
+  nlohmann::json geometry_fallbacks;
+  if (!patches.geometry_fallbacks.empty())
+  {
+    geometry_fallbacks =
+        DescribeGeometryFallbacks(patches.geometry_fallbacks, geometry_policy, true,
+                                  iodata.units.GetMeshLengthRelativeScale(),
+                                  patches.geometry_fallback_interface_lengths,
+                                  patches.geometry_fallback_interface_types);
+    manifest["Identification"]["Diagnostics"]["GeometryFallbacks"] = geometry_fallbacks;
+    manifest["Summary"]["GeometryFallbacks"] = {
+        {"Count", geometry_fallbacks["Count"]},
+        {"Classes", geometry_fallbacks["Classes"]},
+        {"RawShareByLength", geometry_fallbacks["RawShareByLength"]}};
+  }
   if (Mpi::Root(parallel_mesh.GetComm()))
   {
     std::ofstream output(path);
@@ -18997,6 +19483,15 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   {
     Mpi::Print(parallel_mesh.GetComm(), " Patch dry run: {} ({:d} patches)\n", patches_path,
                static_cast<int>(patches.patches.size()));
+  }
+  if (!geometry_fallbacks.is_null())
+  {
+    Mpi::Print(
+        parallel_mesh.GetComm(), "{}",
+        GeometryFallbackBanner(geometry_fallbacks,
+                               "Identification.Diagnostics.GeometryFallbacks of " + path));
+    GeometryFallbackLedger(geometry_policy, true, patches.geometry_fallbacks)
+        .Enforce("surface-response preflight");
   }
 }
 
@@ -20320,7 +20815,8 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 ContinuationOwnership
 ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
                            const std::vector<SpatialSupportBounds> &supports, int dimension,
-                           double continuation_tolerance, double matching_radius)
+                           double continuation_tolerance, double matching_radius,
+                           GeometryFallbackLedger *geometry_ledger)
 {
   ContinuationOwnership ownership;
   const auto stretches = CollectTranslationalStretches(patches, dimension);
@@ -20392,16 +20888,52 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       }
       std::sort(sorted_inside.begin(), sorted_inside.end());
       double removed_lo = sorted_inside.front()[0], removed_hi = sorted_inside.front()[1];
+      bool gap_inside = false;
       for (const auto &interval : sorted_inside)
       {
-        MFEM_VERIFY(interval[0] <= removed_hi + 1.0e-12 * scale,
-                    "Continuation ownership: the boxes owning the longitudinal cell of "
-                    "patch "
-                        << patch_idx + 1 << " leave a gap inside the cell!");
+        gap_inside = gap_inside || interval[0] > removed_hi + 1.0e-12 * scale;
         removed_hi = std::max(removed_hi, interval[1]);
       }
       const bool at_begin = removed_lo <= c0 + 1.0e-12 * scale;
       const bool at_end = removed_hi >= c1 - 1.0e-12 * scale;
+      if (geometry_ledger && (gap_inside || !(at_begin || at_end)))
+      {
+        // H6a / H6b (readiness hardening, USER decision 1000 (b) / 1001): the owning boxes
+        // leave a gap inside the cell, or a box lies strictly inside it -> the cell is left
+        // UNTOUCHED (the decision-984 SUBCELL form: its own patch keeps correcting it; the
+        // inside interval is a recorded double-count risk, nothing goes raw) with the
+        // record ContinuationUnresolved; the former abort is the FailClosed summary's.
+        GeometryFallbackData entry;
+        entry.cls = "ContinuationUnresolved";
+        entry.site = gap_inside ? "H6a/ApplyContinuationOwnership:gap-inside-cell"
+                                : "H6b/ApplyContinuationOwnership:box-inside-cell";
+        entry.reason =
+            gap_inside
+                ? fmt::format("Continuation ownership: the boxes owning the longitudinal "
+                              "cell of patch {:d} leave a gap inside the cell",
+                              patch_idx + 1)
+                : fmt::format("Continuation ownership: the box of spatial patch {:d} lies "
+                              "strictly inside the longitudinal cell of patch {:d} "
+                              "(feature {:d}, stretch {:d})",
+                              supports[inside.front().support].patch + 1, patch_idx + 1,
+                              key.first, key.second);
+        entry.what = "cell";
+        entry.features = {key.first};
+        entry.patches = {static_cast<int>(patch_idx)};
+        for (const auto &owner : inside)
+        {
+          entry.patches.push_back(static_cast<int>(supports[owner.support].patch));
+        }
+        entry.length = std::min(removed_hi - removed_lo, cell_length);
+        entry.example_origin = patch.origin;
+        entry.topology = "untouched cell (double-count risk over the inside interval)";
+        geometry_ledger->Record(std::move(entry));
+        continue;
+      }
+      MFEM_VERIFY(!gap_inside,
+                  "Continuation ownership: the boxes owning the longitudinal cell of "
+                  "patch "
+                      << patch_idx + 1 << " leave a gap inside the cell!");
       MFEM_VERIFY(at_begin || at_end,
                   "Continuation ownership: the box of spatial patch "
                       << supports[inside.front().support].patch + 1
@@ -22290,7 +22822,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     double matching_radius, const std::set<std::size_t> &skipped,
     const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
     double mirror_band,
-    const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions)
+    const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions,
+    GeometryFallbackLedger *geometry_ledger)
 {
   const auto start = std::chrono::steady_clock::now();
   const int dimension = mesh.Dimension();
@@ -22787,11 +23320,35 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       result.patches.push_back(exclusion);
     }
   }
-  MFEM_VERIFY(candidates.empty() || result.patches.size() < candidates.size(),
-              "The domain-boundary exclusion leaves no applied surface-response patch: all "
-                  << candidates.size()
-                  << " tested patches have placed coupon points outside the device mesh "
-                     "(misplaced or mis-scaled coupons)!");
+  if (geometry_ledger && !candidates.empty() && result.patches.size() >= candidates.size())
+  {
+    // H8 (readiness hardening): every tested patch leaves the mesh (a device smaller than
+    // one coupon box) -> the whole run RAW with the record AllPatchesOutside; the operator
+    // reads the record and runs the thin solve.
+    GeometryFallbackData entry;
+    entry.cls = "AllPatchesOutside";
+    entry.site = "H8/FindDomainBoundaryExclusions:all-excluded";
+    entry.reason =
+        "The domain-boundary exclusion leaves no applied surface-response patch: "
+        "all " +
+        std::to_string(candidates.size()) +
+        " tested patches have placed coupon points outside the device mesh";
+    entry.what = "run";
+    for (const auto &exclusion : result.patches)
+    {
+      entry.patches.push_back(static_cast<int>(exclusion.patch));
+    }
+    geometry_ledger->Record(std::move(entry));
+  }
+  else
+  {
+    MFEM_VERIFY(
+        candidates.empty() || result.patches.size() < candidates.size(),
+        "The domain-boundary exclusion leaves no applied surface-response patch: all "
+            << candidates.size()
+            << " tested patches have placed coupon points outside the device mesh "
+               "(misplaced or mis-scaled coupons)!");
+  }
   result.wall_time =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   Mpi::GlobalMax(1, &result.wall_time, comm);
@@ -23143,9 +23700,36 @@ ExcludedPatchPortions CollectDomainBoundaryPortions(
   return result;
 }
 
+std::size_t OverlapExcludedSubordinate(const ResponseCorrectionData &config,
+                                       std::size_t first, std::size_t second)
+{
+  auto ClaimedLength = [&](std::size_t patch_idx)
+  {
+    double length = 0.0;
+    for (const auto &claim : config.patches[patch_idx].provenance.claims)
+    {
+      length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    for (const auto &claim : config.patches[patch_idx].provenance.raw_claims)
+    {
+      length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    return length;
+  };
+  const double first_length = ClaimedLength(first), second_length = ClaimedLength(second);
+  if (first_length != second_length)
+  {
+    return first_length < second_length ? first : second;
+  }
+  return std::max(first, second);
+}
+
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
-    const std::set<std::size_t> &owned_patches, int dimension)
+    const std::set<std::size_t> &owned_patches, int dimension,
+    const std::vector<SpatialSupportMarginOverlap> *margin_overlaps,
+    GeometryFallbackLedger *geometry_ledger,
+    std::vector<std::pair<std::size_t, std::size_t>> *overlap_excluded)
 {
   std::unordered_map<int, const ResponseModelData *> models;
   for (const auto &model : config.models)
@@ -23198,6 +23782,54 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
       const bool second_cluster = IsCluster(second);
       if (first_cluster == second_cluster)
       {
+        if (!geometry_ledger)
+        {
+          continue;
+        }
+        // H4a on the dry run (the operator's rule): a margins-only cluster / cluster
+        // overlap is the decision-244 record, not a drop; otherwise the subordinate.
+        if (first_cluster && margin_overlaps)
+        {
+          const auto overlap = std::find_if(
+              margin_overlaps->begin(), margin_overlaps->end(), [&](const auto &entry)
+              { return entry.first_patch == first && entry.second_patch == second; });
+          if (overlap != margin_overlaps->end() && !overlap->claim_in_hull)
+          {
+            continue;
+          }
+        }
+        const std::size_t subordinate = OverlapExcludedSubordinate(config, first, second);
+        const std::size_t owner = subordinate == first ? second : first;
+        if (overlap_excluded)
+        {
+          overlap_excluded->emplace_back(subordinate, owner);
+        }
+        GeometryFallbackData entry;
+        entry.cls = "OverlapExcluded";
+        entry.site = "H4a/ApplyPlacementOwnership:matching-volumes-overlap";
+        entry.reason = fmt::format(
+            "Three-dimensional response-correction matching volumes for patches {:d} and "
+            "{:d} overlap without complete spatial-cluster ownership{}",
+            first + 1, second + 1,
+            first_cluster ? " (a claim of one cluster lies inside the other's claims)"
+                          : "");
+        entry.what = "patch";
+        entry.patches = {static_cast<int>(subordinate), static_cast<int>(owner)};
+        entry.models = {models.at(config.patches[subordinate].model)->name,
+                        models.at(config.patches[owner].model)->name};
+        entry.features = {config.patches[subordinate].provenance.feature};
+        entry.example_origin = config.patches[subordinate].origin;
+        entry.topology = models.at(config.patches[subordinate].model)->topology;
+        for (const auto &claim : config.patches[subordinate].provenance.claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        for (const auto &claim : config.patches[subordinate].provenance.raw_claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        geometry_ledger->Record(std::move(entry));
+        owned.insert(subordinate);
         continue;
       }
       const auto subordinate = first_cluster ? second : first;
@@ -23206,6 +23838,43 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
     }
   }
   return exclusions;
+}
+
+ExcludedPatchPortions CollectGeometryFallbackPortions(
+    const std::vector<std::pair<std::size_t, std::size_t>> &exclusions,
+    const std::string &cls, const std::vector<ResponsePatchData> &patches,
+    const ResponseCorrectionData &config, const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double matching_radius)
+{
+  ExcludedPatchPortions result;
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  for (const auto &[patch_idx, owner] : exclusions)
+  {
+    (void)owner;
+    // The dropped patch's claim by the DomainBoundary rule, then clipped by every OTHER
+    // matched cluster's box (its own box would remove its own claims).
+    ExcludedPatchPortions claim;
+    AppendExcludedPatchClaim(claim, patch_idx, patches, config, ownership,
+                             uncovered_clipping, tolerance);
+    std::vector<SpatialSupportBounds> others;
+    for (const auto &support : supports)
+    {
+      if (support.patch != patch_idx)
+      {
+        others.push_back(support);
+      }
+    }
+    std::vector<ResponseCorrectionData::UncoveredPortionData> window = claim.portions;
+    ClipUncoveredPortionsBySpatialSupport(window, others, dimension);
+    for (auto portion : window)
+    {
+      portion.topology = cls;
+      AppendExcludedPatchPortion(result, patch_idx, portion, false, tolerance);
+    }
+  }
+  return result;
 }
 
 SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
@@ -24015,6 +24684,10 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     bool setup_timing)
 {
   auto &response_mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the placement passes record into
+  // the operator's ledger (the members set by the constructor before this call).
+  GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
+                                         geometry_fallbacks);
   // A three-dimensional spatial response represents one complete coupon volume and has
   // unit weight. Such volumes must never overlap: adding both dense defects would count
   // the shared physical domain twice. Use transformed matching-contour bounds as a
@@ -24029,6 +24702,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   std::set<std::size_t> spatially_owned_patches;
   // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
   std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
+  // H4a: (subordinate, owner) pairs of the OverlapExcluded drops (geometry fallbacks).
+  std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded_pairs;
   // The SpatialClusterPriority exclusions (subordinate patch, owner patch) of this
   // placement, read after the domain-boundary pass for the raw remainder (decision 922).
   std::vector<std::pair<std::size_t, std::size_t>> spatial_cluster_priority_pairs;
@@ -24146,15 +24821,47 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         {
           continue;
         }
-        MFEM_ABORT("Three-dimensional response-correction matching volumes for patches "
-                   << first + 1 << " (" << first_model.name << ") and " << second + 1
-                   << " (" << second_model.name
-                   << ") overlap without complete spatial-cluster ownership"
-                   << (first_cluster && second_cluster
-                           ? " (a claim of one cluster lies inside the other's claims)"
-                           : "")
-                   << ". Replace them with one coupled spatial model or an explicit "
-                      "nonoverlapping partition!");
+        // H4a (readiness hardening, USER decision 1000 (b) / 1001): two same-class
+        // supports overlap without ownership -> the SUBORDINATE patch (the smaller
+        // claimed length; ties by the larger patch index) is dropped like a
+        // SpatialClusterPriority coupon (weight 0, owned) and its claims OUTSIDE every
+        // OTHER support's box (the owner's included) stay RAW (the geometry-fallback
+        // portions, F-DB-a) with the record OverlapExcluded; the former abort is the
+        // FailClosed summary's.
+        const std::size_t subordinate_patch =
+            OverlapExcludedSubordinate(config, first, second);
+        const bool drop_second = subordinate_patch == second;
+        const std::size_t owner_patch = drop_second ? first : second;
+        spatially_owned_patches.insert(subordinate_patch);
+        vertex_coupon_exclusion_reasons.emplace(subordinate_patch, "OverlapExcluded");
+        overlap_excluded_pairs.emplace_back(subordinate_patch, owner_patch);
+        GeometryFallbackData entry;
+        entry.cls = "OverlapExcluded";
+        entry.site = "H4a/ApplyPlacementOwnership:matching-volumes-overlap";
+        entry.reason = fmt::format(
+            "Three-dimensional response-correction matching volumes for patches {:d} ({}) "
+            "and {:d} ({}) overlap without complete spatial-cluster ownership{}",
+            first + 1, first_model.name, second + 1, second_model.name,
+            first_cluster && second_cluster
+                ? " (a claim of one cluster lies inside the other's claims)"
+                : "");
+        entry.what = "patch";
+        entry.patches = {static_cast<int>(subordinate_patch),
+                         static_cast<int>(owner_patch)};
+        entry.models = {drop_second ? second_model.name : first_model.name,
+                        drop_second ? first_model.name : second_model.name};
+        entry.features = {config.patches[subordinate_patch].provenance.feature};
+        for (const auto &claim : config.patches[subordinate_patch].provenance.claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        for (const auto &claim : config.patches[subordinate_patch].provenance.raw_claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+        entry.example_origin = config.patches[subordinate_patch].origin;
+        entry.topology = drop_second ? second_model.topology : first_model.topology;
+        geometry_ledger.Record(std::move(entry));
       }
     }
     // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of
@@ -24303,7 +25010,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     const ContinuationOwnership ownership = ApplyContinuationOwnership(
         placed_patches, boxes, dimension,
         kSignatureParameterToleranceOverRadius * config.matching_radius,
-        config.matching_radius);
+        config.matching_radius, &geometry_ledger);
     {
       for (const auto &cell : ownership.cells)
       {
@@ -24414,7 +25121,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
             { return models[model_indices.at(model_idx)].spatial_basis; },
             [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
             coordinate_scale, config.matching_radius, spatially_owned_patches,
-            config.mirror_planes, containment_mirror_band, config.mirror_unmerged_portions);
+            config.mirror_planes, containment_mirror_band, config.mirror_unmerged_portions,
+            &geometry_ledger);
         if (containment_hit && first_order_mesh)
         {
           VerifyDomainBoundaryContainmentReproduces((*containment_cache)->exclusions,
@@ -24444,6 +25152,16 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         spatially_owned_patches.insert(exclusion.patch);
         vertex_coupon_exclusion_reasons.emplace(exclusion.patch, "DomainBoundary");
       }
+      if (std::any_of(geometry_fallbacks.begin(), geometry_fallbacks.end(),
+                      [](const auto &entry) { return entry.cls == "AllPatchesOutside"; }))
+      {
+        // H8: no applied patch remains; the whole run is raw (the constructor returns
+        // after this pass; the driver resets the operator after saving the record);
+        // FailClosed aborts here with the summary.
+        raw_fallback = true;
+        geometry_ledger.Enforce(maxwell ? "Maxwell surface-response configuration"
+                                        : "electrostatic surface-response configuration");
+      }
       ownership_diagnostics["DomainBoundaryExclusions"] =
           DescribeDomainBoundaryExclusions(exclusions, config, coordinate_scale);
       // F-DB-a (decisions 442 / 454): the excluded patches' raw claims are kept in the
@@ -24451,6 +25169,26 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       domain_boundary_portions = CollectDomainBoundaryPortions(
           exclusions, placed_patches, config, ownership, uncovered_spatial_support_clipping,
           config.matching_radius);
+      if (!overlap_excluded_pairs.empty())
+      {
+        // H4a: the dropped patches' claims (the DomainBoundary rule) clipped by every OTHER
+        // support's box (the owner corrects the inside of its box; a part inside another
+        // dropped support's box is corrected by nobody: the 922 SCP add-back form),
+        // labelled by the class; kept raw with the DomainBoundary portions and measured
+        // separately for the share.
+        geometry_fallback_portions = CollectGeometryFallbackPortions(
+            overlap_excluded_pairs, "OverlapExcluded", placed_patches, config, ownership,
+            uncovered_spatial_support_clipping, boxes, dimension, config.matching_radius);
+        for (std::size_t i = 0; i < geometry_fallback_portions.portions.size(); i++)
+        {
+          domain_boundary_portions.portions.push_back(
+              geometry_fallback_portions.portions[i]);
+          domain_boundary_portions.patches.push_back(geometry_fallback_portions.patches[i]);
+          domain_boundary_portions.translational.push_back(
+              geometry_fallback_portions.translational[i]);
+        }
+        domain_boundary_portions.length += geometry_fallback_portions.length;
+      }
       ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
       // S7diag R1 (decision 758): the raw claim of every applied patch the
@@ -24678,6 +25416,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         {
           MFEM_VERIFY(write_geometry_cache, "Response-geometry cache generation requires "
                                             "PALACE_RESPONSE_GEOMETRY_CACHE_WRITE=1!");
+          // Decision 1001 Q5: a configuration with geometry fallbacks is never cached (the
+          // cache version stays 20; a cache read is a configuration without fallbacks).
+          MFEM_VERIFY(
+              automatic_config->geometry_fallbacks.empty(),
+              "A surface-response configuration with "
+                  << automatic_config->geometry_fallbacks.size()
+                  << " geometry fallback(s) is not cached (GeometryFailurePolicy; "
+                     "decision 1001 Q5): run without PALACE_RESPONSE_GEOMETRY_CACHE!");
           if (Mpi::Root(fespace.GetComm()))
           {
             WriteResponseGeometryCache(*geometry_cache, *automatic_config);
@@ -24702,6 +25448,27 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         config = &*automatic_config;
       }
     }
+  }
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the configuration's matching-time
+  // entries; the placement passes below append theirs; the deferred FailClosed abort at the
+  // end of the construction. A whole-run raw fallback (an automatic configuration with no
+  // model / patch, recorded by the matching) leaves the operator empty and flagged: the
+  // driver saves its record and runs the thin solve without it. The manual configuration
+  // and FailClosed keep the former abort's condition (deferred to Enforce under
+  // FailClosed).
+  geometry_fallbacks = config->geometry_fallbacks;
+  geometry_failure_policy = ResolveGeometryFailurePolicy(*request, false);
+  geometry_fallback_interface_lengths = config->geometry_fallback_interface_lengths;
+  geometry_fallback_interface_types = config->geometry_fallback_interface_types;
+  geometry_fallback_coordinate_scale = coordinate_scale;
+  GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
+                                         geometry_fallbacks);
+  if (request->IsAutomatic() && !geometry_fallbacks.empty() &&
+      (config->models.empty() || config->patches.empty()))
+  {
+    raw_fallback = true;
+    geometry_ledger.Enforce("electrostatic surface-response configuration");
+    return;
   }
   MFEM_VERIFY(!config->models.empty() && !config->patches.empty(),
               "Surface response correction requires at least one model and patch!");
@@ -25259,6 +26026,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   auto placement =
       ApplyPlacementOwnership(*config, model_indices, basis_points, coordinate_scale,
                               dimension, cached_geometry, setup_timing);
+  if (raw_fallback)
+  {
+    return;  // H8: every patch excluded by the domain boundary (recorded)
+  }
+  // Every placement-time record (H4a / H6 / H8) is in by now: a FailClosed run stops here,
+  // before the mortar / matrices (a no-op under RecordRaw or with an empty ledger).
+  geometry_ledger.Enforce("electrostatic surface-response configuration");
   const auto &placed_patches = placement.placed_patches;
   const auto &spatially_owned_patches = placement.owned_patches;
 
@@ -25937,6 +26711,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                "correction.csv)\n",
                global_diagnostic_patch_count, global_diagnostic_point_count);
   }
+  geometry_ledger.Enforce("electrostatic surface-response configuration");
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -26046,6 +26821,22 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   const auto &config = *config_ptr;
+  // Geometry fallbacks (USER decision 1000 (b) / 1001), the Maxwell path: as the
+  // electrostatic constructor (a whole-run raw fallback leaves HasSurfaceResponse() false
+  // with the record; the deferred FailClosed abort at the end of the configuration).
+  geometry_fallbacks = config.geometry_fallbacks;
+  geometry_failure_policy = ResolveGeometryFailurePolicy(*request, false);
+  geometry_fallback_interface_lengths = config.geometry_fallback_interface_lengths;
+  geometry_fallback_interface_types = config.geometry_fallback_interface_types;
+  geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+  GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
+                                         geometry_fallbacks);
+  if (!geometry_fallbacks.empty() && (config.models.empty() || config.patches.empty()))
+  {
+    raw_fallback = true;
+    geometry_ledger.Enforce("Maxwell surface-response configuration");
+    return;
+  }
   // The mirror planes for the fail-closed check of the Maxwell line samples (no mirror in
   // Maxwell runs; boundary-cut DESIGN 2.2.3).
   mirror_planes = config.mirror_planes;
@@ -26271,6 +27062,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   const auto placement =
       ApplyPlacementOwnership(config, model_indices, basis_points, coordinate_scale,
                               dimension, cached_geometry, false);
+  if (raw_fallback)
+  {
+    return;  // H8: every patch excluded by the domain boundary (recorded)
+  }
+  // Every placement-time record (H4a / H6 / H8) is in by now: a FailClosed run stops here,
+  // before the line quadrature / loop fit (a no-op under RecordRaw or with an empty
+  // ledger).
+  geometry_ledger.Enforce("Maxwell surface-response configuration");
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
@@ -26740,6 +27539,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {"UnconstrainedKnots", maxwell_loop_fit_unconstrained_count},
       {"Cycles", maxwell_loop_fit_cycle_count},
       {"RemainderMeasured", maxwell_loop_remainder_measured}};
+  geometry_ledger.Enforce("Maxwell surface-response configuration");
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -29822,6 +30622,39 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   return result;
 }
 
+nlohmann::json SurfaceResponseOperator::GetGeometryFallbackRecord() const
+{
+  if (geometry_fallbacks.empty())
+  {
+    return nlohmann::json();
+  }
+  auto record = DescribeGeometryFallbacks(geometry_fallbacks, geometry_failure_policy,
+                                          false, geometry_fallback_coordinate_scale,
+                                          geometry_fallback_interface_lengths,
+                                          geometry_fallback_interface_types);
+  if (raw_fallback)
+  {
+    // The whole run is raw: 100 % per type by definition (no correction applied).
+    nlohmann::json shares = nlohmann::json::object();
+    for (const auto &[type, share] : record["RawShareByLength"].items())
+    {
+      (void)share;
+      shares[type] = {{"Share", 1.0}, {"Note", "no correction applied"}};
+    }
+    record["RawShareByEnergy"] = std::move(shares);
+  }
+  else if (!geometry_fallback_energy_shares.empty())
+  {
+    nlohmann::json shares = nlohmann::json::object();
+    for (const auto &[type, share] : geometry_fallback_energy_shares)
+    {
+      shares[type] = {{"Share", share}};
+    }
+    record["RawShareByEnergy"] = std::move(shares);
+  }
+  return record;
+}
+
 nlohmann::json SurfaceResponseOperator::GetStatistics() const
 {
   const auto comm = fespace.GetComm();
@@ -29883,6 +30716,12 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
     {
       result["Diagnostics"][key] = value;
     }
+  }
+  if (!geometry_fallbacks.empty())
+  {
+    // Written only when a converted site fired (USER decision 1000 (b)); the drivers add
+    // RawShareByEnergy from the fallback portions' raw within-R energy.
+    result["Diagnostics"]["GeometryFallbacks"] = GetGeometryFallbackRecord();
   }
   if (global_diagnostic_patch_count > 0 &&
       result["Diagnostics"].contains("SpatialClusterPriority"))

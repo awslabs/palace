@@ -3343,6 +3343,14 @@
               "description": "Behavior when a detected edge cluster has no compatible coupon model. `Warn` disables correction for the affected interface group; `Error` terminates the simulation.",
               "default": "Warn"
             },
+            "GeometryFailurePolicy": {
+              "type": "string",
+              "enum": [
+                "RecordRaw",
+                "FailClosed"
+              ],
+              "description": "What a run does when the device geometry reaches a converted former-abort site of the identification / placement with a valid configuration and library (readiness hardening, USER decision 1000 (b)). `RecordRaw`: the affected feature / patch / segment is excluded, its raw within-R energy stays in the raw term and the run continues with a named `SurfaceResponse.Diagnostics.GeometryFallbacks` record, `surface-response-geometry-fallbacks.csv` and a LOW-confidence banner with the raw share per interface type (never silent). `FailClosed`: the same records are collected and the run aborts at the end of the configuration with their summary (the preflight writes `surface-response-requirements.json` with `Identification.Diagnostics.GeometryFallbacks` first). Absent: `RecordRaw` on a solve run, `FailClosed` on `--surface-response-preflight` (the library build)."
+            },
             "PatchConstruction": {
               "type": "string",
               "enum": [
@@ -3666,6 +3674,9 @@
               "Library"
             ],
             "UnmatchedPolicy": [
+              "Library"
+            ],
+            "GeometryFailurePolicy": [
               "Library"
             ],
             "PatchConstruction": [
