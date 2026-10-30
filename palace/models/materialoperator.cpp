@@ -232,12 +232,11 @@ void MaterialOperator::SetUpMaterialProperties(
       MFEM_VERIFY(internal::mat::IsValid(data.mu_r),
                   "Material has no valid permeability defined!");
       if (!internal::mat::IsIdentity(data.epsilon_r) ||
-          internal::mat::IsValid(data.tandelta) || internal::mat::IsValid(data.sigma) ||
-          std::abs(data.lambda_L) > 0.0)
+          internal::mat::IsValid(data.tandelta) || internal::mat::IsValid(data.sigma))
       {
         Mpi::Warning(
             "Magnetostatic problem type does not account for material permittivity,\n"
-            "loss tangent, electrical conductivity, or London depth!\n");
+            "loss tangent, or electrical conductivity!\n");
       }
     }
     else

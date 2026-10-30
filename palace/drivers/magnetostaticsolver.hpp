@@ -34,7 +34,8 @@ private:
                             const std::vector<double> &Phi_inc,
                             const mfem::DenseMatrix &linked_flux,
                             const std::vector<Vector> &london_ah,
-                            const std::vector<Vector> &london_ms_shifted) const;
+                            const std::vector<Vector> &london_ms_shifted,
+                            const std::vector<Vector> &london_ml) const;
 
   // Report the stored energy and imposed loop fluxoids of each excitation, when grouped
   // flux loop excitations leave no inductance matrix.

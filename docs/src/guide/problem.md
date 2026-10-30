@@ -225,6 +225,18 @@ current port's effective `"InactiveMode"` to be `"Open"`. Invalid or incomplete 
 are rejected rather than producing a matrix containing a mixture of bare, screened, and
 unknown entries.
 
+**Superconductors**: A superconducting conductor is modeled either as a
+[`"Superconductor"`](../config/reference.md#config-boundaries-superconductor) boundary, a
+sheet with the kinetic sheet inductance of a film, or as a domain whose material has a
+[`"LondonDepth"`](../config/reference.md#config-domains-materials-londondepth), in which the
+London supercurrent flows (see the [reference](../reference.md#Magnetostatic-Simulations)).
+The domain model resolves the current through the conductor, so it holds for any thickness
+and width, including strips a few penetration depths thick and wide where the sheet models
+do not apply, but its elements must resolve the penetration depth at the conductor surfaces.
+In both, the inductance includes the kinetic energy of the supercurrent, which the magnetic
+field energies in `domain-E.csv` do not, and superconducting loops hold zero fluxoid unless
+driven by a flux loop.
+
 When running on GPU, the 2D surface curl solve for flux loop
 boundary conditions is performed on the host while the main 3D magnetostatic solve uses
 GPU acceleration.

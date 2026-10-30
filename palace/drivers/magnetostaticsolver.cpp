@@ -176,6 +176,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<Vector> london_ah(n_step), london_ms_shifted(n_step);
   std::vector<double> london_kinetic_step(n_step, 0.0);
 
+  // Per step with London domains: M_L·A. The generators a_h live on the films, so the
+  // domain kinetic energy AᵀM_L·A is unshifted.
+  std::vector<Vector> london_ml(n_step);
+
   // Magnetic flux linked through each current port's element apertures during each flux
   // excitation, used to recover the current-flux mutual inductance in a mixed simulation.
   // This coupling is invisible to the cross-energy formula: a current step drives zero loop
@@ -302,7 +306,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                      "Current source solve did not converge for port {:d}!\n", idx);
         // Halt only on the London path (unreliable stiff-penalty inductance); otherwise
         // warn and continue like the other drivers.
-        if (!curlcurl_op.GetSuperconductorOp().empty())
+        if (!curlcurl_op.GetSuperconductorOp().empty() || curlcurl_op.HasLondonDomains())
         {
           solve_converged_ = false;
           return {indicator, curlcurl_op.GlobalTrueVSize()};
@@ -396,6 +400,17 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // Retain M_sheet·(A − a_h) for the shifted-kinetic cross-energy added to the
       // volume-only AᵀM_mag·A in PostprocessTerminals.
       london_ms_shifted[step] = msd;
+    }
+
+    // Kinetic energy of the London domains, not part of AᵀM_mag·A.
+    if (curlcurl_op.HasLondonDomains())
+    {
+      london_ml[step].SetSize(A[step].Size());
+      london_ml[step].UseDevice(true);
+      curlcurl_op.ApplyLondonMass(A[step], london_ml[step]);
+      const double kinetic = linalg::Dot(curlcurl_op.GetComm(), A[step], london_ml[step]);
+      london_kinetic_step[step] += kinetic;
+      london_kinetic += kinetic;
     }
   }
 
@@ -502,7 +517,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (surf_flux_op.HasSingleLoopExcitations())
   {
     PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), surf_flux_op, A, I_inc,
-                         Phi_inc, linked_flux, london_ah, london_ms_shifted);
+                         Phi_inc, linked_flux, london_ah, london_ms_shifted, london_ml);
   }
   else
   {
@@ -518,9 +533,9 @@ void MagnetostaticSolver::PostprocessExcitations(
     const std::vector<double> &london_kinetic) const
 {
   // Without an inductance matrix, terminal-Phi.csv reports each excitation's total stored
-  // energy E = ½AᵀM_mag·A + ½(A − a_h)ᵀM_sheet(A − a_h) (so E = ½ΦᵀM⁻¹Φ for the fluxoid
-  // state Φ imposed on the loops) and the fluxoid cᵀa_h it imposes on every flux loop, zero
-  // for the loops it does not drive and for the current source steps.
+  // energy E = ½AᵀM_mag·A + ½(A − a_h)ᵀM_sheet(A − a_h) + ½AᵀM_L·A (so E = ½ΦᵀM⁻¹Φ for the
+  // fluxoid state Φ imposed on the loops) and the fluxoid cᵀa_h it imposes on every flux
+  // loop, zero for the loops it does not drive and for the current source steps.
   const auto &surf_j_op = curlcurl_op.GetSurfaceCurrentOp();
   const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
   const int n = static_cast<int>(domain_energy.size());
@@ -584,8 +599,8 @@ void MagnetostaticSolver::PostprocessTerminals(
     const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
     const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux,
-    const std::vector<Vector> &london_ah,
-    const std::vector<Vector> &london_ms_shifted) const
+    const std::vector<Vector> &london_ah, const std::vector<Vector> &london_ms_shifted,
+    const std::vector<Vector> &london_ml) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -669,16 +684,22 @@ void MagnetostaticSolver::PostprocessTerminals(
   //
   // M_mag is volume-only (AᵀM_mag·A = 2W), so add the shifted London kinetic energy
   //   S(A_i − a_h_i, A_j − a_h_j) = Dot(A_i − a_h_i, M_sheet(A_j − a_h_j))
-  // on the diagonal and London-London off-diagonals; zero unless both steps carry a drive.
+  // on the diagonal and London-London off-diagonals (zero unless both steps carry a drive),
+  // and the kinetic energy Dot(A_i, M_L A_j) of the London domains.
   auto london_correction = [&](int i, int j) -> double
   {
-    if (london_ms_shifted[i].Size() == 0 || london_ms_shifted[j].Size() == 0)
+    double energy = 0.0;
+    if (london_ms_shifted[i].Size() > 0 && london_ms_shifted[j].Size() > 0)
     {
-      return 0.0;
+      Vector d(A[i]);
+      d -= london_ah[i];
+      energy += linalg::Dot<Vector>(post_op.GetComm(), d, london_ms_shifted[j]);
     }
-    Vector d(A[i]);
-    d -= london_ah[i];
-    return linalg::Dot<Vector>(post_op.GetComm(), d, london_ms_shifted[j]);
+    if (london_ml[j].Size() > 0)
+    {
+      energy += linalg::Dot<Vector>(post_op.GetComm(), A[i], london_ml[j]);
+    }
+    return energy;
   };
 
   mfem::DenseMatrix cross_energy(n);
