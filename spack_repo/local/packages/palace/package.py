@@ -762,6 +762,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if self.run_tests:
                 make("palace-tests")
 
+    def check(self):
+        # --test builds and installs the unit tests, which are run with CTest separately
+        pass
+
     def install(self, spec, prefix):
         # Before 0.19, the superbuild installs Palace while building it
         if spec.satisfies("@0.19:"):
