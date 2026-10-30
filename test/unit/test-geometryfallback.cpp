@@ -951,6 +951,317 @@ TEST_CASE("Geometry fallback B2 oriented overlap: a same-class pair whose orient
   }
 }
 
+// U-H4a-op (readiness hardening-2 (iv) B2 at the OPERATOR; the r1020 review MAJOR-2,
+// decision 1035; the operator-level H4a fixture hardening-1 MINOR-2 named): the
+// neighboring-island mesh rotated 45 deg about the plane normal (MakeRotatedIslandMesh)
+// under the SA-keyed convex library at R = 0.1 (the facing edges 0.25 apart stay beyond
+// 2 R: no cluster, 8 convex corners) whose convex-corner-90 BasisPoints span the cube
+// [-h, h]^3 about the vertex (the coupon's matching volume, the U-INV H8 widened-points
+// form). Every corner frame lies 45 deg off the mesh axes and all eight cubes are
+// co-aligned, so a pair's ORIENTED cubes overlap iff every offset along the island axes is
+// below 2 h, while the MESH-ALIGNED boxes (half-width h sqrt 2) overlap whenever the
+// rotated offsets are below 2 h sqrt 2. The pair distances before the rotation: the facing
+// pair 0.25 along x (2 pairs), adjacent corners 0.5 along an edge (8), the diagonal 0.5 /
+// 0.5 (4), facing-to-outer 0.75 along x (4), cross 0.25 / 0.5 (2). With h = 0.1 the facing
+// pairs' mesh-aligned boxes overlap (rotated offsets 0.177 < 0.283) and their oriented
+// cubes do not (0.25 >= 0.2): NO record on the preflight or the operator, the 8 corners
+// applied (the base records the 2 pairs OverlapExcluded on the mesh-aligned test: the
+// failing-first of B2 at the operator). With h = 0.2 the facing pairs truly overlap
+// (0.25 < 0.4) while 14 more pairs overlap on the mesh-aligned test alone (the adjacent
+// 0.354 / 0.354 and the 0.75-along-x 0.53 / 0.53 rotated offsets against 0.566): exactly 2
+// OverlapExcluded with the rotated frames on the preflight and the operator (U-INV), the
+// subordinate by the larger patch index on equal claims.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback B2 at the operator U-H4a-op: rotated same-class corner "
+                 "supports decide on the oriented boxes, preflight == operator (decisions "
+                 "1018 Q1 / 1035)",
+                 "[surfaceresponseoperator][geometryfallback][invariant][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  constexpr double angle_degrees = 45.0;
+  constexpr double R = 0.1;
+  // The SA-keyed convex library at R with the corner coupon's basis points on the cube
+  // [-h, h]^3 (three rings of four, the fixture's 12-point layout).
+  auto WriteLibrary = [&](double h, const std::string &tag)
+  {
+    const fs::path points = temp.temp_dir / ("uh4aop-corner-cube-" + tag + ".csv");
+    const fs::path library_path =
+        temp.temp_dir / ("fabrication-process-convex-3d-cube-" + tag + ".json");
+    if (Mpi::Root(comm))
+    {
+      {
+        std::ofstream output(points);
+        output << "x,y,z\n";
+        for (const double z : {-h, 0.0, h})
+        {
+          output << -h << "," << -h << "," << z << "\n"
+                 << h << "," << -h << "," << z << "\n"
+                 << h << "," << h << "," << z << "\n"
+                 << -h << "," << h << "," << z << "\n";
+        }
+      }
+      // The fixture's surface matrices carry their within-R rows at R (m) = 0.2: the
+      // copies re-key that column to this library's R.
+      auto SurfaceMatrixAtR = [&](const std::string &source)
+      {
+        const fs::path copy =
+            temp.temp_dir / ("uh4aop-" + fs::path(source).filename().string());
+        std::ifstream input(source);
+        std::ofstream output(copy);
+        std::string line;
+        std::getline(input, line);
+        output << line << "\n";
+        while (std::getline(input, line))
+        {
+          const auto first = line.find(',');
+          const auto second = line.find(',', first + 1);
+          const auto third = line.find(',', second + 1);
+          REQUIRE(third != std::string::npos);
+          output << line.substr(0, second + 1) << R << line.substr(third) << "\n";
+        }
+        return copy.string();
+      };
+      json library = ReadJson(convex_library_3d_path);
+      library["Name"] = "unit-test-process-convex-3d-cube-" + tag;
+      library["MatchingRadius"] = R;
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        for (const char *key : {"FabricatedSurfaceMatrix", "ThinSurfaceMatrix"})
+        {
+          if (model.contains(key))
+          {
+            model[key] = SurfaceMatrixAtR(model[key].get<std::string>());
+          }
+        }
+        if (model["Topology"] == "ConvexCorner")
+        {
+          model["BasisPoints"] = points.string();
+        }
+      }
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(comm);
+    return library_path;
+  };
+  // The island config on the two-island mesh: both islands terminals, one SA interface
+  // over both attributes, the solve's PostprocessOnly construction. The ground is the two
+  // walls normal to y (the Cartesian box's attributes 2 / 4) alone: the rotated side walls
+  // are off the mesh's bounding box, and as metal they would out-vote the islands in the
+  // process-plane normal (the area-weighted principal direction of the metal normals off
+  // the bounding box) and read every island edge NonPlanar.
+  auto Config = [&](const fs::path &library_path)
+  {
+    json config = ConvexIslandConfig();
+    config["Boundaries"]["Ground"]["Attributes"] = {2, 4};
+    config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9}}},
+                                        {{"Index", 2}, {"Attributes", {10}}}};
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {R};
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction.erase("PatchConstruction");
+    correction["CorrectionMode"] = "PostprocessOnly";
+    return config;
+  };
+  auto MakeIoData = [&](const json &config)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    return iodata;
+  };
+  auto Preflight = [&](json config, const fs::path &dir)
+  {
+    config["Problem"]["Output"] = dir.string();
+    config["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "RecordRaw";
+    IoData iodata = MakeIoData(config);
+    MakeOutputFolder(iodata, comm);
+    Mesh mesh(MakeRotatedIslandMesh(angle_degrees));
+    const fs::path manifest_path = dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(comm);
+    return ReadJson(manifest_path);
+  };
+  auto Operator = [&](const json &config)
+  {
+    IoData iodata = MakeIoData(config);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeRotatedIslandMesh(angle_degrees)));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    return std::make_pair(response.IsRawFallback(), response.GetGeometryFallbackRecord());
+  };
+  // The placed convex corners of a manifest: (id, origin, frame axes), every frame off the
+  // mesh axes by the rotation.
+  struct Corner
+  {
+    int id;
+    std::array<double, 3> origin;
+    std::array<std::array<double, 3>, 3> axes;
+  };
+  auto PlacedCorners = [&](const json &manifest)
+  {
+    std::vector<Corner> corners;
+    const double c = std::cos(angle_degrees * std::acos(-1.0) / 180.0);
+    for (const auto &feature : manifest.at("Identification").at("Features"))
+    {
+      if (feature.at("Type") != "ConvexCorner")
+      {
+        continue;
+      }
+      REQUIRE(feature.at("Match").at("Status") == "Matched");
+      CHECK(feature.at("Match").at("Model") == "convex-corner-90");
+      Corner corner;
+      corner.id = feature.at("Id").get<int>();
+      corner.origin = feature.at("Frame").at("Origin").get<std::array<double, 3>>();
+      corner.axes =
+          feature.at("Frame").at("Axes").get<std::array<std::array<double, 3>, 3>>();
+      for (int k = 0; k < 3; k++)
+      {
+        // An in-plane axis has both in-plane components at cos 45 deg; the normal is y.
+        if (std::abs(corner.axes[k][1]) > 0.5)
+        {
+          CHECK_THAT(std::abs(corner.axes[k][1]), WithinAbs(1.0, 1.0e-9));
+        }
+        else
+        {
+          CHECK_THAT(std::abs(corner.axes[k][0]), WithinAbs(c, 1.0e-9));
+          CHECK_THAT(std::abs(corner.axes[k][2]), WithinAbs(c, 1.0e-9));
+        }
+      }
+      corners.push_back(corner);
+    }
+    return corners;
+  };
+  // The pairs whose MESH-ALIGNED boxes of the cube [-h, h]^3 in their frames
+  // interior-overlap (the base's decision) and the pairs whose ORIENTED cubes do (the
+  // offsets along the first corner's axes, the cubes co-aligned); the ElementBox rule,
+  // tolerance 1e-12.
+  auto OverlappingPairs = [](const std::vector<Corner> &corners, double h)
+  {
+    auto HalfWidth = [&](const Corner &corner, int d)
+    {
+      double width = 0.0;
+      for (int k = 0; k < 3; k++)
+      {
+        width += h * std::abs(corner.axes[k][d]);
+      }
+      return width;
+    };
+    std::pair<std::size_t, std::size_t> pairs{0, 0};  // mesh-aligned, oriented
+    for (std::size_t i = 0; i < corners.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < corners.size(); j++)
+      {
+        bool aligned = true, oriented = true;
+        for (int d = 0; d < 3; d++)
+        {
+          const double lo = std::max(corners[i].origin[d] - HalfWidth(corners[i], d),
+                                     corners[j].origin[d] - HalfWidth(corners[j], d));
+          const double hi = std::min(corners[i].origin[d] + HalfWidth(corners[i], d),
+                                     corners[j].origin[d] + HalfWidth(corners[j], d));
+          aligned = aligned && hi - lo > 1.0e-12;
+          double offset = 0.0;
+          for (int e = 0; e < 3; e++)
+          {
+            offset += corners[i].axes[d][e] * (corners[j].origin[e] - corners[i].origin[e]);
+          }
+          oriented = oriented && 2.0 * h - std::abs(offset) > 1.0e-12;
+        }
+        pairs.first += aligned ? 1 : 0;
+        pairs.second += oriented ? 1 : 0;
+      }
+    }
+    return pairs;
+  };
+  auto Distance = [](const Corner &a, const Corner &b)
+  {
+    double sum = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      sum += (a.origin[d] - b.origin[d]) * (a.origin[d] - b.origin[d]);
+    }
+    return std::sqrt(sum);
+  };
+
+  // h = 0.1: the facing pairs' mesh-aligned boxes overlap, no oriented pair: no record on
+  // either side, the 8 corners applied.
+  {
+    const json config = Config(WriteLibrary(0.1, "h01"));
+    const json manifest = Preflight(config, temp.temp_dir / "uh4aop-h01");
+    const auto corners = PlacedCorners(manifest);
+    REQUIRE(corners.size() == 8);
+    CHECK(manifest.at("Summary").at("Counts").at("Missing").get<int>() == 0);
+    const auto pairs = OverlappingPairs(corners, 0.1);
+    CHECK(pairs.first == 2);
+    CHECK(pairs.second == 0);
+    CHECK(!manifest.at("Identification").at("Diagnostics").contains("GeometryFallbacks"));
+    CHECK(!manifest.at("Summary").contains("GeometryFallbacks"));
+    const auto [raw, record] = Operator(config);
+    CHECK(!raw);
+    CHECK(record.is_null());
+  }
+  // h = 0.2: the facing pairs' oriented cubes overlap (0.25 < 0.4), 14 more pairs on the
+  // mesh-aligned test alone: exactly 2 OverlapExcluded on both, the facing corners.
+  {
+    const json config = Config(WriteLibrary(0.2, "h02"));
+    const json manifest = Preflight(config, temp.temp_dir / "uh4aop-h02");
+    const auto corners = PlacedCorners(manifest);
+    REQUIRE(corners.size() == 8);
+    const auto pairs = OverlappingPairs(corners, 0.2);
+    CHECK(pairs.first == 16);
+    CHECK(pairs.second == 2);
+    const auto &preflight_record =
+        manifest.at("Identification").at("Diagnostics").at("GeometryFallbacks");
+    REQUIRE(preflight_record.at("Count").get<int>() == 2);
+    CHECK(preflight_record.at("Classes").at("OverlapExcluded").get<int>() == 2);
+    std::set<int> subordinates;
+    for (const auto &entry : preflight_record.at("Entries"))
+    {
+      CHECK(entry.at("Class") == "OverlapExcluded");
+      CHECK(entry.at("Site") == "H4a/ApplyPlacementOwnership:matching-volumes-overlap");
+      CHECK(entry.at("What") == "patch");
+      CHECK(entry.at("Models") == json::array({"convex-corner-90", "convex-corner-90"}));
+      REQUIRE(entry.at("Patches").size() == 2);
+      // Equal claimed lengths (R along each arm): the larger patch index is dropped.
+      CHECK(entry.at("Patches")[0].get<int>() > entry.at("Patches")[1].get<int>());
+      CHECK_THAT(entry.at("Length").get<double>(), WithinAbs(2.0 * R, 1.0e-9));
+      REQUIRE(entry.at("Features").size() == 1);
+      const int subordinate = entry.at("Features").front().get<int>();
+      subordinates.insert(subordinate);
+      // The subordinate is a facing corner: its nearest corner lies 0.25 away.
+      const auto self = std::find_if(corners.begin(), corners.end(),
+                                     [&](const Corner &c) { return c.id == subordinate; });
+      REQUIRE(self != corners.end());
+      double nearest = 1.0e300;
+      for (const auto &other : corners)
+      {
+        if (other.id != subordinate)
+        {
+          nearest = std::min(nearest, Distance(*self, other));
+        }
+      }
+      CHECK_THAT(nearest, WithinAbs(0.25, 1.0e-9));
+    }
+    CHECK(subordinates.size() == 2);
+    CHECK(manifest.at("Summary").at("GeometryFallbacks").at("Count").get<int>() == 2);
+    const auto [raw, record] = Operator(config);
+    CHECK(!raw);
+    REQUIRE(!record.is_null());
+    CHECK(record.at("Classes").at("OverlapExcluded").get<int>() == 2);
+    CHECK(CheckGeometryFallbackInvariant(manifest, record) == 2);
+  }
+#endif
+}
+
 // H6a / H6b (operator ApplyContinuationOwnership: the owning boxes leave a gap inside a
 // cell / a box lies strictly inside a cell). By construction every continued support
 // contains the stretch's first end, so every inside interval starts at the cell's begin

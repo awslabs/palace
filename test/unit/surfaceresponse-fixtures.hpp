@@ -334,6 +334,15 @@ struct SurfaceResponseFiles
   // hardening-2 (iii): a listed gap next to a differently listed one at a one-slot corner
   // coupon).
   static std::unique_ptr<mfem::ParMesh> MakeDiagonalIslandMesh();
+  // The neighboring-island mesh (two 0.5 x 0.5 islands, attributes 9 / 10, on the plane
+  // y = 0.5 of a 2 x 1 x 2 box; MakeIslandMesh(neighboring_island = true)) rotated by
+  // `angle_degrees` about the plane normal y through the box centre (1, y, 1): the islands'
+  // corner frames lie off the mesh axes while the geometry (the corners 0.5 apart along
+  // each island's edges, the facing pair 0.25 apart) is the unrotated one's. The
+  // operator-level B2 fixture of readiness hardening-2 (iv): the MESH-ALIGNED box of a
+  // coupon cube widens with the rotation (half-width h sqrt 2 at 45 deg), its ORIENTED box
+  // does not.
+  static std::unique_ptr<mfem::ParMesh> MakeRotatedIslandMesh(double angle_degrees);
   // Two disconnected rectangular islands (attributes 9 / 10) on the plane y = 0.5 of a
   // 2 x 1 x 2 box whose facing corners (1.0, 0.75) and (1.125, 0.875) in (x, z) form the
   // offset-corner-pair spatial cluster; MakeSerialOffsetCornerPairMesh is the serial mesh

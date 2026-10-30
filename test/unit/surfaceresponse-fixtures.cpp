@@ -1474,6 +1474,23 @@ std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeDiagonalIslandMesh()
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+std::unique_ptr<mfem::ParMesh>
+SurfaceResponseFiles::MakeRotatedIslandMesh(double angle_degrees)
+{
+  mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+  const double angle = angle_degrees * std::acos(-1.0) / 180.0;
+  const double c = std::cos(angle), s = std::sin(angle);
+  constexpr double center = 1.0;  // the 2 x 1 x 2 box's in-plane centre
+  for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+  {
+    double *point = serial.GetVertex(vertex);
+    const double x = point[0] - center, z = point[2] - center;
+    point[0] = center + c * x + s * z;
+    point[2] = center - s * x + c * z;
+  }
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
 std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeTouchingIslandMesh()
 {
   constexpr double extent = 2.0;
