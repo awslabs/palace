@@ -267,10 +267,13 @@ backward and absolute error estimates are included for each eigenvalue.
 
 When impedance postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/reference.md#config-boundaries-postprocessing-impedance),
-the characteristic impedance is computed using the power-voltage definition
-``Z_\text{PV} = |V|^2 / P`` and, when a current path is also specified, the voltage-current
-definition ``Z_\text{VI} = V / I``. Per-unit-length inductance and capacitance are derived
-from these quantities. The results are written to `mode-Z.csv`. Similarly, when voltage
+the complex characteristic impedance is computed using the power-voltage definition
+``Z_\text{PV} = |V|^2 / P^*`` and, when a current path is also specified, the voltage-current
+definition ``Z_\text{VI} = V / I`` (see the [reference](../reference.md) for details). The
+per-unit-length inductance ``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
+``C = \text{Re}\{n_\text{eff} / Z\} / c_0`` are derived from each impedance ``Z``, from the
+series impedance ``i k_n Z = R + i\omega L`` and shunt admittance ``i k_n / Z = G + i\omega C``
+per unit length of the line. The results are written to `mode-Z.csv`. Similarly, when voltage
 postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Voltage"]`](../config/reference.md#config-boundaries-postprocessing-voltage),
 the complex mode voltages are written to `mode-V.csv`.

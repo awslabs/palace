@@ -503,14 +503,13 @@ palace::test::CustomCheck TestWavePortInputImpedance(int port,
   };
 }
 
-// Reference-free check of the power-voltage impedance of a lossy quasi-TEM boundary mode
-// in mode-Z.csv. On a line with a lossless dielectric, the shunt admittance per unit length
-// is iωC with C real, so the characteristic impedance Z0 = kₙ / ωC has the phase of kₙ,
-// Z_PV = Re{|V|² / 2P} = Re{Z0}, and the voltage-current impedance from the line integrals
-// of the mode is Z_VI = |Z0|. Then Z_PV = Z_VI cos(arg kₙ) (with kₙ from the sibling
-// mode-kn.csv), which holds only with the right Poynting power P: P is a modal quantity,
-// while V and I are line integrals of the field. The reference diff of mode-Z.csv still
-// runs first at the case tolerances.
+// Reference-free check of the complex characteristic impedances of a lossy quasi-TEM
+// boundary mode in mode-Z.csv. The power-voltage impedance Z_PV = |V|² / 2P* of the mode
+// must match the voltage-current impedance Z_VI = V / I: P is a modal quantity, while V and
+// I are line integrals of the field. On a line with a lossless dielectric, the shunt
+// admittance per unit length is iωC with C real, so that the characteristic impedance
+// Z0 = kₙ / ωC also has the phase of kₙ (from the sibling mode-kn.csv). The reference diff
+// of mode-Z.csv still runs first at the case tolerances.
 palace::test::CustomCheck
 TestBoundaryModeLossyImpedance(int mode, palace::test::RegressionOptions opts)
 {
@@ -533,23 +532,28 @@ TestBoundaryModeLossyImpedance(int mode, palace::test::RegressionOptions opts)
     };
     palace::TableWithCSVFile kn_file((actual_path.parent_path() / "mode-kn.csv").string(),
                                      /*load_existing_file=*/true);
-    palace::Column *z_pv = find_header(actual, "Z_PV[1] (Ohm)");
-    palace::Column *z_vi = find_header(actual, "Z_VI[1] (Ohm)");
+    palace::Column *re_z_pv = find_header(actual, "Re{Z_PV[1]} (Ohm)");
+    palace::Column *im_z_pv = find_header(actual, "Im{Z_PV[1]} (Ohm)");
+    palace::Column *re_z_vi = find_header(actual, "Re{Z_VI[1]} (Ohm)");
+    palace::Column *im_z_vi = find_header(actual, "Im{Z_VI[1]} (Ohm)");
     palace::Column *re_kn = find_header(kn_file.table, "Re{kn} (1/m)");
     palace::Column *im_kn = find_header(kn_file.table, "Im{kn} (1/m)");
-    REQUIRE(z_pv != nullptr);
-    REQUIRE(z_vi != nullptr);
+    REQUIRE(re_z_pv != nullptr);
+    REQUIRE(im_z_pv != nullptr);
+    REQUIRE(re_z_vi != nullptr);
+    REQUIRE(im_z_vi != nullptr);
     REQUIRE(re_kn != nullptr);
     REQUIRE(im_kn != nullptr);
     const auto r = static_cast<std::size_t>(mode - 1);
     REQUIRE(r < actual.n_rows());
     REQUIRE(r < kn_file.table.n_rows());
+    const std::complex<double> Z_PV(re_z_pv->data[r], im_z_pv->data[r]);
+    const std::complex<double> Z_VI(re_z_vi->data[r], im_z_vi->data[r]);
     const std::complex<double> kn(re_kn->data[r], im_kn->data[r]);
-    const double z_pv_tl = z_vi->data[r] * std::cos(std::arg(kn));
-    INFO("mode " << mode << ": Z_PV = " << z_pv->data[r]
-                 << ", Z_VI cos(arg kn) = " << z_pv_tl << ", kn = " << kn);
+    INFO("mode " << mode << ": Z_PV = " << Z_PV << ", Z_VI = " << Z_VI << ", kn = " << kn);
     CHECK(std::abs(std::arg(kn)) > 0.1);  // Lossy enough for the check to be meaningful
-    CHECK(std::abs(z_pv->data[r] - z_pv_tl) <= opts.rtol * z_pv_tl);
+    CHECK(std::abs(Z_PV - Z_VI) <= opts.rtol * std::abs(Z_VI));
+    CHECK(std::abs(std::arg(Z_PV) - std::arg(kn)) <= opts.rtol * std::abs(std::arg(kn)));
   };
 }
 
@@ -2196,8 +2200,9 @@ TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;  // abstol from the preceding cavity2d block
-  opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
-                           "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
+  opts.excluded_columns = {"Maximum",       "Minimum",          "Mean",
+                           "Error (Bkwd.)", "Error (Abs.)",     "Im{kn} (1/m)",
+                           "Im{n_eff}",     "Im{Z_PV[1]} (Ohm)"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   opts.custom_checks["mode-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
@@ -2211,8 +2216,9 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
-                           "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
+  opts.excluded_columns = {"Maximum",       "Minimum",          "Mean",
+                           "Error (Bkwd.)", "Error (Abs.)",     "Im{kn} (1/m)",
+                           "Im{n_eff}",     "Im{Z_PV[1]} (Ohm)"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   // The energies are below atol, so compare them with the relative tolerance only.
@@ -2222,10 +2228,10 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
 }
 
 // The CPW of cpw2d_thick_impedance with finite-conductivity conductors (a 100 nm copper
-// film), whose CPW mode (mode 2) is lossy at 5 GHz (arg kₙ = -24 degrees). Its
+// film), whose CPW mode (mode 2) is lossy at 5 GHz (arg kₙ = -24 degrees). Its complex
 // power-voltage impedance must match the voltage-current impedance of a current loop around
-// the center conductor, Z_PV = Z_VI cos(arg kₙ), to 1e-5 here: with the longitudinal-field
-// term of the Poynting power conjugated wrongly, Z_PV was 4.8 times too low (issue 1115).
+// the center conductor, and have the phase of kₙ: with the longitudinal-field term of the
+// Poynting power conjugated wrongly, Re{Z_PV} was 4.8 times too low (issue 1115).
 TEST_CASE("cpw2d_thick_conductivity", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2233,9 +2239,9 @@ TEST_CASE("cpw2d_thick_conductivity", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-10;
   // The current around the center conductor nearly vanishes for the other mode (mode 1), so
   // its Z_VI is not reproducible: the Z_VI of mode 2 enters the impedance check instead.
-  opts.excluded_columns = {"Maximum",       "Minimum",      "Mean",
-                           "Error (Bkwd.)", "Error (Abs.)", "Z_VI[1] (Ohm)",
-                           "L_VI[1] (H/m)", "C_VI[1] (F/m)"};
+  opts.excluded_columns = {"Maximum",           "Minimum",       "Mean",
+                           "Error (Bkwd.)",     "Error (Abs.)",  "Re{Z_VI[1]} (Ohm)",
+                           "Im{Z_VI[1]} (Ohm)", "L_VI[1] (H/m)", "C_VI[1] (F/m)"};
   opts.skip_rowcount = true;
   opts.linear_solver_policy = force_default_solver;
   // The energies are below atol, so compare them with the relative tolerance only.

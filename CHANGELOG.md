@@ -24,6 +24,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
     several of them. Set `"Type": "SuperLU"` to keep using SuperLU_DIST. SchemaVer 4-2-0
     [PR 1148](https://github.com/awslabs/palace/pull/1148).
+  - The `mode-Z.csv` output of boundary-mode solves now reports the complex characteristic
+    impedances, `Re{Z_PV}` and `Im{Z_PV}` with `Z_PV = |V|² / 2P*` as for wave ports, and
+    `Re{Z_VI}` and `Im{Z_VI}` with `Z_VI = V / I` (oriented with the mode power) instead of
+    `|V| / |I|`. The per-unit-length inductance and capacitance are now
+    `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
+    modes. [Issue 1115](https://github.com/awslabs/palace/issues/1115).
 
 #### Performance Improvements
 

@@ -387,30 +387,29 @@ field component on the port.
 **Impedance.** The *power-voltage* characteristic impedance is defined as
 
 ```math
-Z_{PV} = \frac{|V|^2}{P}
+Z_{PV} = \frac{|V|^2}{P^*}
 ```
 
-where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
-peak-phasor power flux through the port cross-section, equal to twice the time-averaged power. For
-TEM modes with a voltage path between the two conductors, ``Z_{PV}`` reduces to the conventional TEM
-characteristic impedance. For wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
-specified, as ``Z_{PV} = |V|^2 / P^*`` with the complex power
-``P = \int_\Gamma (\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` of the port mode: this is real
-for a lossless propagating mode, and complex for a lossy one, consistent with the total-field
-impedance ``|V|^2 / P^*`` of the port. Boundary-mode solves report the real part of the same
-complex ``Z_{PV}``. For a quasi-TEM mode on a line with a lossless dielectric, the complex
-``Z_{PV}`` has the phase of ``k_n``, and its magnitude is the voltage-current impedance
-``Z_{VI}`` below.
+where ``P = \int_\Gamma(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` is the complex power flux
+of the mode through the cross-section, with peak phasors (twice the time-averaged power). It is
+real for a lossless propagating mode, and complex for a lossy one. For a TEM mode with a voltage
+path between the two conductors, ``P = V I^*`` and ``Z_{PV} = V / I`` is the conventional complex
+characteristic impedance of the line, which has the phase of ``k_n`` for a quasi-TEM mode on a line
+with a lossless dielectric. Wave ports report ``Z_{PV}`` when `"VoltagePath"` is specified,
+consistent with the total-field impedance ``|V|^2 / P^*`` of the port, and boundary-mode solves
+with impedance postprocessing.
 
-As a diagnostic, boundary-mode impedance postprocessing also reports the *voltage-current*
-impedance magnitude when a current path is specified:
+As a diagnostic, boundary-mode impedance postprocessing also reports the complex
+*voltage-current* impedance when a current path is specified:
 
 ```math
-Z_{VI} = |V| / |I|
+Z_{VI} = V / I
 ```
 
-where ``V`` and ``I`` are computed independently from different paths. Note that independently
-specifying both voltage and current does not in general define a valid characteristic impedance [[11]](#References).
+where ``V`` and ``I`` are computed independently from different paths. Its sign is chosen such
+that ``\text{Re}\{V I^* / P\} > 0``, as for a TEM mode, so that it does not depend on the
+directions of the voltage path and of the current loop. Note that independently specifying both
+voltage and current does not in general define a valid characteristic impedance [[11]](#References).
 For TEM modes ``Z_{VI} = Z_{PV}``; for other modes they will generally differ.
 
 The normal convention ``+\hat{\bm{n}}`` is the outward mesh normal. The mode eigenvalue gives
