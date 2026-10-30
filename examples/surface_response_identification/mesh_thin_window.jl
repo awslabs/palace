@@ -32,22 +32,26 @@
 # face on the outer box is the exterior boundary. Mesh size: LC_FINE on the metal edges (Distance /
 # Threshold field) growing to LC_FAR (defaults 4 / 40 um).
 #
-# Ring orientation (decision 1022, census finding F-1): gmsh's `occ.addPlaneSurface` assumes every hole
-# wire arrives in the SAME orientation as the outer wire and reverses it itself; a hole given in the
-# opposite orientation yields an invalid face (area = outer PLUS holes) that `occ.fragment` can leave as
-# a FREE sheet (meshed twice: orphan + duplicate triangles, an MFEM abort at mesh load) whenever the hole
-# contains another metal polygon. GDS does not enforce ring orientation, so every loop is normalised to
-# the mesher's contract before it reaches gmsh: outers (and bump footprints) counter-clockwise, holes
-# co-oriented with their outer (a loop is re-traversed backwards from its first vertex; the vertices are
-# unchanged). After the fragment the CONFORMITY GATE fails closed: every image of a metal sheet must be
-# shared by exactly two volumes (the substrate and the vacuum), except an image inside a bump footprint
-# column, which is one-sided by construction (the void column); a free or otherwise one-sided image is
-# an error and no mesh is written, and so is an image claimed by more than one metal sheet (coincident
-# sheets = duplicate boundary triangles). Before the fragment, the OCC area of every metal face must
-# equal the polygon's net area (outer minus holes): a hole outside its outer, nested holes or a
-# self-intersecting ring make gmsh build a malformed face silently (the census CHR-012 set carried four
-# ground rings declared as holes of an island). The manifest records `ReorientedLoops` (outers /
-# holes), `ToolImagesNotShared` and `ToolImagesShared` (both 0 for a written mesh).
+# Ring orientation (decision 1022, census finding F-1): gmsh's `occ.addPlaneSurface` assumes
+# every hole wire arrives in the SAME orientation as the outer wire and reverses it itself;
+# a hole given in the opposite orientation yields an invalid face (area = outer PLUS holes)
+# that `occ.fragment` can leave as a FREE sheet (meshed twice: orphan + duplicate triangles,
+# an MFEM abort at mesh load) whenever the hole contains another metal polygon. GDS does not
+# enforce ring orientation, so every loop is normalised to the mesher's contract before it
+# reaches gmsh: outers (and bump footprints) counter-clockwise, holes co-oriented with their
+# outer (a loop is re-traversed backwards from its first vertex; the vertices are
+# unchanged). Three gates then fail closed (a named error, no mesh written). Before the
+# fragment, the FACE GATE: the OCC area of every metal face must equal the polygon's net
+# area (outer minus holes); a hole outside its outer, nested holes, a self-intersecting ring
+# or a hole in the opposite orientation make gmsh build a malformed face silently (the
+# census CHR-012 set carried four ground rings declared as holes of an island). After the
+# fragment, the CONFORMITY GATE: every image of a metal sheet must be shared by exactly two
+# volumes (the substrate and the vacuum), except an image inside a bump footprint column,
+# which is one-sided by construction (the void column); a free or otherwise one-sided image
+# (e.g. a metal polygon reaching beyond the box wall) is an error. And the COINCIDENT-SHEET
+# GATE: an image claimed by more than one metal sheet (coincident sheets = duplicate
+# boundary triangles) is an error. The manifest records `ReorientedLoops` (outers / holes),
+# `ToolImagesNotShared` and `ToolImagesShared` (both 0 for a written mesh).
 
 import Gmsh: gmsh
 import JSON
@@ -67,10 +71,10 @@ end
 # The loop traversed in the opposite direction, starting from the same first vertex.
 reverse_loop(loop) = vcat([loop[1]], reverse(loop[2:end]))
 
-# The polygon's loops in the mesher's contract: the outer counter-clockwise, every hole co-oriented
-# with it. Returns the loops and the counts of reoriented outers and holes. `normalise = false` hands
-# the loops to gmsh as given (the behaviour before decision 1022; the conformity gate then catches an
-# invalid face: used by the tests).
+# The polygon's loops in the mesher's contract: the outer counter-clockwise, every hole
+# co-oriented with it. Returns the loops and the counts of reoriented outers and holes.
+# `normalise = false` hands the loops to gmsh as given (the behaviour before decision 1022;
+# the pre-fragment face gate then refuses the invalid face: used by the tests).
 function oriented_loops(polygon; normalise=true)
     outer = polygon["Outer"]
     reoriented_outers = 0
@@ -90,8 +94,8 @@ function oriented_loops(polygon; normalise=true)
     return loops, reoriented_outers, reoriented_holes
 end
 
-# Adds the polygon as a plane surface at height z; returns the surface tag and the reoriented
-# (outers, holes) counts.
+# Adds the polygon as a plane surface at height z; returns the surface tag and the
+# reoriented (outers, holes) counts.
 function add_polygon(occ, polygon, z; normalise=true)
     loops, reoriented_outers, reoriented_holes = oriented_loops(polygon; normalise)
     loop_tags = Int32[]
@@ -110,9 +114,10 @@ function polygon_net_area(polygon)
            sum(abs(signed_area2(hole) / 2) for hole in get(polygon, "Holes", []); init=0.0)
 end
 
-# The pre-fragment face gate: the OCC area of the plane surface built for the polygon must equal the
-# polygon's net area, else gmsh built a malformed face (a hole outside its outer, nested holes, a
-# self-intersecting ring). Errors with the conductor named; `occ` must be synchronized.
+# The pre-fragment face gate: the OCC area of the plane surface built for the polygon must
+# equal the polygon's net area, else gmsh built a malformed face (a hole outside its outer,
+# nested holes, a self-intersecting ring). Errors with the conductor named; `occ` must be
+# synchronized.
 function check_face_area(face, polygon, label)
     net = polygon_net_area(polygon)
     area = gmsh.model.occ.getMass(2, face)
@@ -124,8 +129,8 @@ function check_face_area(face, polygon, label)
     return area
 end
 
-# The fragment images claimed by more than one metal sheet (coincident sheets: both groups would
-# carry the same triangles). Returns [(face tag, [conductor labels])].
+# The fragment images claimed by more than one metal sheet (coincident sheets: both groups
+# would carry the same triangles). Returns [(face tag, [conductor labels])].
 function shared_tool_images(domain_map, n_objects, tool_labels)
     owners = Dict{Int32, Vector{String}}()
     for (i, (k, label)) in enumerate(tool_labels)
@@ -138,9 +143,10 @@ function shared_tool_images(domain_map, n_objects, tool_labels)
     return sort!(shared; by=first)
 end
 
-# The conformity gate on the fragment images of the metal sheets (decision 1022): every image must be
-# shared by exactly two volumes, except a one-sided image inside a bump footprint column (the bump
-# columns are void: `footprint_columns` = [(x0, x1, y0, y1, z0, z1)]). Returns the images that fail.
+# The conformity gate on the fragment images of the metal sheets (decision 1022): every
+# image must be shared by exactly two volumes, except a one-sided image inside a bump
+# footprint column (the bump columns are void: `footprint_columns` = [(x0, x1, y0, y1, z0,
+# z1)]). Returns the images that fail.
 function unshared_tool_images(domain_map, n_objects, tool_labels, footprint_columns, tol)
     unshared = Tuple{String, Int32, Int}[]  # (conductor label, face tag, adjacent volumes)
     for (i, (k, label)) in enumerate(tool_labels)
@@ -312,8 +318,9 @@ function mesh_thin_window(
     occ.synchronize()
     n_objects = length(objects)
     tol = 1.0e-6 * max(x1 - x0, y1 - y0, zmax_all - zmin_all)
-    # the conformity gate (decision 1022): a metal sheet image not shared by the substrate and the
-    # vacuum would be meshed as a free sheet (orphan + duplicate triangles); fail closed, no mesh
+    # the conformity gate (decision 1022): a metal sheet image not shared by the substrate
+    # and the vacuum would be meshed as a free sheet (orphan + duplicate triangles); fail
+    # closed, no mesh
     unshared =
         unshared_tool_images(domain_map, n_objects, tool_labels, footprint_columns, tol)
     if !isempty(unshared)
