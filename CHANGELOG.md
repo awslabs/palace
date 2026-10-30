@@ -29,7 +29,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Re{Z_VI}` and `Im{Z_VI}` with `Z_VI = V / I` (oriented with the mode power) instead of
     `|V| / |I|`. The per-unit-length inductance and capacitance are now
     `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
-    modes. [Issue 1115](https://github.com/awslabs/palace/issues/1115).
+    modes. [PR 1119](https://github.com/awslabs/palace/pull/1119).
 
 #### Performance Improvements
 
@@ -95,7 +95,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     instead of one inner product per entry, a reduced solve checks the residuals of only the
     modes nearest to the target, and the reduced model is retired in favor of exact port
     solves when those are cheaper.
-    [Issue 1109](https://github.com/awslabs/palace/issues/1109).
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
 
 #### Bug Fixes
 
@@ -149,18 +149,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `P` of the mode, consistent with the total-field impedance in `port-Z.csv`. Circuit
     synthesis now also fits the complex propagation constant of a lossy port mode, so that the
     synthesized port loads carry the attenuation of the port lines.
-    [Issue 1109](https://github.com/awslabs/palace/issues/1109).
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
   - Fixed a crash of circuit synthesis (`"AdaptiveCircuitSynthesis"`) when several wave
     ports share a boundary, for example inactive wave ports extracting the S-parameters of
     a second mode at the boundaries of the active ports.
-    [Issue 1109](https://github.com/awslabs/palace/issues/1109).
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
   - Fixed the characteristic impedance `Z_PV` of lossy modes in 2D boundary-mode solves, for
     example with `"Conductivity"` or `"Impedance"` boundaries on the conductors: the term of
     the mode power with the longitudinal electric field was conjugated wrongly, which added a
     spurious imaginary part to the power. This made `Z_PV` too low, by a factor of 3.2 for a
     strongly lossy coplanar-strip line at 1 GHz, and the power normalization of lossy modes
     wrong. Results are unchanged for lossless modes.
-    [Issue 1115](https://github.com/awslabs/palace/issues/1115).
+    [PR 1119](https://github.com/awslabs/palace/pull/1119).
 
 #### Build system
 
