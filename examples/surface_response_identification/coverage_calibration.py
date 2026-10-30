@@ -25,7 +25,7 @@ Records file schema:
 {"families": {"ES": {"calibrate": [CELL, ...], "test": [CELL, ...]}, "Maxwell": {...}}}
 CELL = {"window": str, "postpro": dir, "manifest": file, "cells": {"SA": pct, "MS": pct, "MA_sharp": pct, "C": pct},
         "ladder_run": dir (optional), "reference_order": int (optional), "ma_reading": "sharp" (optional),
-        "flags": [str] (information), "note": str}
+        "port_form": "r2a-pembed" (optional; Maxwell FORM), "flags": [str] (information), "note": str}
 """
 
 import argparse
@@ -154,11 +154,12 @@ def loo_evaluate(model, cells, type_key):
             "cells": records}
 
 
-def select_model(cells, type_key):
+def select_model(cells, type_key, models=MODELS):
     """DESIGN 5.2 SELECTION: the smallest LOO 90 % half-width among the models with LOO coverage >= 90 %;
-    none -> M0 widened by k. -> the band entry for this Type plus every candidate's report."""
+    none -> M0 widened by k. -> the band entry for this Type plus every candidate's report. `models` restricts the
+    candidates (DESIGN 5.5: C is fitted with M0 only, so the band applied is the band validated)."""
     candidates = {}
-    for model in MODELS:
+    for model in models:
         if model != "M0" and len(cells) < len(design_row(model, cells[0]["pred"][type_key])) + 2:
             continue
         fit = fit_model(model, cells, type_key)
@@ -176,7 +177,8 @@ def select_model(cells, type_key):
     if widened > 1.0:
         covered = sum(1 for r in loo["cells"] if abs(r["loo_residual_pt"]) <= widened * r["H_loo_pt"])
         loo_reported = dict(loo, coverage=covered / loo["n"], covered=covered, ci90=wilson_ci(covered, loo["n"]),
-                            note=f"WIDENED x {widened:.3f}")
+                            coverage_unwidened=loo["coverage"], covered_unwidened=loo["covered"],
+                            note=f"WIDENED x {widened:.4f}: the unwidened LOO coverage is {loo['covered']} / {loo['n']}")
     else:
         loo_reported = loo
     entry = {"model": chosen, "coefficients": c["fit"]["coefficients"], "H_pt": c["fit"]["H_pt"],
@@ -192,7 +194,7 @@ def select_model(cells, type_key):
 def cell_predictors(cell, bands=None):
     """Run coverage_report.build_report on the cell's run; -> the report and the per-Type predictors."""
     report = cr.build_report(cell["postpro"], cell["manifest"], bands, cell.get("discovery"), cell.get("ladder_run"),
-                             cell.get("reference_order"), cell.get("ma_reading", "sharp"), cell.get("window"))
+                             cell.get("reference_order"), cell.get("ma_reading", "sharp"), cell.get("window"), cell.get("port_form"))
     pred = {}
     for card_type in CARD_TYPES:
         t = BAND_TYPE[card_type]
@@ -244,7 +246,8 @@ def calibrate_family(family, spec, log):
         usable = [c for c in cells if card_type in c["d"]]
         if len(usable) < 3:
             continue
-        entry = select_model(usable, card_type)
+        # DESIGN 5.5: C gets the M0 band (its cells have no class mix; the depth lever is not pre-registered for C)
+        entry = select_model(usable, card_type, models=("M0",) if card_type == "C" else MODELS)
         gs = [c["pred"][card_type].get("g") for c in usable if c["pred"][card_type].get("g") is not None
               and c["pred"][card_type].get("energy_mode") == "ENERGY"]
         entry["median_g"] = median(gs) if gs else 0.0
@@ -303,7 +306,7 @@ def main(argv=None):
     parser.add_argument("--tag", default="v1")
     parser.add_argument("--fit-date", help="ISO date stamped in the file (default: today, UTC)")
     parser.add_argument("--lean-output", help="also write the band file WITHOUT the per-cell evaluation (the copy "
-                        "committed as coverage_bands_v1.json: the fitted numbers + the provenance shas)")
+                        "committed as coverage_bands_v2.json: the fitted numbers + the provenance shas)")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
     log = (lambda s: None) if args.quiet else (lambda s: print(s, flush=True))

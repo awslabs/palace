@@ -91,6 +91,28 @@ class FitTest(unittest.TestCase):
         self.assertGreaterEqual(entry["loo_coverage"]["coverage"], 0.9)
         self.assertIn("WIDENED", entry["loo_coverage"]["note"])
 
+    def test_c_is_fitted_with_m0_only(self):
+        # DESIGN 5.5 / MAJOR-4: a planted depth lever on C must NOT select M1; the C band applied (beta0 +- H) is the one validated
+        cells = make_cells(20, lambda p: 0.1 - 0.5 * p["last_step_pt"])
+        for c in cells:
+            c["pred"]["C"] = c["pred"].pop("SA")
+            c["d"]["C"] = c["d"].pop("SA")
+        entry = cc.select_model(cells, "C", models=("M0",))
+        self.assertEqual(entry["model"], "M0")
+        self.assertEqual(list(entry["candidates"]), ["M0"])
+        self.assertEqual(list(entry["coefficients"]), ["beta0"])
+        self.assertEqual(entry["coefficients"]["beta0"], cc.median([c["d"]["C"] for c in cells]))
+        self.assertEqual(cc.select_model(cells, "C")["model"], "M1")  # the unrestricted selection would have taken the lever
+        # the widening note discloses the unwidened LOO coverage (MINOR-2)
+        cells = [{"window": f"w{i}", "pred": {"C": {"last_step_pt": 0.0, "sec_share": 0.0, "corner_share": 0.0}},
+                  "d": {"C": 0.1 + 0.01 * (i % 3)}} for i in range(10)]
+        cells += [{"window": "out1", "pred": cells[0]["pred"], "d": {"C": 1.0}}, {"window": "out2", "pred": cells[0]["pred"], "d": {"C": -1.0}}]
+        entry = cc.select_model(cells, "C", models=("M0",))
+        self.assertGreater(entry["widened"], 1.0)
+        self.assertIn("unwidened LOO coverage is 10 / 12", entry["loo_coverage"]["note"])
+        self.assertEqual(entry["loo_coverage"]["coverage_unwidened"], entry["candidates"]["M0"]["loo_coverage"])
+        self.assertGreaterEqual(entry["loo_coverage"]["coverage"], 0.9)
+
     def test_bitwise_reproducible(self):
         cells = make_cells(15, lambda p: -3.0 + 1.0 * p["last_step_pt"], seed=11)
         a = json.dumps(cc.select_model(cells, "SA"), sort_keys=True)

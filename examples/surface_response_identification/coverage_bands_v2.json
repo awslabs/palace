@@ -14,7 +14,7 @@
    "n": 20,
    "types": {
     "C": {
-     "H_pt": 0.17008689730154455,
+     "H_pt": 0.16898990800169877,
      "candidates": {
       "M0": {
        "H_pt": 0.16898990800169877,
@@ -27,40 +27,12 @@
        },
        "loo_coverage": 0.9,
        "loo_half_width_pt": 0.17979898881499423
-      },
-      "M1": {
-       "H_pt": 0.17008689730154455,
-       "ci90": [
-        0.7383369536731332,
-        0.9663367764380952
-       ],
-       "coefficients": {
-        "beta0": 0.012415069590365091,
-        "beta1": -0.021739450513805415
-       },
-       "loo_coverage": 0.9,
-       "loo_half_width_pt": 0.1790411251392273
-      },
-      "M2": {
-       "H_pt": 0.16898990800169877,
-       "ci90": [
-        0.7383369536731332,
-        0.9663367764380952
-       ],
-       "coefficients": {
-        "beta0": 0.006363397308445373,
-        "beta1": 0.0,
-        "beta2": 0.0
-       },
-       "loo_coverage": 0.9,
-       "loo_half_width_pt": 0.17979898881499423
       }
      },
      "coefficients": {
-      "beta0": 0.012415069590365091,
-      "beta1": -0.021739450513805415
+      "beta0": 0.006363397308445373
      },
-     "full_band_coverage_calibrate": 0.85,
+     "full_band_coverage_calibrate": 0.9,
      "loo_coverage": {
       "ci90": [
        0.7383369536731332,
@@ -68,13 +40,13 @@
       ],
       "coverage": 0.9,
       "covered": 18,
-      "loo_half_width_pt": 0.1790411251392273,
+      "loo_half_width_pt": 0.17979898881499423,
       "n": 20,
       "widen_k": 1.0
      },
      "median_g": 0.0,
-     "median_residual_pt": 0.050506842677255755,
-     "model": "M1",
+     "median_residual_pt": 0.049414225889948815,
+     "model": "M0",
      "n": 20,
      "n_energy_mode": 0,
      "widened": 1.0
@@ -125,7 +97,7 @@
      "coefficients": {
       "beta0": 0.6083440639893856
      },
-     "full_band_coverage_calibrate": 0.95,
+     "full_band_coverage_calibrate": 0.9,
      "loo_coverage": {
       "ci90": [
        0.7383369536731332,
@@ -192,7 +164,7 @@
       "beta1": 10.21555163919981,
       "beta2": -43.0676274918256
      },
-     "full_band_coverage_calibrate": 0.9,
+     "full_band_coverage_calibrate": 1.0,
      "loo_coverage": {
       "ci90": [
        0.7383369536731332,
@@ -257,7 +229,7 @@
      "coefficients": {
       "beta0": -2.8854382576196826
      },
-     "full_band_coverage_calibrate": 1.0,
+     "full_band_coverage_calibrate": 0.9,
      "loo_coverage": {
       "ci90": [
        0.7383369536731332,
@@ -303,33 +275,6 @@
        },
        "loo_coverage": 0.8333333333333334,
        "loo_half_width_pt": 0.40953698338819233
-      },
-      "M1": {
-       "H_pt": 0.3054001135755454,
-       "ci90": [
-        0.5126619681967507,
-        0.8953474344295108
-       ],
-       "coefficients": {
-        "beta0": 0.31503269813342916,
-        "beta1": -0.21809026233337603
-       },
-       "loo_coverage": 0.75,
-       "loo_half_width_pt": 0.3816917524086834
-      },
-      "M2": {
-       "H_pt": 0.3295652655184389,
-       "ci90": [
-        0.6007930895844598,
-        0.9432194472505557
-       ],
-       "coefficients": {
-        "beta0": 0.14092812570289937,
-        "beta1": 0.0,
-        "beta2": 0.0
-       },
-       "loo_coverage": 0.8333333333333334,
-       "loo_half_width_pt": 0.40953698338819233
       }
      },
      "coefficients": {
@@ -342,10 +287,12 @@
        0.9811839504836382
       ],
       "coverage": 0.9166666666666666,
+      "coverage_unwidened": 0.8333333333333334,
       "covered": 11,
+      "covered_unwidened": 10,
       "loo_half_width_pt": 0.40953698338819233,
       "n": 12,
-      "note": "WIDENED x 1.670",
+      "note": "WIDENED x 1.6699: the unwidened LOO coverage is 10 / 12",
       "widen_k": 1.6698758562353375
      },
      "median_g": 0.0,
@@ -401,17 +348,19 @@
      "coefficients": {
       "beta0": 1.4216916035290073
      },
-     "full_band_coverage_calibrate": 0.9166666666666666,
+     "full_band_coverage_calibrate": 1.0,
      "loo_coverage": {
       "ci90": [
        0.6988317205601311,
        0.9811839504836382
       ],
       "coverage": 0.9166666666666666,
+      "coverage_unwidened": 0.8333333333333334,
       "covered": 11,
+      "covered_unwidened": 10,
       "loo_half_width_pt": 2.100518839862886,
       "n": 12,
-      "note": "WIDENED x 1.208",
+      "note": "WIDENED x 1.2076: the unwidened LOO coverage is 10 / 12",
       "widen_k": 1.2076149972605659
      },
      "median_g": 1.6468462939702744,
@@ -474,10 +423,12 @@
        0.9811839504836382
       ],
       "coverage": 0.9166666666666666,
+      "coverage_unwidened": 0.8333333333333334,
       "covered": 11,
+      "covered_unwidened": 10,
       "loo_half_width_pt": 3.411343822213986,
       "n": 12,
-      "note": "WIDENED x 1.241",
+      "note": "WIDENED x 1.2409: the unwidened LOO coverage is 10 / 12",
       "widen_k": 1.2408606464172813
      },
      "median_g": -0.1713533522688736,
@@ -540,10 +491,12 @@
        0.9811839504836382
       ],
       "coverage": 0.9166666666666666,
+      "coverage_unwidened": 0.8333333333333334,
       "covered": 11,
+      "covered_unwidened": 10,
       "loo_half_width_pt": 0.9964799626024479,
       "n": 12,
-      "note": "WIDENED x 1.000",
+      "note": "WIDENED x 1.0003: the unwidened LOO coverage is 10 / 12",
       "widen_k": 1.0002786432958812
      },
      "median_g": -0.07167167016208163,
@@ -558,14 +511,14 @@
  },
  "fit_date": "2026-10-30",
  "full_record": {
-  "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/calibration/coverage-bands-v1.json",
-  "sha256": "4e8d9490d80fe8d414b29ac2f3dea45a9e14ed910397cedefc6a79340d8d4651"
+  "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/calibration/coverage-bands-v2.json",
+  "sha256": "d9a01283767b5ad609eee81eee91529ee279ce26f643cbed53f1b248a3b12eb0"
  },
  "provenance": {
   "inputs": [
    {
-    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/calibration/records-v1.json",
-    "sha256": "f44fe59c10bd83ceb3a9c937444af986cc57d5be7f72d526ebe1930502e80281"
+    "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/coverage/calibration/records-v2.json",
+    "sha256": "275986c03c2e1c48050778952c34f7f4b529ca1c248d73dcd97e317e0b8bac85"
    },
    {
     "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/boxgrow/campaign/runs/j1j/ctx003-C4-thin-preflight-bgc/postpro/surface-response-requirements.json",
@@ -1288,5 +1241,5 @@
  "residual_quantile": 0.9,
  "target_coverage": 0.9,
  "tool": "coverage_calibration.py",
- "version": "v1"
+ "version": "v2"
 }

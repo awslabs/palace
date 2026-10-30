@@ -15,7 +15,7 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
      loop remainder, the UNCLAIMED remainder as its own row: OI-COVERAGE-EXCLUSION-ENERGY),
      in ENERGY (the PatchEnergy raw partition; a PROXY by length when absent) and in LENGTH.
   B  the NAMED RESIDUAL TABLE: the terms the band does not calibrate, with their bounds of record.
-  C  the PREDICTED ERROR BAND per Type from a calibration file (coverage_bands_v1.json, written by
+  C  the PREDICTED ERROR BAND per Type from a calibration file (coverage_bands_v2.json, written by
      coverage_calibration.py) and ONE label HIGH / MEDIUM / LOW with its reasons.
   D  QUOTABILITY: the AMR ladder (ft per Type and its steps), the DEPTH rule, the closure spread.
 
@@ -61,7 +61,7 @@ INDUCTIVE_EMAG_OVER_EELEC = 1.0
 INDUCTIVE_LOOP_SHARE = 0.05
 ENERGY_BOOKKEEPING_REL_TOL = 1e-9
 LENGTH_BOOKKEEPING_TOL_UM = 1e-6
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage_bands_v1.json")
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage_bands_v2.json")
 
 
 class MissingInput(Exception):
@@ -502,10 +502,13 @@ def raw_partition(postpro, interfaces, targets):
     return {"labels": labels, "members": members, "weights": weights}
 
 
-# A solve-time catalog name absent from the manifest (the curved-edge kappa node models applied on the arcs of an
-# IsolatedEdge / CurvedEdge requirement; the manifest's SelectedModels carry the interpolated alias) is mapped by its
-# catalog Topology to the LONGEST manifest requirement of that topology (the first topology present wins). The
-# catalog exports no requirement hash (a candidate export: ModelCatalog[].RequirementHash); the mapping is recorded.
+# A solve-time catalog name absent from the manifest is the FIRST-ORDER CURVATURE TERM of a straight-like feature (the
+# kappa0.1 node models of the curvature family; surfaceresponseoperator.cpp FindFirstOrderNodes: "described by its
+# straight model (its anchor)", an additive term on the anchor's patches). Decision 1052 (the ANCHOR rule): such a
+# model is credited to the Status / class of the manifest-known model it shares a raw-partition label with (its
+# anchor). A model with no anchor in any label of the run falls back to the catalog Topology -> the LONGEST manifest
+# requirement of that topology (the first topology present wins); every mapping is RECORDED (block_A.anchor_mapped_models
+# with the energy share it carries). The catalog exports no requirement hash (a candidate export: ModelCatalog[].RequirementHash).
 TOPOLOGY_FALLBACK = {"curved edge": ("CurvedEdge", "IsolatedEdge"), "isolated edge": ("IsolatedEdge",),
                      "convex corner": ("ConvexCorner",), "concave corner": ("ConcaveCorner",),
                      "parallel-edge cluster": ("ParallelEdgeCluster",), "spatial edge cluster": ("SpatialEdgeCluster",),
@@ -513,23 +516,48 @@ TOPOLOGY_FALLBACK = {"curved edge": ("CurvedEdge", "IsolatedEdge"), "isolated ed
                      "different-conductor gap": ("DifferentConductorGap",)}
 
 
-def classify_model(idx, catalog, manifest_models, by_topology=None, mapped=None):
-    """-> (status row, class) of a catalog model via its manifest requirement (by name; else by topology fallback);
-    a name with no requirement at all -> ("Unknown", Topology)."""
+def anchor_models(partition, catalog, manifest_models):
+    """{manifest-absent model index: the index of the manifest-known model it shares a raw label with} (the ANCHOR
+    rule, decision 1052); the lowest-indexed anchor when a label carries several."""
+    anchors = {}
+    if partition is None:
+        return anchors
+    for members in partition["members"].values():
+        known = sorted(m for m in members if catalog.get(m, {}).get("Name") in manifest_models)
+        if not known:
+            continue
+        for m in members:
+            if m not in known and m not in anchors:
+                anchors[m] = known[0]
+    return anchors
+
+
+def classify_model(idx, catalog, manifest_models, by_topology=None, mapped=None, anchors=None):
+    """-> (status row, class, requirement info) of a catalog model via its manifest requirement (by name; else via its
+    ANCHOR; else by topology fallback); a name with no requirement at all -> ("Unknown", Topology, None)."""
     entry = catalog.get(idx, {})
     info = manifest_models.get(entry.get("Name"))
-    if info is None and by_topology:
-        topo = str(entry.get("Topology") or "")
-        for candidate in TOPOLOGY_FALLBACK.get(topo, (topo,)):
-            if candidate in by_topology:
-                info = by_topology[candidate]
-                if mapped is not None:
-                    mapped.append({"model": idx, "name": entry.get("Name"), "topology": topo, "mapped_to": candidate,
-                                   "status": info["Status"], "class": info["Class"]})
-                break
     if info is None:
-        return "Unknown", str(entry.get("Topology") or "Unknown")
-    return STATUS_ROW.get(info["Status"], str(info["Status"])), info["Class"]
+        topo = str(entry.get("Topology") or "")
+        anchor = (anchors or {}).get(idx)
+        if anchor is not None:
+            info = manifest_models.get(catalog.get(anchor, {}).get("Name"))
+            if mapped is not None:
+                mapped.append({"model": idx, "name": entry.get("Name"), "topology": topo, "via": "anchor",
+                               "anchor_model": anchor, "anchor_name": catalog.get(anchor, {}).get("Name"),
+                               "mapped_to": info["Topology"], "status": info["Status"], "class": info["Class"]})
+        elif by_topology:
+            for candidate in TOPOLOGY_FALLBACK.get(topo, (topo,)):
+                if candidate in by_topology:
+                    info = by_topology[candidate]
+                    if mapped is not None:
+                        mapped.append({"model": idx, "name": entry.get("Name"), "topology": topo, "via": "topology",
+                                       "anchor_model": None, "anchor_name": None, "mapped_to": candidate,
+                                       "status": info["Status"], "class": info["Class"]})
+                    break
+    if info is None:
+        return "Unknown", str(entry.get("Topology") or "Unknown"), None
+    return STATUS_ROW.get(info["Status"], str(info["Status"])), info["Class"], info
 
 
 def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_models, W, lengths, by_topology=None):
@@ -539,11 +567,13 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
     fab = model_energies(postpro, interfaces, targets)
     raw_rows, locations = raw_class_energies(postpro, interfaces, targets, kind)
     mode = "ENERGY" if partition is not None else "PROXY"
-    out = {"mode": mode, "types": {}, "locations": locations, "topology_mapped_models": []}
+    anchors = anchor_models(partition, catalog, manifest_models)
+    out = {"mode": mode, "types": {}, "locations": locations, "anchor_mapped_models": []}
+    first_type = next(iter(W), None)
     for t, w in W.items():
         W_t = w["W"]
         acc = {"W": W_t, "E_out": w["E_out"], "models": {}, "classes": {}, "raw": {}, "unclaimed_label": None,
-               "fab_total": 0.0, "raw_models_total": 0.0, "g": None, "grown": 0.0}
+               "fab_total": 0.0, "raw_models_total": 0.0, "g": None, "grown": 0.0, "mapped_models": 0.0}
         fab_t = sum(v.get(t, 0.0) for v in fab.values())
         acc["fab_total"] = fab_t
         if partition is not None:
@@ -557,13 +587,15 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
                 wsum = sum(weights) or float(len(members))
                 for m, wgt in zip(members, weights):
                     share = (wgt / wsum) if wsum else 1.0 / max(len(members), 1)
-                    status, cls = classify_model(m, catalog, manifest_models, by_topology,
-                                                 out["topology_mapped_models"] if t == list(W)[0] else None)
+                    status, cls, info = classify_model(m, catalog, manifest_models, by_topology,
+                                                       out["anchor_mapped_models"] if t == first_type else None, anchors)
                     acc["models"][status] = acc["models"].get(status, 0.0) + e * share
                     acc["classes"][cls] = acc["classes"].get(cls, 0.0) + e * share
                     acc["raw_models_total"] += e * share
-                    if (manifest_models.get(catalog.get(m, {}).get("Name")) or {}).get("Grown"):
+                    if (info or {}).get("Grown"):
                         acc["grown"] += e * share
+                    if catalog.get(m, {}).get("Name") not in manifest_models:
+                        acc["mapped_models"] += e * share
             for row_name, by_type in raw_rows.items():
                 acc["raw"][row_name] = by_type.get(t, 0.0)
             recorded_raw = sum(acc["raw"].values())
@@ -593,6 +625,7 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
         acc["exact_share"] = acc["models_share"].get("Exact", 0.0)
         acc["grown_share"] = acc["grown"] / W_t if W_t else 0.0
         acc["unclaimed_share"] = acc["raw_share"].get("Unclaimed", 0.0)
+        acc["mapped_models_share"] = acc["mapped_models"] / W_t if W_t else 0.0
         out["types"][t] = acc
     return out
 
@@ -697,7 +730,8 @@ NAMED_RESIDUALS = (
      "key": "ma_raw"},
     {"term": "p3-REFERENCE / u_p", "decisions": "973 / 978 / 994",
      "bound": "u_p 2.012 % is an ESTIMATE, not a bound; the transmon MA_sharp +5.91 % [+4.95, +6.57]",
-     "trigger": "--reference-order 3", "band_use": "the band WIDENED by u_p on every Type; labelled p3-REFERENCE",
+     "trigger": "--reference-order 3 (the MA_sharp reading graded against a p3 reference; DESIGN 5.1)",
+     "band_use": "the band WIDENED by u_p on the p3-graded Type (MA) only; labelled p3-REFERENCE",
      "key": "p3"},
     {"term": "the C form terms", "decisions": "921 / 936 / 938 / 949",
      "bound": "R-50 class +0.31 / +0.32 / +0.37 / +0.98 % (C4 / O2 / S5 / S6, Thomson); junction class -0.14..-0.26 % (Faraday EMF)",
@@ -707,13 +741,14 @@ NAMED_RESIDUALS = (
      "bound": "C1: E_mag / E_elec 11.5, the [2] identity +4.25 % NOT MET (973 / 995)",
      "trigger": "E_mag / E_elec > 1 OR the max loop share > 0.05", "band_use": "labelled INDUCTIVE (OPERATOR); confidence capped at MEDIUM",
      "key": "inductive"},
-    {"term": "Maxwell DEPTH", "decisions": "1016 / 1024 / 1045 / 1047",
+    {"term": "DEPTH (ES / Maxwell)", "decisions": "1016 / 1024 / 1045 / 1047",
      "bound": "S7-rc SA -6.02 F (stopped at the 11th solve); S1b-rc SA -6.48 / MS -5.19 F (the AMR does not refine at junction footprints)",
-     "trigger": "the run's own ladder: the last ft step > 0.3 pt or the step ratio >= 0.7",
+     "trigger": "the run's own ladder (ES or Maxwell): the last ft step > 0.3 pt or the step ratio >= 0.7",
      "band_use": "NOT QUOTABLE: the band extended by the Richardson tail (ratio < 0.7) or DEPTH-UNBOUNDED (LOW)", "key": "depth"},
     {"term": "Maxwell FORM", "decisions": "929 D / 1024",
      "bound": "C_eff* +1.42 F [FORM / OPERATOR] on S7-rc (the S6 class); OI-MX-PEMBED-SLIVER-CONDITIONING",
-     "trigger": "a P-embedded R2a port (--port-form r2a-pembed)", "band_use": "the C column labelled FORM; no Type band change",
+     "trigger": "a P-embedded R2a port (--port-form r2a-pembed, or the config's LumpedPort Length override)",
+     "band_use": "the C column labelled FORM; no Type band change",
      "key": "form"},
     {"term": "the junction-footprint AMR", "decisions": "1045",
      "bound": "OI-MX-JUNCTION-FOOTPRINT-AMR: the AMR error ~70 % at the 3 junction footprints",
@@ -730,12 +765,17 @@ NAMED_RESIDUALS = (
 
 GROWN_EXCESS_PT_PER_SHARE = 4.30  # +4.30 % of the grown box's MA energy (988 / 990)
 P3_UP_PCT = 2.0122280303430604
+# DESIGN 5.1: the transmon of record grades MA_sharp alone against the 973 r2.5 p3 reference (SA / MS / C vs the thick
+# ES best), so --reference-order 3 widens the MA band only (DESIGN 1.2: "WIDENED by u_p on that Type").
+P3_GRADED_TYPES = ("MA",)
+PORT_FORMS = ("r2a-pembed",)
 
 
-def maxwell_flags(postpro, config, energies):
-    """INDUCTIVE (E_mag / E_elec, the max loop share), the C class (R-50 / junction), FORM (P-embedded R2a)."""
+def maxwell_flags(postpro, config, energies, port_form=None):
+    """INDUCTIVE (E_mag / E_elec, the max loop share), the C class (R-50 / junction), FORM (a P-embedded R2a port:
+    --port-form r2a-pembed or the config's LumpedPort Length override; DESIGN 1.2 / decision 929 item D)."""
     flags = {"inductive": False, "E_mag_over_E_elec": None, "max_loop_share": None, "c_class": None,
-             "form": False, "junction_port": False}
+             "form": port_form in PORT_FORMS, "port_form": port_form, "junction_port": False}
     ports = config.get("Boundaries", {}).get("LumpedPort", []) or []
     excited = [p for p in ports if p.get("Excitation")] or ports
     for p in excited:
@@ -796,8 +836,8 @@ def named_residuals(kind, energy, lengths, ladder_types, flags, reference_order,
         elif k == "p3":
             fired = reference_order == 3
             if fired:
-                ext = {t: {"half_pt": P3_UP_PCT} for t in energy["types"]}
-                detail = f"u_p {P3_UP_PCT:.3f} % added to every Type's half-width"
+                ext = {t: {"half_pt": P3_UP_PCT} for t in energy["types"] if t in P3_GRADED_TYPES}
+                detail = f"u_p {P3_UP_PCT:.3f} % added to the half-width of the p3-graded Type ({' / '.join(ext) or 'none in this run'})"
         elif k == "c_form":
             fired = kind == "Maxwell" and flags.get("c_class") is not None
             detail = f"C class {flags.get('c_class')}" if fired else ""
@@ -811,7 +851,8 @@ def named_residuals(kind, energy, lengths, ladder_types, flags, reference_order,
             detail = "; ".join(f"{t} {v['status']} last step {fmt_pt(v['last_step_pt'])} ratio {v['step_ratio']}" for t, v in bad.items())
         elif k == "form":
             fired = kind == "Maxwell" and bool(flags.get("form"))
-            detail = "P-embedded port (Length override)" if fired else ""
+            detail = (f"P-embedded R2a port ({flags.get('port_form') or 'the config Length override'}): the C column is FORM"
+                      if fired else "")
         elif k == "jj_amr":
             fired = kind == "Maxwell" and bool(flags.get("junction_port")) and flags.get("indicator_falls") is False
             detail = "the error indicator does not fall between solves" if fired else ""
@@ -890,13 +931,15 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
         lo = b - H - gap
         hi = b + H + gap
         if proxy or acc.get("g") is None:
-            pass  # two-sided already
+            pass  # two-sided: g is the calibration median, not the run's own (DESIGN 1.3)
         else:
-            # one-sided towards the correction's direction (DESIGN 1.3): the raw region counted as uncorrected
+            # one-sided in the direction of the THIN bias (PLAN section 4 item 3; decision 1052): the uncorrected share r
+            # misses the library's correction g, so thin + library is LOW by r g when g > 0 and the discrepancy
+            # (thin + library - thick) / thick can be MORE NEGATIVE: the band extends downward; g < 0 the mirror
             if g > 0:
-                lo = b - H
-            else:
                 hi = b + H
+            else:
+                lo = b - H
         ext_notes = []
         for res in residuals:
             if not res["fired"]:
@@ -922,16 +965,29 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
         row.update({"model": cal.get("model"), "coefficients": cal.get("coefficients"), "bias_pt": b, "H_pt": cal.get("H_pt"),
                     "widened": cal.get("widened", 1.0), "gap_pt": gap, "g": g, "g_source": g_source,
                     "raw_share": r, "low_pt": lo, "high_pt": hi, "extensions": ext_notes,
-                    "loo_coverage": cal.get("loo_coverage"), "n": cal.get("n"), "median_residual_pt": cal.get("median_residual_pt")})
+                    "loo_coverage": cal.get("loo_coverage"), "loo_coverage_unwidened": unwidened_loo(cal), "n": cal.get("n"),
+                    "median_residual_pt": cal.get("median_residual_pt")})
         out[t] = row
     c = types_cal.get("C")
     if c:
-        out["C"] = {"calibrated": True, "model": c.get("model"), "bias_pt": c.get("coefficients", {}).get("beta0", 0.0),
-                    "H_pt": c.get("H_pt"), "widened": c.get("widened", 1.0), "loo_coverage": c.get("loo_coverage"), "n": c.get("n"),
-                    "low_pt": c.get("coefficients", {}).get("beta0", 0.0) - c.get("H_pt", 0.0) * c.get("widened", 1.0),
-                    "high_pt": c.get("coefficients", {}).get("beta0", 0.0) + c.get("H_pt", 0.0) * c.get("widened", 1.0),
+        # DESIGN 5.5: C gets the M0 band (coverage_calibration.py fits C with M0 only); the band printed IS the band
+        # validated: beta0 (the median) +- H x widened. A C entry of another model is a calibration-file error.
+        if c.get("model") != "M0":
+            raise ValueError(f"the C band must be M0 (DESIGN 5.5); the band file carries {c.get('model')}")
+        beta0 = c.get("coefficients", {}).get("beta0", 0.0)
+        half = c.get("H_pt", 0.0) * c.get("widened", 1.0)
+        out["C"] = {"calibrated": True, "model": c.get("model"), "bias_pt": beta0, "H_pt": c.get("H_pt"),
+                    "widened": c.get("widened", 1.0), "loo_coverage": c.get("loo_coverage"), "loo_coverage_unwidened": unwidened_loo(c),
+                    "n": c.get("n"), "low_pt": beta0 - half, "high_pt": beta0 + half,
                     "note": "C is printed beside; it never enters the label (DESIGN 5.5)"}
     return out
+
+
+def unwidened_loo(cal):
+    """The selected model's LOO coverage BEFORE the post-hoc widening (the candidates' record), when widened."""
+    if cal.get("widened", 1.0) <= 1.0:
+        return None
+    return ((cal.get("candidates") or {}).get(cal.get("model")) or {}).get("loo_coverage")
 
 
 def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, proxy, ma_reading):
@@ -980,7 +1036,7 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
 
 
 def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder_dir=None, reference_order=None,
-                 ma_reading="raw", label=None):
+                 ma_reading="raw", label=None, port_form=None):
     """The full report (dict) for one run. Raises MissingInput when a required input is absent."""
     config = read_json(os.path.join(postpro, "config_resolved.json"))
     palace = read_json(os.path.join(postpro, "palace.json"))
@@ -1001,7 +1057,7 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     energy = energy_partition(postpro, interfaces, targets, kind, catalog, loaded["models"], W, lengths, loaded["by_topology"])
     proxy = energy["mode"] == "PROXY"
     lad = ladder(postpro, interfaces, targets, kind, ladder_dir)
-    flags = maxwell_flags(postpro, config, energies) if kind == "Maxwell" else {}
+    flags = maxwell_flags(postpro, config, energies, port_form) if kind == "Maxwell" else {}
     if kind == "Maxwell":
         flags["indicator_falls"] = indicator_falls(ladder_dir or postpro)
     residuals = named_residuals(kind, energy, lengths, lad["types"], flags, reference_order, ma_reading == "sharp",
@@ -1017,18 +1073,23 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
                   "interfaces": w["interfaces"]} for t, w in W.items()},
         "E_elec_raw_J": energies.get("E_elec_raw"), "E_elec_ft_J": energies.get("E_elec_ft"),
         "block_A": {"energy": energy["types"], "length": lengths["types"], "energy_locations": energy["locations"],
-                    "topology_mapped_models": energy["topology_mapped_models"],
+                    "anchor_mapped_models": energy["anchor_mapped_models"],
+                    "mapped_models_share": {t: acc.get("mapped_models_share", 0.0) for t, acc in energy["types"].items()},
                     "length_bookkeeping_miss_um": lengths["bookkeeping_miss_um"], "assigned_length_um": lengths["assigned_length"],
                     "exclusions": lengths["exclusions"], "fallback_locations": lengths["fallback_locations"],
                     "uncovered_by_type": lengths["uncovered_by_type"], "counts": lengths["counts"]},
         "block_B": residuals, "block_D": {"ladder": lad, "closure": energies.get("closure"), "flags": flags,
                                           "ff_vs_ft": {t: ((w["ff"] - w["ft"]) / w["ft"] if (w["ft"] and w["ff"] is not None) else None)
                                                        for t, w in W.items()}},
-        "ma_reading": ma_reading, "reference_order": reference_order,
+        "ma_reading": ma_reading, "reference_order": reference_order, "port_form": port_form,
     }
     if bands is not None:
         fam = (bands.get("families") or {}).get(family) or {}
         report["block_C"] = band_table(bands, family, energy, lengths, lad["types"], residuals, proxy)
+        if "C" in report["block_C"] and kind == "Maxwell":
+            # DESIGN 1.2: the C column labelled by class (R-50 / junction) and FORM (a P-embedded R2a port)
+            report["block_C"]["C"]["c_class"] = flags.get("c_class")
+            report["block_C"]["C"]["form"] = bool(flags.get("form"))
         report["bands"] = {"path": bands["_path"], "sha256": bands["_sha256"], "version": bands.get("version"),
                            "fit_date": bands.get("fit_date"), "provenance": bands.get("provenance"),
                            "dev_set_caveat": bands.get("dev_set_caveat")}
@@ -1152,6 +1213,13 @@ def render_markdown(report):
     if A.get("fallback_locations"):
         lines.append("GeometryFallbacks: " + "; ".join(f"{f['Class']} ({f['What']}) at {f['ExampleOrigin']} {f.get('Length', 0.0):.2f} um"
                                                       for f in A["fallback_locations"]))
+    if A.get("anchor_mapped_models"):
+        shares = A.get("mapped_models_share") or {}
+        lines.append("Manifest-absent catalog models (the first-order curvature node models; decision 1052 ANCHOR rule): "
+                     + "; ".join(f"m{m['model']} {m['name']} -> {m['status']} / {m['class']} via {m['via']}"
+                                 + (f" (anchor m{m['anchor_model']} {m['anchor_name']})" if m['via'] == 'anchor' else f" ({m['mapped_to']})")
+                                 for m in A["anchor_mapped_models"])
+                     + "; energy share they carry: " + ", ".join(f"{t} {fmt_pct(s)}" for t, s in shares.items()))
     if report.get("form") == "preflight":
         return "\n".join(lines) + "\n"
     lines += ["", "## B. NAMED RESIDUALS"]
@@ -1164,14 +1232,22 @@ def render_markdown(report):
     if C:
         lines.append("| Type | model | bias | H (x widened) | gap r|g| | band | LOO coverage (n) | extensions |")
         lines.append("|---|---|---|---|---|---|---|---|")
+        form = (report.get("block_D") or {}).get("flags", {}).get("form")
         for t, row in C.items():
             if not row.get("calibrated"):
                 lines.append(f"| {t} | — | | | | {row.get('note')} | | |")
                 continue
             loo = row.get("loo_coverage") or {}
-            lines.append(f"| {t} | {row.get('model')} | {fmt_pt(row.get('bias_pt'))} | {row.get('H_pt', 0.0):.2f} x {row.get('widened', 1.0):.2f} | "
-                         f"{row.get('gap_pt', 0.0):.2f} | [{row['low_pt']:+.2f}, {row['high_pt']:+.2f}] | "
-                         f"{loo.get('coverage', 'n/a')} CI {loo.get('ci90')} (n {row.get('n')}) | {'; '.join(row.get('extensions', []))} |")
+            widened = row.get("widened", 1.0)
+            widen_txt = f"{row.get('H_pt', 0.0):.2f}" + (f" x {widened:.4f} WIDENED" if widened > 1.0 else " x 1 (not widened)")
+            loo_txt = f"{loo.get('coverage', 'n/a')} CI {loo.get('ci90')} (n {row.get('n')})"
+            if row.get("loo_coverage_unwidened") is not None:
+                loo_txt += f"; unwidened {row['loo_coverage_unwidened']:.3f}: the >= 90 % is reached by the widening"
+            ext = list(row.get("extensions", []))
+            if t == "C" and form:
+                ext.append("Maxwell FORM (P-embedded R2a port): the C column is FORM")
+            lines.append(f"| {t} | {row.get('model')} | {fmt_pt(row.get('bias_pt'))} | {widen_txt} | "
+                         f"{row.get('gap_pt', 0.0):.2f} | [{row['low_pt']:+.2f}, {row['high_pt']:+.2f}] | {loo_txt} | {'; '.join(ext)} |")
     else:
         lines.append("no band file")
     lines += ["", "## D. QUOTABILITY"]
@@ -1218,11 +1294,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("postpro", nargs="?", help="the run's postpro directory (omit with --preflight)")
     parser.add_argument("--manifest", required=True, help="the preflight manifest surface-response-requirements.json")
-    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: coverage_bands_v1.json)")
+    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: coverage_bands_v2.json)")
     parser.add_argument("--no-bands", action="store_true", help="coverage only (blocks A / B / D; no band, no label)")
     parser.add_argument("--discovery", help="the discovery closure manifest (UnbuildableRequirements keys)")
     parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run directory")
-    parser.add_argument("--reference-order", type=int, help="3 = graded against a p3 reference (p3-REFERENCE: u_p added)")
+    parser.add_argument("--reference-order", type=int,
+                        help="3 = the MA_sharp reading is graded against a p3 reference (p3-REFERENCE: u_p added to the MA band; DESIGN 5.1)")
+    parser.add_argument("--port-form", choices=PORT_FORMS,
+                        help="r2a-pembed = a P-embedded R2a port (Maxwell FORM: the C column labelled FORM; decision 929 item D)")
     parser.add_argument("--ma-reading", choices=("raw", "sharp"), default="raw",
                         help="sharp = the MA_sharp transformation (thin_ma_sharp) is applied to this run's reading")
     parser.add_argument("--preflight", action="store_true", help="the preflight-only form (manifest + palace.json)")
@@ -1239,7 +1318,7 @@ def main(argv=None):
                 parser.error("postpro is required without --preflight")
             bands = None if args.no_bands else load_bands(args.bands)
             report = build_report(args.postpro, args.manifest, bands, args.discovery, args.ladder_run, args.reference_order,
-                                  args.ma_reading, args.label)
+                                  args.ma_reading, args.label, args.port_form)
             out_dir = args.output or args.postpro
     except MissingInput as exc:
         print(f"coverage_report: MISSING INPUT {exc}", file=sys.stderr)

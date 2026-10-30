@@ -40,6 +40,11 @@ def _dump(obj, path):
         json.dump(obj, f)
 
 
+def _load(path):
+    with open(path) as f:
+        return json.load(f)
+
+
 def _wide_row(values):
     return ",".join(f"{v:+.12e}" if isinstance(v, float) else str(v) for v in values)
 
@@ -206,8 +211,9 @@ class EnergyPartitionTest(unittest.TestCase):
         self.assertEqual(lad["status"], "DEPTH-UNBOUNDED")
         self.assertAlmostEqual(lad["tail_pt"], 3.0 * lad["last_step_pt"], places=9)
         self.assertGreater(lad["tail_pt"], 0.0)
-        depth = [r for r in report["block_B"] if r["term"] == "Maxwell DEPTH"][0]
+        depth = [r for r in report["block_B"] if r["term"] == "DEPTH (ES / Maxwell)"][0]
         self.assertTrue(depth["fired"])
+        self.assertFalse(any(r["term"] == "Maxwell DEPTH" for r in report["block_B"]))  # MINOR-4: the row fires on ES ladders too
         bands = cr.load_bands(write_bands(os.path.join(self.tmp, "bands.json")))
         report = cr.build_report(self.post, self.manifest, bands, ma_reading="sharp")
         band = report["block_C"]["SA"]
@@ -283,24 +289,46 @@ class LabelAndFormsTest(unittest.TestCase):
         md = cr.render_markdown(report)
         self.assertIn("ENERGY = PROXY", md)
 
-    def test_gap_term_one_sided(self):
+    def test_gap_term_one_sided_in_the_thin_bias_direction(self):
+        # decision 1052 (the PLAN's reading): g > 0 -> the uncorrected share misses the library's raise -> thin + library
+        # LOW -> the band extends DOWNWARD only; g < 0 -> upward only; no raw partition (PROXY) -> two-sided
         report = cr.build_report(self.post, self.manifest, self.bands, ma_reading="sharp")
         band = report["block_C"]["MS"]
         g = report["block_A"]["energy"]["MS"]["g"]
         self.assertGreater(g, 0.0)
         self.assertAlmostEqual(band["gap_pt"], 100.0 * (1.6 / 18.0) * g, places=9)
-        self.assertAlmostEqual(band["low_pt"], -3.0 - 1.0, places=9)  # g > 0: the gap extends the upper edge only
-        self.assertAlmostEqual(band["high_pt"], -3.0 + 1.0 + band["gap_pt"] + 0.0, places=9)
+        self.assertAlmostEqual(band["low_pt"], -3.0 - 1.0 - band["gap_pt"], places=9)
+        self.assertAlmostEqual(band["high_pt"], -3.0 + 1.0, places=9)
+        # g < 0: scale the fabricated energies below the raw ones
+        post, manifest = write_fixture(os.path.join(self.tmp, "neg"))
+        with open(os.path.join(post, "surface-response-model-energy.csv"), "w") as f:
+            f.write("source,evaluation,model,patch count,patch weight,domain correction (J)," + ",".join(
+                f"fabricated surface energy[{i}] (J)" for i in (1, 2, 3)) + "\n")
+            for m in (1, 2, 3):
+                f.write(_wide_row([1.0, 0.0, float(m), 10.0, 1.0, 0.0] + [0.5 * FAB[m][i] for i in (1, 2, 3)]) + "\n")
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        band = report["block_C"]["MS"]
+        self.assertLess(report["block_A"]["energy"]["MS"]["g"], 0.0)
+        self.assertAlmostEqual(band["low_pt"], -3.0 - 1.0, places=9)
+        self.assertAlmostEqual(band["high_pt"], -3.0 + 1.0 + band["gap_pt"], places=9)
+        post, manifest = write_fixture(os.path.join(self.tmp, "proxy2"), raw_partition=False)
+        band = cr.build_report(post, manifest, self.bands, ma_reading="sharp")["block_C"]["MS"]
+        self.assertAlmostEqual(band["high_pt"] - band["low_pt"], 2.0 + 2.0 * band["gap_pt"], places=9)
 
-    def test_named_residuals_grown_and_p3(self):
+    def test_named_residuals_grown_and_p3_on_the_graded_type_only(self):
         report = cr.build_report(self.post, self.manifest, self.bands, reference_order=3, ma_reading="sharp")
         rows = {r["term"]: r for r in report["block_B"]}
         self.assertTrue(rows["grown-coupon (T5) excess"]["fired"])
         grown_ma = report["block_A"]["energy"]["MA"]["grown_share"]
         self.assertAlmostEqual(rows["grown-coupon (T5) excess"]["extensions"]["MA"]["upper_pt"], 4.30 * grown_ma, places=9)
         self.assertTrue(rows["p3-REFERENCE / u_p"]["fired"])
-        band = report["block_C"]["SA"]
-        self.assertAlmostEqual(band["low_pt"], -3.0 - 1.0 - cr.P3_UP_PCT, places=9)
+        # DESIGN 1.2 / 5.1: u_p widens the p3-graded Type (MA) only; SA / MS are graded against the thick ES best
+        self.assertEqual(set(rows["p3-REFERENCE / u_p"]["extensions"]), {"MA"})
+        plain = cr.build_report(self.post, self.manifest, self.bands, ma_reading="sharp")["block_C"]
+        self.assertAlmostEqual(report["block_C"]["SA"]["low_pt"], plain["SA"]["low_pt"], places=9)
+        self.assertAlmostEqual(report["block_C"]["MS"]["high_pt"], plain["MS"]["high_pt"], places=9)
+        self.assertAlmostEqual(report["block_C"]["MA"]["low_pt"], plain["MA"]["low_pt"] - cr.P3_UP_PCT, places=9)
+        self.assertAlmostEqual(report["block_C"]["MA"]["high_pt"], plain["MA"]["high_pt"] + cr.P3_UP_PCT, places=9)
         self.assertFalse(rows["Maxwell INDUCTIVE"]["fired"])
         self.assertFalse(rows["the cut convention (reference side)"]["fired"])
 
@@ -328,6 +356,254 @@ class LabelAndFormsTest(unittest.TestCase):
         self.assertEqual(report["bands"]["sha256"], self.bands["_sha256"])
         self.assertTrue(os.path.isfile(os.path.join(out, "coverage-report.md")))
         self.assertTrue(cr.summary_line(report).startswith("COVERAGE MEDIUM: SA exact"))
+
+
+class AnchorRuleAndFallbacksTest(unittest.TestCase):
+    """Decision 1052: a manifest-absent catalog model (the kappa0.1 first-order curvature node) is credited to the
+    requirement of the manifest-known model it shares a raw label with; the geometry-fallbacks CSV's own-energy column."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-")
+        self.post, self.manifest = write_fixture(self.tmp)
+        palace = _load(os.path.join(self.post, "palace.json"))
+        palace["SurfaceResponse"]["ModelCatalog"] += [
+            {"Index": 4, "Name": "curved-edge-concave-kappa0.1", "Topology": "curved edge"},
+            {"Index": 5, "Name": "curved-edge-convex-kappa0.1", "Topology": "curved edge"}]
+        _dump(palace, os.path.join(self.post, "palace.json"))
+        # m1+m4: the isolated edge (manifest Exact) shares a label with the kappa node m4; m5 never shares a label
+        with open(os.path.join(self.post, "surface-response-model-raw-energy.csv"), "w") as f:
+            f.write("source,evaluation,label," + ",".join(f"raw energy[{i}] (J)" for i in (1, 2, 3)) + "\n")
+            f.write("1,0,m1+m4,+5.0e-16,+10.0e-16,+1.0e-16\n1,0,m2,+1.0e-16,+2.0e-16,+0.2e-16\n1,0,m3,+2.0e-16,+4.0e-16,+0.4e-16\n")
+            f.write("1,0,m5,+0.2e-16,+0.4e-16,+0.04e-16\n1,0,unclaimed,+0.8e-16,+1.6e-16,+0.16e-16\n")
+        with open(os.path.join(self.post, "surface-response-model-raw-groups.csv"), "w") as f:
+            f.write("label,model,patches,weight length (m)\nm1+m4,1,30,+1.0e-06\nm1+m4,4,30,+1.0e-06\nm2,2,3,+1.0e-06\nm3,3,4,+4.0e-07\nm5,5,2,+1.0e-08\n")
+        manifest = _load(self.manifest)
+        manifest["Requirements"][3] = {"Hash": "d" * 64, "Topology": "CurvedEdge", "Status": "Interpolated", "TotalEdgeLength": 20.0,
+                                       "Signature": {}, "Interfaces": [{"Type": "SA"}, {"Type": "MS"}, {"Type": "MA"}],
+                                       "SelectedModels": [{"Name": "isolated-edge@convex-kappa0.38-cubic"}]}
+        manifest["Summary"]["Uncovered"] = {"ByType": {}, "Length": 0.0}
+        _dump(manifest, self.manifest)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_anchor_rule_credits_the_anchor_requirement(self):
+        report = cr.build_report(self.post, self.manifest, None, ma_reading="sharp")
+        e = report["block_A"]["energy"]["SA"]
+        # m1+m4 (5e-16) -> IsolatedEdge / Exact in full (the topology fallback would have said CurvedEdge / Interpolated);
+        # m5 has no anchor -> the topology fallback (CurvedEdge Interpolated), recorded
+        self.assertAlmostEqual(e["classes"]["IsolatedEdge"], 5.0e-16, delta=1e-28)
+        self.assertAlmostEqual(e["models"]["Exact"], 6.0e-16, delta=1e-28)
+        self.assertAlmostEqual(e["classes"]["CurvedEdge"], 0.2e-16, delta=1e-28)
+        self.assertAlmostEqual(e["mapped_models_share"], (2.5e-16 + 0.2e-16) / W[1], places=9)
+        mapped = {m["model"]: m for m in report["block_A"]["anchor_mapped_models"]}
+        self.assertEqual(mapped[4]["via"], "anchor")
+        self.assertEqual(mapped[4]["anchor_model"], 1)
+        self.assertEqual((mapped[4]["status"], mapped[4]["class"]), ("Exact", "IsolatedEdge"))
+        self.assertEqual(mapped[5]["via"], "topology")
+        self.assertEqual((mapped[5]["status"], mapped[5]["class"]), ("Interpolated", "CurvedEdge"))
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+        self.assertIn("ANCHOR rule", cr.render_markdown(report))
+
+    def test_anchor_rule_is_consistent_without_a_curved_edge_requirement(self):
+        manifest = _load(self.manifest)
+        manifest["Requirements"] = manifest["Requirements"][:3]
+        manifest["Identification"]["Totals"]["AssignedLength"] = 480.0
+        _dump(manifest, self.manifest)
+        report = cr.build_report(self.post, self.manifest, None, ma_reading="sharp")
+        e = report["block_A"]["energy"]["SA"]
+        self.assertAlmostEqual(e["classes"]["IsolatedEdge"], 5.0e-16 + 0.2e-16, delta=1e-28)  # m4 by anchor; m5 by topology
+        mapped = {m["model"]: m for m in report["block_A"]["anchor_mapped_models"]}
+        self.assertEqual(mapped[4]["via"], "anchor")
+        self.assertEqual(mapped[5]["mapped_to"], "IsolatedEdge")  # no anchor, no CurvedEdge requirement: the next topology
+
+    def test_geometry_fallbacks_own_energy_column(self):
+        with open(os.path.join(self.post, "surface-response-geometry-fallbacks.csv"), "w") as f:
+            f.write("source,class,type,count,length (m),raw energy (J),within-R energy (J),share\n")
+            f.write("1,OverlapExcluded,MS,2,7.9e-06,3.0e-18,1.8e-15,1.67e-03\n")
+        report = cr.build_report(self.post, self.manifest, None, ma_reading="sharp")
+        e = report["block_A"]["energy"]["MS"]
+        self.assertAlmostEqual(e["raw"]["GeometryFallbacks:OverlapExcluded"], 3.0e-18, delta=1e-30)
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], 1.6e-16 - 0.6e-16 - 3.0e-18, delta=1e-28)
+        self.assertEqual(report["block_A"]["energy"]["SA"]["raw"]["GeometryFallbacks:OverlapExcluded"], 0.0)  # an MS-only row
+
+
+MX_RAW = {1: 4.0e-16, 2: 10.0e-16}   # Maxwell fixture: interfaces 1 SA, 2 MS; the first (f, exc) block only
+MX_OUT = {1: 0.4e-16, 2: 1.0e-16}
+MX_LOOP = {1: 0.1e-16, 2: 0.3e-16}
+
+
+def write_maxwell_surface_q(dirpath, scale=1.0, e_norm=1.0e-12):
+    """surface-Q-corrected.csv (Maxwell long form: one row per interface per (f, exc)) + surface-Q-edge.csv."""
+    header = ["f (GHz)", "exc", "interface", "E_norm raw (J)", "E_norm corrected (J)", "E_norm corrected fixed-flux (J)",
+              "E_norm self-consistent (J)", "E_surf raw (J)", "p_surf raw", "Q_surf raw", "E_surf corrected (J)", "p_surf corrected",
+              "Q_surf corrected", "E_surf corrected fixed-flux (J)", "p_surf corrected fixed-flux", "Q_surf corrected fixed-flux",
+              "E_surf self-consistent (J)", "p_surf self-consistent", "Q_surf self-consistent", "trace closure spread"]
+    with open(os.path.join(dirpath, "surface-Q-corrected.csv"), "w") as f:
+        f.write(",".join(header) + "\n")
+        for exc in (1, 2):
+            for i in (1, 2):
+                ft = MX_RAW[i] * (1.0 + 0.1 * scale) * (1.0 + 0.5 * (exc - 1))
+                f.write(_wide_row([1.0, exc, i, e_norm, e_norm, e_norm, float("nan"), MX_RAW[i], 1.0, 1.0, ft, 1.0, 1.0, ft * 1.01, 1.0, 1.0,
+                                   float("nan"), float("nan"), float("nan"), 0.1]) + "\n")
+    with open(os.path.join(dirpath, "surface-Q-edge.csv"), "w") as f:
+        f.write("f (GHz),exc,interface,R (m),E_out (J),p_out,E_ann (J),p_ann\n")
+        for exc in (1, 2):
+            for i in (1, 2):
+                f.write(_wide_row([1.0, exc, i, 1.9e-6, MX_OUT[i], 0.0, 0.0, 0.0]) + "\n")
+
+
+def write_maxwell_fixture(root, e_mag_over_e_elec=11.5, ladder=False):
+    """A synthetic Maxwell (Driven) follower: one solve (MaxIts 0) unless `ladder`, an R-50 excited port, domain-E.csv
+    with E_mag / E_elec, the loop-remainder row, the confidence + loop-fit CSVs; a manifest with one Exact isolated edge."""
+    post = os.path.join(root, "postpro")
+    os.makedirs(post, exist_ok=True)
+    config = {"Problem": {"Type": "Driven"},
+              "Boundaries": {"Postprocessing": {"Dielectric": [{"Index": 1, "Type": "SA", "EdgeDistances": [1.9]},
+                                                               {"Index": 2, "Type": "MS", "EdgeDistances": [1.9]}]},
+                             "LumpedPort": [{"Index": 1, "R": 50.0, "L": 0.0, "C": 0.0, "Excitation": True}]},
+              "Solver": {"SurfaceResponseCorrection": {"TargetInterfaces": [1, 2]}}}
+    _dump(config, os.path.join(post, "config_resolved.json"))
+    _dump({"Problem": {"DegreesOfFreedom": 2000}, "SurfaceResponse": {"ModelCatalog": [
+        {"Index": 1, "Name": "isolated-edge", "Topology": "isolated edge"}]}}, os.path.join(post, "palace.json"))
+    write_maxwell_surface_q(post, scale=1.0)
+    with open(os.path.join(post, "surface-response-model-energy.csv"), "w") as f:
+        f.write("source,evaluation,model,patch count,patch weight,domain correction (J),fabricated surface energy[1] (J),"
+                "fabricated surface energy[2] (J),f (GHz),exc\n")
+        f.write(_wide_row([1.0, 0.0, 1.0, 10.0, 1.0, 0.0, 3.3e-16, 8.5e-16, 1.0, 1]) + "\n")
+        f.write(_wide_row([1.0, 0.0, 1.0, 10.0, 1.0, 0.0, 9.9e-16, 2.5e-15, 1.0, 2]) + "\n")
+    with open(os.path.join(post, "surface-response-model-raw-energy.csv"), "w") as f:
+        f.write("source,evaluation,label,raw energy[1] (J),raw energy[2] (J),f (GHz),exc\n")
+        f.write(_wide_row([1.0, 0.0, "m1", 3.2e-16, 8.2e-16, 1.0, 1]) + "\n" + _wide_row([1.0, 0.0, "unclaimed", 0.4e-16, 0.8e-16, 1.0, 1]) + "\n")
+        f.write(_wide_row([1.0, 0.0, "m1", 9.6e-16, 2.46e-15, 1.0, 2]) + "\n" + _wide_row([1.0, 0.0, "unclaimed", 1.2e-16, 2.4e-16, 1.0, 2]) + "\n")
+    with open(os.path.join(post, "surface-response-model-raw-groups.csv"), "w") as f:
+        f.write("label,model,patches,weight length (m)\nm1,1,30,+3.0e-06\n")
+    with open(os.path.join(post, "surface-response-loop-remainder-energy.csv"), "w") as f:
+        f.write("source,evaluation,model,patches,weighted claim length (m),remainder energy[1] (J),remainder energy[2] (J),f (GHz),exc\n")
+        f.write(_wide_row([1.0, 0.0, "Total", 3.0, 2.0e-6, MX_LOOP[1], MX_LOOP[2], 1.0, 1]) + "\n")
+        f.write(_wide_row([1.0, 0.0, "Total", 3.0, 2.0e-6, 3.0 * MX_LOOP[1], 3.0 * MX_LOOP[2], 1.0, 2]) + "\n")
+    with open(os.path.join(post, "domain-E.csv"), "w") as f:
+        f.write("f (GHz),E_elec (J),E_mag (J),E_cap (J),E_ind (J)\n" + _wide_row([1.0, 1.0e-12, e_mag_over_e_elec * 1.0e-12, 0.0, 0.0]) + "\n")
+    with open(os.path.join(post, "surface-response-confidence.csv"), "w") as f:
+        f.write("f (GHz),exc,loop residual,response-weighted loop residual,max trace closure spread,"
+                "response-weighted local trace closure spread,confidence pass\n" + _wide_row([1.0, 1, 0.01, 0.001, 0.2, 0.07, 0]) + "\n")
+    with open(os.path.join(post, "surface-response-loop-fit.csv"), "w") as f:
+        f.write("source,evaluation,f (GHz),exc,max loop share\n" + _wide_row([1.0, 0.0, 1.0, 1, 0.01]) + "\n")
+    with open(os.path.join(post, "error-indicators.csv"), "w") as f:
+        f.write("Norm,Minimum,Maximum,Mean\n+1.0e-01,0,0,0\n")
+    if ladder:
+        for n, sc in enumerate((0.4, 0.9, 0.98), start=1):
+            d = os.path.join(post, f"iteration{n:02d}")
+            os.makedirs(d, exist_ok=True)
+            write_maxwell_surface_q(d, scale=sc)
+            with open(os.path.join(d, "error-indicators.csv"), "w") as f:
+                f.write("Norm,Minimum,Maximum,Mean\n" + _wide_row([1.0 / n, 0, 0, 0]) + "\n")
+    manifest = {"Requirements": [
+        {"Hash": "f" * 64, "Topology": "IsolatedEdge", "Status": "Exact", "TotalEdgeLength": 300.0, "Signature": {},
+         "Interfaces": [{"Type": "SA"}, {"Type": "MS"}], "SelectedModels": [{"Name": "isolated-edge"}]}],
+        "Summary": {"Uncovered": {"ByType": {}, "Length": 0.0}, "SpatialClusterPriority": {"OutsideLength": 0.0},
+                    "DomainBoundary": {"RawPortionLength": 0.0}, "Counts": {"Exact": 1}},
+        "Identification": {"Totals": {"AssignedLength": 300.0}, "Exclusions": [], "Diagnostics": {"GeometryFallbacks": {"Entries": []}}}}
+    mpath = os.path.join(root, "surface-response-requirements.json")
+    _dump(manifest, mpath)
+    return post, mpath
+
+
+def write_maxwell_bands(path):
+    bands = {"version": "test", "fit_date": "2026-10-30", "dev_set_caveat": "test", "provenance": {},
+             "families": {"Maxwell": {"class_census": {"IsolatedEdge": 5},
+                                      "types": {t: {"model": "M0", "coefficients": {"beta0": -3.0}, "H_pt": 1.0, "widened": 1.2,
+                                                    "median_g": -0.1, "n": 12, "loo_coverage": {"coverage": 0.917, "ci90": [0.7, 0.98]},
+                                                    "candidates": {"M0": {"loo_coverage": 0.833}}}
+                                                for t in ("SA", "MS", "MA", "C")}}}}
+    _dump(bands, path)
+    return path
+
+
+class MaxwellFixtureTest(unittest.TestCase):
+    """DESIGN section 6: INDUCTIVE from a Maxwell fixture; the loop-remainder row; the C class; FORM; --ladder-run."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-mx-")
+        self.post, self.manifest = write_maxwell_fixture(os.path.join(self.tmp, "follower"))
+        self.bands = cr.load_bands(write_maxwell_bands(os.path.join(self.tmp, "bands.json")))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_inductive_loop_remainder_and_c_class(self):
+        report = cr.build_report(self.post, self.manifest, self.bands, ma_reading="sharp")
+        self.assertEqual(report["family"], "Maxwell")
+        flags = report["block_D"]["flags"]
+        self.assertTrue(flags["inductive"])
+        self.assertAlmostEqual(flags["E_mag_over_E_elec"], 11.5, places=9)
+        self.assertEqual(flags["c_class"], "R-50")
+        self.assertFalse(flags["form"])
+        rows = {r["term"]: r for r in report["block_B"]}
+        self.assertTrue(rows["Maxwell INDUCTIVE"]["fired"])
+        self.assertTrue(rows["the C form terms"]["fired"])
+        self.assertFalse(rows["Maxwell FORM"]["fired"])
+        self.assertTrue(any("INDUCTIVE" in r for r in report["label"]["reasons_not_high"]))
+        # the first (f, exc) block only: W_SA = 4.0 - 0.4; the loop remainder row = 0.1e-16; Unclaimed = 0.4 - 0.1
+        e = report["block_A"]["energy"]["SA"]
+        self.assertAlmostEqual(e["W"], MX_RAW[1] - MX_OUT[1], delta=1e-28)
+        self.assertAlmostEqual(e["raw"]["LoopRemainder"], MX_LOOP[1], delta=1e-28)
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.4e-16 - MX_LOOP[1], delta=1e-28)
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+        self.assertAlmostEqual(e["g"], (3.3e-16 - 3.2e-16) / 3.2e-16, places=9)
+        # a follower (one solve) has no ladder of its own
+        self.assertEqual(report["block_D"]["ladder"]["types"]["SA"]["status"], "ladder: not in this run")
+        self.assertEqual(report["block_C"]["C"]["c_class"], "R-50")
+        self.assertFalse(report["block_C"]["C"]["form"])
+        # MINOR-2: the widening is disclosed with the unwidened LOO coverage beside it
+        self.assertAlmostEqual(report["block_C"]["SA"]["loo_coverage_unwidened"], 0.833)
+        md = cr.render_markdown(report)
+        self.assertIn("x 1.2000 WIDENED", md)
+        self.assertIn("unwidened 0.833", md)
+
+    def test_form_flag_labels_the_c_column(self):
+        report = cr.build_report(self.post, self.manifest, self.bands, ma_reading="sharp", port_form="r2a-pembed")
+        self.assertTrue(report["block_D"]["flags"]["form"])
+        rows = {r["term"]: r for r in report["block_B"]}
+        self.assertTrue(rows["Maxwell FORM"]["fired"])
+        self.assertTrue(report["block_C"]["C"]["form"])
+        self.assertIn("the C column is FORM", cr.render_markdown(report))
+        # the Type bands do not move with FORM
+        plain = cr.build_report(self.post, self.manifest, self.bands, ma_reading="sharp")
+        self.assertEqual(report["block_C"]["SA"]["low_pt"], plain["block_C"]["SA"]["low_pt"])
+        rc = cr.main([self.post, "--manifest", self.manifest, "--bands", self.bands["_path"], "--output", os.path.join(self.tmp, "out"),
+                      "--ma-reading", "sharp", "--port-form", "r2a-pembed"])
+        self.assertEqual(rc, 0)
+        # the config's Length override is the other trigger (DESIGN 1.2)
+        config = _load(os.path.join(self.post, "config_resolved.json"))
+        config["Boundaries"]["LumpedPort"][0]["Length"] = 2.0
+        _dump(config, os.path.join(self.post, "config_resolved.json"))
+        self.assertTrue(cr.build_report(self.post, self.manifest, self.bands, ma_reading="sharp")["block_D"]["flags"]["form"])
+
+    def test_ladder_run_borrows_the_amr_ladder(self):
+        amr, _ = write_maxwell_fixture(os.path.join(self.tmp, "amr"), ladder=True)
+        report = cr.build_report(self.post, self.manifest, self.bands, ladder_dir=amr, ma_reading="sharp")
+        lad = report["block_D"]["ladder"]
+        self.assertTrue(lad["borrowed"])
+        self.assertEqual(lad["types"]["SA"]["solves"], 4)
+        self.assertEqual(lad["types"]["SA"]["status"], "quotable")
+        self.assertAlmostEqual(lad["types"]["SA"]["steps_pt"][-1], 100.0 * 0.002 / 1.1, places=6)
+        self.assertTrue(report["block_D"]["flags"]["indicator_falls"])
+        self.assertIn("ladder borrowed from", cr.render_markdown(report))
+
+    def test_non_inductive_when_e_mag_small(self):
+        post, manifest = write_maxwell_fixture(os.path.join(self.tmp, "quiet"), e_mag_over_e_elec=0.01)
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        self.assertFalse(report["block_D"]["flags"]["inductive"])
+        self.assertFalse({r["term"]: r for r in report["block_B"]}["Maxwell INDUCTIVE"]["fired"])
+
+    def test_c_band_must_be_m0(self):
+        bands = _load(self.bands["_path"])
+        bands["families"]["Maxwell"]["types"]["C"]["model"] = "M1"
+        path = os.path.join(self.tmp, "bands-m1.json")
+        _dump(bands, path)
+        with self.assertRaises(ValueError):
+            cr.build_report(self.post, self.manifest, cr.load_bands(path), ma_reading="sharp")
 
 
 @unittest.skipUnless(os.path.isdir(RECORD_S1) and os.path.isfile(RECORD_S1_MANIFEST), "the records of record are not present")
