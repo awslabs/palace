@@ -5,6 +5,7 @@
 
 #if defined(MFEM_USE_SUPERLU)
 
+#include <algorithm>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -35,9 +36,8 @@ int GetNpDep(int np, bool use_3d)
 }  // namespace
 
 SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d,
-                             bool reorder_reuse, int print)
-  : mfem::Solver(), comm(comm), A(nullptr), solver(comm, GetNpDep(Mpi::Size(comm), use_3d)),
-    reorder_reuse(reorder_reuse)
+                             bool, int print)
+  : mfem::Solver(), comm(comm), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
   if (print > 1)
@@ -82,11 +82,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool 
 
 void SuperLUSolver::SetOperator(const Operator &op)
 {
-  // For repeated factorizations, always reuse the sparsity pattern.
-  if (A && reorder_reuse)
-  {
-    solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
-  }
+  MFEM_VERIFY(!failed, "SuperLUSolver cannot be used after a failed factorization!");
 
   // This is very similar to the MFEM SuperLURowLocMatrix from a HypreParMatrix but avoids
   // using the communicator from the Hypre matrix in the case that the solver is
@@ -95,6 +91,15 @@ void SuperLUSolver::SetOperator(const Operator &op)
   MFEM_VERIFY(hA && hA->GetGlobalNumRows() == hA->GetGlobalNumCols(),
               "SuperLUSolver requires a square HypreParMatrix operator!");
   auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hA);
+
+  // The native solver is bound to one layout (it rejects other local sizes on its own).
+  const HYPRE_BigInt new_layout[3] = {hA->Height(), hypre_ParCSRMatrixFirstRowIndex(parcsr),
+                                      hypre_ParCSRMatrixGlobalNumRows(parcsr)};
+  bool changed = (layout[0] >= 0 && !std::equal(layout, layout + 3, new_layout));
+  Mpi::GlobalOr(1, &changed, comm);
+  MFEM_VERIFY(!changed, "SuperLUSolver does not support a change of the matrix layout!");
+  std::copy(new_layout, new_layout + 3, layout);
+
   hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
   hypre_CSRMatrixMigrate(csr, HYPRE_MEMORY_HOST);
 
@@ -106,11 +111,30 @@ void SuperLUSolver::SetOperator(const Operator &op)
   HYPRE_BigInt *J = hypre_CSRMatrixBigJ(csr);
   double *data = hypre_CSRMatrixData(csr);
 
-  // We need to save A because SuperLU does not copy the input matrix. Also clean up the
-  // Hypre data structure once we are done with it.
+  // Remove the stored exact zeros from this host copy (the coarse operators keep
+  // zero-valued entries in their sparsity pattern). With them the factorization was
+  // inaccurate for nonsingular matrices, without them accurate: the operator is the same,
+  // the pattern of the factorization is not. Every other entry keeps its value and order.
+  HYPRE_Int nnz = 0;
+  for (HYPRE_Int i = 0, p = 0; i < n_loc; i++)
+  {
+    for (const HYPRE_Int end = I[i + 1]; p < end; p++)
+    {
+      if (data[p] != 0.0)
+      {
+        J[nnz] = J[p];
+        data[nnz++] = data[p];
+      }
+    }
+    I[i + 1] = nnz;
+  }
+  hypre_CSRMatrixNumNonzeros(csr) = nnz;
+
+  // We need to save the matrix because SuperLU does not copy the input matrix. Also clean
+  // up the Hypre data structure once we are done with it.
 #if !defined(HYPRE_BIGINT)
-  A = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc, first_row, glob_n, glob_n, I,
-                                                  J, data);
+  pending = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc, first_row, glob_n,
+                                                        glob_n, I, J, data);
 #else
   int n_loc_int = static_cast<int>(n_loc);
   MFEM_ASSERT(n_loc == (HYPRE_Int)n_loc_int,
@@ -121,12 +145,11 @@ void SuperLUSolver::SetOperator(const Operator &op)
     II[i] = static_cast<int>(I[i]);
     MFEM_ASSERT(I[i] == (HYPRE_Int)II[i], "Overflow error for local sparse matrix index!");
   }
-  A = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc_int, first_row, glob_n,
-                                                  glob_n, II.HostRead(), J, data);
+  pending = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc_int, first_row, glob_n,
+                                                        glob_n, II.HostRead(), J, data);
 #endif
-  solver.SetOperator(*A);
-  height = solver.Height();
-  width = solver.Width();
+  height = pending->Height();
+  width = pending->Width();
   hypre_CSRMatrixDestroy(csr);
 }
 

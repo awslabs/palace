@@ -3242,7 +3242,7 @@
         },
         "ReorderingReuse": {
           "type": "boolean",
-          "description": "Reuse the matrix reordering from the previous solve.",
+          "description": "Reuse the matrix reordering from the previous solve. SuperLU_DIST does not reuse it: it orders and factors every operator from scratch.",
           "default": true,
           "x-palace-advanced": true
         },
