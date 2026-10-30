@@ -127,7 +127,12 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-compiler-fortran intel-oneapi-mkl-devel intel-oneapi-mpi-devel
+        # oneAPI 2026.2.0 crashes on slate and strumpack; stay on 2026.1.
+        sudo apt-get install -y \
+          intel-oneapi-compiler-dpcpp-cpp=2026.1.1-325 \
+          intel-oneapi-compiler-fortran=2026.1.1-325 \
+          intel-oneapi-mkl-devel=2026.1.0-236 \
+          intel-oneapi-mpi-devel=2021.18.1-9
         end_timer "Setup Intel OneAPI"
 
     - name: Setup LLVM
