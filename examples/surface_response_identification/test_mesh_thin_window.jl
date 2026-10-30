@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Tests of the thin window mesher's physical groups (decision 321) and of its ring-orientation
-# contract + conformity gate (decision 1022, census finding F-1):
+# Tests of the thin window mesher's physical groups (decision 321) and of its
+# ring-orientation contract + gates (decision 1022, census finding F-1):
 #   julia --project=../cpw3d_surface/window_validation test_mesh_thin_window.jl
 # A tiny synthetic two-plane window (a terminal pad on both planes joined by a bump, a ground
 # bump) is meshed at lc 4 / 40 um: the terminal bump's shells form `bump_<label>` (footprint
@@ -11,11 +11,14 @@
 # `bump_surface` alone; the manifest `Attributes` table lists exactly the groups the mesh
 # carries (a plane that is one ground sheet has no `gap_<plane>`); a bump whose conductor is
 # neither ground nor a terminal is refused.
-# The F-1 reproducer (a single-plane ground square with ONE clockwise hole holding an island; the
-# mesher of record left the ground as a free sheet: 2,012 orphan + 330 duplicate triangles, rc 0):
-# the hole is reoriented (manifest `ReorientedLoops`), every triangle of the written mesh is the
-# face of a tetrahedron, and with the normalisation disabled the conformity gate refuses to write;
-# a hole outside its outer (a malformed face) and two coincident metal sheets are refused too.
+# The F-1 reproducer (a single-plane ground square with ONE clockwise hole holding an
+# island; the mesher of record left the ground as a free sheet: 2,012 orphan + 330 duplicate
+# triangles, rc 0): the hole is reoriented (manifest `ReorientedLoops`), every triangle of
+# the written mesh is the face of a tetrahedron, and with the normalisation disabled the
+# pre-fragment face gate refuses the invalid face (area outer PLUS hole); a hole outside its
+# outer (a malformed face) and two coincident metal sheets are refused too; a metal sheet
+# reaching beyond the box wall (its image outside the box is adjacent to no volume) is
+# refused by the post-fragment conformity gate.
 
 using Test
 using JSON
@@ -188,8 +191,9 @@ end
     end
 end
 
-# The F-1 reproducer (decision 1022): a 1400-um ground square whose single 1300-um hole is given
-# CLOCKWISE against the counter-clockwise outer and holds a 600-um island (single plane, LC 40 / 400).
+# The F-1 reproducer (decision 1022): a 1400-um ground square whose single 1300-um hole is
+# given CLOCKWISE against the counter-clockwise outer and holds a 600-um island (single
+# plane, LC 40 / 400).
 const RING_OUTER = [[300.0, 300.0], [1700.0, 300.0], [1700.0, 1700.0], [300.0, 1700.0]]
 const RING_HOLE_CW = [[350.0, 1650.0], [1650.0, 1650.0], [1650.0, 350.0], [350.0, 350.0]]
 const RING_ISLAND = [[700.0, 700.0], [1300.0, 700.0], [1300.0, 1300.0], [700.0, 1300.0]]
@@ -237,8 +241,8 @@ function mesh_ring_island(directory, name, window; normalise_loops=true)
     return manifest, output
 end
 
-# The triangles of a written mesh that are the face of no tetrahedron, and the duplicated ones
-# (the census conformity gate: both counts must be 0 for MFEM to load the mesh).
+# The triangles of a written mesh that are the face of no tetrahedron, and the duplicated
+# ones (the census conformity gate: both counts must be 0 for MFEM to load the mesh).
 function nonconforming_triangles(output)
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -312,7 +316,8 @@ end
 
     @testset "a hole outside its outer is a malformed face: refused" begin
         mktempdir() do directory
-            # the island's single "hole" lies in the ground metal, as in the census CHR-012 set
+            # the island's single "hole" lies in the ground metal, as in the census CHR-012
+            # set
             window = ring_island_window()
             window["Planes"][1]["Polygons"][2]["Holes"] =
                 [[[400.0, 400.0], [500.0, 400.0], [500.0, 500.0], [400.0, 500.0]]]
@@ -349,15 +354,48 @@ end
         end
     end
 
-    @testset "without the normalisation the conformity gate refuses to write" begin
+    @testset "without the normalisation the face gate refuses the invalid face" begin
         mktempdir() do directory
-            @test_throws ErrorException mesh_ring_island(
-                directory,
-                "ring_unnormalised",
-                ring_island_window();
-                normalise_loops=false
-            )
+            # gmsh reverses the hole wire itself: the clockwise hole as given makes a face
+            # whose area is the outer PLUS the hole, caught before the fragment by
+            # check_face_area
+            err = try
+                mesh_ring_island(
+                    directory,
+                    "ring_unnormalised",
+                    ring_island_window();
+                    normalise_loops=false
+                )
+                nothing
+            catch caught
+                caught
+            end
+            @test err isa ErrorException
+            @test occursin("malformed metal face for ground", err.msg)
             @test !isfile(joinpath(directory, "ring_unnormalised.msh2"))
+            return gmsh.isInitialized() == 1 && gmsh.finalize()
+        end
+    end
+
+    @testset "a metal sheet beyond the box wall: the conformity gate refuses" begin
+        mktempdir() do directory
+            # the island straddles the wall x = 2000 (a polygon not clipped to the box): its
+            # face has the polygon's net area (the face gate passes), the fragment leaves
+            # the part outside the box as an image adjacent to no volume
+            window = ring_island_window(; hole=reverse(RING_HOLE_CW))
+            window["Planes"][1]["Polygons"][2]["Outer"] =
+                [[1750.0, 700.0], [2250.0, 700.0], [2250.0, 1300.0], [1750.0, 1300.0]]
+            err = try
+                mesh_ring_island(directory, "beyond_wall", window)
+                nothing
+            catch caught
+                caught
+            end
+            @test err isa ErrorException
+            @test occursin("conformity gate", err.msg)
+            @test occursin("island (plane 1)", err.msg)
+            @test occursin("0 adjacent volume(s)", err.msg)
+            @test !isfile(joinpath(directory, "beyond_wall.msh2"))
             return gmsh.isInitialized() == 1 && gmsh.finalize()
         end
     end
