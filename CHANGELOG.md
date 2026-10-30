@@ -19,6 +19,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, with
+    the surface normal oriented from an optional `"Center"` inside the surface, so that far
+    fields can be computed when the outer boundary is not a valid integration surface (for
+    example behind a perfectly matched layer), or away from the truncation. SchemaVer 4-1-0.
+
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly

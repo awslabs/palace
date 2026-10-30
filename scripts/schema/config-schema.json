@@ -1786,7 +1786,7 @@
         "FarField": {
           "$ref": "#/$defs/FarField",
           "title": "Far Field",
-          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary."
+          "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium."
         }
       }
     },
@@ -1915,7 +1915,7 @@
     "FarField": {
       "type": "object",
       "title": "Far Field",
-      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
+      "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium.",
       "additionalProperties": false,
       "required": [
         "Attributes"
@@ -1924,6 +1924,10 @@
         "Attributes": {
           "$ref": "#/$defs/Attributes",
           "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Center": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Point inside the integration surface (on the side of the sources and scatterers) used to orient the surface normal, in mesh length units. Used for interior surfaces, whose normal has no direction of its own. If not specified, the point is the centroid of the axis-aligned bounding box of the surface. For external boundaries, the normal of the boundary is used unless a center is given."
         },
         "NSample": {
           "type": "integer",

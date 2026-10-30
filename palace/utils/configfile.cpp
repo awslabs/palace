@@ -836,6 +836,12 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 {
   attributes = farfield.at("Attributes").get<std::vector<int>>();  // Required
   std::ranges::sort(attributes);
+  auto ctr = farfield.find("Center");
+  if (ctr != farfield.end())
+  {
+    center = ctr->get<std::array<double, 3>>();
+    no_center = false;
+  }
 
   // Generate NSample points with the following properties:
   // - If NSample >= 2, the generated points are precisely NSample, otherwise NSample = 2.
@@ -1920,6 +1926,11 @@ void Nondimensionalize(const Units &units, WavePortData &data)
 }
 
 void Nondimensionalize(const Units &units, SurfaceFluxData &data)
+{
+  std::ranges::transform(data.center, data.center.begin(), LengthScaler(units));
+}
+
+void Nondimensionalize(const Units &units, FarFieldPostData &data)
 {
   std::ranges::transform(data.center, data.center.begin(), LengthScaler(units));
 }

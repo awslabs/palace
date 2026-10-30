@@ -2601,13 +2601,75 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     }
   }
 
-  // Interior far-field surfaces are invalid. Construction must make that decision
-  // collectively even when only some ranks own elements of the marked interface.
+  // Normal orientation from a center point: on the exterior boundary z = 0, a center
+  // inside the domain reproduces the outward normal, and a center on the other side of
+  // the boundary flips it.
+  auto Center = [](double x, double y, double z)
+  {
+    mfem::Vector x0(3);
+    x0(0) = x;
+    x0(1) = y;
+    x0(2) = z;
+    return x0;
+  };
+  auto CheckScaled = [&](const std::vector<std::array<std::complex<double>, 3>> &a,
+                         const std::vector<std::array<std::complex<double>, 3>> &b,
+                         double scale)
+  {
+    REQUIRE(a.size() == b.size());
+    for (std::size_t d = 0; d < a.size(); d++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        CAPTURE(d, c, scale);
+        CHECK(a[d][c].real() ==
+              Catch::Approx(scale * b[d][c].real()).epsilon(1.0e-12).margin(1.0e-14));
+        CHECK(a[d][c].imag() ==
+              Catch::Approx(scale * b[d][c].imag()).epsilon(1.0e-12).margin(1.0e-14));
+      }
+    }
+  };
+  {
+    SurfaceFunctional inside(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts, true,
+                             Center(0.5, 0.5, 0.5));
+    REQUIRE(inside.IsValid());
+    CheckScaled(inside.EvalFarField(E, B, {omega_re, omega_im}), result, 1.0);
+    SurfaceFunctional outside(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts,
+                              true, Center(0.5, 0.5, -0.5));
+    REQUIRE(outside.IsValid());
+    CheckScaled(outside.EvalFarField(E, B, {omega_re, omega_im}), result, -1.0);
+  }
+
+  // Interior far-field surfaces are invalid without an orientation center. Construction
+  // must make that decision collectively even when only some ranks own elements of the
+  // marked interface.
   marker = 0;
   marker[7 - 1] = 1;
   SurfaceFunctional interior_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
                                       r_naughts);
   REQUIRE_FALSE(interior_farfield.IsValid());
+
+  // With an orientation center, the interior surface z = 1/2 is valid (both sides
+  // averaged, or the local side on parallel interfaces), and the centers below and above
+  // the surface give opposite normals.
+  SurfaceFunctional below(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts, true,
+                          Center(0.5, 0.5, 0.25));
+  SurfaceFunctional above(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts, true,
+                          Center(0.5, 0.5, 0.75));
+  REQUIRE(below.IsValid());
+  REQUIRE(above.IsValid());
+  const auto result_below = below.EvalFarField(E, B, {omega_re, omega_im});
+  const auto result_above = above.EvalFarField(E, B, {omega_re, omega_im});
+  CheckScaled(result_above, result_below, -1.0);
+  double norm = 0.0;
+  for (const auto &v : result_below)
+  {
+    for (const auto &c : v)
+    {
+      norm += std::norm(c);
+    }
+  }
+  CHECK(norm > 0.0);
 }
 
 TEST_CASE("FaceSamplingPlan retains unmatched boundary slots",

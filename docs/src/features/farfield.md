@@ -22,7 +22,8 @@ follows:
     the propagation of waves to infinity. This can be accomplished by enclosing
     the system inside a sphere or box and applying
     [`config["Boundaries"]["Absorbing"]` boundary
-    conditions](../config/reference.md#config-boundaries-absorbing).
+    conditions](../config/reference.md#config-boundaries-absorbing), or a
+    [perfectly matched layer](../guide/boundaries.md#Perfectly-matched-layer).
   - The result is provided as complex vectors ``r \mathbf{E}(\theta, \phi)``,
     where ``(\theta, \phi)`` identify a point on sphere at infinite distance and
     the result is defined up to a global phase.
@@ -38,8 +39,16 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
     *Palace* only supports propagation of fields to infinity when the integration
     surface
 
-     1. is an external boundary
-     2. does not cross anisotropic materials
+     1. is closed and encloses all sources and scatterers
+     2. is an external boundary, or an interior surface in a homogeneous medium (no
+        material interface or surface source on it)
+     3. does not cross anisotropic materials
+
+    An interior surface (for example a box around the radiating structure, inside the
+    physical region terminated by a PML) has no normal direction of its own: its normal
+    is oriented from `"Center"`, a point inside the surface (by default the centroid of
+    the bounding box of the surface, which must then lie inside it). The fields of the
+    two sides are averaged.
 
 ## Setup
 

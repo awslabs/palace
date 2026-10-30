@@ -78,6 +78,13 @@ private:
   {
     std::vector<std::pair<double, double>> thetaphis;
 
+    // Orientation of the surface normal for interior surfaces: toward the center point
+    // inside the surface (the user-specified "Center", or the centroid of the bounding box
+    // of the surface), as the normal of external boundaries points into the domain. Unused
+    // (false) for external boundaries without a "Center".
+    bool orient = false;
+    mfem::Vector center;
+
     FarFieldData() = default;
     FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
                  const mfem::Array<int> &bdr_attr_marker);
