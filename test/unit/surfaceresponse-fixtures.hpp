@@ -327,6 +327,22 @@ struct SurfaceResponseFiles
                  bool neighboring_island = false, bool second_layer = false,
                  bool high_order_rounded = false, int normal_elements = 4);
   static std::unique_ptr<mfem::ParMesh> MakeTouchingIslandMesh();
+  // The plain island whose metal boundary elements are split by the island's diagonal
+  // x + z = 1 into attributes 9 (below) and 10 (above): one conductor, two attributes, so
+  // a dielectric interface per attribute gives the two diagonal corners (0.25, 0.75) and
+  // (0.75, 0.25) one arm per target map (the OI-MX-R2A-COMPARATOR-FORM of readiness
+  // hardening-2 (iii): a listed gap next to a differently listed one at a one-slot corner
+  // coupon).
+  static std::unique_ptr<mfem::ParMesh> MakeDiagonalIslandMesh();
+  // The neighboring-island mesh (two 0.5 x 0.5 islands, attributes 9 / 10, on the plane
+  // y = 0.5 of a 2 x 1 x 2 box; MakeIslandMesh(neighboring_island = true)) rotated by
+  // `angle_degrees` about the plane normal y through the box centre (1, y, 1): the islands'
+  // corner frames lie off the mesh axes while the geometry (the corners 0.5 apart along
+  // each island's edges, the facing pair 0.25 apart) is the unrotated one's. The
+  // operator-level B2 fixture of readiness hardening-2 (iv): the MESH-ALIGNED box of a
+  // coupon cube widens with the rotation (half-width h sqrt 2 at 45 deg), its ORIENTED box
+  // does not.
+  static std::unique_ptr<mfem::ParMesh> MakeRotatedIslandMesh(double angle_degrees);
   // Two disconnected rectangular islands (attributes 9 / 10) on the plane y = 0.5 of a
   // 2 x 1 x 2 box whose facing corners (1.0, 0.75) and (1.125, 0.875) in (x, z) form the
   // offset-corner-pair spatial cluster; MakeSerialOffsetCornerPairMesh is the serial mesh
@@ -356,6 +372,16 @@ struct SurfaceResponseFiles
   CheckPlacedModelEdges(const json &feature, const json &identification,
                         const std::vector<std::vector<std::string>> &patch_rows,
                         const json &model_edges, double tolerance);
+  // The geometry-fallback invariant (readiness hardening DESIGN section 4, U-INV; USER
+  // decision 1000 (b), supervisor 1001 / 1008): the preflight manifest's
+  // Identification.Diagnostics.GeometryFallbacks.Entries (P) and the operator's
+  // GetGeometryFallbackRecord() Entries (S; null without a record) agree on (Class,
+  // Features, Patches, Models, Length to 1e-12: one unit on both records) for every
+  // geometry class; the solve-only NoMatchedFeature (A10.1) has no entry in P and is
+  // predicted by Summary.Counts (Exact + Interpolated + LegacyContract + QuantumNearMatched
+  // == 0), which is asserted when S carries it. Returns the number of entries compared.
+  static std::size_t CheckGeometryFallbackInvariant(const json &manifest,
+                                                    const json &solve_record);
 };
 
 // Shared helpers of the electrostatic surface-response tests: a whole electrostatic run of

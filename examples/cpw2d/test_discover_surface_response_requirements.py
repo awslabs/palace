@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import contextlib
+import io
 import json
 import os
 import stat
@@ -7,6 +9,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import unittest.mock
 from pathlib import Path
 
 CPW2D = Path(__file__).parent
@@ -160,8 +163,11 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
              {"Conductor": 1, "GapSide": -1, "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}", "OffsetOverR": 2.105263}]}},
     ]
 
-    def fake_device(self, tmp):
-        """A device config + source library + an executable fake Palace (geometry preflight only)."""
+    def fake_device(self, tmp, geometry_fallback=False):
+        """A device config + source library + an executable fake Palace (geometry preflight only).
+        The fake asserts the explicit RecordRaw leaf of decision 1001 Q2 on every pass config;
+        with geometry_fallback it writes one KeyMismatch GeometryFallbacks record into the
+        manifest (the form the binary writes when a converted site fires)."""
         requirements = tmp / "fake-requirements.json"
         requirements.write_text(json.dumps(self.FAKE_REQUIREMENTS))
         library = tmp / "process-library.json"
@@ -177,6 +183,7 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
             assert sys.argv[1] == "--surface-response-preflight"
             config = json.load(open(sys.argv[2]))
             response = config["Solver"]["Electrostatic"]["ResponseCorrection"]
+            assert response.get("GeometryFailurePolicy") == "RecordRaw", response
             library = json.load(open(response["Library"]))
             names = {{model["Name"] for model in library["Models"]}}
             requirements = json.load(open({str(requirements)!r}))
@@ -196,6 +203,17 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
                         "Library": {{"Name": library["Name"], "Path": response["Library"],
                                     "MatchingRadius": library["MatchingRadius"]}},
                         "Summary": {{"Counts": counts, "TotalEdgeLengths": lengths}}}}
+            if {geometry_fallback!r}:
+                record = {{"Version": 1, "Policy": "RecordRaw", "Run": "Preflight", "Count": 1,
+                          "Classes": {{"KeyMismatch": 1}},
+                          "Entries": [{{"Class": "KeyMismatch", "Site": "H7a/ResolveLegacyContractAlias:context-digest",
+                                       "Reason": "fake alias digest mismatch", "What": "feature", "Features": [7],
+                                       "Patches": [], "Models": ["legacy-model", "a" * 64], "Length": 3.5,
+                                       "ExampleOrigin": [0.0, 0.0, 0.0], "Interfaces": [4], "Topology": "SpatialEdgeCluster"}}],
+                          "RawShareByLength": {{"SA": {{"FallbackLength": 3.5, "TypeLength": 70.0, "Share": 0.05}}}}}}
+                manifest["Identification"] = {{"Diagnostics": {{"GeometryFallbacks": record}}}}
+                manifest["Summary"]["GeometryFallbacks"] = {{"Count": 1, "Classes": record["Classes"],
+                                                            "RawShareByLength": record["RawShareByLength"]}}
             (output / "surface-response-requirements.json").write_text(json.dumps(manifest))
             """))
         palace.chmod(palace.stat().st_mode | stat.S_IXUSR)
@@ -244,6 +262,44 @@ class DiscoverSurfaceResponseRequirementsTest(unittest.TestCase):
                 DISCOVERY.discover(config, tmp / "typo", palace, omit_requirements=["cccccccc"])
             with self.assertRaises(ValueError):
                 DISCOVERY.discover(config, tmp / "empty", palace, omit_requirements=[""])
+
+    def test_geometry_fallbacks_are_carried_into_the_closure_and_listed(self):
+        """Decision 1001 Q2: every pass config carries GeometryFailurePolicy RecordRaw (the fake
+        asserts it); a manifest with a GeometryFallbacks record closes (no stall), the record reaches
+        closure-history.json (per pass and at the top) and the final manifest, and the RAW-BY-FALLBACK
+        listing names the feature with its class; without a record nothing is added (the normal case)."""
+        with tempfile.TemporaryDirectory(prefix="discover-fallback-") as tmp:
+            tmp = Path(tmp)
+            config, palace = self.fake_device(tmp, geometry_fallback=True)
+            manifest = DISCOVERY.discover(config, tmp / "fallback", palace)
+            record = manifest["Identification"]["Diagnostics"]["GeometryFallbacks"]
+            self.assertEqual(record["Count"], 1)
+            self.assertEqual(manifest["Summary"]["GeometryFallbacks"]["Classes"], {"KeyMismatch": 1})
+            history = json.loads((tmp / "fallback" / "closure-history.json").read_text())
+            self.assertEqual(history["GeometryFallbacks"]["Classes"], {"KeyMismatch": 1})
+            self.assertEqual(history["GeometryFallbacks"]["Entries"][0]["Features"], [7])
+            for entry in history["Passes"]:
+                self.assertEqual(entry["GeometryFallbacks"]["Count"], 1)
+            listing = DISCOVERY.describe_geometry_fallbacks(history["GeometryFallbacks"])
+            self.assertIn("GEOMETRY FALLBACKS (RecordRaw): 1 recorded", listing)
+            self.assertIn("KeyMismatch (feature; features [7]; models ['legacy-model'", listing)
+            self.assertIn("RAW-BY-FALLBACK", listing)
+            self.assertIn("raw share by length SA: 5.000 %", listing)
+            # The normal case: no record anywhere, the leaf on every pass config.
+            plain = tmp / "plain"
+            plain.mkdir()
+            config, palace = self.fake_device(plain, geometry_fallback=False)
+            manifest = DISCOVERY.discover(config, plain / "out", palace)
+            self.assertNotIn("Identification", manifest)
+            self.assertNotIn("GeometryFallbacks", manifest["Summary"])
+            history = json.loads((plain / "out" / "closure-history.json").read_text())
+            self.assertNotIn("GeometryFallbacks", history)
+            self.assertIsNone(history["Passes"][0]["GeometryFallbacks"])
+            self.assertIsNone(DISCOVERY.geometry_fallbacks_record(manifest))
+            for pass_dir in ("pass-01", "pass-02"):
+                for name in ("config.json", "production-config.json"):
+                    pass_config = json.loads((plain / "out" / pass_dir / name).read_text())
+                    self.assertEqual(pass_config["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"], "RecordRaw")
 
     def test_restore_source_status_marks_only_placeholders_missing(self):
         manifest = {
@@ -774,6 +830,191 @@ class UnplaceableRequirementTest(unittest.TestCase):
             config, palace = self.fake_device(tmp / "stall", [declared, other], stalling=[other["Hash"]])
             with self.assertRaisesRegex(RuntimeError, "Geometry closure stalled with missing requirements"):
                 DISCOVERY.discover(config, tmp / "stall" / "closure", palace)
+
+
+
+class DiscoveryFallbackRecordTest(unittest.TestCase):
+    """The readiness hardening-2 discovery records (USER decision 1000 (b); decisions 1012 / 1013
+    F-2 / F-3 / F-4a; 1018 Q2 / Q3): a Missing requirement the discovery can give NO placeholder
+    (an Unboxable key; a key the generator refuses by name) is recorded under
+    UnboxableRequirements / UnbuildableRequirements of the manifest and the history, listed
+    RAW-BY-FALLBACK, and the closure continues; a mirror-formed placeholder's conductor references
+    follow the library reader's rule (its Edges), not the signature's Context."""
+
+    fake_device = MirrorFormedContractPlaceholderTest.fake_device
+
+    ORDINARY = {"Topology": "IsolatedEdge", "Hash": "a" * 64, "Count": 4, "Instances": 2, "TotalEdgeLength": 10.0,
+                "BoundaryCondition": {"Type": "PEC"}, "Interfaces": [{"Slot": 0, "Target": 1, "Type": "SA"}],
+                "Signature": {"Type": "IsolatedEdge", "Interfaces": ["SA"], "Law": "{\"Type\":\"PEC\"}"}}
+    # The census F-2 form (CHR-012 t0_0 pass-01: a mirror-formed SpatialEdgeCluster key with
+    # "Unboxable": true and no Box; decision 282): the reader refuses a placeholder for it.
+    UNBOXABLE = {"Topology": "SpatialEdgeCluster", "Hash": "d" * 64, "Count": 1, "Instances": 1,
+                 "TotalEdgeLength": 71.6325510289, "MirrorFormed": True, "Dimension": 3,
+                 "BoundaryCondition": {"Type": "PEC"},
+                 "Interfaces": [{"Slot": 0, "Target": 1, "Type": "SA"}, {"Slot": 1, "Target": 2, "Type": "MS"}],
+                 "Signature": {"Type": "SpatialEdgeCluster", "Unboxable": True, "EdgeCount": 2, "Portions": [
+                     {"Conductor": 1, "Gap": [0.0, -1.0], "Interfaces": ["MS", "SA"], "Law": "{\"Type\":\"PEC\"}",
+                      "P": [-3.0, 0.0, 0.0, 0.0]},
+                     {"Conductor": 1, "Gap": [-1.0, 0.0], "Interfaces": ["MS", "SA"], "Law": "{\"Type\":\"PEC\"}",
+                      "P": [0.0, 0.0, 0.0, 3.0]}],
+                     "Vertices": [{"P": [0.0, 0.0], "TurnDegrees": 90.0}]}}
+
+    def test_unboxable_requirement_gets_no_placeholder_and_is_recorded(self):
+        """F-2: the Unboxable key gets no placeholder in any pass (the reader would refuse it), the
+        closure reaches its end on the other keys, the record is in the manifest (with
+        Summary.UnboxableRequirements and the requirement's OutOfScope / Reason) and the history,
+        and the RAW-BY-FALLBACK listing is printed. A device without such a key adds nothing.
+        FAILS on the base (the key gets a placeholder; on the real binary the pass-2 preflight aborts
+        in ReadProcessLibrary; the census ran it with --omit-requirement)."""
+        radius, fixture = mirror_formed_fixture()
+        requirements = [fixture["s2p-f11-613e6f656498"], self.ORDINARY, self.UNBOXABLE]
+        with tempfile.TemporaryDirectory(prefix="discover-unboxable-") as tmp:
+            tmp = Path(tmp)
+            config, palace = self.fake_device(tmp, requirements)
+            with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                manifest = DISCOVERY.discover(config, tmp / "closure", palace)
+            history = json.loads((tmp / "closure" / "closure-history.json").read_text())
+            self.assertEqual(len(history["Passes"]), 2)
+            self.assertEqual(history["PlaceholderCount"], 2)
+            for pass_dir in ("pass-01", "pass-02"):
+                library = json.loads((tmp / "closure" / pass_dir / "process-library.json").read_text())
+                self.assertNotIn("__preflight_placeholder_" + "d" * 16, {m["Name"] for m in library["Models"]})
+            expected = {"Hash": "d" * 64, "Topology": "SpatialEdgeCluster", "Count": 1, "Instances": 1,
+                        "TotalEdgeLength": 71.6325510289, "EdgeCount": 2, "MirrorFormed": True,
+                        "OutOfScope": DISCOVERY.UNBOXABLE_METHOD, "Rule": DISCOVERY.UNBOXABLE_RULE, "Pass": 1}
+            self.assertEqual(manifest["UnboxableRequirements"], [expected])
+            self.assertEqual(manifest["Summary"]["UnboxableRequirements"], {"Count": 1, "TotalEdgeLength": 71.6325510289})
+            self.assertEqual(history["UnboxableRequirements"], [expected])
+            self.assertNotIn("UnbuildableRequirements", manifest)
+            self.assertNotIn("UnbuildableRequirements", history)
+            self.assertFalse(manifest["Complete"])
+            by_hash = {requirement["Hash"]: requirement for requirement in manifest["Requirements"]}
+            unboxable = by_hash["d" * 64]
+            self.assertEqual(unboxable["Status"], "Missing")
+            self.assertEqual(unboxable["OutOfScope"], "Unboxable")
+            self.assertTrue(unboxable["Reason"].startswith("Unboxable: decision 282 / 1018"))
+            self.assertIs(unboxable["Signature"]["Unboxable"], True)
+            # The other keys close as before and are restored Missing for the planner.
+            for requirement in requirements[:2]:
+                restored = by_hash[requirement["Hash"]]
+                self.assertEqual(restored["Status"], "Missing")
+                self.assertEqual(restored["Reason"], "Missing from source library after exhaustive geometry discovery")
+                self.assertNotIn("OutOfScope", restored)
+            self.assertEqual(manifest["Summary"]["Counts"]["Missing"], 1 + 4 + 1)
+            listing = stdout.getvalue()
+            self.assertIn("DISCOVERY FALLBACKS: 1 Missing requirement(s) got NO placeholder and stay RAW-BY-FALLBACK", listing)
+            self.assertIn("RAW-BY-FALLBACK Unboxable " + "d" * 64 + " (SpatialEdgeCluster; instances 1; length 7.163255e+01)", listing)
+            self.assertEqual(DISCOVERY.describe_discovery_fallbacks([expected], []).splitlines()[1],
+                             "  RAW-BY-FALLBACK Unboxable " + "d" * 64 + " (SpatialEdgeCluster; instances 1; length 7.163255e+01)")
+            # The plain device: no record, no listing, nothing added to the manifest or the history.
+            (tmp / "plain").mkdir()
+            config, palace = self.fake_device(tmp / "plain", requirements[:2])
+            with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                manifest = DISCOVERY.discover(config, tmp / "plain" / "closure", palace)
+            history = json.loads((tmp / "plain" / "closure" / "closure-history.json").read_text())
+            for record in (manifest, manifest["Summary"], history):
+                self.assertNotIn("UnboxableRequirements", record)
+                self.assertNotIn("UnbuildableRequirements", record)
+            self.assertNotIn("RAW-BY-FALLBACK", stdout.getvalue())
+            self.assertEqual(history["PlaceholderCount"], 2)
+
+    def test_unbuildable_requirement_is_recorded_and_the_closure_continues(self):
+        """F-4a / F-4b: the generator's SignatureGeometryError on a mirror-formed key (model_edges:
+        a JointTurnGap joint) is caught in the closure loop: the key gets no placeholder, is recorded
+        under UnbuildableRequirements with the message, the closure continues on the other keys and
+        the listing names it. FAILS on the base (the traceback of CHR-012 t0_1 discovery.log: the
+        exception propagates out of discover and the discovery dies)."""
+        radius, fixture = mirror_formed_fixture()
+        refused = fixture["s2p-f11-613e6f656498"]
+        placed = fixture["o3-f45-d7c875318447"]
+        message = ("JointTurnGap: arc 0 end 1 turns by 7.000000e-05 rad on the built boundary "
+                   "(signature turn 7.000000e-05 rad): in neither built range")
+        real_model_edges = cluster_signature_geometry.model_edges
+
+        def refusing_model_edges(record, radius_):
+            if record["Hash"] == refused["Hash"]:
+                raise cluster_signature_geometry.SignatureGeometryError(message)
+            return real_model_edges(record, radius_)
+
+        with tempfile.TemporaryDirectory(prefix="discover-unbuildable-") as tmp:
+            tmp = Path(tmp)
+            config, palace = self.fake_device(tmp, [placed, refused, self.ORDINARY])
+            with unittest.mock.patch.object(cluster_signature_geometry, "model_edges", refusing_model_edges):
+                with self.assertRaisesRegex(cluster_signature_geometry.SignatureGeometryError, "JointTurnGap"):
+                    DISCOVERY.placeholder_model(refused, radius, {"MetalThickness": 0.1})
+                with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    manifest = DISCOVERY.discover(config, tmp / "closure", palace)
+            history = json.loads((tmp / "closure" / "closure-history.json").read_text())
+            self.assertEqual(len(history["Passes"]), 2)
+            self.assertEqual(history["PlaceholderCount"], 2)
+            self.assertEqual(sorted(p["Id"] for p in history["Passes"][0]["AddedPlaceholders"]),
+                             sorted([placed["Hash"][:16], "a" * 16]))
+            for pass_dir in ("pass-01", "pass-02"):
+                library = json.loads((tmp / "closure" / pass_dir / "process-library.json").read_text())
+                self.assertNotIn(f"__preflight_placeholder_{refused['Hash'][:16]}", {m["Name"] for m in library["Models"]})
+            expected = {"Hash": refused["Hash"], "Topology": "SpatialEdgeCluster", "Count": refused["Count"],
+                        "Instances": refused["Instances"], "TotalEdgeLength": refused["TotalEdgeLength"],
+                        "MirrorFormed": True, "OutOfScope": DISCOVERY.UNBUILDABLE_METHOD, "Error": message,
+                        "Rule": DISCOVERY.UNBUILDABLE_RULE, "Pass": 1}
+            self.assertEqual(manifest["UnbuildableRequirements"], [expected])
+            self.assertEqual(manifest["Summary"]["UnbuildableRequirements"],
+                             {"Count": 1, "TotalEdgeLength": refused["TotalEdgeLength"]})
+            self.assertEqual(history["UnbuildableRequirements"], [expected])
+            self.assertNotIn("UnboxableRequirements", manifest)
+            by_hash = {requirement["Hash"]: requirement for requirement in manifest["Requirements"]}
+            self.assertEqual(by_hash[refused["Hash"]]["Status"], "Missing")
+            self.assertEqual(by_hash[refused["Hash"]]["OutOfScope"], "UnbuildableJoint")
+            self.assertEqual(by_hash[refused["Hash"]]["Reason"], f"UnbuildableJoint: {message}")
+            self.assertEqual(by_hash[refused["Hash"]]["MirrorFormedContract"], refused["MirrorFormedContract"])
+            self.assertEqual(by_hash[placed["Hash"]]["Reason"], "Missing from source library after exhaustive geometry discovery")
+            self.assertNotIn("OutOfScope", by_hash[placed["Hash"]])
+            listing = stdout.getvalue()
+            self.assertIn("DISCOVERY FALLBACKS: 1 Missing requirement(s)", listing)
+            self.assertIn(f"RAW-BY-FALLBACK UnbuildableJoint {refused['Hash']} (SpatialEdgeCluster; instances "
+                          f"{refused['Instances']}; length {float(refused['TotalEdgeLength']):.6e}): {message}", listing)
+
+    def test_mirror_formed_placeholder_references_follow_the_readers_rule(self):
+        """F-3 (decision 1018 Q2): the mirror-formed placeholder's conductor references count the
+        canonical conductors of its EDGES (the library reader's rule over Edges + PlanViewBoundary;
+        the placeholder has no PlanViewBoundary), not the signature's Portions + Context: a
+        requirement whose Context carries a second conductor gets a single-conductor placeholder
+        (no ConductorReferences, no Reference, like signature_model's own single-conductor form),
+        the Edges all conductor 1; a requirement whose CLAIMS carry two conductors keeps the two
+        references at (0, 0, -R (k + 1)). FAILS on the base (CHR-012 t1_0 pass-02: 2 references on
+        22 conductor-1 Edges, refused by ReadProcessLibrary)."""
+        radius, fixture = mirror_formed_fixture()
+        base = fixture["s2p-f11-613e6f656498"]
+
+        def rekeyed(**changes):
+            record = json.loads(json.dumps(base))
+            for path, value in changes.items():
+                part, index = path.split(".")
+                record["Signature"][part][int(index)]["Conductor"] = value
+            record["Geometry"]["Signature"] = record["Signature"]
+            record["Hash"] = device_coupons.signature_key_hash(record["Signature"])
+            return record
+
+        context_second = rekeyed(**{"Context.0": 2})
+        self.assertEqual(signature_library.conductor_count({"Type": "SpatialEdgeCluster", "Signature": context_second["Signature"]}), 2)
+        _, model = DISCOVERY.placeholder_model(context_second, radius, {"MetalThickness": 0.1})
+        self.assertEqual({edge["Conductor"] for edge in model["Edges"]}, {1})
+        self.assertNotIn("ConductorReferences", model)
+        self.assertNotIn("Reference", model)
+        self.assertEqual(len(model["Edges"]), 4)
+        # The base's form, refused by the reader: signature_model references the Context conductor.
+        plain = signature_library.signature_model(context_second["Topology"], context_second["Signature"], radius, "x", "y")
+        self.assertEqual(plain["ConductorReferences"], [[0.0, 0.0, -radius], [0.0, 0.0, -2.0 * radius]])
+        # Two conductors among the claims: two references, one per canonical conductor of the Edges.
+        claims_second = rekeyed(**{"Portions.1": 2})
+        _, model = DISCOVERY.placeholder_model(claims_second, radius, {"MetalThickness": 0.1})
+        self.assertEqual({edge["Conductor"] for edge in model["Edges"]}, {1, 2})
+        self.assertEqual(model["ConductorReferences"], [[0.0, 0.0, -radius], [0.0, 0.0, -2.0 * radius]])
+        self.assertNotIn("Reference", model)
+        # The fixture's own keys (Context conductors == Portions conductors): unchanged.
+        for requirement in fixture.values():
+            _, model = DISCOVERY.placeholder_model(requirement, radius, {"MetalThickness": 0.1})
+            self.assertNotIn("ConductorReferences", model)
+            self.assertNotIn("Reference", model)
 
 
 

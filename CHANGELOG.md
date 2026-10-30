@@ -19,6 +19,26 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `"GeometryFailurePolicy"` (`"RecordRaw"` | `"FailClosed"`) to the electrostatic
+    `ResponseCorrection` and the Maxwell `SurfaceResponseCorrection` blocks (readiness
+    hardening, USER decision 1000 (b)): the former geometry-reachable abort sites of the
+    identification / placement (no matched feature, every coupon outside the mesh, no metal
+    perimeter, overlapping coupon supports without an owner, a refused placement, an alias
+    key mismatch) become recorded raw fallbacks on a solve run (`SurfaceResponse.
+    Diagnostics.GeometryFallbacks`, `surface-response-geometry-fallbacks.csv`, a LOW
+    CONFIDENCE banner with the raw share per interface type) and a deferred abort after the
+    manifest on the preflight; nothing changes when no site fires. Readiness hardening-2
+    adds the classes `UnlocatedPatch` (a coupon's metal-edge reference off the mesh beyond
+    the boundary tolerance `1e-3 R`; a reference within it is read as located) and
+    `InterfaceMappingConflict` (a matched model whose interface slots cannot bind the
+    feature's distinct interface target maps; the feature is read as Missing, never mapped
+    through slot 0), makes the same-class coupon-support overlap test oriented (the
+    frame-aligned boxes of the placed basis points by the separating-axis test; the
+    cluster-over-vertex priority keeps the mesh-aligned test), and makes the discovery
+    (`discover_surface_response_requirements.py`) record the Missing requirements it can
+    give no placeholder (`UnboxableRequirements`: an Unboxable key; `UnbuildableRequirements`:
+    a key the coupon generator refuses by name) in the manifest and the closure history with
+    a `DISCOVERY FALLBACKS` listing instead of dying.
   - New optional `config["Model"]["Refinement"]["MinElementSize"]`, an element-size floor
     for AMR marking (a length in mesh units; default `0` = off, bitwise the previous
     marking). With a floor, only elements whose volume-based size `h` (the `h` of the mesh

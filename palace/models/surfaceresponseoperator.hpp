@@ -613,6 +613,26 @@ private:
   // The ownership records of the translational stretches inside the spatial supports
   // (decision 236), reported under Diagnostics with the statistics.
   nlohmann::json ownership_diagnostics;
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the matching-time entries of the
+  // automatic configuration plus the placement-time entries of this construction; the
+  // run's effective policy; the whole-run raw fallback flag (NoMatchedFeature /
+  // AllPatchesOutside / NoPerimeter: the drivers then run the thin solve without the
+  // operator after saving its record). The denominators of RawShareByLength come with the
+  // configuration; the record's lengths are mesh units x the mesh length relative scale
+  // (the manifest's units: one unit in both records).
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFallbackData>
+      geometry_fallbacks;
+  config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFailurePolicy
+      geometry_failure_policy = config::ElectrostaticSolverData::ResponseCorrectionData::
+          GeometryFailurePolicy::RECORD_RAW;
+  std::map<int, double> geometry_fallback_interface_lengths;
+  std::map<int, InterfaceDielectric> geometry_fallback_interface_types;
+  double geometry_fallback_coordinate_scale = 1.0;
+  bool raw_fallback = false;
+  // RawShareByEnergy per interface type (SA / MS / MA -> share), set by the driver from the
+  // fallback portions' raw within-R energy of the last evaluation; empty until then.
+  std::map<std::string, double> geometry_fallback_energy_shares;
+  ExcludedPatchPortions geometry_fallback_portions;
   // The uncovered requirements (decision 394 F2): the portions of the unmatched features
   // as perimeter sub-segments in mesh coordinates, whose raw within-R surface energy the
   // electrostatic driver keeps in the corrected interface energies.
@@ -1064,6 +1084,22 @@ public:
   {
     return domain_boundary_portions;
   }
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the raw claims of the patches a
+  // converted site excluded (OverlapExcluded: the subordinate's claims outside every OTHER
+  // support's box, the owner's included), labelled by class in `topology`. They are ALSO
+  // appended to the DomainBoundary portions (F-DB-a: kept raw in the corrected interface
+  // energies, no new energy term); this copy is the drivers' measurement for
+  // RawShareByEnergy and the fallback CSV.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetGeometryFallbackPortions() const
+  {
+    return geometry_fallback_portions.portions;
+  }
+  const auto &GetGeometryFallbackInterfaceTypes() const
+  {
+    return geometry_fallback_interface_types;
+  }
   // The parts of the SpatialClusterPriority-dropped coupons' raw claims outside every
   // matched cluster's box (OI-SCP-HOLE, decision 922; empty when no coupon is dropped or
   // every dropped window lies inside its owner's box): kept in the corrected interface
@@ -1149,6 +1185,22 @@ public:
   // counts. This method is collective over the response operator communicator.
   nlohmann::json GetStatistics() const;
 
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the entries of this configuration
+  // (matching + placement), the record (null when none fired) and whether the whole run is
+  // raw (no model / patch applied: the driver saves the record and runs without the
+  // operator).
+  const auto &GetGeometryFallbacks() const { return geometry_fallbacks; }
+  nlohmann::json GetGeometryFallbackRecord() const;
+  bool IsRawFallback() const { return raw_fallback; }
+  void SetGeometryFallbackEnergyShares(std::map<std::string, double> shares)
+  {
+    geometry_fallback_energy_shares = std::move(shares);
+  }
+  const auto &GetGeometryFallbackEnergyShares() const
+  {
+    return geometry_fallback_energy_shares;
+  }
+
 private:
   // Gather the local per-patch response records of GetElectrostaticResponse on every rank
   // and decode them, ordered by patch index.
@@ -1161,6 +1213,67 @@ private:
 // reports exact, interpolated, and missing process-library requirements.
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path);
+
+// Geometry fallbacks (readiness hardening; USER decision 1000 (b), supervisor 1001; DESIGN
+// readiness-20261029/hardening): the GeometryFailurePolicy of a run and the ledger every
+// converted former-abort site records into when its condition holds. Under RecordRaw the
+// site takes its raw branch and the run continues; under FailClosed the same record is
+// taken and the abort is DEFERRED to Enforce() at the end of the configuration (the
+// preflight writes its manifest first), so every fallback is reported at once and the
+// preflight predicts the solve. Absent leaf: RecordRaw on a solve, FailClosed on the
+// preflight. Every conversion decision is taken on replicated data (the root's
+// identification broadcast, the replicated patch table), so the ledger is rank-consistent.
+using GeometryFailurePolicy =
+    config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFailurePolicy;
+using GeometryFallbackData =
+    config::ElectrostaticSolverData::ResponseCorrectionData::GeometryFallbackData;
+GeometryFailurePolicy ResolveGeometryFailurePolicy(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request, bool preflight);
+const char *GeometryFailurePolicyName(GeometryFailurePolicy policy);
+
+class GeometryFallbackLedger
+{
+private:
+  GeometryFailurePolicy policy;
+  bool preflight;
+  std::vector<GeometryFallbackData> &entries;
+
+public:
+  GeometryFallbackLedger(GeometryFailurePolicy policy, bool preflight,
+                         std::vector<GeometryFallbackData> &entries)
+    : policy(policy), preflight(preflight), entries(entries)
+  {
+  }
+  GeometryFailurePolicy GetPolicy() const { return policy; }
+  bool IsPreflight() const { return preflight; }
+  bool Empty() const { return entries.empty(); }
+  const std::vector<GeometryFallbackData> &Entries() const { return entries; }
+  // Appends the record and prints one line (root): "Geometry fallback <class> (<site>):
+  // <reason>".
+  void Record(GeometryFallbackData entry);
+  // The deferred FailClosed abort: a no-op under RecordRaw or without a record.
+  void Enforce(const std::string &where) const;
+};
+
+// The Diagnostics entry "GeometryFallbacks" (the manifest's Identification.Diagnostics and
+// palace.json's SurfaceResponse.Diagnostics; every length = mesh length units x
+// `coordinate_scale`, the mesh length relative scale on both records): Version, Policy,
+// Run, Count, Classes, Entries and the raw share by LENGTH per interface type (the fallback
+// entries' length over the selected perimeter length of the interfaces of that type; a
+// whole-run entry (What = "run") counts the total selected length of every type = 100 % per
+// type and carries that total as its Length; `type_lengths` = the selected length per
+// target interface, `types` = the interface type per target interface).
+nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData> &entries,
+                                         GeometryFailurePolicy policy, bool preflight,
+                                         double coordinate_scale,
+                                         const std::map<int, double> &type_lengths,
+                                         const std::map<int, InterfaceDielectric> &types);
+// The LOW-confidence banner (one line) printed by the run summary whenever the ledger is
+// non-empty: the raw share per type by energy (the record's RawShareByEnergy where present:
+// a whole-run fallback reads "100 % (no correction applied)") and by length; with no
+// selected interface type (RawShareByLength empty: NoPerimeter) the whole-run text names
+// every Type.
+std::string GeometryFallbackBanner(const nlohmann::json &record, const std::string &where);
 
 // The response-geometry cache (PALACE_RESPONSE_GEOMETRY_CACHE): the automatically
 // constructed models and UNPLACED patches with the provenance the continuation ownership
@@ -1183,10 +1296,12 @@ struct LegacyContractAlias
 // The alias record of a feature whose hash is the alias key: fails closed (MFEM_ABORT) when
 // the feature's context digest differs from the alias's or when the feature's claims-only
 // signature is not the legacy model's Signature (the alias names another geometry).
-nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
-                                          const nlohmann::json &model_signature,
-                                          const LegacyContractAlias &alias,
-                                          const IdentifiedFeature &feature);
+// Under a geometry-fallback ledger (a solve run) a mismatch is recorded as KeyMismatch and
+// null is returned (the feature stays Missing); the library build's callers pass none.
+nlohmann::json ResolveLegacyContractAlias(
+    const std::string &model_name, const nlohmann::json &model_signature,
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature,
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // The role-insensitive Box + Context digest (decision 899 B2, OI-ROLEKEY): SHA-256 of
 // {Box, Context} with the Conductor label removed from every Chain: false piece (a piece
@@ -1200,7 +1315,8 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
 std::string RoleInsensitiveContextDigest(const nlohmann::json &signature);
 nlohmann::json ResolveRoleInsensitiveLegacyContractAlias(
     const std::string &model_name, const nlohmann::json &model_signature,
-    const LegacyContractAlias &alias, const IdentifiedFeature &feature);
+    const LegacyContractAlias &alias, const IdentifiedFeature &feature,
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // Distance from a point to a straight segment a-b.
 double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
@@ -1648,7 +1764,8 @@ struct ContinuationOwnership
 ContinuationOwnership ApplyContinuationOwnership(
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
     const std::vector<SpatialSupportBounds> &supports, int dimension,
-    double continuation_tolerance, double matching_radius);
+    double continuation_tolerance, double matching_radius,
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // Clip the uncovered requirements' portions by the matched spatial clusters' support boxes
 // (decision 399 MAJOR-1): for every support with claims (a matched SpatialEdgeCluster; a
@@ -1814,10 +1931,22 @@ nlohmann::json DescribeUncoveredPortions(
 // section (the metal-edge point, on a mesh face for every correctly placed patch) is not
 // located, or none of whose tested points is, is a misplaced or mis-scaled coupon and
 // aborts naming the patch (0-based), model and point; when there were candidates at least
-// one applied patch must remain. Every patch of `skipped` (already not applied) is left
-// alone; `points` are the local model basis points in patch units (origin + points /
-// scale); `model_name` names a model for the abort; coordinates and lengths of the result
-// in mesh units. Collective over the mesh's communicator.
+// one applied patch must remain. Boundary tolerance (readiness hardening-2 F-6, decision
+// 1018 Q4): a reference neither located nor reflected within
+// kSignatureParameterToleranceOverRadius x R (mesh units) of the nearest element box lies
+// ON the mesh boundary to roundoff and is read as located (its other points classify the
+// patch); beyond it, with a `geometry_ledger`, the patch is excluded (weight 0; reasons
+// MisplacedReference / AllPointsOutside, its raw claims kept like any DomainBoundary patch)
+// and UnlocatedPatch recorded instead of the abort (FailClosed: the ledger's deferred
+// Enforce). The boundary tolerance is read on the distance to the nearest ELEMENT bounding
+// box (ElementPointLocator::BoxDistance): exact on an axis-aligned mesh boundary (the
+// census tile walls, whose boundary elements' boxes end on the wall); on a slanted or
+// curved outer boundary a reference inside a boundary element's box shadow but outside the
+// mesh reads distance 0 and is accepted up to ~h away (the distance to the nearest boundary
+// face is the exact form when such domains appear). Every patch of `skipped` (already not
+// applied) is left alone; `points` are the local model basis points in patch units (origin
+// + points / scale); `model_name` names a model for the abort; coordinates and lengths of
+// the result in mesh units. Collective over the mesh's communicator.
 struct DomainBoundaryExclusion
 {
   std::size_t patch = 0;
@@ -1832,7 +1961,10 @@ struct DomainBoundaryExclusion
   // decision 481), NonMirroringPlane (an outside point lies beyond an Unsupported /
   // NonPlanar plane), BeyondBand (beyond a Natural plane by more
   // than the band), ReflectionNotLocated (reflected into the domain but not located: a
-  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane).
+  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane);
+  // under a geometry-fallback ledger only (readiness hardening-2 F-6, decision 1018 Q4;
+  // recorded UnlocatedPatch): MisplacedReference (the metal-edge reference off the mesh
+  // beyond the boundary tolerance), AllPointsOutside (no tested point inside).
   std::string reason;
   // Reason UnmergedTopology (decision 481): the unmerged configuration whose REAL portion
   // the patch's own footprint overlaps (index into MirrorBand.UnmergedFeatures), that
@@ -1903,7 +2035,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     double mirror_band = 0.0,
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
-        &unmerged_portions = {});
+        &unmerged_portions = {},
+    GeometryFallbackLedger *geometry_ledger = nullptr);
 
 // The per-process cache of the DERIVED model response matrices (decision 734 F1; the
 // response-setup PROFILE 7.1): BuildDomainResponseMatrices (the unit-scaled fabricated /
@@ -1999,16 +2132,63 @@ std::array<double, 3>
 OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch,
                double c);
 
+// The ORIENTED box of a spatial support (readiness hardening-2 (iv) B2, decision 1018 Q1):
+// the frame-aligned box of its placed basis points, `axes[k]` the patch frame in mesh
+// coordinates and `min[k]` / `max[k]` the extremes of dot(P, axes[k]) over the points (the
+// SpatialSupportBounds frame box; the coupon's matching volume). Two oriented boxes
+// interior-overlap by the separating-axis test (the face normals of both and, in 3D, their
+// 9 cross products; the ElementBox tolerance 1e-12 x scale): for mesh-aligned frames the
+// test is the mesh-aligned InteriorOverlaps. The same-class overlap test of
+// ApplyPlacementOwnership / FindSpatialClusterPriorityExclusions decides on THIS test once
+// the mesh-aligned boxes overlap: a pair whose oriented boxes are disjoint (two frames off
+// the mesh axes whose mesh-aligned boxes widen beyond the coupons) is no overlap of two
+// coupon domains and records nothing; a pair whose oriented boxes overlap is the H4a
+// OverlapExcluded record of record. The S1b-rc concave pairs that motivated the test
+// (decision 1007 / findings-from-exec-B F-B1: the two neighbours of the 135-deg corner,
+// whose frame is 22.5 deg off the mesh axes; centres 2.014 R apart, the pairs' frames 21 /
+// 45 deg apart) are MEASURED a TRUE overlap of the coupon cubes (the separating-axis gap
+// -0.53 / -0.76 um; findings-from-exec-B F-B1 UPDATE, decision 1030): each is recorded
+// OverlapExcluded on the mesh-aligned and on the oriented test alike. Two vertex cubes of
+// frames rotated by theta overlap up to R (1 + |cos theta| + |sin theta|) apart while the
+// identification clusters vertex pairs below 2 R only (OI-VERTEX-PAIR-CUBE-OVERLAP, the
+// identification fix round); the SpatialClusterPriority (cluster vs vertex) branch keeps
+// the mesh-aligned test of record.
+struct OrientedSupportBox
+{
+  std::array<std::array<double, 3>, 3> axes = {
+      {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  std::array<double, 3> min{}, max{};
+};
+OrientedSupportBox OrientedBoxOf(const SpatialSupportBounds &support);
+bool OrientedBoxesInteriorOverlap(const OrientedSupportBox &a, const OrientedSupportBox &b,
+                                  int dimension);
+
 // The SpatialClusterPriority pass of ApplyPlacementOwnership on a set of spatial supports
 // (the preflight's reading of the operator's rule): every pair of supports not already
 // owned and not of one interpolation group whose boxes interior-overlap with exactly one
 // of them a spatial edge cluster yields (subordinate patch, owner patch); a placeholder
 // support (from_signature_box: a Missing key, no coupon) and cluster / cluster pairs (the
 // margin-overlap record) are skipped. Deterministic in the supports' order.
+// With `geometry_ledger` (readiness hardening H4a): a same-class pair whose boxes
+// interior-overlap without ownership (two clusters with a claim inside the other's claims
+// hull per `margin_overlaps`, or two vertex coupons) yields (subordinate, owner) in
+// `overlap_excluded` (the subordinate = the smaller claimed length, ties by the larger
+// patch index: the operator's rule) with an OverlapExcluded record; the subordinate is
+// owned from then on. Without the ledger the same-class pairs are skipped as before. A
+// same-class pair whose ORIENTED boxes are disjoint (OrientedBoxesInteriorOverlap) is no
+// overlap and records nothing (B2).
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
-    const std::set<std::size_t> &owned_patches, int dimension);
+    const std::set<std::size_t> &owned_patches, int dimension,
+    const std::vector<SpatialSupportMarginOverlap> *margin_overlaps = nullptr,
+    GeometryFallbackLedger *geometry_ledger = nullptr,
+    std::vector<std::pair<std::size_t, std::size_t>> *overlap_excluded = nullptr);
+// The H4a subordinate of two overlapping same-class patches: the smaller claimed length
+// (provenance claims + raw claims), ties by the larger patch index.
+std::size_t OverlapExcludedSubordinate(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    std::size_t first, std::size_t second);
 
 // The dropped coupons' raw claims (provenance raw_claims: the arms' R windows) clipped by
 // ClipUncoveredPortionsBySpatialSupport against every matched cluster's box; the kept

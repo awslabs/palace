@@ -3845,6 +3845,10 @@ private:
     for (const auto &[r, weight] : weighted)
     {
       const Point3D &n = runs[r].process_normal;
+      // H11d (readiness hardening, DESIGN 3.3): GUARDED. A feature of two ANTIPARALLEL
+      // runs is a cross-plane pair, which the CrossLayer exclusion (decision 73 (3))
+      // removes before the features are formed (the exclusion passes run on the extracted
+      // geometry first, the feature formation after them).
       MFEM_VERIFY(Dot(n, first) > 0.0,
                   "Runs of " << what << " disagree on the sign of their process normal (["
                              << first[0] << ", " << first[1] << ", " << first[2] << "] vs ["
@@ -3863,6 +3867,10 @@ private:
   Point3D SignedReferenceNormal(const Point3D &n, const std::string &what) const
   {
     const double cosine = Dot(n, n_ref);
+    // H11d (readiness hardening, DESIGN 3.3): UNREACHABLE after the NonPlanar rule: every
+    // framed run is parallel to n_ref within kParallelCosineTolerance (the rule excludes
+    // the others before the features are formed), and the callers pass a normalised sum of
+    // such runs' normals of one sign.
     MFEM_VERIFY(!DirectionLess(std::abs(cosine), 1.0 - kParallelCosineTolerance),
                 "Process normal of "
                     << what << " ([" << n[0] << ", " << n[1] << ", " << n[2]

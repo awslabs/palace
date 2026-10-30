@@ -1446,6 +1446,51 @@ SurfaceResponseFiles::MakeIslandMesh(bool rounded, bool tetrahedral, bool apertu
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeDiagonalIslandMesh()
+{
+  mfem::Mesh serial = MakeSerialIslandMesh();
+  for (int be = 0; be < serial.GetNBE(); be++)
+  {
+    if (serial.GetBdrAttribute(be) != 9)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetBdrElementVertices(be, vertices);
+    double x = 0.0, z = 0.0;
+    for (const int vertex : vertices)
+    {
+      x += serial.GetVertex(vertex)[0];
+      z += serial.GetVertex(vertex)[2];
+    }
+    // The face centroid above the diagonal x + z = 1 (the 4 faces the diagonal halves,
+    // centroid sum exactly 1, stay 9: the two diagonal corners' own faces among them).
+    if (x + z > static_cast<double>(vertices.Size()) * (1.0 + 1.0e-9))
+    {
+      serial.SetBdrAttribute(be, 10);
+    }
+  }
+  serial.SetAttributes();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+std::unique_ptr<mfem::ParMesh>
+SurfaceResponseFiles::MakeRotatedIslandMesh(double angle_degrees)
+{
+  mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+  const double angle = angle_degrees * std::acos(-1.0) / 180.0;
+  const double c = std::cos(angle), s = std::sin(angle);
+  constexpr double center = 1.0;  // the 2 x 1 x 2 box's in-plane centre
+  for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+  {
+    double *point = serial.GetVertex(vertex);
+    const double x = point[0] - center, z = point[2] - center;
+    point[0] = center + c * x + s * z;
+    point[2] = center - s * x + c * z;
+  }
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
 std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeTouchingIslandMesh()
 {
   constexpr double extent = 2.0;
@@ -1928,6 +1973,79 @@ TextCsv ReadTextCsv(const fs::path &path)
     csv.rows.push_back(fields);
   }
   return csv;
+}
+
+std::size_t SurfaceResponseFiles::CheckGeometryFallbackInvariant(const json &manifest,
+                                                                 const json &solve_record)
+{
+  // The compared key of an entry and its sorted list (the entries' order is the record's
+  // order on both sides; the invariant is about the set).
+  auto Keyed = [](const json &entries)
+  {
+    std::vector<std::pair<std::string, double>> keyed;
+    for (const auto &entry : entries)
+    {
+      if (entry.at("Class") == "NoMatchedFeature")
+      {
+        continue;
+      }
+      const json key = {{"Class", entry.at("Class")},
+                        {"Features", entry.at("Features")},
+                        {"Patches", entry.at("Patches")},
+                        {"Models", entry.at("Models")}};
+      keyed.emplace_back(key.dump(), entry.at("Length").get<double>());
+    }
+    std::sort(keyed.begin(), keyed.end());
+    return keyed;
+  };
+  const auto &diagnostics = manifest.at("Identification").at("Diagnostics");
+  json preflight_entries = json::array();
+  if (diagnostics.contains("GeometryFallbacks"))
+  {
+    const auto &record = diagnostics.at("GeometryFallbacks");
+    CHECK(record.at("Run") == "Preflight");
+    preflight_entries = record.at("Entries");
+    // The Summary mirror the census / audit read.
+    REQUIRE(manifest.at("Summary").contains("GeometryFallbacks"));
+    CHECK(manifest.at("Summary").at("GeometryFallbacks").at("Count").get<int>() ==
+          static_cast<int>(preflight_entries.size()));
+    for (const auto &entry : preflight_entries)
+    {
+      // A10.1: the preflight never records NoMatchedFeature.
+      CHECK(entry.at("Class") != "NoMatchedFeature");
+    }
+  }
+  else
+  {
+    CHECK(!manifest.at("Summary").contains("GeometryFallbacks"));
+  }
+  json solve_entries = json::array();
+  if (!solve_record.is_null())
+  {
+    CHECK(solve_record.at("Run") == "Solve");
+    solve_entries = solve_record.at("Entries");
+  }
+  const bool solve_no_match =
+      std::any_of(solve_entries.begin(), solve_entries.end(), [](const json &entry)
+                  { return entry.at("Class") == "NoMatchedFeature"; });
+  if (solve_no_match)
+  {
+    const auto &counts = manifest.at("Summary").at("Counts");
+    CHECK(counts.at("Exact").get<int>() + counts.at("Interpolated").get<int>() +
+              counts.value("LegacyContract", 0) + counts.value("QuantumNearMatched", 0) ==
+          0);
+  }
+  const auto preflight = Keyed(preflight_entries);
+  const auto solve = Keyed(solve_entries);
+  REQUIRE(preflight.size() == solve.size());
+  for (std::size_t i = 0; i < preflight.size(); i++)
+  {
+    INFO("entry " << i << ": preflight " << preflight[i].first << " vs solve "
+                  << solve[i].first);
+    CHECK(preflight[i].first == solve[i].first);
+    CHECK_THAT(preflight[i].second, Catch::Matchers::WithinAbs(solve[i].second, 1.0e-12));
+  }
+  return preflight.size();
 }
 
 void RunElectrostatic(json config)

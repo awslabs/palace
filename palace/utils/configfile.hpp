@@ -1411,6 +1411,22 @@ public:
     // default so that every existing output is unchanged.
     bool patch_energy = false;
 
+    // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
+    // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
+    // identification / placement (a valid config and library). RecordRaw: the affected
+    // feature / patch / segment is excluded, its raw within-R energy stays in the raw term
+    // and the run continues with a named GeometryFallbacks record + a LOW-confidence banner
+    // (never silent). FailClosed: the same records are collected and the run aborts at the
+    // end of the configuration with their summary (the preflight writes its manifest
+    // first). Absent = the run-mode default: RecordRaw on a solve, FailClosed on the
+    // preflight.
+    enum class GeometryFailurePolicy : char
+    {
+      RECORD_RAW,
+      FAIL_CLOSED
+    };
+    std::optional<GeometryFailurePolicy> geometry_failure_policy = std::nullopt;
+
     // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the
     // mirror-extended identification across the planar NATURAL vertical truncation planes
     // (window cuts, symmetry planes, natural outlines). Mirror = "Natural" (default): the
@@ -1550,6 +1566,31 @@ public:
       std::vector<std::pair<std::size_t, double>> cells;  // (patch, removed length)
     };
     std::vector<CornerArmTrimData> corner_arm_trims;
+
+    // The geometry fallbacks recorded by the automatic configuration (GeometryFailurePolicy
+    // above; DESIGN readiness-20261029/hardening section 2): one record per converted site
+    // that fired, lengths in mesh units. Empty on every run that reaches no converted site
+    // (then nothing is written). Carried with the configuration across the AMR cycles; a
+    // configuration with fallbacks writes no geometry cache (decision 1001 Q5).
+    struct GeometryFallbackData
+    {
+      std::string cls;     // the record class (OverlapExcluded, PlacementRejected, ...)
+      std::string site;    // the converted site's label (H4a/24149 ...)
+      std::string reason;  // the former abort's text
+      std::string what;    // feature / patch / segment / chain / run
+      std::vector<int> features;
+      std::vector<int> patches;
+      std::vector<std::string> models;
+      double length = 0.0;
+      std::array<double, 3> example_origin{};
+      std::vector<int> interfaces;
+      std::string topology;
+    };
+    std::vector<GeometryFallbackData> geometry_fallbacks;
+    // The selected perimeter length per target interface (mesh units) and the interface
+    // type per target interface: the denominators of the record's RawShareByLength.
+    std::map<int, double> geometry_fallback_interface_lengths;
+    std::map<int, InterfaceDielectric> geometry_fallback_interface_types;
 
     // Corner-arm extension (decision 511 O2 (i); fillet-basis design 2026-10-07 section
     // 7.1): the F1 rule completed in the other direction. A matched corner's own-arm
