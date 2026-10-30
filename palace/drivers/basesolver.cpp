@@ -584,6 +584,18 @@ void BaseSolver::SaveMetadata(const SurfaceResponseOperator &response) const
     }
     WriteMetadata(post_dir, meta);
   }
+  // Geometry fallbacks (USER decision 1000 (b) / 1001): the LOW-confidence banner closes
+  // the run summary whenever a converted site fired; never silent.
+  if (const auto record = response.GetGeometryFallbackRecord(); !record.is_null())
+  {
+    Mpi::Print(
+        "{}",
+        GeometryFallbackBanner(
+            record, "SurfaceResponse.Diagnostics.GeometryFallbacks of palace.json" +
+                        std::string(response.IsRawFallback()
+                                        ? " (no correction applied: the thin solve)"
+                                        : " and surface-response-geometry-fallbacks.csv")));
+  }
 }
 
 void BaseSolver::SaveMetadata(const SurfacePostOperator &surf_post_op) const

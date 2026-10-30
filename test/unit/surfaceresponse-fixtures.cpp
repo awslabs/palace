@@ -1930,6 +1930,79 @@ TextCsv ReadTextCsv(const fs::path &path)
   return csv;
 }
 
+std::size_t SurfaceResponseFiles::CheckGeometryFallbackInvariant(const json &manifest,
+                                                                 const json &solve_record)
+{
+  // The compared key of an entry and its sorted list (the entries' order is the record's
+  // order on both sides; the invariant is about the set).
+  auto Keyed = [](const json &entries)
+  {
+    std::vector<std::pair<std::string, double>> keyed;
+    for (const auto &entry : entries)
+    {
+      if (entry.at("Class") == "NoMatchedFeature")
+      {
+        continue;
+      }
+      const json key = {{"Class", entry.at("Class")},
+                        {"Features", entry.at("Features")},
+                        {"Patches", entry.at("Patches")},
+                        {"Models", entry.at("Models")}};
+      keyed.emplace_back(key.dump(), entry.at("Length").get<double>());
+    }
+    std::sort(keyed.begin(), keyed.end());
+    return keyed;
+  };
+  const auto &diagnostics = manifest.at("Identification").at("Diagnostics");
+  json preflight_entries = json::array();
+  if (diagnostics.contains("GeometryFallbacks"))
+  {
+    const auto &record = diagnostics.at("GeometryFallbacks");
+    CHECK(record.at("Run") == "Preflight");
+    preflight_entries = record.at("Entries");
+    // The Summary mirror the census / audit read.
+    REQUIRE(manifest.at("Summary").contains("GeometryFallbacks"));
+    CHECK(manifest.at("Summary").at("GeometryFallbacks").at("Count").get<int>() ==
+          static_cast<int>(preflight_entries.size()));
+    for (const auto &entry : preflight_entries)
+    {
+      // A10.1: the preflight never records NoMatchedFeature.
+      CHECK(entry.at("Class") != "NoMatchedFeature");
+    }
+  }
+  else
+  {
+    CHECK(!manifest.at("Summary").contains("GeometryFallbacks"));
+  }
+  json solve_entries = json::array();
+  if (!solve_record.is_null())
+  {
+    CHECK(solve_record.at("Run") == "Solve");
+    solve_entries = solve_record.at("Entries");
+  }
+  const bool solve_no_match =
+      std::any_of(solve_entries.begin(), solve_entries.end(), [](const json &entry)
+                  { return entry.at("Class") == "NoMatchedFeature"; });
+  if (solve_no_match)
+  {
+    const auto &counts = manifest.at("Summary").at("Counts");
+    CHECK(counts.at("Exact").get<int>() + counts.at("Interpolated").get<int>() +
+              counts.value("LegacyContract", 0) + counts.value("QuantumNearMatched", 0) ==
+          0);
+  }
+  const auto preflight = Keyed(preflight_entries);
+  const auto solve = Keyed(solve_entries);
+  REQUIRE(preflight.size() == solve.size());
+  for (std::size_t i = 0; i < preflight.size(); i++)
+  {
+    INFO("entry " << i << ": preflight " << preflight[i].first << " vs solve "
+                  << solve[i].first);
+    CHECK(preflight[i].first == solve[i].first);
+    CHECK_THAT(preflight[i].second, Catch::Matchers::WithinAbs(solve[i].second, 1.0e-12));
+  }
+  return preflight.size();
+}
+
 void RunElectrostatic(json config)
 {
   IoData iodata(std::move(config), /*print=*/false);

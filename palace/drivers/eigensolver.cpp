@@ -370,7 +370,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto eigen = MakeEigenvalueSolver();
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
   const bool self_consistent_response =
-      response_correction &&
+      response_correction && !response_correction->IsRawFallback() &&
       iodata.solver.surface_response_correction->IncludesSelfConsistent();
   std::unique_ptr<ComplexWrapperOperator> response_mass;
   internal::ResponseCorrectedMass corrected_M, corrected_Mp;

@@ -322,9 +322,21 @@ PostOperator<solver_t>::PostOperator(
       surface_response_patch_energy_enabled = response.patch_energy;
       surface_response_op =
           std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
-      MFEM_VERIFY(surface_response_op->HasSurfaceResponse(),
-                  "Maxwell surface response correction requires fabricated and thin "
-                  "surface response matrices in the selected coupon models!");
+      if (surface_response_op->IsRawFallback())
+      {
+        // A whole-run geometry fallback (USER decision 1000 (b) / 1001): no model / patch
+        // applied; the drivers save the operator's record + banner and the Maxwell outputs
+        // are the raw run's (nothing measured or printed for the correction).
+        surface_response_postprocess_enabled = false;
+        surface_response_self_consistent_enabled = false;
+        surface_response_patch_energy_enabled = false;
+      }
+      else
+      {
+        MFEM_VERIFY(surface_response_op->HasSurfaceResponse(),
+                    "Maxwell surface response correction requires fabricated and thin "
+                    "surface response matrices in the selected coupon models!");
+      }
       for (const auto &portion : surface_response_op->GetUncoveredPortions())
       {
         surface_response_uncovered.push_back(
@@ -1782,7 +1794,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
                 solver_t == ProblemType::BOUNDARYMODE)
   {
-    if (!surface_response_op)
+    if (!surface_response_op || surface_response_op->IsRawFallback())
     {
       return;
     }

@@ -96,7 +96,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
   const bool self_consistent_response =
-      response_correction &&
+      response_correction && !response_correction->IsRawFallback() &&
       iodata.solver.surface_response_correction->IncludesSelfConsistent();
   std::unique_ptr<ComplexWrapperOperator> response_mass;
   if (self_consistent_response)
@@ -338,7 +338,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                                             &surface_post_geometry);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
   const bool self_consistent_response =
-      response_correction &&
+      response_correction && !response_correction->IsRawFallback() &&
       iodata.solver.surface_response_correction->IncludesSelfConsistent();
 
   // Configure PROM parameters if not specified.
