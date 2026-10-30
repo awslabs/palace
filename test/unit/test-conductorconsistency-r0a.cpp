@@ -766,6 +766,162 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// R0-b's reader (idfix DESIGN A.3 (b); decision 1064 (4)): a model whose conductor
+// references are one per LOCAL METAL PIECE loads with the piece carrier (Edges[].LocalPiece
+// on an edge cluster, the top-level LocalPieces leaf on a gap), the piece count must equal
+// the reference count, a ParallelEdgeCluster's pieces must be the ones its GapDirections
+// bound (the ONE rule), and a model without the carrier loads exactly as today.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Fabrication-process library local-piece conductor references (R0-b reader)",
+    "[surfaceresponseoperator][conductorconsistency][r0a][r0b][3d][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  json base_library;
+  {
+    std::ifstream input(coupled_library_3d_path);
+    REQUIRE(input);
+    base_library = json::parse(input);
+  }
+  // The template gap model: two references and two open contour paths (the version-2
+  // DifferentConductorGap form of the fixture).
+  json gap_template;
+  json cluster_template;
+  for (const auto &model : base_library["Models"])
+  {
+    if (model.value("Topology", "") == "DifferentConductorGap" &&
+        model.contains("ConductorReferences"))
+    {
+      gap_template = model;
+    }
+  }
+  REQUIRE(!gap_template.is_null());
+  {
+    std::ifstream input(parallel_cluster_library_3d_path);
+    REQUIRE(input);
+    const json cluster_library = json::parse(input);
+    for (const auto &model : cluster_library["Models"])
+    {
+      if (model.value("Name", "") == "cpw-three-conductor-four-edge-cluster")
+      {
+        cluster_template = model;
+      }
+    }
+  }
+  REQUIRE(!cluster_template.is_null());
+  json config = ConvexMaxwellIslandConfig();
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");
+  int variant = 0;
+  auto Load = [&](json model, const std::string &label)
+  {
+    json library = base_library;
+    library["Name"] = "unit-test-r0b-" + label;
+    library["MatchingRadius"] = 0.2;  // the island config's EdgeDistances
+    library["Models"] = {model};
+    const auto library_path =
+        temp.temp_dir / ("fabrication-process-r0b-" + std::to_string(variant++) + ".json");
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    auto run_config = config;
+    run_config["Solver"]["SurfaceResponseCorrection"]["Library"] = library_path.string();
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakeIslandMesh());
+    const auto manifest_path =
+        temp.temp_dir / ("surface-response-requirements-r0b-" + label + ".json");
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+  };
+
+  SECTION("a SameConductorGap without the leaf loads as today; with LocalPieces 2 and two "
+          "references it loads; a mismatch is refused by name")
+  {
+    json same_gap = gap_template;
+    same_gap["Name"] = "same-gap-local-pieces";
+    same_gap["Topology"] = "SameConductorGap";
+    // Without the leaf: plural references on a SameConductorGap are refused (today's rule).
+    CHECK_THROWS_WITH(Load(same_gap, "scg-plural-no-leaf"),
+                      ContainsSubstring("ConductorReferences") &&
+                          ContainsSubstring("SameConductorGap with the LocalPieces leaf"));
+    // Today's form: one Reference, no paths: loads.
+    json legacy_gap = same_gap;
+    legacy_gap.erase("ConductorReferences");
+    legacy_gap.erase("OpenContourPaths");
+    legacy_gap["Reference"] = {-13.0, 0.0, 0.0};
+    CHECK_NOTHROW(Load(legacy_gap, "scg-legacy"));
+    // With LocalPieces = 2 + 2 references + the open paths: loads.
+    same_gap["LocalPieces"] = 2;
+    CHECK_NOTHROW(Load(same_gap, "scg-local-pieces"));
+    // A mismatched count is refused by name.
+    json three = same_gap;
+    three["LocalPieces"] = 3;
+    CHECK_THROWS_WITH(Load(three, "scg-three"), ContainsSubstring("LocalPieces must be 2"));
+    json one_reference = same_gap;
+    one_reference["ConductorReferences"] = {{-13.0, 0.0, 0.0}};
+    CHECK_THROWS_WITH(Load(one_reference, "scg-one-reference"),
+                      ContainsSubstring("at least two points"));
+    // The leaf on another topology is refused.
+    json on_cluster = cluster_template;
+    on_cluster["LocalPieces"] = 3;
+    CHECK_THROWS_WITH(Load(on_cluster, "pec-leaf"),
+                      ContainsSubstring("LocalPieces is the SameConductorGap"));
+  }
+
+  SECTION("a ParallelEdgeCluster with Edges[].LocalPiece: one reference per piece, the "
+          "pieces those of its GapDirections")
+  {
+    // The three-conductor four-edge template (labels 1 / 2 / 2 / 3, three references) read
+    // as a one-label CPW with three LOCAL pieces (ground / strip / ground).
+    json cluster = cluster_template;
+    cluster["Name"] = "cpw-one-label-three-pieces";
+    const std::vector<int> pieces = {1, 2, 2, 3};
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      cluster["Edges"][k]["Conductor"] = 1;
+      cluster["Edges"][k]["LocalPiece"] = pieces[k];
+    }
+    cluster["OpenContourPaths"] = {
+        {{"Indices", {1, 2}}, {"StartConductor", 1}, {"EndConductor", 2}},
+        {{"Indices", {3, 4}}, {"StartConductor", 2}, {"EndConductor", 3}}};
+    CHECK_NOTHROW(Load(cluster, "pec-local-pieces"));
+    // Without the leaf a one-label cluster must carry ONE reference (today's rule).
+    json no_leaf = cluster;
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      no_leaf["Edges"][k].erase("LocalPiece");
+    }
+    CHECK_THROWS_WITH(Load(no_leaf, "pec-no-leaf"),
+                      ContainsSubstring("one conductor reference for each canonical "
+                                        "conductor label"));
+    // The leaf on some edges only is refused.
+    json partial = cluster;
+    partial["Edges"][2].erase("LocalPiece");
+    CHECK_THROWS_WITH(Load(partial, "pec-partial"),
+                      ContainsSubstring("every edge or on none"));
+    // Pieces that are not the ones the GapDirections bound are refused (the ONE rule).
+    json wrong = cluster;
+    wrong["Edges"][2]["LocalPiece"] = 3;
+    wrong["Edges"][3]["LocalPiece"] = 4;
+    CHECK_THROWS_WITH(Load(wrong, "pec-wrong-pieces"),
+                      ContainsSubstring("not the piece its GapDirections bound"));
+    // Fewer references than pieces is refused by name.
+    json two_references = cluster;
+    two_references["ConductorReferences"] = {{0.0, 0.0, 0.0}, {12.0, 0.0, 0.0}};
+    two_references["OpenContourPaths"] = {
+        {{"Indices", {1, 2}}, {"StartConductor", 1}, {"EndConductor", 2}}};
+    CHECK_THROWS_WITH(Load(two_references, "pec-two-references"),
+                      ContainsSubstring("one reference per local piece is required"));
+  }
+#endif
+}
+
 TEST_CASE("Response-correction ConductorConsistency.RecordOnly is read and bounded",
           "[surfaceresponseoperator][conductorconsistency][r0a][config][Serial]")
 {

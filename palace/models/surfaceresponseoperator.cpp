@@ -1176,6 +1176,7 @@ struct LibraryClusterEdge
   double offset = 0.0;
   int gap_direction = 0;
   int conductor = 0;
+  int local_piece = 0;  // R0-b (Edges[].LocalPiece); 0 when the model carries none
 };
 
 struct MetalBoundaryLaw
@@ -1194,6 +1195,7 @@ struct LibrarySpatialEdge
   Point3D process_normal{};
   std::array<double, 2> interval{};
   int conductor = 0;
+  int local_piece = 0;  // R0-b (Edges[].LocalPiece); 0 when the model carries none
   int interface_slot = 0;
   MetalBoundaryLaw boundary_condition;
   // The ENTRY's per-Edge weight of a mirror-formed coupon (impl-B5 CONTRACT.md section 3:
@@ -2532,6 +2534,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           cluster_edge.offset = edge.at("Offset").get<double>() / coordinate_scale;
           cluster_edge.gap_direction = edge.at("GapDirection").get<int>();
           cluster_edge.conductor = edge.at("Conductor").get<int>();
+          cluster_edge.local_piece = edge.value("LocalPiece", 0);
+          MFEM_VERIFY(cluster_edge.local_piece >= 0,
+                      "ParallelEdgeCluster Edges[].LocalPiece must be a positive piece "
+                      "index when present!");
           MFEM_VERIFY(
               std::isfinite(cluster_edge.offset) &&
                   (cluster_edge.gap_direction == -1 || cluster_edge.gap_direction == 1) &&
@@ -2578,6 +2584,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           spatial_edge.process_normal = edge.at("ProcessNormal").get<Point3D>();
           spatial_edge.interval = edge.at("Interval").get<std::array<double, 2>>();
           spatial_edge.conductor = edge.at("Conductor").get<int>();
+          spatial_edge.local_piece = edge.value("LocalPiece", 0);
+          MFEM_VERIFY(spatial_edge.local_piece >= 0,
+                      "SpatialEdgeCluster Edges[].LocalPiece must be a positive piece "
+                      "index when present!");
           spatial_edge.interface_slot = edge.value("InterfaceSlot", 0);
           spatial_edge.boundary_condition = ParseLibraryBoundaryCondition(
               edge.value("BoundaryCondition", nlohmann::json("PEC")), units,
@@ -2657,6 +2667,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     // device-plan coupon carries no claimed Edge, decision 282): read by the
     // conductor-reference count of a spatial cluster below.
     int plan_view_conductor_count = 0;
+    // R0-b (idfix DESIGN A.3 (b)): the largest PlanViewBoundary[].LocalPiece (0 without).
+    int plan_view_local_piece_count = 0;
     if (auto boundary = entry.find("PlanViewBoundary"); boundary != entry.end())
     {
       MFEM_VERIFY((spatial_cluster || endpoint || junction) && boundary->is_array() &&
@@ -2673,6 +2685,13 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                     "Invalid PlanViewBoundary component!");
         plan_view_conductor_count =
             std::max(plan_view_conductor_count, component["Conductor"].get<int>());
+        if (auto piece = component.find("LocalPiece"); piece != component.end())
+        {
+          MFEM_VERIFY(piece->is_number_integer() && piece->get<int>() > 0,
+                      "PlanViewBoundary[].LocalPiece must be a positive piece index!");
+          plan_view_local_piece_count =
+              std::max(plan_view_local_piece_count, piece->get<int>());
+        }
         auto ValidSegment = [](const auto &segment)
         {
           return segment.is_array() && segment.size() == 2 &&
@@ -2991,14 +3010,22 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       MFEM_VERIFY(version >= 2,
                   "ConductorReferences requires a version-2 fabrication-process "
                   "response library!");
+      // R0-b (decision 1064 (4) (a)): a SameConductorGap / CurvedSameConductorGap carries
+      // plural references only with the top-level LocalPieces leaf (one reference per
+      // local metal piece: its two metal sides).
+      const bool same_conductor_gap =
+          model.topology == LibraryTopology::SAME_CONDUCTOR_GAP ||
+          model.topology == LibraryTopology::CURVED_SAME_CONDUCTOR_GAP;
       MFEM_VERIFY(!entry.contains("Reference") && references->is_array() &&
                       references->size() >= 2 &&
                       (model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
                        model.topology == LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP ||
-                       parallel_cluster || spatial_cluster),
+                       parallel_cluster || spatial_cluster ||
+                       (same_conductor_gap && entry.contains("LocalPieces"))),
                   "ConductorReferences must contain at least two points and is supported "
                   "only by a DifferentConductorGap, ParallelEdgeCluster, or "
-                  "SpatialEdgeCluster model without Reference!");
+                  "SpatialEdgeCluster model without Reference (a SameConductorGap with "
+                  "the LocalPieces leaf, idfix R0-b)!");
       model.conductor_references = references->get<std::vector<std::array<double, 3>>>();
       for (auto &reference : model.conductor_references)
       {
@@ -3068,21 +3095,119 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       {
         conductor_count = std::max(conductor_count, plan_view_conductor_count);
       }
-      MFEM_VERIFY(static_cast<int>(model.conductor_references.size()) == conductor_count,
-                  "Edge-cluster models require one conductor reference for each "
-                  "canonical conductor label of their Edges and PlanViewBoundary "
-                  "components!");
+      // R0-b (idfix DESIGN A.3 (b); decision 1064 (4)): with Edges[].LocalPiece (every
+      // edge, 1..P contiguous in increasing offset for a ParallelEdgeCluster, where the
+      // pieces must be the ones the GapDirections bound — the ONE rule shared with the
+      // generators, U-PIECES) the references are one per LOCAL PIECE, not per label; the
+      // KeyText never sees the leaf (the match is by signature, the key unchanged).
+      int local_piece_count = 0;
+      bool any_local_piece = false, every_local_piece = true;
+      if (parallel_cluster)
+      {
+        std::vector<double> offsets;
+        std::vector<int> gap_directions;
+        for (const auto &edge : model.cluster_edges)
+        {
+          any_local_piece = any_local_piece || edge.local_piece > 0;
+          every_local_piece = every_local_piece && edge.local_piece > 0;
+          offsets.push_back(edge.offset);
+          gap_directions.push_back(edge.gap_direction);
+        }
+        if (any_local_piece)
+        {
+          MFEM_VERIFY(every_local_piece,
+                      "ParallelEdgeCluster model \""
+                          << model.name
+                          << "\": Edges[].LocalPiece must be present on every edge or on "
+                             "none (idfix R0-b)!");
+          const auto pieces = LocalPiecesOfParallelEdges(offsets, gap_directions);
+          for (std::size_t k = 0; k < pieces.size(); k++)
+          {
+            MFEM_VERIFY(model.cluster_edges[k].local_piece == pieces[k],
+                        "ParallelEdgeCluster model \""
+                            << model.name << "\": Edges[" << k
+                            << "].LocalPiece = " << model.cluster_edges[k].local_piece
+                            << " is not the piece its GapDirections bound (" << pieces[k]
+                            << "; LocalPiecesOfParallelEdges, idfix R0-b)!");
+            local_piece_count = std::max(local_piece_count, pieces[k]);
+          }
+        }
+      }
+      else
+      {
+        for (const auto &edge : model.spatial_edges)
+        {
+          any_local_piece = any_local_piece || edge.local_piece > 0;
+          every_local_piece = every_local_piece && edge.local_piece > 0;
+          local_piece_count = std::max(local_piece_count, edge.local_piece);
+        }
+        any_local_piece = any_local_piece || plan_view_local_piece_count > 0;
+        if (any_local_piece)
+        {
+          MFEM_VERIFY(every_local_piece,
+                      "SpatialEdgeCluster model \""
+                          << model.name
+                          << "\": Edges[].LocalPiece must be present on every edge when "
+                             "any Edge or PlanViewBoundary component carries it (idfix "
+                             "R0-b)!");
+          local_piece_count = std::max(local_piece_count, plan_view_local_piece_count);
+        }
+      }
+      if (any_local_piece)
+      {
+        MFEM_VERIFY(static_cast<int>(model.conductor_references.size()) ==
+                        local_piece_count,
+                    "Edge-cluster model \""
+                        << model.name << "\" carries " << local_piece_count
+                        << " local metal piece(s) (Edges[].LocalPiece / "
+                           "PlanViewBoundary[].LocalPiece) but "
+                        << model.conductor_references.size()
+                        << " conductor reference(s): one reference per local piece is "
+                           "required (idfix R0-b)!");
+        model.response.local_piece_references = true;
+      }
+      else
+      {
+        MFEM_VERIFY(static_cast<int>(model.conductor_references.size()) == conductor_count,
+                    "Edge-cluster models require one conductor reference for each "
+                    "canonical conductor label of their Edges and PlanViewBoundary "
+                    "components!");
+      }
+    }
+    if (auto local_pieces = entry.find("LocalPieces"); local_pieces != entry.end())
+    {
+      // R0-b (decision 1064 (4) (a)): the gap classes' carrier (no Edges array): the
+      // reference count must equal the leaf (2: the two metal sides of a gap).
+      MFEM_VERIFY(model.topology == LibraryTopology::SAME_CONDUCTOR_GAP ||
+                      model.topology == LibraryTopology::CURVED_SAME_CONDUCTOR_GAP,
+                  "LocalPieces is the SameConductorGap / CurvedSameConductorGap carrier "
+                  "of the local-piece references (an edge-cluster model carries "
+                  "Edges[].LocalPiece)!");
+      MFEM_VERIFY(local_pieces->is_number_integer() && local_pieces->get<int>() == 2,
+                  "SameConductorGap model \""
+                      << model.name
+                      << "\": LocalPieces must be 2 (its two metal sides; idfix R0-b)!");
+      MFEM_VERIFY(static_cast<int>(model.conductor_references.size()) ==
+                      local_pieces->get<int>(),
+                  "SameConductorGap model \""
+                      << model.name << "\": LocalPieces = " << local_pieces->get<int>()
+                      << " but " << model.conductor_references.size()
+                      << " conductor reference(s): one reference per local piece is "
+                         "required (idfix R0-b)!");
+      model.response.local_piece_references = true;
     }
     if (auto paths = entry.find("OpenContourPaths"); paths != entry.end())
     {
       MFEM_VERIFY(model.conductor_references.size() >= 2 &&
                       (model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
                        model.topology == LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP ||
-                       parallel_cluster || spatial_cluster) &&
+                       parallel_cluster || spatial_cluster ||
+                       model.response.local_piece_references) &&
                       model.response.contour_groups.empty() && paths->is_array() &&
                       !paths->empty(),
                   "OpenContourPaths requires a version-2 DifferentConductorGap or "
-                  "edge-cluster model with ConductorReferences and no ContourGroups!");
+                  "edge-cluster model with ConductorReferences and no ContourGroups (or a "
+                  "SameConductorGap with LocalPieces, idfix R0-b)!");
       std::set<int> point_indices;
       for (const auto &path : *paths)
       {
@@ -11532,6 +11657,20 @@ FeaturePatchSummary BuildFeaturePatches(
                       model.cluster_edges.size() == ordered.size(),
                   "A parallel-edge cluster model's edge count differs from the feature!");
       std::vector<std::size_t> reference_sides;  // first side of every conductor label
+      if (model.response.local_piece_references)
+      {
+        // R0-b: one reference per LOCAL PIECE (Edges[].LocalPiece): the first side of every
+        // piece, in increasing piece index.
+        std::set<int> pieces;
+        for (std::size_t k = 0; k < model.cluster_edges.size(); k++)
+        {
+          if (pieces.insert(model.cluster_edges[k].local_piece).second)
+          {
+            reference_sides.push_back(k);
+          }
+        }
+      }
+      else
       {
         std::set<int> conductors;
         for (std::size_t k = 0; k < ordered.size(); k++)
