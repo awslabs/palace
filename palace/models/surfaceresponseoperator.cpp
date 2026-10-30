@@ -3475,6 +3475,40 @@ void MapLibraryInterfaces(
   }
 }
 
+// Whether MapLibraryInterfaces binds every (slot, type) target of `targets_by_slot` on
+// `source` without its abort: exactly its verify (an interface of that slot and type on the
+// model, or no fabricated surface matrix). Readiness hardening-2 (iii), decision 1018 Q6
+// (OI-MX-R2A-COMPARATOR-FORM): BuildFeaturePatches tests it before the runtime model is
+// formed; a feature whose portions carry more distinct target maps than the model has
+// slots (a listed gap next to a differently listed one at a one-slot corner coupon) is
+// recorded InterfaceMappingConflict under a ledger instead of aborting the configuration.
+bool CanMapLibraryInterfaces(
+    const LibraryModel &source,
+    const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot)
+{
+  if (source.response.fabricated_surface_matrix.empty())
+  {
+    return true;
+  }
+  for (const auto &[slot, targets] : targets_by_slot)
+  {
+    for (const auto &[type, target] : targets)
+    {
+      (void)target;
+      const int interface_slot = slot;
+      const InterfaceDielectric interface_type = type;
+      if (std::none_of(
+              source.interfaces.begin(), source.interfaces.end(),
+              [interface_slot, interface_type](const auto &entry)
+              { return entry.slot == interface_slot && entry.type == interface_type; }))
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool MatchLibraryInterfaces(
     const LibraryModel &model,
     const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot)
@@ -11146,6 +11180,99 @@ FeaturePatchSummary BuildFeaturePatches(
     {
       targets_by_slot.emplace(static_cast<int>(targets_by_slot.size()), targets);
     }
+    // A refused placement under a ledger (readiness hardening, USER decision 1000 (b) /
+    // 1001; H5a / H5b PlacementRejected, hardening-2 (iii) InterfaceMappingConflict): the
+    // feature is NOT placed and read as Missing (raw) with the record; the matched counters
+    // (the family counters of the summary print among them) are rolled back; the former
+    // abort is the FailClosed summary's.
+    auto RejectFeature = [&](const char *cls, const char *site, const std::string &reason,
+                             const Point3D &origin)
+    {
+      summary.matched_features--;
+      summary.matched_length -= feature_length;
+      if (curved_blend)
+      {
+        summary.curved_family_features--;
+      }
+      else if (corner_match != corner_matches.end())
+      {
+        summary.corner_family_features--;
+      }
+      summary.unmatched_features++;
+      summary.unmatched_length += feature_length;
+      auto &entry = summary.unmatched_by_type[feature.type];
+      entry.first++;
+      entry.second += feature_length;
+      if (diagnostics)
+      {
+        for (const auto &portion : feature.portions)
+        {
+          if (IsImage(portion))
+          {
+            continue;
+          }
+          const double length = portion.s1 - portion.s0;
+          diagnostics->matched_length -= length;
+          for (const auto &[type, target] : framed.at(portion.segment)->targets)
+          {
+            (void)type;
+            diagnostics->matched_length_by_interface[target] -= length;
+          }
+        }
+      }
+      placement_rejected.insert(feature.id);
+      GeometryFallbackData record;
+      record.cls = cls;
+      record.site = site;
+      record.reason = reason;
+      record.what = "feature";
+      record.features = {feature.id};
+      record.models = {model.name};
+      record.length = feature_length;
+      record.example_origin = origin;
+      record.topology = feature.type;
+      for (const auto &framed_portion : portions)
+      {
+        for (const auto &[type, target] : framed_portion.segment->targets)
+        {
+          (void)type;
+          if (std::find(record.interfaces.begin(), record.interfaces.end(), target) ==
+              record.interfaces.end())
+          {
+            record.interfaces.push_back(target);
+          }
+        }
+      }
+      geometry_ledger->Record(std::move(record));
+    };
+    if (geometry_ledger && !CanMapLibraryInterfaces(model, targets_by_slot))
+    {
+      // (iii) OI-MX-R2A-COMPARATOR-FORM (decision 1018 Q6): the feature's portions carry
+      // distinct target maps the model's interface slots cannot bind (MapLibraryInterfaces
+      // would abort forming the runtime model): recorded, the feature raw; never mapped
+      // through slot 0 (a one-slot corner's correction is one number for both arms, and
+      // the unlisted arm's energy would over-correct the listed arm's target).
+      std::ostringstream maps;
+      for (const auto &[slot, targets] : targets_by_slot)
+      {
+        maps << (slot > 0 ? "; " : "") << "slot " << slot << " {";
+        bool first = true;
+        for (const auto &[type, target] : targets)
+        {
+          maps << (first ? "" : ", ") << ToString(type) << " -> " << target;
+          first = false;
+        }
+        maps << "}";
+      }
+      RejectFeature("InterfaceMappingConflict", "R2A/BuildFeaturePatches:interface-slots",
+                    fmt::format("Fabrication-process response model \"{}\" cannot map the "
+                                "{:d} distinct interface target map(s) of feature {:d} "
+                                "({}) onto its interface slots ({})",
+                                model.name, targets_by_slot.size(), feature.id,
+                                feature.type, maps.str()),
+                    feature.origin);
+      continue;
+    }
     const int runtime =
         RuntimeModel(model_index, targets_by_slot, family ? &*family : nullptr);
     const Point3D n = feature.axes[2];
@@ -11589,60 +11716,10 @@ FeaturePatchSummary BuildFeaturePatches(
             signature.value("Context", nlohmann::json::array()),
             feature.signature.value("Context", nlohmann::json(nullptr)));
         // H5a / H5b (readiness hardening, USER decision 1000 (b) / 1001): a refused
-        // placement makes the feature Missing (raw) with the record PlacementRejected;
-        // the matched counters are rolled back; the former abort is the FailClosed
-        // summary's. The runtime model registered above stays (0 patches).
+        // placement makes the feature Missing (raw) with the record PlacementRejected
+        // (RejectFeature above). The runtime model registered above stays (0 patches).
         auto RejectPlacement = [&](const char *site, const std::string &reason)
-        {
-          summary.matched_features--;
-          summary.matched_length -= feature_length;
-          summary.unmatched_features++;
-          summary.unmatched_length += feature_length;
-          auto &entry = summary.unmatched_by_type[feature.type];
-          entry.first++;
-          entry.second += feature_length;
-          if (diagnostics)
-          {
-            for (const auto &portion : feature.portions)
-            {
-              if (IsImage(portion))
-              {
-                continue;
-              }
-              const double length = portion.s1 - portion.s0;
-              diagnostics->matched_length -= length;
-              for (const auto &[type, target] : framed.at(portion.segment)->targets)
-              {
-                (void)type;
-                diagnostics->matched_length_by_interface[target] -= length;
-              }
-            }
-          }
-          placement_rejected.insert(feature.id);
-          GeometryFallbackData record;
-          record.cls = "PlacementRejected";
-          record.site = site;
-          record.reason = reason;
-          record.what = "feature";
-          record.features = {feature.id};
-          record.models = {model.name};
-          record.length = feature_length;
-          record.example_origin = patch.origin;
-          record.topology = feature.type;
-          for (const auto &framed_portion : portions)
-          {
-            for (const auto &[type, target] : framed_portion.segment->targets)
-            {
-              (void)type;
-              if (std::find(record.interfaces.begin(), record.interfaces.end(), target) ==
-                  record.interfaces.end())
-              {
-                record.interfaces.push_back(target);
-              }
-            }
-          }
-          geometry_ledger->Record(std::move(record));
-        };
+        { RejectFeature("PlacementRejected", site, reason, patch.origin); };
         if (geometry_ledger &&
             !(feature.signature.contains("Context") && context_agreement.agrees))
         {
@@ -23045,14 +23122,91 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         point_offsets[c + 1] - point_offsets[c], points[point][0] * coordinate_scale,
         points[point][1] * coordinate_scale, points[point][2] * coordinate_scale);
   };
-  for (std::size_t c = 0; c < candidates.size(); c++)
+  // F-6 (readiness hardening-2, decision 1018 Q4; the census QUO-019 strip islands whose
+  // lower edge lies ON the tile wall): a reference neither located nor reflected whose
+  // distance to the nearest element box is within the identification's own length
+  // tolerance (kSignatureParameterToleranceOverRadius x R, 1.9 nm at R = 1.9 um; the
+  // locator's box tolerance is ~1e-11 of the mesh scale) is a reference ON the mesh
+  // boundary to roundoff: read as located, the patch continues through the classification
+  // below (its other points decide: applied, Mirrored or DomainBoundary). Beyond the
+  // tolerance the reference is off the mesh: without a ledger the abort of record; under
+  // the ledger the patch is excluded (weight 0, reason MisplacedReference, its raw claims
+  // kept by the DomainBoundary portions) and UnlocatedPatch recorded. The distances are
+  // GlobalMin'd like the other outside points' below (the same decision on every rank).
+  std::vector<unsigned char> misplaced_reference(candidates.size(), 0);
   {
-    const std::size_t reference = origin_references[c];
-    if (reference != no_reference && !found[reference] && !reflected[reference])
+    std::vector<std::size_t> unlocated;
+    for (std::size_t c = 0; c < candidates.size(); c++)
     {
-      MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
+      const std::size_t reference = origin_references[c];
+      if (reference != no_reference && !found[reference] && !reflected[reference])
+      {
+        unlocated.push_back(c);
+      }
+    }
+    std::vector<double> reference_distances(unlocated.size());
+    for (std::size_t k = 0; k < unlocated.size(); k++)
+    {
+      reference_distances[k] = locator.BoxDistance(points[origin_references[unlocated[k]]]);
+    }
+    if (!reference_distances.empty())
+    {
+      Mpi::GlobalMin(static_cast<int>(reference_distances.size()),
+                     reference_distances.data(), comm);
+    }
+    for (std::size_t k = 0; k < unlocated.size(); k++)
+    {
+      const std::size_t c = unlocated[k];
+      const std::size_t reference = origin_references[c];
+      if (reference_distances[k] <= tolerance)
+      {
+        found[reference] = 1;
+        continue;
+      }
+      if (!geometry_ledger)
+      {
+        MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
+      }
+      misplaced_reference[c] = 1;
     }
   }
+  // The UnlocatedPatch record of an excluded patch (the former misplaced-coupon abort's
+  // text with the point's distance): what "patch", its model and feature, the unlocated
+  // point, the patch's own length (its longitudinal cell, else its claims; mesh units).
+  auto RecordUnlocatedPatch = [&](std::size_t c, std::size_t point, const char *site,
+                                  const char *what_point, double distance)
+  {
+    const auto &patch = patches[candidates[c]];
+    GeometryFallbackData entry;
+    entry.cls = "UnlocatedPatch";
+    entry.site = site;
+    entry.reason =
+        DescribeMisplacedPatch(c, point, what_point) +
+        fmt::format(" (distance {:.6e} mesh units from the nearest element box; the "
+                    "boundary tolerance {:.6e})",
+                    distance, tolerance);
+    entry.what = "patch";
+    entry.patches = {static_cast<int>(candidates[c])};
+    entry.models = {model_name(patch.model)};
+    entry.features = {patch.provenance.feature};
+    entry.example_origin = points[point];
+    const auto &cell = patch.longitudinal_cell;
+    if (patch.provenance.coupon_depth > 0.0 && cell[1] > cell[0])
+    {
+      entry.length = cell[1] - cell[0];
+    }
+    else
+    {
+      for (const auto *claims : {&patch.provenance.claims, &patch.provenance.raw_claims})
+      {
+        for (const auto &claim : *claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+      }
+    }
+    geometry_ledger->Record(std::move(entry));
+  };
   result.phase_times["reflect"] = Elapsed();
   // The distance of every outside point to the nearest element box, over the ranks.
   std::vector<std::size_t> outside;
@@ -23091,6 +23245,21 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         exclusion.nearest_outside_point = points[outside[k]];
       }
       k++;
+    }
+    if (misplaced_reference[c])
+    {
+      // F-6 under the ledger: the reference off the mesh beyond the boundary tolerance.
+      const std::size_t reference = origin_references[c];
+      const auto position = std::lower_bound(outside.begin(), outside.end(), reference);
+      MFEM_VERIFY(position != outside.end() && *position == reference,
+                  "An unlocated metal-edge reference is missing from the outside points!");
+      RecordUnlocatedPatch(c, reference, "H9a/FindDomainBoundaryExclusions:reference",
+                           "its metal-edge reference",
+                           distances[static_cast<std::size_t>(position - outside.begin())]);
+      exclusion.reason = "MisplacedReference";
+      patches[exclusion.patch].weight = 0.0;
+      result.patches.push_back(exclusion);
+      continue;
     }
     // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
     // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
@@ -23294,7 +23463,17 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       // No tested point inside: not a cut through the coupon but a coupon off the mesh.
       if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
       {
-        MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+        if (!geometry_ledger)
+        {
+          MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+        }
+        // F-6 under the ledger: excluded with the record (the nearest point's distance).
+        RecordUnlocatedPatch(c, begin, "H9a/FindDomainBoundaryExclusions:all-points",
+                             "every one of its tested points", exclusion.nearest_distance);
+        exclusion.reason = "AllPointsOutside";
+        patches[exclusion.patch].weight = 0.0;
+        result.patches.push_back(exclusion);
+        continue;
       }
       if (mirror_planes.empty() || mirror_band <= 0.0)
       {
@@ -23724,6 +23903,77 @@ std::size_t OverlapExcludedSubordinate(const ResponseCorrectionData &config,
   return std::max(first, second);
 }
 
+OrientedSupportBox OrientedBoxOf(const SpatialSupportBounds &support)
+{
+  OrientedSupportBox box;
+  box.axes = support.axes;
+  box.min = support.frame_min;
+  box.max = support.frame_max;
+  return box;
+}
+
+bool OrientedBoxesInteriorOverlap(const OrientedSupportBox &a, const OrientedSupportBox &b,
+                                  int dimension)
+{
+  // The separating-axis test: the boxes are disjoint iff some axis among the face normals
+  // of both (and, in 3D, the cross products of their frame axes) separates the projected
+  // centres by at least the sum of the projected half extents (within the tolerance).
+  double scale = 1.0;
+  for (int k = 0; k < dimension; k++)
+  {
+    scale = std::max({scale, std::abs(a.min[k]), std::abs(a.max[k]), std::abs(b.min[k]),
+                      std::abs(b.max[k])});
+  }
+  const double tolerance = 1.0e-12 * scale;
+  Point3D centre_a{}, centre_b{};
+  std::array<double, 3> half_a{}, half_b{};
+  for (int k = 0; k < dimension; k++)
+  {
+    half_a[k] = 0.5 * (a.max[k] - a.min[k]);
+    half_b[k] = 0.5 * (b.max[k] - b.min[k]);
+    centre_a = Add(centre_a, Scale(0.5 * (a.min[k] + a.max[k]), a.axes[k]));
+    centre_b = Add(centre_b, Scale(0.5 * (b.min[k] + b.max[k]), b.axes[k]));
+  }
+  const Point3D d = Subtract(centre_a, centre_b);
+  auto Separates = [&](Point3D axis)
+  {
+    const double length = Norm(axis);
+    if (length <= 1.0e-12)
+    {
+      return false;  // parallel frame axes: their cross product is no direction
+    }
+    axis = Scale(1.0 / length, axis);
+    double reach = 0.0;
+    for (int k = 0; k < dimension; k++)
+    {
+      reach += half_a[k] * std::abs(Dot(a.axes[k], axis)) +
+               half_b[k] * std::abs(Dot(b.axes[k], axis));
+    }
+    return std::abs(Dot(d, axis)) >= reach - tolerance;
+  };
+  for (int k = 0; k < dimension; k++)
+  {
+    if (Separates(a.axes[k]) || Separates(b.axes[k]))
+    {
+      return false;
+    }
+  }
+  if (dimension == 3)
+  {
+    for (int i = 0; i < 3; i++)
+    {
+      for (int j = 0; j < 3; j++)
+      {
+        if (Separates(Cross(a.axes[i], b.axes[j])))
+        {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
     const std::set<std::size_t> &owned_patches, int dimension,
@@ -23783,6 +24033,13 @@ std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclu
       if (first_cluster == second_cluster)
       {
         if (!geometry_ledger)
+        {
+          continue;
+        }
+        // B2 (decision 1018 Q1): the mesh-aligned boxes overlap; the ORIENTED boxes (the
+        // coupon domains) decide the same-class pair.
+        if (!OrientedBoxesInteriorOverlap(OrientedBoxOf(supports[i]),
+                                          OrientedBoxOf(supports[j]), dimension))
         {
           continue;
         }
@@ -24696,7 +24953,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   struct SpatialSupport
   {
     std::size_t patch = 0;
-    ElementBox box;
+    ElementBox box;               // mesh-aligned (the SpatialClusterPriority test)
+    OrientedSupportBox oriented;  // frame-aligned (the same-class test, B2)
   };
   std::vector<SpatialSupport> spatial_supports;
   std::set<std::size_t> spatially_owned_patches;
@@ -24756,9 +25014,15 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       auto &support = spatial_supports.emplace_back();
       support.patch = patch_idx;
+      // The oriented box (B2): the patch frame and the extremes of the placed points'
+      // projections on it (the same arithmetic as CollectSpatialSupports' frame box).
+      support.oriented.axes = {patch_config.axis_u, patch_config.axis_v,
+                               patch_config.axis_w};
+      bool first_point = true;
       for (const auto &local : basis_points[model_it->second])
       {
         ElementBox point_box;
+        Point3D point{};
         for (int d = 0; d < dimension; d++)
         {
           const double coordinate =
@@ -24767,8 +25031,18 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                local[2] * patch_config.axis_w[d]) /
                   coordinate_scale;
           point_box.min[d] = point_box.max[d] = coordinate;
+          point[d] = coordinate;
         }
         support.box.Add(point_box);
+        for (int k = 0; k < 3; k++)
+        {
+          const double projection = Dot(point, support.oriented.axes[k]);
+          support.oriented.min[k] =
+              first_point ? projection : std::min(support.oriented.min[k], projection);
+          support.oriented.max[k] =
+              first_point ? projection : std::max(support.oriented.max[k], projection);
+        }
+        first_point = false;
       }
     }
     for (std::size_t i = 0; i < spatial_supports.size(); i++)
@@ -24808,6 +25082,16 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           spatial_cluster_priority_pairs.emplace_back(
               spatial_supports[subordinate].patch,
               spatial_supports[first_cluster ? i : j].patch);
+          continue;
+        }
+        // B2 (readiness hardening-2 (iv), decision 1018 Q1): the mesh-aligned boxes
+        // overlap; two same-class supports whose ORIENTED boxes (the coupon domains) are
+        // disjoint do not overlap: both stay applied, no record. A pair whose oriented
+        // boxes overlap (the S1b-rc concave pair: a true overlap of the coupon cubes,
+        // decision 1030) is the H4a OverlapExcluded record below as before.
+        if (!OrientedBoxesInteriorOverlap(spatial_supports[i].oriented,
+                                          spatial_supports[j].oriented, 3))
+        {
           continue;
         }
         // Two clusters (decision 244): a margins-only overlap (no claim of either inside

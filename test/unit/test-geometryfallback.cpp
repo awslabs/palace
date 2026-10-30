@@ -4,11 +4,14 @@
 #include "fixtures.hpp"
 #include "surfaceresponse-fixtures.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -315,6 +318,384 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// F-6 (readiness hardening-2, decision 1018 Q4; operator FindDomainBoundaryExclusions
+// "misplaced or mis-scaled coupon": the census QUO-019 strip islands whose metal-edge
+// reference lies 1 nm outside the tile wall). On the unit island mesh ([0, 1]^3) a cell
+// whose reference sits on the x = 1 face: pushed 1e-9 outside (within the boundary
+// tolerance kSignatureParameterToleranceOverRadius x R = 2e-4) it is read as located and
+// the patch keeps the classification of the on-face one (DomainBoundary MirrorOff by its
+// gap-side points; no record, with or without a ledger); pushed 1e-2 R outside, without a
+// ledger the abort of record stands, with the ledger the patch is excluded with the reason
+// MisplacedReference and one UnlocatedPatch record (what "patch", its model, feature,
+// cell length and the reference point). A cell with no reference and every tested point
+// outside: the abort of record, or AllPointsOutside + UnlocatedPatch under the ledger. The
+// preflight and the solve call this one function with their ledgers (P == S).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback F-6 UnlocatedPatch: a metal-edge reference on the mesh "
+                 "boundary to roundoff is located, one off the mesh is recorded (decision "
+                 "1018 Q4)",
+                 "[surfaceresponseoperator][geometryfallback][domainboundary][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  using ResponsePatchData = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  constexpr double R = 0.2;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  auto mesh = MakeIslandMesh();
+  const std::vector<std::array<double, 3>> basis_points = {
+      {-0.05, -0.05, 0.0}, {0.05, -0.05, 0.0}, {0.05, 0.05, 0.0}, {-0.05, 0.05, 0.0}};
+  auto BasisPoints = [&](int) -> const std::vector<std::array<double, 3>> *
+  { return &basis_points; };
+  auto Spatial = [](int) { return false; };
+  auto Name = [](int) { return std::string("edge"); };
+  // A cell in the lead's frame (u from the metal into the gap = -x, w along the edge)
+  // whose reference (the origin) sits at x = 1 + delta: the gap-side basis points at
+  // x = 1.05 + delta are outside the unit mesh whatever delta.
+  auto Patch = [&](const std::array<double, 3> &origin, int feature)
+  {
+    ResponsePatchData patch;
+    patch.model = 0;
+    patch.origin = origin;
+    patch.axis_u = {-1.0, 0.0, 0.0};
+    patch.axis_v = {0.0, 1.0, 0.0};
+    patch.axis_w = {0.0, 0.0, 1.0};
+    patch.longitudinal_cell = {-0.03, 0.03};
+    patch.provenance.feature = feature;
+    patch.provenance.coupon_depth = R;
+    return patch;
+  };
+  const ResponsePatchData inside = Patch({0.25, 0.5, 0.3}, 3);
+  auto Find = [&](std::vector<ResponsePatchData> &patches, GeometryFallbackLedger *ledger)
+  {
+    return FindDomainBoundaryExclusions(*mesh, patches, BasisPoints, Spatial, Name, 1.0, R,
+                                        {}, {}, 0.0, {}, ledger);
+  };
+  // (1) The reference ON the face and 1e-9 outside it: the same classification
+  // (DomainBoundary MirrorOff by the gap-side points), no record, no abort.
+  for (const double delta : {0.0, 1.0e-9, 0.5 * tolerance})
+  {
+    for (const bool with_ledger : {false, true})
+    {
+      std::vector<GeometryFallbackData> entries;
+      GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+      std::vector<ResponsePatchData> patches = {inside, Patch({1.0 + delta, 0.5, 0.3}, 7)};
+      const auto exclusions = Find(patches, with_ledger ? &ledger : nullptr);
+      CAPTURE(delta, with_ledger);
+      REQUIRE(exclusions.tested_patches == 2);
+      REQUIRE(exclusions.patches.size() == 1);
+      CHECK(exclusions.patches[0].patch == 1);
+      CHECK(exclusions.patches[0].reason == "MirrorOff");
+      CHECK(exclusions.patches[0].outside_points > 0);
+      CHECK(exclusions.patches[0].outside_points < exclusions.patches[0].tested_points);
+      CHECK(patches[0].weight == 1.0);
+      CHECK(patches[1].weight == 0.0);
+      CHECK(entries.empty());
+    }
+  }
+  // (2) The reference 1e-2 R outside: beyond the tolerance.
+  {
+    const double delta = 1.0e-2 * R;
+    std::vector<ResponsePatchData> patches = {inside, Patch({1.0 + delta, 0.5, 0.3}, 7)};
+    // The direct call of record (no ledger) keeps the abort.
+    {
+      auto copy = patches;
+      CHECK_THROWS_WITH(Find(copy, nullptr),
+                        ContainsSubstring("misplaced or mis-scaled coupon") &&
+                            ContainsSubstring("patch 1 (0-based") &&
+                            ContainsSubstring("model edge") &&
+                            ContainsSubstring("metal-edge reference"));
+    }
+    // With the ledger: excluded MisplacedReference, one UnlocatedPatch record.
+    {
+      std::vector<GeometryFallbackData> entries;
+      GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+      auto copy = patches;
+      const auto exclusions = Find(copy, &ledger);
+      REQUIRE(exclusions.tested_patches == 2);
+      REQUIRE(exclusions.patches.size() == 1);
+      CHECK(exclusions.patches[0].patch == 1);
+      CHECK(exclusions.patches[0].reason == "MisplacedReference");
+      CHECK(copy[0].weight == 1.0);
+      CHECK(copy[1].weight == 0.0);
+      REQUIRE(entries.size() == 1);
+      const auto &entry = entries.front();
+      CHECK(entry.cls == "UnlocatedPatch");
+      CHECK(entry.site == "H9a/FindDomainBoundaryExclusions:reference");
+      CHECK(entry.what == "patch");
+      CHECK(entry.patches == std::vector<int>{1});
+      CHECK(entry.models == std::vector<std::string>{"edge"});
+      CHECK(entry.features == std::vector<int>{7});
+      CHECK_THAT(entry.length, WithinAbs(0.06, 1.0e-12));
+      CHECK_THAT(entry.example_origin[0], WithinAbs(1.0 + delta, 1.0e-12));
+      CHECK_THAT(entry.example_origin[1], WithinAbs(0.5, 1.0e-12));
+      CHECK_THAT(entry.example_origin[2], WithinAbs(0.3, 1.0e-12));
+      CHECK_THAT(entry.reason, ContainsSubstring("misplaced or mis-scaled coupon") &&
+                                   ContainsSubstring("metal-edge reference") &&
+                                   ContainsSubstring("distance 2.000000e-03 mesh units") &&
+                                   ContainsSubstring("boundary tolerance 2.000000e-04"));
+      // The deferred FailClosed abort names the class; RecordRaw's Enforce is a no-op.
+      ledger.Enforce("test");
+      GeometryFallbackLedger fail_closed(GeometryFailurePolicy::FAIL_CLOSED, false,
+                                         entries);
+      CHECK_THROWS_WITH(fail_closed.Enforce("test"),
+                        ContainsSubstring("FailClosed") &&
+                            ContainsSubstring("UnlocatedPatch 1") &&
+                            ContainsSubstring("(test)"));
+    }
+  }
+  // (3) No reference and every tested point outside (a coupon off the mesh).
+  {
+    std::vector<ResponsePatchData> patches = {inside, Patch({2.0, 0.5, 0.3}, 9)};
+    patches[1].conductor_references.clear();
+    {
+      auto copy = patches;
+      CHECK_THROWS_WITH(Find(copy, nullptr),
+                        ContainsSubstring("misplaced or mis-scaled coupon") &&
+                            ContainsSubstring("patch 1 (0-based") &&
+                            ContainsSubstring("every one of its tested points"));
+    }
+    {
+      std::vector<GeometryFallbackData> entries;
+      GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+      auto copy = patches;
+      const auto exclusions = Find(copy, &ledger);
+      REQUIRE(exclusions.patches.size() == 1);
+      CHECK(exclusions.patches[0].patch == 1);
+      CHECK(exclusions.patches[0].reason == "AllPointsOutside");
+      CHECK(exclusions.patches[0].outside_points == exclusions.patches[0].tested_points);
+      CHECK(copy[0].weight == 1.0);
+      CHECK(copy[1].weight == 0.0);
+      REQUIRE(entries.size() == 1);
+      CHECK(entries.front().cls == "UnlocatedPatch");
+      CHECK(entries.front().site == "H9a/FindDomainBoundaryExclusions:all-points");
+      CHECK(entries.front().patches == std::vector<int>{1});
+      CHECK(entries.front().features == std::vector<int>{9});
+      CHECK_THAT(entries.front().reason,
+                 ContainsSubstring("every one of its tested points"));
+    }
+  }
+  // Bitwise neutrality: the well-placed cell alone is applied with no record under either
+  // ledger state, as before.
+  for (const bool with_ledger : {false, true})
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<ResponsePatchData> patches = {inside};
+    const auto exclusions = Find(patches, with_ledger ? &ledger : nullptr);
+    CHECK(exclusions.tested_patches == 1);
+    CHECK(exclusions.patches.empty());
+    CHECK(patches[0].weight == 1.0);
+    CHECK(entries.empty());
+  }
+#endif
+}
+
+// (iii) OI-MX-R2A-COMPARATOR-FORM (readiness hardening-2, decision 1018 Q6; operator
+// MapLibraryInterfaces "has no slot 1 SA interface mapping"): a feature whose portions
+// carry more distinct interface target maps than its model has slots. The diagonal island
+// (one conductor, attributes 9 / 10 split by the island's diagonal) with one SA interface
+// per attribute (Index 4 on 9, Index 5 on 10): the two diagonal corners (0.25, 0.75) and
+// (0.75, 0.25) claim R = 0.2 along each arm, one arm on attribute 9 and the other crossing
+// into attribute 10, so their target maps are {SA -> 4} and {SA -> 5} (slots 0 / 1) while
+// the one-slot "convex-corner-90" coupon maps slot 0 alone; the other two corners and every
+// straight cell carry one map. On the base the configuration aborts forming the runtime
+// model ("has no slot 1 SA interface mapping"); here the two corners are NOT placed (never
+// mapped through slot 0) and recorded InterfaceMappingConflict (what "feature", the corner
+// id / model / both targets / its claimed length), their claims uncovered (raw), the other
+// corners and the straight cells placed as on the same mesh with ONE interface over both
+// attributes; the preflight predicts the solve (U-INV); the explicit FailClosed leaf aborts
+// at the end of the configuration naming the class.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Geometry fallback R2A InterfaceMappingConflict: a corner whose arms carry "
+    "different interface targets is recorded raw instead of aborting "
+    "(decision 1018 Q6)",
+    "[surfaceresponseoperator][geometryfallback][invariant][3d][Serial]"
+    "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  // The convex library keyed on SA only like the island's features (the domainboundary
+  // fixture's form): the isolated-edge and the one-slot convex-corner-90 coupons.
+  const fs::path sa_library = temp.temp_dir / "fabrication-process-convex-3d-sa.json";
+  if (Mpi::Root(comm))
+  {
+    json library = ReadJson(convex_library_3d_path);
+    library["Name"] = "unit-test-process-convex-3d-sa";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream output(sa_library);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  // The island config on the diagonal mesh: both attributes metal (one terminal), the SA
+  // interface split by attribute (two targets) or over both attributes (one target).
+  auto Config = [&](bool split_interfaces)
+  {
+    json config = ConvexIslandConfig();
+    config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9, 10}}}};
+    json &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    if (split_interfaces)
+    {
+      json second = dielectric[0];
+      second["Index"] = 5;
+      second["Attributes"] = {10};
+      dielectric.push_back(second);
+      correction["TargetInterfaces"] = {4, 5};
+    }
+    else
+    {
+      dielectric[0]["Attributes"] = {9, 10};
+    }
+    correction["Library"] = sa_library.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction.erase("PatchConstruction");
+    correction["CorrectionMode"] = "PostprocessOnly";
+    return config;
+  };
+  auto MakeIoData = [&](const json &config)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    return iodata;
+  };
+  auto Preflight = [&](json config, const fs::path &dir)
+  {
+    config["Problem"]["Output"] = dir.string();
+    config["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "RecordRaw";
+    IoData iodata = MakeIoData(config);
+    MakeOutputFolder(iodata, comm);
+    Mesh mesh(MakeDiagonalIslandMesh());
+    const fs::path manifest_path = dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(comm);
+    return ReadJson(manifest_path);
+  };
+  // The reference: one interface over both attributes places all four corners.
+  const json reference = Preflight(Config(false), temp.temp_dir / "r2a-reference");
+  CHECK(!reference.at("Identification").at("Diagnostics").contains("GeometryFallbacks"));
+  CHECK(reference.at("Summary").at("Counts").at("Missing").get<int>() == 0);
+  auto CornerIds = [](const json &manifest)
+  {
+    std::vector<int> ids;
+    for (const auto &feature : manifest.at("Identification").at("Features"))
+    {
+      if (feature.at("Type") == "ConvexCorner")
+      {
+        ids.push_back(feature.at("Id").get<int>());
+      }
+    }
+    return ids;
+  };
+  REQUIRE(CornerIds(reference).size() == 4);
+  CHECK(reference.at("Summary").at("Uncovered").at("Features").get<int>() == 0);
+
+  // The split interfaces: two InterfaceMappingConflict entries on the preflight.
+  const json manifest = Preflight(Config(true), temp.temp_dir / "r2a-split");
+  const auto &record =
+      manifest.at("Identification").at("Diagnostics").at("GeometryFallbacks");
+  REQUIRE(record.at("Count").get<int>() == 2);
+  CHECK(record.at("Classes").at("InterfaceMappingConflict").get<int>() == 2);
+  CHECK(record.at("Policy") == "RecordRaw");
+  std::set<int> rejected;
+  for (const auto &entry : record.at("Entries"))
+  {
+    CHECK(entry.at("Class") == "InterfaceMappingConflict");
+    CHECK(entry.at("Site") == "R2A/BuildFeaturePatches:interface-slots");
+    CHECK(entry.at("What") == "feature");
+    CHECK(entry.at("Topology") == "ConvexCorner");
+    CHECK(entry.at("Models") == json::array({"convex-corner-90"}));
+    CHECK(entry.at("Interfaces") == json::array({4, 5}));
+    CHECK_THAT(entry.at("Reason").get<std::string>(),
+               ContainsSubstring("cannot map the 2 distinct interface target map(s)") &&
+                   ContainsSubstring("slot 0 {SA -> 4}; slot 1 {SA -> 5}"));
+    // The corner's claims: R along each arm.
+    CHECK_THAT(entry.at("Length").get<double>(), WithinAbs(0.4, 1.0e-9));
+    REQUIRE(entry.at("Features").size() == 1);
+    rejected.insert(entry.at("Features").front().get<int>());
+  }
+  CHECK(rejected.size() == 2);
+  // The two diagonal corners (x + z = 1), by their recorded frames.
+  const auto corner_ids = CornerIds(manifest);
+  REQUIRE(corner_ids.size() == 4);
+  for (const auto &feature : manifest.at("Identification").at("Features"))
+  {
+    if (feature.at("Type") != "ConvexCorner")
+    {
+      continue;
+    }
+    const auto origin = feature.at("Frame").at("Origin").get<std::array<double, 3>>();
+    const bool diagonal = std::abs(origin[0] + origin[2] - 1.0) < 1.0e-9;
+    CHECK(diagonal == (rejected.count(feature.at("Id").get<int>()) > 0));
+  }
+  // The rejected corners are read as Missing: their claims are the uncovered portions
+  // (raw), the Summary mirror names the class and the raw share by length.
+  CHECK(manifest.at("Summary").at("Uncovered").at("Features").get<int>() == 2);
+  CHECK_THAT(manifest.at("Summary").at("Uncovered").at("Length").get<double>(),
+             WithinAbs(0.8, 1.0e-9));
+  CHECK(manifest.at("Summary").at("GeometryFallbacks").at("Count").get<int>() == 2);
+  const auto &share = manifest.at("Summary").at("GeometryFallbacks").at("RawShareByLength");
+  REQUIRE(share.contains("SA"));
+  CHECK_THAT(share.at("SA").at("FallbackLength").get<double>(), WithinAbs(0.8, 1.0e-9));
+  CHECK_THAT(share.at("SA").at("TypeLength").get<double>(), WithinAbs(2.0, 1.0e-9));
+  // The operator (the solve default RecordRaw): the same two entries (U-INV), not raw as a
+  // whole; the explicit FailClosed leaf aborts naming the class.
+  {
+    IoData iodata = MakeIoData(Config(true));
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeDiagonalIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    CHECK(!response.IsRawFallback());
+    REQUIRE(response.GetGeometryFallbacks().size() == 2);
+    for (const auto &entry : response.GetGeometryFallbacks())
+    {
+      CHECK(entry.cls == "InterfaceMappingConflict");
+      CHECK(entry.interfaces == std::vector<int>{4, 5});
+    }
+    const json solve_record = response.GetGeometryFallbackRecord();
+    REQUIRE(!solve_record.is_null());
+    CHECK(solve_record.at("Classes").at("InterfaceMappingConflict").get<int>() == 2);
+    CHECK(CheckGeometryFallbackInvariant(manifest, solve_record) == 2);
+    CHECK_THAT(GeometryFallbackBanner(solve_record, "palace.json"),
+               ContainsSubstring("LOW CONFIDENCE") &&
+                   ContainsSubstring("InterfaceMappingConflict 2"));
+  }
+  {
+    json fail_closed = Config(true);
+    fail_closed["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "FailClosed";
+    IoData iodata = MakeIoData(fail_closed);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeDiagonalIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
+                      ContainsSubstring("GeometryFailurePolicy FailClosed") &&
+                          ContainsSubstring("InterfaceMappingConflict 2"));
+  }
+  // The reference configuration on the operator: no record (bitwise neutrality of the
+  // predicate on a one-map feature set).
+  {
+    IoData iodata = MakeIoData(Config(false));
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeDiagonalIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    CHECK(response.GetGeometryFallbacks().empty());
+    CHECK(response.GetGeometryFallbackRecord().is_null());
+  }
+#endif
+}
+
 // H4a (operator ApplyPlacementOwnership "matching volumes overlap without complete
 // spatial-cluster ownership"; the dry run's FindSpatialClusterPriorityExclusions carries
 // the same rule): the S1p pair of the margin-overlap case (decision 244) with B's claim
@@ -418,6 +799,467 @@ TEST_CASE(
     CHECK(overlap_excluded.empty());
     CHECK(entries.empty());
   }
+}
+
+// (iv) B2 (readiness hardening-2, decision 1018 Q1; motivated by decision 1007 /
+// findings-from-exec-B F-B1, the S1b-rc concave pair, since MEASURED a true overlap of the
+// coupon cubes recorded OverlapExcluded on both tests, decision 1030): the same-class
+// overlap test decides on the ORIENTED boxes (the coupon domains) once the mesh-aligned
+// boxes overlap. A 2 x 0.4 x 1 coupon box rotated 45 deg in the plane (A) and a
+// mesh-aligned 0.8 x 0.8 x 1 box (B) whose mesh-aligned boxes overlap: B at (1, -1)
+// lies 1.414 along A's short axis beyond A's 0.2 and B's 0.566 reach (disjoint: no overlap,
+// no record); B at (0.5, -0.5) reaches A (overlap: OverlapExcluded as H4a). Mesh-aligned
+// frames reproduce InteriorOverlaps (touching faces are no interior overlap).
+TEST_CASE("Geometry fallback B2 oriented overlap: a same-class pair whose oriented boxes "
+          "are disjoint is no overlap (decision 1018 Q1)",
+          "[surfaceresponseoperator][geometryfallback][Serial]")
+{
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  using Model = config::ElectrostaticSolverData::ResponseCorrectionModelData;
+  const double c = std::sqrt(0.5);
+  OrientedSupportBox a;
+  a.axes = {{{c, c, 0.0}, {-c, c, 0.0}, {0.0, 0.0, 1.0}}};
+  a.min = {-1.0, -0.2, -0.5};
+  a.max = {1.0, 0.2, 0.5};
+  auto MeshAligned =
+      [](const std::array<double, 3> &centre, const std::array<double, 3> &half)
+  {
+    OrientedSupportBox box;
+    for (int k = 0; k < 3; k++)
+    {
+      box.min[k] = centre[k] - half[k];
+      box.max[k] = centre[k] + half[k];
+    }
+    return box;
+  };
+  const OrientedSupportBox far = MeshAligned({1.0, -1.0, 0.0}, {0.4, 0.4, 0.5});
+  const OrientedSupportBox near = MeshAligned({0.5, -0.5, 0.0}, {0.4, 0.4, 0.5});
+  // The mesh-aligned boxes: A's is +-(1 + 0.2) / sqrt(2) in x and y; both pairs overlap.
+  struct Aabb
+  {
+    std::array<double, 3> min{}, max{};
+  };
+  const double a_reach = 1.2 * c;
+  const Aabb a_aabb = {{-a_reach, -a_reach, -0.5}, {a_reach, a_reach, 0.5}};
+  const Aabb far_aabb = {far.min, far.max};
+  const Aabb near_aabb = {near.min, near.max};
+  auto AabbInteriorOverlap = [](const Aabb &p, const Aabb &q)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      if (std::min(p.max[d], q.max[d]) - std::max(p.min[d], q.min[d]) <= 1.0e-12)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  REQUIRE(AabbInteriorOverlap(a_aabb, far_aabb));
+  REQUIRE(AabbInteriorOverlap(a_aabb, near_aabb));
+  CHECK(!OrientedBoxesInteriorOverlap(a, far, 3));
+  CHECK(!OrientedBoxesInteriorOverlap(far, a, 3));
+  CHECK(OrientedBoxesInteriorOverlap(a, near, 3));
+  CHECK(OrientedBoxesInteriorOverlap(near, a, 3));
+  // Mesh-aligned frames: the separating-axis test is the mesh-aligned test (overlapping,
+  // touching along a face, disjoint), in 3D and in 2D.
+  const OrientedSupportBox unit = MeshAligned({0.5, 0.5, 0.5}, {0.5, 0.5, 0.5});
+  CHECK(
+      OrientedBoxesInteriorOverlap(unit, MeshAligned({0.9, 0.5, 0.5}, {0.5, 0.5, 0.5}), 3));
+  CHECK(!OrientedBoxesInteriorOverlap(unit, MeshAligned({1.5, 0.5, 0.5}, {0.5, 0.5, 0.5}),
+                                      3));
+  CHECK(!OrientedBoxesInteriorOverlap(unit, MeshAligned({2.5, 0.5, 0.5}, {0.5, 0.5, 0.5}),
+                                      3));
+  CHECK(
+      OrientedBoxesInteriorOverlap(unit, MeshAligned({0.9, 0.5, 7.0}, {0.5, 0.5, 0.5}), 2));
+  CHECK(!OrientedBoxesInteriorOverlap(unit, MeshAligned({0.5, 1.5, 0.5}, {0.5, 0.5, 0.5}),
+                                      2));
+  // A rotated box inside a mesh-aligned one overlaps it on every axis.
+  CHECK(OrientedBoxesInteriorOverlap(a, MeshAligned({0.0, 0.0, 0.0}, {3.0, 3.0, 3.0}), 3));
+
+  // The dry run's same-class branch (FindSpatialClusterPriorityExclusions) on two corner
+  // supports with these boxes: the far pair records nothing under the ledger, the near
+  // pair the OverlapExcluded record of H4a (B, the shorter claims, the subordinate).
+  auto Support = [&](std::size_t patch, const OrientedSupportBox &box, const Aabb &aabb,
+                     const std::vector<Claim> &claims)
+  {
+    SpatialSupportBounds support;
+    support.patch = patch;
+    support.min = aabb.min;
+    support.max = aabb.max;
+    support.axes = box.axes;
+    support.frame_min = box.min;
+    support.frame_max = box.max;
+    support.claims = claims;
+    return support;
+  };
+  const std::vector<Claim> a_claims = {Claim{1, {-c, -c, 0.0}, {c, c, 0.0}}};
+  const std::vector<Claim> b_claims = {Claim{2, {0.5, -0.9, 0.0}, {0.5, -0.1, 0.0}}};
+  config::ElectrostaticSolverData::ResponseCorrectionData config;
+  config.matching_radius = 1.0;
+  for (int k = 0; k < 2; k++)
+  {
+    Model model;
+    model.idx = k + 1;
+    model.name = k == 0 ? "corner-a" : "corner-b";
+    model.topology = "convex corner";
+    model.spatial_basis = true;
+    config.models.push_back(model);
+    Patch patch;
+    patch.model = k + 1;
+    patch.weight = 1.0;
+    patch.provenance.feature = 20 + k;
+    patch.provenance.claims = k == 0 ? a_claims : b_claims;
+    config.patches.push_back(patch);
+  }
+  CHECK(OrientedBoxesInteriorOverlap(OrientedBoxOf(Support(0, a, a_aabb, a_claims)),
+                                     OrientedBoxOf(Support(1, near, near_aabb, b_claims)),
+                                     3));
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded;
+    const std::vector<SpatialSupportBounds> supports = {
+        Support(0, a, a_aabb, a_claims), Support(1, far, far_aabb, b_claims)};
+    CHECK(FindSpatialClusterPriorityExclusions(supports, config, {}, 3, nullptr, &ledger,
+                                               &overlap_excluded)
+              .empty());
+    CHECK(overlap_excluded.empty());
+    CHECK(entries.empty());
+  }
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<std::pair<std::size_t, std::size_t>> overlap_excluded;
+    const std::vector<SpatialSupportBounds> supports = {
+        Support(0, a, a_aabb, a_claims), Support(1, near, near_aabb, b_claims)};
+    CHECK(FindSpatialClusterPriorityExclusions(supports, config, {}, 3, nullptr, &ledger,
+                                               &overlap_excluded)
+              .empty());
+    REQUIRE(overlap_excluded.size() == 1);
+    CHECK(overlap_excluded.front() == std::make_pair(std::size_t{1}, std::size_t{0}));
+    REQUIRE(entries.size() == 1);
+    CHECK(entries.front().cls == "OverlapExcluded");
+    CHECK(entries.front().patches == std::vector<int>{1, 0});
+    CHECK_THAT(entries.front().length, WithinAbs(0.8, 1.0e-12));
+  }
+  // Without a ledger the same-class pairs are skipped as of record, oriented or not.
+  {
+    const std::vector<SpatialSupportBounds> supports = {
+        Support(0, a, a_aabb, a_claims), Support(1, near, near_aabb, b_claims)};
+    CHECK(FindSpatialClusterPriorityExclusions(supports, config, {}, 3).empty());
+  }
+}
+
+// U-H4a-op (readiness hardening-2 (iv) B2 at the OPERATOR; the r1020 review MAJOR-2,
+// decision 1035; the operator-level H4a fixture hardening-1 MINOR-2 named): the
+// neighboring-island mesh rotated 45 deg about the plane normal (MakeRotatedIslandMesh)
+// under the SA-keyed convex library at R = 0.1 (the facing edges 0.25 apart stay beyond
+// 2 R: no cluster, 8 convex corners) whose convex-corner-90 BasisPoints span the cube
+// [-h, h]^3 about the vertex (the coupon's matching volume, the U-INV H8 widened-points
+// form). Every corner frame lies 45 deg off the mesh axes and all eight cubes are
+// co-aligned, so a pair's ORIENTED cubes overlap iff every offset along the island axes is
+// below 2 h, while the MESH-ALIGNED boxes (half-width h sqrt 2) overlap whenever the
+// rotated offsets are below 2 h sqrt 2. The pair distances before the rotation: the facing
+// pair 0.25 along x (2 pairs), adjacent corners 0.5 along an edge (8), the diagonal 0.5 /
+// 0.5 (4), facing-to-outer 0.75 along x (4), cross 0.25 / 0.5 (2). With h = 0.1 the facing
+// pairs' mesh-aligned boxes overlap (rotated offsets 0.177 < 0.283) and their oriented
+// cubes do not (0.25 >= 0.2): NO record on the preflight or the operator, the 8 corners
+// applied (the base records the 2 pairs OverlapExcluded on the mesh-aligned test: the
+// failing-first of B2 at the operator). With h = 0.2 the facing pairs truly overlap
+// (0.25 < 0.4) while 14 more pairs overlap on the mesh-aligned test alone (the adjacent
+// 0.354 / 0.354 and the 0.75-along-x 0.53 / 0.53 rotated offsets against 0.566): exactly 2
+// OverlapExcluded with the rotated frames on the preflight and the operator (U-INV), the
+// subordinate by the larger patch index on equal claims.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback B2 at the operator U-H4a-op: rotated same-class corner "
+                 "supports decide on the oriented boxes, preflight == operator (decisions "
+                 "1018 Q1 / 1035)",
+                 "[surfaceresponseoperator][geometryfallback][invariant][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  constexpr double angle_degrees = 45.0;
+  constexpr double R = 0.1;
+  // The SA-keyed convex library at R with the corner coupon's basis points on the cube
+  // [-h, h]^3 (three rings of four, the fixture's 12-point layout).
+  auto WriteLibrary = [&](double h, const std::string &tag)
+  {
+    const fs::path points = temp.temp_dir / ("uh4aop-corner-cube-" + tag + ".csv");
+    const fs::path library_path =
+        temp.temp_dir / ("fabrication-process-convex-3d-cube-" + tag + ".json");
+    if (Mpi::Root(comm))
+    {
+      {
+        std::ofstream output(points);
+        output << "x,y,z\n";
+        for (const double z : {-h, 0.0, h})
+        {
+          output << -h << "," << -h << "," << z << "\n"
+                 << h << "," << -h << "," << z << "\n"
+                 << h << "," << h << "," << z << "\n"
+                 << -h << "," << h << "," << z << "\n";
+        }
+      }
+      // The fixture's surface matrices carry their within-R rows at R (m) = 0.2: the
+      // copies re-key that column to this library's R.
+      auto SurfaceMatrixAtR = [&](const std::string &source)
+      {
+        const fs::path copy =
+            temp.temp_dir / ("uh4aop-" + fs::path(source).filename().string());
+        std::ifstream input(source);
+        std::ofstream output(copy);
+        std::string line;
+        std::getline(input, line);
+        output << line << "\n";
+        while (std::getline(input, line))
+        {
+          const auto first = line.find(',');
+          const auto second = line.find(',', first + 1);
+          const auto third = line.find(',', second + 1);
+          REQUIRE(third != std::string::npos);
+          output << line.substr(0, second + 1) << R << line.substr(third) << "\n";
+        }
+        return copy.string();
+      };
+      json library = ReadJson(convex_library_3d_path);
+      library["Name"] = "unit-test-process-convex-3d-cube-" + tag;
+      library["MatchingRadius"] = R;
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        for (const char *key : {"FabricatedSurfaceMatrix", "ThinSurfaceMatrix"})
+        {
+          if (model.contains(key))
+          {
+            model[key] = SurfaceMatrixAtR(model[key].get<std::string>());
+          }
+        }
+        if (model["Topology"] == "ConvexCorner")
+        {
+          model["BasisPoints"] = points.string();
+        }
+      }
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(comm);
+    return library_path;
+  };
+  // The island config on the two-island mesh: both islands terminals, one SA interface
+  // over both attributes, the solve's PostprocessOnly construction. The ground is the two
+  // walls normal to y (the Cartesian box's attributes 2 / 4) alone: the rotated side walls
+  // are off the mesh's bounding box, and as metal they would out-vote the islands in the
+  // process-plane normal (the area-weighted principal direction of the metal normals off
+  // the bounding box) and read every island edge NonPlanar.
+  auto Config = [&](const fs::path &library_path)
+  {
+    json config = ConvexIslandConfig();
+    config["Boundaries"]["Ground"]["Attributes"] = {2, 4};
+    config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9}}},
+                                        {{"Index", 2}, {"Attributes", {10}}}};
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9, 10};
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {R};
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction.erase("PatchConstruction");
+    correction["CorrectionMode"] = "PostprocessOnly";
+    return config;
+  };
+  auto MakeIoData = [&](const json &config)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    return iodata;
+  };
+  auto Preflight = [&](json config, const fs::path &dir)
+  {
+    config["Problem"]["Output"] = dir.string();
+    config["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "RecordRaw";
+    IoData iodata = MakeIoData(config);
+    MakeOutputFolder(iodata, comm);
+    Mesh mesh(MakeRotatedIslandMesh(angle_degrees));
+    const fs::path manifest_path = dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(comm);
+    return ReadJson(manifest_path);
+  };
+  auto Operator = [&](const json &config)
+  {
+    IoData iodata = MakeIoData(config);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeRotatedIslandMesh(angle_degrees)));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    return std::make_pair(response.IsRawFallback(), response.GetGeometryFallbackRecord());
+  };
+  // The placed convex corners of a manifest: (id, origin, frame axes), every frame off the
+  // mesh axes by the rotation.
+  struct Corner
+  {
+    int id;
+    std::array<double, 3> origin;
+    std::array<std::array<double, 3>, 3> axes;
+  };
+  auto PlacedCorners = [&](const json &manifest)
+  {
+    std::vector<Corner> corners;
+    const double c = std::cos(angle_degrees * std::acos(-1.0) / 180.0);
+    for (const auto &feature : manifest.at("Identification").at("Features"))
+    {
+      if (feature.at("Type") != "ConvexCorner")
+      {
+        continue;
+      }
+      REQUIRE(feature.at("Match").at("Status") == "Matched");
+      CHECK(feature.at("Match").at("Model") == "convex-corner-90");
+      Corner corner;
+      corner.id = feature.at("Id").get<int>();
+      corner.origin = feature.at("Frame").at("Origin").get<std::array<double, 3>>();
+      corner.axes =
+          feature.at("Frame").at("Axes").get<std::array<std::array<double, 3>, 3>>();
+      for (int k = 0; k < 3; k++)
+      {
+        // An in-plane axis has both in-plane components at cos 45 deg; the normal is y.
+        if (std::abs(corner.axes[k][1]) > 0.5)
+        {
+          CHECK_THAT(std::abs(corner.axes[k][1]), WithinAbs(1.0, 1.0e-9));
+        }
+        else
+        {
+          CHECK_THAT(std::abs(corner.axes[k][0]), WithinAbs(c, 1.0e-9));
+          CHECK_THAT(std::abs(corner.axes[k][2]), WithinAbs(c, 1.0e-9));
+        }
+      }
+      corners.push_back(corner);
+    }
+    return corners;
+  };
+  // The pairs whose MESH-ALIGNED boxes of the cube [-h, h]^3 in their frames
+  // interior-overlap (the base's decision) and the pairs whose ORIENTED cubes do (the
+  // offsets along the first corner's axes, the cubes co-aligned); the ElementBox rule,
+  // tolerance 1e-12.
+  auto OverlappingPairs = [](const std::vector<Corner> &corners, double h)
+  {
+    auto HalfWidth = [&](const Corner &corner, int d)
+    {
+      double width = 0.0;
+      for (int k = 0; k < 3; k++)
+      {
+        width += h * std::abs(corner.axes[k][d]);
+      }
+      return width;
+    };
+    std::pair<std::size_t, std::size_t> pairs{0, 0};  // mesh-aligned, oriented
+    for (std::size_t i = 0; i < corners.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < corners.size(); j++)
+      {
+        bool aligned = true, oriented = true;
+        for (int d = 0; d < 3; d++)
+        {
+          const double lo = std::max(corners[i].origin[d] - HalfWidth(corners[i], d),
+                                     corners[j].origin[d] - HalfWidth(corners[j], d));
+          const double hi = std::min(corners[i].origin[d] + HalfWidth(corners[i], d),
+                                     corners[j].origin[d] + HalfWidth(corners[j], d));
+          aligned = aligned && hi - lo > 1.0e-12;
+          double offset = 0.0;
+          for (int e = 0; e < 3; e++)
+          {
+            offset += corners[i].axes[d][e] * (corners[j].origin[e] - corners[i].origin[e]);
+          }
+          oriented = oriented && 2.0 * h - std::abs(offset) > 1.0e-12;
+        }
+        pairs.first += aligned ? 1 : 0;
+        pairs.second += oriented ? 1 : 0;
+      }
+    }
+    return pairs;
+  };
+  auto Distance = [](const Corner &a, const Corner &b)
+  {
+    double sum = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      sum += (a.origin[d] - b.origin[d]) * (a.origin[d] - b.origin[d]);
+    }
+    return std::sqrt(sum);
+  };
+
+  // h = 0.1: the facing pairs' mesh-aligned boxes overlap, no oriented pair: no record on
+  // either side, the 8 corners applied.
+  {
+    const json config = Config(WriteLibrary(0.1, "h01"));
+    const json manifest = Preflight(config, temp.temp_dir / "uh4aop-h01");
+    const auto corners = PlacedCorners(manifest);
+    REQUIRE(corners.size() == 8);
+    CHECK(manifest.at("Summary").at("Counts").at("Missing").get<int>() == 0);
+    const auto pairs = OverlappingPairs(corners, 0.1);
+    CHECK(pairs.first == 2);
+    CHECK(pairs.second == 0);
+    CHECK(!manifest.at("Identification").at("Diagnostics").contains("GeometryFallbacks"));
+    CHECK(!manifest.at("Summary").contains("GeometryFallbacks"));
+    const auto [raw, record] = Operator(config);
+    CHECK(!raw);
+    CHECK(record.is_null());
+  }
+  // h = 0.2: the facing pairs' oriented cubes overlap (0.25 < 0.4), 14 more pairs on the
+  // mesh-aligned test alone: exactly 2 OverlapExcluded on both, the facing corners.
+  {
+    const json config = Config(WriteLibrary(0.2, "h02"));
+    const json manifest = Preflight(config, temp.temp_dir / "uh4aop-h02");
+    const auto corners = PlacedCorners(manifest);
+    REQUIRE(corners.size() == 8);
+    const auto pairs = OverlappingPairs(corners, 0.2);
+    CHECK(pairs.first == 16);
+    CHECK(pairs.second == 2);
+    const auto &preflight_record =
+        manifest.at("Identification").at("Diagnostics").at("GeometryFallbacks");
+    REQUIRE(preflight_record.at("Count").get<int>() == 2);
+    CHECK(preflight_record.at("Classes").at("OverlapExcluded").get<int>() == 2);
+    std::set<int> subordinates;
+    for (const auto &entry : preflight_record.at("Entries"))
+    {
+      CHECK(entry.at("Class") == "OverlapExcluded");
+      CHECK(entry.at("Site") == "H4a/ApplyPlacementOwnership:matching-volumes-overlap");
+      CHECK(entry.at("What") == "patch");
+      CHECK(entry.at("Models") == json::array({"convex-corner-90", "convex-corner-90"}));
+      REQUIRE(entry.at("Patches").size() == 2);
+      // Equal claimed lengths (R along each arm): the larger patch index is dropped.
+      CHECK(entry.at("Patches")[0].get<int>() > entry.at("Patches")[1].get<int>());
+      CHECK_THAT(entry.at("Length").get<double>(), WithinAbs(2.0 * R, 1.0e-9));
+      REQUIRE(entry.at("Features").size() == 1);
+      const int subordinate = entry.at("Features").front().get<int>();
+      subordinates.insert(subordinate);
+      // The subordinate is a facing corner: its nearest corner lies 0.25 away.
+      const auto self = std::find_if(corners.begin(), corners.end(),
+                                     [&](const Corner &c) { return c.id == subordinate; });
+      REQUIRE(self != corners.end());
+      double nearest = 1.0e300;
+      for (const auto &other : corners)
+      {
+        if (other.id != subordinate)
+        {
+          nearest = std::min(nearest, Distance(*self, other));
+        }
+      }
+      CHECK_THAT(nearest, WithinAbs(0.25, 1.0e-9));
+    }
+    CHECK(subordinates.size() == 2);
+    CHECK(manifest.at("Summary").at("GeometryFallbacks").at("Count").get<int>() == 2);
+    const auto [raw, record] = Operator(config);
+    CHECK(!raw);
+    REQUIRE(!record.is_null());
+    CHECK(record.at("Classes").at("OverlapExcluded").get<int>() == 2);
+    CHECK(CheckGeometryFallbackInvariant(manifest, record) == 2);
+  }
+#endif
 }
 
 // H6a / H6b (operator ApplyContinuationOwnership: the owning boxes leave a gap inside a

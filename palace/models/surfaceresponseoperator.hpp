@@ -1931,10 +1931,22 @@ nlohmann::json DescribeUncoveredPortions(
 // section (the metal-edge point, on a mesh face for every correctly placed patch) is not
 // located, or none of whose tested points is, is a misplaced or mis-scaled coupon and
 // aborts naming the patch (0-based), model and point; when there were candidates at least
-// one applied patch must remain. Every patch of `skipped` (already not applied) is left
-// alone; `points` are the local model basis points in patch units (origin + points /
-// scale); `model_name` names a model for the abort; coordinates and lengths of the result
-// in mesh units. Collective over the mesh's communicator.
+// one applied patch must remain. Boundary tolerance (readiness hardening-2 F-6, decision
+// 1018 Q4): a reference neither located nor reflected within
+// kSignatureParameterToleranceOverRadius x R (mesh units) of the nearest element box lies
+// ON the mesh boundary to roundoff and is read as located (its other points classify the
+// patch); beyond it, with a `geometry_ledger`, the patch is excluded (weight 0; reasons
+// MisplacedReference / AllPointsOutside, its raw claims kept like any DomainBoundary patch)
+// and UnlocatedPatch recorded instead of the abort (FailClosed: the ledger's deferred
+// Enforce). The boundary tolerance is read on the distance to the nearest ELEMENT bounding
+// box (ElementPointLocator::BoxDistance): exact on an axis-aligned mesh boundary (the
+// census tile walls, whose boundary elements' boxes end on the wall); on a slanted or
+// curved outer boundary a reference inside a boundary element's box shadow but outside the
+// mesh reads distance 0 and is accepted up to ~h away (the distance to the nearest boundary
+// face is the exact form when such domains appear). Every patch of `skipped` (already not
+// applied) is left alone; `points` are the local model basis points in patch units (origin
+// + points / scale); `model_name` names a model for the abort; coordinates and lengths of
+// the result in mesh units. Collective over the mesh's communicator.
 struct DomainBoundaryExclusion
 {
   std::size_t patch = 0;
@@ -1949,7 +1961,10 @@ struct DomainBoundaryExclusion
   // decision 481), NonMirroringPlane (an outside point lies beyond an Unsupported /
   // NonPlanar plane), BeyondBand (beyond a Natural plane by more
   // than the band), ReflectionNotLocated (reflected into the domain but not located: a
-  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane).
+  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane);
+  // under a geometry-fallback ledger only (readiness hardening-2 F-6, decision 1018 Q4;
+  // recorded UnlocatedPatch): MisplacedReference (the metal-edge reference off the mesh
+  // beyond the boundary tolerance), AllPointsOutside (no tested point inside).
   std::string reason;
   // Reason UnmergedTopology (decision 481): the unmerged configuration whose REAL portion
   // the patch's own footprint overlaps (index into MirrorBand.UnmergedFeatures), that
@@ -2117,6 +2132,37 @@ std::array<double, 3>
 OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch,
                double c);
 
+// The ORIENTED box of a spatial support (readiness hardening-2 (iv) B2, decision 1018 Q1):
+// the frame-aligned box of its placed basis points, `axes[k]` the patch frame in mesh
+// coordinates and `min[k]` / `max[k]` the extremes of dot(P, axes[k]) over the points (the
+// SpatialSupportBounds frame box; the coupon's matching volume). Two oriented boxes
+// interior-overlap by the separating-axis test (the face normals of both and, in 3D, their
+// 9 cross products; the ElementBox tolerance 1e-12 x scale): for mesh-aligned frames the
+// test is the mesh-aligned InteriorOverlaps. The same-class overlap test of
+// ApplyPlacementOwnership / FindSpatialClusterPriorityExclusions decides on THIS test once
+// the mesh-aligned boxes overlap: a pair whose oriented boxes are disjoint (two frames off
+// the mesh axes whose mesh-aligned boxes widen beyond the coupons) is no overlap of two
+// coupon domains and records nothing; a pair whose oriented boxes overlap is the H4a
+// OverlapExcluded record of record. The S1b-rc concave pairs that motivated the test
+// (decision 1007 / findings-from-exec-B F-B1: the two neighbours of the 135-deg corner,
+// whose frame is 22.5 deg off the mesh axes; centres 2.014 R apart, the pairs' frames 21 /
+// 45 deg apart) are MEASURED a TRUE overlap of the coupon cubes (the separating-axis gap
+// -0.53 / -0.76 um; findings-from-exec-B F-B1 UPDATE, decision 1030): each is recorded
+// OverlapExcluded on the mesh-aligned and on the oriented test alike. Two vertex cubes of
+// frames rotated by theta overlap up to R (1 + |cos theta| + |sin theta|) apart while the
+// identification clusters vertex pairs below 2 R only (OI-VERTEX-PAIR-CUBE-OVERLAP, the
+// identification fix round); the SpatialClusterPriority (cluster vs vertex) branch keeps
+// the mesh-aligned test of record.
+struct OrientedSupportBox
+{
+  std::array<std::array<double, 3>, 3> axes = {
+      {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  std::array<double, 3> min{}, max{};
+};
+OrientedSupportBox OrientedBoxOf(const SpatialSupportBounds &support);
+bool OrientedBoxesInteriorOverlap(const OrientedSupportBox &a, const OrientedSupportBox &b,
+                                  int dimension);
+
 // The SpatialClusterPriority pass of ApplyPlacementOwnership on a set of spatial supports
 // (the preflight's reading of the operator's rule): every pair of supports not already
 // owned and not of one interpolation group whose boxes interior-overlap with exactly one
@@ -2128,7 +2174,9 @@ OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchDat
 // hull per `margin_overlaps`, or two vertex coupons) yields (subordinate, owner) in
 // `overlap_excluded` (the subordinate = the smaller claimed length, ties by the larger
 // patch index: the operator's rule) with an OverlapExcluded record; the subordinate is
-// owned from then on. Without the ledger the same-class pairs are skipped as before.
+// owned from then on. Without the ledger the same-class pairs are skipped as before. A
+// same-class pair whose ORIENTED boxes are disjoint (OrientedBoxesInteriorOverlap) is no
+// overlap and records nothing (B2).
 std::vector<std::pair<std::size_t, std::size_t>> FindSpatialClusterPriorityExclusions(
     const std::vector<SpatialSupportBounds> &supports,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,

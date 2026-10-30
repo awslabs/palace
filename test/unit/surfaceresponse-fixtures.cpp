@@ -1446,6 +1446,51 @@ SurfaceResponseFiles::MakeIslandMesh(bool rounded, bool tetrahedral, bool apertu
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeDiagonalIslandMesh()
+{
+  mfem::Mesh serial = MakeSerialIslandMesh();
+  for (int be = 0; be < serial.GetNBE(); be++)
+  {
+    if (serial.GetBdrAttribute(be) != 9)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetBdrElementVertices(be, vertices);
+    double x = 0.0, z = 0.0;
+    for (const int vertex : vertices)
+    {
+      x += serial.GetVertex(vertex)[0];
+      z += serial.GetVertex(vertex)[2];
+    }
+    // The face centroid above the diagonal x + z = 1 (the 4 faces the diagonal halves,
+    // centroid sum exactly 1, stay 9: the two diagonal corners' own faces among them).
+    if (x + z > static_cast<double>(vertices.Size()) * (1.0 + 1.0e-9))
+    {
+      serial.SetBdrAttribute(be, 10);
+    }
+  }
+  serial.SetAttributes();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+std::unique_ptr<mfem::ParMesh>
+SurfaceResponseFiles::MakeRotatedIslandMesh(double angle_degrees)
+{
+  mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+  const double angle = angle_degrees * std::acos(-1.0) / 180.0;
+  const double c = std::cos(angle), s = std::sin(angle);
+  constexpr double center = 1.0;  // the 2 x 1 x 2 box's in-plane centre
+  for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+  {
+    double *point = serial.GetVertex(vertex);
+    const double x = point[0] - center, z = point[2] - center;
+    point[0] = center + c * x + s * z;
+    point[2] = center - s * x + c * z;
+  }
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
 std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeTouchingIslandMesh()
 {
   constexpr double extent = 2.0;

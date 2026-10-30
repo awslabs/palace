@@ -1045,7 +1045,15 @@ the identification / placement that a valid configuration and library can still 
 through the DEVICE GEOMETRY (a library matching no feature of the device, every coupon
 leaving the mesh, a metal perimeter that does not exist, two coupon supports overlapping
 without an owner, a refused placement, an alias whose key does not reproduce the
-identification's). Under `RecordRaw` the affected feature / patch is EXCLUDED, its raw
+identification's, a coupon whose metal-edge reference lies off the mesh beyond the boundary
+tolerance `1e-3 R` (`UnlocatedPatch`; a reference within it lies on the mesh boundary to
+roundoff and is read as located), a matched model whose interface slots cannot bind the
+feature's distinct interface target maps (`InterfaceMappingConflict`: a listed gap next to a
+differently listed one at a one-slot corner coupon; the feature is read as Missing, never
+mapped through slot 0)). Two same-class coupon supports overlap when their ORIENTED boxes
+(the frame-aligned boxes of their placed basis points, the separating-axis test) overlap,
+not merely their mesh-aligned boxes; the spatial-cluster priority over a vertex coupon keeps
+the mesh-aligned test. Under `RecordRaw` the affected feature / patch is EXCLUDED, its raw
 within-R energy stays in the raw term exactly like a `DomainBoundary` claim (no new energy
 term), the run continues, and the fallback is NEVER silent: one entry per fired site under
 `SurfaceResponse.Diagnostics.GeometryFallbacks` in `palace.json` (class, site, reason,
