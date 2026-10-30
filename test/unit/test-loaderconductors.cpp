@@ -42,11 +42,16 @@ namespace
 // [0.25, 0.75] with a one-cell step x in [0.125, 0.625], z in [0.75, 0.875]: the step's
 // concave and convex corners, 0.625 R apart, form a three-edge spatial cluster whose
 // claims all lie on conductor 1 (the island's other corners are 2.5 R away and stay
-// isolated). A second PEC strip (attribute 10) x in [1.375, 1.875], z in [1.125, 1.375]
+// isolated). A second PEC strip (attribute 10) x in [1.375, 1.875], z in [1.25, 1.5]
 // has no vertex within 2 R of the cluster, so it claims nothing there, but its left corner
 // lies inside the cluster's support box: two of its edges are foreign context pieces
 // (Chain false, the next conductor label 2). The strip's own ends are further clusters of
-// their own (two corners 1.25 R apart), left unmatched here.
+// their own (two corners 1.25 R apart), left unmatched here. The strip sits 2.5 R above
+// the island's right corner (1.125, 0.75) along z: under the oriented separating-axis
+// vertex rule of the identification fix round (decision 1062 A.5 (a)) two axis-aligned
+// +-R cubes 2.5 R apart along one axis are disjoint, so the island corner and the strip's
+// left corner stay separate features (at the former z in [1.125, 1.375] the strip's corner
+// lay 1.25 R x 1.875 R from it — inside its cube — and the rule clusters them).
 std::unique_ptr<mfem::ParMesh> MakeStepWithForeignStripMesh()
 {
   constexpr double extent = 2.0;
@@ -81,7 +86,7 @@ std::unique_ptr<mfem::ParMesh> MakeStepWithForeignStripMesh()
     };
     const bool island =
         Inside(0.125, 1.125, 0.25, 0.75) || Inside(0.125, 0.625, 0.75, 0.875);
-    const bool strip = Inside(1.375, 1.875, 1.125, 1.375);
+    const bool strip = Inside(1.375, 1.875, 1.25, 1.5);
     if (on_plane && (island || strip))
     {
       serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
@@ -102,7 +107,7 @@ bool InsideIslandStep(const std::array<double, 3> &p)
 }
 bool InsideStrip(const std::array<double, 3> &p)
 {
-  return p[0] > 1.375 && p[0] < 1.875 && p[2] > 1.125 && p[2] < 1.375 &&
+  return p[0] > 1.375 && p[0] < 1.875 && p[2] > 1.25 && p[2] < 1.5 &&
          std::abs(p[1] - 0.5) < 1.0e-9;
 }
 
