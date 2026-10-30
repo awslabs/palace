@@ -77,6 +77,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+  - The `mode-Z.csv` output of boundary-mode solves now reports the complex characteristic
+    impedances, `Re{Z_PV}` and `Im{Z_PV}` with `Z_PV = |V|² / 2P*` as for wave ports, and
+    `Re{Z_VI}` and `Im{Z_VI}` with `Z_VI = V / I` (oriented with the mode power) instead of
+    `|V| / |I|`. The per-unit-length inductance and capacitance are now
+    `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
+    modes. [Issue 1115](https://github.com/awslabs/palace/issues/1115).
   - Removed the `"NSamples"` option of the wave port `"VoltagePath"` and of the
     `"Impedance"` and `"Voltage"` boundary postprocessing paths. Coordinate-path line
     integrals are now exact for the discrete field, so the number of samples no longer has

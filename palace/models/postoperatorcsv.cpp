@@ -152,7 +152,6 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
     for (auto &[idx, result] : measurement_cache.mode_data.impedance)
     {
-      const double n_eff_re = measurement_cache.mode_data.n_eff.real();
       if (result.has_impedance)
       {
         result.Z0 *= electromagnetics::Z0_;  // nondim → Ohm
@@ -1620,12 +1619,16 @@ void PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
     auto key = [&](auto &&name) { return fmt::format("{}[{}]", name, idx); };
     auto hdr = [&](auto &&name, auto &&unit)
     { return fmt::format("{}[{}] ({})", name, idx, unit); };
-    mode_Z->table.insert(key("Z_PV"), hdr("Z_PV", "Ohm"));
+    auto re_hdr = [&](auto &&name) { return fmt::format("Re{{{}[{}]}} (Ohm)", name, idx); };
+    auto im_hdr = [&](auto &&name) { return fmt::format("Im{{{}[{}]}} (Ohm)", name, idx); };
+    mode_Z->table.insert(key("re_Z_PV"), re_hdr("Z_PV"));
+    mode_Z->table.insert(key("im_Z_PV"), im_hdr("Z_PV"));
     mode_Z->table.insert(key("L_PV"), hdr("L_PV", "H/m"));
     mode_Z->table.insert(key("C_PV"), hdr("C_PV", "F/m"));
     if (has_current)
     {
-      mode_Z->table.insert(key("Z_VI"), hdr("Z_VI", "Ohm"));
+      mode_Z->table.insert(key("re_Z_VI"), re_hdr("Z_VI"));
+      mode_Z->table.insert(key("im_Z_VI"), im_hdr("Z_VI"));
       mode_Z->table.insert(key("L_VI"), hdr("L_VI", "H/m"));
       mode_Z->table.insert(key("C_VI"), hdr("C_VI", "F/m"));
     }
@@ -1642,22 +1645,28 @@ void PostOperatorCSV<solver_t>::PrintModeZ()
     return;
   }
   mode_Z->table["idx"] << row_idx_v;
-  const double n_eff_re = measurement_cache.mode_data.n_eff.real();
+  // Per-unit-length inductance and capacitance of the line with characteristic impedance Z
+  // and propagation constant kₙ = n_eff ω / c₀, from its series impedance i kₙ Z = R + iωL
+  // and shunt admittance i kₙ / Z = G + iωC per unit length: L = Re{n_eff Z} / c₀ and C =
+  // Re{n_eff / Z} / c₀, which are n_eff Z / c₀ and n_eff / (Z c₀) for a lossless mode.
+  const std::complex<double> n_eff = measurement_cache.mode_data.n_eff;
   for (const auto &[idx, result] : measurement_cache.mode_data.impedance)
   {
     const auto port_idx = idx;
     auto s = [&](auto &&name) { return fmt::format("{}[{}]", name, port_idx); };
     if (result.has_impedance)
     {
-      mode_Z->table[s("Z_PV")] << result.Z0;
-      mode_Z->table[s("L_PV")] << result.Z0 * n_eff_re / electromagnetics::c0_;
-      mode_Z->table[s("C_PV")] << n_eff_re / (result.Z0 * electromagnetics::c0_);
+      mode_Z->table[s("re_Z_PV")] << result.Z0.real();
+      mode_Z->table[s("im_Z_PV")] << result.Z0.imag();
+      mode_Z->table[s("L_PV")] << (n_eff * result.Z0).real() / electromagnetics::c0_;
+      mode_Z->table[s("C_PV")] << (n_eff / result.Z0).real() / electromagnetics::c0_;
     }
     if (result.has_vi_impedance)
     {
-      mode_Z->table[s("Z_VI")] << result.Z_VI;
-      mode_Z->table[s("L_VI")] << result.Z_VI * n_eff_re / electromagnetics::c0_;
-      mode_Z->table[s("C_VI")] << n_eff_re / (result.Z_VI * electromagnetics::c0_);
+      mode_Z->table[s("re_Z_VI")] << result.Z_VI.real();
+      mode_Z->table[s("im_Z_VI")] << result.Z_VI.imag();
+      mode_Z->table[s("L_VI")] << (n_eff * result.Z_VI).real() / electromagnetics::c0_;
+      mode_Z->table[s("C_VI")] << (n_eff / result.Z_VI).real() / electromagnetics::c0_;
     }
   }
   WriteTable(*mode_Z);
