@@ -1938,7 +1938,13 @@ nlohmann::json DescribeUncoveredPortions(
 // patch); beyond it, with a `geometry_ledger`, the patch is excluded (weight 0; reasons
 // MisplacedReference / AllPointsOutside, its raw claims kept like any DomainBoundary patch)
 // and UnlocatedPatch recorded instead of the abort (FailClosed: the ledger's deferred
-// Enforce). Every patch of `skipped` (already not applied) is left
+// Enforce). The boundary tolerance is read on the distance to the nearest ELEMENT bounding
+// box (ElementPointLocator::BoxDistance): exact on an axis-aligned mesh boundary (the
+// census tile walls, whose boundary elements' boxes end on the wall); on a slanted or
+// curved outer boundary a reference inside a boundary element's box shadow but outside the
+// mesh reads distance 0 and is accepted up to ~h away (the distance to the nearest boundary
+// face is the exact form when such domains appear). Every patch of `skipped` (already not
+// applied) is left
 // alone; `points` are the local model basis points in patch units (origin + points /
 // scale); `model_name` names a model for the abort; coordinates and lengths of the result
 // in mesh units. Collective over the mesh's communicator.
@@ -2135,11 +2141,18 @@ OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchDat
 // 9 cross products; the ElementBox tolerance 1e-12 x scale): for mesh-aligned frames the
 // test is the mesh-aligned InteriorOverlaps. The same-class overlap test of
 // ApplyPlacementOwnership / FindSpatialClusterPriorityExclusions decides on THIS test once
-// the mesh-aligned boxes overlap: a pair whose oriented boxes are disjoint (the S1b-rc
-// concave pair 2.018 R apart whose other arms widen the mesh-aligned boxes beyond the
-// coupons, decision 1007 / findings-from-exec-B F-B1) is no overlap of two coupon domains
-// and records nothing; the SpatialClusterPriority (cluster vs vertex) branch keeps the
-// mesh-aligned test of record.
+// the mesh-aligned boxes overlap: a pair whose oriented boxes are disjoint (two frames off
+// the mesh axes whose mesh-aligned boxes widen beyond the coupons) is no overlap of two
+// coupon domains and records nothing; a pair whose oriented boxes overlap is the H4a
+// OverlapExcluded record of record. The S1b-rc concave pair that motivated the test
+// (decision 1007 / findings-from-exec-B F-B1, centres 2.014 R apart, frames 22.5 deg
+// apart) is MEASURED a TRUE overlap of the coupon cubes (the separating-axis gap -0.53 /
+// -0.76 um; findings-from-exec-B F-B1 UPDATE, decision 1030): it is recorded
+// OverlapExcluded on the mesh-aligned and on the oriented test alike. Two vertex cubes of
+// frames rotated by theta overlap up to R (1 + |cos theta| + |sin theta|) apart while the
+// identification clusters vertex pairs below 2 R only (OI-VERTEX-PAIR-CUBE-OVERLAP, the
+// identification fix round); the SpatialClusterPriority (cluster vs vertex) branch keeps
+// the mesh-aligned test of record.
 struct OrientedSupportBox
 {
   std::array<std::array<double, 3>, 3> axes = {

@@ -801,14 +801,15 @@ TEST_CASE(
   }
 }
 
-// (iv) B2 (readiness hardening-2, decision 1018 Q1; decision 1007 / findings-from-exec-B
-// F-B1, the S1b-rc concave pair 2.018 R apart): the same-class overlap test decides on the
-// ORIENTED boxes (the coupon domains) once the mesh-aligned boxes overlap. A 2 x 0.4 x 1
-// coupon box rotated 45 deg in the plane (A) and a mesh-aligned 0.8 x 0.8 x 1 box (B) whose
-// mesh-aligned boxes overlap: B at (1, -1) lies 1.414 along A's short axis beyond A's 0.2
-// and B's 0.566 reach (disjoint: no overlap, no record); B at (0.5, -0.5) reaches A
-// (overlap: OverlapExcluded as H4a). Mesh-aligned frames reproduce InteriorOverlaps
-// (touching faces are no interior overlap).
+// (iv) B2 (readiness hardening-2, decision 1018 Q1; motivated by decision 1007 /
+// findings-from-exec-B F-B1, the S1b-rc concave pair, since MEASURED a true overlap of the
+// coupon cubes recorded OverlapExcluded on both tests, decision 1030): the same-class
+// overlap test decides on the ORIENTED boxes (the coupon domains) once the mesh-aligned
+// boxes overlap. A 2 x 0.4 x 1 coupon box rotated 45 deg in the plane (A) and a
+// mesh-aligned 0.8 x 0.8 x 1 box (B) whose mesh-aligned boxes overlap: B at (1, -1)
+// lies 1.414 along A's short axis beyond A's 0.2 and B's 0.566 reach (disjoint: no overlap,
+// no record); B at (0.5, -0.5) reaches A (overlap: OverlapExcluded as H4a). Mesh-aligned
+// frames reproduce InteriorOverlaps (touching faces are no interior overlap).
 TEST_CASE("Geometry fallback B2 oriented overlap: a same-class pair whose oriented boxes "
           "are disjoint is no overlap (decision 1018 Q1)",
           "[surfaceresponseoperator][geometryfallback][Serial]")

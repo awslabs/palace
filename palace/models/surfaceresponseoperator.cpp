@@ -25077,7 +25077,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         }
         // B2 (readiness hardening-2 (iv), decision 1018 Q1): the mesh-aligned boxes
         // overlap; two same-class supports whose ORIENTED boxes (the coupon domains) are
-        // disjoint do not overlap (the S1b-rc concave pair): both stay applied, no record.
+        // disjoint do not overlap: both stay applied, no record. A pair whose oriented
+        // boxes overlap (the S1b-rc concave pair: a true overlap of the coupon cubes,
+        // decision 1030) is the H4a OverlapExcluded record below as before.
         if (!OrientedBoxesInteriorOverlap(spatial_supports[i].oriented,
                                           spatial_supports[j].oriented, 3))
         {
