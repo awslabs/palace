@@ -105,6 +105,7 @@ private:
                         std::complex<double> truth_omega, double truth_sigma);
   void UpdateProjection(std::size_t old_basis_size);
   void BuildActionGram();
+  const ComplexVector &Action(std::size_t col) const;
   double ValidateAffineModel(const ComplexOperator &truth_operator, double omega,
                              double sigma) const;
   std::optional<double>
