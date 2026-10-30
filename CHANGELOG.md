@@ -83,6 +83,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     use substantially for small and medium problems (5.2 GiB to 1.25 GiB for the spheres
     example on one NVIDIA L4) and speeds up setup and postprocessing.
     [PR 1085](https://github.com/awslabs/palace/pull/1085).
+  - Sped up the per-port wave-port PROM of adaptive driven sweeps for port modes whose shape
+    changes with frequency, as for lossy lines, where every exact port solve adds a basis
+    vector. Its projections and residual Gram matrix are now built with dense matrix products
+    instead of one inner product per entry, a reduced solve checks the residuals of only the
+    modes nearest to the target, and the reduced model is retired in favor of exact port
+    solves when those are cheaper. For the lossy microstrip of issue 1109, setting up the
+    reduced model takes 1 s instead of 35 s per port, and the online sweep 9 s instead of
+    115 s. [Issue 1109](https://github.com/awslabs/palace/issues/1109).
 
 #### Bug Fixes
 
