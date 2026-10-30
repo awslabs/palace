@@ -10936,7 +10936,8 @@ FeaturePatchSummary BuildFeaturePatches(
   auto Quadrature = [&](const FramedPortion &fp, double side_factor,
                         std::size_t model_index, int runtime,
                         const IdentifiedFeature &feature, const auto &Place,
-                        const std::optional<FirstOrderSplit> &split = std::nullopt)
+                        const std::optional<FirstOrderSplit> &split = std::nullopt,
+                        const std::function<void(ResponsePatchData &)> &Probe = {})
   {
     const auto &model = library.models[model_index];
     MFEM_VERIFY(model.coupon_depth > 0.0,
@@ -10994,6 +10995,12 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.provenance.quadrature_weight = ip.weight;
         patch.provenance.side_factor = side_factor;
         patch.provenance.coupon_depth = term.coupon_depth;
+        // R0-a (idfix DESIGN A.1 (c)): the conductor-consistency probes of the cell, from
+        // the device sides (set by the feature's branch; none for a vertex feature).
+        if (Probe)
+        {
+          Probe(patch);
+        }
         Emit(std::move(patch), term_model, term_runtime, feature, model_weight);
       }
     }
@@ -11064,6 +11071,46 @@ FeaturePatchSummary BuildFeaturePatches(
     }
     MFEM_VERIFY(best.segment, "A paired feature has no partner side!");
     return best;
+  };
+  // R0-a (idfix DESIGN A.1 (c) / C.3; decisions 1062 / 1064): the conductor-consistency
+  // probes of a translational cell. `sides` = the model's Edges in increasing lateral
+  // offset (the device side chains the placement ordered), `gap_directions` / `conductors`
+  // their GapDirection / canonical label; the edge's lateral offset = its foot at the
+  // origin cross-section, the probe = its foot at each end face of the cell (the snap onto
+  // the device perimeter: on an arc the foot lies on the chord polyline the solve has).
+  auto ConductorProbes = [&](ResponsePatchData &patch,
+                             const std::vector<const std::vector<FramedPortion> *> &sides,
+                             const std::vector<int> &gap_directions,
+                             const std::vector<int> &conductors)
+  {
+    MFEM_VERIFY(sides.size() == gap_directions.size() && sides.size() == conductors.size(),
+                "Conductor-consistency probes require one GapDirection and one conductor "
+                "label per side!");
+    std::vector<double> offsets;
+    offsets.reserve(sides.size());
+    for (const auto *side : sides)
+    {
+      offsets.push_back(Dot(Subtract(ClosestFoot(patch.origin, *side).point, patch.origin),
+                            patch.axis_u));
+    }
+    const auto pieces = LocalPiecesOfParallelEdges(offsets, gap_directions);
+    patch.conductor_probe_edges.clear();
+    patch.conductor_probes.clear();
+    for (std::size_t k = 0; k < sides.size(); k++)
+    {
+      patch.conductor_probe_edges.push_back(
+          {offsets[k], gap_directions[k], conductors[k], pieces[k]});
+    }
+    for (int end_face = 0; end_face < 2; end_face++)
+    {
+      const Point3D face_point =
+          Add(patch.origin, Scale(patch.longitudinal_cell[end_face], patch.axis_w));
+      for (std::size_t k = 0; k < sides.size(); k++)
+      {
+        patch.conductor_probes.push_back(
+            {ClosestFoot(face_point, *sides[k]).point, static_cast<int>(k), end_face});
+      }
+    }
   };
 
   for (const auto &feature : identification.features)
@@ -11295,6 +11342,11 @@ FeaturePatchSummary BuildFeaturePatches(
 
     if (feature.type == "IsolatedEdge" || feature.type == "CurvedEdge")
     {
+      // R0-a: one edge at u = 0, its gap on the +u side (AxisU points from the metal into
+      // the gap), one metal piece, conductor 1.
+      const std::vector<const std::vector<FramedPortion> *> probe_sides = {&portions};
+      auto Probe = [&](ResponsePatchData &patch)
+      { ConductorProbes(patch, probe_sides, {1}, {1}); };
       for (const auto &fp : portions)
       {
         if (fp.image)
@@ -11319,7 +11371,7 @@ FeaturePatchSummary BuildFeaturePatches(
                                                      ? Add(point, Scale(-R, segment.axis_u))
                                                      : point};
             },
-            split);
+            split, Probe);
       }
     }
     else if (feature.type == "SameConductorGap" ||
@@ -11393,6 +11445,20 @@ FeaturePatchSummary BuildFeaturePatches(
       {
         const auto &side = *ordered[k].second;
         const auto &other = *ordered[1 - k].second;
+        // R0-a: the model's two edges = the two sides in canonical order; a GAP has its
+        // metal outside (edge 0's gap on +u, edge 1's on -u: two pieces), a STRIP its metal
+        // between (one piece); a DifferentConductorGap carries the labels 1 / 2.
+        const bool different_conductor =
+            model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
+            model.topology == LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP;
+        const std::vector<const std::vector<FramedPortion> *> probe_sides = {
+            ordered[0].second, ordered[1].second};
+        const std::vector<int> probe_gaps =
+            strip ? std::vector<int>{-1, 1} : std::vector<int>{1, -1};
+        const std::vector<int> probe_conductors =
+            different_conductor ? std::vector<int>{1, 2} : std::vector<int>{1, 1};
+        auto Probe = [&](ResponsePatchData &patch)
+        { ConductorProbes(patch, probe_sides, probe_gaps, probe_conductors); };
         for (const auto &fp : side)
         {
           if (fp.image)
@@ -11436,7 +11502,7 @@ FeaturePatchSummary BuildFeaturePatches(
                   patch.maxwell_conductor_anchors = {Add(e1, Scale(-R, first.axis_u))};
                 }
               },
-              split);
+              split, Probe);
         }
       }
     }
@@ -11497,6 +11563,24 @@ FeaturePatchSummary BuildFeaturePatches(
       const std::vector<FramedPortion> &first_side = *ordered.front().second;
       const std::vector<FramedPortion> &last_side = *ordered.back().second;
       const double side_factor = 1.0 / static_cast<double>(ordered.size());
+      // R0-a: the model's Edges (Offset / GapDirection / Conductor, increasing offset) are
+      // the sides in canonical order; a cluster model without Edges cannot be probed and is
+      // refused (a model class without a probe rule fails closed, idfix DESIGN A.1 (c)).
+      MFEM_VERIFY(!model.cluster_edges.empty(),
+                  "ParallelEdgeCluster model \""
+                      << model.name
+                      << "\" carries no Edges (Offset / GapDirection / Conductor): its "
+                         "conductor-consistency probes cannot be formed (idfix R0-a)!");
+      std::vector<const std::vector<FramedPortion> *> probe_sides;
+      std::vector<int> probe_gaps, probe_conductors;
+      for (std::size_t k = 0; k < ordered.size(); k++)
+      {
+        probe_sides.push_back(ordered[k].second);
+        probe_gaps.push_back(model.cluster_edges[k].gap_direction);
+        probe_conductors.push_back(model.cluster_edges[k].conductor);
+      }
+      auto Probe = [&](ResponsePatchData &patch)
+      { ConductorProbes(patch, probe_sides, probe_gaps, probe_conductors); };
       for (std::size_t k = 0; k < ordered.size(); k++)
       {
         for (const auto &fp : *ordered[k].second)
@@ -11518,7 +11602,8 @@ FeaturePatchSummary BuildFeaturePatches(
                           ? patch.origin
                           : ClosestFoot(patch.origin, *ordered[reference].second).point);
                 }
-              });
+              },
+              std::nullopt, Probe);
         }
       }
     }
@@ -18282,6 +18367,21 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                              {"Displacement", snap.displacement},
                              {"Distance", snap.distance}});
     }
+    // R0-a (version 21): the translational patch's conductor-consistency probes.
+    nlohmann::json conductor_probe_edges = nlohmann::json::array();
+    for (const auto &edge : patch.conductor_probe_edges)
+    {
+      conductor_probe_edges.push_back({{"Offset", edge.offset},
+                                       {"GapDirection", edge.gap_direction},
+                                       {"Conductor", edge.conductor},
+                                       {"Piece", edge.piece}});
+    }
+    nlohmann::json conductor_probes = nlohmann::json::array();
+    for (const auto &probe : patch.conductor_probes)
+    {
+      conductor_probes.push_back(
+          {{"Point", probe.point}, {"Edge", probe.edge}, {"EndFace", probe.end_face}});
+    }
     patches.push_back({{"Model", patch.model},
                        {"SupportBox", support_box},
                        {"Chain", patch.provenance.chain},
@@ -18296,6 +18396,8 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"InterpolationGroup", patch.interpolation_group},
                        {"MaxwellConductorAnchors", patch.maxwell_conductor_anchors},
                        {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec},
+                       {"ConductorProbeEdges", conductor_probe_edges},
+                       {"ConductorProbes", conductor_probes},
                        {"Feature", patch.provenance.feature},
                        {"Segment", patch.provenance.segment},
                        {"Stretch", patch.provenance.stretch},
@@ -18318,7 +18420,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 20},
+  nlohmann::json cache = {{"Version", 21},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -18472,10 +18574,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 20,
+      data.value("Version", 0) == 21,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 20 carries the feature, mesh segment, chain stretch, own-edge "
+          << " (version 21 carries the feature, mesh segment, chain stretch, own-edge "
              "offset and own-cell pre-image (decision 537) of every patch, the claims, "
              "support box, chain and foreign (Chain: false, decision 553) context pieces "
              "of every spatial cluster patch, the raw claims of every vertex coupon "
@@ -18508,7 +18610,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "version-19 cache written by a pre-T5 binary with a library carrying a "
              "T5-grown model places the UNGROWN model where the T5 binary places the grown "
              "one, a divergence the cache's patch content cannot show (the 527 / 781 "
-             "merge-order rule); delete a stale cache)!");
+             "merge-order rule); version 21 adds the conductor-consistency probes of every "
+             "translational patch (ConductorProbeEdges / ConductorProbes: the device metal "
+             "point of every model Edge at both end faces of the cell with its local "
+             "piece, "
+             "idfix R0-a, decisions 1062 / 1064): a version-20 cache carries none, so its "
+             "translational patches could not be gated; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -18717,11 +18824,25 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
            snap.at("Distance").get<double>()});
     }
     MFEM_VERIFY(entry.contains("ProbeSnapsComputed"),
-                "Response-geometry cache version 20 patch of model "
+                "Response-geometry cache version 21 patch of model "
                     << patch.model
                     << " carries no ProbeSnapsComputed (a cache written before decision "
                        "632); delete the stale cache!");
     patch.provenance.probe_snaps_computed = entry.at("ProbeSnapsComputed").get<bool>();
+    // R0-a (version 21): the translational patch's conductor-consistency probes (both
+    // arrays present, empty for a spatial / vertex patch).
+    for (const auto &edge : entry.at("ConductorProbeEdges"))
+    {
+      patch.conductor_probe_edges.push_back(
+          {edge.at("Offset").get<double>(), edge.at("GapDirection").get<int>(),
+           edge.at("Conductor").get<int>(), edge.at("Piece").get<int>()});
+    }
+    for (const auto &probe : entry.at("ConductorProbes"))
+    {
+      patch.conductor_probes.push_back({probe.at("Point").get<std::array<double, 3>>(),
+                                        probe.at("Edge").get<int>(),
+                                        probe.at("EndFace").get<int>()});
+    }
     if (const auto box = entry.find("SupportBox"); box != entry.end() && !box->is_null())
     {
       patch.provenance.support_box = box->get<std::array<double, 4>>();
@@ -18919,6 +19040,76 @@ nlohmann::json DescribeGeometryFallbacks(const std::vector<GeometryFallbackData>
       "fallback: 100 % per type, no correction applied). Under FailClosed the same entries "
       "are recorded and the run aborts once the placement is complete.";
   return record;
+}
+
+std::vector<int> LocalPiecesOfParallelEdges(const std::vector<double> &offsets,
+                                            const std::vector<int> &gap_directions)
+{
+  MFEM_VERIFY(!offsets.empty() && offsets.size() == gap_directions.size(),
+              "LocalPiecesOfParallelEdges requires one GapDirection per edge offset!");
+  std::vector<int> pieces(offsets.size(), 0);
+  // The piece left of the first edge exists iff its gap lies on its +u side.
+  int piece = gap_directions.front() == 1 ? 1 : 0;
+  for (std::size_t k = 0; k < offsets.size(); k++)
+  {
+    MFEM_VERIFY(gap_directions[k] == 1 || gap_directions[k] == -1,
+                "LocalPiecesOfParallelEdges: GapDirection must be -1 or 1!");
+    MFEM_VERIFY(k == 0 || offsets[k] > offsets[k - 1],
+                "LocalPiecesOfParallelEdges: edge offsets must be strictly increasing!");
+    if (gap_directions[k] == 1)
+    {
+      // The metal lies on the -u side of this edge: the piece that reaches it from the
+      // left (the box side, or the previous edge whose gap lay on its -u side).
+      MFEM_VERIFY(k == 0 || gap_directions[k - 1] == -1,
+                  "LocalPiecesOfParallelEdges: edges "
+                      << k - 1 << " and " << k
+                      << " both have their gap on the +u side with no metal between "
+                         "them (not a cross-section)!");
+      pieces[k] = piece;
+    }
+    else
+    {
+      // The gap lies on the -u side: a new piece starts at this edge and runs to the next
+      // edge whose gap lies on its +u side (or to the box side).
+      MFEM_VERIFY(k == 0 || gap_directions[k - 1] == 1,
+                  "LocalPiecesOfParallelEdges: edges "
+                      << k - 1 << " and " << k
+                      << " both have their gap on the -u side with no gap between them "
+                         "(not a cross-section)!");
+      pieces[k] = ++piece;
+    }
+  }
+  return pieces;
+}
+
+int LocalPieceOfOffset(const std::vector<double> &offsets,
+                       const std::vector<int> &gap_directions,
+                       const std::vector<int> &pieces, double u)
+{
+  MFEM_VERIFY(offsets.size() == gap_directions.size() && offsets.size() == pieces.size(),
+              "LocalPieceOfOffset requires the edges' offsets, gap directions and pieces!");
+  for (std::size_t k = 0; k < offsets.size(); k++)
+  {
+    if (gap_directions[k] == 1)
+    {
+      // Metal on the -u side of edge k: from the previous edge (or the box side) to here.
+      const bool from_left = k == 0 || u >= offsets[k - 1];
+      if (from_left && u <= offsets[k])
+      {
+        return pieces[k];
+      }
+    }
+    else
+    {
+      // Metal on the +u side of edge k: from here to the next edge (or the box side).
+      const bool to_right = k + 1 == offsets.size() || u <= offsets[k + 1];
+      if (u >= offsets[k] && to_right)
+      {
+        return pieces[k];
+      }
+    }
+  }
+  return 0;
 }
 
 std::string GeometryFallbackBanner(const nlohmann::json &record, const std::string &where)
@@ -24485,7 +24676,8 @@ bool SurfaceResponseOperator::HasConductorConsistencyProbes() const
   int local = 0;
   for (const auto &patch : patches)
   {
-    if (!models[patch.model].plane_conductor_vertices.empty())
+    if (!models[patch.model].plane_conductor_vertices.empty() ||
+        !patch.conductor_probes.empty())
     {
       local = 1;
       break;
@@ -24509,6 +24701,82 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
     diagnostics["ExcludedPatches"] = nlohmann::json::array();
     diagnostics["Records"] = nlohmann::json::array();
     diagnostics["UnprobedModels"] = nlohmann::json::array();
+    // R0-a (the identification fix round; idfix DESIGN A.1 (c) / B.3 / SUPERVISOR
+    // AMENDMENT 3 C.1 / C.3 / C.4; decisions 1062 / 1064): the frozen leaves of the gate on
+    // both paths and every model class (allow-listed by name in the lane's gates).
+    diagnostics["ProbeRule"] =
+        "idfix R0-a (decisions 1062 / 1064): every placed patch of every model class is "
+        "probed on BOTH paths. A spatial model: its trace mesh's conductor vertices on the "
+        "process plane w = 0 (the surface mortar's on the electrostatic path; the explicit "
+        "TraceMesh's on the collocated Maxwell path). A translational model (IsolatedEdge "
+        "/ "
+        "CurvedEdge / SameConductorGap / DifferentConductorGap / SameConductorStrip / "
+        "CurvedSameConductorStrip / ParallelEdgeCluster): the device metal point of every "
+        "model Edge (in increasing lateral offset, with its GapDirection and conductor "
+        "label) at BOTH end faces of the patch's longitudinal cell, the foot on the edge's "
+        "claimed segments (the snap onto the device perimeter, arcs included), grouped "
+        "into "
+        "LOCAL METAL PIECES by the GapDirections (consecutive edges bound one piece iff "
+        "the "
+        "metal lies between them; the metal outside the first / last edge reaches the box "
+        "side; a CPW = 3 pieces, a gap = 2, a strip or an isolated edge = 1); the reading "
+        "is "
+        "compared with the reference the edge's metal is held at (its conductor label; a "
+        "one-reference model: the single reference for every piece). A model class without "
+        "a probe rule fails closed at the placement (a ParallelEdgeCluster model without "
+        "Edges); a translational patch of the Legacy construction or an explicit patch, "
+        "and "
+        "a spatial model without a TraceMesh, are recorded UnprobedModels (never a silent "
+        "zero). The probes change no trace (the energies of a run with 0 exclusions are "
+        "unchanged).";
+    diagnostics["MaxwellFloorRule"] =
+        "idfix B.3 (c) / SUPERVISOR AMENDMENT 3 C.1 (decisions 1061 Q3 (A) / 1062): on "
+        "the Maxwell path Normalization = max(Amplitude, AmplitudeFloor x F) with F(s, f) "
+        "= "
+        "the largest trace amplitude A_p = max |t_i| (complex magnitude, the FIT trace "
+        "incl. "
+        "the conductor states) over the window's APPLIED patches at that source and "
+        "frequency, GlobalMax over the ranks (the record's ExcitationPotential slot). "
+        "APPLIED for the floor = every placed patch with weight > 0 by every rule OTHER "
+        "than "
+        "the ConductorConsistency gate, i.e. taken BEFORE this gate's own exclusions, at "
+        "every (source, frequency). The floor is NOT recomputed after the pass's "
+        "exclusions, "
+        "and a sticky exclusion does not remove a patch from the floor's set. So F(s, f) "
+        "depends on the field at (s, f) only. FloorApplied does not imply a pass: with the "
+        "floor applied the ratio is D / F (C.4).";
+    diagnostics["DeviationNorm"] =
+        "idfix B.3 (d): the deviation D(q) = |P(q) - C(piece(q))|, the magnitude of the "
+        "complex difference between the probe's reading P(q) = -(the line integral of E "
+        "from "
+        "the patch's conductor anchor to q along the constructed legs) and the value the "
+        "basis assigns to q's metal (0 for the anchor's conductor / a one-reference model; "
+        "the conductor-state trace of the probe's reference otherwise); phase-invariant, "
+        "equal to the electrostatic |deviation| for a real field. MaxRatio = max_q D(q) / "
+        "Normalization; MaxRatio > Tolerance excludes the patch: RecordRaw (weight 0, "
+        "STICKY "
+        "across the sources / frequencies of one operator, its raw claim served RAW as the "
+        "ConductorConsistency share, recorded with the LOW-CONFIDENCE banner; never an "
+        "abort). An eigenmode's self-consistent field is solved before the gate acts "
+        "(SelfConsistentPreGate, decision 1064 (1)). RecordOnly (a diagnostic opt-out) "
+        "records the verdicts and excludes nothing.";
+    diagnostics["ProbePathRule"] =
+        "idfix B.3 (d) / SUPERVISOR AMENDMENT 3 C.3: the gap-crossing leg is CONSTRUCTED "
+        "by "
+        "one rule, used by the gate and by R0-b's LocalPiece generator. A translational "
+        "patch: the straight w = 0 leg(s) between consecutive Edge offsets AT THE PROBE'S "
+        "END "
+        "FACE (the cell's begin / end along AxisW), from the patch's conductor anchor "
+        "translated to that face through every edge offset between the anchor's lateral "
+        "offset and the probe's edge, in order (a leg over PEC metal reads ~0, a leg "
+        "across a "
+        "gap the piece-to-piece voltage; quasi-TEM: no in-plane flux, so 'at the probe's "
+        "v' "
+        "is the load-bearing part). A spatial patch: the one straight plane segment from "
+        "the "
+        "probe's own conductor's anchor to the trace-mesh vertex (decision 1064 (2)). On "
+        "the "
+        "electrostatic path the probes read the potential (path-independent).";
     diagnostics["Rule"] =
         "decision 277 (2026-10-03): solve-time gate on every applied spatial "
         "surface-mortar patch, per excitation. MaxRatio = max over the trace mesh's "
@@ -24551,7 +24819,7 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
         "MaxDisplacement and the Knots (Knot = trace vertex, Segment / Arc of the "
         "identification, Displacement in mesh-file units) are recorded per patch; the "
         "snaps are computed at the placement and travel with the geometry cache "
-        "(version 20); a spatial patch placed WITHOUT them (the model's trace data not "
+        "(version 21); a spatial patch placed WITHOUT them (the model's trace data not "
         "readable at the placement - a discovery placeholder, which the geometry-only "
         "preflight places and never solves; ProbeSnapsComputed false) is refused by a "
         "solve on every rank alike (decision 632). Tolerance and AmplitudeFloor are "
@@ -24563,20 +24831,17 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
 std::vector<SurfaceResponseOperator::ConductorConsistencyRecord>
 SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int source)
 {
-  MFEM_VERIFY(!maxwell, "The conductor-consistency gate applies to electrostatic response "
-                        "correction only!");
+  MFEM_VERIFY(!maxwell, "The electrostatic conductor-consistency gate reads a real "
+                        "potential; the Maxwell path takes the complex field overload!");
   // The trace walk also samples the probe points (the device potential at the conductor
-  // vertices) into `correction`.
+  // vertices and at the translational edge probes) into `correction`.
   ApplyTrace(x, trace);
   // The excitation's largest potential (the largest terminal potential: the maximum
   // principle) sets the normalization floor of the ratio.
   double excitation_potential = x.Size() > 0 ? x.Normlinf() : 0.0;
   Mpi::GlobalMax(1, &excitation_potential, fespace.GetComm());
   const double amplitude_floor = kConductorConsistencyAmplitudeFloor * excitation_potential;
-  // Each record: record_size fixed values, then its probe-snap count and 4 values per snap.
-  constexpr int record_size = 23;
-  constexpr int snap_size = 4;
-  std::vector<double> local_records;
+  std::vector<ConductorConsistencyRecord> local_records;
   for (auto &patch : patches)
   {
     const auto &model = models[patch.model];
@@ -24584,9 +24849,12 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
     {
       continue;
     }
+    const bool translational = !patch.conductor_probes.empty();
     MFEM_ASSERT(patch.probe_point_count ==
-                    static_cast<int>(model.plane_conductor_vertices.size() +
-                                     model.off_plane_conductor_vertices.size()),
+                    (translational
+                         ? static_cast<int>(patch.conductor_probes.size())
+                         : static_cast<int>(model.plane_conductor_vertices.size() +
+                                            model.off_plane_conductor_vertices.size())),
                 "Inconsistent conductor-consistency probe count!");
     const int reference_offset = patch.point_offset + patch.point_count -
                                  patch.probe_point_count - model.conductor_state_count - 1;
@@ -24598,11 +24866,17 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
     record.patch = patch.global_index;
     record.model = model.idx;
     record.source = source;
-    record.plane_knots = static_cast<int>(model.plane_conductor_vertices.size());
-    record.off_plane_knots = static_cast<int>(model.off_plane_conductor_vertices.size());
-    record.adjacent_knots = static_cast<int>(model.adjacent_free_vertices.size());
+    record.probe_kind = translational ? 1 : 0;
+    record.plane_knots = translational
+                             ? patch.probe_point_count
+                             : static_cast<int>(model.plane_conductor_vertices.size());
+    record.off_plane_knots =
+        translational ? 0 : static_cast<int>(model.off_plane_conductor_vertices.size());
+    record.adjacent_knots =
+        translational ? 0 : static_cast<int>(model.adjacent_free_vertices.size());
     record.claim_length = patch.claim_length;
     record.cell_length = patch.cell_length;
+    record.record_only = conductor_consistency_record_only;
     for (int i = 0; i < model.basis_size; i++)
     {
       record.amplitude =
@@ -24624,47 +24898,220 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
       return deviation == 0.0 ? 0.0 : mfem::infinity();
     };
     int probe = 0;
-    for (const int v : model.plane_conductor_vertices)
+    if (translational)
     {
-      const auto &vertex = model.mortar_vertices[v];
-      const double deviation =
-          correction(probe_offset + probe) - ConductorValue(vertex.conductor);
-      if (probe == 0 || std::abs(deviation) > record.max_deviation)
+      // R0-a (idfix DESIGN A.1 (c)): the device potential at every model Edge's metal point
+      // on both end faces of the cell against the potential at the reference the edge's
+      // metal is held at (its canonical conductor label; a one-reference model: the single
+      // reference for every piece).
+      for (const auto &probe_data : patch.conductor_probes)
       {
-        record.max_deviation = std::abs(deviation);
-        record.max_ratio = Ratio(deviation);
-        record.worst_vertex = v;
-        record.worst_conductor = vertex.conductor;
-        record.worst_point = patch.probe_points[probe];
+        const auto &edge = patch.conductor_probe_edges[probe_data.edge];
+        // The reference the edge's metal is held at: its local piece's (a LocalPiece model,
+        // R0-b) or its conductor label's.
+        const int reference = model.local_piece_references ? edge.piece : edge.conductor;
+        const double deviation =
+            correction(probe_offset + probe) - ConductorValue(reference);
+        if (probe == 0 || std::abs(deviation) > record.max_deviation)
+        {
+          record.max_deviation = std::abs(deviation);
+          record.max_ratio = Ratio(deviation);
+          record.worst_vertex = probe;
+          record.worst_conductor = edge.conductor;
+          record.worst_edge = probe_data.edge;
+          record.worst_piece = edge.piece;
+          record.worst_end_face = probe_data.end_face;
+          record.worst_point = patch.probe_points[probe];
+        }
+        probe++;
       }
-      probe++;
     }
-    for (const int v : model.off_plane_conductor_vertices)
+    else
     {
-      const auto &vertex = model.mortar_vertices[v];
-      const double deviation =
-          correction(probe_offset + probe) - ConductorValue(vertex.conductor);
-      record.off_plane_max_ratio = std::max(record.off_plane_max_ratio, Ratio(deviation));
-      probe++;
-    }
-    for (const auto &[free, plane] : model.adjacent_free_vertices)
-    {
-      const int conductor = model.mortar_vertices[plane].conductor;
-      // Trace coefficients are relative to conductor 1; conductor c >= 2 is its state.
-      const double conductor_trace =
-          conductor == 1 ? 0.0
-                         : trace(patch.trace_offset + model.contour_size + conductor - 2);
-      const double deviation =
-          trace(patch.trace_offset + model.mortar_vertices[free].basis) - conductor_trace;
-      record.adjacent_max_ratio = std::max(record.adjacent_max_ratio, Ratio(deviation));
+      for (const int v : model.plane_conductor_vertices)
+      {
+        const auto &vertex = model.mortar_vertices[v];
+        const double deviation =
+            correction(probe_offset + probe) - ConductorValue(vertex.conductor);
+        if (probe == 0 || std::abs(deviation) > record.max_deviation)
+        {
+          record.max_deviation = std::abs(deviation);
+          record.max_ratio = Ratio(deviation);
+          record.worst_vertex = v;
+          record.worst_conductor = vertex.conductor;
+          record.worst_point = patch.probe_points[probe];
+        }
+        probe++;
+      }
+      for (const int v : model.off_plane_conductor_vertices)
+      {
+        const auto &vertex = model.mortar_vertices[v];
+        const double deviation =
+            correction(probe_offset + probe) - ConductorValue(vertex.conductor);
+        record.off_plane_max_ratio = std::max(record.off_plane_max_ratio, Ratio(deviation));
+        probe++;
+      }
+      for (const auto &[free, plane] : model.adjacent_free_vertices)
+      {
+        const int conductor = model.mortar_vertices[plane].conductor;
+        // Trace coefficients are relative to conductor 1; conductor c >= 2 is its state.
+        const double conductor_trace =
+            conductor == 1 ? 0.0
+                           : trace(patch.trace_offset + model.contour_size + conductor - 2);
+        const double deviation =
+            trace(patch.trace_offset + model.mortar_vertices[free].basis) - conductor_trace;
+        record.adjacent_max_ratio = std::max(record.adjacent_max_ratio, Ratio(deviation));
+      }
     }
     record.excluded = record.max_ratio > kConductorConsistencyTolerance;
-    if (record.excluded)
+    if (record.excluded && !conductor_consistency_record_only)
     {
       patch.weight = 0.0;
+      patch.conductor_consistency_excluded = true;
     }
     record.probe_snaps = patch.probe_snaps;
     record.max_probe_snap = patch.max_probe_snap;
+    local_records.push_back(std::move(record));
+  }
+  return FinishConductorConsistencyGate(std::move(local_records), source,
+                                        excitation_potential);
+}
+
+std::vector<SurfaceResponseOperator::ConductorConsistencyRecord>
+SurfaceResponseOperator::ApplyConductorConsistencyGate(const ComplexVector &E, int source,
+                                                       double frequency,
+                                                       bool self_consistent_pre_gate)
+{
+  MFEM_VERIFY(maxwell && maxwell_probes.size() == patches.size(),
+              "The Maxwell conductor-consistency gate requires a configured Maxwell "
+              "surface response!");
+  // The line integrals of the complex field, the CHAIN trace and the FIT trace (the one the
+  // energies use, GetMaxwellResponse): A_p is read on the fit trace.
+  Vector line_real, line_imag, trace_real, trace_imag;
+  EvaluateMaxwellLines(E.Real(), E.Imag(), line_real, line_imag);
+  BuildMaxwellChainTrace(line_real, trace_real);
+  BuildMaxwellChainTrace(line_imag, trace_imag);
+  std::vector<double> amplitudes(patches.size(), 0.0), states(patches.size(), 0.0);
+  double largest_applied_amplitude = 0.0;
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    const auto &patch = patches[patch_index];
+    const auto &model = models[patch.model];
+    AddMaxwellLoopFitCorrection(patch_index, line_real, trace_real);
+    AddMaxwellLoopFitCorrection(patch_index, line_imag, trace_imag);
+    for (int i = 0; i < model.basis_size; i++)
+    {
+      const double magnitude = std::hypot(trace_real(patch.trace_offset + i),
+                                          trace_imag(patch.trace_offset + i));
+      amplitudes[patch_index] = std::max(amplitudes[patch_index], magnitude);
+      if (i >= model.contour_size)
+      {
+        states[patch_index] = std::max(states[patch_index], magnitude);
+      }
+    }
+    // The floor's set (SUPERVISOR AMENDMENT 3 C.1): every patch applied by every rule OTHER
+    // than this gate — a patch this gate excluded at an earlier source stays in it.
+    if (patch.weight > 0.0 || patch.conductor_consistency_excluded)
+    {
+      largest_applied_amplitude =
+          std::max(largest_applied_amplitude, amplitudes[patch_index]);
+    }
+  }
+  Mpi::GlobalMax(1, &largest_applied_amplitude, fespace.GetComm());
+  const double amplitude_floor =
+      kConductorConsistencyAmplitudeFloor * largest_applied_amplitude;
+  std::vector<ConductorConsistencyRecord> local_records;
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    auto &patch = patches[patch_index];
+    const auto &model = models[patch.model];
+    const auto &probes = maxwell_probes[patch_index];
+    if (probes.empty() || patch.weight <= 0.0)
+    {
+      continue;
+    }
+    ConductorConsistencyRecord record;
+    record.patch = patch.global_index;
+    record.model = model.idx;
+    record.source = source;
+    record.maxwell = true;
+    record.frequency = frequency;
+    record.self_consistent_pre_gate = self_consistent_pre_gate;
+    record.record_only = conductor_consistency_record_only;
+    record.probe_kind = probes.front().kind;
+    record.plane_knots = static_cast<int>(probes.size());
+    record.claim_length = patch.claim_length;
+    record.cell_length = patch.cell_length;
+    record.amplitude = amplitudes[patch_index];
+    record.state = states[patch_index];
+    // The quantity the floor multiplies (the ES record's ExcitationPotential slot): the
+    // largest applied trace amplitude at this source and frequency.
+    record.excitation_potential = largest_applied_amplitude;
+    record.normalization = std::max(record.amplitude, amplitude_floor);
+    auto Ratio = [&](double deviation)
+    {
+      if (record.normalization > 0.0)
+      {
+        return deviation / record.normalization;
+      }
+      return deviation == 0.0 ? 0.0 : mfem::infinity();
+    };
+    for (std::size_t q = 0; q < probes.size(); q++)
+    {
+      const auto &probe = probes[q];
+      // P(q) = -(the line integral of E from the anchor to the probe along the legs).
+      std::complex<double> reading = 0.0;
+      for (const auto &[line, sign] : probe.legs)
+      {
+        reading -= sign * std::complex<double>(line_real[line], line_imag[line]);
+      }
+      // C(q): a translational chain starts at reference 1, so a probe on another
+      // reference's metal is compared with that reference's conductor-state trace; a
+      // spatial probe's leg starts at its own conductor's anchor (decision 1064 (2)): 0.
+      std::complex<double> assumed = 0.0;
+      const int reference =
+          probe.kind == 1 && model.local_piece_references ? probe.piece : probe.conductor;
+      if (probe.kind == 1 && reference > 1)
+      {
+        const int state = patch.trace_offset + model.contour_size + reference - 2;
+        assumed = {trace_real(state), trace_imag(state)};
+      }
+      const double deviation = std::abs(reading - assumed);
+      if (q == 0 || deviation > record.max_deviation)
+      {
+        record.max_deviation = deviation;
+        record.max_ratio = Ratio(deviation);
+        record.worst_vertex = probe.kind == 1 ? static_cast<int>(q) : probe.vertex;
+        record.worst_conductor = probe.conductor;
+        record.worst_edge = probe.edge;
+        record.worst_piece = probe.piece;
+        record.worst_end_face = probe.end_face;
+        record.worst_point = probe.point;
+      }
+    }
+    record.excluded = record.max_ratio > kConductorConsistencyTolerance;
+    if (record.excluded && !conductor_consistency_record_only)
+    {
+      patch.weight = 0.0;
+      patch.conductor_consistency_excluded = true;
+    }
+    local_records.push_back(std::move(record));
+  }
+  return FinishConductorConsistencyGate(std::move(local_records), source,
+                                        largest_applied_amplitude);
+}
+
+std::vector<SurfaceResponseOperator::ConductorConsistencyRecord>
+SurfaceResponseOperator::FinishConductorConsistencyGate(
+    std::vector<ConductorConsistencyRecord> patch_records, int source,
+    double excitation_potential)
+{
+  // Each record: record_size fixed values, then its probe-snap count and 4 values per snap.
+  constexpr int record_size = 31;
+  constexpr int snap_size = 4;
+  std::vector<double> local_records;
+  for (const auto &record : patch_records)
+  {
     local_records.insert(local_records.end(), {static_cast<double>(record.patch),
                                                static_cast<double>(record.model),
                                                static_cast<double>(record.source),
@@ -24687,7 +25134,15 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
                                                record.claim_length,
                                                record.cell_length,
                                                record.excluded ? 1.0 : 0.0,
-                                               record.max_probe_snap});
+                                               record.max_probe_snap,
+                                               static_cast<double>(record.worst_edge),
+                                               static_cast<double>(record.worst_piece),
+                                               static_cast<double>(record.worst_end_face),
+                                               static_cast<double>(record.probe_kind),
+                                               record.maxwell ? 1.0 : 0.0,
+                                               record.frequency,
+                                               record.self_consistent_pre_gate ? 1.0 : 0.0,
+                                               record.record_only ? 1.0 : 0.0});
     local_records.push_back(static_cast<double>(record.probe_snaps.size()));
     for (const auto &snap : record.probe_snaps)
     {
@@ -24741,6 +25196,14 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
     record.cell_length = r[20];
     record.excluded = r[21] > 0.5;
     record.max_probe_snap = r[22];
+    record.worst_edge = static_cast<int>(std::llround(r[23]));
+    record.worst_piece = static_cast<int>(std::llround(r[24]));
+    record.worst_end_face = static_cast<int>(std::llround(r[25]));
+    record.probe_kind = static_cast<int>(std::llround(r[26]));
+    record.maxwell = r[27] > 0.5;
+    record.frequency = r[28];
+    record.self_consistent_pre_gate = r[29] > 0.5;
+    record.record_only = r[30] > 0.5;
     const int snap_count = static_cast<int>(std::llround(r[record_size]));
     offset += record_size + 1;
     MFEM_VERIFY(snap_count >= 0 &&
@@ -24764,39 +25227,47 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   // the excluded patches' claim / cell lengths totalled next to the DomainBoundary record.
   std::map<int, std::string> model_names = GetModelNames();
   auto &diagnostics = ConductorConsistencyDiagnostics();
-  int excluded_count = 0;
+  int excluded_count = 0, record_only_count = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
   int max_patch = -1;
   for (const auto &record : records)
   {
-    nlohmann::json entry = {{"Patch", record.patch},
-                            {"Model", model_names.at(record.model)},
-                            {"ModelIndex", record.model},
-                            {"Source", record.source},
-                            {"PlaneKnots", record.plane_knots},
-                            {"OffPlaneKnots", record.off_plane_knots},
-                            {"AdjacentKnots", record.adjacent_knots},
-                            {"Amplitude", record.amplitude},
-                            {"State", record.state},
-                            {"ExcitationPotential", record.excitation_potential},
-                            {"Normalization", record.normalization},
-                            {"FloorApplied", record.normalization > record.amplitude},
-                            {"MaxDeviation", record.max_deviation},
-                            {"MaxRatio", record.max_ratio},
-                            {"MaxRatioOverState", record.state > 0.0
-                                                      ? record.max_deviation / record.state
-                                                      : 0.0},
-                            {"WorstVertex", record.worst_vertex},
-                            {"WorstConductor", record.worst_conductor},
-                            {"WorstPoint",
-                             {record.worst_point[0] * mesh_coordinate_scale,
-                              record.worst_point[1] * mesh_coordinate_scale,
-                              record.worst_point[2] * mesh_coordinate_scale}},
-                            {"OffPlaneMaxRatio", record.off_plane_max_ratio},
-                            {"AdjacentMaxRatio", record.adjacent_max_ratio},
-                            {"ClaimLength", record.claim_length * mesh_coordinate_scale},
-                            {"CellLength", record.cell_length * mesh_coordinate_scale},
-                            {"Excluded", record.excluded}};
+    nlohmann::json entry = {
+        {"Patch", record.patch},
+        {"Model", model_names.at(record.model)},
+        {"ModelIndex", record.model},
+        {"Source", record.source},
+        {"PlaneKnots", record.plane_knots},
+        {"OffPlaneKnots", record.off_plane_knots},
+        {"AdjacentKnots", record.adjacent_knots},
+        {"Amplitude", record.amplitude},
+        {"State", record.state},
+        {"ExcitationPotential", record.excitation_potential},
+        {"Normalization", record.normalization},
+        {"FloorApplied", record.normalization > record.amplitude},
+        {"MaxDeviation", record.max_deviation},
+        {"MaxRatio", record.max_ratio},
+        {"MaxRatioOverState",
+         record.state > 0.0 ? record.max_deviation / record.state : 0.0},
+        {"WorstVertex", record.worst_vertex},
+        {"WorstConductor", record.worst_conductor},
+        {"ProbeKind", record.probe_kind == 1 ? "TranslationalEdge" : "SpatialVertex"},
+        {"WorstEdge", record.worst_edge},
+        {"WorstPiece", record.worst_piece},
+        {"WorstEndFace", record.worst_end_face},
+        {"Maxwell", record.maxwell},
+        {"Frequency", record.frequency},
+        {"SelfConsistentPreGate", record.self_consistent_pre_gate},
+        {"RecordOnly", record.record_only},
+        {"WorstPoint",
+         {record.worst_point[0] * mesh_coordinate_scale,
+          record.worst_point[1] * mesh_coordinate_scale,
+          record.worst_point[2] * mesh_coordinate_scale}},
+        {"OffPlaneMaxRatio", record.off_plane_max_ratio},
+        {"AdjacentMaxRatio", record.adjacent_max_ratio},
+        {"ClaimLength", record.claim_length * mesh_coordinate_scale},
+        {"CellLength", record.cell_length * mesh_coordinate_scale},
+        {"Excluded", record.excluded}};
     // The probes read on the device arc chords (decision 611 (2)): count, largest
     // displacement and the knots (mesh-file units).
     nlohmann::json snaps = nlohmann::json::array();
@@ -24812,7 +25283,14 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
         {"MaxDisplacement", record.max_probe_snap * mesh_coordinate_scale},
         {"Knots", std::move(snaps)}};
     diagnostics["Records"].push_back(entry);
-    if (record.excluded)
+    if (record.excluded && record.record_only)
+    {
+      // RecordOnly (the diagnostic opt-out, idfix B.4 (F)): the verdict stands in the
+      // record, the patch keeps its weight and its claims stay corrected.
+      diagnostics["RecordOnlyVerdicts"].push_back(entry);
+      record_only_count++;
+    }
+    else if (record.excluded)
     {
       diagnostics["ExcludedPatches"].push_back(entry);
       excluded_count++;
@@ -24877,14 +25355,31 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   }
   if (!records.empty())
   {
-    Mpi::Print(" Conductor-consistency gate (decision 277), excitation {:d}: {:d} spatial "
-               "patch(es) probed, max ratio {:.3e} (patch {:d}, 0-based), {:d} excluded "
-               "(tolerance {:.3e}; amplitude floor {:.3e} x the excitation potential "
-               "{:.6e}; claims {:.6e}, cells {:.6e} mesh-file units left uncorrected)\n",
-               source, static_cast<int>(records.size()), max_ratio, max_patch,
-               excluded_count, kConductorConsistencyTolerance,
-               kConductorConsistencyAmplitudeFloor, excitation_potential, excluded_claims,
-               excluded_cells);
+    int spatial_records = 0, translational_records = 0;
+    for (const auto &record : records)
+    {
+      (record.probe_kind == 1 ? translational_records : spatial_records)++;
+    }
+    const bool maxwell_records = records.front().maxwell;
+    Mpi::Print(" Conductor-consistency gate (decision 277; idfix R0-a), {} {:d}{}: {:d} "
+               "patch(es) probed ({:d} spatial, {:d} translational), max ratio {:.3e} "
+               "(patch {:d}, 0-based), {:d} excluded{} (tolerance {:.3e}; amplitude floor "
+               "{:.3e} x {} {:.6e}; claims {:.6e}, cells {:.6e} mesh-file units left "
+               "uncorrected)\n",
+               maxwell_records ? "source" : "excitation", source,
+               maxwell_records ? fmt::format(" at {:.6e} GHz", records.front().frequency)
+                               : std::string(),
+               static_cast<int>(records.size()), spatial_records, translational_records,
+               max_ratio, max_patch, excluded_count,
+               record_only_count > 0
+                   ? fmt::format(" ({:d} verdict(s) RECORDED ONLY: RecordOnly, a "
+                                 "DIAGNOSTIC run, not a run of record)",
+                                 record_only_count)
+                   : std::string(),
+               kConductorConsistencyTolerance, kConductorConsistencyAmplitudeFloor,
+               maxwell_records ? "the largest applied trace amplitude"
+                               : "the excitation potential",
+               excitation_potential, excluded_claims, excluded_cells);
     int snapped_patches = 0, snapped_knots = 0;
     double max_snap = 0.0;
     for (const auto &record : records)
@@ -25477,7 +25972,10 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
       // S7diag R1 (decision 758): the raw claim of every applied patch the
       // conductor-consistency gate can probe, by the same rule, kept for the gate (which
-      // runs per excitation, when `placed_patches` is gone) on every rank.
+      // runs per excitation, when `placed_patches` is gone) on every rank. R0-a (idfix
+      // DESIGN A.1 (c)): the gate probes every model class on both paths, so every applied
+      // patch's claim is kept (a patch without probes is never excluded; its claim is
+      // never read).
       conductor_consistency_claim_tolerance =
           kSignatureParameterToleranceOverRadius * config.matching_radius;
       for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
@@ -25488,8 +25986,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
           continue;
         }
         const auto model_it = model_indices.find(patch_config.model);
-        if (model_it == model_indices.end() ||
-            models[model_it->second].plane_conductor_vertices.empty())
+        if (model_it == model_indices.end())
         {
           continue;
         }
@@ -25701,7 +26198,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           MFEM_VERIFY(write_geometry_cache, "Response-geometry cache generation requires "
                                             "PALACE_RESPONSE_GEOMETRY_CACHE_WRITE=1!");
           // Decision 1001 Q5: a configuration with geometry fallbacks is never cached (the
-          // cache version stays 20; a cache read is a configuration without fallbacks).
+          // cache (version 21) carries none; a cache read is a configuration without
+          // fallbacks).
           MFEM_VERIFY(
               automatic_config->geometry_fallbacks.empty(),
               "A surface-response configuration with "
@@ -25745,6 +26243,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   geometry_fallback_interface_lengths = config->geometry_fallback_interface_lengths;
   geometry_fallback_interface_types = config->geometry_fallback_interface_types;
   geometry_fallback_coordinate_scale = coordinate_scale;
+  // The conductor-consistency gate's diagnostic opt-out (idfix R0-a, B.4 (F)): recorded in
+  // the Diagnostics whenever set, so that a run of record carrying it is refused by name.
+  conductor_consistency_record_only = request->conductor_consistency_record_only;
+  if (conductor_consistency_record_only)
+  {
+    ConductorConsistencyDiagnostics()["RecordOnly"] = true;
+  }
   GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
                                          geometry_fallbacks);
   if (request->IsAutomatic() && !geometry_fallbacks.empty() &&
@@ -25800,6 +26305,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
     model.contour_size = static_cast<int>(points.size());
     model.conductor_state_count = model_config.conductor_state_count;
+    model.local_piece_references = model_config.local_piece_references;
     MFEM_VERIFY(model.conductor_state_count >= 0,
                 "Response correction requires a nonnegative conductor-state count!");
     model.basis_size = model.contour_size + model.conductor_state_count;
@@ -26363,6 +26869,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // claimed portions of a spatial cluster and the longitudinal cell, mesh units.
     auto &placed = patches.back();
     placed.feature = patch_config.provenance.feature;
+    placed.conductor_probe_edges = patch_config.conductor_probe_edges;
+    placed.conductor_probes = patch_config.conductor_probes;
     placed.cell_length =
         patch_config.longitudinal_cell[1] - patch_config.longitudinal_cell[0];
     for (const auto &claim : patch_config.provenance.claims)
@@ -26387,6 +26895,39 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // weight, the one it would carry if applied.
   const std::size_t applied_patch_count = patches.size();
   const int applied_basis_size = basis_size;
+  {
+    // R0-a (idfix DESIGN A.1 (c)): a translational patch WITHOUT edge probes (an explicit
+    // patch, or the PatchConstruction "Legacy" comparison branch, which forms no probes)
+    // is recorded untestable by model (UnprobedModels; never a silent zero), like a
+    // collocated spatial model.
+    // (A two-dimensional mesh IS the cross-section: no end face, no edge probe; not
+    // recorded there.)
+    std::vector<int> unprobed(models.size(), 0);
+    for (std::size_t p = 0; dimension == 3 && p < applied_patch_count; p++)
+    {
+      const auto &model = models[patches[p].model];
+      if (!model.spatial_basis && patches[p].conductor_probes.empty())
+      {
+        unprobed[patches[p].model] = 1;
+      }
+    }
+    if (!unprobed.empty() && dimension == 3)
+    {
+      Mpi::GlobalMax(static_cast<int>(unprobed.size()), unprobed.data(), fespace.GetComm());
+    }
+    for (std::size_t m = 0; m < models.size(); m++)
+    {
+      if (unprobed[m])
+      {
+        ConductorConsistencyDiagnostics()["UnprobedModels"].push_back(
+            {{"Model", models[m].name},
+             {"ModelIndex", models[m].idx},
+             {"Reason", "translational patch without edge probes (an explicit patch or "
+                        "the PatchConstruction Legacy comparison branch): the R0-a probes "
+                        "are formed by the Features construction only"}});
+      }
+    }
+  }
   diagnostic_entry_models.clear();
   diagnostic_entry_features.clear();
   for (std::size_t k = 0; k < spatial_cluster_priority.entries.size(); k++)
@@ -26535,6 +27076,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         patch.point_count = patch.mortar_longitudinal_subdivisions *
                             (contour_sample_count + model.conductor_state_count + 1);
       }
+    }
+    if (!model.spatial_mortar && !patch.conductor_probes.empty())
+    {
+      // R0-a (idfix DESIGN A.1 (c)): a translational patch's conductor-consistency probes
+      // follow its (last slice's) references, like the spatial probes.
+      patch.probe_point_count = static_cast<int>(patch.conductor_probes.size());
+      patch.point_count += patch.probe_point_count;
     }
     point_count += patch.point_count;
   }
@@ -26888,6 +27436,23 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         point++;
       }
     }
+    if (!model.spatial_mortar && patch.probe_point_count > 0)
+    {
+      // R0-a (idfix DESIGN A.1 (c)): the translational patch's conductor-consistency probes
+      // (the device metal point of every model Edge at both end faces of the cell, placed
+      // on the device perimeter), after the references, like the spatial probes.
+      auto &probes = patches[patch_idx].probe_points;
+      probes.clear();
+      for (const auto &probe : patch_config.conductor_probes)
+      {
+        for (int d = 0; d < dimension; d++)
+        {
+          xyz(d * point_count + point) = probe.point[d];
+        }
+        probes.push_back(probe.point);
+        point++;
+      }
+    }
     MFEM_ASSERT(point == patch.point_offset + patch.point_count,
                 "Incorrect surface-response patch point count!");
   }
@@ -27113,6 +27678,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   geometry_fallback_interface_lengths = config.geometry_fallback_interface_lengths;
   geometry_fallback_interface_types = config.geometry_fallback_interface_types;
   geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+  conductor_consistency_record_only = request->conductor_consistency_record_only;
+  if (conductor_consistency_record_only)
+  {
+    ConductorConsistencyDiagnostics()["RecordOnly"] = true;
+  }
   GeometryFallbackLedger geometry_ledger(geometry_failure_policy, false,
                                          geometry_fallbacks);
   if (!geometry_fallbacks.empty() && (config.models.empty() || config.patches.empty()))
@@ -27178,6 +27748,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     model.topology = model_config.topology.empty() ? "Explicit" : model_config.topology;
     model.contour_size = static_cast<int>(points.size());
     model.conductor_state_count = model_config.conductor_state_count;
+    model.local_piece_references = model_config.local_piece_references;
     MFEM_VERIFY(model.conductor_state_count >= 0,
                 "Maxwell response correction requires a nonnegative conductor-state "
                 "count!");
@@ -27227,7 +27798,36 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       // angle-interpolated corner, which ModelTraceMesh serves alike). A slave whose two
       // parents are not consecutive knots of one ring (a cap-centre slave) lies on no ring
       // edge and is routed by no line.
-      for (const auto &vertex : ModelTraceMesh(model_config).vertices)
+      const auto trace_mesh = ModelTraceMesh(model_config);
+      // R0-a (decision 1064 (2)): the gate's probes of a spatial model on this (collocated)
+      // path = the trace mesh's conductor vertices on the process plane w = 0 (the coupon's
+      // metal bottom on the device's metal sheet), the same set the electrostatic mortar
+      // gate reads; the plane tolerance relative to the trace mesh's extent normal to it.
+      if (model.spatial_basis)
+      {
+        double extent = 0.0;
+        for (const auto &vertex : trace_mesh.vertices)
+        {
+          extent = std::max(extent, std::abs(vertex.point[2]));
+        }
+        for (std::size_t v = 0; v < trace_mesh.vertices.size(); v++)
+        {
+          const auto &vertex = trace_mesh.vertices[v];
+          if (vertex.conductor > 0 && std::abs(vertex.point[2]) <= 1.0e-6 * extent)
+          {
+            MFEM_VERIFY(vertex.conductor <= model.conductor_state_count + 1,
+                        "Response model \"" << model.name
+                                            << "\": a trace-mesh conductor vertex names "
+                                               "conductor "
+                                            << vertex.conductor
+                                            << " beyond its conductor references!");
+            model.maxwell_probe_points.push_back(vertex.point);
+            model.maxwell_probe_conductors.push_back(vertex.conductor);
+            model.maxwell_probe_vertices.push_back(static_cast<int>(v));
+          }
+        }
+      }
+      for (const auto &vertex : trace_mesh.vertices)
       {
         if (vertex.parent_a <= 0)
         {
@@ -27393,6 +27993,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   };
   std::vector<std::vector<ContourSlaveVertex>> contour_slaves;
   contour_slaves.reserve(local_patch_capacity);
+  // Per local patch its placed configuration (the probe snaps and axes of the R0-a probes).
+  std::vector<const ResponsePatchData *> local_patch_configs;
+  local_patch_configs.reserve(local_patch_capacity);
   for (std::size_t patch_index = 0; patch_index < applied_patches.size(); patch_index++)
   {
     const auto &patch_config = applied_patches[patch_index];
@@ -27503,6 +28106,25 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     patches.push_back(Patch{applied_patch_indices[patch_index], model_it->second, 0,
                             basis_size, 0, patch_config.longitudinal_cell, 1, 0.0,
                             patch_config.weight, patch_config.domain_weight});
+    local_patch_configs.push_back(&patch_config);
+    // The provenance of the conductor-consistency record (R0-a on the Maxwell path): the
+    // feature, the claimed portions, the cell and the translational edge probes.
+    auto &placed = patches.back();
+    placed.feature = patch_config.provenance.feature;
+    placed.conductor_probe_edges = patch_config.conductor_probe_edges;
+    placed.conductor_probes = patch_config.conductor_probes;
+    placed.cell_length =
+        patch_config.longitudinal_cell[1] - patch_config.longitudinal_cell[0];
+    for (const auto &claim : patch_config.provenance.claims)
+    {
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = claim.p1[d] - claim.p0[d];
+        length_squared += delta * delta;
+      }
+      placed.claim_length += std::sqrt(length_squared);
+    }
     basis_size += model.basis_size;
   }
 
@@ -27765,6 +28387,160 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
     maxwell_patch_paths.emplace_back(path_begin,
                                      static_cast<int>(maxwell_paths.size()) - path_begin);
+
+    // R0-a (idfix DESIGN B.3 (d) / SUPERVISOR AMENDMENT 3 C.3; decision 1064 (2)): the
+    // conductor-consistency probes of this patch and their constructed legs.
+    const auto &patch_config = *local_patch_configs[patch_index];
+    auto &probes = maxwell_probes.emplace_back();
+    auto AppendLeg = [&](std::vector<std::pair<int, double>> &legs, const mfem::Vector &p0,
+                         const mfem::Vector &p1)
+    {
+      const int line = AppendLineIfDistinct(p0, p1);
+      if (line >= 0)
+      {
+        legs.emplace_back(line, 1.0);
+      }
+    };
+    if (!patch.conductor_probes.empty())
+    {
+      // A translational patch: for every edge probe, the straight w = 0 chain at its end
+      // face from the patch's conductor anchor (reference 1, translated to the face along
+      // AxisW) through every edge offset between the anchor's lateral offset and the
+      // probe's edge, in order; a leg over metal reads ~0 (the tangential field of a PEC
+      // sheet), a leg across a gap the piece-to-piece voltage. The anchor's lateral offset
+      // = its projection on AxisU relative to the origin; its piece by LocalPieceOfOffset.
+      const auto &edges = patch.conductor_probe_edges;
+      std::vector<double> offsets;
+      std::vector<int> gap_directions, pieces;
+      for (const auto &edge : edges)
+      {
+        offsets.push_back(edge.offset);
+        gap_directions.push_back(edge.gap_direction);
+        pieces.push_back(edge.piece);
+      }
+      double anchor_offset = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        anchor_offset += (anchor[d] - patch_config.origin[d]) * patch_config.axis_u[d];
+      }
+      MFEM_VERIFY(LocalPieceOfOffset(offsets, gap_directions, pieces, anchor_offset) > 0,
+                  "Response-correction patch "
+                      << patch.global_index << " (model " << model.name
+                      << "): its Maxwell conductor anchor (lateral offset " << anchor_offset
+                      << ") lies in a gap of its cross-section, so the R0-a probe chain "
+                         "cannot start on metal (a placement defect)!");
+      for (const auto &probe_data : patch.conductor_probes)
+      {
+        const auto &edge = edges[probe_data.edge];
+        MaxwellProbe probe;
+        probe.point = probe_data.point;
+        probe.kind = 1;
+        probe.edge = probe_data.edge;
+        probe.end_face = probe_data.end_face;
+        probe.conductor = edge.conductor;
+        probe.piece = edge.piece;
+        // The anchor translated to the probe's end face.
+        mfem::Vector face_anchor(anchor);
+        for (int d = 0; d < dimension; d++)
+        {
+          face_anchor[d] +=
+              patch_config.longitudinal_cell[probe_data.end_face] * patch_config.axis_w[d];
+        }
+        auto ProbePoint = [&](int edge_index)
+        {
+          mfem::Vector point(3);
+          point = 0.0;
+          for (const auto &other : patch.conductor_probes)
+          {
+            if (other.edge == edge_index && other.end_face == probe_data.end_face)
+            {
+              for (int d = 0; d < dimension; d++)
+              {
+                point[d] = other.point[d];
+              }
+              return point;
+            }
+          }
+          MFEM_ABORT("Response-correction patch "
+                     << patch.global_index << ": no conductor probe for edge " << edge_index
+                     << " on end face " << probe_data.end_face << "!");
+          return point;
+        };
+        // The edges strictly between the anchor's offset and the probe's edge, in order.
+        const double target_offset = edges[probe_data.edge].offset;
+        std::vector<int> chain;
+        if (target_offset >= anchor_offset)
+        {
+          for (std::size_t k = 0; k < edges.size(); k++)
+          {
+            if (edges[k].offset > anchor_offset && edges[k].offset < target_offset)
+            {
+              chain.push_back(static_cast<int>(k));
+            }
+          }
+        }
+        else
+        {
+          for (std::size_t k = edges.size(); k-- > 0;)
+          {
+            if (edges[k].offset < anchor_offset && edges[k].offset > target_offset)
+            {
+              chain.push_back(static_cast<int>(k));
+            }
+          }
+        }
+        chain.push_back(probe_data.edge);
+        mfem::Vector previous(face_anchor);
+        for (const int edge_index : chain)
+        {
+          const mfem::Vector next = ProbePoint(edge_index);
+          AppendLeg(probe.legs, previous, next);
+          previous = next;
+        }
+        probes.push_back(std::move(probe));
+      }
+    }
+    else if (!model.maxwell_probe_points.empty())
+    {
+      // A spatial patch: its trace mesh's plane conductor vertices, each read along the
+      // straight plane leg from its OWN conductor's anchor (decision 1064 (2)); a vertex
+      // the placement snapped onto a device arc chord (decision 611 (2)) is read there.
+      std::map<int, const ResponsePatchData::Provenance::ProbeSnap *> snap_by_vertex;
+      for (const auto &snap : patch_config.provenance.probe_snaps)
+      {
+        snap_by_vertex.emplace(snap.vertex, &snap);
+      }
+      for (std::size_t q = 0; q < model.maxwell_probe_points.size(); q++)
+      {
+        MaxwellProbe probe;
+        probe.kind = 0;
+        probe.vertex = model.maxwell_probe_vertices[q];
+        probe.conductor = model.maxwell_probe_conductors[q];
+        mfem::Vector point(3);
+        for (int d = 0; d < 3; d++)
+        {
+          const auto &local = model.maxwell_probe_points[q];
+          point[d] = patch_config.origin[d] + (local[0] * patch_config.axis_u[d] +
+                                               local[1] * patch_config.axis_v[d] +
+                                               local[2] * patch_config.axis_w[d]) /
+                                                  coordinate_scale;
+        }
+        if (const auto snap = snap_by_vertex.find(probe.vertex);
+            snap != snap_by_vertex.end())
+        {
+          for (int d = 0; d < dimension; d++)
+          {
+            point[d] += snap->second->displacement[d];
+          }
+        }
+        for (int d = 0; d < dimension; d++)
+        {
+          probe.point[d] = point[d];
+        }
+        AppendLeg(probe.legs, anchors[probe.conductor - 1], point);
+        probes.push_back(std::move(probe));
+      }
+    }
   }
 
   {

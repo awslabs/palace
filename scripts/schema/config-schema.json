@@ -3454,6 +3454,18 @@
               "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`; and `surface-response-model-raw-energy.csv` / `-groups.csv`, the raw field's within-R energy partitioned exactly over the applied patches' claims by model set plus the unclaimed remainder. Electrostatic, driven and eigenmode (per frequency / per mode, with the `f (GHz)` / `m` and `exc` keys after the electrostatic columns; the Maxwell path also writes `surface-response-patches.csv`, `surface-response-traces.csv` with the complex spatial traces and `surface-response-patch-loops.csv`, the per-path loop residuals of the line-integral trace lift); a three-dimensional export: not supported by boundary mode or on a two-dimensional mesh. Every other output is unchanged.",
               "default": false
             },
+            "ConductorConsistency": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The conductor-consistency gate (decision 277; the identification fix round R0-a, decisions 1062 / 1064): on BOTH the electrostatic and the Maxwell path every placed patch of every model class is probed at its metal cross-sections on the coupon's box faces (a translational patch: the device metal point of every model Edge at both end faces of its cell, grouped into local metal pieces by the Edges' GapDirections; a spatial patch: its trace mesh's conductor vertices on the process plane) and a patch whose device reading departs from the potential its basis assigns to that metal by more than the tolerance (0.02 of the trace amplitude, floored) is EXCLUDED (weight 0, its raw claim kept RAW, recorded, the LOW-CONFIDENCE banner).",
+              "properties": {
+                "RecordOnly": {
+                  "type": "boolean",
+                  "description": "DIAGNOSTIC: record every probe reading and verdict but exclude nothing (every patch keeps its weight); the run prints a DIAGNOSTIC banner and writes `ConductorConsistency.RecordOnly: true` into its diagnostics. Admitted only for the named ITEM-0 test leg and the hardening fixtures; a run of record with it set is refused by the comparator.",
+                  "default": false
+                }
+              }
+            },
             "DomainBoundary": {
               "type": "object",
               "additionalProperties": false,

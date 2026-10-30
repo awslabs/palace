@@ -1802,6 +1802,15 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
 
     MaxwellSurfaceResponseMeasurement result;
     const double nan = std::numeric_limits<double>::quiet_NaN();
+    // R0-a (idfix DESIGN B.3 (e)): the gate's exclusions so far, read fresh at every
+    // measurement (the list grows with the sources; empty with 0 exclusions).
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+        conductor_consistency_portions;
+    for (const auto &portion : surface_response_op->GetConductorConsistencyPortions())
+    {
+      conductor_consistency_portions.push_back(
+          {portion.p0, portion.p1, portion.topology, portion.feature});
+    }
     result.raw_normalization_energy = measurement_cache.domain_E_field_energy_all +
                                       measurement_cache.lumped_port_capacitor_energy;
     MFEM_VERIFY(result.raw_normalization_energy > 0.0,
@@ -1866,6 +1875,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.spatial_cluster_priority = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
             target_interfaces, *E, D_recovered.get(),
             surface_response_spatial_cluster_priority);
+      }
+      if (!conductor_consistency_portions.empty())
+      {
+        // R0-a (idfix DESIGN B.3 (e)): the conductor-consistency-excluded patches' raw
+        // claims (grown by the gate before this measurement, S7diag R1), on the raw field.
+        result.conductor_consistency = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+            target_interfaces, *E, D_recovered.get(), conductor_consistency_portions);
       }
       if (!surface_response_model_raw.empty())
       {
@@ -1962,6 +1978,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         const double kept_raw = PortionEnergy(result.uncovered, target) +
                                 PortionEnergy(result.domain_boundary, target) +
                                 PortionEnergy(result.spatial_cluster_priority, target) +
+                                PortionEnergy(result.conductor_consistency, target) +
                                 RemainderEnergy(result.loop_remainder, target);
         interface->second.corrected_energy =
             outside->energy_outside + fabricated->second + kept_raw;
@@ -2042,6 +2059,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                     target_interfaces, corrected_field, corrected_flux,
                     surface_response_spatial_cluster_priority);
           }
+          if (!conductor_consistency_portions.empty())
+          {
+            result.self_consistent_conductor_consistency =
+                surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+                    target_interfaces, corrected_field, corrected_flux,
+                    conductor_consistency_portions);
+          }
           if (!corrected_response.loop_remainders.empty())
           {
             const auto remainder_portions = surface_response_op->GetLoopRemainderPortions(
@@ -2078,6 +2102,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
               PortionEnergy(result.self_consistent_uncovered, target) +
               PortionEnergy(result.self_consistent_domain_boundary, target) +
               PortionEnergy(result.self_consistent_spatial_cluster_priority, target) +
+              PortionEnergy(result.self_consistent_conductor_consistency, target) +
               RemainderEnergy(result.self_consistent_loop_remainder, target);
         }
         result.has_self_consistent = true;
@@ -2970,12 +2995,15 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
       post_dir / "surface-response-domain-boundary-energy.csv";
   const fs::path spatial_cluster_priority_path =
       post_dir / "surface-response-spatial-cluster-priority-energy.csv";
+  const fs::path conductor_consistency_path =
+      post_dir / "surface-response-conductor-consistency-energy.csv";
   const bool first_print = !surface_response_portion_tables_started;
   if (first_print)
   {
     fs::remove(uncovered_path);
     fs::remove(domain_boundary_path);
     fs::remove(spatial_cluster_priority_path);
+    fs::remove(conductor_consistency_path);
     surface_response_portion_tables_started = true;
   }
   const auto &result = *surface_response_measurement;
@@ -3146,6 +3174,23 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
                             "geometric cells", "spatialclusterpriority",
                             result.spatial_cluster_priority,
                             result.self_consistent_spatial_cluster_priority);
+  }
+  if (!result.conductor_consistency.empty())
+  {
+    // R0-a (idfix DESIGN B.3 (e); S7diag R1, decision 758): the ConductorConsistency share
+    // per type (the DomainBoundary table's columns), written once something is excluded.
+    std::map<std::string, PortionTypeRow> portions_by_type;
+    const auto &record = surface_response_op->GetConductorConsistencyPortionRecord();
+    for (std::size_t i = 0; i < record.portions.size(); i++)
+    {
+      auto &entry = portions_by_type[record.portions[i].topology];
+      entry.portions++;
+      entry.length += PortionLength(record.portions[i]);
+      entry.extra += record.translational[i] ? 1.0 : 0.0;
+    }
+    WritePortionEnergyTable(conductor_consistency_path, portions_by_type, "geometric cells",
+                            "conductorconsistency", result.conductor_consistency,
+                            result.self_consistent_conductor_consistency);
   }
 }
 

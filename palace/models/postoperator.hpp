@@ -314,6 +314,12 @@ protected:
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> spatial_cluster_priority;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
         self_consistent_spatial_cluster_priority;
+    // R0-a on the Maxwell path (idfix DESIGN B.3 (e); S7diag R1, decision 758): the raw
+    // claims of the patches the conductor-consistency gate has excluded so far, kept raw
+    // like the three lists above (surface-response-conductor-consistency-energy.csv).
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> conductor_consistency;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+        self_consistent_conductor_consistency;
     // PatchEnergy (decision 922 B-1): per target interface, the raw field's within-R energy
     // per model-set label (+ "unclaimed").
     std::map<int, std::map<std::string, double>> model_raw_partition;

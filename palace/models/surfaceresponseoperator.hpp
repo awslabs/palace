@@ -163,6 +163,27 @@ private:
   friend class SurfaceResponseOperator;
 };
 
+// R0-a (idfix DESIGN A.1 (c) / A.3 (b), decision 1062): the LOCAL METAL PIECES of a 2D
+// translational cross-section from its Edges in increasing lateral offset, each with its
+// GapDirection (+1: the gap on the +u side of the edge, -1: on the -u side). Consecutive
+// edges k and k + 1 bound ONE metal piece iff edge k's gap lies on its -u side and edge
+// k + 1's on its +u side (the metal lies between them); the metal outside the first edge
+// (its gap on +u) and outside the last edge (its gap on -u) are pieces reaching the box
+// side. Returns the piece of every edge, 1..P in increasing u (a CPW = 3, a gap = 2, a
+// strip or an isolated edge = 1). ONE rule, shared by name with the library generators'
+// LocalPiece (lane C; U-PIECES asserts the two agree on every v3-j ParallelEdgeCluster).
+// Refuses (MFEM_ABORT) two consecutive edges facing the same way with nothing between them
+// (gap after gap or metal after metal: not a cross-section).
+std::vector<int> LocalPiecesOfParallelEdges(const std::vector<double> &offsets,
+                                            const std::vector<int> &gap_directions);
+
+// The piece (1..P) whose metal interval holds the lateral offset u, 0 when u lies in a gap
+// (the same edges / pieces as LocalPiecesOfParallelEdges; an offset ON an edge belongs to
+// the edge's metal side).
+int LocalPieceOfOffset(const std::vector<double> &offsets,
+                       const std::vector<int> &gap_directions,
+                       const std::vector<int> &pieces, double u);
+
 //
 // Low-rank Schur-complement correction which replaces the local response of an ideal
 // thin-metal edge by a fabrication-resolved coupon response. The correction has the form
@@ -227,6 +248,24 @@ public:
     double max_ratio = 0.0;      // max_deviation / normalization
     int worst_vertex = -1;       // trace-mesh vertex (0-based) of max_deviation
     int worst_conductor = 0;     // its conductor (1-based)
+    // R0-a (idfix DESIGN A.1 (c) / B.3): a translational patch's worst probe = its model
+    // Edge (0-based, increasing offset), the edge's local metal piece (1-based) and the
+    // cell end face it was read on (0 / 1); -1 / 0 / -1 for a spatial patch. The probe
+    // kind: 0 = a spatial trace-mesh conductor vertex, 1 = a translational edge probe.
+    int worst_edge = -1;
+    int worst_piece = 0;
+    int worst_end_face = -1;
+    int probe_kind = 0;
+    // The Maxwell path (B.3 / C.1 / decision 1064): the frequency or mode the record was
+    // read at (the source index is `source`), the floor F(s, f) = AmplitudeFloor x the
+    // largest applied trace amplitude (ES: AmplitudeFloor x the excitation potential, both
+    // in `normalization`'s floor), and whether the self-consistent field of an eigenmode
+    // was solved before this gate could act (SelfConsistentPreGate).
+    bool maxwell = false;
+    double frequency = 0.0;
+    bool self_consistent_pre_gate = false;
+    // RecordOnly (the diagnostic opt-out, B.4 (F)): the verdict recorded, the weight kept.
+    bool record_only = false;
     // Nondimensional mesh coordinates; the record and the log multiply by the mesh
     // coordinate scale (mesh-file units = the device coordinates).
     std::array<double, 3> worst_point{};
@@ -432,6 +471,10 @@ private:
     int contour_size = 0;
     int basis_size = 0;
     int conductor_state_count = 0;
+    // R0-b (idfix DESIGN A.3 (b); decision 1064 (4)): the references are one per LOCAL
+    // metal piece (the gate compares a probe with its piece's reference), not one per
+    // label.
+    bool local_piece_references = false;
     mfem::DenseMatrix fabricated_domain;
     mfem::DenseMatrix thin_domain;
     mfem::DenseMatrix domain_defect;
@@ -491,6 +534,14 @@ private:
     std::vector<int> plane_conductor_vertices;
     std::vector<int> off_plane_conductor_vertices;
     std::vector<std::pair<int, int>> adjacent_free_vertices;
+    // R0-a on the Maxwell path (idfix DESIGN B.3; decision 1064 (2)): the probes of a
+    // spatial model = its explicit TraceMesh's conductor vertices on the process plane
+    // (w = 0), in the coupon frame, with their conductor labels and trace-mesh vertex
+    // indices (the ProbeSnaps key); empty for a model without a TraceMesh (recorded
+    // UnprobedModels) and for every translational model (its probes are the patch's).
+    std::vector<std::array<double, 3>> maxwell_probe_points;
+    std::vector<int> maxwell_probe_conductors;
+    std::vector<int> maxwell_probe_vertices;
   };
 
   struct Patch
@@ -518,6 +569,20 @@ private:
     // and the patch's provenance for the record.
     int probe_point_count = 0;
     std::vector<std::array<double, 3>> probe_points;
+    // R0-a (idfix DESIGN A.1 (c)): a translational patch's probes = the device metal point
+    // of every model Edge at both end faces of its cell (ResponseCorrectionPatchData::
+    // conductor_probes, computed at the placement), with the Edges' GapDirection / label /
+    // local piece; empty for a spatial patch (whose probes are its trace mesh's conductor
+    // vertices) and for an unprobed patch (recorded UnprobedModels).
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionPatchData::ConductorProbeEdge>
+        conductor_probe_edges;
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionPatchData::ConductorProbe>
+        conductor_probes;
+    // The conductor-consistency gate's sticky exclusion (B.3 (e) / C.1): weight 0 from the
+    // excluding source on; the patch stays in the Maxwell floor's set (C.1).
+    bool conductor_consistency_excluded = false;
     // The probes read on the device arc chords (decision 611 (2)): the placed patch's
     // ProbeSnaps applied to probe_points, for the record.
     std::vector<ConductorConsistencyRecord::ProbeSnap> probe_snaps;
@@ -574,6 +639,27 @@ private:
   std::vector<MaxwellContourPath> maxwell_paths;
   std::vector<MaxwellConductorPath> maxwell_conductor_paths;
   std::vector<std::pair<int, int>> maxwell_patch_paths;
+  // R0-a (idfix DESIGN B.3 (d) / SUPERVISOR AMENDMENT 3 C.3; decision 1064): per LOCAL
+  // patch, its conductor-consistency probes on the Maxwell path. The reading of probe q is
+  // P(q) = -(sum over its legs of sign x the leg's line integral of E), complex: the legs
+  // are CONSTRUCTED by one rule — a translational patch: the straight w = 0 legs between
+  // consecutive Edge offsets at the probe's end face, from the patch's conductor anchor
+  // (translated to that face) through every edge up to the probe's edge; a spatial patch:
+  // the one straight plane leg from the probe's own conductor's anchor to the trace-mesh
+  // vertex. The lines live in maxwell_lines (evaluated with the contour lines, in no path,
+  // in no fit, zero in every transpose).
+  struct MaxwellProbe
+  {
+    std::array<double, 3> point{};  // mesh coordinates
+    int kind = 0;       // 0 = a spatial trace-mesh vertex, 1 = a translational edge
+    int vertex = -1;    // the trace-mesh vertex (spatial)
+    int edge = -1;      // the model edge (translational)
+    int end_face = -1;  // the cell end face (translational)
+    int conductor = 1;  // the canonical conductor label the probe's metal carries
+    int piece = 0;      // the local metal piece (translational; 0 spatial)
+    std::vector<std::pair<int, double>> legs;  // (line, sign) from the anchor to the probe
+  };
+  std::vector<std::vector<MaxwellProbe>> maxwell_probes;
   int maxwell_quadrature_order = 0;
   // OI-MX-LOOPGATE: per local patch the least-squares structure, the line lengths (mesh
   // units) and, keyed by the placed patch index on every rank, every applied patch's raw
@@ -1034,22 +1120,60 @@ private:
   std::vector<double> AllgatherRecords(const std::vector<double> &local_records) const;
 
 public:
-  // Conductor-consistency gate (decision 277 (A)), solve time only: measure every applied
-  // spatial surface-mortar patch on the potential x of excitation `source`
-  // (ConductorConsistencyRecord), exclude the patches whose max_ratio exceeds
-  // kConductorConsistencyTolerance (weight 0 from now on, like a DomainBoundary cell: the
-  // fixed-trace energies, the self-consistent operator and the ModelCatalog weights of
-  // this and every later excitation omit them), append the records to the Diagnostics
-  // ("ConductorConsistency": every tested patch of every excitation, the excluded ones
-  // with their claim / cell lengths next to the DomainBoundary record) and return the
-  // records of this excitation (ordered by global patch index, replicated on all ranks).
-  // Collective. The preflight (dry run) cannot evaluate it: it needs the device trace.
+  // Conductor-consistency gate (decision 277 (A); the identification fix round R0-a, idfix
+  // DESIGN A.1 (c) / B.3 / SUPERVISOR AMENDMENT 3, decisions 1062 / 1064), solve time
+  // only, BOTH paths, EVERY model class: measure every applied patch that carries probes
+  // on the field of excitation `source` (a spatial surface-mortar patch: the device
+  // potential at its trace mesh's conductor vertices on the process plane; a translational
+  // patch: the device potential at every model Edge's metal point on both end faces of
+  // its cell, grouped into local metal pieces by the Edges' GapDirections, against the
+  // reference its metal is held at), exclude the patches whose max_ratio exceeds
+  // kConductorConsistencyTolerance (weight 0 from now on, STICKY, like a DomainBoundary
+  // cell: the fixed-trace energies, the self-consistent operator and the ModelCatalog
+  // weights of this and every later excitation omit them; their raw claims are served
+  // RAW), append the records to the Diagnostics ("ConductorConsistency": every tested
+  // patch of every excitation, the excluded ones with their claim / cell lengths next to
+  // the DomainBoundary record) and return the records of this excitation (ordered by
+  // global patch index, replicated on all ranks). Under
+  // SurfaceResponseCorrection.ConductorConsistency.RecordOnly (the diagnostic opt-out) the
+  // verdicts are recorded and NO weight changes. Collective. The preflight (dry run) cannot
+  // evaluate it: it needs the device trace.
   std::vector<ConductorConsistencyRecord> ApplyConductorConsistencyGate(const Vector &x,
                                                                         int source);
-  // Whether any patch carries conductor-consistency probes (a spatial surface-mortar
-  // model with conductor vertices on the process plane).
+  // The MAXWELL gate (idfix DESIGN B.3 / SUPERVISOR AMENDMENT 3 C.1 / C.3 / C.4; decision
+  // 1064) on the complex field E (true dofs) of `source` (the excitation index; the
+  // frequency in GHz, or the mode index in `source` with its frequency, for the record):
+  // every applied patch's probes are read as line integrals of E along their constructed
+  // legs (MaxwellProbe), P(q) complex; the patch's trace amplitude A_p = max |t_i| over its
+  // FIT trace incl. the states; the floor F(s, f) = kConductorConsistencyAmplitudeFloor x
+  // the largest A_p over the PRE-GATE applied set (every patch with weight > 0 by every
+  // rule other than this gate: a sticky exclusion keeps its patch in the set, so F depends
+  // on the field at (s, f) only; GlobalMax); the deviation D(q) = |P(q) - C(piece(q))| with
+  // C = 0 for the anchor's conductor / a one-reference model and the piece's
+  // conductor-state trace otherwise; ratio = D / max(A_p, F) >
+  // kConductorConsistencyTolerance on any probe excludes the patch (RecordRaw: weight 0,
+  // sticky, its raw claim served RAW, recorded, never an abort). self_consistent_pre_gate
+  // marks a record whose self-consistent field was solved before the gate could act (an
+  // eigenmode, decision 1064 (1)). Collective.
+  std::vector<ConductorConsistencyRecord>
+  ApplyConductorConsistencyGate(const ComplexVector &E, int source, double frequency,
+                                bool self_consistent_pre_gate);
+  // Whether any patch carries conductor-consistency probes (a spatial surface-mortar model
+  // with conductor vertices on the process plane, or a translational patch with its edge
+  // probes).
   bool HasConductorConsistencyProbes() const;
 
+private:
+  // The shared tail of both gates: the per-patch records of this rank gathered
+  // (Allgatherv), sorted by patch, written into the Diagnostics (the excluded patches' raw
+  // claims appended, the patch table following the exclusion), printed, returned.
+  std::vector<ConductorConsistencyRecord>
+  FinishConductorConsistencyGate(std::vector<ConductorConsistencyRecord> patch_records,
+                                 int source, double excitation_potential);
+  // The diagnostic opt-out (RecordOnly): record, never exclude.
+  bool conductor_consistency_record_only = false;
+
+public:
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through
   // Hermitian response-matrix quadratic forms.
@@ -1656,7 +1780,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 // wholly inside pair already owned that a partial pair's box also contains (owned as
 // before, the owned length split equally among the owners: re-attributed, not newly owned).
 // Keys, boxes and the identification are untouched (a placement rule);
-// the geometry cache (version 20) stores the unplaced patches and this pass runs on every
+// the geometry cache (version 21) stores the unplaced patches and this pass runs on every
 // load, so no cache version change.
 struct ContinuationOwnership
 {
