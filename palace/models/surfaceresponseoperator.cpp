@@ -23045,14 +23045,91 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         point_offsets[c + 1] - point_offsets[c], points[point][0] * coordinate_scale,
         points[point][1] * coordinate_scale, points[point][2] * coordinate_scale);
   };
-  for (std::size_t c = 0; c < candidates.size(); c++)
+  // F-6 (readiness hardening-2, decision 1018 Q4; the census QUO-019 strip islands whose
+  // lower edge lies ON the tile wall): a reference neither located nor reflected whose
+  // distance to the nearest element box is within the identification's own length
+  // tolerance (kSignatureParameterToleranceOverRadius x R, 1.9 nm at R = 1.9 um; the
+  // locator's box tolerance is ~1e-11 of the mesh scale) is a reference ON the mesh
+  // boundary to roundoff: read as located, the patch continues through the classification
+  // below (its other points decide: applied, Mirrored or DomainBoundary). Beyond the
+  // tolerance the reference is off the mesh: without a ledger the abort of record; under
+  // the ledger the patch is excluded (weight 0, reason MisplacedReference, its raw claims
+  // kept by the DomainBoundary portions) and UnlocatedPatch recorded. The distances are
+  // GlobalMin'd like the other outside points' below (the same decision on every rank).
+  std::vector<unsigned char> misplaced_reference(candidates.size(), 0);
   {
-    const std::size_t reference = origin_references[c];
-    if (reference != no_reference && !found[reference] && !reflected[reference])
+    std::vector<std::size_t> unlocated;
+    for (std::size_t c = 0; c < candidates.size(); c++)
     {
-      MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
+      const std::size_t reference = origin_references[c];
+      if (reference != no_reference && !found[reference] && !reflected[reference])
+      {
+        unlocated.push_back(c);
+      }
+    }
+    std::vector<double> reference_distances(unlocated.size());
+    for (std::size_t k = 0; k < unlocated.size(); k++)
+    {
+      reference_distances[k] = locator.BoxDistance(points[origin_references[unlocated[k]]]);
+    }
+    if (!reference_distances.empty())
+    {
+      Mpi::GlobalMin(static_cast<int>(reference_distances.size()),
+                     reference_distances.data(), comm);
+    }
+    for (std::size_t k = 0; k < unlocated.size(); k++)
+    {
+      const std::size_t c = unlocated[k];
+      const std::size_t reference = origin_references[c];
+      if (reference_distances[k] <= tolerance)
+      {
+        found[reference] = 1;
+        continue;
+      }
+      if (!geometry_ledger)
+      {
+        MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
+      }
+      misplaced_reference[c] = 1;
     }
   }
+  // The UnlocatedPatch record of an excluded patch (the former misplaced-coupon abort's
+  // text with the point's distance): what "patch", its model and feature, the unlocated
+  // point, the patch's own length (its longitudinal cell, else its claims; mesh units).
+  auto RecordUnlocatedPatch = [&](std::size_t c, std::size_t point, const char *site,
+                                  const char *what_point, double distance)
+  {
+    const auto &patch = patches[candidates[c]];
+    GeometryFallbackData entry;
+    entry.cls = "UnlocatedPatch";
+    entry.site = site;
+    entry.reason =
+        DescribeMisplacedPatch(c, point, what_point) +
+        fmt::format(" (distance {:.6e} mesh units from the nearest element box; the "
+                    "boundary tolerance {:.6e})",
+                    distance, tolerance);
+    entry.what = "patch";
+    entry.patches = {static_cast<int>(candidates[c])};
+    entry.models = {model_name(patch.model)};
+    entry.features = {patch.provenance.feature};
+    entry.example_origin = points[point];
+    const auto &cell = patch.longitudinal_cell;
+    if (patch.provenance.coupon_depth > 0.0 && cell[1] > cell[0])
+    {
+      entry.length = cell[1] - cell[0];
+    }
+    else
+    {
+      for (const auto *claims : {&patch.provenance.claims, &patch.provenance.raw_claims})
+      {
+        for (const auto &claim : *claims)
+        {
+          entry.length += Norm(Subtract(claim.p1, claim.p0));
+        }
+      }
+    }
+    geometry_ledger->Record(std::move(entry));
+  };
   result.phase_times["reflect"] = Elapsed();
   // The distance of every outside point to the nearest element box, over the ranks.
   std::vector<std::size_t> outside;
@@ -23091,6 +23168,21 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         exclusion.nearest_outside_point = points[outside[k]];
       }
       k++;
+    }
+    if (misplaced_reference[c])
+    {
+      // F-6 under the ledger: the reference off the mesh beyond the boundary tolerance.
+      const std::size_t reference = origin_references[c];
+      const auto position = std::lower_bound(outside.begin(), outside.end(), reference);
+      MFEM_VERIFY(position != outside.end() && *position == reference,
+                  "An unlocated metal-edge reference is missing from the outside points!");
+      RecordUnlocatedPatch(c, reference, "H9a/FindDomainBoundaryExclusions:reference",
+                           "its metal-edge reference",
+                           distances[static_cast<std::size_t>(position - outside.begin())]);
+      exclusion.reason = "MisplacedReference";
+      patches[exclusion.patch].weight = 0.0;
+      result.patches.push_back(exclusion);
+      continue;
     }
     // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
     // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
@@ -23294,7 +23386,17 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       // No tested point inside: not a cut through the coupon but a coupon off the mesh.
       if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
       {
-        MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+        if (!geometry_ledger)
+        {
+          MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+        }
+        // F-6 under the ledger: excluded with the record (the nearest point's distance).
+        RecordUnlocatedPatch(c, begin, "H9a/FindDomainBoundaryExclusions:all-points",
+                             "every one of its tested points", exclusion.nearest_distance);
+        exclusion.reason = "AllPointsOutside";
+        patches[exclusion.patch].weight = 0.0;
+        result.patches.push_back(exclusion);
+        continue;
       }
       if (mirror_planes.empty() || mirror_band <= 0.0)
       {

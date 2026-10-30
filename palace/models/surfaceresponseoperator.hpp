@@ -1931,7 +1931,14 @@ nlohmann::json DescribeUncoveredPortions(
 // section (the metal-edge point, on a mesh face for every correctly placed patch) is not
 // located, or none of whose tested points is, is a misplaced or mis-scaled coupon and
 // aborts naming the patch (0-based), model and point; when there were candidates at least
-// one applied patch must remain. Every patch of `skipped` (already not applied) is left
+// one applied patch must remain. Boundary tolerance (readiness hardening-2 F-6, decision
+// 1018 Q4): a reference neither located nor reflected within
+// kSignatureParameterToleranceOverRadius x R (mesh units) of the nearest element box lies
+// ON the mesh boundary to roundoff and is read as located (its other points classify the
+// patch); beyond it, with a `geometry_ledger`, the patch is excluded (weight 0; reasons
+// MisplacedReference / AllPointsOutside, its raw claims kept like any DomainBoundary patch)
+// and UnlocatedPatch recorded instead of the abort (FailClosed: the ledger's deferred
+// Enforce). Every patch of `skipped` (already not applied) is left
 // alone; `points` are the local model basis points in patch units (origin + points /
 // scale); `model_name` names a model for the abort; coordinates and lengths of the result
 // in mesh units. Collective over the mesh's communicator.
@@ -1949,7 +1956,10 @@ struct DomainBoundaryExclusion
   // decision 481), NonMirroringPlane (an outside point lies beyond an Unsupported /
   // NonPlanar plane), BeyondBand (beyond a Natural plane by more
   // than the band), ReflectionNotLocated (reflected into the domain but not located: a
-  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane).
+  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane);
+  // under a geometry-fallback ledger only (readiness hardening-2 F-6, decision 1018 Q4;
+  // recorded UnlocatedPatch): MisplacedReference (the metal-edge reference off the mesh
+  // beyond the boundary tolerance), AllPointsOutside (no tested point inside).
   std::string reason;
   // Reason UnmergedTopology (decision 481): the unmerged configuration whose REAL portion
   // the patch's own footprint overlaps (index into MirrorBand.UnmergedFeatures), that

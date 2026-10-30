@@ -315,6 +315,180 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// F-6 (readiness hardening-2, decision 1018 Q4; operator FindDomainBoundaryExclusions
+// "misplaced or mis-scaled coupon": the census QUO-019 strip islands whose metal-edge
+// reference lies 1 nm outside the tile wall). On the unit island mesh ([0, 1]^3) a cell
+// whose reference sits on the x = 1 face: pushed 1e-9 outside (within the boundary
+// tolerance kSignatureParameterToleranceOverRadius x R = 2e-4) it is read as located and
+// the patch keeps the classification of the on-face one (DomainBoundary MirrorOff by its
+// gap-side points; no record, with or without a ledger); pushed 1e-2 R outside, without a
+// ledger the abort of record stands, with the ledger the patch is excluded with the reason
+// MisplacedReference and one UnlocatedPatch record (what "patch", its model, feature,
+// cell length and the reference point). A cell with no reference and every tested point
+// outside: the abort of record, or AllPointsOutside + UnlocatedPatch under the ledger. The
+// preflight and the solve call this one function with their ledgers (P == S).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback F-6 UnlocatedPatch: a metal-edge reference on the mesh "
+                 "boundary to roundoff is located, one off the mesh is recorded (decision "
+                 "1018 Q4)",
+                 "[surfaceresponseoperator][geometryfallback][domainboundary][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  using ResponsePatchData = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  constexpr double R = 0.2;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  auto mesh = MakeIslandMesh();
+  const std::vector<std::array<double, 3>> basis_points = {
+      {-0.05, -0.05, 0.0}, {0.05, -0.05, 0.0}, {0.05, 0.05, 0.0}, {-0.05, 0.05, 0.0}};
+  auto BasisPoints = [&](int) -> const std::vector<std::array<double, 3>> *
+  { return &basis_points; };
+  auto Spatial = [](int) { return false; };
+  auto Name = [](int) { return std::string("edge"); };
+  // A cell in the lead's frame (u from the metal into the gap = -x, w along the edge)
+  // whose reference (the origin) sits at x = 1 + delta: the gap-side basis points at
+  // x = 1.05 + delta are outside the unit mesh whatever delta.
+  auto Patch = [&](const std::array<double, 3> &origin, int feature)
+  {
+    ResponsePatchData patch;
+    patch.model = 0;
+    patch.origin = origin;
+    patch.axis_u = {-1.0, 0.0, 0.0};
+    patch.axis_v = {0.0, 1.0, 0.0};
+    patch.axis_w = {0.0, 0.0, 1.0};
+    patch.longitudinal_cell = {-0.03, 0.03};
+    patch.provenance.feature = feature;
+    patch.provenance.coupon_depth = R;
+    return patch;
+  };
+  const ResponsePatchData inside = Patch({0.25, 0.5, 0.3}, 3);
+  auto Find = [&](std::vector<ResponsePatchData> &patches, GeometryFallbackLedger *ledger)
+  {
+    return FindDomainBoundaryExclusions(*mesh, patches, BasisPoints, Spatial, Name, 1.0, R,
+                                        {}, {}, 0.0, {}, ledger);
+  };
+  // (1) The reference ON the face and 1e-9 outside it: the same classification
+  // (DomainBoundary MirrorOff by the gap-side points), no record, no abort.
+  for (const double delta : {0.0, 1.0e-9, 0.5 * tolerance})
+  {
+    for (const bool with_ledger : {false, true})
+    {
+      std::vector<GeometryFallbackData> entries;
+      GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+      std::vector<ResponsePatchData> patches = {inside, Patch({1.0 + delta, 0.5, 0.3}, 7)};
+      const auto exclusions = Find(patches, with_ledger ? &ledger : nullptr);
+      CAPTURE(delta, with_ledger);
+      REQUIRE(exclusions.tested_patches == 2);
+      REQUIRE(exclusions.patches.size() == 1);
+      CHECK(exclusions.patches[0].patch == 1);
+      CHECK(exclusions.patches[0].reason == "MirrorOff");
+      CHECK(exclusions.patches[0].outside_points > 0);
+      CHECK(exclusions.patches[0].outside_points < exclusions.patches[0].tested_points);
+      CHECK(patches[0].weight == 1.0);
+      CHECK(patches[1].weight == 0.0);
+      CHECK(entries.empty());
+    }
+  }
+  // (2) The reference 1e-2 R outside: beyond the tolerance.
+  {
+    const double delta = 1.0e-2 * R;
+    std::vector<ResponsePatchData> patches = {inside, Patch({1.0 + delta, 0.5, 0.3}, 7)};
+    // The direct call of record (no ledger) keeps the abort.
+    {
+      auto copy = patches;
+      CHECK_THROWS_WITH(Find(copy, nullptr),
+                        ContainsSubstring("misplaced or mis-scaled coupon") &&
+                            ContainsSubstring("patch 1 (0-based") &&
+                            ContainsSubstring("model edge") &&
+                            ContainsSubstring("metal-edge reference"));
+    }
+    // With the ledger: excluded MisplacedReference, one UnlocatedPatch record.
+    {
+      std::vector<GeometryFallbackData> entries;
+      GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+      auto copy = patches;
+      const auto exclusions = Find(copy, &ledger);
+      REQUIRE(exclusions.tested_patches == 2);
+      REQUIRE(exclusions.patches.size() == 1);
+      CHECK(exclusions.patches[0].patch == 1);
+      CHECK(exclusions.patches[0].reason == "MisplacedReference");
+      CHECK(copy[0].weight == 1.0);
+      CHECK(copy[1].weight == 0.0);
+      REQUIRE(entries.size() == 1);
+      const auto &entry = entries.front();
+      CHECK(entry.cls == "UnlocatedPatch");
+      CHECK(entry.site == "H9a/FindDomainBoundaryExclusions:reference");
+      CHECK(entry.what == "patch");
+      CHECK(entry.patches == std::vector<int>{1});
+      CHECK(entry.models == std::vector<std::string>{"edge"});
+      CHECK(entry.features == std::vector<int>{7});
+      CHECK_THAT(entry.length, WithinAbs(0.06, 1.0e-12));
+      CHECK_THAT(entry.example_origin[0], WithinAbs(1.0 + delta, 1.0e-12));
+      CHECK_THAT(entry.example_origin[1], WithinAbs(0.5, 1.0e-12));
+      CHECK_THAT(entry.example_origin[2], WithinAbs(0.3, 1.0e-12));
+      CHECK_THAT(entry.reason, ContainsSubstring("misplaced or mis-scaled coupon") &&
+                                   ContainsSubstring("metal-edge reference") &&
+                                   ContainsSubstring("distance 2.000000e-03 mesh units") &&
+                                   ContainsSubstring("boundary tolerance 2.000000e-04"));
+      // The deferred FailClosed abort names the class; RecordRaw's Enforce is a no-op.
+      ledger.Enforce("test");
+      GeometryFallbackLedger fail_closed(GeometryFailurePolicy::FAIL_CLOSED, false,
+                                         entries);
+      CHECK_THROWS_WITH(fail_closed.Enforce("test"),
+                        ContainsSubstring("FailClosed") &&
+                            ContainsSubstring("UnlocatedPatch 1") &&
+                            ContainsSubstring("(test)"));
+    }
+  }
+  // (3) No reference and every tested point outside (a coupon off the mesh).
+  {
+    std::vector<ResponsePatchData> patches = {inside, Patch({2.0, 0.5, 0.3}, 9)};
+    patches[1].conductor_references.clear();
+    {
+      auto copy = patches;
+      CHECK_THROWS_WITH(Find(copy, nullptr),
+                        ContainsSubstring("misplaced or mis-scaled coupon") &&
+                            ContainsSubstring("patch 1 (0-based") &&
+                            ContainsSubstring("every one of its tested points"));
+    }
+    {
+      std::vector<GeometryFallbackData> entries;
+      GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+      auto copy = patches;
+      const auto exclusions = Find(copy, &ledger);
+      REQUIRE(exclusions.patches.size() == 1);
+      CHECK(exclusions.patches[0].patch == 1);
+      CHECK(exclusions.patches[0].reason == "AllPointsOutside");
+      CHECK(exclusions.patches[0].outside_points == exclusions.patches[0].tested_points);
+      CHECK(copy[0].weight == 1.0);
+      CHECK(copy[1].weight == 0.0);
+      REQUIRE(entries.size() == 1);
+      CHECK(entries.front().cls == "UnlocatedPatch");
+      CHECK(entries.front().site == "H9a/FindDomainBoundaryExclusions:all-points");
+      CHECK(entries.front().patches == std::vector<int>{1});
+      CHECK(entries.front().features == std::vector<int>{9});
+      CHECK_THAT(entries.front().reason,
+                 ContainsSubstring("every one of its tested points"));
+    }
+  }
+  // Bitwise neutrality: the well-placed cell alone is applied with no record under either
+  // ledger state, as before.
+  for (const bool with_ledger : {false, true})
+  {
+    std::vector<GeometryFallbackData> entries;
+    GeometryFallbackLedger ledger(GeometryFailurePolicy::RECORD_RAW, false, entries);
+    std::vector<ResponsePatchData> patches = {inside};
+    const auto exclusions = Find(patches, with_ledger ? &ledger : nullptr);
+    CHECK(exclusions.tested_patches == 1);
+    CHECK(exclusions.patches.empty());
+    CHECK(patches[0].weight == 1.0);
+    CHECK(entries.empty());
+  }
+#endif
+}
+
 // H4a (operator ApplyPlacementOwnership "matching volumes overlap without complete
 // spatial-cluster ownership"; the dry run's FindSpatialClusterPriorityExclusions carries
 // the same rule): the S1p pair of the margin-overlap case (decision 244) with B's claim
