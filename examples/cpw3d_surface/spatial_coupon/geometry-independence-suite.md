@@ -3629,6 +3629,16 @@ counts are frozen in `FeatureTopology` and independently reproduced from finite
 oriented signature segments plus boundary `Physical`/`Continuation` classes.
 Records and meshes must be content-distinct by SHA-256 across matrix entries.
 
+The Julia stages' `runtime` / `ownership-runtime` identity is the Julia BINARY the
+`julia` command resolves to (`julia_runtime.resolve_julia_runtime`:
+`joinpath(Sys.BINDIR, Base.julia_exename())` as reported by the command itself),
+which `run_gmsh_only_case.py` runs as the stage's argv[0] and binds as the runtime
+tool; `refreeze_manifest_tools.py --julia-runtime PATH` freezes the same binary and
+prints its version. A juliaup launcher is a dispatcher that self-updates without
+changing the runtime, so its digest is never the pin (decision 1014, replacing the
+launcher-digest pins of 2026-09-17 and 2026-10-26); another installed Julia version
+still changes the pin.
+
 Run `general_mesh_audit_producer.py` once for each required kind, passing all
 seven `--stage-report STAGE=PATH` bindings to `bounded-run` and
 `mesh-topology-quality`, or run its `variant-audits` kind once per variant: one
