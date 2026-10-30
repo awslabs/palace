@@ -246,6 +246,7 @@ void WavePortReducedModel::BuildActionGram()
   action_gram = LocalInnerProducts(dim, action, dim, action, B_actions[0].Size(), true);
   Mpi::GlobalSum(static_cast<int>(dim * dim), action_gram.data(), solver_comm);
   action_gram = 0.5 * (action_gram + action_gram.adjoint()).eval();
+  action_gram_max = action_gram.cwiseAbs().maxCoeff();
   gram_direct_self_checked = false;
   gram_residual_trusted = true;
 }
@@ -397,8 +398,7 @@ std::optional<double> WavePortReducedModel::EvaluateGramResidual(
   auto norm_from_gram = [&](const Eigen::VectorXcd &c) -> std::optional<double>
   {
     const std::complex<double> value = c.dot(action_gram * c);
-    const double scale =
-        std::max(1.0, c.squaredNorm() * action_gram.cwiseAbs().maxCoeff() * dim);
+    const double scale = std::max(1.0, c.squaredNorm() * action_gram_max * dim);
     const double roundoff = 256.0 * std::numeric_limits<double>::epsilon() * scale;
     if (!std::isfinite(value.real()) || !std::isfinite(value.imag()) ||
         std::abs(value.imag()) > roundoff || value.real() < -roundoff)
@@ -480,16 +480,18 @@ bool WavePortReducedModel::SolveFromGram(
     return false;
   }
 
-  struct Candidate
+  // Ritz pairs with a valid propagation constant, ranked with the same complex target
+  // distance as the exact solve (ModeEigenSolver::Solve), so that both select the same
+  // mode.
+  struct RitzPair
   {
+    int k;
     std::complex<double> lambda;
     std::complex<double> kn;
-    Eigen::VectorXcd coefficients;
-    double residual;
     double distance;
   };
-  std::vector<Candidate> candidates;
-  candidates.reserve(n);
+  std::vector<RitzPair> ritz_pairs;
+  ritz_pairs.reserve(n);
   const double kn_target = std::sqrt(-sigma);
   for (int k = 0; k < n; k++)
   {
@@ -507,8 +509,32 @@ bool WavePortReducedModel::SolveFromGram(
     {
       continue;
     }
+    ritz_pairs.push_back({k, lambda, kn, mode_assembly::TargetDistance(kn, kn_target)});
+  }
+  std::ranges::stable_sort(ritz_pairs, {}, &RitzPair::distance);
 
-    Eigen::VectorXcd y = vr.col(k);
+  // Check the residuals of the Ritz pairs in ascending target distance, and stop once one
+  // more pair than the selected modes is accepted: the selected modes and the gap check
+  // below are the same as when checking all pairs, while only the few pairs nearest to the
+  // target pay for a residual evaluation.
+  struct Candidate
+  {
+    std::complex<double> lambda;
+    std::complex<double> kn;
+    Eigen::VectorXcd coefficients;
+    double residual;
+    double distance;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(num_modes + 1);
+  for (const auto &pair : ritz_pairs)
+  {
+    if (candidates.size() > static_cast<std::size_t>(num_modes))
+    {
+      break;
+    }
+    const std::complex<double> lambda = pair.lambda;
+    Eigen::VectorXcd y = vr.col(pair.k);
     const double ynorm = y.norm();
     if (!(ynorm > 0.0))
     {
@@ -558,14 +584,9 @@ bool WavePortReducedModel::SolveFromGram(
     {
       continue;
     }
-    candidates.push_back(
-        {lambda, kn, std::move(y), eta, mode_assembly::TargetDistance(kn, kn_target)});
+    candidates.push_back({lambda, pair.kn, std::move(y), eta, pair.distance});
   }
 
-  // Rank with the same complex target distance as the exact solve (ModeEigenSolver::Solve)
-  // so that both select the same mode.
-  std::ranges::stable_sort(candidates, [](const Candidate &a, const Candidate &b)
-                           { return a.distance < b.distance; });
   if (candidates.size() < static_cast<std::size_t>(num_modes))
   {
     return false;

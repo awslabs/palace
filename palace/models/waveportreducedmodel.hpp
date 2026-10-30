@@ -100,6 +100,7 @@ private:
   std::vector<ComplexVector> B_actions;
   Eigen::MatrixXcd B_projection;
   Eigen::MatrixXcd action_gram;
+  double action_gram_max = 0.0;
 
   void BuildAffineModel(const ComplexOperator *truth_operator,
                         std::complex<double> truth_omega, double truth_sigma);
