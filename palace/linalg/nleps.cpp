@@ -773,6 +773,19 @@ int QuasiNewtonSolver::Solve()
                      "({:.3e}{:+.3e}i).\n",
                      k, it, eig.real(), eig.imag());
         }
+        // A root at or below the target is not kept or counted: locked into the invariant
+        // pair, it could hide a wanted root whose field lies near its span. Its start is
+        // spent.
+        if (!(eig.imag() > sigma.imag()))
+        {
+          if (print > 0)
+          {
+            Mpi::Print(GetComm(), "Eigenvalue {:d} is not above the target, not kept.\n",
+                       k);
+          }
+          restart = max_restart + 1;
+          break;
+        }
         // A column which is itself an eigenvector of T(eig) is appended without coupling:
         // R([X, x], diag(H, eig)) = [R(X, H), T(eig) x]. Its coupling v2 is not determined
         // when eig is already on the diagonal of H (the extended residual then does not
@@ -803,17 +816,7 @@ int QuasiNewtonSolver::Solve()
         }
         H(k, k) = eig;
         k++;
-        // If the eigenvalue is inside the desired range, increment initial guess index
-        // Otherwise, use the same initial guess again and increment number of desired
-        // eigenvalues.
-        if (eig.imag() > sigma.imag())
-        {
-          guess_idx++;
-        }
-        else
-        {
-          nev++;
-        }
+        guess_idx++;  // Kept: above the target, checked before the invariant pair grew
         restart = 0;  // reset restart counter
         break;
       }

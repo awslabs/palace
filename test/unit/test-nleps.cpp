@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <utility>
@@ -379,7 +380,8 @@ struct QuasiNewtonResult
 QuasiNewtonResult
 SolveQuasiNewton(const DiagonalLorentzProblem &p,
                  const std::vector<std::pair<std::complex<double>, int>> &seeds, int nev,
-                 double target, double pc_scale, double tol, double mix = 0.0)
+                 double target, double pc_scale, double tol, double mix = 0.0,
+                 bool register_poles = true)
 {
   // Each seed vector is the unit vector of its dof plus mix times those of the others.
   std::vector<std::complex<double>> theta;
@@ -404,10 +406,14 @@ SolveQuasiNewton(const DiagonalLorentzProblem &p,
   qn.SetMaxIter(100);
   qn.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
   qn.SetExtraSystemMatrix([&p](std::complex<double> l) { return p.A2(l); });
-  qn.SetExtraSystemPoles(
-      {std::complex<double>(-0.5 * gamma_l, std::sqrt(w0 * w0 - 0.25 * gamma_l * gamma_l)),
-       std::complex<double>(-0.5 * gamma_l,
-                            -std::sqrt(w0 * w0 - 0.25 * gamma_l * gamma_l))});
+  if (register_poles)
+  {
+    qn.SetExtraSystemPoles(
+        {std::complex<double>(-0.5 * gamma_l,
+                              std::sqrt(w0 * w0 - 0.25 * gamma_l * gamma_l)),
+         std::complex<double>(-0.5 * gamma_l,
+                              -std::sqrt(w0 * w0 - 0.25 * gamma_l * gamma_l))});
+  }
   qn.SetPreconditionerUpdate([&p](std::complex<double> a0, std::complex<double>,
                                   std::complex<double> a2, std::complex<double> a3)
                              { return p.Preconditioner(a0, a2, a3); });
@@ -548,6 +554,54 @@ TEST_CASE("Quasi-Newton deflation of a degenerate pair", "[nleps][Serial][Parall
   const auto expected = TargetSideRoots(p, target);
   REQUIRE(expected.size() == 3);
   CheckEigenpairs(p, SolveDegeneratePair(p, target, tol), expected, tol);
+}
+
+// A root below the target is not kept: locked into the invariant pair, it could hide the
+// target-side root of the same real field. The conjugate of a target-side root comes first
+// (seeds by frequency), and both target-side roots must be returned. The poles are not
+// registered, so that the seeds are the starts.
+TEST_CASE("Quasi-Newton does not keep a root below the target", "[nleps][Serial][Parallel]")
+{
+  const DiagonalLorentzProblem p({1.5 * 1.5, 1.8 * 1.8});
+  constexpr double target = 0.3, tol = 1.0e-10, eta = 1.0e-4;
+  const auto expected = TargetSideRoots(p, target);
+  REQUIRE(expected.size() == 2);
+  auto Root = [&](int j)
+  {
+    for (const auto l : p.Roots(p.k[j]))
+    {
+      if (l.imag() > target && l.imag() < w0)
+      {
+        return l;
+      }
+    }
+    FAIL("No target-side root of dof " << j);
+    return std::complex<double>();
+  };
+  const std::vector<std::pair<std::complex<double>, int>> seeds = {
+      {std::conj(Root(0)) * (1.0 + eta), 0},
+      {Root(0) * (1.0 + eta), 0},
+      {Root(1) * (1.0 + eta), 1}};
+  // The seeds are ordered by frequency only if their residuals ||T(θ) x|| / ||x|| are
+  // comparable (SetInitialGuess), and the preconditioner diagonal must be nonsingular at
+  // each: for a unit vector of dof j, the residual is the diagonal entry j of T(θ).
+  double r_min = std::numeric_limits<double>::infinity(), r_max = 0.0;
+  for (const auto &[theta, j] : seeds)
+  {
+    CAPTURE(theta, j);
+    for (std::size_t i = 0; i < p.k.size(); i++)
+    {
+      const auto d = p.k[i] + theta * theta * (1.0 + Chi(theta));
+      REQUIRE(std::isfinite(std::abs(d)));
+      REQUIRE(std::abs(d) > 0.0);
+    }
+    const double r = std::abs(p.k[j] + theta * theta * (1.0 + Chi(theta)));
+    r_min = std::min(r_min, r);
+    r_max = std::max(r_max, r);
+  }
+  REQUIRE(r_max <= 10.0 * r_min);
+  CheckEigenpairs(p, SolveQuasiNewton(p, seeds, 2, target, 1.0, tol, 0.0, false), expected,
+                  tol);
 }
 
 // Both modes of an exactly degenerate pair, each an eigenvector, must be returned as two
