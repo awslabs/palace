@@ -11183,12 +11183,21 @@ FeaturePatchSummary BuildFeaturePatches(
     // A refused placement under a ledger (readiness hardening, USER decision 1000 (b) /
     // 1001; H5a / H5b PlacementRejected, hardening-2 (iii) InterfaceMappingConflict): the
     // feature is NOT placed and read as Missing (raw) with the record; the matched counters
-    // are rolled back; the former abort is the FailClosed summary's.
+    // (the family counters of the summary print among them) are rolled back; the former
+    // abort is the FailClosed summary's.
     auto RejectFeature = [&](const char *cls, const char *site, const std::string &reason,
                              const Point3D &origin)
     {
       summary.matched_features--;
       summary.matched_length -= feature_length;
+      if (curved_blend)
+      {
+        summary.curved_family_features--;
+      }
+      else if (corner_match != corner_matches.end())
+      {
+        summary.corner_family_features--;
+      }
       summary.unmatched_features++;
       summary.unmatched_length += feature_length;
       auto &entry = summary.unmatched_by_type[feature.type];
