@@ -417,6 +417,61 @@ class AnchorRuleAndFallbacksTest(unittest.TestCase):
         self.assertEqual(mapped[4]["via"], "anchor")
         self.assertEqual(mapped[5]["mapped_to"], "IsolatedEdge")  # no anchor, no CurvedEdge requirement: the next topology
 
+    def _write_raw_rows(self, rows):
+        with open(os.path.join(self.post, "surface-response-model-raw-energy.csv"), "w") as f:
+            f.write("source,evaluation,label," + ",".join(f"raw energy[{i}] (J)" for i in (1, 2, 3)) + "\n")
+            f.writelines(rows)
+        with open(os.path.join(self.post, "surface-response-model-raw-groups.csv"), "w") as f:
+            f.write("label,model,patches,weight length (m)\n")
+            for row in rows:
+                label = row.split(",")[2]
+                for m in label.split("+"):
+                    if m.startswith("m"):
+                        f.write(f"{label},{m[1:]},3,+1.0e-06\n")
+
+    def test_anchor_tie_break_is_independent_of_the_raw_csv_row_order(self):
+        """Decision 1053: the kappa node m4 shares a ZERO-energy label with the Interpolated corner m3 (visited first) and
+        a 5e-16 label with the Exact isolated edge m1: the straight-like member anchors it whatever the row order."""
+        rows = ["1,0,m3+m4,+0.0e+00,+0.0e+00,+0.0e+00\n", "1,0,m1+m4,+5.0e-16,+10.0e-16,+1.0e-16\n",
+                "1,0,m2,+1.0e-16,+2.0e-16,+0.2e-16\n", "1,0,m3,+2.0e-16,+4.0e-16,+0.4e-16\n",
+                "1,0,m5,+0.2e-16,+0.4e-16,+0.04e-16\n", "1,0,unclaimed,+0.8e-16,+1.6e-16,+0.16e-16\n"]
+        reports = []
+        for order in (rows, list(reversed(rows)), rows[1:] + rows[:1]):
+            self._write_raw_rows(order)
+            reports.append(cr.build_report(self.post, self.manifest, None, ma_reading="sharp"))
+        for report in reports:
+            mapped = {m["model"]: m for m in report["block_A"]["anchor_mapped_models"]}
+            self.assertEqual((mapped[4]["via"], mapped[4]["anchor_model"], mapped[4]["class"]), ("anchor", 1, "IsolatedEdge"))
+            self.assertAlmostEqual(report["block_A"]["energy"]["SA"]["classes"]["IsolatedEdge"], 5.0e-16, delta=1e-28)
+            # the attribution (model -> anchor / status / class) is identical; the record list keeps one entry per label
+            # visited, in CSV order (the v2 report form of record), so it is compared as a set
+            attribution = {(m["model"], m["via"], m["anchor_model"], m["status"], m["class"]) for m in report["block_A"]["anchor_mapped_models"]}
+            self.assertEqual(attribution, {(4, "anchor", 1, "Exact", "IsolatedEdge"), (5, "topology", None, "Interpolated", "CurvedEdge")})
+            for kind in ("classes", "models"):
+                for T in ("SA", "MS", "MA"):
+                    self.assertEqual(sorted(report["block_A"]["energy"][T][kind]), sorted(reports[0]["block_A"]["energy"][T][kind]))
+                    for name, value in report["block_A"]["energy"][T][kind].items():
+                        # the attribution is identical; only the summation-order roundoff (~1e-16 relative) may differ
+                        self.assertAlmostEqual(value, reports[0]["block_A"]["energy"][T][kind][name], delta=1e-28)
+
+    def test_anchor_tie_break_straight_like_then_shared_energy_then_index(self):
+        catalog = {1: {"Name": "edge-a", "Topology": "isolated edge"}, 2: {"Name": "gap-b", "Topology": "same-conductor gap"},
+                   3: {"Name": "corner-c", "Topology": "concave corner"}, 7: {"Name": "kappa", "Topology": "curved edge"},
+                   8: {"Name": "kappa-2", "Topology": "curved edge"}, 9: {"Name": "kappa-3", "Topology": "curved edge"}}
+        known = {"edge-a": {"Status": "Exact", "Class": "IsolatedEdge", "Topology": "IsolatedEdge"},
+                 "gap-b": {"Status": "Exact", "Class": "SameConductorGap", "Topology": "SameConductorGap"},
+                 "corner-c": {"Status": "Interpolated", "Class": "ConcaveCorner", "Topology": "ConcaveCorner"}}
+        labels = {"m3+m7": {"SA": 9.0e-16}, "m1+m7": {"SA": 1.0e-16}, "m2+m7": {"SA": 2.0e-16},  # straight-like beats the corner's energy; gap-b's 2e-16 beats edge-a's 1e-16
+                  "m1+m8": {"SA": 1.0e-16}, "m2+m8": {"SA": 1.0e-16},  # equal shared energy -> the lowest index (1)
+                  "m3+m9": {"SA": 0.0}}  # no straight-like member -> the corner
+        members = {label: [int(m[1:]) for m in label.split("+")] for label in labels}
+        partition = {"labels": labels, "members": members, "weights": {}}
+        self.assertEqual(cr.anchor_models(partition, catalog, known), {7: 2, 8: 1, 9: 3})
+        shuffled = {"labels": dict(reversed(list(labels.items()))), "members": dict(reversed(list(members.items()))), "weights": {}}
+        self.assertEqual(cr.anchor_models(shuffled, catalog, known), {7: 2, 8: 1, 9: 3})
+        self.assertTrue(cr.is_straight_like("IsolatedEdge") and cr.is_straight_like("same-conductor strip") and cr.is_straight_like("DifferentConductorGap"))
+        self.assertFalse(cr.is_straight_like("ConcaveCorner") or cr.is_straight_like("spatial edge cluster") or cr.is_straight_like(None))
+
     def test_geometry_fallbacks_own_energy_column(self):
         with open(os.path.join(self.post, "surface-response-geometry-fallbacks.csv"), "w") as f:
             f.write("source,class,type,count,length (m),raw energy (J),within-R energy (J),share\n")

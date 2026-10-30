@@ -509,26 +509,48 @@ def raw_partition(postpro, interfaces, targets):
 # anchor). A model with no anchor in any label of the run falls back to the catalog Topology -> the LONGEST manifest
 # requirement of that topology (the first topology present wins); every mapping is RECORDED (block_A.anchor_mapped_models
 # with the energy share it carries). The catalog exports no requirement hash (a candidate export: ModelCatalog[].RequirementHash).
+# Decision 1053 (the TIE-BREAK, order-independent over EVERY label the model appears in): prefer the STRAIGHT-LIKE known
+# member (isolated edge / strip / gap: the families FindFirstOrderNodes anchors); among several, the member sharing the
+# most raw energy with the model (summed over their shared labels and Types); then the lowest model index.
 TOPOLOGY_FALLBACK = {"curved edge": ("CurvedEdge", "IsolatedEdge"), "isolated edge": ("IsolatedEdge",),
                      "convex corner": ("ConvexCorner",), "concave corner": ("ConcaveCorner",),
                      "parallel-edge cluster": ("ParallelEdgeCluster",), "spatial edge cluster": ("SpatialEdgeCluster",),
                      "same-conductor strip": ("SameConductorStrip",), "same-conductor gap": ("SameConductorGap",),
                      "different-conductor gap": ("DifferentConductorGap",)}
+STRAIGHT_LIKE_TOPOLOGIES = frozenset({"isolatededge", "sameconductorstrip", "sameconductorgap", "differentconductorgap"})
+
+
+def is_straight_like(topology):
+    """True for the straight families the C++ anchors a curvature node to (isolated edge / strip / gap), whichever
+    spelling the source uses (the manifest's IsolatedEdge, the catalog's 'isolated edge' / 'same-conductor strip')."""
+    return re.sub(r"[^a-z]", "", str(topology or "").lower()) in STRAIGHT_LIKE_TOPOLOGIES
 
 
 def anchor_models(partition, catalog, manifest_models):
     """{manifest-absent model index: the index of the manifest-known model it shares a raw label with} (the ANCHOR
-    rule, decision 1052); the lowest-indexed anchor when a label carries several."""
+    rule, decision 1052). Candidates = the known members of EVERY label the model appears in, ranked by the decision-1053
+    tie-break: straight-like first, then the most raw energy shared with the model, then the lowest index (independent
+    of the CSV row order)."""
     anchors = {}
     if partition is None:
         return anchors
-    for members in partition["members"].values():
-        known = sorted(m for m in members if catalog.get(m, {}).get("Name") in manifest_models)
+    candidates = {}  # absent model -> {known member: shared raw energy (J)}
+    for label, members in partition["members"].items():
+        known = [m for m in members if catalog.get(m, {}).get("Name") in manifest_models]
         if not known:
             continue
+        energy = sum(partition["labels"].get(label, {}).values())
         for m in members:
-            if m not in known and m not in anchors:
-                anchors[m] = known[0]
+            if m in known:
+                continue
+            shared = candidates.setdefault(m, {})
+            for k in known:
+                shared[k] = shared.get(k, 0.0) + energy
+    for m, shared in candidates.items():
+        def rank(k):
+            topology = manifest_models[catalog[k]["Name"]].get("Topology") or catalog[k].get("Topology")
+            return (not is_straight_like(topology), -shared[k], k)
+        anchors[m] = min(shared, key=rank)
     return anchors
 
 
