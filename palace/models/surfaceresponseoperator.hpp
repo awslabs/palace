@@ -1944,10 +1944,9 @@ nlohmann::json DescribeUncoveredPortions(
 // curved outer boundary a reference inside a boundary element's box shadow but outside the
 // mesh reads distance 0 and is accepted up to ~h away (the distance to the nearest boundary
 // face is the exact form when such domains appear). Every patch of `skipped` (already not
-// applied) is left
-// alone; `points` are the local model basis points in patch units (origin + points /
-// scale); `model_name` names a model for the abort; coordinates and lengths of the result
-// in mesh units. Collective over the mesh's communicator.
+// applied) is left alone; `points` are the local model basis points in patch units (origin
+// + points / scale); `model_name` names a model for the abort; coordinates and lengths of
+// the result in mesh units. Collective over the mesh's communicator.
 struct DomainBoundaryExclusion
 {
   std::size_t patch = 0;
@@ -2144,10 +2143,11 @@ OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchDat
 // the mesh-aligned boxes overlap: a pair whose oriented boxes are disjoint (two frames off
 // the mesh axes whose mesh-aligned boxes widen beyond the coupons) is no overlap of two
 // coupon domains and records nothing; a pair whose oriented boxes overlap is the H4a
-// OverlapExcluded record of record. The S1b-rc concave pair that motivated the test
-// (decision 1007 / findings-from-exec-B F-B1, centres 2.014 R apart, frames 22.5 deg
-// apart) is MEASURED a TRUE overlap of the coupon cubes (the separating-axis gap -0.53 /
-// -0.76 um; findings-from-exec-B F-B1 UPDATE, decision 1030): it is recorded
+// OverlapExcluded record of record. The S1b-rc concave pairs that motivated the test
+// (decision 1007 / findings-from-exec-B F-B1: the two neighbours of the 135-deg corner,
+// whose frame is 22.5 deg off the mesh axes; centres 2.014 R apart, the pairs' frames 21 /
+// 45 deg apart) are MEASURED a TRUE overlap of the coupon cubes (the separating-axis gap
+// -0.53 / -0.76 um; findings-from-exec-B F-B1 UPDATE, decision 1030): each is recorded
 // OverlapExcluded on the mesh-aligned and on the oriented test alike. Two vertex cubes of
 // frames rotated by theta overlap up to R (1 + |cos theta| + |sin theta|) apart while the
 // identification clusters vertex pairs below 2 R only (OI-VERTEX-PAIR-CUBE-OVERLAP, the
