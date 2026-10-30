@@ -261,9 +261,7 @@ int main(int argc, char *argv[])
     device.emplace(ConfigureDevice(iodata.solver.device),
                    utils::GetDeviceId(world_comm, ngpu));
     ConfigureCeedBackend(iodata.solver.ceed_backend);
-#if defined(PALACE_WITH_GPU_AWARE_MPI)
-    device->SetGPUAwareMPI(true);
-#endif
+    device->SetGPUAwareMPI(utils::QueryGPUAwareMPI());
 
     // Initialize Hypre and, optionally, SLEPc/PETSc.
     hypre::Initialize();

@@ -1924,10 +1924,10 @@ TEST_CASE("MFEM fixed arbitrary-rule bases", "[libCEED][Serial][Parallel][GPU]")
 
 // One test case per mesh, so CTest can run the meshes in parallel. The mesh is the
 // template argument, so the case list is the mesh list and the case name shows the mesh.
-constexpr char StarQuad[] = "star-quad.mesh";
+constexpr char StarQuad[] = "star.mesh";
 constexpr char StarTri[] = "star-tri.mesh";
 constexpr char StarMixedP2[] = "star-mixed-p2.mesh";
-constexpr char FicheraHex[] = "fichera-hex.mesh";
+constexpr char FicheraHex[] = "fichera.mesh";
 constexpr char FicheraTet[] = "fichera-tet.mesh";
 constexpr char FicheraMixedP2[] = "fichera-mixed-p2.mesh";
 
@@ -1949,7 +1949,7 @@ TEMPLATE_TEST_CASE_SIG("3D libCEED Operators", "[libCEED][Serial][Parallel]",
 
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
 {
-  auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
+  auto mesh = GENERATE("star.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
   RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
@@ -1957,7 +1957,7 @@ TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
 
 TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
 {
-  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
+  auto mesh = GENERATE("fichera.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
   RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
@@ -1968,7 +1968,7 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
 // Matrix coefficients are excluded (need sdim x sdim, not dim x dim).
 TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
 {
-  auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh");
+  auto mesh = GENERATE("star.mesh", "star-tri.mesh");
   auto order = GENERATE(1, 2, 3);
   RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, false, order, true);
 }
@@ -1981,7 +1981,7 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
 TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
 {
   auto mesh_file =
-      GENERATE("star-quad.mesh", "star-tri.mesh", "fichera-hex.mesh", "fichera-tet.mesh");
+      GENERATE("star.mesh", "star-tri.mesh", "fichera.mesh", "fichera-tet.mesh");
   auto order = GENERATE(1, 2);
   const auto comm = MPI_COMM_WORLD;
   auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
@@ -2307,8 +2307,8 @@ TEST_CASE("libCEED packed complex QData application",
             false, false},
            {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
             false, false, false},
-           {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
-            false, false, false},
+           {"Hexahedron and unmatched boundary terms", "fichera.mesh", 3, true, true, false,
+            false, false},
            {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
             true, false, false},
            {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
@@ -2319,7 +2319,7 @@ TEST_CASE("libCEED packed complex QData application",
            {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false},
            {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
             true},
-           {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
+           {"H(curl) hexahedra, subset and boundary remainder", "fichera.mesh", 2, true,
             true, false, false, true}}));
   CAPTURE(name);
   // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
@@ -2618,7 +2618,7 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
            {"Real-only input", true, false, false, false, true}}));
   CAPTURE(name);
   PackedIntegrationSettings settings(3);
-  const char *file = tensor ? "fichera-hex.mesh" : "fichera-tet.mesh";
+  const char *file = tensor ? "fichera.mesh" : "fichera-tet.mesh";
   auto mesh = Initialize(Mpi::World(), TestMeshPath(file), 0, false);
   mfem::ND_FECollection nd(3, 3);
   mfem::H1_FECollection h1(3, 3);
@@ -2949,7 +2949,7 @@ TEST_CASE("libCEED Zero-Coefficient Element Skipping", "[libCEED][Serial][Parall
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
 {
-  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
+  auto mesh = GENERATE("fichera.mesh", "fichera-tet.mesh");
   RunCeedBenchmarks(MPI_COMM_WORLD, TestMeshPath(mesh), benchmark_ref_levels, false,
                     benchmark_order);
 }

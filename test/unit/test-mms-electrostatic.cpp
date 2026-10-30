@@ -166,8 +166,8 @@ SolveCartesianMmsError(const MmsCase &mms, int n, int order, double linear_tol =
 
 std::unique_ptr<mfem::Mesh> LoadCurvedCylinderMesh(int refinement)
 {
-  const std::string mesh_path =
-      std::string(PALACE_TEST_DATA_DIR) + "/mesh/cylinder-tet-p2.msh";
+  const std::string mesh_path = std::string(PALACE_TEST_DATA_DIR) +
+                                "/regression/input/cylinder/mesh/cylinder_tet.msh";
   std::ifstream mesh_file(mesh_path);
   REQUIRE(mesh_file.good());
   constexpr bool generate_edges = false, refine = true, fix_orientation = true;

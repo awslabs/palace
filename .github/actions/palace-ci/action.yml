@@ -190,8 +190,7 @@ runs:
               - spec: cuda@12.9
                 prefix: /usr/local/cuda-12.9/
             # When some packages are built with OpenMP in a non-OpenMP build,
-            # FindSTRUMPACK in MFEM cannot compile the test program. Hopefully,
-            # we can remove this when MFEM is not in the superbuild.
+            # FindSTRUMPACK in MFEM cannot compile the test program.
             all:
               require: ~openmp
         CUDAEOF

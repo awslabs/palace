@@ -15,6 +15,7 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 
@@ -63,8 +64,7 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
           "[errorestimator][Serial][Parallel][GPU]")
 {
   const auto comm = MPI_COMM_WORLD;
-  auto mesh =
-      LoadMesh(comm, std::string(PALACE_TEST_DATA_DIR "/mesh/fichera-mixed-p2.mesh"));
+  auto mesh = LoadMesh(comm, TestMeshPath("fichera-mixed-p2.mesh"));
   const int dim = mesh.Dimension();
   REQUIRE(dim == 3);
   constexpr int order = 2;

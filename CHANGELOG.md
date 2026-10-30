@@ -343,6 +343,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`NCMesh::GetRootTransforms`), used to identify the interior boundary sides of
     nonconforming meshes.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - The Spack package now builds MFEM with CMake
+    ([spack/spack-packages#143](https://github.com/spack/spack-packages/pull/143)) and
+    builds *Palace* directly instead of through the superbuild. *Palace* links HYPRE,
+    METIS, the sparse direct solvers, SUNDIALS, GSLIB, Umpire, and zlib through MFEM's
+    CMake package instead of finding them itself, and uses OpenMP, CUDA, or HIP when MFEM
+    does. The `palace/` CMake project no longer has the `PALACE_WITH_OPENMP`,
+    `PALACE_WITH_CUDA`, `PALACE_WITH_HIP`, `PALACE_WITH_SUPERLU`, `PALACE_WITH_STRUMPACK`,
+    `PALACE_WITH_MUMPS`, `PALACE_WITH_CUDSS`, `PALACE_WITH_SUNDIALS`, and
+    `PALACE_WITH_GSLIB` options or the `*_DIR` options for these libraries. The superbuild
+    options are unchanged.
+    [PR 1113](https://github.com/awslabs/palace/pull/1113).
+  - Removed the `PALACE_WITH_GPU_AWARE_MPI` option. *Palace* now asks MPI at runtime
+    whether it supports GPU buffers (Open MPI `MPIX_Query_cuda_support` and
+    `MPIX_Query_rocm_support`, MPICH-based `MPIX_GPU_query_support`) and sets MFEM, HYPRE,
+    and PETSc accordingly.
+    [PR 1113](https://github.com/awslabs/palace/pull/1113).
+  - The unit tests read the MFEM example meshes from MFEM's installed `data/` folder
+    instead of copies in `test/data/mesh`.
+    [PR 1113](https://github.com/awslabs/palace/pull/1113).
 
 ## [0.18.1] - 2026-09-21
 

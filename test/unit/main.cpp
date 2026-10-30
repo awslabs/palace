@@ -17,6 +17,11 @@
 #include <StrumpackConfig.hpp>
 #endif
 
+// The tests catch the exceptions MFEM throws on errors instead of aborting
+#if !defined(MFEM_USE_EXCEPTIONS)
+#error "The unit tests require MFEM built with exceptions (mfem+exceptions in Spack)"
+#endif
+
 using namespace palace;
 
 // Global test options configurable from command line.
@@ -100,6 +105,7 @@ int main(int argc, char *argv[])
   mfem::Device device(
       device_str.c_str(),
       palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount()));
+  device.SetGPUAwareMPI(palace::utils::QueryGPUAwareMPI());
 
   // Initialize HYPRE with correct memory location based on device.
   // TODO: Create a palace::Device class that takes care of all of this.

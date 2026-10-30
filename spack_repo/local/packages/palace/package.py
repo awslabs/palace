@@ -367,7 +367,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mfem~sundials", when="~sundials")
         depends_on("mfem+gslib", when="+gslib")
         depends_on("mfem~gslib", when="~gslib")
-        # Palace tests require mfem+exceptions, checked at build time.
+        # Palace tests require mfem+exceptions, checked when compiling them.
         # TODO: depends_on("mfem+exceptions", type="test") should work but
         # the concretizer enables +exceptions even for non-test builds:
         # https://github.com/spack/spack/issues/51775
@@ -377,6 +377,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("eigen@3.5:", type="build")
 
     with when("@0.19:"):
+        depends_on("mfem build_system=cmake")
         depends_on("mfem+cudss", when="+cudss")
         depends_on("cudss+mpi", when="+cudss")
 
@@ -442,9 +443,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
-        # GPU-aware MPI
+        # GPU-aware MPI. From 0.19, Palace enables it at runtime when MPI supports it, this
+        # only sets hypre's default (and lets MFEM compile its GPU-aware hypre communication).
+        depends_on("hypre+gpu-aware-mpi", when="@0.19:")
         for var in ["openmpi", "mpich", "mvapich-plus"]:
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+cuda")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.18 ^[virtuals=mpi] {var}+cuda")
 
         # We need https://github.com/llnl/blt/pull/735, which is not available
         # in blt <= 0.7.1
@@ -466,9 +469,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
 
     with when("+rocm"):
+        # GPU-aware MPI, as for CUDA
+        depends_on("hypre+gpu-aware-mpi", when="@0.19:")
         for var in ["openmpi@5:", "mpich", "mvapich-plus"]:
-            # GPU-aware MPI
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+rocm")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.18 ^[virtuals=mpi] {var}+rocm")
 
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
@@ -486,28 +490,22 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     depends_on("catch2@3:", type="test")
 
+    @property
+    def root_cmakelists_dir(self):
+        # From 0.19, Spack builds Palace directly instead of through the superbuild
+        if self.spec.satisfies("@0.19:"):
+            return join_path(self.stage.source_path, "palace")
+        return self.stage.source_path
+
     def cmake_args(self):
         args = [
             self.define_from_variant("CMAKE_CXX_STANDARD", "cxxstd"),
             self.define_from_variant("BUILD_SHARED_LIBS", "shared"),
-            self.define_from_variant("PALACE_WITH_64BIT_INT", "int64"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
-            self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
-            self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
-            self.define_from_variant("PALACE_WITH_HIP", "rocm"),
-            self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
-            self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
-            self.define_from_variant("PALACE_WITH_CUDSS", "cudss"),
-            self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
-            self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
-            self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
-            self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
-            self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
-            self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
             # PROCESSORS accounting (ranks x threads) is exact. Unit [Parallel]
             # cases stay at 2 ranks (light, fast); regression cases use ~8 CPUs
@@ -534,15 +532,38 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # Lets `palace --version` point at the full spec (`spack find /<hash>`)
         args.append(self.define("PALACE_BUILD_ID", f"Spack {self.spec.dag_hash()}"))
 
-        if self.spec.satisfies("@0.16:"):
-            args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
-            if self.spec.satisfies("+enzyme"):
-                args.append(
-                    self.define(
-                        "ENZYME_DIR",
-                        self.spec["enzyme"].prefix.lib.join("cmake").join("Enzyme"),
-                    )
+        if self.spec.satisfies("+enzyme"):
+            args.append(
+                self.define(
+                    "ENZYME_DIR", self.spec["enzyme"].prefix.lib.join("cmake").join("Enzyme")
                 )
+            )
+
+        # Before 0.19, Spack builds Palace through the superbuild, and Palace does not take
+        # its configuration and dependencies from MFEM's CMake package or GPU-aware MPI
+        # from hypre
+        if self.spec.satisfies("@:0.18"):
+            args.extend(
+                [
+                    self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
+                    self.define_from_variant("PALACE_WITH_CUDA", "cuda"),
+                    self.define_from_variant("PALACE_WITH_HIP", "rocm"),
+                    self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
+                    self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
+                    self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
+                    self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
+                    self.define_from_variant("PALACE_WITH_SUNDIALS", "sundials"),
+                    self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
+                ]
+            )
+            gpu_aware_mpi = any(
+                self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
+                for var in ["openmpi", "mpich", "mvapich-plus"]
+            )
+            args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", gpu_aware_mpi))
+
+        if self.spec.satisfies("@0.16:0.18"):
+            args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
             if self.spec.satisfies("+mumps"):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
             if self.spec.satisfies("+cudss"):
@@ -556,7 +577,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
             args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
-        else:
+        elif self.spec.satisfies("@:0.15"):
+            # The superbuild builds MFEM and its dependencies before 0.16
+            args.extend(
+                [
+                    self.define_from_variant("PALACE_WITH_64BIT_INT", "int64"),
+                    self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
+                    self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
+                ]
+            )
             # Pass libraries down to the ExternalMFEM cmake file. Needed only
             # before 0.16 because we compile MFEM with Spack afterwards.
             hypre_packages = ["LAPACK", "BLAS"]
@@ -703,13 +732,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        palace_with_gpu_aware_mpi = any(
-            self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
-            for var in ["openmpi", "mpich", "mvapich-plus"]
-        )
-
-        args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
-
         # Pass down external BLAS/LAPACK
         args.extend(
             [
@@ -729,23 +751,23 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             # After v 0.13 gslib and libceed are built externally and
             # so the directories for these are passed explicitly.
             args.append(self.define("LIBCEED_DIR", self.spec["libceed"].prefix))
-            if self.spec.satisfies("+gslib"):
+            if self.spec.satisfies("+gslib @:0.18"):
                 args.append(self.define("GSLIB_DIR", self.spec["gslib"].prefix))
 
         return args
 
     def build(self, spec, prefix):
         with working_dir(self.build_directory):
+            make()
             if self.run_tests:
-                if spec.satisfies("^mfem~exceptions"):
-                    raise InstallError(
-                        "Palace tests require mfem+exceptions. "
-                        "Reinstall with: spack install palace ^mfem+exceptions"
-                    )
                 make("palace-tests")
-            else:
-                make()
+
+    def check(self):
+        # --test builds and installs the unit tests, which are run with CTest separately
+        pass
 
     def install(self, spec, prefix):
-        # No install phase for Palace (always performed during build)
-        pass
+        # Before 0.19, the superbuild installs Palace while building it
+        if spec.satisfies("@0.19:"):
+            with working_dir(self.build_directory):
+                make("install")

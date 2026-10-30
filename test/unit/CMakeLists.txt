@@ -113,27 +113,20 @@ target_link_libraries(unit-tests
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
 
-# The PostOperator boundary-viz regression decodes MFEM's compressed binary VTU output
-# when MFEM is built with zlib support.
-find_package(ZLIB QUIET)
-if(ZLIB_FOUND)
-  target_link_libraries(unit-tests PRIVATE ZLIB::ZLIB)
-endif()
-
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
   ${CMAKE_SOURCE_DIR}/fem/libceed/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
 )
-if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
-  if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA OR MFEM_USE_HIP)
+  if(MFEM_USE_CUDA)
     set(LANGUAGE_PROPERTY CUDA)
-  elseif(PALACE_WITH_HIP)
+  elseif(MFEM_USE_HIP)
     set(LANGUAGE_PROPERTY HIP)
   endif()
   set(COMPILE_OPTIONS_PROPERTY "-Wno-pedantic")
-  if(PALACE_WITH_OPENMP)
+  if(MFEM_USE_OPENMP)
     set(COMPILE_OPTIONS_PROPERTY "${COMPILE_OPTIONS_PROPERTY} ${OpenMP_CXX_FLAGS}")
   endif()
   set_property(
@@ -147,7 +140,7 @@ if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
 endif()
 
 # Resolve linker error with CUDA and static linkage
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   set_target_properties(unit-tests PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 endif()
 
@@ -157,10 +150,17 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
-# Add path for test data files.
+# Add paths for test data files. MFEM installs its data directory, with the meshes the tests
+# use, next to its lib directory.
+cmake_path(GET MFEM_LIBRARY_DIR PARENT_PATH MFEM_DATA_DIR)
+cmake_path(APPEND MFEM_DATA_DIR data)
+if(NOT EXISTS "${MFEM_DATA_DIR}/star.mesh")
+  message(WARNING "MFEM data directory not found at ${MFEM_DATA_DIR}")
+endif()
 target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
+          "PALACE_MFEM_DATA_DIR=\"${MFEM_DATA_DIR}\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>:PALACE_WITH_COVERAGE="LLVM">
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<CXX_COMPILER_ID:GNU>>:PALACE_WITH_COVERAGE="GCC">
@@ -182,6 +182,12 @@ endif()
 install(
   TARGETS unit-tests
   RUNTIME DESTINATION bin
+)
+
+# Build the unit tests and install them with their data
+add_custom_target(palace-tests
+  COMMAND ${CMAKE_COMMAND} --install ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS unit-tests
 )
 
 # Install test data files to share directory. Some source-tree regression fixtures are
@@ -307,13 +313,13 @@ catch_discover_tests(unit-tests
 )
 
 # GPU tests (if available)
-if(PALACE_WITH_CUDA)
+if(MFEM_USE_CUDA)
   set(PALACE_GPU_DEVICE cuda)
-elseif(PALACE_WITH_HIP)
+elseif(MFEM_USE_HIP)
   set(PALACE_GPU_DEVICE hip)
 endif()
 
-if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+if(MFEM_USE_CUDA OR MFEM_USE_HIP)
   catch_discover_tests(unit-tests
     TEST_PREFIX "gpu-"
     # Exclude [Regression] (own registration) and [Long] (long-* only) so the
