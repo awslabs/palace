@@ -15,7 +15,7 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
-## In progress
+## [0.19.0] - 2026-10-30
 
 #### New Features
 
@@ -50,18 +50,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     fluxoid. With grouped excitations `terminal-Phi.csv` reports the stored energy and loop
     fluxoids of each excitation instead of the inductance matrix, and the ParaView fields
     are saved per excitation. The default, each loop its own excitation, is unchanged.
-    SchemaVer 3-1-0.
+    SchemaVer 3-1-0
     [PR 979](https://github.com/awslabs/palace/pull/979).
-  - Error estimation for adaptive mesh refinement now uses broken finite element spaces, allowing
-    discontinuous fields across interior boundaries without cracking the mesh. Mesh cracking
-    is now a per-boundary physical modeling choice (see Interface Changes).
+  - Error estimation for adaptive mesh refinement now uses broken finite element spaces,
+    allowing discontinuous fields across interior boundaries without cracking the mesh. Mesh
+    cracking is now a per-boundary physical modeling choice (see Interface Changes).
     [PR 994](https://github.com/awslabs/palace/pull/994).
   - Added `Boundaries.Superconductor[].TwoSided`, which models a London film as two coupled
     coincident faces (the exact two-port response of a slab of thickness `d`), capturing
     screening on both faces when `d` is comparable to `lambda`. With the same field on both
     faces, the film reduces to `L_ksq = (mu0 * lambda / 2) * coth(d/(2 * lambda))`. The
     magnetostatic solution space is broken across the film, so the mesh is not cracked.
-    Requires a 3D mesh and an interior film. SchemaVer 4-1-0.
+    Requires the `PenetrationDepth`/`Thickness` form, a 3D mesh, and an interior film.
+    SchemaVer 4-1-0
     [PR 992](https://github.com/awslabs/palace/pull/992).
 
 #### Interface Changes
@@ -102,7 +103,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Specifying `config["Model"]["CrackInternalBoundaryElements"]` is deprecated: `true`
     restores the previous behavior of cracking all interior boundaries with boundary
     conditions except for lumped ports, with split impedances, and `false` disables cracking
-    entirely, which is an error for boundaries with `"Crack": true`. SchemaVer 4-0-0.
+    entirely, which is an error for boundaries with `"Crack": true`. SchemaVer 4-0-0
     [PR 994](https://github.com/awslabs/palace/pull/994).
   - Results change for interior boundaries which are no longer cracked by default. Cracking
     required a local bisection of the elements next to the boundary, which is no longer
@@ -131,11 +132,33 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the fluxes of the two faces of the cracked mesh.
     [PR 994](https://github.com/awslabs/palace/pull/994).
 
+#### Performance Improvements
+
+  - Reduced matrix-free material and boundary operator work by omitting elements outside
+    shared nonzero-coefficient support unions, including compatible complex operator
+    packing.
+    [PR 987](https://github.com/awslabs/palace/pull/987).
+  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
+    PROM trained on the offline modes. Also reusing reduced operators and wave-port state
+    across excitations, evaluating the wave-port modal correction and excitation of the
+    PROM from port-space mode pairings instead of per-frequency assembly of mode vectors on
+    the full mesh, evaluating default domain energies in reduced coordinates, and evaluating
+    port quantities without unnecessary magnetic-field reconstruction when possible.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
+  - Restricted the assembly of wave-port mode vectors (excitation and modal correction) to
+    the port boundary elements instead of looping over all boundary elements of the mesh,
+    and assembled the per-frequency wave-port mode forms (S-parameter projection and modal
+    reactions) in a single sweep over the port elements.
+    [PR 909](https://github.com/awslabs/palace/pull/909).
+  - CSV output tables are now appended row by row instead of rewritten at every measurement,
+    so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
+    [PR 942](https://github.com/awslabs/palace/pull/942).
+
 #### Bug Fixes
 
   - Fixed the sign of the second-order absorbing boundary condition term (`"Absorbing"` with
-    `"Order": 2`): it now matches β = μ⁻¹c₀/(2iω) in the documentation. Before, the extra term
-    made the boundary reflect more than the first-order condition at oblique incidence.
+    `"Order": 2`): it now matches β = μ⁻¹c₀/(2iω) in the documentation. Before, the extra
+    term made the boundary reflect more than the first-order condition at oblique incidence.
     [PR 1070](https://github.com/awslabs/palace/pull/1070).
   - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
     cracked face with three vertices on the crack front (at a corner of the crack) merged
@@ -174,18 +197,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
-  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
-    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
-    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
-    (unchanged for positive diagonals).
+  - Fixed `"BoundaryMode"` simulations with p-multigrid preconditioning
+    (`"MGMaxLevels"` > 1) aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi
+    smoother spectral estimates now accept any finite, nonzero diagonal, scaling by its
+    absolute value (unchanged for positive diagonals).
     [PR 977](https://github.com/awslabs/palace/pull/977).
   - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field
-    component in BoundaryMode and wave port mode solves, which sometimes used incorrect
-    boundary material properties. [PR 977](https://github.com/awslabs/palace/pull/977).
+    component in `"BoundaryMode"` simulations and wave port mode solves, which sometimes
+    used incorrect boundary material properties.
+    [PR 977](https://github.com/awslabs/palace/pull/977).
   - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
     metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
-    the Spack package sets it from the resolved commit (`v<version>` for releases, from the
-    next release on), and the containers embed the `git describe` of the built commit.
+    the Spack package sets it from the resolved commit (`v<version>` for releases, from
+    0.19.0 on), and the containers embed the `git describe` of the built commit.
     [PR 974](https://github.com/awslabs/palace/pull/974).
   - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the
     `circular_hole` PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential
@@ -200,12 +224,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed the ordering of the initial guesses of the hybrid nonlinear eigenvalue solver
+    when a linear eigenpair has a residual equal to the low-error threshold, for example
+    when several residuals are exactly zero: the ordering was undefined, and could try most
+    of the low-error guesses after the high-error ones.
+    [PR 999](https://github.com/awslabs/palace/pull/999).
   - Fixed the sign of the London penetration depth term for the out-of-plane field component
     in `"BoundaryMode"` simulations and wave ports.
     [PR 1025](https://github.com/awslabs/palace/pull/1025).
   - Fixed issues affecting non-cracked 2D nonconformal meshes, and the wave ports of
     non-cracked 3D nonconformal meshes, where the edges on the unrefined side were not
-    constrained.
+    constrained. This patches MFEM with
+    [mfem/mfem#5531](https://github.com/mfem/mfem/pull/5531).
     [PR 1023](https://github.com/awslabs/palace/pull/1023).
   - Fixed boundary mode simulations extracting their cross-section from a nonconformal 3D
     mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
@@ -218,7 +248,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1038](https://github.com/awslabs/palace/pull/1038).
   - Fixed integer range expansion in configuration files rewriting brackets inside strings,
     so a path such as `"mesh[1-3].msh"` is no longer read as `"mesh[1,2,3].msh"`, in both
-    Palace and `scripts/validate-config`.
+    *Palace* and `scripts/validate-config`.
     [PR 970](https://github.com/awslabs/palace/pull/970).
   - Fixed the electric surface flux (`surface-F.csv`) and boundary surface charge (`Q_s`)
     of complex fields in lossy dielectrics, which used the real permittivity only; they now
@@ -235,7 +265,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with absorbing or finite-conductivity boundaries) that could select a strongly
     evanescent mode instead of the intended propagating mode. Exact and reduced (adaptive
     sweep) mode solves now rank modes by the complex distance of the propagation constant
-    from the target. [PR 1019](https://github.com/awslabs/palace/pull/1019).
+    from the target.
+    [PR 1019](https://github.com/awslabs/palace/pull/1019).
   - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux
     error estimators on processes without elements of a submesh.
     [PR 1022](https://github.com/awslabs/palace/pull/1022).
@@ -262,11 +293,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     frequency, and circuit synthesis with a single distinct sample, which now aborts at
     startup instead of failing in the sweep.
     [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Fixed out-of-bounds writes for `"Impedance"` and `"Conductivity"` boundary attributes
+    outside the range of the mesh boundary attributes (for example `0` or a typo). They are
+    now ignored with a warning, like other unknown boundary attributes.
+    [PR 1002](https://github.com/awslabs/palace/pull/1002).
   - Fixed coordinate-path line integrals (wave port `"VoltagePath"` and the `"Impedance"`
     and `"Voltage"` postprocessing paths in `"BoundaryMode"` simulations) losing accuracy
-    on locally refined meshes: a few tenths of a percent in Z_PV on the CPW examples, and
+    on locally refined meshes: a few tenths of a percent in `Z_PV` on the CPW examples, and
     up to about 1% after several levels of adaptive refinement towards conductor edges,
-    where Z_PV then changed erratically from one level to the next. They are now exact for
+    where `Z_PV` then changed erratically from one level to the next. They are now exact for
     the discrete field on affine elements, and the wave port voltage no longer needs GSLIB
     or a point search over the full 3D mesh.
     [PR 1049](https://github.com/awslabs/palace/pull/1049).
@@ -280,44 +315,35 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     parallel: the boundary edges of the port cross-section could miss the attribute of the
     adjacent boundary when that boundary was owned by another process, so its boundary
     condition was not applied on the port. Likewise, an uncracked internal boundary
-    crossing the port (with `"CrackInternalBoundaryElements": false`, or a nonconformal
-    input mesh) could miss its boundary condition on the port in parallel.
+    crossing the port (now the default; before with
+    `"CrackInternalBoundaryElements": false` or a nonconformal input mesh) could miss its
+    boundary condition on the port in parallel.
     [PR 1056](https://github.com/awslabs/palace/pull/1056).
   - Fixed driven-sweep restarts (`"Restart"` > 1) with `"FarField"` postprocessing, which
     always aborted while reloading the CSV tables because the far-field table was never
     read back. It now reloads and validates like the other tables, matching its
     one-row-per-direction layout.
     [PR 1075](https://github.com/awslabs/palace/pull/1075).
-  - Fixed interface dielectric energies on uncracked interior metal sheets (with
-    `config["Model"]["CrackInternalBoundaryElements"]` disabled), which used the energy of
-    the average of the fields of both sides for type `"Default"`, and a single face for
-    types `"MA"` and `"MS"` on sheets with the same material on both sides, such as air
-    bridges. They now give the same results as on a cracked mesh.
+  - Fixed interface dielectric energies on uncracked interior metal sheets (now the default;
+    before with `config["Model"]["CrackInternalBoundaryElements"]` disabled), which used
+    the energy of the average of the fields of both sides for type `"Default"`, and a single
+    face for types `"MA"` and `"MS"` on sheets with the same material on both sides, such as
+    air bridges. They now give the same results as on a cracked mesh.
     [PR 994](https://github.com/awslabs/palace/pull/994).
-
-#### Performance Improvements
-
-  - Reduced matrix-free material and boundary operator work by omitting elements outside
-    shared nonzero-coefficient support unions, including compatible complex operator packing.
-    [PR 987](https://github.com/awslabs/palace/pull/987).
-  - Accelerated adaptive online sweeps by replacing 2D wave-port EVP solves with a per-port
-    PROM trained on the offline modes. Also reusing reduced operators and wave-port state
-    across excitations, evaluating the wave-port modal correction and excitation of the
-    PROM from port-space mode pairings instead of per-frequency assembly of mode vectors on
-    the full mesh, evaluating default domain energies in reduced coordinates, and evaluating
-    port quantities without unnecessary magnetic-field reconstruction when possible.
-    [PR 909](https://github.com/awslabs/palace/pull/909).
-  - Restricted the assembly of wave-port mode vectors (excitation and modal correction) to
-    the port boundary elements instead of looping over all boundary elements of the mesh,
-    and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
-    reactions) in a single sweep over the port elements.
-    [PR 909](https://github.com/awslabs/palace/pull/909).
-  - CSV output tables are now appended row by row instead of rewritten at every measurement,
-    so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
-    [PR 942](https://github.com/awslabs/palace/pull/942).
+  - Fixed silently wrong results of multi-GPU simulations with GPU-aware MPI, such as wrong
+    S-parameters and slow or failed GMRES convergence, caused by a race in the device
+    matrix-vector product of hypre. The superbuild now patches hypre v3.2.0 with
+    [hypre-space/hypre#1629](https://github.com/hypre-space/hypre/pull/1629); for Spack
+    builds, the patch is in
+    [spack/spack-packages#7198](https://github.com/spack/spack-packages/pull/7198).
+    [PR 1062](https://github.com/awslabs/palace/pull/1062).
 
 #### Documentation
 
+  - The developer testing notes now describe `TestMeshPath` for the unit test meshes and
+    `PALACE_TEST_DATA_DIR` instead of the removed `MFEM_DATA_PATH`, and
+    `test/data/mesh/README.md` records the source and MFEM version of each test mesh.
+    [PR 1073](https://github.com/awslabs/palace/pull/1073).
   - Fixed the sign in the denominators of the finite-thickness surface impedance formula in
     the reference docs, which now match the implementation.
     [PR 1074](https://github.com/awslabs/palace/pull/1074).
@@ -325,6 +351,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     reject configurations that never produced valid solver output are bug fixes
     (ADDITION), not breaking (MODEL) changes.
     [PR 952](https://github.com/awslabs/palace/pull/952).
+  - Restored the paragraph on the outputs of the lumped and wave port case of the coaxial
+    example, which was cut off mid-equation.
+    [PR 1018](https://github.com/awslabs/palace/pull/1018).
+  - The installation guide and quick start now install Spack from the release series
+    *Palace* is tested with (`releases/v1.2`) instead of Spack `develop`.
+    [PR 990](https://github.com/awslabs/palace/pull/990).
 
 #### Build system
 
@@ -354,6 +386,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     were bumped to their latest releases. The Spack package now uses a libCEED release
     instead of a development commit.
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
+  - The `cudss` variant of the Spack package now requires *Palace* 0.19 or later, which
+    builds against MFEM 4.10: the MFEM `cudss` variant does not exist for the MFEM 4.9 of
+    0.16 to 0.18.1, so `palace@0.18+cudss` could not be concretized.
+    [PR 1053](https://github.com/awslabs/palace/pull/1053).
   - Added an MFEM patch for [mfem/mfem#5698](https://github.com/mfem/mfem/pull/5698)
     (`NCMesh::GetRootTransforms`), used to identify the interior boundary sides of
     nonconforming meshes.
