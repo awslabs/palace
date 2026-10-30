@@ -397,7 +397,10 @@ characteristic impedance. For wave ports, ``Z_{PV}`` is reported when `"VoltageP
 specified, as ``Z_{PV} = |V|^2 / P^*`` with the complex power
 ``P = \int_\Gamma (\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` of the port mode: this is real
 for a lossless propagating mode, and complex for a lossy one, consistent with the total-field
-impedance ``|V|^2 / P^*`` of the port.
+impedance ``|V|^2 / P^*`` of the port. Boundary-mode solves report the real part of the same
+complex ``Z_{PV}``. For a quasi-TEM mode on a line with a lossless dielectric, the complex
+``Z_{PV}`` has the phase of ``k_n``, and its magnitude is the voltage-current impedance
+``Z_{VI}`` below.
 
 As a diagnostic, boundary-mode impedance postprocessing also reports the *voltage-current*
 impedance magnitude when a current path is specified:
