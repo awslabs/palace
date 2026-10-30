@@ -14,7 +14,8 @@
 # The F-1 reproducer (a single-plane ground square with ONE clockwise hole holding an island; the
 # mesher of record left the ground as a free sheet: 2,012 orphan + 330 duplicate triangles, rc 0):
 # the hole is reoriented (manifest `ReorientedLoops`), every triangle of the written mesh is the
-# face of a tetrahedron, and with the normalisation disabled the conformity gate refuses to write.
+# face of a tetrahedron, and with the normalisation disabled the conformity gate refuses to write;
+# a hole outside its outer (a malformed face) and two coincident metal sheets are refused too.
 
 using Test
 using JSON
@@ -279,6 +280,7 @@ end
             manifest, output = mesh_ring_island(directory, "ring_cw", ring_island_window())
             @test manifest["ReorientedLoops"] == Dict("Outers" => 0, "Holes" => 1)
             @test manifest["ToolImagesNotShared"] == 0
+            @test manifest["ToolImagesShared"] == 0
             @test manifest["Groups"]["ground_L1"]["Elements"] > 0
             @test manifest["Groups"]["island_L1"]["Elements"] > 0
             @test manifest["Groups"]["gap_L1"]["Elements"] > 0
@@ -305,6 +307,44 @@ end
             manifest, output = mesh_ring_island(directory, "ring_cw_outer", window)
             @test manifest["ReorientedLoops"] == Dict("Outers" => 1, "Holes" => 1)
             @test nonconforming_triangles(output) == (0, 0)
+        end
+    end
+
+    @testset "a hole outside its outer is a malformed face: refused before the fragment" begin
+        mktempdir() do directory
+            # the island's single "hole" lies in the ground metal, as in the census CHR-012 set
+            window = ring_island_window()
+            window["Planes"][1]["Polygons"][2]["Holes"] =
+                [[[400.0, 400.0], [500.0, 400.0], [500.0, 500.0], [400.0, 500.0]]]
+            err = try
+                mesh_ring_island(directory, "hole_outside", window)
+                nothing
+            catch caught
+                caught
+            end
+            @test err isa ErrorException && occursin("malformed metal face for island", err.msg)
+            @test !isfile(joinpath(directory, "hole_outside.msh2"))
+            return gmsh.isInitialized() == 1 && gmsh.finalize()
+        end
+    end
+
+    @testset "coincident metal sheets are refused after the fragment" begin
+        mktempdir() do directory
+            window = ring_island_window()
+            push!(
+                window["Planes"][1]["Polygons"],
+                Dict("Conductor" => "twin", "Outer" => RING_ISLAND)
+            )
+            push!(window["Terminals"], "twin")
+            err = try
+                mesh_ring_island(directory, "twin", window)
+                nothing
+            catch caught
+                caught
+            end
+            @test err isa ErrorException && occursin("more than one metal sheet", err.msg)
+            @test !isfile(joinpath(directory, "twin.msh2"))
+            return gmsh.isInitialized() == 1 && gmsh.finalize()
         end
     end
 

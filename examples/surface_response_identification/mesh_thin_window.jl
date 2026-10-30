@@ -42,8 +42,12 @@
 # unchanged). After the fragment the CONFORMITY GATE fails closed: every image of a metal sheet must be
 # shared by exactly two volumes (the substrate and the vacuum), except an image inside a bump footprint
 # column, which is one-sided by construction (the void column); a free or otherwise one-sided image is
-# an error and no mesh is written. The manifest records `ReorientedLoops` (outers / holes) and
-# `ToolImagesNotShared` (0 for a written mesh).
+# an error and no mesh is written, and so is an image claimed by more than one metal sheet (coincident
+# sheets = duplicate boundary triangles). Before the fragment, the OCC area of every metal face must
+# equal the polygon's net area (outer minus holes): a hole outside its outer, nested holes or a
+# self-intersecting ring make gmsh build a malformed face silently (the census CHR-012 set carried four
+# ground rings declared as holes of an island). The manifest records `ReorientedLoops` (outers /
+# holes), `ToolImagesNotShared` and `ToolImagesShared` (both 0 for a written mesh).
 
 import Gmsh: gmsh
 import JSON
@@ -98,6 +102,39 @@ function add_polygon(occ, polygon, z; normalise=true)
         push!(loop_tags, occ.addCurveLoop(curves))
     end
     return occ.addPlaneSurface(loop_tags), reoriented_outers, reoriented_holes
+end
+
+# The polygon's net area (outer minus holes) from the shoelace formula.
+function polygon_net_area(polygon)
+    return abs(signed_area2(polygon["Outer"]) / 2) -
+           sum(abs(signed_area2(hole) / 2) for hole in get(polygon, "Holes", []); init=0.0)
+end
+
+# The pre-fragment face gate: the OCC area of the plane surface built for the polygon must equal the
+# polygon's net area, else gmsh built a malformed face (a hole outside its outer, nested holes, a
+# self-intersecting ring). Errors with the conductor named; `occ` must be synchronized.
+function check_face_area(face, polygon, label)
+    net = polygon_net_area(polygon)
+    area = gmsh.model.occ.getMass(2, face)
+    abs(area - net) <= 1.0e-6 * max(net, 1.0) || error(
+        "malformed metal face for $(label): OCC area $(area) vs the polygon's net area $(net) " *
+        "(outer minus holes): a hole outside its outer, nested holes or a self-intersecting " *
+        "ring; no mesh written"
+    )
+    return area
+end
+
+# The fragment images claimed by more than one metal sheet (coincident sheets: both groups would
+# carry the same triangles). Returns [(face tag, [conductor labels])].
+function shared_tool_images(domain_map, n_objects, tool_labels)
+    owners = Dict{Int32, Vector{String}}()
+    for (i, (k, label)) in enumerate(tool_labels)
+        for (dim, tag) in domain_map[n_objects + i]
+            dim == 2 || continue
+            push!(get!(owners, tag, String[]), "$(label) (plane $(k))")
+        end
+    end
+    return sort!([(tag, labels) for (tag, labels) in owners if length(labels) > 1]; by=first)
 end
 
 # The conformity gate on the fragment images of the metal sheets (decision 1022): every image must be
@@ -259,6 +296,12 @@ function mesh_thin_window(
             push!(tool_labels, (k, String(polygon["Conductor"])))
         end
     end
+    # the pre-fragment face gate: every metal face has the polygon's net area
+    occ.synchronize()
+    polygons = [polygon for plane in planes for polygon in plane["Polygons"]]
+    for (i, (dim, face)) in enumerate(tools)
+        check_face_area(face, polygons[i], "$(tool_labels[i][2]) (plane $(tool_labels[i][1]))")
+    end
     objects = vcat(
         [(Int32(3), t) for t in substrate_boxes],
         [(Int32(3), t) for t in vacuum_boxes]
@@ -280,6 +323,17 @@ function mesh_thin_window(
             "conformity gate: $(length(unshared)) metal sheet image(s) not shared by two " *
             "volumes after the fragment (a free sheet would be meshed twice); no mesh " *
             "written. First: " * join(first_unshared, "; ")
+        )
+    end
+    shared = shared_tool_images(domain_map, n_objects, tool_labels)
+    if !isempty(shared)
+        first_shared = [
+            "face $(tag) claimed by $(join(labels, ", "))" for (tag, labels) in shared[1:min(end, 5)]
+        ]
+        error(
+            "conformity gate: $(length(shared)) fragment image(s) claimed by more than one metal " *
+            "sheet (coincident sheets would carry duplicate triangles); no mesh written. First: " *
+            join(first_shared, "; ")
         )
     end
     substrate_tags = [Int32[] for _ in planes]
@@ -473,6 +527,7 @@ function mesh_thin_window(
         "ReorientedLoops" =>
             Dict("Outers" => reoriented_outers, "Holes" => reoriented_holes),
         "ToolImagesNotShared" => length(unshared),
+        "ToolImagesShared" => length(shared),
         "GmshVersion" => gmsh.option.getString("General.Version"),
         "Recipe" => "thin sheets at the planes, void bump columns with a metal shell, order 1, MSH 2.2 binary"
     )
