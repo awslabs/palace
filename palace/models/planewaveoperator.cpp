@@ -78,14 +78,17 @@ PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fes
   {
     return it->second;
   }
-  // Mark the local dofs of the elements in the total-field region, then sum over the
-  // processes sharing each dof (P^T): a true dof belongs to the closure of the region if
-  // any element of the region contains it.
+  // Mark the local dofs of the elements in the total-field region, then combine the marks
+  // of the processes sharing each dof with a boolean OR and restrict to the true dofs, as
+  // for essential dofs: a true dof belongs to the closure of the region if any element of
+  // the region contains it. P^T is not used, since for Nédélec spaces with face dofs on
+  // shared triangles it contains the face orientation transformations, so that it does
+  // not map a 0/1 marker to a 0/1 marker.
   const auto &src = sources.at(idx);
   const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
   const mfem::ParMesh &mesh = *fes.GetParMesh();
-  mfem::Vector lmark(fes.GetVSize());
-  lmark = 0.0;
+  mfem::Array<int> lmark(fes.GetVSize()), tmark_bool;
+  lmark = 0;
   mfem::Array<int> vdofs;
   for (int e = 0; e < mesh.GetNE(); e++)
   {
@@ -96,18 +99,20 @@ PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fes
     fes.GetElementVDofs(e, vdofs);
     for (int d : vdofs)
     {
-      lmark(d >= 0 ? d : -1 - d) = 1.0;
+      lmark[d >= 0 ? d : -1 - d] = 1;
     }
   }
+  fes.Synchronize(lmark);
+  fes.GetRestrictionMatrix()->BooleanMult(lmark, tmark_bool);
   Vector &tmark = tf_markers[idx];
   tmark.SetSize(fes.GetTrueVSize());
-  fes.GetProlongationMatrix()->MultTranspose(lmark, tmark);
-  auto *m = tmark.HostReadWrite();
+  const int *tb = tmark_bool.HostRead();
+  auto *m = tmark.HostWrite();
   int n_tf = 0;
   for (int i = 0; i < tmark.Size(); i++)
   {
-    m[i] = (m[i] > 0.5) ? 1.0 : 0.0;
-    n_tf += (m[i] > 0.5);
+    m[i] = tb[i] ? 1.0 : 0.0;
+    n_tf += (tb[i] != 0);
   }
   Mpi::GlobalSum(1, &n_tf, fes.GetComm());
   Mpi::Print(" Plane wave {:d}: {:d} total-field unknowns (of {:d})\n", idx, n_tf,
