@@ -3475,6 +3475,40 @@ void MapLibraryInterfaces(
   }
 }
 
+// Whether MapLibraryInterfaces binds every (slot, type) target of `targets_by_slot` on
+// `source` without its abort: exactly its verify (an interface of that slot and type on the
+// model, or no fabricated surface matrix). Readiness hardening-2 (iii), decision 1018 Q6
+// (OI-MX-R2A-COMPARATOR-FORM): BuildFeaturePatches tests it before the runtime model is
+// formed; a feature whose portions carry more distinct target maps than the model has
+// slots (a listed gap next to a differently listed one at a one-slot corner coupon) is
+// recorded InterfaceMappingConflict under a ledger instead of aborting the configuration.
+bool CanMapLibraryInterfaces(
+    const LibraryModel &source,
+    const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot)
+{
+  if (source.response.fabricated_surface_matrix.empty())
+  {
+    return true;
+  }
+  for (const auto &[slot, targets] : targets_by_slot)
+  {
+    for (const auto &[type, target] : targets)
+    {
+      (void)target;
+      const int interface_slot = slot;
+      const InterfaceDielectric interface_type = type;
+      if (std::none_of(
+              source.interfaces.begin(), source.interfaces.end(),
+              [interface_slot, interface_type](const auto &entry)
+              { return entry.slot == interface_slot && entry.type == interface_type; }))
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool MatchLibraryInterfaces(
     const LibraryModel &model,
     const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot)
@@ -11146,6 +11180,90 @@ FeaturePatchSummary BuildFeaturePatches(
     {
       targets_by_slot.emplace(static_cast<int>(targets_by_slot.size()), targets);
     }
+    // A refused placement under a ledger (readiness hardening, USER decision 1000 (b) /
+    // 1001; H5a / H5b PlacementRejected, hardening-2 (iii) InterfaceMappingConflict): the
+    // feature is NOT placed and read as Missing (raw) with the record; the matched counters
+    // are rolled back; the former abort is the FailClosed summary's.
+    auto RejectFeature = [&](const char *cls, const char *site, const std::string &reason,
+                             const Point3D &origin)
+    {
+      summary.matched_features--;
+      summary.matched_length -= feature_length;
+      summary.unmatched_features++;
+      summary.unmatched_length += feature_length;
+      auto &entry = summary.unmatched_by_type[feature.type];
+      entry.first++;
+      entry.second += feature_length;
+      if (diagnostics)
+      {
+        for (const auto &portion : feature.portions)
+        {
+          if (IsImage(portion))
+          {
+            continue;
+          }
+          const double length = portion.s1 - portion.s0;
+          diagnostics->matched_length -= length;
+          for (const auto &[type, target] : framed.at(portion.segment)->targets)
+          {
+            (void)type;
+            diagnostics->matched_length_by_interface[target] -= length;
+          }
+        }
+      }
+      placement_rejected.insert(feature.id);
+      GeometryFallbackData record;
+      record.cls = cls;
+      record.site = site;
+      record.reason = reason;
+      record.what = "feature";
+      record.features = {feature.id};
+      record.models = {model.name};
+      record.length = feature_length;
+      record.example_origin = origin;
+      record.topology = feature.type;
+      for (const auto &framed_portion : portions)
+      {
+        for (const auto &[type, target] : framed_portion.segment->targets)
+        {
+          (void)type;
+          if (std::find(record.interfaces.begin(), record.interfaces.end(), target) ==
+              record.interfaces.end())
+          {
+            record.interfaces.push_back(target);
+          }
+        }
+      }
+      geometry_ledger->Record(std::move(record));
+    };
+    if (geometry_ledger && !CanMapLibraryInterfaces(model, targets_by_slot))
+    {
+      // (iii) OI-MX-R2A-COMPARATOR-FORM (decision 1018 Q6): the feature's portions carry
+      // distinct target maps the model's interface slots cannot bind (MapLibraryInterfaces
+      // would abort forming the runtime model): recorded, the feature raw; never mapped
+      // through slot 0 (a one-slot corner's correction is one number for both arms, and
+      // the unlisted arm's energy would over-correct the listed arm's target).
+      std::ostringstream maps;
+      for (const auto &[slot, targets] : targets_by_slot)
+      {
+        maps << (slot > 0 ? "; " : "") << "slot " << slot << " {";
+        bool first = true;
+        for (const auto &[type, target] : targets)
+        {
+          maps << (first ? "" : ", ") << ToString(type) << " -> " << target;
+          first = false;
+        }
+        maps << "}";
+      }
+      RejectFeature("InterfaceMappingConflict", "R2A/BuildFeaturePatches:interface-slots",
+                    fmt::format("Fabrication-process response model \"{}\" cannot map the "
+                                "{:d} distinct interface target map(s) of feature {:d} "
+                                "({}) onto its interface slots ({})",
+                                model.name, targets_by_slot.size(), feature.id,
+                                feature.type, maps.str()),
+                    feature.origin);
+      continue;
+    }
     const int runtime =
         RuntimeModel(model_index, targets_by_slot, family ? &*family : nullptr);
     const Point3D n = feature.axes[2];
@@ -11589,60 +11707,10 @@ FeaturePatchSummary BuildFeaturePatches(
             signature.value("Context", nlohmann::json::array()),
             feature.signature.value("Context", nlohmann::json(nullptr)));
         // H5a / H5b (readiness hardening, USER decision 1000 (b) / 1001): a refused
-        // placement makes the feature Missing (raw) with the record PlacementRejected;
-        // the matched counters are rolled back; the former abort is the FailClosed
-        // summary's. The runtime model registered above stays (0 patches).
+        // placement makes the feature Missing (raw) with the record PlacementRejected
+        // (RejectFeature above). The runtime model registered above stays (0 patches).
         auto RejectPlacement = [&](const char *site, const std::string &reason)
-        {
-          summary.matched_features--;
-          summary.matched_length -= feature_length;
-          summary.unmatched_features++;
-          summary.unmatched_length += feature_length;
-          auto &entry = summary.unmatched_by_type[feature.type];
-          entry.first++;
-          entry.second += feature_length;
-          if (diagnostics)
-          {
-            for (const auto &portion : feature.portions)
-            {
-              if (IsImage(portion))
-              {
-                continue;
-              }
-              const double length = portion.s1 - portion.s0;
-              diagnostics->matched_length -= length;
-              for (const auto &[type, target] : framed.at(portion.segment)->targets)
-              {
-                (void)type;
-                diagnostics->matched_length_by_interface[target] -= length;
-              }
-            }
-          }
-          placement_rejected.insert(feature.id);
-          GeometryFallbackData record;
-          record.cls = "PlacementRejected";
-          record.site = site;
-          record.reason = reason;
-          record.what = "feature";
-          record.features = {feature.id};
-          record.models = {model.name};
-          record.length = feature_length;
-          record.example_origin = patch.origin;
-          record.topology = feature.type;
-          for (const auto &framed_portion : portions)
-          {
-            for (const auto &[type, target] : framed_portion.segment->targets)
-            {
-              (void)type;
-              if (std::find(record.interfaces.begin(), record.interfaces.end(), target) ==
-                  record.interfaces.end())
-              {
-                record.interfaces.push_back(target);
-              }
-            }
-          }
-          geometry_ledger->Record(std::move(record));
-        };
+        { RejectFeature("PlacementRejected", site, reason, patch.origin); };
         if (geometry_ledger &&
             !(feature.signature.contains("Context") && context_agreement.agrees))
         {

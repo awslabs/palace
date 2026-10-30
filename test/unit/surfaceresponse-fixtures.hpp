@@ -327,6 +327,13 @@ struct SurfaceResponseFiles
                  bool neighboring_island = false, bool second_layer = false,
                  bool high_order_rounded = false, int normal_elements = 4);
   static std::unique_ptr<mfem::ParMesh> MakeTouchingIslandMesh();
+  // The plain island whose metal boundary elements are split by the island's diagonal
+  // x + z = 1 into attributes 9 (below) and 10 (above): one conductor, two attributes, so
+  // a dielectric interface per attribute gives the two diagonal corners (0.25, 0.75) and
+  // (0.75, 0.25) one arm per target map (the OI-MX-R2A-COMPARATOR-FORM of readiness
+  // hardening-2 (iii): a listed gap next to a differently listed one at a one-slot corner
+  // coupon).
+  static std::unique_ptr<mfem::ParMesh> MakeDiagonalIslandMesh();
   // Two disconnected rectangular islands (attributes 9 / 10) on the plane y = 0.5 of a
   // 2 x 1 x 2 box whose facing corners (1.0, 0.75) and (1.125, 0.875) in (x, z) form the
   // offset-corner-pair spatial cluster; MakeSerialOffsetCornerPairMesh is the serial mesh

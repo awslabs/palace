@@ -5,10 +5,12 @@
 #include "surfaceresponse-fixtures.hpp"
 
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -485,6 +487,210 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(exclusions.patches.empty());
     CHECK(patches[0].weight == 1.0);
     CHECK(entries.empty());
+  }
+#endif
+}
+
+// (iii) OI-MX-R2A-COMPARATOR-FORM (readiness hardening-2, decision 1018 Q6; operator
+// MapLibraryInterfaces "has no slot 1 SA interface mapping"): a feature whose portions
+// carry more distinct interface target maps than its model has slots. The diagonal island
+// (one conductor, attributes 9 / 10 split by the island's diagonal) with one SA interface
+// per attribute (Index 4 on 9, Index 5 on 10): the two diagonal corners (0.25, 0.75) and
+// (0.75, 0.25) claim R = 0.2 along each arm, one arm on attribute 9 and the other crossing
+// into attribute 10, so their target maps are {SA -> 4} and {SA -> 5} (slots 0 / 1) while
+// the one-slot "convex-corner-90" coupon maps slot 0 alone; the other two corners and every
+// straight cell carry one map. On the base the configuration aborts forming the runtime
+// model ("has no slot 1 SA interface mapping"); here the two corners are NOT placed (never
+// mapped through slot 0) and recorded InterfaceMappingConflict (what "feature", the corner
+// id / model / both targets / its claimed length), their claims uncovered (raw), the other
+// corners and the straight cells placed as on the same mesh with ONE interface over both
+// attributes; the preflight predicts the solve (U-INV); the explicit FailClosed leaf aborts
+// at the end of the configuration naming the class.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Geometry fallback R2A InterfaceMappingConflict: a corner whose arms carry "
+    "different interface targets is recorded raw instead of aborting "
+    "(decision 1018 Q6)",
+    "[surfaceresponseoperator][geometryfallback][invariant][3d][Serial]"
+    "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  // The convex library keyed on SA only like the island's features (the domainboundary
+  // fixture's form): the isolated-edge and the one-slot convex-corner-90 coupons.
+  const fs::path sa_library = temp.temp_dir / "fabrication-process-convex-3d-sa.json";
+  if (Mpi::Root(comm))
+  {
+    json library = ReadJson(convex_library_3d_path);
+    library["Name"] = "unit-test-process-convex-3d-sa";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream output(sa_library);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  // The island config on the diagonal mesh: both attributes metal (one terminal), the SA
+  // interface split by attribute (two targets) or over both attributes (one target).
+  auto Config = [&](bool split_interfaces)
+  {
+    json config = ConvexIslandConfig();
+    config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9, 10}}}};
+    json &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    if (split_interfaces)
+    {
+      json second = dielectric[0];
+      second["Index"] = 5;
+      second["Attributes"] = {10};
+      dielectric.push_back(second);
+      correction["TargetInterfaces"] = {4, 5};
+    }
+    else
+    {
+      dielectric[0]["Attributes"] = {9, 10};
+    }
+    correction["Library"] = sa_library.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction.erase("PatchConstruction");
+    correction["CorrectionMode"] = "PostprocessOnly";
+    return config;
+  };
+  auto MakeIoData = [&](const json &config)
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    return iodata;
+  };
+  auto Preflight = [&](json config, const fs::path &dir)
+  {
+    config["Problem"]["Output"] = dir.string();
+    config["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "RecordRaw";
+    IoData iodata = MakeIoData(config);
+    MakeOutputFolder(iodata, comm);
+    Mesh mesh(MakeDiagonalIslandMesh());
+    const fs::path manifest_path = dir / "surface-response-requirements.json";
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(comm);
+    return ReadJson(manifest_path);
+  };
+  // The reference: one interface over both attributes places all four corners.
+  const json reference = Preflight(Config(false), temp.temp_dir / "r2a-reference");
+  CHECK(!reference.at("Identification").at("Diagnostics").contains("GeometryFallbacks"));
+  CHECK(reference.at("Summary").at("Counts").at("Missing").get<int>() == 0);
+  auto CornerIds = [](const json &manifest)
+  {
+    std::vector<int> ids;
+    for (const auto &feature : manifest.at("Identification").at("Features"))
+    {
+      if (feature.at("Type") == "ConvexCorner")
+      {
+        ids.push_back(feature.at("Id").get<int>());
+      }
+    }
+    return ids;
+  };
+  REQUIRE(CornerIds(reference).size() == 4);
+  CHECK(reference.at("Summary").at("Uncovered").at("Features").get<int>() == 0);
+
+  // The split interfaces: two InterfaceMappingConflict entries on the preflight.
+  const json manifest = Preflight(Config(true), temp.temp_dir / "r2a-split");
+  const auto &record =
+      manifest.at("Identification").at("Diagnostics").at("GeometryFallbacks");
+  REQUIRE(record.at("Count").get<int>() == 2);
+  CHECK(record.at("Classes").at("InterfaceMappingConflict").get<int>() == 2);
+  CHECK(record.at("Policy") == "RecordRaw");
+  std::set<int> rejected;
+  for (const auto &entry : record.at("Entries"))
+  {
+    CHECK(entry.at("Class") == "InterfaceMappingConflict");
+    CHECK(entry.at("Site") == "R2A/BuildFeaturePatches:interface-slots");
+    CHECK(entry.at("What") == "feature");
+    CHECK(entry.at("Topology") == "ConvexCorner");
+    CHECK(entry.at("Models") == json::array({"convex-corner-90"}));
+    CHECK(entry.at("Interfaces") == json::array({4, 5}));
+    CHECK_THAT(entry.at("Reason").get<std::string>(),
+               ContainsSubstring("cannot map the 2 distinct interface target map(s)") &&
+                   ContainsSubstring("slot 0 {SA -> 4}; slot 1 {SA -> 5}"));
+    // The corner's claims: R along each arm.
+    CHECK_THAT(entry.at("Length").get<double>(), WithinAbs(0.4, 1.0e-9));
+    REQUIRE(entry.at("Features").size() == 1);
+    rejected.insert(entry.at("Features").front().get<int>());
+  }
+  CHECK(rejected.size() == 2);
+  // The two diagonal corners (x + z = 1), by their recorded frames.
+  const auto corner_ids = CornerIds(manifest);
+  REQUIRE(corner_ids.size() == 4);
+  for (const auto &feature : manifest.at("Identification").at("Features"))
+  {
+    if (feature.at("Type") != "ConvexCorner")
+    {
+      continue;
+    }
+    const auto origin = feature.at("Frame").at("Origin").get<std::array<double, 3>>();
+    const bool diagonal = std::abs(origin[0] + origin[2] - 1.0) < 1.0e-9;
+    CHECK(diagonal == (rejected.count(feature.at("Id").get<int>()) > 0));
+  }
+  // The rejected corners are read as Missing: their claims are the uncovered portions
+  // (raw), the Summary mirror names the class and the raw share by length.
+  CHECK(manifest.at("Summary").at("Uncovered").at("Features").get<int>() == 2);
+  CHECK_THAT(manifest.at("Summary").at("Uncovered").at("Length").get<double>(),
+             WithinAbs(0.8, 1.0e-9));
+  CHECK(manifest.at("Summary").at("GeometryFallbacks").at("Count").get<int>() == 2);
+  const auto &share = manifest.at("Summary").at("GeometryFallbacks").at("RawShareByLength");
+  REQUIRE(share.contains("SA"));
+  CHECK_THAT(share.at("SA").at("FallbackLength").get<double>(), WithinAbs(0.8, 1.0e-9));
+  CHECK_THAT(share.at("SA").at("TypeLength").get<double>(), WithinAbs(2.0, 1.0e-9));
+  // The operator (the solve default RecordRaw): the same two entries (U-INV), not raw as a
+  // whole; the explicit FailClosed leaf aborts naming the class.
+  {
+    IoData iodata = MakeIoData(Config(true));
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeDiagonalIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    CHECK(!response.IsRawFallback());
+    REQUIRE(response.GetGeometryFallbacks().size() == 2);
+    for (const auto &entry : response.GetGeometryFallbacks())
+    {
+      CHECK(entry.cls == "InterfaceMappingConflict");
+      CHECK(entry.interfaces == std::vector<int>{4, 5});
+    }
+    const json solve_record = response.GetGeometryFallbackRecord();
+    REQUIRE(!solve_record.is_null());
+    CHECK(solve_record.at("Classes").at("InterfaceMappingConflict").get<int>() == 2);
+    CHECK(CheckGeometryFallbackInvariant(manifest, solve_record) == 2);
+    CHECK_THAT(GeometryFallbackBanner(solve_record, "palace.json"),
+               ContainsSubstring("LOW CONFIDENCE") &&
+                   ContainsSubstring("InterfaceMappingConflict 2"));
+  }
+  {
+    json fail_closed = Config(true);
+    fail_closed["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "FailClosed";
+    IoData iodata = MakeIoData(fail_closed);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeDiagonalIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
+                      ContainsSubstring("GeometryFailurePolicy FailClosed") &&
+                          ContainsSubstring("InterfaceMappingConflict 2"));
+  }
+  // The reference configuration on the operator: no record (bitwise neutrality of the
+  // predicate on a one-map feature set).
+  {
+    IoData iodata = MakeIoData(Config(false));
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeDiagonalIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    CHECK(response.GetGeometryFallbacks().empty());
+    CHECK(response.GetGeometryFallbackRecord().is_null());
   }
 #endif
 }

@@ -1446,6 +1446,34 @@ SurfaceResponseFiles::MakeIslandMesh(bool rounded, bool tetrahedral, bool apertu
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeDiagonalIslandMesh()
+{
+  mfem::Mesh serial = MakeSerialIslandMesh();
+  for (int be = 0; be < serial.GetNBE(); be++)
+  {
+    if (serial.GetBdrAttribute(be) != 9)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetBdrElementVertices(be, vertices);
+    double x = 0.0, z = 0.0;
+    for (const int vertex : vertices)
+    {
+      x += serial.GetVertex(vertex)[0];
+      z += serial.GetVertex(vertex)[2];
+    }
+    // The face centroid above the diagonal x + z = 1 (the 4 faces the diagonal halves,
+    // centroid sum exactly 1, stay 9: the two diagonal corners' own faces among them).
+    if (x + z > static_cast<double>(vertices.Size()) * (1.0 + 1.0e-9))
+    {
+      serial.SetBdrAttribute(be, 10);
+    }
+  }
+  serial.SetAttributes();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
 std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeTouchingIslandMesh()
 {
   constexpr double extent = 2.0;
