@@ -23,15 +23,13 @@ namespace
 
 void CheckInfoAUPD(a_int info)
 {
-  if (info != 0)
+  // INFO = 1 (the maximum number of iterations was taken) is not an error: the converged
+  // Ritz values (IPARAM(5)) are postprocessed, see ArpackEigenvalueSolver::SolveInternal.
+  if (info != 0 && info != 1)
   {
     std::string msg = "ARPACK pznaupd error: ";
     switch (info)
     {
-      case 1:
-        msg += "Maximum number of iterations taken, all possible eigenvalues "
-               "have been found!";
-        break;
       case 2:
         msg += "No longer an informational error (deprecated starting with "
                "release 2 of ARPACK)!";
@@ -428,10 +426,12 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
     eig[i] = eig[i] * gamma;
     perm[i] = i;
   }
+  // Only the first num_conv Ritz values have converged (fewer than nev when the maximum
+  // number of iterations is reached), the others are not computed.
+  const int num_extracted = std::min(num_conv, nev);
   if (which_type == WhichType::TARGET_IMAGINARY)
   {
-    std::sort(perm, perm + nev, CompareTargetImag);
-    const int num_extracted = std::min(num_conv, nev);
+    std::sort(perm, perm + num_extracted, CompareTargetImag);
     int num_target_side = 0;
     for (int i = 0; i < num_extracted; i++)
     {
@@ -455,16 +455,16 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
   else if (which_option == ::arpack::which::largest_real ||
            which_option == ::arpack::which::smallest_real)
   {
-    std::sort(perm, perm + nev, CompareReal);
+    std::sort(perm, perm + num_extracted, CompareReal);
   }
   else if (which_option == ::arpack::which::largest_imaginary ||
            which_option == ::arpack::which::smallest_imaginary)
   {
-    std::sort(perm, perm + nev, CompareImag);
+    std::sort(perm, perm + num_extracted, CompareImag);
   }
   else
   {
-    std::sort(perm, perm + nev, CompareAbs);
+    std::sort(perm, perm + num_extracted, CompareAbs);
   }
 
   return num_conv;

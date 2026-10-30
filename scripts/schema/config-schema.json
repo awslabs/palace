@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-1-0",
+  "$id": "urn:palace:schema:4-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -170,6 +170,15 @@
         },
         "Postprocessing": {
           "$ref": "#/$defs/DomainPostprocessing"
+        },
+        "PML": {
+          "type": "array",
+          "title": "Perfectly Matched Layer",
+          "description": "Array of PML blocks, each with its own coordinate stretch and disjoint attributes.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PML"
+          }
         }
       }
     },
@@ -616,6 +625,149 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "PML": {
+      "type": "object",
+      "description": "Block of perfectly matched layer (PML) regions, which turn the given domains into an absorbing layer for 3D frequency domain driven and eigenmode simulations (treated as regular materials for other simulation types, and not supported for 2D simulations). The uniaxial PML terminates the physical domain on the faces of an axis-aligned box by applying the complex coordinate stretch factor `s = \u03ba + \u03c3 / (\u03b5\u2080 (\u03b1 + i\u03c9))` along each axis to the material properties of the PML regions (their background material properties), where `\u03ba`, `\u03c3`, and `\u03b1` are graded polynomially from 1, 0, and 0 at the interface with the physical domain to `\"KappaMax\"`, `\"SigmaMax\"`, and 2\u03c0 `\"AlphaMax\"` at the outer edge of the layer. The stretch is the same in all PML regions of a block, so that materials crossing the layer (for example, a substrate) remain reflectionless. Several blocks can terminate the physical domain at different locations or with different parameters: the stretch must be continuous across the interfaces between the PML regions of different blocks (blocks in contact must have the same stretch on their interfaces). The materials of the PML regions may be anisotropic and have a loss tangent, but cannot have a conductivity or London penetration depth. In most cases, only `\"Attributes\"` needs to be specified: the layer geometry is detected from the mesh (for PML regions outside of the bounding box of the physical region), the conductivity is computed from `\"ReflectionTarget\"`, and the stretch is evaluated at the lowest frequency of interest.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "type": "array",
+          "description": "Integer array of mesh domain attributes of the PML regions. Their material properties in `config[\"Domains\"][\"Materials\"]` are the background material properties of the layer.",
+          "items": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "Direction": {
+          "type": "array",
+          "description": "Faces of the physical domain covered by the layer of the block, as an array of `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, or `\"-Z\"` (case-insensitive), for example `[\"+X\", \"+Z\"]` for an edge layer. Must be specified together with `\"Thickness\"`. When both are omitted, the faces and thicknesses are detected from the bounding boxes of the physical (non-PML) region and of the PML regions of the block.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "x-palace-advanced": true
+        },
+        "Thickness": {
+          "description": "Thickness of the layer in mesh length units, measured inward from the faces of the bounding box of the PML regions of the block, as a scalar for all faces listed in `\"Direction\"` or an array of 6 values for the faces `[-X, +X, -Y, +Y, -Z, +Z]`. Must be specified together with `\"Direction\"`.",
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 6,
+              "maxItems": 6
+            }
+          ],
+          "x-palace-advanced": true
+        },
+        "Order": {
+          "type": "integer",
+          "description": "Polynomial grading order of the PML profiles with depth into the layer.",
+          "minimum": 2,
+          "default": 3,
+          "x-palace-advanced": true
+        },
+        "SigmaMax": {
+          "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. `\"Auto\"`, `null`, or negative values compute the value per face from the size `h` of the PML elements normal to the face (measured on the mesh) and the finite element order `p` as `\u03c3_max = 0.8 (n + 1) p / (\u03b7\u2080 n_r h)`, for the grading order `n` and the smallest refractive index `n_r` of the materials of the PML regions of the block: this bounds the change of the stretch between neighboring elements (the optimal conductivity of a discrete layer), and the theoretical reflection at normal incidence of a layer of `N` elements is `exp(-1.6 p N)`. If `\"ReflectionTarget\"` is specified, they are instead computed from the reflection target and the layer thickness.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "const": "Auto"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ],
+          "default": "Auto",
+          "x-palace-advanced": true
+        },
+        "KappaMax": {
+          "description": "Maximum real coordinate stretch at the outer edge of the layer, which improves the absorption of evanescent waves. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes.",
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 1
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ],
+          "default": 1.0,
+          "x-palace-advanced": true
+        },
+        "AlphaMax": {
+          "description": "Maximum complex frequency shift of the complex frequency shifted (CFS) PML, GHz. Nonzero values reduce the absorption below this frequency and improve the absorption of evanescent waves at low frequencies. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Requires `\"FrequencyDependent\"`: for a static PML, the complex frequency shift is equivalent to a different `\"KappaMax\"` and `\"SigmaMax\"`.",
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ],
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "ReflectionTarget": {
+          "type": "number",
+          "description": "Target theoretical reflection coefficient at normal incidence. If specified, `\"SigmaMax\"` is computed from it and the layer thickness when not specified (instead of from the size of the PML elements), as `\u03c3_max = -(n + 1) ln(R) / (2 \u03b7\u2080 n_r d)`.",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "FrequencyDependent": {
+          "type": "boolean",
+          "description": "Evaluate the stretch factors at the solve frequency rather than at `\"ReferenceFrequency\"`. This gives an absorption independent of frequency over a broadband driven frequency sweep, at the cost of reassembling the PML terms at each frequency (a static PML evaluated at the lowest frequency usually performs as well). For eigenmode simulations, the stretch factors are evaluated at the complex eigenfrequency, which turns the problem into a nonlinear eigenvalue problem (see `config[\"Solver\"][\"Eigenmode\"][\"NonlinearType\"]`).",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "ReferenceFrequency": {
+          "type": "number",
+          "description": "Frequency at which the stretch factors are evaluated when `\"FrequencyDependent\"` is `false`, GHz. The resulting PML terms are independent of the solve frequency, which keeps the eigenmode problem linear. Their absorption grows with frequency. If omitted, Palace uses the lowest driven frequency or the eigenmode target frequency, so that `\"ReflectionTarget\"` is met at all frequencies of interest.",
+          "exclusiveMinimum": 0,
+          "x-palace-advanced": true
+        },
+        "AllowRefinement": {
+          "type": "boolean",
+          "description": "Allow adaptive mesh refinement inside of the PML regions. The error indicators of PML elements measure the discretization error of the stretched fields with the background material properties. By default, PML elements are not marked for refinement, and their error indicators do not contribute to the adaptive mesh refinement tolerance (they are included in the postprocessed error indicators).",
+          "default": false,
+          "x-palace-advanced": true
+        }
+      }
+    },
     "Material": {
       "type": "object",
       "additionalProperties": false,
@@ -725,7 +877,7 @@
       "properties": {
         "Energy": {
           "type": "array",
-          "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory.",
+          "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory. In PML regions, the energies are computed with the material properties of the background medium of the layer (they measure the field in the layer rather than physical energies), and the participation ratios are relative to the energy of the physical region, which excludes the PML regions.",
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/Energy"
@@ -2316,6 +2468,24 @@
         }
       ]
     },
+    "PMLSubdomainSolver": {
+      "type": "string",
+      "default": "Default",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use `\"Direct\"` for frequency domain problems with PML regions when geometric multigrid is enabled and a sparse direct solver is available, and `\"None\"` otherwise."
+        },
+        {
+          "const": "None",
+          "description": "No PML subdomain correction."
+        },
+        {
+          "const": "Direct",
+          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`, and in double precision for `\"STRUMPACK-MP\"`), in complex arithmetic."
+        }
+      ]
+    },
     "PreconditionerSide": {
       "type": "string",
       "oneOf": [
@@ -2436,7 +2606,7 @@
         },
         "N": {
           "type": "integer",
-          "description": "Number of eigenvalues to compute.",
+          "description": "Number of eigenvalues to compute. If fewer modes converge within `\"MaxIts\"` iterations, the converged modes are postprocessed, with a warning.",
           "exclusiveMinimum": 0,
           "default": 1
         },
@@ -3051,6 +3221,11 @@
           "type": "boolean",
           "description": "When `true`, drops entries smaller than double-precision machine epsilon from the system matrix used in the sparse direct solver.",
           "default": false
+        },
+        "PMLSubdomainSolver": {
+          "$ref": "#/$defs/PMLSubdomainSolver",
+          "description": "For frequency domain problems with PML regions, solver for a subdomain correction on the unknowns of the PML elements (except those shared with the physical region), applied once per cycle at the finest level of the geometric multigrid preconditioner. The polynomial multigrid smoothers do not converge on the PML equations for strongly absorbing layers (when the PML conductivity σ exceeds about ωε₀), so that multigrid preconditioning without this correction can require many iterations. A direct solve on the PML subdomain is affordable when the PML regions hold a small fraction of the unknowns, and otherwise costs about as much as a direct solve of the whole system (`\"MGMaxLevels\": 1` and `\"ComplexCoarseSolve\": true`). Only used when geometric multigrid is enabled, and by default whenever the problem has PML regions.",
+          "x-palace-advanced": true
         },
         "ReorderingReuse": {
           "type": "boolean",

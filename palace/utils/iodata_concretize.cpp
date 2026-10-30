@@ -3,6 +3,7 @@
 
 #include "iodata.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -82,6 +83,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"PCMatShifted", static_cast<bool>(linear.pc_mat_shifted)},
                 {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
+                {"PMLSubdomainSolver", ToString(linear.pml_subdomain_solver)},
                 {"ReorderingReuse", linear.reorder_reuse},
                 {"PCSide", ToString(linear.pc_side)},
                 {"ColumnOrdering", ToString(linear.sym_factorization)},
@@ -237,6 +239,31 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                 {"SerialUniformLevels", ref.ser_uniform_ref_levels}});
 }
 
+void ConcretizePML(const config::PMLData &pml, json &j_pml)
+{
+  // The σ_max computed per face from the mesh (negative entries) is recorded as "Auto"
+  // (from the element size) or null (from the reflection target, which is only recorded if
+  // used) when it applies to all axes.
+  const bool computed_sigma_max =
+      std::ranges::all_of(pml.sigma_max, [](double s) { return s < 0.0; });
+  ApplyEntries(j_pml, {{"Order", pml.order},
+                       {"SigmaMax", !computed_sigma_max ? json(pml.sigma_max)
+                                    : pml.sigma_auto    ? json("Auto")
+                                                        : json(nullptr)},
+                       {"KappaMax", pml.kappa_max},
+                       {"AlphaMax", pml.alpha_max},
+                       {"FrequencyDependent", pml.frequency_dependent},
+                       {"AllowRefinement", pml.allow_refinement}});
+  if (!pml.sigma_auto)
+  {
+    Concretize(j_pml, "ReflectionTarget", pml.reflection_target);
+  }
+  if (!pml.frequency_dependent)
+  {
+    Concretize(j_pml, "ReferenceFrequency", pml.reference_frequency);
+  }
+}
+
 void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
 {
   // Materials: positional match to the C++ vector. Emit the per-property baseline only
@@ -255,6 +282,16 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
                                {"LossTan", m.tandelta.s[0]},
                                {"Conductivity", m.sigma.s[0]},
                                {"LondonDepth", m.lambda_L}});
+    }
+  }
+  // PML blocks: positional match to the C++ vector.
+  if (j_domains.contains("PML") && j_domains["PML"].is_array())
+  {
+    auto &j_pml = j_domains["PML"];
+    const std::size_t n = std::min(j_pml.size(), domains.pml.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      ConcretizePML(domains.pml[i], j_pml[i]);
     }
   }
 }

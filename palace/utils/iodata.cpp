@@ -404,6 +404,14 @@ void IoData::CheckConfiguration()
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "at least one port (LumpedPort or WavePort) boundary condition!\n");
+    const bool floquet_fd_pml = std::ranges::any_of(boundaries.periodic.wave_vector,
+                                                    [](double k) { return k != 0.0; }) &&
+                                std::ranges::any_of(domains.pml, [](const auto &data)
+                                                    { return data.frequency_dependent; });
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !floquet_fd_pml,
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support frequency-dependent PML regions with a Floquet wave vector: the "
+                "synthesized PML terms must be reciprocal!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || boundaries.floquetport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
@@ -555,6 +563,42 @@ void IoData::CheckConfiguration()
                        [](const auto &data) { return data.two_sided; }),
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
+
+  for (auto &pml : domains.pml)
+  {
+    if (pml.frequency_dependent || pml.reference_frequency > 0.0)
+    {
+      continue;
+    }
+    MFEM_VERIFY(pml.reference_frequency < 0.0,
+                "\"PML.ReferenceFrequency\" must be positive when specified. Omit it "
+                "to use the solver default.");
+
+    double reference_frequency = -1.0;
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      MFEM_VERIFY(!solver.driven.sample_f.empty(),
+                  "Static PML default ReferenceFrequency requires at least one driven "
+                  "sample frequency!");
+      // The absorption of a static PML grows with frequency: use the lowest frequency so
+      // that the reflection target is met at all frequencies.
+      reference_frequency = *std::ranges::min_element(solver.driven.sample_f);
+    }
+    else if (problem.type == ProblemType::EIGENMODE)
+    {
+      reference_frequency = solver.eigenmode.target;
+    }
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
+    {
+      // PML regions are only supported for driven and eigenmode simulations, and treated
+      // as regular materials otherwise (see MaterialOperator).
+      MFEM_VERIFY(reference_frequency > 0.0,
+                  "Static PML requires a positive reference frequency. Set "
+                  "\"PML.ReferenceFrequency\", use positive driven sample frequencies, "
+                  "or set a positive Eigenmode target.");
+      pml.reference_frequency = reference_frequency;
+    }
+  }
 
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
@@ -758,6 +802,46 @@ void IoData::CheckConfiguration()
   // aliases for the concrete values, so default-constructed fields are already at
   // their resolved values and no runtime resolution is needed here.
 
+  // The PML subdomain correction is part of the geometric multigrid preconditioner, and
+  // uses a sparse direct solver. By default, it is used for frequency domain problems with
+  // PML regions, since the multigrid smoothers do not converge on the PML equations of
+  // strongly absorbing layers.
+  const bool has_pml =
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
+      !domains.pml.empty();
+  if (solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DEFAULT)
+  {
+#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
+    constexpr bool has_direct = true;
+#else
+    const bool has_direct = (solver.linear.type == LinearSolver::CUDSS);
+#endif
+    solver.linear.pml_subdomain_solver =
+        (has_direct && has_pml && solver.linear.mg_max_levels > 1)
+            ? PMLSubdomainSolver::DIRECT
+            : PMLSubdomainSolver::NONE;
+  }
+
+  // AMS relies on a real-valued approximation of the system matrix, which the PML terms of
+  // strongly absorbing layers make indefinite: the preconditioner then breaks down, and the
+  // Krylov solver can report convergence to a meaningless solution.
+  MFEM_VERIFY(!has_pml || solver.linear.type != LinearSolver::AMS,
+              "PML regions are not supported with the AMS linear solver! Use a sparse "
+              "direct solver (\"Type\": \"SuperLU\", \"STRUMPACK\", or \"MUMPS\"), "
+              "which requires building Palace with SuperLU_DIST, STRUMPACK, or MUMPS.");
+  if (solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE &&
+      solver.linear.mg_max_levels == 1)
+  {
+    Mpi::Warning("config[\"Solver\"][\"Linear\"][\"PMLSubdomainSolver\"] is only used with "
+                 "geometric multigrid preconditioning (\"MGMaxLevels\" > 1)!\n");
+  }
+#if !defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS)
+  MFEM_VERIFY(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::DIRECT ||
+                  solver.linear.type == LinearSolver::CUDSS,
+              "PML subdomain solver \"Direct\" requested but Palace was not built with a "
+              "sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS)!");
+#endif
+
   // Validate build-availability of requested solver backends. Centralized here so
   // downstream code never encounters an unavailable backend at runtime.
 #if !defined(PALACE_WITH_SLEPC)
@@ -831,6 +915,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 
   // Materials: conductivity and London penetration depth.
   for (auto &data : domains.materials)
+  {
+    config::Nondimensionalize(units, data);
+  }
+  for (auto &data : domains.pml)
   {
     config::Nondimensionalize(units, data);
   }

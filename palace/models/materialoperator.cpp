@@ -4,11 +4,15 @@
 #include "materialoperator.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include "linalg/densematrix.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -117,15 +121,17 @@ mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &d
 
 MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
                                    const config::PeriodicBoundaryData &periodic,
-                                   ProblemType problem_type, const Mesh &mesh)
+                                   ProblemType problem_type, const Mesh &mesh,
+                                   const std::vector<config::PMLData> &pml, int fe_order)
   : mesh(mesh)
 {
   SetUpMaterialProperties(materials, periodic, problem_type, mesh);
+  SetUpPML(pml, materials, problem_type, mesh, fe_order);
 }
 
 MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh)
   : MaterialOperator(iodata.domains.materials, iodata.boundaries.periodic,
-                     iodata.problem.type, mesh)
+                     iodata.problem.type, mesh, iodata.domains.pml, iodata.solver.order)
 {
 }
 
@@ -410,6 +416,69 @@ void MaterialOperator::SetUpMaterialProperties(
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
+}
+
+void MaterialOperator::SetUpPML(const std::vector<config::PMLData> &pml,
+                                const std::vector<config::MaterialData> &materials,
+                                ProblemType problem_type, const mfem::ParMesh &mesh,
+                                int fe_order)
+{
+  attr_mat_bulk = attr_mat;
+  if (pml.empty())
+  {
+    return;
+  }
+
+  // The PML is only defined for 3D frequency domain problems. Otherwise, the PML regions
+  // are treated as regular materials: with a warning for other simulation types, and
+  // silently on 2D meshes, which are the wave port cross-section submeshes (SpaceOperator
+  // rejects PML regions for 2D simulations).
+  if (problem_type != ProblemType::DRIVEN && problem_type != ProblemType::EIGENMODE)
+  {
+    Mpi::Warning(mesh.GetComm(),
+                 "PML regions are only supported for 3D driven and eigenmode simulations "
+                 "and are treated as regular materials!\n");
+    return;
+  }
+  if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3)
+  {
+    return;
+  }
+  std::vector<int> pml_attributes;
+  for (const auto &data : pml)
+  {
+    pml_attributes.insert(pml_attributes.end(), data.attributes.begin(),
+                          data.attributes.end());
+  }
+  std::ranges::sort(pml_attributes);
+  MFEM_VERIFY(std::ranges::adjacent_find(pml_attributes) == pml_attributes.end(),
+              "PML attributes must not be specified in more than one PML block!");
+  pml_layers.reserve(pml.size());
+  for (const auto &data : pml)
+  {
+    pml_layers.emplace_back(data, pml_attributes, materials, this->mesh, attr_mat,
+                            mat_muinv, mat_epsilon, mat_epsilon_imag, fe_order);
+  }
+  pml::CheckStretchContinuity(pml_layers, this->mesh);
+  for (int i = 0; i < attr_mat_bulk.Size(); i++)
+  {
+    if (IsPMLCeedAttribute(i + 1))
+    {
+      attr_mat_bulk[i] = -1;
+    }
+  }
+}
+
+std::vector<int> MaterialOperator::GetPMLAttributes() const
+{
+  std::vector<int> attributes;
+  for (const auto &layer : pml_layers)
+  {
+    attributes.insert(attributes.end(), layer.GetAttributes().begin(),
+                      layer.GetAttributes().end());
+  }
+  std::ranges::sort(attributes);
+  return attributes;
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const
@@ -897,8 +966,13 @@ void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &at
     }
 
     // Find all attributes in restricted list of attributes which map to this material index
-    // and process them together.
+    // and process them together. Attributes without a material (for example the PML
+    // attributes for the bulk attribute map) have none in the restricted coefficient.
     const int orig_mat_idx = attr_mat_orig[attr - 1];
+    if (orig_mat_idx < 0)
+    {
+      continue;
+    }
     const int new_mat_idx = mat_coeff.SizeK();
     for (auto attr2 : attr_list)
     {
@@ -941,5 +1015,7 @@ template bool internal::mat::IsOrthonormal(const config::SymmetricMatrixData<3> 
 template bool internal::mat::IsValid(const config::SymmetricMatrixData<3> &);
 template bool internal::mat::IsIsotropic(const config::SymmetricMatrixData<3> &);
 template bool internal::mat::IsIdentity(const config::SymmetricMatrixData<3> &);
+template mfem::DenseMatrix
+internal::mat::ToDenseMatrix(const config::SymmetricMatrixData<3> &);
 
 }  // namespace palace
