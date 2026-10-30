@@ -238,6 +238,7 @@ documentation build generates this table from that file.
 | `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
 | `1-6-0`        | `0.18.0`               |                                    |
 | `1-7-0`        | `0.18.1`               |                                    |
+| `4-1-0`        | `0.19.0`               |                                    |
 
 ```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
