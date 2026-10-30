@@ -313,7 +313,16 @@ def load_manifest(path):
             models.setdefault(name, {"Status": req.get("Status"), "Class": cls, "Topology": req.get("Topology"),
                                      "Grown": grown, "Hash": (req.get("Hash") or "")[:12],
                                      "Unboxable": bool((req.get("Signature") or {}).get("Unboxable"))})
-    return {"models": models, "manifest": manifest, "path": path, "sha256": sha256_file(path)}
+    by_topology = {}
+    for req in manifest.get("Requirements", []):
+        if req.get("Status") not in STATUS_ROW:
+            continue
+        topo = req.get("Topology")
+        length = float(req.get("TotalEdgeLength") or 0.0)
+        if topo not in by_topology or length > by_topology[topo]["Length"]:
+            by_topology[topo] = {"Status": req.get("Status"), "Class": requirement_class(req), "Length": length,
+                                 "Hash": (req.get("Hash") or "")[:12]}
+    return {"models": models, "by_topology": by_topology, "manifest": manifest, "path": path, "sha256": sha256_file(path)}
 
 
 def length_partition(loaded, types, discovery=None):
@@ -445,8 +454,10 @@ def raw_class_energies(postpro, interfaces, targets, kind):
             name = "GeometryFallbacks:" + str(r.get("class"))
             t = r.get("type")
             acc = rows_out.setdefault(name, {})
-            if t in TYPES and is_number(r.get("within-R energy (J)")):
-                acc[t] = acc.get(t, 0.0) + r["within-R energy (J)"]
+            # columns: raw energy (J) = the fallback portions' own within-R raw energy; within-R energy (J) = the
+            # Type's whole within-R energy (the denominator of 'share')
+            if t in TYPES and is_number(r.get("raw energy (J)")):
+                acc[t] = acc.get(t, 0.0) + r["raw energy (J)"]
                 locations.setdefault(name, []).append({"type": t, "count": r.get("count"),
                                                        "length_m": r.get("length (m)")})
     if kind == "Maxwell":
@@ -491,23 +502,44 @@ def raw_partition(postpro, interfaces, targets):
     return {"labels": labels, "members": members, "weights": weights}
 
 
-def classify_model(idx, catalog, manifest_models):
-    """-> (status row, class) of a catalog model via its manifest requirement; unknown names -> ("Unknown", Topology)."""
+# A solve-time catalog name absent from the manifest (the curved-edge kappa node models applied on the arcs of an
+# IsolatedEdge / CurvedEdge requirement; the manifest's SelectedModels carry the interpolated alias) is mapped by its
+# catalog Topology to the LONGEST manifest requirement of that topology (the first topology present wins). The
+# catalog exports no requirement hash (a candidate export: ModelCatalog[].RequirementHash); the mapping is recorded.
+TOPOLOGY_FALLBACK = {"curved edge": ("CurvedEdge", "IsolatedEdge"), "isolated edge": ("IsolatedEdge",),
+                     "convex corner": ("ConvexCorner",), "concave corner": ("ConcaveCorner",),
+                     "parallel-edge cluster": ("ParallelEdgeCluster",), "spatial edge cluster": ("SpatialEdgeCluster",),
+                     "same-conductor strip": ("SameConductorStrip",), "same-conductor gap": ("SameConductorGap",),
+                     "different-conductor gap": ("DifferentConductorGap",)}
+
+
+def classify_model(idx, catalog, manifest_models, by_topology=None, mapped=None):
+    """-> (status row, class) of a catalog model via its manifest requirement (by name; else by topology fallback);
+    a name with no requirement at all -> ("Unknown", Topology)."""
     entry = catalog.get(idx, {})
     info = manifest_models.get(entry.get("Name"))
+    if info is None and by_topology:
+        topo = str(entry.get("Topology") or "")
+        for candidate in TOPOLOGY_FALLBACK.get(topo, (topo,)):
+            if candidate in by_topology:
+                info = by_topology[candidate]
+                if mapped is not None:
+                    mapped.append({"model": idx, "name": entry.get("Name"), "topology": topo, "mapped_to": candidate,
+                                   "status": info["Status"], "class": info["Class"]})
+                break
     if info is None:
         return "Unknown", str(entry.get("Topology") or "Unknown")
     return STATUS_ROW.get(info["Status"], str(info["Status"])), info["Class"]
 
 
-def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_models, W, lengths):
+def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_models, W, lengths, by_topology=None):
     """Block A ENERGY column per Type. ENERGY mode when the raw partition exists; else the PROXY
     (model rows = W_t x the LENGTH share; the recorded RAW rows' own energies; Unclaimed = the remainder)."""
     partition = raw_partition(postpro, interfaces, targets)
     fab = model_energies(postpro, interfaces, targets)
     raw_rows, locations = raw_class_energies(postpro, interfaces, targets, kind)
     mode = "ENERGY" if partition is not None else "PROXY"
-    out = {"mode": mode, "types": {}, "locations": locations}
+    out = {"mode": mode, "types": {}, "locations": locations, "topology_mapped_models": []}
     for t, w in W.items():
         W_t = w["W"]
         acc = {"W": W_t, "E_out": w["E_out"], "models": {}, "classes": {}, "raw": {}, "unclaimed_label": None,
@@ -525,7 +557,8 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
                 wsum = sum(weights) or float(len(members))
                 for m, wgt in zip(members, weights):
                     share = (wgt / wsum) if wsum else 1.0 / max(len(members), 1)
-                    status, cls = classify_model(m, catalog, manifest_models)
+                    status, cls = classify_model(m, catalog, manifest_models, by_topology,
+                                                 out["topology_mapped_models"] if t == list(W)[0] else None)
                     acc["models"][status] = acc["models"].get(status, 0.0) + e * share
                     acc["classes"][cls] = acc["classes"].get(cls, 0.0) + e * share
                     acc["raw_models_total"] += e * share
@@ -965,7 +998,7 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     loaded = load_manifest(manifest_path)
     discovery = read_json(discovery_path) if discovery_path else None
     lengths = length_partition(loaded, types, discovery)
-    energy = energy_partition(postpro, interfaces, targets, kind, catalog, loaded["models"], W, lengths)
+    energy = energy_partition(postpro, interfaces, targets, kind, catalog, loaded["models"], W, lengths, loaded["by_topology"])
     proxy = energy["mode"] == "PROXY"
     lad = ladder(postpro, interfaces, targets, kind, ladder_dir)
     flags = maxwell_flags(postpro, config, energies) if kind == "Maxwell" else {}
@@ -984,6 +1017,7 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
                   "interfaces": w["interfaces"]} for t, w in W.items()},
         "E_elec_raw_J": energies.get("E_elec_raw"), "E_elec_ft_J": energies.get("E_elec_ft"),
         "block_A": {"energy": energy["types"], "length": lengths["types"], "energy_locations": energy["locations"],
+                    "topology_mapped_models": energy["topology_mapped_models"],
                     "length_bookkeeping_miss_um": lengths["bookkeeping_miss_um"], "assigned_length_um": lengths["assigned_length"],
                     "exclusions": lengths["exclusions"], "fallback_locations": lengths["fallback_locations"],
                     "uncovered_by_type": lengths["uncovered_by_type"], "counts": lengths["counts"]},
