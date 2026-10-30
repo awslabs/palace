@@ -271,13 +271,22 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   // modes with |B|×h < p×π. Beyond this, projections alias to ~0 with default quadrature.
   {
     double h_max = 0.0;
+    mfem::DenseMatrix JtJ;
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
       if (bdr_marker[mesh.GetBdrAttribute(be) - 1])
       {
         auto *T = mesh.GetBdrElementTransformation(be);
         T->SetIntPoint(&mfem::Geometries.GetCenter(T->GetGeometryType()));
-        h_max = std::max(h_max, T->Jacobian().CalcSingularvalue(0));
+        // The boundary Jacobian is not square and CalcSingularvalue only checks that in
+        // debug builds, so take the largest singular value from J^T J instead.
+        const auto &J = T->Jacobian();
+        if (JtJ.Height() != J.Width())
+        {
+          JtJ.SetSize(J.Width(), J.Width());
+        }
+        mfem::MultAtB(J, J, JtJ);
+        h_max = std::max(h_max, std::sqrt(JtJ.CalcSingularvalue(0)));
       }
     }
     Mpi::GlobalMax(1, &h_max, nd_fespace.GetComm());

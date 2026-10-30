@@ -294,6 +294,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     types `"MA"` and `"MS"` on sheets with the same material on both sides, such as air
     bridges. They now give the same results as on a cracked mesh.
     [PR 994](https://github.com/awslabs/palace/pull/994).
+  - Fixed the Floquet port MaxOrder cap reading past the boundary element Jacobian, which
+    gave a garbage element size and could randomly drop Floquet orders from the solve and
+    the `port-floquet-S.csv` output.
+    [PR 1091](https://github.com/awslabs/palace/pull/1091).
 
 #### Performance Improvements
 
