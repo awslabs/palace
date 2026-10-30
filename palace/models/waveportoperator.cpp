@@ -1178,7 +1178,10 @@ void WavePortData::ConfigureReducedModelTraining(std::size_t max_samples,
 
 void WavePortData::EnableReducedModel(double adaptive_tol)
 {
-  mode_solver->EnableReducedModel(adaptive_tol);
+  // Use the reduced model only while its solves are cheaper than exact ones: the exact
+  // solve of a small port cross-section can be cheaper than the dense reduced solve of a
+  // port mode whose shape changes with frequency, with a basis of many vectors.
+  mode_solver->EnableReducedModel(adaptive_tol, /*cost_check=*/true);
 }
 
 ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
@@ -1915,6 +1918,12 @@ void WavePortOperator::PrintReducedModelStats() const
                idx, data.GetReducedBasisSize(), stats.online_basis_cap,
                stats.reduced_solves, stats.exact_solves, stats.fallbacks,
                stats.worst_residual);
+    if (stats.exact_solve_time > 0.0)
+    {
+      Mpi::Print("  reduced/exact solve time = {:.2e}/{:.2e} s{}\n",
+                 stats.reduced_solve_time, stats.exact_solve_time,
+                 stats.retired ? ": exact solves are cheaper, reduced model retired" : "");
+    }
   }
 }
 
