@@ -62,6 +62,16 @@ def piece_count(pieces):
     return max(pieces) if pieces else 0
 
 
+LOCAL_PIECES_MODEL_NAME_SUFFIX = "-pieces"
+
+
+def local_pieces_model_name(base_name, pieces):
+    """The piece-form model Name = <the one-reference form's Name>-pieces<P> (decision 1101; review d1099 MINOR-3):
+    a library holding both forms of one key (DESIGN A.3 (e): the old entries kept for the ES record form) carries two
+    distinct Names. The generator applies it to its default Name; the planner passes the suffixed --model-name."""
+    return f"{base_name}{LOCAL_PIECES_MODEL_NAME_SUFFIX}{piece_count(pieces)}"
+
+
 def metal_intervals_by_piece(offsets, gap_directions, pieces, radius):
     """{piece: (left, right)} of every piece's metal interval, the box-side pieces reaching offsets[0] - radius /
     offsets[-1] + radius (the coupon's half-width beyond the outer edges)."""

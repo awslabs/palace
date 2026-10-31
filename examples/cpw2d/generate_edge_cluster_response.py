@@ -626,6 +626,8 @@ def main():
             json.dumps(data["Edges"], sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()[:12]
         model_name = f"parallel-edge-cluster-{signature}"
+        if args.local_pieces:
+            model_name = local_pieces.local_pieces_model_name(model_name, pieces.tolist())   # the piece form's Name
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     (

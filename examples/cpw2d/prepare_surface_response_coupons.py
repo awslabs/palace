@@ -1037,23 +1037,11 @@ def straight_coupon_directory(root, coupon):
     return root / "coupons" / topology / f"w{slug(width)}um"
 
 
-def build_straight(coupons, args, parameters, cache):
-    for coupon in coupons:
-        require_verified_boundary_conditions(coupon)
+def straight_spec(coupons, args, parameters):
+    """The straight-edge planner cache spec (its fingerprint names the cache root)."""
     resolution = process_resolution(
         parameters, args.straight_lc_fine, args.min_process_feature_elements
     )
-    separations = {
-        topology: sorted(
-            {
-                float(coupon["Geometry"]["Separation"])
-                for coupon in coupons
-                if coupon["Topology"] == topology
-            }
-        )
-        for topology in PAIRED_TOPOLOGIES
-    }
-    isolated = any(coupon["Topology"] == "IsolatedEdge" for coupon in coupons)
     spec = {
         "Version": 1,
         "Family": "straight",
@@ -1084,6 +1072,44 @@ def build_straight(coupons, args, parameters, cache):
             (STRAIGHT_BUILDER, STRAIGHT_QUALIFIER, Path(__file__))
         ),
     }
+    add_local_pieces_form(spec, args)
+    return spec
+
+
+def parallel_cluster_model_name(key, edges, args):
+    """parallel-edge-cluster-<key[:12]>; the piece form carries the -pieces<P> suffix (local_pieces_model_name)."""
+    name = f"parallel-edge-cluster-{key[:12]}"
+    if getattr(args, "local_pieces", False):
+        pieces = local_pieces_module.local_pieces_of_parallel_edges(
+            [edge["Offset"] for edge in edges], [edge["GapDirection"] for edge in edges])
+        name = local_pieces_module.local_pieces_model_name(name, pieces)
+    return name
+
+
+def add_local_pieces_form(spec, args):
+    """R0-b (DESIGN A.3 (b); review d1099 MAJOR-1): the piece-labelled form of a cross-section is not its one-reference
+    form, so the planner cache key must carry the form; the key is added ONLY when --local-pieces is on so that every
+    default spec (and its cache root) stays byte-identical."""
+    if getattr(args, "local_pieces", False):
+        spec["LocalPieces"] = True
+    return spec
+
+
+def build_straight(coupons, args, parameters, cache):
+    for coupon in coupons:
+        require_verified_boundary_conditions(coupon)
+    separations = {
+        topology: sorted(
+            {
+                float(coupon["Geometry"]["Separation"])
+                for coupon in coupons
+                if coupon["Topology"] == topology
+            }
+        )
+        for topology in PAIRED_TOPOLOGIES
+    }
+    isolated = any(coupon["Topology"] == "IsolatedEdge" for coupon in coupons)
+    spec = straight_spec(coupons, args, parameters)
     key = fingerprint(spec)
     root = cache / f"straight-{key}"
     qualification_path = root / "qualification.json"
@@ -1367,12 +1393,11 @@ def generate_parallel_cluster_meshes(
     return mesh_root, meshes
 
 
-def build_parallel_cluster(coupon, args, parameters, cache):
-    require_verified_boundary_conditions(coupon)
+def parallel_cluster_spec(coupon, edges, args, parameters):
+    """The parallel-edge-cluster planner cache spec (its fingerprint names the cache root and the model Name)."""
     resolution = process_resolution(
         parameters, args.cluster_lc_fine, args.min_process_feature_elements
     )
-    edges = normalize_parallel_edges(coupon, args.matching_radius)
     spec = {
         "Version": 1,
         "Family": "parallel-edge-cluster",
@@ -1406,6 +1431,14 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             )
         ),
     }
+    add_local_pieces_form(spec, args)
+    return spec
+
+
+def build_parallel_cluster(coupon, args, parameters, cache):
+    require_verified_boundary_conditions(coupon)
+    edges = normalize_parallel_edges(coupon, args.matching_radius)
+    spec = parallel_cluster_spec(coupon, edges, args, parameters)
     key = fingerprint(spec)
     root = cache / f"parallel-cluster-{key}"
     qualification_path = root / "qualification.json"
@@ -1483,7 +1516,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             "--library-name",
             f"{args.name}-parallel-cluster-p{final_order}",
             "--model-name",
-            f"parallel-edge-cluster-{key[:12]}",
+            parallel_cluster_model_name(key, edges, args),
             *material_options(parameters),
         ]
     )
@@ -2883,7 +2916,8 @@ def parse_args():
                         help="R0-b, the generator side (identification fix round DESIGN A.3 (b); decisions 1064 (4) / 1096 (8)): the 2D "
                              "coupons' conductor labels are their LOCAL metal pieces (one reference per piece; the parallel-cluster "
                              "signature CSV and the same-conductor-gap mesher carry Conductor := piece; Edges[].LocalPiece / LocalPieces "
-                             "on the library entries). Default OFF: every output byte-identical to the one-reference form")
+                             "on the library entries; the straight / parallel-cluster cache keys carry the form and the PEC model Name "
+                             "the -pieces<P> suffix). Default OFF: every output byte-identical to the one-reference form")
     parser.add_argument("--max-heldout-error", type=float, default=10.0)
     parser.add_argument("--max-fabricated-matrix-change", type=float, default=5.0)
     parser.add_argument("--max-fabricated-energy-change", type=float, default=10.0)

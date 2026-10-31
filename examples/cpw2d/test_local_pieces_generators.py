@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -198,6 +199,62 @@ class DefaultOffIdentity(unittest.TestCase):
             self.assertEqual(model["OpenContourPaths"], paths)
             self.assertIn("LocalPiecesRule", model)
             self.assertEqual(edges[0], {"Offset": 0.0, "GapDirection": 1, "Conductor": 1})   # the input edges untouched
+
+
+def planner_args(**overrides):
+    """The planner options the two cache specs read (a SimpleNamespace stands for parse_args())."""
+    base = dict(matching_radius=1.9, orders=[2], mesh_order=2, basis_size=6, samples=12, coupon_depth=1.0,
+                edge_offset_tolerance=1.0e-3, straight_lc_fine=0.01, straight_lc_far=0.5, cluster_lc_fine=0.01,
+                cluster_lc_far=0.5, min_process_feature_elements=4, cluster_h_factors=[2.0, 1.0])
+    base.update(overrides)
+    return types.SimpleNamespace(**base)
+
+
+class PlannerCacheForm(unittest.TestCase):
+    """Review d1099 MAJOR-1 / MINOR-3 (decision 1101): the planner's straight / parallel-cluster cache keys carry the
+    --local-pieces form (no silent reuse of the other form's library from one cache root), the default spec has no such
+    key, and the piece form's model Name carries the -pieces<P> suffix."""
+
+    PARAMETERS = {"metal_thickness": 0.1, "overetch": 0.05}
+    CLUSTER = {"Id": "pec", "Topology": "ParallelEdgeCluster", "BoundaryCondition": "Verified",
+               "Geometry": {"Edges": [{"Offset": o, "GapDirection": d, "Conductor": 1}
+                                      for o, d in zip([0.0, 2.0, 4.0, 6.0], [1, -1, 1, -1])]}}
+    STRAIGHT = [{"Id": "gap", "Topology": "SameConductorGap", "BoundaryCondition": "Verified", "Geometry": {"Separation": 2.0}},
+                {"Id": "iso", "Topology": "IsolatedEdge", "BoundaryCondition": "Verified", "Geometry": {}}]
+
+    def test_cache_specs_key_on_the_form_and_the_default_is_unchanged(self):
+        edges = PLANNER.normalize_parallel_edges(self.CLUSTER, 1.9)
+        absent, off, on = planner_args(), planner_args(local_pieces=False), planner_args(local_pieces=True)
+        for spec_of in (lambda a: PLANNER.parallel_cluster_spec(self.CLUSTER, edges, a, self.PARAMETERS),
+                        lambda a: PLANNER.straight_spec(self.STRAIGHT, a, self.PARAMETERS)):
+            spec_absent, spec_off, spec_on = spec_of(absent), spec_of(off), spec_of(on)
+            self.assertEqual(spec_absent, spec_off)                       # the default spec: the flag absent == off
+            self.assertNotIn("LocalPieces", spec_absent)
+            self.assertEqual(spec_on.pop("LocalPieces"), True)           # the form is the ONLY difference
+            self.assertEqual(spec_on, spec_off)
+            spec_on["LocalPieces"] = True
+            self.assertNotEqual(PLANNER.fingerprint(spec_on), PLANNER.fingerprint(spec_off))   # distinct cache roots
+        key = PLANNER.fingerprint(PLANNER.parallel_cluster_spec(self.CLUSTER, edges, off, self.PARAMETERS))
+        self.assertEqual(PLANNER.parallel_cluster_model_name(key, edges, off), f"parallel-edge-cluster-{key[:12]}")
+        key_on = PLANNER.fingerprint(PLANNER.parallel_cluster_spec(self.CLUSTER, edges, on, self.PARAMETERS))
+        self.assertEqual(PLANNER.parallel_cluster_model_name(key_on, edges, on), f"parallel-edge-cluster-{key_on[:12]}-pieces3")
+
+    def test_piece_form_model_name(self):
+        self.assertEqual(lp.local_pieces_model_name("parallel-edge-cluster-abc", [1, 2, 2, 3]), "parallel-edge-cluster-abc-pieces3")
+        self.assertEqual(lp.local_pieces_model_name("n", [1, 1]), "n-pieces1")
+        # the generator's default Name (no --model-name): the one-reference form's Name + the suffix under --local-pieces
+        spec = {"Edges": self.CLUSTER["Geometry"]["Edges"]}
+        with tempfile.TemporaryDirectory(prefix="pieces-name-") as tmp:
+            tmp = Path(tmp)
+            (tmp / "spec.json").write_text(json.dumps(spec))
+            names = {}
+            for form, flag in (("off", []), ("on", ["--local-pieces"])):
+                subprocess.run([sys.executable, str(CPW2D / "generate_edge_cluster_response.py"), str(tmp / "spec.json"),
+                                "--output", str(tmp / form), "--thin-mesh", "thin.msh", "--fabricated-mesh", "fab.msh",
+                                "--library-name", "t", *flag], check=True, capture_output=True, cwd=tmp)
+                names[form] = json.loads((tmp / form / "process-library.json").read_text())["Models"][0]["Name"]
+            self.assertRegex(names["off"], r"^parallel-edge-cluster-[0-9a-f]{12}$")
+            self.assertEqual(names["on"], names["off"] + "-pieces3")
 
 
 if __name__ == "__main__":
