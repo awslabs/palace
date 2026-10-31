@@ -674,5 +674,82 @@ class RecordS1Test(unittest.TestCase):
         self.assertEqual(report["block_D"]["ladder"]["types"]["SA"]["status"], "quotable")
 
 
+def _strip_json_comments(text):
+    """// and /* */ comments outside strings and trailing commas removed (the C++ PreprocessFile of the schema test)."""
+    out = []
+    i = 0
+    in_string = False
+    while i < len(text):
+        c = text[i]
+        if in_string:
+            out.append(c)
+            if c == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 1
+            elif c == '"':
+                in_string = False
+        elif c == '"':
+            in_string = True
+            out.append(c)
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = len(text) if j < 0 else j
+            continue
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = len(text) if j < 0 else j + 2
+            continue
+        else:
+            out.append(c)
+        i += 1
+    # the trailing commas Palace's preprocessor tolerates
+    import re
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+class TestBandFileLocation(unittest.TestCase):
+    """OI-SCHEMA-TEST-COVERAGE-BANDS (decision 1065): test-schema's "Example Configs" case parses EVERY *.json
+    directly under examples/<dir>/ as a Palace config, so the committed band files live in data/ (the default
+    path of the tool) and no non-config JSON may sit at the package level."""
+
+    def test_default_band_file_is_in_data_and_loads(self):
+        here = os.path.dirname(os.path.abspath(cr.__file__))
+        self.assertEqual(os.path.dirname(cr.DEFAULT_BANDS), os.path.join(here, "data"))
+        self.assertTrue(os.path.isfile(cr.DEFAULT_BANDS), cr.DEFAULT_BANDS)
+        bands = cr.load_bands(cr.DEFAULT_BANDS)
+        self.assertIn("families", bands)
+        self.assertTrue(bands.get("version"))
+
+    def test_no_json_at_the_package_level(self):
+        here = os.path.dirname(os.path.abspath(cr.__file__))
+        stray = sorted(f for f in os.listdir(here) if f.endswith(".json"))
+        self.assertEqual(stray, [], "a non-config JSON at examples/<dir>/ level fails test-schema 'Example Configs'")
+
+    def test_examples_level_json_are_palace_configs(self):
+        """The test-schema walk emulated (test/unit/test-schema.cpp: every *.json directly under examples/<dir>/,
+        comments stripped, parsed, validated): the config schema requires exactly the five top-level sections."""
+        examples = os.path.dirname(os.path.dirname(os.path.abspath(cr.__file__)))
+        schema_path = os.path.join(os.path.dirname(examples), "scripts", "schema", "config-schema.json")
+        with open(schema_path) as f:
+            schema = json.load(f)
+        required = set(schema["required"])
+        allowed = set(schema["properties"])
+        found = 0
+        for entry in sorted(os.listdir(examples)):
+            sub = os.path.join(examples, entry)
+            if not os.path.isdir(sub):
+                continue
+            for name in sorted(os.listdir(sub)):
+                if not name.endswith(".json"):
+                    continue
+                found += 1
+                with open(os.path.join(sub, name)) as f:
+                    text = f.read()
+                config = json.loads(_strip_json_comments(text))
+                keys = set(config)
+                self.assertTrue(required <= keys <= allowed, f"{sub}/{name}: top-level keys {sorted(keys)}")
+        self.assertGreater(found, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

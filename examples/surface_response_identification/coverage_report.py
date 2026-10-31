@@ -15,7 +15,7 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
      loop remainder, the UNCLAIMED remainder as its own row: OI-COVERAGE-EXCLUSION-ENERGY),
      in ENERGY (the PatchEnergy raw partition; a PROXY by length when absent) and in LENGTH.
   B  the NAMED RESIDUAL TABLE: the terms the band does not calibrate, with their bounds of record.
-  C  the PREDICTED ERROR BAND per Type from a calibration file (coverage_bands_v2.json, written by
+  C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v2.json, written by
      coverage_calibration.py) and ONE label HIGH / MEDIUM / LOW with its reasons.
   D  QUOTABILITY: the AMR ladder (ft per Type and its steps), the DEPTH rule, the closure spread.
 
@@ -61,7 +61,9 @@ INDUCTIVE_EMAG_OVER_EELEC = 1.0
 INDUCTIVE_LOOP_SHARE = 0.05
 ENERGY_BOOKKEEPING_REL_TOL = 1e-9
 LENGTH_BOOKKEEPING_TOL_UM = 1e-6
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage_bands_v2.json")
+# The committed band files live in data/ (OI-SCHEMA-TEST-COVERAGE-BANDS, decision 1065: a non-config JSON at the
+# examples/<dir>/ level is read by test-schema's "Example Configs" case as a Palace config).
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v2.json")
 
 
 class MissingInput(Exception):
@@ -1316,7 +1318,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("postpro", nargs="?", help="the run's postpro directory (omit with --preflight)")
     parser.add_argument("--manifest", required=True, help="the preflight manifest surface-response-requirements.json")
-    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: coverage_bands_v2.json)")
+    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v2.json)")
     parser.add_argument("--no-bands", action="store_true", help="coverage only (blocks A / B / D; no band, no label)")
     parser.add_argument("--discovery", help="the discovery closure manifest (UnbuildableRequirements keys)")
     parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run directory")

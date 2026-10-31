@@ -306,7 +306,7 @@ def main(argv=None):
     parser.add_argument("--tag", default="v1")
     parser.add_argument("--fit-date", help="ISO date stamped in the file (default: today, UTC)")
     parser.add_argument("--lean-output", help="also write the band file WITHOUT the per-cell evaluation (the copy "
-                        "committed as coverage_bands_v2.json: the fitted numbers + the provenance shas)")
+                        "committed as data/coverage_bands_v<n>.json: the fitted numbers + the provenance shas)")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
     log = (lambda s: None) if args.quiet else (lambda s: print(s, flush=True))
