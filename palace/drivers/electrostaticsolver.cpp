@@ -1137,6 +1137,107 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     geometry_fallback_csv->flush();
   };
+  // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1074): with
+  // Diagnostics.ExclusionEnergy on, the raw within-R energy of the EXCLUDED / unclaimed
+  // perimeter portions per class (the identification's classes by name, CornerArmTrim,
+  // Unclaimed-other, UnprobedModels, MaxwellPatchExcluded) x interface type x source ->
+  // surface-response-exclusion-energy.csv. A diagnostic partition: no energy column of any
+  // other table changes; nothing is written when the flag is off.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> exclusion_energy_portions;
+  std::unique_ptr<std::ofstream> exclusion_energy_csv;
+  auto MeasureExclusionEnergy = [&](int source, const EnergyData &energies)
+  {
+    if (!response_correction || !response_correction->ExclusionEnergyRequested())
+    {
+      return;
+    }
+    BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+    const auto targets = response_correction->GetTargetInterfaces();
+    // The partition against the CLASSIFIED edge tree (decision 1076): every class's energy
+    // + "Claimed" (the feature-claimed perimeter's), and the "Total" row = the within-R
+    // energy under that tree's distance by ONE integral (the P == S identity: the classes
+    // and Claimed sum to it).
+    const auto raw_excluded =
+        post_op.GetElectrostaticClassifiedEdgeEnergies(targets, exclusion_energy_portions);
+    const auto raw_total = post_op.GetElectrostaticClassifiedEdgeEnergies(targets, {});
+    if (!root)
+    {
+      return;
+    }
+    const auto &types = response_correction->GetGeometryFallbackInterfaceTypes();
+    auto TypeName = [&](int interface)
+    {
+      const auto type = types.find(interface);
+      return type == types.end() ? std::string("Default") : ToString(type->second);
+    };
+    std::map<std::string, double> interface_raw_by_type;
+    std::map<std::string, std::map<std::string, double>> excluded_by_class_type;
+    for (const auto &[interface, data] : energies.interfaces)
+    {
+      if (!targets.count(interface))
+      {
+        continue;
+      }
+      const std::string name = TypeName(interface);
+      interface_raw_by_type[name] += data.energy;
+      if (const auto excluded = raw_excluded.find(interface);
+          excluded != raw_excluded.end())
+      {
+        for (const auto &[cls, energy] : excluded->second)
+        {
+          excluded_by_class_type[cls][name] += energy;
+        }
+      }
+      if (const auto total = raw_total.find(interface); total != raw_total.end())
+      {
+        for (const auto &[cls, energy] : total->second)
+        {
+          (void)cls;  // the one remainder group of an empty portion set
+          excluded_by_class_type["Total"][name] += energy;
+        }
+      }
+    }
+    // The portions of every class (all types) and their summed length in metres; Total =
+    // every portion.
+    std::map<std::string, std::pair<int, double>> portions_by_class;
+    for (const auto &portion : exclusion_energy_portions)
+    {
+      double length2 = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+      }
+      for (const std::string &key : {portion.type, std::string("Total")})
+      {
+        auto &[count, length] = portions_by_class[key];
+        count++;
+        length += std::sqrt(length2);
+      }
+    }
+    if (!exclusion_energy_csv)
+    {
+      exclusion_energy_csv = std::make_unique<std::ofstream>(
+          post_dir / "surface-response-exclusion-energy.csv");
+      *exclusion_energy_csv << "source,class,type,class portions,class length (m),raw "
+                               "energy (J),interface raw energy (J),share\n"
+                            << std::setprecision(17);
+    }
+    for (const auto &[cls, by_type] : excluded_by_class_type)
+    {
+      const auto [count, length] = portions_by_class[cls];
+      for (const auto &[name, energy] : by_type)
+      {
+        const double interface_raw = interface_raw_by_type[name];
+        *exclusion_energy_csv
+            << source << "," << cls << "," << name << "," << count << ","
+            << iodata.units.Dimensionalize<Units::ValueType::LENGTH>(length) << ","
+            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy) << ","
+            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(interface_raw) << ","
+            << (interface_raw > 0.0 ? energy / interface_raw : 0.0) << "\n";
+      }
+    }
+    exclusion_energy_csv->flush();
+  };
   // The SpatialClusterPriority raw remainders (decision 922) likewise.
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       spatial_cluster_priority_portions;
@@ -1172,6 +1273,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       model_raw_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    if (response_correction->ExclusionEnergyRequested())
+    {
+      for (const auto &portion : response_correction->GetExclusionEnergyPortions())
+      {
+        exclusion_energy_portions.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
     }
   }
   // The (ii-a) clipped-correction DIAGNOSTIC of the SpatialClusterPriority-dropped coupons
@@ -1440,6 +1549,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // Geometry fallbacks (USER decision 1000 (b)): the share of the within-R energy the
       // converted sites left raw, on the same raw field (nothing when none fired).
       MeasureGeometryFallbacks(idx, raw_energies);
+      MeasureExclusionEnergy(idx, raw_energies);
       if (!spatial_cluster_priority_portions.empty())
       {
         // The SpatialClusterPriority raw remainders' within-R energy (decision 922) on the
@@ -2239,6 +2349,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::filesystem::remove(post_dir /
                             "surface-response-spatial-cluster-priority-energy.csv");
     std::filesystem::remove(post_dir / "surface-response-conductor-consistency-energy.csv");
+    // Section 8: a stale exclusion-energy table of an earlier run is removed alike; the
+    // table of this run (when Diagnostics.ExclusionEnergy is on) was written per source
+    // above and is not touched here.
+    if (!exclusion_energy_csv)
+    {
+      std::filesystem::remove(post_dir / "surface-response-exclusion-energy.csv");
+    }
     // PatchEnergy (decision 922 B-1): surface-response-model-raw-energy.csv (per source and
     // model-set label the raw within-R energy per postprocessing interface, 0 for a
     // non-target interface) and surface-response-model-raw-groups.csv (per label and

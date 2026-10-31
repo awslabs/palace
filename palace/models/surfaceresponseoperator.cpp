@@ -9870,9 +9870,98 @@ namespace
 // portion on that arm (decision 394 F2) loses the same part. A corner whose trim s - R is
 // within the tolerance (90 deg exactly: s = R) is left untouched (the legacy layout,
 // bitwise). One record per trimmed corner, lengths in patch units.
+// OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8 (b); decisions 1064 (2) / 1074): the
+// excluded / unclaimed perimeter portions of the identification by Class, as perimeter
+// sub-segments in mesh coordinates: (i) a REAL segment with a whole-segment exclusion =
+// one portion of its class (Port / SimulationBoundary / NonPlanar / NonManifold /
+// TruncationCut / Untargeted / UndeterminedProcessSide / Unchained, by name); (ii) an
+// analytic excluded_portions zone = its exclusion's class (CrossLayer); (iii) the remainder
+// of a non-excluded real segment no feature portion and no analytic zone covers =
+// `Unclaimed-other` (so that perimeter = assigned + excluded + unclaimed-other at the
+// signature tolerance). The corner-arm trims' stretches are appended by ApplyCornerArmTrim.
+// Image segments (the mirror band) are never counted.
+std::vector<ResponseCorrectionData::UncoveredPortionData>
+CollectIdentificationExclusionPortions(const IdentificationResult &identification, double R)
+{
+  std::vector<ResponseCorrectionData::UncoveredPortionData> portions;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  const std::size_t real_segments = identification.real_segments > 0
+                                        ? identification.real_segments
+                                        : identification.segments.size();
+  // The feature portions per segment (every feature, matched or not: an unmatched
+  // feature's portions are the uncovered requirements, not unclaimed).
+  std::vector<std::vector<std::pair<double, double>>> claimed(
+      identification.segments.size());
+  for (const auto &feature : identification.features)
+  {
+    for (const auto &portion : feature.portions)
+    {
+      if (portion.segment < claimed.size() && portion.s1 > portion.s0)
+      {
+        claimed[portion.segment].emplace_back(portion.s0, portion.s1);
+      }
+    }
+  }
+  for (std::size_t i = 0; i < real_segments; i++)
+  {
+    const auto &segment = identification.segments[i];
+    if (segment.length <= tolerance)
+    {
+      continue;
+    }
+    auto SegmentPoint = [&](double s)
+    {
+      return Add(segment.key[0],
+                 Scale(s / segment.length, Subtract(segment.key[1], segment.key[0])));
+    };
+    auto Emit = [&](double s0, double s1, const std::string &cls)
+    {
+      s0 = std::max(0.0, s0);
+      s1 = std::min(segment.length, s1);
+      if (s1 - s0 > tolerance)
+      {
+        portions.push_back(
+            {-1, cls, static_cast<int>(i), SegmentPoint(s0), SegmentPoint(s1)});
+      }
+    };
+    if (segment.exclusion)
+    {
+      Emit(0.0, segment.length, segment.exclusion->first);
+      continue;
+    }
+    // The covered intervals: the feature portions and the analytic zones (each emitted
+    // with its class); their complement is unclaimed.
+    std::vector<std::pair<double, double>> covered = claimed[i];
+    for (const auto &zone : segment.excluded_portions)
+    {
+      const auto index = static_cast<std::size_t>(std::llround(zone[2]));
+      MFEM_VERIFY(index < identification.exclusions.size(),
+                  "An analytic exclusion zone names an unknown exclusion record!");
+      Emit(zone[0], zone[1], identification.exclusions[index].cls);
+      covered.emplace_back(zone[0], zone[1]);
+    }
+    std::sort(covered.begin(), covered.end());
+    double cursor = 0.0;
+    for (const auto &[s0, s1] : covered)
+    {
+      if (s0 > cursor + tolerance)
+      {
+        Emit(cursor, s0, "Unclaimed-other");
+      }
+      cursor = std::max(cursor, s1);
+    }
+    if (segment.length > cursor + tolerance)
+    {
+      Emit(cursor, segment.length, "Unclaimed-other");
+    }
+  }
+  return portions;
+}
+
 std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
     const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
-    std::vector<ResponseCorrectionData::UncoveredPortionData> &uncovered, double R)
+    std::vector<ResponseCorrectionData::UncoveredPortionData> &uncovered, double R,
+    std::vector<ResponseCorrectionData::UncoveredPortionData> *trimmed_portions)
 {
   std::vector<ResponseCorrectionData::CornerArmTrimData> records;
   const double tolerance = kSignatureParameterToleranceOverRadius * R;
@@ -9935,6 +10024,11 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
     record.angle_degrees = angle_degrees;
     record.exit_distance_over_radius = exit_over_radius;
     record.trimmed_length = exit - R;
+    // The stretches along the arm this corner removes (the exclusion-energy export's
+    // CornerArmTrim portions, idfix DESIGN section 8): the co-located cells of a
+    // first-order split share one stretch, so the stretches are merged before they are
+    // emitted (each counted once).
+    std::vector<std::pair<double, double>> stretches;
     for (std::size_t p = 0; p < patches.size(); p++)
     {
       auto &patch = patches[p];
@@ -9984,6 +10078,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
       // per-patch record keeps the full removed length (the A7 audit weights it itself).
       record.removed_cell_length += removed * patch.provenance.model_weight;
       record.cells.emplace_back(p, removed);
+      stretches.emplace_back(std::max(a_lo, 0.0), std::min(a_hi, exit));
     }
     // The uncovered portions on the second arm (an unmatched feature beginning at the
     // corner's window): the same part removed.
@@ -10010,6 +10105,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
         continue;
       }
       record.removed_uncovered_length += removed;
+      stretches.emplace_back(std::max(a_lo, 0.0), std::min(a_hi, exit));
       if (a_hi <= exit + 1.0e-12 * scale)
       {
         it = uncovered.erase(it);
@@ -10023,6 +10119,31 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
       const Point3D direction = Normalize(Subtract(far, near));
       near = Add(near, Scale(exit - a_near, direction));
       ++it;
+    }
+    if (trimmed_portions && !stretches.empty())
+    {
+      std::sort(stretches.begin(), stretches.end());
+      std::vector<std::pair<double, double>> merged;
+      for (const auto &stretch : stretches)
+      {
+        if (!merged.empty() && stretch.first <= merged.back().second + tolerance)
+        {
+          merged.back().second = std::max(merged.back().second, stretch.second);
+        }
+        else
+        {
+          merged.push_back(stretch);
+        }
+      }
+      for (const auto &[lo, hi] : merged)
+      {
+        if (hi - lo > tolerance)
+        {
+          trimmed_portions->push_back({feature.id, "CornerArmTrim", -1,
+                                       Add(vertex, Scale(lo, arm)),
+                                       Add(vertex, Scale(hi, arm))});
+        }
+      }
     }
     records.push_back(std::move(record));
   }
@@ -12195,8 +12316,12 @@ FeaturePatchSummary BuildFeaturePatches(
   // Corner-arm trim (decision 394, F1): the second arm's straight cells of a matched corner
   // whose arms are not perpendicular begin where that arm exits the coupon's matching
   // square.
+  // The exclusion-energy export's portions (idfix DESIGN section 8): the corner-arm trims'
+  // stretches join the identification's excluded / unclaimed classes.
+  result.exclusion_portions = CollectIdentificationExclusionPortions(identification, R);
   result.corner_arm_trims =
-      ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R);
+      ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R,
+                         &result.exclusion_portions);
   // Corner-arm extension (decision 511 O2 (i)): the arm cells of a matched corner whose
   // claim ends beyond the square exit (a rounded corner: t_d + R from the virtual corner)
   // begin at the exit.
@@ -18649,6 +18774,18 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                            {"P1", portion.p1}});
     }
     cache["UncoveredPortions"] = std::move(uncovered);
+    // The exclusion-energy export's portions (idfix DESIGN section 8; decision 1072 Q3: a
+    // required leaf of version 21).
+    nlohmann::json exclusions = nlohmann::json::array();
+    for (const auto &portion : config.exclusion_portions)
+    {
+      exclusions.push_back({{"Feature", portion.feature},
+                            {"Topology", portion.topology},
+                            {"Segment", portion.segment},
+                            {"P0", portion.p0},
+                            {"P1", portion.p1}});
+    }
+    cache["ExclusionPortions"] = std::move(exclusions);
     // Mirror band (boundary-cut DESIGN 2.2): the planes, the record and the virtual-corner
     // trims.
     nlohmann::json planes = nlohmann::json::array();
@@ -18843,6 +18980,24 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     portion.p0 = entry.at("P0");
     portion.p1 = entry.at("P1");
     result.uncovered_portions.push_back(std::move(portion));
+  }
+  // Decision 1072 Q3: the exclusion-energy portions are a REQUIRED leaf of version 21; a
+  // version-21 cache written before the export existed (the identification fix round's
+  // interim binaries) is refused by name, never read as an empty set.
+  MFEM_VERIFY(data.contains("ExclusionPortions"),
+              "Response-geometry cache version 21 without ExclusionPortions: written by an "
+              "interim binary before the exclusion-energy export (idfix DESIGN section 8; "
+              "decision 1072 Q3); delete the stale cache!");
+  result.exclusion_portions.clear();
+  for (const auto &entry : data.at("ExclusionPortions"))
+  {
+    ResponseCorrectionData::UncoveredPortionData portion;
+    portion.feature = entry.at("Feature");
+    portion.topology = entry.at("Topology");
+    portion.segment = entry.at("Segment");
+    portion.p0 = entry.at("P0");
+    portion.p1 = entry.at("P1");
+    result.exclusion_portions.push_back(std::move(portion));
   }
   for (const auto &entry : data.value("MirrorPlanes", nlohmann::json::array()))
   {
@@ -25825,6 +25980,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       ownership_diagnostics["MirrorFormedPlacement"] = placements;
     }
     uncovered_portions = config.uncovered_portions;
+    exclusion_portions = config.exclusion_portions;  // section 8's export set, by class
     mirror_planes = config.mirror_planes;
     mirror_band = config.mirror_band_over_radius * config.matching_radius;
     mirror_tolerance = kSignatureParameterToleranceOverRadius * config.matching_radius;
@@ -26409,6 +26565,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // The conductor-consistency gate's diagnostic opt-out (idfix R0-a, B.4 (F)): recorded in
   // the Diagnostics whenever set, so that a run of record carrying it is refused by name.
   conductor_consistency_record_only = request->conductor_consistency_record_only;
+  exclusion_energy = request->exclusion_energy;
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -27089,6 +27246,28 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                         "the PatchConstruction Legacy comparison branch): the R0-a probes "
                         "are formed by the Features construction only"}});
       }
+    }
+    // Section 8 / decision 1064 (2): the unprobed APPLIED patches (no probe of any kind,
+    // so the gate skips them: a translational patch without edge probes; a spatial patch
+    // whose model is collocated or whose trace mesh has no conductor vertex, the two
+    // UnprobedModels reasons above) by their raw claims, for the exclusion-energy export.
+    if (dimension == 3)
+    {
+      std::vector<int> unprobed_patches;
+      for (std::size_t p = 0; p < applied_patch_count; p++)
+      {
+        const auto &model = models[patches[p].model];
+        const bool probed =
+            model.spatial_basis
+                ? (model.spatial_mortar && !(model.plane_conductor_vertices.empty() &&
+                                             model.off_plane_conductor_vertices.empty()))
+                : !patches[p].conductor_probes.empty();
+        if (!probed && patches[p].weight > 0.0)
+        {
+          unprobed_patches.push_back(patches[p].global_index);
+        }
+      }
+      RecordUnprobedPatchClaims(unprobed_patches);
     }
   }
   diagnostic_entry_models.clear();
@@ -27842,6 +28021,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   geometry_fallback_interface_types = config.geometry_fallback_interface_types;
   geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   conductor_consistency_record_only = request->conductor_consistency_record_only;
+  exclusion_energy = request->exclusion_energy;
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -28730,6 +28910,28 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   }
 
   {
+    // Section 8 / decision 1064 (2): the unprobed applied patches (no probe of any kind:
+    // the gate skips them) by their raw claims, gathered to every rank (the claims are
+    // replicated) and sorted, for the exclusion-energy export.
+    std::vector<double> local_unprobed;
+    for (std::size_t p = 0; p < patches.size(); p++)
+    {
+      if (maxwell_probes[p].empty() && patches[p].weight > 0.0)
+      {
+        local_unprobed.push_back(static_cast<double>(patches[p].global_index));
+      }
+    }
+    const std::vector<double> gathered = AllgatherRecords(local_unprobed);
+    std::vector<int> unprobed_patches;
+    unprobed_patches.reserve(gathered.size());
+    for (const double value : gathered)
+    {
+      unprobed_patches.push_back(static_cast<int>(std::llround(value)));
+    }
+    std::sort(unprobed_patches.begin(), unprobed_patches.end());
+    RecordUnprobedPatchClaims(unprobed_patches);
+  }
+  {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
     ConfigureMaxwellLines(line_geometry, line_patches, patch_provenance, geometry_ledger);
   }
@@ -28792,6 +28994,49 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
+}
+
+void SurfaceResponseOperator::RecordUnprobedPatchClaims(
+    const std::vector<int> &global_indices)
+{
+  // The raw claims (the DomainBoundary rule; replicated, keyed by the placed index) of the
+  // applied patches the gate cannot probe, labelled UnprobedModels, each once; the count
+  // and the claimed length beside the gate's UnprobedModels list.
+  int count = 0;
+  for (const int global_index : global_indices)
+  {
+    const auto claim = conductor_consistency_claims.find(global_index);
+    if (claim == conductor_consistency_claims.end())
+    {
+      continue;  // a two-dimensional mesh: no raw claims
+    }
+    count++;
+    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    {
+      auto portion = claim->second.portions[i];
+      portion.topology = "UnprobedModels";
+      AppendExcludedPatchPortion(
+          unprobed_model_portions, static_cast<std::size_t>(global_index), portion,
+          claim->second.translational[i], conductor_consistency_claim_tolerance);
+    }
+  }
+  if (count > 0)
+  {
+    ConductorConsistencyDiagnostics()["UnprobedPatches"] = {
+        {"Count", count},
+        {"ClaimLength", unprobed_model_portions.length * mesh_coordinate_scale}};
+  }
+}
+
+std::vector<ResponseCorrectionData::UncoveredPortionData>
+SurfaceResponseOperator::GetExclusionEnergyPortions() const
+{
+  std::vector<ResponseCorrectionData::UncoveredPortionData> portions = exclusion_portions;
+  portions.insert(portions.end(), unprobed_model_portions.portions.begin(),
+                  unprobed_model_portions.portions.end());
+  portions.insert(portions.end(), maxwell_patch_excluded_portions.portions.begin(),
+                  maxwell_patch_excluded_portions.portions.end());
+  return portions;
 }
 
 double MaxwellLineBoxTolerance(double coordinate_scale)

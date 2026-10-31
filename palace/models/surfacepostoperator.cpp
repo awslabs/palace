@@ -881,6 +881,8 @@ SurfacePostOperator::SurfacePostOperator(
                  std::vector<std::array<double, 6>>, std::vector<double>>;
   std::map<AutomaticEdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
       automatic_edge_distance_trees;
+  std::map<AutomaticEdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
+      classified_edge_distance_trees;
   const SurfacePostGeometry *cached_automatic_geometry =
       automatic_geometry && *automatic_geometry ? automatic_geometry->get() : nullptr;
   std::shared_ptr<SurfacePostGeometry> new_automatic_geometry;
@@ -1005,6 +1007,13 @@ SurfacePostOperator::SurfacePostOperator(
         if (cached_tree != cached_automatic_geometry->automatic_edge_distance_trees.end())
         {
           it->second.edge_distance_tree = cached_tree->second;
+          const auto cached_classified =
+              cached_automatic_geometry->classified_edge_distance_trees.find(idx);
+          if (cached_classified !=
+              cached_automatic_geometry->classified_edge_distance_trees.end())
+          {
+            it->second.classified_edge_distance_tree = cached_classified->second;
+          }
           continue;
         }
       }
@@ -1046,6 +1055,41 @@ SurfacePostOperator::SurfacePostOperator(
       if (!data.localize_edge_energy && new_automatic_geometry)
       {
         new_automatic_geometry->automatic_edge_distance_trees.emplace(idx, tree_it->second);
+      }
+      // The exclusion-energy export's CLASSIFIED tree (decision 1076): every segment of the
+      // interface, physical or not, under the same exclusion rules; cached alike.
+      auto classified_indices =
+          GetInterfaceMetalEdgeSegmentIndices(edges, idx, data.type, false);
+      ExcludeMetalEdgeSegmentIndices(mesh, edges, data.edge_exclude_attributes,
+                                     classified_indices);
+      ExcludeCoincidentMetalEdgeSegmentIndices(
+          edges, data.edge_exclude_segments, data.edge_exclude_segment_sagittas,
+          data.edge_exclude_segment_tolerance, mesh.SpaceDimension(), classified_indices);
+      const AutomaticEdgeDistanceTreeKey classified_key{
+          leaf, classified_indices, data.edge_frame_normal, data.edge_exclude_segments,
+          data.edge_exclude_segment_sagittas};
+      auto classified_it = classified_edge_distance_trees.find(classified_key);
+      if (classified_it == classified_edge_distance_trees.end())
+      {
+        std::vector<std::array<double, 3>> process_normals;
+        if (data.localize_edge_energy)
+        {
+          process_normals = BuildMetalEdgeProcessNormals(
+              mesh, edges, classified_indices, [this](int attribute)
+              { return this->mat_op.GetLightSpeedMax(attribute); }, data.edge_frame_normal);
+        }
+        classified_it =
+            classified_edge_distance_trees
+                .try_emplace(classified_key,
+                             BuildEdgeDistanceTree(edges, classified_indices,
+                                                   std::move(process_normals), false))
+                .first;
+      }
+      it->second.classified_edge_distance_tree = classified_it->second;
+      if (!data.localize_edge_energy && new_automatic_geometry)
+      {
+        new_automatic_geometry->classified_edge_distance_trees.emplace(
+            idx, classified_it->second);
       }
     }
     else
@@ -1295,8 +1339,28 @@ SurfacePostOperator::GetInterfacePartitionedEdgeEnergies(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
     const std::vector<UncoveredPerimeterPortion> &portions) const
 {
-  // PatchEnergy (decision 922 B-1). One integral per (interface, group) and one for the
-  // unclaimed remainder; the groups come from the exact piece partition of the portions.
+  // PatchEnergy (decision 922 B-1): the physical tree, the remainder "unclaimed".
+  return PartitionInterfaceEdgeEnergies(indices, E, D, portions, false, "unclaimed");
+}
+
+std::map<int, std::map<std::string, double>>
+SurfacePostOperator::GetInterfaceClassifiedEdgeEnergies(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<UncoveredPerimeterPortion> &portions) const
+{
+  // The exclusion-energy export (decision 1076): the classified tree, the remainder
+  // "Claimed".
+  return PartitionInterfaceEdgeEnergies(indices, E, D, portions, true, "Claimed");
+}
+
+std::map<int, std::map<std::string, double>>
+SurfacePostOperator::PartitionInterfaceEdgeEnergies(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<UncoveredPerimeterPortion> &portions, bool classified,
+    const std::string &remainder_label) const
+{
+  // One integral per (interface, group) and one for the remainder; the groups come from
+  // the exact piece partition of the portions on the selected tree.
   const auto &mesh = *h1_fespace.GetParMesh();
   const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   std::map<int, std::map<std::string, double>> energies;
@@ -1310,22 +1374,28 @@ SurfacePostOperator::GetInterfacePartitionedEdgeEnergies(
     const auto &data = it->second;
     MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
                 "Partitioned edge energies require a matching edge distance!");
+    MFEM_VERIFY(!classified || data.classified_edge_distance_tree,
+                "The exclusion-energy export requires the classified edge tree of an "
+                "automatic-edge interface (interface "
+                    << idx << " has none)!");
+    const EdgeDistanceTree &tree =
+        classified ? *data.classified_edge_distance_tree : *data.edge_distance_tree;
     energies.emplace(idx, std::map<std::string, double>{});
     const double radius = data.edge_distances.back();
-    const UncoveredEdgeIntervals intervals(*data.edge_distance_tree, portions,
+    const UncoveredEdgeIntervals intervals(tree, portions,
                                            kSignatureParameterToleranceOverRadius * radius);
     const PartitionedEdgePieces pieces(intervals);
     const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
     auto coefficient = data.GetCoefficient(E, D, mat_op);
     for (std::size_t group = 0; group <= pieces.groups.size(); group++)
     {
-      PartitionedEdgeCoefficient partitioned(*coefficient, *data.edge_distance_tree, pieces,
-                                             radius, data.edge_distance_smoothing,
+      PartitionedEdgeCoefficient partitioned(*coefficient, tree, pieces, radius,
+                                             data.edge_distance_smoothing,
                                              static_cast<int>(group));
       local_energies.push_back(GetLocalSurfaceIntegral(partitioned, attr_marker,
                                                        data.ownership_quadrature_order));
       entries.emplace_back(idx, group < pieces.groups.size() ? pieces.groups[group]
-                                                             : std::string("unclaimed"));
+                                                             : remainder_label);
     }
   }
   if (!local_energies.empty())

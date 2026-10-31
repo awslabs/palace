@@ -9,9 +9,11 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <fmt/format.h>
@@ -35,6 +37,7 @@ namespace palace
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
+using ResponseCorrectionData = config::ElectrostaticSolverData::ResponseCorrectionData;
 using namespace Catch::Matchers;
 
 namespace
@@ -1238,6 +1241,320 @@ TEST_CASE("Response-correction ConductorConsistency.RecordOnly is read and bound
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"] = {
       {"Tolerance", 0.05}};
   CHECK_THROWS_WITH(IoData(config, false), ContainsSubstring("unknown key \"Tolerance\""));
+}
+
+// OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1072 Q3 /
+// 1074): the config leaf Diagnostics.ExclusionEnergy; the identification's excluded /
+// unclaimed portions by class close the perimeter partition (perimeter = assigned +
+// excluded + unclaimed-other) and travel with the v21 cache as a required leaf; the
+// electrostatic driver writes surface-response-exclusion-energy.csv when the leaf is on and
+// nothing else changes (every other table bitwise ON vs OFF).
+TEST_CASE("Response-correction Diagnostics.ExclusionEnergy is read and bounded",
+          "[surfaceresponseoperator][exclusionenergy][config][Serial]")
+{
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "unused"}}},
+      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries", {{"Ground", {{"Attributes", {1}}}}}},
+      {"Solver",
+       {{"Electrostatic",
+         {{"ResponseCorrection",
+           {{"Library", "unused.json"}, {"Diagnostics", {{"ExclusionEnergy", true}}}}}}}}}};
+  {
+    IoData iodata(config, false);
+    REQUIRE(iodata.solver.electrostatic.response_correction);
+    CHECK(iodata.solver.electrostatic.response_correction->exclusion_energy);
+  }
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Diagnostics"] = {
+      {"ExclusionEnergy", false}};
+  {
+    IoData iodata(config, false);
+    CHECK_FALSE(iodata.solver.electrostatic.response_correction->exclusion_energy);
+  }
+  config["Solver"]["Electrostatic"]["ResponseCorrection"].erase("Diagnostics");
+  {
+    // Off by default (decision 1076: the measured overhead exceeded the 10 % bar; the
+    // stage E / F configurations turn it on).
+    IoData iodata(config, false);
+    CHECK_FALSE(iodata.solver.electrostatic.response_correction->exclusion_energy);
+  }
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Diagnostics"] = {
+      {"PatchEnergy", true}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    ContainsSubstring("unknown key \"PatchEnergy\""));
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator exclusion-energy portions close the perimeter "
+                 "partition and travel with the geometry cache (section 8)",
+                 "[surfaceresponseoperator][exclusionenergy][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // The electrostatic path on the shorted CPW stub (the one-label cluster library): the
+  // ground plane's rim on the box walls is TruncationCut, the short's corners are unmatched
+  // (uncovered, not unclaimed).
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "s8");
+  json config = ConvexIslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["Diagnostics"] = {{"ExclusionEnergy", true}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  const double scale = iodata.units.GetMeshLengthRelativeScale();
+  // The preflight manifest's Totals (mesh-file units): the perimeter partition of record.
+  const auto manifest_path = temp.temp_dir / "surface-response-requirements-s8.json";
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+  }
+  Mpi::Barrier(Mpi::World());
+  std::ifstream manifest_input(manifest_path);
+  REQUIRE(manifest_input);
+  const json manifest = json::parse(manifest_input);
+  const auto &totals = manifest.at("Identification").at("Totals");
+  const double perimeter = totals.at("PerimeterLength").get<double>();
+  const double assigned = totals.at("AssignedLength").get<double>();
+  const double excluded = totals.at("ExcludedLength").get<double>();
+  REQUIRE(perimeter > 0.0);
+  REQUIRE(excluded > 0.0);  // the ground plane's rim and its untargeted perimeter
+
+  // The operator writes the geometry cache (version 21) as it is built.
+  const auto cache_path = temp.temp_dir / "s8-geometry-cache.json";
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  }
+  LaplaceOperator laplace(iodata, meshes);
+  std::vector<ResponseCorrectionData::UncoveredPortionData> identification_portions;
+  {
+    test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
+    SurfaceResponseOperator response(iodata, laplace);
+    REQUIRE(response.ExclusionEnergyRequested());
+    identification_portions = response.GetIdentificationExclusionPortions();
+    // The export set = the identification's portions (+ UnprobedModels /
+    // MaxwellPatchExcluded, none here: every stub patch is probed), each named by class.
+    const auto export_set = response.GetExclusionEnergyPortions();
+    CHECK(export_set.size() == identification_portions.size());
+    CHECK(response.GetUnprobedModelPortionRecord().portions.empty());
+    for (const auto &portion : export_set)
+    {
+      CHECK_FALSE(portion.topology.empty());
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  auto Length = [](const auto &portion)
+  {
+    double length2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+    }
+    return std::sqrt(length2);
+  };
+  std::map<std::string, double> length_by_class;
+  for (const auto &portion : identification_portions)
+  {
+    length_by_class[portion.topology] += Length(portion) * scale;
+  }
+  // Every exclusion class of the manifest, by NAME and length (the portions ARE the
+  // manifest's exclusions); no portion of a class the manifest lacks (the identification's
+  // classes, CornerArmTrim and Unclaimed-other aside).
+  std::map<std::string, double> manifest_by_class;
+  for (const auto &exclusion : manifest.at("Identification").at("Exclusions"))
+  {
+    if (exclusion.at("Length").get<double>() > 0.0)
+    {
+      manifest_by_class[exclusion.at("Class").get<std::string>()] +=
+          exclusion.at("Length").get<double>();
+    }
+  }
+  REQUIRE_FALSE(manifest_by_class.empty());
+  double excluded_classes = 0.0;
+  for (const auto &[cls, length] : length_by_class)
+  {
+    if (cls == "Unclaimed-other" || cls == "CornerArmTrim")
+    {
+      continue;
+    }
+    excluded_classes += length;
+    REQUIRE(manifest_by_class.count(cls) == 1);
+    CHECK_THAT(length, WithinRel(manifest_by_class.at(cls), 1.0e-9));
+  }
+  CHECK(length_by_class.size() - length_by_class.count("Unclaimed-other") -
+            length_by_class.count("CornerArmTrim") ==
+        manifest_by_class.size());
+  // The partition closes: the excluded classes = the manifest's ExcludedLength; the
+  // unclaimed remainder = perimeter - assigned - excluded (no Unclaimed-other portion when
+  // every non-excluded segment is claimed).
+  CHECK_THAT(excluded_classes, WithinRel(excluded, 1.0e-9));
+  const double unclaimed = length_by_class.count("Unclaimed-other")
+                               ? length_by_class.at("Unclaimed-other")
+                               : 0.0;
+  CHECK_THAT(unclaimed, WithinAbs(perimeter - assigned - excluded, 1.0e-9 * perimeter));
+  // The cache (version 21) carries the portions as a REQUIRED leaf: a round trip returns
+  // them; a cache without the leaf is refused by name (decision 1072 Q3).
+  REQUIRE(fs::exists(cache_path));
+  const auto stale_path = temp.temp_dir / "s8-geometry-cache-stale.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(cache_path);
+    json cache = json::parse(input);
+    REQUIRE(cache.at("Version").get<int>() == 21);
+    REQUIRE(cache.at("ExclusionPortions").size() == identification_portions.size());
+    cache.erase("ExclusionPortions");
+    std::ofstream output(stale_path);
+    output << cache.dump() << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto &request = *iodata.solver.electrostatic.response_correction;
+  const auto reread = ReadResponseGeometryCache(cache_path, request);
+  REQUIRE(reread.exclusion_portions.size() == identification_portions.size());
+  for (std::size_t i = 0; i < reread.exclusion_portions.size(); i++)
+  {
+    CHECK(reread.exclusion_portions[i].topology == identification_portions[i].topology);
+    CHECK(reread.exclusion_portions[i].segment == identification_portions[i].segment);
+  }
+  CHECK_THROWS_WITH(ReadResponseGeometryCache(stale_path, request),
+                    ContainsSubstring("without ExclusionPortions"));
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic Diagnostics.ExclusionEnergy writes the exclusion-energy "
+                 "table and changes nothing else (section 8)",
+                 "[electrostaticsolver][surfaceresponseoperator][exclusionenergy][3d]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "shorted-cpw-stub.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "es8");
+  json config = ConvexIslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  // The plane (Terminal 9) inside the grounded box: its rim on the walls is NonManifold
+  // (physical perimeter shared with the wall metal: in the interface's edge-distance tree,
+  // so its within-R energy is attributable). A TruncationCut / Port cut is NOT physical
+  // perimeter and lies in no edge tree: the partition attributes the field near a cut to
+  // the nearest physical edge, so those classes read 0 here (the named limitation of the
+  // export; the lane record carries it).
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  const fs::path off_dir = temp.temp_dir / "exclusion-energy-off";
+  const fs::path on_dir = temp.temp_dir / "exclusion-energy-on";
+  config["Problem"]["Output"] = off_dir.string();  // the default: off (decision 1076)
+  test::RunElectrostatic(config);
+  correction["Diagnostics"] = {{"ExclusionEnergy", true}};
+  config["Problem"]["Output"] = on_dir.string();
+  test::RunElectrostatic(config);
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const fs::path table = "surface-response-exclusion-energy.csv";
+  CHECK_FALSE(fs::exists(off_dir / table));
+  REQUIRE(fs::exists(on_dir / table));
+  // Every other CSV of the run is bitwise ON vs OFF (the export is a diagnostic beside).
+  int compared = 0;
+  for (const auto &entry : fs::directory_iterator(off_dir))
+  {
+    if (entry.path().extension() != ".csv")
+    {
+      continue;
+    }
+    const auto name = entry.path().filename();
+    REQUIRE(fs::exists(on_dir / name));
+    std::ifstream off(entry.path(), std::ios::binary), on(on_dir / name, std::ios::binary);
+    const std::string off_bytes((std::istreambuf_iterator<char>(off)), {});
+    const std::string on_bytes((std::istreambuf_iterator<char>(on)), {});
+    CHECK(off_bytes == on_bytes);
+    compared++;
+  }
+  CHECK(compared > 0);
+  // The table: the header of record, one row per class x type for the single source; the
+  // NonManifold class (the plane's rim on the grounded walls) reads > 0 against the
+  // classified tree (decision 1076); every energy non-negative; P == S: the classes and
+  // Claimed sum to the Total row (the within-R energy under the classified tree by one
+  // integral) to 1e-12 relative, and no more than the type's interface raw energy.
+  std::ifstream input(on_dir / table);
+  std::string line;
+  REQUIRE(std::getline(input, line));
+  CHECK(line ==
+        "source,class,type,class portions,class length (m),raw energy (J),interface "
+        "raw energy (J),share");
+  std::map<std::string, double> energy_by_class_type, total_by_type, interface_raw_by_type;
+  std::map<std::string, double> energy_by_class;
+  std::set<std::string> classes;
+  int rows = 0;
+  while (std::getline(input, line))
+  {
+    std::vector<std::string> fields;
+    std::stringstream row(line);
+    std::string field;
+    while (std::getline(row, field, ','))
+    {
+      fields.push_back(field);
+    }
+    REQUIRE(fields.size() == 8);
+    CHECK(fields[0] == "1");  // the one source
+    const std::string &cls = fields[1], &type = fields[2];
+    const double energy = std::stod(fields[5]);
+    CHECK(energy >= 0.0);
+    CHECK(std::stod(fields[7]) >= 0.0);
+    interface_raw_by_type[type] = std::stod(fields[6]);
+    energy_by_class[cls] += energy;
+    if (cls == "Total")
+    {
+      total_by_type[type] = energy;
+    }
+    else
+    {
+      classes.insert(cls);
+      energy_by_class_type[type] += energy;
+      if (cls != "Claimed")
+      {
+        CHECK(std::stoi(fields[3]) > 0);
+        CHECK(std::stod(fields[4]) > 0.0);
+      }
+    }
+    rows++;
+  }
+  CHECK(rows > 0);
+  CHECK(classes.count("NonManifold") == 1);
+  CHECK(classes.count("Claimed") == 1);
+  // The NonManifold rim's row carries energy (the classified tree attributes it there).
+  CHECK(energy_by_class["NonManifold"] > 0.0);
+  REQUIRE_FALSE(total_by_type.empty());
+  for (const auto &[type, total] : total_by_type)
+  {
+    CHECK(total > 0.0);
+    CHECK_THAT(energy_by_class_type[type], WithinRel(total, 1.0e-12));
+    CHECK(total <= interface_raw_by_type[type] * (1.0 + 1.0e-9));
+  }
+#endif
 }
 
 }  // namespace palace

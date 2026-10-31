@@ -823,7 +823,7 @@ BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_at
 
 std::vector<std::size_t>
 GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int interface_index,
-                                    InterfaceDielectric interface_type)
+                                    InterfaceDielectric interface_type, bool physical_only)
 {
   MFEM_VERIFY(interface_type != InterfaceDielectric::DEFAULT,
               "Automatic metal edge selection requires an explicit MA, MS, or SA "
@@ -832,7 +832,7 @@ GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int inter
   for (std::size_t i = 0; i < geometry.segments.size(); i++)
   {
     const auto &segment = geometry.segments[i];
-    if (segment.type != MetalEdgeSegmentType::PHYSICAL)
+    if (physical_only && segment.type != MetalEdgeSegmentType::PHYSICAL)
     {
       continue;
     }
@@ -899,10 +899,9 @@ void ExcludeMetalEdgeSegmentIndices(const mfem::ParMesh &mesh,
               "extracted perimeter!");
 }
 
-std::shared_ptr<const EdgeDistanceTree>
-BuildEdgeDistanceTree(const MetalEdgeGeometry &geometry,
-                      const std::vector<std::size_t> &segment_indices,
-                      std::vector<std::array<double, 3>> process_normals)
+std::shared_ptr<const EdgeDistanceTree> BuildEdgeDistanceTree(
+    const MetalEdgeGeometry &geometry, const std::vector<std::size_t> &segment_indices,
+    std::vector<std::array<double, 3>> process_normals, bool physical_only)
 {
   using VertexDistance = std::pair<double, std::size_t>;
   std::vector<double> vertex_distances(geometry.vertices.size(), mfem::infinity());
@@ -962,7 +961,7 @@ BuildEdgeDistanceTree(const MetalEdgeGeometry &geometry,
     MFEM_VERIFY(index < geometry.segments.size(),
                 "Invalid automatically extracted metal edge segment index!");
     const auto &segment = geometry.segments[index];
-    MFEM_VERIFY(segment.type == MetalEdgeSegmentType::PHYSICAL,
+    MFEM_VERIFY(!physical_only || segment.type == MetalEdgeSegmentType::PHYSICAL,
                 "Automatic edge-distance trees cannot contain truncation segments!");
     segments.push_back({geometry.vertices[segment.vertices[0]].coordinate,
                         geometry.vertices[segment.vertices[1]].coordinate});
@@ -972,8 +971,9 @@ BuildEdgeDistanceTree(const MetalEdgeGeometry &geometry,
     for (int endpoint = 0; endpoint < 2; endpoint++)
     {
       const auto type = geometry.vertices[segment.vertices[endpoint]].physical_type;
-      MFEM_VERIFY(type, "Physical metal edge segment has an unclassified endpoint!");
-      data.vertex_types[endpoint] = static_cast<int>(*type);
+      MFEM_VERIFY(type || segment.type != MetalEdgeSegmentType::PHYSICAL,
+                  "Physical metal edge segment has an unclassified endpoint!");
+      data.vertex_types[endpoint] = type ? static_cast<int>(*type) : -1;
       data.vertex_distances[endpoint] = vertex_distances[segment.vertices[endpoint]];
     }
     metadata.push_back(data);

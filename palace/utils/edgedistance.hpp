@@ -176,19 +176,29 @@ void ExcludeCoincidentMetalEdgeSegmentIndices(
     const std::vector<double> &sagittas, double tolerance, int space_dimension,
     std::vector<std::size_t> &segment_indices, EdgeExclusionRecord *record = nullptr);
 
+// The metal edge segments of an interface: the PHYSICAL ones (the edge-distance tree every
+// energy table reads: the field near a fold / non-manifold / truncation / port edge is
+// attributed to the nearest PHYSICAL edge) or, with `physical_only` false, every segment
+// the identification classifies (the exclusion-energy export's CLASSIFIED tree, idfix
+// DESIGN section 8; decision 1076).
 std::vector<std::size_t>
 GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int interface_index,
-                                    InterfaceDielectric interface_type);
+                                    InterfaceDielectric interface_type,
+                                    bool physical_only = true);
 
 void ExcludeMetalEdgeSegmentIndices(const mfem::ParMesh &mesh,
                                     const MetalEdgeGeometry &geometry,
                                     const std::vector<int> &exclude_attributes,
                                     std::vector<std::size_t> &segment_indices);
 
-std::shared_ptr<const EdgeDistanceTree>
-BuildEdgeDistanceTree(const MetalEdgeGeometry &geometry,
-                      const std::vector<std::size_t> &segment_indices,
-                      std::vector<std::array<double, 3>> process_normals = {});
+// `physical_only` (the default) refuses a non-physical segment (the energy tables' trees);
+// false admits every segment type (the exclusion-energy export's classified tree, decision
+// 1076): a non-physical segment's endpoints keep their perimeter distance to the nearest
+// non-regular PHYSICAL vertex (infinity when no physical chain reaches them) and an
+// unclassified endpoint type (-1).
+std::shared_ptr<const EdgeDistanceTree> BuildEdgeDistanceTree(
+    const MetalEdgeGeometry &geometry, const std::vector<std::size_t> &segment_indices,
+    std::vector<std::array<double, 3>> process_normals = {}, bool physical_only = true);
 
 struct EdgeRefinementContext
 {

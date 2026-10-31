@@ -271,6 +271,14 @@ protected:
   // model set (empty without PatchEnergy), whose within-R raw energy is partitioned per
   // model set (surface-response-model-raw-energy.csv).
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> surface_response_model_raw;
+  // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1074): the
+  // excluded / unclaimed perimeter portions by class (empty without
+  // Diagnostics.ExclusionEnergy), whose within-R raw energy is partitioned per class
+  // (surface-response-exclusion-energy.csv). Read fresh at every measurement: the
+  // MaxwellPatchExcluded part is set at the construction, the rest at the placement.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+      surface_response_exclusion_energy;
+  bool surface_response_exclusion_energy_enabled = false;
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
   // PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B): the per-patch export
@@ -323,6 +331,9 @@ protected:
     // PatchEnergy (decision 922 B-1): per target interface, the raw field's within-R energy
     // per model-set label (+ "unclaimed").
     std::map<int, std::map<std::string, double>> model_raw_partition;
+    // Section 8: per target interface, the raw field's within-R energy per exclusion class
+    // (surface-response-exclusion-energy.csv); empty without Diagnostics.ExclusionEnergy.
+    std::map<int, std::map<std::string, double>> exclusion_energy_partition;
     // OI-MX-LOOPGATE (decision 955): per target interface, the circulating remainders' raw
     // within-R energy per model row ("m<idx>": rho_p x the raw energy on the patch's
     // claims; the Total is their sum), of the raw field (both closures) and of the
@@ -386,6 +397,11 @@ protected:
   // plain text tables appended per print, root only.
   void PrintSurfaceResponseModelRawEnergies(double output_index, int excitation) const;
   mutable bool surface_response_model_raw_started = false;
+  // Section 8: surface-response-exclusion-energy.csv (per exclusion class x interface type
+  // the raw within-R energy, the type's interface raw energy and the share, with the
+  // Maxwell keys), a plain text table appended per print, root only.
+  void PrintSurfaceResponseExclusionEnergies(double output_index, int excitation) const;
+  mutable bool surface_response_exclusion_energy_started = false;
   // OI-MX-LOOPGATE (decision 955): surface-response-loop-fit.csv (per evaluation the
   // maximum and response-weighted circulating share, the remainder / fallback patch counts
   // and the rho-weighted claim length) and surface-response-loop-remainder-energy.csv (per
@@ -822,6 +838,19 @@ public:
   {
     return surf_post_op.GetInterfaceUncoveredEdgeEnergies(response_targets, *E,
                                                           D_recovered.get(), portions);
+  }
+  // The exclusion-energy export (idfix DESIGN section 8; decision 1076): the same field's
+  // within-R energy partitioned per exclusion class against the CLASSIFIED edge tree
+  // (+ "Claimed").
+  template <ProblemType U = solver_t>
+  auto GetElectrostaticClassifiedEdgeEnergies(
+      const std::set<int> &response_targets,
+      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions) const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
+                          std::map<int, std::map<std::string, double>>>
+  {
+    return surf_post_op.GetInterfaceClassifiedEdgeEnergies(response_targets, *E,
+                                                           D_recovered.get(), portions);
   }
   // PatchEnergy (decision 922 B-1): the same field's within-R energy partitioned per
   // model-set label over the applied patches' raw claims.

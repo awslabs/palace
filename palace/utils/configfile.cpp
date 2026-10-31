@@ -1668,6 +1668,19 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                         << key << "\" (RecordOnly is the only key)!");
       }
     }
+    if (auto diagnostics = correction.find("Diagnostics"); diagnostics != correction.end())
+    {
+      MFEM_VERIFY(diagnostics->is_object(),
+                  "Response-correction \"Diagnostics\" must be an object!");
+      data.exclusion_energy = diagnostics->value("ExclusionEnergy", data.exclusion_energy);
+      for (const auto &[key, value] : diagnostics->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "ExclusionEnergy",
+                    "Response-correction \"Diagnostics\" has an unknown key \""
+                        << key << "\" (ExclusionEnergy is the only key)!");
+      }
+    }
     if (auto domain_boundary = correction.find("DomainBoundary");
         domain_boundary != correction.end())
     {

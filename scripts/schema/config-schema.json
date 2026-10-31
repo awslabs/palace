@@ -3454,6 +3454,18 @@
               "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`; and `surface-response-model-raw-energy.csv` / `-groups.csv`, the raw field's within-R energy partitioned exactly over the applied patches' claims by model set plus the unclaimed remainder. Electrostatic, driven and eigenmode (per frequency / per mode, with the `f (GHz)` / `m` and `exc` keys after the electrostatic columns; the Maxwell path also writes `surface-response-patches.csv`, `surface-response-traces.csv` with the complex spatial traces and `surface-response-patch-loops.csv`, the per-path loop residuals of the line-integral trace lift); a three-dimensional export: not supported by boundary mode or on a two-dimensional mesh. Every other output is unchanged.",
               "default": false
             },
+            "Diagnostics": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Diagnostic exports of the surface-response correction (the identification fix round, idfix DESIGN section 8).",
+              "properties": {
+                "ExclusionEnergy": {
+                  "type": "boolean",
+                  "description": "Write `surface-response-exclusion-energy.csv`: the raw field's within-R energy per exclusion class by name (the identification's Port / SimulationBoundary / NonPlanar / NonManifold / TruncationCut / Untargeted / UndeterminedProcessSide / Unchained / CrossLayer, CornerArmTrim, Unclaimed-other, UnprobedModels, MaxwellPatchExcluded; plus `Claimed` = the feature-claimed perimeter's and `Total` = the within-R energy by one integral, which the classes and Claimed sum to) x interface type x source (electrostatic) / frequency or mode (Maxwell). The partition reads the CLASSIFIED edge tree: every metal edge segment of the interface, physical or not, so the field near a fold / non-manifold / truncation / port edge is attributed to that edge. Every OTHER energy table (uncovered, domain-boundary, spatial-cluster-priority, conductor-consistency, model-raw, the surface-Q edge columns) reads the PHYSICAL edge tree and attributes the field near such an edge to the nearest PHYSICAL edge: a named limitation of those tables. Off by default (the partition costs one surface integral per class and interface, +45 % of the postprocess categories on the S1 stage-1 window: above the 10 % bar of decision 1076); the stage E / F configurations set it true (OI-COVERAGE-EXCLUSION-ENERGY; decisions 1064 (2) / 1074 / 1076).",
+                  "default": false
+                }
+              }
+            },
             "ConductorConsistency": {
               "type": "object",
               "additionalProperties": false,

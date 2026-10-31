@@ -1455,6 +1455,21 @@ public:
     // the comparator, never by this reader.
     bool conductor_consistency_record_only = false;
 
+    // Diagnostics.ExclusionEnergy (OI-COVERAGE-EXCLUSION-ENERGY, idfix DESIGN section 8;
+    // decisions 1064 (2) / 1072 Q3 / 1074 / 1076): write
+    // surface-response-exclusion-energy.csv = the raw field's within-R energy per exclusion
+    // class (the identification's classes by name, CornerArmTrim, Unclaimed-other,
+    // UnprobedModels, MaxwellPatchExcluded, + Claimed and Total) x interface type x source
+    // / cycle, on both paths, partitioned against the CLASSIFIED edge tree (every metal
+    // edge segment, physical or not: the field near a fold / non-manifold / truncation /
+    // port edge is attributed to that edge; every OTHER energy table reads the PHYSICAL
+    // tree and attributes it to the nearest physical edge). OFF by default: the partition
+    // costs one surface integral per class and interface (+ the Total row), measured at
+    // +0.066 s per Maxwell measurement on the S1 stage-1 window = +45 % of its postprocess
+    // categories, above decision 1076's 10 % bar, so the stage E / F configurations turn
+    // it on.
+    bool exclusion_energy = false;
+
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
     // identification / placement (a valid config and library). RecordRaw: the affected
@@ -1695,6 +1710,14 @@ public:
       std::array<double, 3> p0{}, p1{};
     };
     std::vector<UncoveredPortionData> uncovered_portions;
+    // The excluded / unclaimed perimeter portions of the identification (idfix DESIGN
+    // section 8; the exclusion-energy export): `topology` = the exclusion Class by name (a
+    // whole-segment exclusion's class, an analytic CrossLayer zone's, CornerArmTrim for the
+    // stretch a corner's exit trims off an arm cell, Unclaimed-other for the remainder of a
+    // non-excluded segment no feature portion claims), `feature` = -1 (the trimmed
+    // stretch: the corner), `segment` = the perimeter segment. Carried by the geometry
+    // cache (version 21, a required leaf).
+    std::vector<UncoveredPortionData> exclusion_portions;
 
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.

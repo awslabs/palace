@@ -754,6 +754,18 @@ private:
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
   ExcludedPatchPortions domain_boundary_portions;
+  // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1074): the
+  // identification's excluded / unclaimed perimeter portions by class (the configuration's
+  // exclusion_portions: the classes by name, CornerArmTrim, Unclaimed-other) and the raw
+  // claims (the DomainBoundary rule) of the applied patches the conductor-consistency gate
+  // cannot probe (UnprobedModels). With the class-named MaxwellPatchExcluded portions they
+  // form the exclusion-energy export's set (GetExclusionEnergyPortions); nothing here
+  // changes an energy: a diagnostic partition of the raw within-R energy, written only
+  // when Diagnostics.ExclusionEnergy is on.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      exclusion_portions;
+  ExcludedPatchPortions unprobed_model_portions;
+  bool exclusion_energy = false;
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
   // matched cluster's box as the drivers' fourth raw class (counted, uncorrected).
@@ -823,6 +835,10 @@ private:
       const std::vector<MaxwellUncoveredLine> &uncovered_lines,
       const std::vector<MaxwellPatchProvenance> &patch_provenance,
       GeometryFallbackLedger &geometry_ledger);
+  // Section 8: the raw claims (conductor_consistency_claims, replicated) of the applied
+  // patches named by their global indices, labelled UnprobedModels, into
+  // unprobed_model_portions (+ the count / claimed length under the gate's diagnostics).
+  void RecordUnprobedPatchClaims(const std::vector<int> &global_indices);
   void EvaluatePointValues(const Vector &x, Vector &values) const;
   void EvaluatePointValues(const Vector &xr, const Vector &xi, Vector &vr,
                            Vector &vi) const;
@@ -1276,6 +1292,22 @@ public:
   {
     return maxwell_patch_excluded_portions;
   }
+  // The exclusion-energy export (idfix DESIGN section 8): Diagnostics.ExclusionEnergy, the
+  // identification's portions by class, the unprobed patches' raw claims, and the whole
+  // export set (every portion's `topology` = its Class).
+  bool ExclusionEnergyRequested() const { return exclusion_energy; }
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetIdentificationExclusionPortions() const
+  {
+    return exclusion_portions;
+  }
+  const ExcludedPatchPortions &GetUnprobedModelPortionRecord() const
+  {
+    return unprobed_model_portions;
+  }
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+  GetExclusionEnergyPortions() const;
   // The parts of the SpatialClusterPriority-dropped coupons' raw claims outside every
   // matched cluster's box (OI-SCP-HOLE, decision 922; empty when no coupon is dropped or
   // every dropped window lies inside its owner's box): kept in the corrected interface
