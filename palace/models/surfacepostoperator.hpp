@@ -34,10 +34,17 @@ struct BoundaryData;
 struct SurfaceFluxData;
 struct InterfaceDielectricData;
 struct FarFieldPostData;
+struct SolverData;
 
 }  // namespace config
 
 enum class ProblemType : char;
+
+// Whether the run's surface-response correction (electrostatic ResponseCorrection or
+// Maxwell SurfaceResponseCorrection) requests the exclusion-energy export
+// (Diagnostics.ExclusionEnergy; idfix DESIGN section 8): the SurfacePostOperator builds the
+// CLASSIFIED edge trees the export partitions against only then.
+bool ExclusionEnergyRequested(const config::SolverData &solver);
 
 // Mesh-independent automatic edge-distance geometry retained across AMR iterations. Only
 // aggregate edge-distance trees are cached; mesh-segment-localized diagnostics are rebuilt.
@@ -45,6 +52,9 @@ class SurfacePostGeometry
 {
 private:
   std::map<int, std::shared_ptr<const EdgeDistanceTree>> automatic_edge_distance_trees;
+  // The exclusion-energy export's CLASSIFIED trees (every metal edge segment of the
+  // interface, physical or not; idfix DESIGN section 8, decision 1076), beside.
+  std::map<int, std::shared_ptr<const EdgeDistanceTree>> classified_edge_distance_trees;
 
   friend class SurfacePostOperator;
 };
@@ -113,6 +123,12 @@ private:
     // The optional quadrature-level spatial filter (decision 352 follow-up (2)).
     std::shared_ptr<const InterfaceRegion> region;
     std::shared_ptr<const EdgeDistanceTree> edge_distance_tree;
+    // The exclusion-energy export's tree (decision 1076): EVERY metal edge segment of the
+    // interface the identification classifies (physical, fold, non-manifold, truncation,
+    // port), so that the field near a cut or fold is attributed to that edge and not, as
+    // in `edge_distance_tree` and every energy table reading it, to the nearest PHYSICAL
+    // edge. Automatic-edge interfaces only (null otherwise).
+    std::shared_ptr<const EdgeDistanceTree> classified_edge_distance_tree;
     // The EdgeExcludeSegments exclusion's coverage record of this entry's perimeter
     // (decision 657 (b): the listed length and the perimeter length the coincidence test
     // removed); nullopt for an entry without EdgeExcludeSegments.
@@ -156,6 +172,11 @@ private:
   // Axisymmetric (r, z) mesh: every MFEM-side surface and volume quadrature weight carries
   // the revolution measure 2 pi x (the libCEED operators carry it in their geometry data).
   const bool axisymmetric;
+
+  // The exclusion-energy export's CLASSIFIED edge tree (idfix DESIGN section 8; decision
+  // 1076) is built per automatic-edge interface only when Diagnostics.ExclusionEnergy is
+  // requested (the d1073 review's MINOR-5: an unrequested tree is memory with no reader).
+  const bool classified_edge_trees;
 
   struct LocalVolumeEdgeEnergyCache
   {
@@ -244,7 +265,8 @@ public:
       mfem::ParFiniteElementSpace &nd_fespace,
       const std::unordered_set<int> *cracked_attributes = nullptr,
       const config::BoundaryData *boundaries = nullptr,
-      std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr);
+      std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr,
+      bool classified_edge_trees = false);
   SurfacePostOperator(
       const IoData &iodata, const MaterialOperator &mat_op,
       mfem::ParFiniteElementSpace &h1_fespace, mfem::ParFiniteElementSpace &nd_fespace,
@@ -312,6 +334,15 @@ public:
   // foot lies on no portion. The labels and "unclaimed" sum to the within-R energy (the
   // interface energy minus the outside energy) exactly, up to the quadrature of the two
   // integrals.
+  // The exclusion-energy export (idfix DESIGN section 8; decisions 1074 / 1076): the same
+  // exact partition read against the CLASSIFIED tree (every metal edge segment of the
+  // interface), the portions' `type` = the exclusion Class; the remainder key is "Claimed"
+  // (the within-R energy whose nearest classified edge lies on no exclusion portion: the
+  // feature-claimed perimeter, modelled or uncovered). The classes and "Claimed" sum to the
+  // within-R energy of the interface under this tree's distance.
+  std::map<int, std::map<std::string, double>> GetInterfaceClassifiedEdgeEnergies(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<UncoveredPerimeterPortion> &portions) const;
   std::map<int, std::map<std::string, double>> GetInterfacePartitionedEdgeEnergies(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
@@ -360,6 +391,15 @@ private:
   void EvaluateInterfaceResponseRowImpl(const InterfaceResponseSamples &samples,
                                         const GridFunction &E, const GridFunction *D,
                                         double *row) const;
+  // The exact partition of the within-R energy over the portions' labels against the tree
+  // `classified` selects (the physical tree or the classified one), the remainder keyed
+  // `remainder_label`: GetInterfacePartitionedEdgeEnergies and
+  // GetInterfaceClassifiedEdgeEnergies.
+  std::map<int, std::map<std::string, double>>
+  PartitionInterfaceEdgeEnergies(const std::set<int> &indices, const GridFunction &E,
+                                 const GridFunction *D,
+                                 const std::vector<UncoveredPerimeterPortion> &portions,
+                                 bool classified, const std::string &remainder_label) const;
 
 public:
   std::vector<InterfaceResponseMatrix>

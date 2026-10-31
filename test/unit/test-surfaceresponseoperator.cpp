@@ -1873,7 +1873,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 21);
+      CHECK(cache["Version"] == 22);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3163,7 +3163,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 21);
+      CHECK(cache["Version"] == 22);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -7443,7 +7443,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
         model["Signature"] = signature;
         // One conductor reference per canonical conductor of the feature's own signature
-        // (the first edge of each), the fixture's Edges relabelled accordingly.
+        // (the first edge of each), the fixture's Edges relabelled accordingly. The
+        // reference sits at the MODEL's own exact Edges[k].Offset (decision 1093): the
+        // signature's OffsetOverR is quantised to 1e-6 R, and a reference built from it
+        // (12 / 11 -> 1.090909 x 11 = 11.999999) lands 1e-6 R inside the gap of the exact
+        // cross-section, which the ReferenceInGap rule (idfix R0-a, decision 1082 Q1:
+        // inclusive on an edge, no tolerance) rejects as a library defect - as the
+        // generators write the references from the same exact numbers as the Edges.
         json references = json::array();
         std::vector<int> conductors;
         for (std::size_t k = 0; k < signature["Edges"].size(); k++)
@@ -7453,8 +7459,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
               conductors.end())
           {
             conductors.push_back(conductor);
-            references.push_back(
-                {signature["Edges"][k]["OffsetOverR"].get<double>() * R, 0.0, 0.0});
+            references.push_back({model["Edges"][k]["Offset"].get<double>(), 0.0, 0.0});
           }
           model["Edges"][k]["Conductor"] = conductor;
         }
@@ -10009,7 +10014,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 21);
+    CHECK(stale["Version"] == 22);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
@@ -10031,7 +10036,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(thirteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 13") &&
-                          Catch::Matchers::ContainsSubstring("version 21"));
+                          Catch::Matchers::ContainsSubstring("version 22"));
     // Two version-14 caches existed before the fillet merge (decision 552 (3), the 527
     // rule): main's (the decision-537 own-cell pre-image WITHOUT the corner-arm extension
     // records) and the fillet lane's (the extension records WITHOUT the own-cell
@@ -10058,7 +10063,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fourteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 14") &&
-                            Catch::Matchers::ContainsSubstring("version 21"));
+                            Catch::Matchers::ContainsSubstring("version 22"));
     }
     // Two version-15 caches existed before the foreign-context merge (decision 559 (3), the
     // 527 rule): main's (the stacks + fillet additions of decision 552 (3) WITHOUT the
@@ -10086,7 +10091,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fifteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 15") &&
-                            Catch::Matchers::ContainsSubstring("version 21"));
+                            Catch::Matchers::ContainsSubstring("version 22"));
     }
     // A version-16 cache (main before the mirror-formed contract merge: no
     // MirrorFormedTopology / MirrorReach / MirrorEdgeWeights on the patches, decision 557
@@ -10106,7 +10111,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(sixteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 16") &&
-                          Catch::Matchers::ContainsSubstring("version 21"));
+                          Catch::Matchers::ContainsSubstring("version 22"));
     // A version-17 cache (main before the probe-snap lane: no ProbeSnaps on the patches,
     // decision 611 (2)) is refused by the version message, never misread for its missing
     // records.
@@ -10123,7 +10128,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 17") &&
-                          Catch::Matchers::ContainsSubstring("version 21"));
+                          Catch::Matchers::ContainsSubstring("version 22"));
     // A version-18 cache (main before decision 774: the same schema as version 19, but a
     // mirror-formed coupon's image-side probes recorded un-snapped) is refused by the
     // version message (decision 781; the 527 rule), never read for its stale ProbeSnaps.
@@ -10136,7 +10141,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 18") &&
-                          Catch::Matchers::ContainsSubstring("version 21"));
+                          Catch::Matchers::ContainsSubstring("version 22"));
     // A version-19 cache (main before the T5 excluded-corner containment rule: the same
     // schema, but written by a binary that places the UNGROWN model of a cluster the T5
     // binary grows once a library carries the grown model) is refused by the version
@@ -10151,7 +10156,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(nineteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 19") &&
-                          Catch::Matchers::ContainsSubstring("version 21"));
+                          Catch::Matchers::ContainsSubstring("version 22"));
     // A version-20 cache (main before the idfix identification round: the same schema, but
     // written by a binary that places two corner patches where the oriented SAT
     // vertex-vertex rule forms one RAW cluster, and no patch where a near-matched model is
@@ -10164,10 +10169,25 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       std::ofstream output(twenty_path);
       output << twenty.dump(2) << "\n";
     }
-    CHECK_THROWS_WITH(ReadResponseGeometryCache(twenty_path, data),
-                      Catch::Matchers::ContainsSubstring("cache version 20") &&
-                          Catch::Matchers::ContainsSubstring("version 21") &&
-                          Catch::Matchers::ContainsSubstring("separating-axis"));
+    CHECK_THROWS_WITH(
+        ReadResponseGeometryCache(twenty_path, data),
+        Catch::Matchers::ContainsSubstring("cache version 20") &&
+            Catch::Matchers::ContainsSubstring("version 22") &&
+            Catch::Matchers::ContainsSubstring("separating-axis") &&
+            Catch::Matchers::ContainsSubstring("conductor-consistency probes"));
+    // A version-21 cache (EITHER idfix lane's pre-merge binary) is refused by the version
+    // message (the 527 / 1064 (3) / 1087 merge-order rule): the merged binary writes 22.
+    nlohmann::json twenty_one = stale;
+    twenty_one["Version"] = 21;
+    const auto twenty_one_path = temp.temp_dir / "response-geometry-ownership-v21.json";
+    {
+      std::ofstream output(twenty_one_path);
+      output << twenty_one.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(twenty_one_path, data),
+                      Catch::Matchers::ContainsSubstring("cache version 21") &&
+                          Catch::Matchers::ContainsSubstring("version 22") &&
+                          Catch::Matchers::ContainsSubstring("BOTH idfix lanes"));
   }
   SECTION("vertex ownership (rule B4): a corner patch on a chain piece end inside a "
           "contract-3 box is owned once; interior chain points, other planes, other boxes "

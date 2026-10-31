@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 
@@ -159,6 +160,9 @@ struct MetalEdgeSegment
   int face_count = 0;
   std::vector<std::array<double, 3>> face_normals;
   std::vector<int> side_attributes;
+  // H10: a supporting face was a duplicate boundary element of another metal attribute (the
+  // identification excludes the segment as DuplicateBoundary).
+  bool duplicate_boundary = false;
 
   // Every supporting face lies on the bounding box of the mesh (a PEC simulation box).
   bool on_bounding_box = false;
@@ -182,6 +186,18 @@ struct MetalEdgeGeometry
 {
   std::vector<MetalEdgeVertex> vertices;
   std::vector<MetalEdgeSegment> segments;
+  // The extraction's recorded conversions (MetalSurfaceExtraction::record_fallbacks): one
+  // entry per class with the count, the summed length (mesh units; a face's perimeter) and
+  // the first site, for the identification's ledger.
+  struct Fallback
+  {
+    std::string cls;
+    std::string reason;
+    int count = 0;
+    double length = 0.0;
+    std::array<double, 3> origin{};
+  };
+  std::vector<Fallback> fallbacks;
 
   // Rank-local facets (MetalSurfaceExtraction::retain_faces) and the global deduplicated
   // metal faces replicated on every rank (MetalSurfaceExtraction::retain_global_faces).
@@ -231,6 +247,16 @@ struct MetalSurfaceExtraction
 
   // Retain the global deduplicated metal faces (replicated on every rank).
   bool retain_global_faces = false;
+
+  // Geometry fallbacks (readiness hardening-2 DESIGN rows H10 / H11c, landed in the
+  // identification fix round): with `record_fallbacks` the extraction converts two former
+  // aborts into recorded conversions the identification excludes by class — coincident
+  // metal boundary elements carrying DIFFERENT metal attributes keep the first face (the
+  // canonical order) with both attributes recorded and the segments it supports flagged
+  // DuplicateBoundary (H10; no mesh modification); a face degenerating to fewer than three
+  // distinct canonical vertices is SKIPPED and recorded DegenerateFace (H11c). Without the
+  // flag (the post-processing edge tools) the aborts stand.
+  bool record_fallbacks = false;
 
   // Joint rule for two-segment vertices (CORNER and chain break, or REGULAR). Geometric
   // (USER decision 121 (B)): REGULAR iff JointIsNoise(turn, shorter adjacent straight
@@ -287,19 +313,26 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
 // same material on both sides); when given, ambiguous_side reports per segment whether the
 // side had to be taken from the fallback or, without one, from the dominant component of
 // the face normal (a guess the caller should not rely on).
+// H11a / H11b (hardening-2 DESIGN): with `unframed` given, a segment whose process normal
+// (here) or gap direction (below) has no direction to infer (a norm below 1e-20) is left
+// ZERO and flagged (1) instead of aborting; the identification excludes it UnorientedEdge.
+// Without it (the default) the aborts stand.
 std::vector<std::array<double, 3>> BuildMetalEdgeProcessNormals(
     const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
     const std::vector<std::size_t> &segment_indices,
     const std::function<double(int)> &material_score,
     const std::optional<std::array<double, 3>> &fallback = std::nullopt,
-    std::vector<bool> *ambiguous_side = nullptr);
+    std::vector<bool> *ambiguous_side = nullptr,
+    std::vector<unsigned char> *unframed = nullptr);
 
 // Infer the in-plane direction from metal toward the adjacent gap for selected physical
-// edge segments. The process normals must correspond one-to-one with segment_indices.
+// edge segments. The process normals must correspond one-to-one with segment_indices (an
+// unframed segment's zero normal yields an unframed gap direction).
 std::vector<std::array<double, 3>>
 BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
                             const std::vector<std::size_t> &segment_indices,
-                            const std::vector<std::array<double, 3>> &process_normals);
+                            const std::vector<std::array<double, 3>> &process_normals,
+                            std::vector<unsigned char> *unframed = nullptr);
 
 }  // namespace palace
 

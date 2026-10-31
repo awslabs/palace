@@ -24,6 +24,7 @@
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/metaledge.hpp"
 #include "utils/outputdir.hpp"
 
 using namespace palace;
@@ -43,6 +44,113 @@ json ReadJson(const fs::path &path)
   std::ifstream input(path);
   REQUIRE(input);
   return json::parse(input);
+}
+
+// U-H13b (hardening-2 DESIGN row H13-I2, landed in the identification fix round's lane B):
+// a PINCHED metal sheet on the plane y = 0.5 of a 3 x 1 x 3 box (hexahedra, h = 0.25): the
+// sheet [0, 3]^2 minus the hole [1, 2]^2 and, when `pinched`, minus the corner cell [2,
+// 3]^2, so that the hole's loop and the corner notch meet at the vertex (2, 0.5, 2) with
+// FOUR perimeter segments: a chain vertex with more than two chain segments. The sheet
+// reaches the box walls (its rim is a cut); the hole and the notch are physical perimeter.
+// The sheet's defects (U-H10 / U-H11c alike): DUPLICATE_ATTRIBUTE adds the plane face at
+// the hole's rim centred (0.875, 0.5, 1.375) a SECOND time under attribute 10 (coincident
+// boundary elements of different metal attributes: H10), DEGENERATE_FACE moves two
+// vertices of the plane face [0, 0.25] x [0.25, 0.5] onto its other two so that it keeps
+// two distinct canonical vertices (H11c; the collapsed hexahedra are never integrated
+// here).
+enum class SheetDefect
+{
+  NONE,
+  PINCH,
+  DUPLICATE_ATTRIBUTE,
+  DEGENERATE_FACE
+};
+
+mfem::Mesh MakeSerialSheetMesh(SheetDefect defect)
+{
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(12, 4, 12, mfem::Element::HEXAHEDRON, 3.0, 1.0, 3.0);
+  if (defect == SheetDefect::DEGENERATE_FACE)
+  {
+    // The two x = 0.25 vertices of the plane face [0, 0.25] x [0.25, 0.5] onto its x = 0
+    // vertices: the face keeps two distinct canonical points.
+    for (int v = 0; v < serial.GetNV(); v++)
+    {
+      double *point = serial.GetVertex(v);
+      if (std::abs(point[0] - 0.25) < 1.0e-12 && std::abs(point[1] - 0.5) < 1.0e-12 &&
+          (std::abs(point[2] - 0.25) < 1.0e-12 || std::abs(point[2] - 0.5) < 1.0e-12))
+      {
+        point[0] = 0.0;
+      }
+    }
+  }
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double x = 0.0, z = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      x += 0.25 * point[0];
+      z += 0.25 * point[2];
+    }
+    if (!on_plane)
+    {
+      continue;
+    }
+    const bool in_hole = x > 1.0 && x < 2.0 && z > 1.0 && z < 2.0;
+    const bool in_corner = defect == SheetDefect::PINCH && x > 2.0 && z > 2.0;
+    if (in_hole || in_corner)
+    {
+      continue;  // bare dielectric
+    }
+    serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+    serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    if (defect == SheetDefect::DUPLICATE_ATTRIBUTE && std::abs(x - 0.875) < 1.0e-9 &&
+        std::abs(z - 1.375) < 1.0e-9)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 10);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return serial;
+}
+
+mfem::Mesh MakeSerialPinchedSheetMesh(bool pinched)
+{
+  return MakeSerialSheetMesh(pinched ? SheetDefect::PINCH : SheetDefect::NONE);
+}
+
+// The sheet tests' library: the concave library's models (concave corners, isolated edges)
+// on the config's interface (Type SA, Coupon 1), written by the root.
+fs::path WriteSheetLibrary(const fs::path &directory, const fs::path &template_library,
+                           const std::string &suffix)
+{
+  const auto path = directory / ("fabrication-process-sheet-" + suffix + ".json");
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = ReadJson(template_library);
+    library["Name"] = "unit-test-process-sheet-" + suffix;
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream output(path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  return path;
 }
 
 }  // namespace
@@ -1595,4 +1703,215 @@ TEST_CASE(
     CHECK_THAT(Share(both, "SA").at("FallbackLength").get<double>(),
                WithinAbs(8.0 * scale, 1.0e-12));
   }
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback H13-I2 BranchingPerimeter: a pinched perimeter is two "
+                 "chains at the junction (GUARDED by the extraction's chain rule)",
+                 "[surfaceresponseoperator][geometryfallback][h13][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // U-H13b (hardening-2 DESIGN row H13-I2): the identification's former abort "a perimeter
+  // chain has a vertex with more than two chain segments" is UNREACHABLE by construction:
+  // the extraction's physical chains stop at every non-regular vertex (corners, endpoints,
+  // junctions), so the pinch vertex (2, 0.5, 2) where the hole's loop and the corner notch
+  // meet with four perimeter segments ends FOUR chains of two segments there, and the
+  // identification's per-chain incidence never exceeds two. The conversion in
+  // RunGeometryIdentification (the per-chain pass: the incident segments excluded
+  // BranchingPerimeter with a record, the chain cut) is the safety net for a chain the
+  // extraction would leave branched; this fixture reads it NOT firing on the pinch (0
+  // records, the construction continues under both policies), the control alike.
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["Library"] =
+      WriteSheetLibrary(temp.temp_dir, concave_library_3d_path, "h13").string();
+  auto Build =
+      [&](const json &run_config, bool pinched, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = MakeSerialPinchedSheetMesh(pinched);
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  for (const bool pinched : {false, true})
+  {
+    CAPTURE(pinched);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(config, pinched, meshes);
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    CHECK(response.GetGeometryFallbacks().empty());
+    CHECK(response.GetPatchCount() > 0);
+    bool branching = false;
+    for (const auto &portion : response.GetIdentificationExclusionPortions())
+    {
+      branching = branching || portion.topology == "BranchingPerimeter";
+    }
+    CHECK_FALSE(branching);
+  }
+  // FailClosed constructs too (nothing recorded).
+  {
+    json fail_closed = config;
+    fail_closed["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "FailClosed";
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(fail_closed, true, meshes);
+    LaplaceOperator laplace(iodata, meshes);
+    CHECK_NOTHROW(SurfaceResponseOperator(iodata, laplace));
+  }
+#endif
+}
+
+// U-H10 / U-H11c (hardening-2 DESIGN rows H10 / H11c, landed in the identification fix
+// round's lane B): the extraction's two former aborts under record_fallbacks. Without the
+// flag (the post-processing edge tools) they abort as today; with it the duplicate face of
+// another attribute is kept once with the segments it supports flagged, the degenerate face
+// is skipped, each recorded by class with its perimeter; the identification turns the
+// flagged segments into DuplicateBoundary exclusions and the ledger carries both classes
+// (RecordRaw continues, FailClosed aborts by name).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback H10 DuplicateBoundary / H11c DegenerateFace: the "
+                 "extraction records instead of aborting under record_fallbacks",
+                 "[surfaceresponseoperator][geometryfallback][h10][h11][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  json config = IslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 10};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["Library"] =
+      WriteSheetLibrary(temp.temp_dir, concave_library_3d_path, "h10").string();
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  auto ParallelMesh = [&](SheetDefect defect)
+  {
+    mfem::Mesh serial = MakeSerialSheetMesh(defect);
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  };
+  MetalSurfaceExtraction surface = JointNoiseExtraction(0.2);
+  surface.classify_components = true;
+  surface.retain_global_faces = true;
+
+  SECTION("H10: coincident boundary elements of different metal attributes")
+  {
+    auto mesh = ParallelMesh(SheetDefect::DUPLICATE_ATTRIBUTE);
+    if (Mpi::Size(Mpi::World()) == 1)
+    {
+      // The former abort fires on the ROOT's gathered faces alone (the other ranks would
+      // wait in the next collective): read in the serial run.
+      CHECK_THROWS_WITH(ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, surface),
+                        ContainsSubstring("different metal attributes 9 and 10"));
+    }
+    MetalSurfaceExtraction recording = surface;
+    recording.record_fallbacks = true;
+    const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, recording);
+    REQUIRE(geometry.fallbacks.size() == 1);
+    CHECK(geometry.fallbacks[0].cls == "DuplicateBoundary");
+    CHECK(geometry.fallbacks[0].count == 1);
+    CHECK_THAT(geometry.fallbacks[0].length, WithinRel(1.0, 1.0e-9));  // 4 x 0.25
+    // The duplicate face sits on the hole's rim: its ONE perimeter edge (x = 1, z in
+    // [1.25, 1.5], along the hole) is flagged; its interior edges form no segment.
+    int flagged = 0;
+    for (const auto &segment : geometry.segments)
+    {
+      flagged += segment.duplicate_boundary ? 1 : 0;
+    }
+    CHECK(flagged == 1);
+    // The identification excludes it (DuplicateBoundary) and records the class; the
+    // control sheet records nothing.
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(
+        std::make_unique<Mesh>(ParallelMesh(SheetDefect::DUPLICATE_ATTRIBUTE)));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    REQUIRE(response.GetGeometryFallbacks().size() == 1);
+    const auto &entry = response.GetGeometryFallbacks().front();
+    CHECK(entry.cls == "DuplicateBoundary");
+    CHECK(entry.site == "H10/metaledge:coincident-faces");
+    CHECK(entry.what == "segment");
+    bool listed = false;
+    for (const auto &portion : response.GetIdentificationExclusionPortions())
+    {
+      listed = listed || portion.topology == "DuplicateBoundary";
+    }
+    CHECK(listed);
+    json fail_closed = config;
+    fail_closed["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
+        "FailClosed";
+    IoData closed(fail_closed, false);
+    closed.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> closed_meshes;
+    closed_meshes.push_back(
+        std::make_unique<Mesh>(ParallelMesh(SheetDefect::DUPLICATE_ATTRIBUTE)));
+    LaplaceOperator closed_laplace(closed, closed_meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(closed, closed_laplace),
+                      ContainsSubstring("GeometryFailurePolicy FailClosed") &&
+                          ContainsSubstring("DuplicateBoundary"));
+  }
+
+  SECTION("H11c: a face degenerating to fewer than three distinct vertices")
+  {
+    auto mesh = ParallelMesh(SheetDefect::DEGENERATE_FACE);
+    if (Mpi::Size(Mpi::World()) == 1)
+    {
+      CHECK_THROWS_WITH(ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, surface),
+                        ContainsSubstring("fewer than three distinct vertices"));
+    }
+    MetalSurfaceExtraction recording = surface;
+    recording.record_fallbacks = true;
+    const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, recording);
+    REQUIRE(geometry.fallbacks.size() == 1);
+    CHECK(geometry.fallbacks[0].cls == "DegenerateFace");
+    CHECK(geometry.fallbacks[0].count >= 1);
+    CHECK(geometry.fallbacks[0].length > 0.0);
+    CHECK_FALSE(geometry.segments.empty());
+  }
+
+  SECTION("the control sheet: nothing recorded; H11a / H11b GUARDED")
+  {
+    MetalSurfaceExtraction recording = surface;
+    recording.record_fallbacks = true;
+    auto mesh = ParallelMesh(SheetDefect::NONE);
+    const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries, recording);
+    CHECK(geometry.fallbacks.empty());
+    // H11a / H11b (UnorientedEdge): the frame builders' `unframed` form is bitwise the
+    // abort form wherever a frame exists, and flags nothing on a regular sheet. No fixture
+    // reaches the zero-norm sites: two coplanar faces of opposite inward direction form an
+    // INTERIOR edge (no segment) in the extraction, a near-cancellation a fold; the sites
+    // are GUARDED by the extraction's edge classification and recorded so (hardening-2
+    // DESIGN row H11b's clause).
+    std::vector<std::size_t> physical;
+    for (std::size_t i = 0; i < geometry.segments.size(); i++)
+    {
+      if (geometry.segments[i].type == MetalEdgeSegmentType::PHYSICAL)
+      {
+        physical.push_back(i);
+      }
+    }
+    REQUIRE_FALSE(physical.empty());
+    auto Score = [](int) { return 1.0; };
+    std::vector<unsigned char> unframed_normals, unframed_gaps;
+    const auto normals = BuildMetalEdgeProcessNormals(*mesh, geometry, physical, Score,
+                                                      std::nullopt, nullptr, nullptr);
+    const auto flagged_normals = BuildMetalEdgeProcessNormals(
+        *mesh, geometry, physical, Score, std::nullopt, nullptr, &unframed_normals);
+    CHECK(flagged_normals == normals);
+    CHECK(std::count(unframed_normals.begin(), unframed_normals.end(), 1) == 0);
+    const auto gaps = BuildMetalEdgeGapDirections(*mesh, geometry, physical, normals);
+    const auto flagged_gaps =
+        BuildMetalEdgeGapDirections(*mesh, geometry, physical, normals, &unframed_gaps);
+    CHECK(flagged_gaps == gaps);
+    CHECK(std::count(unframed_gaps.begin(), unframed_gaps.end(), 1) == 0);
+  }
+#endif
 }

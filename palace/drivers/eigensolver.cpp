@@ -856,6 +856,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->GetEigenvector(i, E);
 
     linalg::NormalizePhase(space_op.GetComm(), E);
+    if (response_correction && !response_correction->IsRawFallback() &&
+        response_correction->HasConductorConsistencyProbes())
+    {
+      // The conductor-consistency gate on the Maxwell path (idfix DESIGN B.3; decision
+      // 1064 (1)): this mode's field, before its energies. The self-consistent eigenproblem
+      // was solved once for every mode above, before this gate could act: an exclusion here
+      // is recorded SelfConsistentPreGate (the fixed-trace letters are exact; a named
+      // limitation the coverage report carries).
+      BlockTimer gate_timer(Timer::POSTPRO_RESPONSE_COUPON);
+      response_correction->ApplyConductorConsistencyGate(
+          E, i,
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
+              (2 * M_PI),
+          self_consistent_response);
+    }
 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());

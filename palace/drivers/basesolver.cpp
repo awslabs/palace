@@ -584,6 +584,40 @@ void BaseSolver::SaveMetadata(const SurfaceResponseOperator &response) const
     }
     WriteMetadata(post_dir, meta);
   }
+  // The conductor-consistency gate (idfix R0-a, DESIGN A.1 (c) / B.3 (e); USER decision
+  // 1000 (b)): the LOW-confidence banner whenever the gate excluded a patch on either path
+  // (RecordRaw: its raw claim served RAW as the ConductorConsistency share); the raw share
+  // per Type is the energy table's; a RecordOnly run is named a DIAGNOSTIC, never a run of
+  // record.
+  if (const auto diagnostics = statistics.find("Diagnostics");
+      diagnostics != statistics.end() && diagnostics->is_object() &&
+      diagnostics->contains("ConductorConsistency") &&
+      (*diagnostics)["ConductorConsistency"].is_object())
+  {
+    const auto &gate = (*diagnostics)["ConductorConsistency"];
+    const int excluded = gate.value("Count", 0);
+    if (excluded > 0)
+    {
+      Mpi::Print(
+          "\n*** LOW CONFIDENCE: the conductor-consistency gate (decision 277; idfix "
+          "R0-a) EXCLUDED {:d} patch(es) of {:d} tested (claims {:.6e}, cells {:.6e} "
+          "mesh-file units served RAW as the ConductorConsistency share): see "
+          "SurfaceResponse.Diagnostics.ConductorConsistency of palace.json and the "
+          "raw share per Type in surface-response-conductor-consistency-energy.csv "
+          "***\n",
+          excluded, gate.value("TestedPatches", 0), gate.value("ClaimLength", 0.0),
+          gate.value("CellLength", 0.0));
+    }
+    if (gate.value("RecordOnly", false))
+    {
+      Mpi::Print(
+          "\n*** DIAGNOSTIC: SurfaceResponseCorrection.ConductorConsistency.RecordOnly "
+          "was set: the gate recorded {:d} verdict(s) and EXCLUDED NOTHING; this is "
+          "NOT a run of record (idfix DESIGN B.4 (F)) ***\n",
+          static_cast<int>(
+              gate.value("RecordOnlyVerdicts", nlohmann::json::array()).size()));
+    }
+  }
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the LOW-confidence banner closes
   // the run summary whenever a converted site fired; never silent.
   if (const auto record = response.GetGeometryFallbackRecord(); !record.is_null())

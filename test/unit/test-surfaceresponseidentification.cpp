@@ -6238,7 +6238,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     imaged.real_segments = static_cast<std::size_t>(chord);
     CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
   }
-  // 7. The geometry cache round trip of the record (version 21).
+  // 7. The geometry cache round trip of the record (version 22).
   {
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -6267,7 +6267,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     std::ifstream input(path);
     nlohmann::json cache = nlohmann::json::parse(input);
     input.close();
-    CHECK(cache["Version"] == 21);
+    CHECK(cache["Version"] == 22);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
     CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
     CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
@@ -6297,7 +6297,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       ContainsSubstring("cache version 17") &&
-                          ContainsSubstring("version 21"));
+                          ContainsSubstring("version 22"));
     // A version-18 cache (main before decision 774: the same schema, but a mirror-formed
     // coupon's image-side probes recorded un-snapped) is refused by the version message
     // (decision 781; the 527 rule), never read for its stale ProbeSnaps.
@@ -6310,7 +6310,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
                       ContainsSubstring("cache version 18") &&
-                          ContainsSubstring("version 21"));
+                          ContainsSubstring("version 22"));
     // A version-19 cache (main before the T5 excluded-corner containment rule, decision
     // 972: the same schema, but written by a binary that places the UNGROWN model of a
     // cluster the T5 binary grows) is refused by the version message (the 527 / 781
@@ -6324,14 +6324,21 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(nineteen_path, data),
                       ContainsSubstring("cache version 19") &&
-                          ContainsSubstring("version 21") &&
+                          ContainsSubstring("version 22") &&
                           ContainsSubstring("excluded corner window"));
-    // A version-20 cache (main before the idfix identification round, decision 1087: the
-    // same schema, but written by a binary without the oriented SAT vertex-vertex rule and
-    // the near-matched placement) is refused by the version message (the 527 / 781
-    // merge-order rule), never read for its stale placement.
+    // A version-20 cache (main before the identification fix round: the same placement
+    // and schema, but written by a binary without the oriented SAT vertex-vertex rule and
+    // the near-matched placement (lane A, decision 1087) and with no conductor-consistency
+    // probes on its translational patches (lane B, decision 1064 (3)), so the gate could
+    // not read them) is refused by the version message (the 527 / 781 merge-order rule),
+    // never read as a probe-less / stale-placement configuration.
     nlohmann::json twenty = cache;
     twenty["Version"] = 20;
+    for (auto &patch : twenty["Patches"])
+    {
+      patch.erase("ConductorProbeEdges");
+      patch.erase("ConductorProbes");
+    }
     const auto twenty_path = dir / "geometry-v20.json";
     {
       std::ofstream output(twenty_path);
@@ -6339,8 +6346,24 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(twenty_path, data),
                       ContainsSubstring("cache version 20") &&
-                          ContainsSubstring("version 21") &&
+                          ContainsSubstring("version 22") &&
+                          ContainsSubstring("conductor-consistency probes") &&
                           ContainsSubstring("GeometricNearMatched"));
+    // A version-21 cache (EITHER idfix lane's pre-merge binary: lane A's carries the SAT /
+    // near-match placement without the probes, lane B's the probes without that placement)
+    // is refused by the version message (the 527 / 1064 (3) / 1087 merge-order rule): the
+    // merged binary writes version 22.
+    nlohmann::json twenty_one = cache;
+    twenty_one["Version"] = 21;
+    const auto twenty_one_path = dir / "geometry-v21.json";
+    {
+      std::ofstream output(twenty_one_path);
+      output << twenty_one.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(twenty_one_path, data),
+                      ContainsSubstring("cache version 21") &&
+                          ContainsSubstring("version 22") &&
+                          ContainsSubstring("BOTH idfix lanes"));
   }
 }
 

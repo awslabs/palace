@@ -1654,6 +1654,33 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
                 "Response-correction \"MortarOversampling\" must be between 1 and 8!");
     data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
+    if (auto gate = correction.find("ConductorConsistency"); gate != correction.end())
+    {
+      MFEM_VERIFY(gate->is_object(),
+                  "Response-correction \"ConductorConsistency\" must be an object!");
+      data.conductor_consistency_record_only =
+          gate->value("RecordOnly", data.conductor_consistency_record_only);
+      for (const auto &[key, value] : gate->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "RecordOnly",
+                    "Response-correction \"ConductorConsistency\" has an unknown key \""
+                        << key << "\" (RecordOnly is the only key)!");
+      }
+    }
+    if (auto diagnostics = correction.find("Diagnostics"); diagnostics != correction.end())
+    {
+      MFEM_VERIFY(diagnostics->is_object(),
+                  "Response-correction \"Diagnostics\" must be an object!");
+      data.exclusion_energy = diagnostics->value("ExclusionEnergy", data.exclusion_energy);
+      for (const auto &[key, value] : diagnostics->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "ExclusionEnergy",
+                    "Response-correction \"Diagnostics\" has an unknown key \""
+                        << key << "\" (ExclusionEnergy is the only key)!");
+      }
+    }
     if (auto domain_boundary = correction.find("DomainBoundary");
         domain_boundary != correction.end())
     {

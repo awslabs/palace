@@ -1062,6 +1062,33 @@ public:
     // one independent V_i - V_1 conductor state.
     std::vector<std::array<double, 3>> conductor_references = {{{0.0, 0.0, 0.0}}};
 
+    // Conductor-consistency probes of an automatically generated translational patch
+    // (idfix DESIGN A.1 (c) / C.3, R0-a). conductor_probe_edges: the model's Edges in
+    // increasing Offset, each with its lateral offset in the patch frame (mesh length
+    // units; the device foot at the origin cross-section), its GapDirection (+1: the gap on
+    // the +u side), its canonical conductor label and its LOCAL PIECE
+    // (LocalPiecesOfParallelEdges: the metal pieces the GapDirections bound, 1..P in
+    // increasing u). conductor_probes: for every edge and both end faces of the
+    // longitudinal cell the DEVICE metal point of that edge at the end face (the foot on
+    // the edge's claimed segments: the snap onto the device perimeter, arcs included), mesh
+    // length units. Both empty for a spatial / vertex patch (its probes are its trace
+    // mesh's conductor vertices) and for an explicit patch.
+    struct ConductorProbeEdge
+    {
+      double offset = 0.0;
+      int gap_direction = 1;
+      int conductor = 1;
+      int piece = 1;
+    };
+    struct ConductorProbe
+    {
+      std::array<double, 3> point{};
+      int edge = 0;      // index into conductor_probe_edges
+      int end_face = 0;  // 0 = the cell's begin face, 1 = its end face (along AxisW)
+    };
+    std::vector<ConductorProbeEdge> conductor_probe_edges;
+    std::vector<ConductorProbe> conductor_probes;
+
     // Internal longitudinal quadrature weight for automatically generated 3D patches.
     // Explicit configuration syntax always uses the default unit weight.
     double weight = 1.0;
@@ -1313,6 +1340,13 @@ public:
     // coefficients.
     int conductor_state_count = 0;
 
+    // R0-b (idfix DESIGN A.3 (b); decision 1064 (4)): the model's conductor references are
+    // ONE PER LOCAL METAL PIECE (Edges[].LocalPiece / PlanViewBoundary[].LocalPiece, or the
+    // top-level LocalPieces count of a gap model), not one per canonical conductor label:
+    // the conductor-consistency gate then compares a probe with ITS PIECE's reference.
+    // False for every model without the leaf (one reference per label, as today).
+    bool local_piece_references = false;
+
     // Mapping from global target interface index to coupon interface index.
     std::vector<ResponseCorrectionInterfaceData> interfaces;
 
@@ -1410,6 +1444,31 @@ public:
     // per-patch rows of surface-response-model-energy.csv). Electrostatic only; off by
     // default so that every existing output is unchanged.
     bool patch_energy = false;
+
+    // ConductorConsistency (the identification fix round, idfix DESIGN A.1 (c) / B.3 /
+    // SUPERVISOR AMENDMENT 3; decisions 1062 / 1064): the conductor-consistency gate runs
+    // on BOTH paths (electrostatic and Maxwell) for every placed patch of every model
+    // class. RecordOnly (default false) is the DIAGNOSTIC opt-out: the gate records every
+    // reading and verdict but EXCLUDES nothing (every patch keeps its weight) and the run
+    // prints a DIAGNOSTIC banner; the frozen rule admits it only for the ITEM-0 test's T2
+    // leg and the hardening fixtures (B.4 (F)): a run of record with it set is refused by
+    // the comparator, never by this reader.
+    bool conductor_consistency_record_only = false;
+
+    // Diagnostics.ExclusionEnergy (OI-COVERAGE-EXCLUSION-ENERGY, idfix DESIGN section 8;
+    // decisions 1064 (2) / 1072 Q3 / 1074 / 1076): write
+    // surface-response-exclusion-energy.csv = the raw field's within-R energy per exclusion
+    // class (the identification's classes by name, CornerArmTrim, Unclaimed-other,
+    // UnprobedModels, MaxwellPatchExcluded, + Claimed and Total) x interface type x source
+    // / cycle, on both paths, partitioned against the CLASSIFIED edge tree (every metal
+    // edge segment, physical or not: the field near a fold / non-manifold / truncation /
+    // port edge is attributed to that edge; every OTHER energy table reads the PHYSICAL
+    // tree and attributes it to the nearest physical edge). OFF by default: the partition
+    // costs one surface integral per class and interface (+ the Total row), measured at
+    // +0.066 s per Maxwell measurement on the S1 stage-1 window = +45 % of its postprocess
+    // categories, above decision 1076's 10 % bar, so the stage E / F configurations turn
+    // it on.
+    bool exclusion_energy = false;
 
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
@@ -1656,6 +1715,14 @@ public:
       std::array<double, 3> p0{}, p1{};
     };
     std::vector<UncoveredPortionData> uncovered_portions;
+    // The excluded / unclaimed perimeter portions of the identification (idfix DESIGN
+    // section 8; the exclusion-energy export): `topology` = the exclusion Class by name (a
+    // whole-segment exclusion's class, an analytic CrossLayer zone's, CornerArmTrim for the
+    // stretch a corner's exit trims off an arm cell, Unclaimed-other for the remainder of a
+    // non-excluded segment no feature portion claims), `feature` = -1 (the trimmed
+    // stretch: the corner), `segment` = the perimeter segment. Carried by the geometry
+    // cache (version 22, a required leaf).
+    std::vector<UncoveredPortionData> exclusion_portions;
 
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.

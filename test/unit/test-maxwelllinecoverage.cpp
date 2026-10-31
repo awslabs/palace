@@ -152,6 +152,122 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageTrueGap",
   CHECK(coverage.closed_crack_count == 1);
 }
 
+TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageLocalElementDiameter",
+          "[surfaceresponseoperator][maxwell][Serial]")
+{
+  // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (idfix DESIGN section 7; decision 1072 Q2): a
+  // hanging-face closure crack of a nonconforming refinement is O(eps x h). The tolerance
+  // of a piece = max(4096 ULP x scale, 1e-6 x the local element diameter), the diameter =
+  // the max over the elements of the intervals bounding the piece.
+  const auto line = VerticalLine(-6.6490033793415808e+00, 3.6334089021739100e+00,
+                                 -1.3509670079635962e-03, -1.5010744532928826e-03);
+  const double coordinate_scale = 6.75;
+  const double ulp_tolerance =
+      kMaxwellLineCrackUlps * std::numeric_limits<double>::epsilon() * coordinate_scale;
+  const double split = 0.3;
+  auto Gapped = [&](double gap_length)
+  {
+    std::vector<Interval> intervals = {{0.0, split},
+                                       {split + gap_length / line.length, 1.0}};
+    return intervals;
+  };
+  // A crack of 20x the ULP tolerance (the S1b-rc record: 3.06e-11 vs 5.69e-13 = 54x): the
+  // ULP rule alone fails closed; with the bounding elements of diameter h it is closed iff
+  // 1e-6 x h >= the gap. The diameter of a NON-bounding interval does not count.
+  const double gap = 20.0 * ulp_tolerance;
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(gap), {}, line.length,
+                                               coordinate_scale, 744, line.begin, line.end),
+                    ContainsSubstring("above the floating-point crack tolerance"));
+  MaxwellLineCoverage coverage;
+  const double h_closing = gap / kMaxwellLineCrackLocalDiameterFraction * 1.5;
+  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(
+                      Gapped(gap), {}, line.length, coordinate_scale, 744, line.begin,
+                      line.end, {h_closing, 0.1 * h_closing}));
+  CHECK(coverage.closed_crack_count == 1);
+  CHECK_THAT(coverage.max_closed_crack, WithinRel(gap, 1.0e-6));
+  REQUIRE(coverage.intervals.size() == 2);
+  // The larger of the two bounding elements sets the scale.
+  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(
+                      Gapped(gap), {}, line.length, coordinate_scale, 744, line.begin,
+                      line.end, {0.1 * h_closing, h_closing}));
+  CHECK(coverage.closed_crack_count == 1);
+  // Elements too small to explain the crack: fails closed, the message naming both terms.
+  const double h_failing = gap / kMaxwellLineCrackLocalDiameterFraction * 0.5;
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(gap), {}, line.length,
+                                               coordinate_scale, 744, line.begin, line.end,
+                                               {h_failing, h_failing}),
+                    ContainsSubstring("x the local element diameter"));
+  // A large element NOT bounding the crack (a third interval elsewhere) does not count.
+  std::vector<Interval> three = {
+      {0.0, 0.1}, {0.1, split}, {split + gap / line.length, 1.0}};
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(three, {}, line.length, coordinate_scale,
+                                               744, line.begin, line.end,
+                                               {h_closing, h_failing, h_failing}),
+                    ContainsSubstring("above the floating-point crack tolerance"));
+  // Mismatched diameter counts are refused by name.
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(Gapped(gap), {}, line.length,
+                                               coordinate_scale, 744, line.begin, line.end,
+                                               {h_closing}),
+                    ContainsSubstring("element diameters must parallel the intervals"));
+  // Where no crack exists the diameters change nothing: the covered resolution is bitwise.
+  std::vector<Interval> covered = {{0.0, split}, {split, 1.0}};
+  const auto without = ResolveMaxwellLineCoverage(
+      covered, {}, line.length, coordinate_scale, 744, line.begin, line.end);
+  const auto with =
+      ResolveMaxwellLineCoverage(covered, {}, line.length, coordinate_scale, 744,
+                                 line.begin, line.end, {h_closing, h_closing});
+  CHECK(with.intervals == without.intervals);
+  CHECK(with.closed_crack_count == 0);
+}
+
+TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageUncoveredReported",
+          "[surfaceresponseoperator][maxwell][geometryfallback][h14a][Serial]")
+{
+  // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decisions 1072 Q2 / 1074): a line
+  // that leaves the mesh beyond the crack tolerance is REPORTED (the former abort's text,
+  // the gap, the tolerance) when the caller asks, so that the operator can exclude the
+  // patch; without the request the abort stands; a covered line reports nothing and
+  // resolves bitwise with or without the request.
+  const auto line = VerticalLine(-6.6490033793415808e+00, 3.6334089021739100e+00,
+                                 -1.3509670079635962e-03, -1.5010744532928826e-03);
+  const double coordinate_scale = 6.75;
+  const double ulp_tolerance =
+      kMaxwellLineCrackUlps * std::numeric_limits<double>::epsilon() * coordinate_scale;
+  const double gap = 1.0e-6 * line.length;  // the line pushed 1e-6 of its length outside
+  REQUIRE(gap > ulp_tolerance);
+  std::vector<Interval> gapped = {{0.0, 0.3}, {0.3 + gap / line.length, 1.0}};
+  // Without the request: the abort.
+  CHECK_THROWS_WITH(ResolveMaxwellLineCoverage(gapped, {}, line.length, coordinate_scale,
+                                               744, line.begin, line.end),
+                    ContainsSubstring("leaves the finite-element mesh"));
+  // With it: no throw, the report carries the same text and the numbers.
+  MaxwellLineUncovered uncovered;
+  MaxwellLineCoverage coverage;
+  REQUIRE_NOTHROW(coverage = ResolveMaxwellLineCoverage(gapped, {}, line.length,
+                                                        coordinate_scale, 744, line.begin,
+                                                        line.end, {}, {}, &uncovered));
+  CHECK(uncovered.Reported());
+  CHECK_THAT(uncovered.message, ContainsSubstring("contour line 744 leaves the "
+                                                  "finite-element mesh"));
+  CHECK_THAT(uncovered.message, ContainsSubstring("above the floating-point crack "
+                                                  "tolerance"));
+  CHECK_THAT(uncovered.gap, WithinRel(gap, 1.0e-6));
+  CHECK_THAT(uncovered.tolerance, WithinRel(ulp_tolerance, 1.0e-12));
+  // The resolution stopped at the uncovered piece: the covered piece before it stands.
+  REQUIRE(coverage.intervals.size() == 1);
+  CHECK(coverage.intervals.front() == Interval{0.0, 0.3});
+  // A covered line: nothing reported, bitwise with and without the request.
+  std::vector<Interval> covered = {{0.0, 0.3}, {0.3, 1.0}};
+  MaxwellLineUncovered none;
+  const auto with = ResolveMaxwellLineCoverage(covered, {}, line.length, coordinate_scale,
+                                               744, line.begin, line.end, {}, {}, &none);
+  const auto without = ResolveMaxwellLineCoverage(
+      covered, {}, line.length, coordinate_scale, 744, line.begin, line.end);
+  CHECK(!none.Reported());
+  CHECK(with.intervals == without.intervals);
+  CHECK(with.closed_crack_count == without.closed_crack_count);
+}
+
 TEST_CASE("SurfaceResponseOperatorMaxwellLineCoverageBitwise",
           "[surfaceresponseoperator][maxwell][Serial]")
 {

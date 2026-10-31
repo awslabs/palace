@@ -34,6 +34,7 @@ class IoData;
 class Mesh;
 class BoundaryModeOperator;
 class DistributedPointLocator;
+class GeometryFallbackLedger;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
@@ -85,6 +86,17 @@ struct ExcludedPatchPortions
   int geometric_cells = 0;    // translational own-edge intervals, split patches once
   int duplicate_patches = 0;  // excluded patches folded into an existing interval
   double length = 0.0;        // mesh units, over all portions
+};
+
+// H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): a Maxwell contour or
+// probe line's uncovered piece beyond the crack tolerance, as ResolveMaxwellLineCoverage
+// reports it when asked (the former abort's text, the gap and the tolerance in mesh units).
+struct MaxwellLineUncovered
+{
+  std::string message;
+  double gap = 0.0;
+  double tolerance = 0.0;
+  bool Reported() const { return !message.empty(); }
 };
 
 // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons the
@@ -164,6 +176,27 @@ private:
   friend class SurfaceResponseOperator;
 };
 
+// R0-a (idfix DESIGN A.1 (c) / A.3 (b), decision 1062): the LOCAL METAL PIECES of a 2D
+// translational cross-section from its Edges in increasing lateral offset, each with its
+// GapDirection (+1: the gap on the +u side of the edge, -1: on the -u side). Consecutive
+// edges k and k + 1 bound ONE metal piece iff edge k's gap lies on its -u side and edge
+// k + 1's on its +u side (the metal lies between them); the metal outside the first edge
+// (its gap on +u) and outside the last edge (its gap on -u) are pieces reaching the box
+// side. Returns the piece of every edge, 1..P in increasing u (a CPW = 3, a gap = 2, a
+// strip or an isolated edge = 1). ONE rule, shared by name with the library generators'
+// LocalPiece (lane C; U-PIECES asserts the two agree on every v3-j ParallelEdgeCluster).
+// Refuses (MFEM_ABORT) two consecutive edges facing the same way with nothing between them
+// (gap after gap or metal after metal: not a cross-section).
+std::vector<int> LocalPiecesOfParallelEdges(const std::vector<double> &offsets,
+                                            const std::vector<int> &gap_directions);
+
+// The piece (1..P) whose metal interval holds the lateral offset u, 0 when u lies in a gap
+// (the same edges / pieces as LocalPiecesOfParallelEdges; an offset ON an edge belongs to
+// the edge's metal side).
+int LocalPieceOfOffset(const std::vector<double> &offsets,
+                       const std::vector<int> &gap_directions,
+                       const std::vector<int> &pieces, double u);
+
 //
 // Low-rank Schur-complement correction which replaces the local response of an ideal
 // thin-metal edge by a fabrication-resolved coupon response. The correction has the form
@@ -228,6 +261,24 @@ public:
     double max_ratio = 0.0;      // max_deviation / normalization
     int worst_vertex = -1;       // trace-mesh vertex (0-based) of max_deviation
     int worst_conductor = 0;     // its conductor (1-based)
+    // R0-a (idfix DESIGN A.1 (c) / B.3): a translational patch's worst probe = its model
+    // Edge (0-based, increasing offset), the edge's local metal piece (1-based) and the
+    // cell end face it was read on (0 / 1); -1 / 0 / -1 for a spatial patch. The probe
+    // kind: 0 = a spatial trace-mesh conductor vertex, 1 = a translational edge probe.
+    int worst_edge = -1;
+    int worst_piece = 0;
+    int worst_end_face = -1;
+    int probe_kind = 0;
+    // The Maxwell path (B.3 / C.1 / decision 1064): the frequency or mode the record was
+    // read at (the source index is `source`), the floor F(s, f) = AmplitudeFloor x the
+    // largest applied trace amplitude (ES: AmplitudeFloor x the excitation potential, both
+    // in `normalization`'s floor), and whether the self-consistent field of an eigenmode
+    // was solved before this gate could act (SelfConsistentPreGate).
+    bool maxwell = false;
+    double frequency = 0.0;
+    bool self_consistent_pre_gate = false;
+    // RecordOnly (the diagnostic opt-out, B.4 (F)): the verdict recorded, the weight kept.
+    bool record_only = false;
     // Nondimensional mesh coordinates; the record and the log multiply by the mesh
     // coordinate scale (mesh-file units = the device coordinates).
     std::array<double, 3> worst_point{};
@@ -433,6 +484,10 @@ private:
     int contour_size = 0;
     int basis_size = 0;
     int conductor_state_count = 0;
+    // R0-b (idfix DESIGN A.3 (b); decision 1064 (4)): the references are one per LOCAL
+    // metal piece (the gate compares a probe with its piece's reference), not one per
+    // label.
+    bool local_piece_references = false;
     mfem::DenseMatrix fabricated_domain;
     mfem::DenseMatrix thin_domain;
     mfem::DenseMatrix domain_defect;
@@ -492,6 +547,14 @@ private:
     std::vector<int> plane_conductor_vertices;
     std::vector<int> off_plane_conductor_vertices;
     std::vector<std::pair<int, int>> adjacent_free_vertices;
+    // R0-a on the Maxwell path (idfix DESIGN B.3; decision 1064 (2)): the probes of a
+    // spatial model = its explicit TraceMesh's conductor vertices on the process plane
+    // (w = 0), in the coupon frame, with their conductor labels and trace-mesh vertex
+    // indices (the ProbeSnaps key); empty for a model without a TraceMesh (recorded
+    // UnprobedModels) and for every translational model (its probes are the patch's).
+    std::vector<std::array<double, 3>> maxwell_probe_points;
+    std::vector<int> maxwell_probe_conductors;
+    std::vector<int> maxwell_probe_vertices;
   };
 
   struct Patch
@@ -519,6 +582,20 @@ private:
     // and the patch's provenance for the record.
     int probe_point_count = 0;
     std::vector<std::array<double, 3>> probe_points;
+    // R0-a (idfix DESIGN A.1 (c)): a translational patch's probes = the device metal point
+    // of every model Edge at both end faces of its cell (ResponseCorrectionPatchData::
+    // conductor_probes, computed at the placement), with the Edges' GapDirection / label /
+    // local piece; empty for a spatial patch (whose probes are its trace mesh's conductor
+    // vertices) and for an unprobed patch (recorded UnprobedModels).
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionPatchData::ConductorProbeEdge>
+        conductor_probe_edges;
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionPatchData::ConductorProbe>
+        conductor_probes;
+    // The conductor-consistency gate's sticky exclusion (B.3 (e) / C.1): weight 0 from the
+    // excluding source on; the patch stays in the Maxwell floor's set (C.1).
+    bool conductor_consistency_excluded = false;
     // The probes read on the device arc chords (decision 611 (2)): the placed patch's
     // ProbeSnaps applied to probe_points, for the record.
     std::vector<ConductorConsistencyRecord::ProbeSnap> probe_snaps;
@@ -575,6 +652,40 @@ private:
   std::vector<MaxwellContourPath> maxwell_paths;
   std::vector<MaxwellConductorPath> maxwell_conductor_paths;
   std::vector<std::pair<int, int>> maxwell_patch_paths;
+  // R0-a (idfix DESIGN B.3 (d) / SUPERVISOR AMENDMENT 3 C.3; decision 1064): per LOCAL
+  // patch, its conductor-consistency probes on the Maxwell path. The reading of probe q is
+  // P(q) = -(sum over its legs of sign x the leg's line integral of E), complex: the legs
+  // are CONSTRUCTED by one rule — a translational patch: the straight w = 0 legs between
+  // consecutive Edge offsets at the probe's end face, from the patch's conductor anchor
+  // (translated to that face) through every edge up to the probe's edge; a spatial patch:
+  // the one straight plane leg from the probe's own conductor's anchor to the trace-mesh
+  // vertex. The lines live in maxwell_lines (evaluated with the contour lines, in no path,
+  // in no fit, zero in every transpose).
+  struct MaxwellProbe
+  {
+    std::array<double, 3> point{};  // mesh coordinates
+    int kind = 0;       // 0 = a spatial trace-mesh vertex, 1 = a translational edge
+    int vertex = -1;    // the trace-mesh vertex (spatial)
+    int edge = -1;      // the model edge (translational)
+    int end_face = -1;  // the cell end face (translational)
+    int conductor = 1;  // the canonical conductor label the probe's metal carries
+    int piece = 0;      // the local metal piece (translational; 0 spatial)
+    std::vector<std::pair<int, double>> legs;  // (line, sign) from the anchor to the probe
+  };
+  std::vector<std::vector<MaxwellProbe>> maxwell_probes;
+  // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): per LOCAL patch, the
+  // provenance of a MaxwellPatchExcluded record (the OverlapExcluded form: the claimed +
+  // raw-claimed length, the origin).
+  struct MaxwellPatchProvenance
+  {
+    double length = 0.0;
+    std::array<double, 3> origin{};
+  };
+  // The raw claims of the patches ConfigureMaxwellLines excluded (a contour or probe line
+  // leaving the mesh beyond the crack tolerance, MaxwellPatchExcluded): ALSO appended to
+  // the DomainBoundary and geometry-fallback portions (served raw once, as the
+  // DomainBoundary share); this copy names the class for the exclusion-energy export.
+  ExcludedPatchPortions maxwell_patch_excluded_portions;
   int maxwell_quadrature_order = 0;
   // OI-MX-LOOPGATE: per local patch the least-squares structure, the line lengths (mesh
   // units) and, keyed by the placed patch index on every rank, every applied patch's raw
@@ -644,6 +755,18 @@ private:
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
   ExcludedPatchPortions domain_boundary_portions;
+  // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1074): the
+  // identification's excluded / unclaimed perimeter portions by class (the configuration's
+  // exclusion_portions: the classes by name, CornerArmTrim, Unclaimed-other) and the raw
+  // claims (the DomainBoundary rule) of the applied patches the conductor-consistency gate
+  // cannot probe (UnprobedModels). With the class-named MaxwellPatchExcluded portions they
+  // form the exclusion-energy export's set (GetExclusionEnergyPortions); nothing here
+  // changes an energy: a diagnostic partition of the raw within-R energy, written only
+  // when Diagnostics.ExclusionEnergy is on.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      exclusion_portions;
+  ExcludedPatchPortions unprobed_model_portions;
+  bool exclusion_energy = false;
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
   // matched cluster's box as the drivers' fourth raw class (counted, uncorrected).
@@ -682,6 +805,9 @@ private:
   long long int point_receive_item_count = 0;
   long long int stencil_nonzero_count = 0;
   long long int contour_line_count = 0;
+  // R0-a: the conductor-consistency probes' legs among maxwell_lines (in no path, no fit):
+  // ContourLines counts the contour lines only, ProbeLines these.
+  long long int probe_line_count = 0;
   mutable long long int operator_mult_count = 0;
   mutable long long int eliminate_rhs_count = 0;
   mutable long long int trace_forward_count = 0;
@@ -691,7 +817,29 @@ private:
       DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr,
       const std::vector<double> *point_band = nullptr);
-  void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry);
+  void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry,
+                             const std::vector<int> &line_patches,
+                             const std::vector<MaxwellPatchProvenance> &patch_provenance,
+                             GeometryFallbackLedger &geometry_ledger);
+  // H14a: a line ConfigureMaxwellLines could not cover, on the rank that owns its patch.
+  struct MaxwellUncoveredLine
+  {
+    int patch = -1;  // local
+    int line = -1;   // local
+    MaxwellLineUncovered report;
+  };
+  // The collective conversion of the uncovered lines (gathered to every rank, so the
+  // ledger, the raw portions and the root's patch table are rank-consistent): one
+  // MaxwellPatchExcluded record per excluded patch (its first uncovered line), the weight
+  // 0, the raw claim appended to the DomainBoundary / geometry-fallback portions once.
+  void ExcludeMaxwellPatchesWithUncoveredLines(
+      const std::vector<MaxwellUncoveredLine> &uncovered_lines,
+      const std::vector<MaxwellPatchProvenance> &patch_provenance,
+      GeometryFallbackLedger &geometry_ledger);
+  // Section 8: the raw claims (conductor_consistency_claims, replicated) of the applied
+  // patches named by their global indices, labelled UnprobedModels, into
+  // unprobed_model_portions (+ the count / claimed length under the gate's diagnostics).
+  void RecordUnprobedPatchClaims(const std::vector<int> &global_indices);
   void EvaluatePointValues(const Vector &x, Vector &values) const;
   void EvaluatePointValues(const Vector &xr, const Vector &xi, Vector &vr,
                            Vector &vi) const;
@@ -729,7 +877,7 @@ private:
   // closed when a conductor of the trace mesh has no vertex on the plane. A trace mesh
   // without any conductor vertex gets no probes (the constructor records the model under
   // Diagnostics.ConductorConsistency.UnprobedModels and warns).
-  static void ConfigureConductorConsistencyProbes(ResponseModel &model);
+  void ConfigureConductorConsistencyProbes(ResponseModel &model);
   // The Diagnostics.ConductorConsistency object with its defaults (tolerance, floor, the
   // counters, the empty lists and the rule), created on first use.
   nlohmann::json &ConductorConsistencyDiagnostics();
@@ -1035,22 +1183,60 @@ private:
   std::vector<double> AllgatherRecords(const std::vector<double> &local_records) const;
 
 public:
-  // Conductor-consistency gate (decision 277 (A)), solve time only: measure every applied
-  // spatial surface-mortar patch on the potential x of excitation `source`
-  // (ConductorConsistencyRecord), exclude the patches whose max_ratio exceeds
-  // kConductorConsistencyTolerance (weight 0 from now on, like a DomainBoundary cell: the
-  // fixed-trace energies, the self-consistent operator and the ModelCatalog weights of
-  // this and every later excitation omit them), append the records to the Diagnostics
-  // ("ConductorConsistency": every tested patch of every excitation, the excluded ones
-  // with their claim / cell lengths next to the DomainBoundary record) and return the
-  // records of this excitation (ordered by global patch index, replicated on all ranks).
-  // Collective. The preflight (dry run) cannot evaluate it: it needs the device trace.
+  // Conductor-consistency gate (decision 277 (A); the identification fix round R0-a, idfix
+  // DESIGN A.1 (c) / B.3 / SUPERVISOR AMENDMENT 3, decisions 1062 / 1064), solve time
+  // only, BOTH paths, EVERY model class: measure every applied patch that carries probes
+  // on the field of excitation `source` (a spatial surface-mortar patch: the device
+  // potential at its trace mesh's conductor vertices on the process plane; a translational
+  // patch: the device potential at every model Edge's metal point on both end faces of
+  // its cell, grouped into local metal pieces by the Edges' GapDirections, against the
+  // reference its metal is held at), exclude the patches whose max_ratio exceeds
+  // kConductorConsistencyTolerance (weight 0 from now on, STICKY, like a DomainBoundary
+  // cell: the fixed-trace energies, the self-consistent operator and the ModelCatalog
+  // weights of this and every later excitation omit them; their raw claims are served
+  // RAW), append the records to the Diagnostics ("ConductorConsistency": every tested
+  // patch of every excitation, the excluded ones with their claim / cell lengths next to
+  // the DomainBoundary record) and return the records of this excitation (ordered by
+  // global patch index, replicated on all ranks). Under
+  // SurfaceResponseCorrection.ConductorConsistency.RecordOnly (the diagnostic opt-out) the
+  // verdicts are recorded and NO weight changes. Collective. The preflight (dry run) cannot
+  // evaluate it: it needs the device trace.
   std::vector<ConductorConsistencyRecord> ApplyConductorConsistencyGate(const Vector &x,
                                                                         int source);
-  // Whether any patch carries conductor-consistency probes (a spatial surface-mortar
-  // model with conductor vertices on the process plane).
+  // The MAXWELL gate (idfix DESIGN B.3 / SUPERVISOR AMENDMENT 3 C.1 / C.3 / C.4; decision
+  // 1064) on the complex field E (true dofs) of `source` (the excitation index; the
+  // frequency in GHz, or the mode index in `source` with its frequency, for the record):
+  // every applied patch's probes are read as line integrals of E along their constructed
+  // legs (MaxwellProbe), P(q) complex; the patch's trace amplitude A_p = max |t_i| over its
+  // FIT trace incl. the states; the floor F(s, f) = kConductorConsistencyAmplitudeFloor x
+  // the largest A_p over the PRE-GATE applied set (every patch with weight > 0 by every
+  // rule other than this gate: a sticky exclusion keeps its patch in the set, so F depends
+  // on the field at (s, f) only; GlobalMax); the deviation D(q) = |P(q) - C(piece(q))| with
+  // C = 0 for the anchor's conductor / a one-reference model and the piece's
+  // conductor-state trace otherwise; ratio = D / max(A_p, F) >
+  // kConductorConsistencyTolerance on any probe excludes the patch (RecordRaw: weight 0,
+  // sticky, its raw claim served RAW, recorded, never an abort). self_consistent_pre_gate
+  // marks a record whose self-consistent field was solved before the gate could act (an
+  // eigenmode, decision 1064 (1)). Collective.
+  std::vector<ConductorConsistencyRecord>
+  ApplyConductorConsistencyGate(const ComplexVector &E, int source, double frequency,
+                                bool self_consistent_pre_gate);
+  // Whether any patch carries conductor-consistency probes (a spatial surface-mortar model
+  // with conductor vertices on the process plane, or a translational patch with its edge
+  // probes).
   bool HasConductorConsistencyProbes() const;
 
+private:
+  // The shared tail of both gates: the per-patch records of this rank gathered
+  // (Allgatherv), sorted by patch, written into the Diagnostics (the excluded patches' raw
+  // claims appended, the patch table following the exclusion), printed, returned.
+  std::vector<ConductorConsistencyRecord>
+  FinishConductorConsistencyGate(std::vector<ConductorConsistencyRecord> patch_records,
+                                 int source, double excitation_potential);
+  // The diagnostic opt-out (RecordOnly): record, never exclude.
+  bool conductor_consistency_record_only = false;
+
+public:
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through
   // Hermitian response-matrix quadratic forms.
@@ -1101,6 +1287,28 @@ public:
   {
     return geometry_fallback_interface_types;
   }
+  // H14a: the raw claims of the patches excluded for a line leaving the mesh
+  // (MaxwellPatchExcluded), the class-named copy (also in the DomainBoundary portions).
+  const ExcludedPatchPortions &GetMaxwellPatchExcludedPortionRecord() const
+  {
+    return maxwell_patch_excluded_portions;
+  }
+  // The exclusion-energy export (idfix DESIGN section 8): Diagnostics.ExclusionEnergy, the
+  // identification's portions by class, the unprobed patches' raw claims, and the whole
+  // export set (every portion's `topology` = its Class).
+  bool ExclusionEnergyRequested() const { return exclusion_energy; }
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetIdentificationExclusionPortions() const
+  {
+    return exclusion_portions;
+  }
+  const ExcludedPatchPortions &GetUnprobedModelPortionRecord() const
+  {
+    return unprobed_model_portions;
+  }
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+  GetExclusionEnergyPortions() const;
   // The parts of the SpatialClusterPriority-dropped coupons' raw claims outside every
   // matched cluster's box (OI-SCP-HOLE, decision 922; empty when no coupon is dropped or
   // every dropped window lies inside its owner's box): kept in the corrected interface
@@ -1657,7 +1865,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 // wholly inside pair already owned that a partial pair's box also contains (owned as
 // before, the owned length split equally among the owners: re-attributed, not newly owned).
 // Keys, boxes and the identification are untouched (a placement rule);
-// the geometry cache (version 21) stores the unplaced patches and this pass runs on every
+// the geometry cache (version 22) stores the unplaced patches and this pass runs on every
 // load, so no cache version change.
 struct ContinuationOwnership
 {
@@ -2290,6 +2498,16 @@ nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &porti
 // untouched by this pass: a line without a true gap is bitwise the pre-existing
 // resolution. A piece neither pass covers still fails closed.
 constexpr double kMaxwellLineCrackUlps = 4096.0;
+// OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (idfix DESIGN section 7; decision 1072 Q2; FROZEN):
+// a hanging-face closure crack of a nonconforming refinement is O(eps x h), not O(eps x the
+// domain) (the 3.06e-11 crack of the NC-refined S1b-rc mesh against the 5.69e-13 ULP
+// tolerance), so the crack tolerance of a piece is max(kMaxwellLineCrackUlps x eps x
+// max(coordinate_scale, line_length), kMaxwellLineCrackLocalDiameterFraction x the local
+// element diameter), the local element diameter = the MAX over the elements of the
+// intervals bounding the piece (exact or in-face) of mfem GetElementSize(e, 2) (the largest
+// singular value of the element Jacobian at its centre). Where no crack exists the
+// resolution is bitwise the former one (the tolerance only widens where a crack is).
+constexpr double kMaxwellLineCrackLocalDiameterFraction = 1.0e-6;
 
 // The bounding-box tolerance of the Maxwell line locator (ConfigureMaxwellLines): the
 // candidate search and the box portion of the coplanarity test above.
@@ -2303,6 +2521,9 @@ struct MaxwellSegmentIntersections
 {
   std::vector<std::pair<double, double>> exact;
   std::vector<std::pair<double, double>> in_face;
+  // The element diameter (GetElementSize(e, 2)) of each interval's element, parallel.
+  std::vector<double> exact_diameters;
+  std::vector<double> in_face_diameters;
 };
 MaxwellSegmentIntersections
 FindMaxwellSegmentIntersections(mfem::ParMesh &mesh, int dimension,
@@ -2318,12 +2539,20 @@ struct MaxwellLineCoverage
   int in_face_count = 0;
   double in_face_length = 0.0;  // Mesh units.
 };
-MaxwellLineCoverage
-ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
-                           std::vector<std::pair<double, double>> in_face_intervals,
-                           double line_length, double coordinate_scale, int line_index,
-                           const std::array<double, 3> &begin,
-                           const std::array<double, 3> &end);
+// `element_diameters` / `in_face_diameters` parallel the intervals (empty = no local
+// element scale: the floating-point tolerance alone). H14a (hardening-2 DESIGN; idfix
+// DESIGN section 7; decision 1074): with `uncovered` given, a piece no intersection covers
+// beyond the crack tolerance is REPORTED there (MaxwellLineUncovered above: the former
+// abort's text, the gap and the tolerance; the line's resolution stops at that piece)
+// instead of aborting, so that the operator can exclude the patch (MaxwellPatchExcluded);
+// without it the abort stands.
+MaxwellLineCoverage ResolveMaxwellLineCoverage(
+    std::vector<std::pair<double, double>> element_intervals,
+    std::vector<std::pair<double, double>> in_face_intervals, double line_length,
+    double coordinate_scale, int line_index, const std::array<double, 3> &begin,
+    const std::array<double, 3> &end, const std::vector<double> &element_diameters = {},
+    const std::vector<double> &in_face_diameters = {},
+    MaxwellLineUncovered *uncovered = nullptr);
 
 }  // namespace palace
 

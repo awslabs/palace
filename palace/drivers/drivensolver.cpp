@@ -255,6 +255,20 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       Mpi::Print("\n");
       ksp.Mult(RHS, E);
+      if (response_correction && !response_correction->IsRawFallback() &&
+          response_correction->HasConductorConsistencyProbes())
+      {
+        // The conductor-consistency gate on the Maxwell path (idfix DESIGN B.3; decision
+        // 1064 (1)): the raw field of this frequency, BEFORE the self-consistent solve (the
+        // weights are read at Mult time, so the corrected field sees the exclusion) and
+        // before any energy of this frequency is formed; an excluded patch stays excluded
+        // at every later frequency of this operator (sticky).
+        BlockTimer gate_timer(Timer::POSTPRO_RESPONSE_COUPON);
+        response_correction->ApplyConductorConsistencyGate(
+            E, excitation_idx,
+            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
+            false);
+      }
       if (corrected_ksp)
       {
         Mpi::Print(" Solving self-consistent fabrication-response corrected field\n");
@@ -629,6 +643,19 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
       // Assemble and solve the PROM linear system.
       prom_op.SolvePROM(excitation_idx, omega, E);
+      if (response_correction && !response_correction->IsRawFallback() &&
+          response_correction->HasConductorConsistencyProbes())
+      {
+        // The conductor-consistency gate (idfix DESIGN B.3; decision 1064 (1)) on the
+        // reduced-order field of this frequency, before its energies. The corrected PROM
+        // was built on the pre-gate operator, so its field is marked SelfConsistentPreGate
+        // when an exclusion fires here (the fixed-trace letters are exact).
+        BlockTimer gate_timer(Timer::POSTPRO_RESPONSE_COUPON);
+        response_correction->ApplyConductorConsistencyGate(
+            E, excitation_idx,
+            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
+            corrected_prom_op != nullptr);
+      }
       if (corrected_prom_op)
       {
         corrected_prom_op->SolvePROM(excitation_idx, omega, E_corrected);

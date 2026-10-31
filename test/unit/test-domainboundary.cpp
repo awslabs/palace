@@ -1690,7 +1690,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       pair["Topology"] = topology;
       pair["Separation"] = 0.25;
       pair["SeparationTolerance"] = 1.0e-8;
-      pair["Reference"] = {0.0, 0.0, 0.0};
+      // The conductor reference lies ON the coupon's metal (the gate's premise, idfix R0-a:
+      // every library of record places it so): the strip's centre; for the gap a point on
+      // its first metal side (u <= -0.125), not the gap's centre in the dielectric, which
+      // the gate would read as a misplaced reference and exclude every cell.
+      pair["Reference"] = std::string(topology) == "SameConductorGap"
+                              ? json({-0.1875, 0.0, 0.0})
+                              : json({0.0, 0.0, 0.0});
       library["Models"].push_back(pair);
     }
     std::ofstream output(library_path);
