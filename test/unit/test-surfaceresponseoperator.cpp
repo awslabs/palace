@@ -6933,6 +6933,153 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+namespace
+{
+
+// Two aperture perimeters are disconnected edge-graph components even though the metal
+// bridge between them is one physical PEC strip (x in [1.25, 1.5] on the plane y = 0.5 of
+// a 3 x 1 x 3 box, attribute 9: a 0.25 = 1.25 R SameConductorStrip at R = 0.2). Its
+// outward-facing edges must select a strip coupon from local geometry instead of being
+// rejected as different conductors (the paired aperture case); the GDS scatter near-match
+// case reads the strip against libraries whose strip separation is offset from 0.25.
+std::unique_ptr<mfem::ParMesh> MakePairedApertureMesh()
+{
+  constexpr double extent = 3.0;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(24, 4, 24, mfem::Element::HEXAHEDRON,
+                                                  extent, 1.0, extent);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent, xmax = 0.0;
+    double zmin = extent, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
+                               zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
+    const bool right_aperture = xmin >= 1.5 - 1.0e-12 && xmax <= 2.0 + 1.0e-12 &&
+                                zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
+    if (on_plane && !left_aperture && !right_aperture)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// The UnpatchedPair reproducer (OI-PAIR-SEPARATION-MISMATCH; CTX-002 t6_2 feature 18): the
+// paired-aperture sheet on a 48 x 4 x 48 grid (cells 0.0625) with the apertures over z in
+// [0.25, 2.75], the left one x in [0.75, 1.25], the right one x in [1.5, 1.9375], and the
+// strip's right edge (the x = 1.5 vertex column) sheared by `taper` x (z - 0.25) / 2.5: the
+// strip's width grows linearly from 0.25 to 0.25 + taper (R = 0.2; taper 0.08 = 32 mrad: a
+// bent pair, consecutive chord pieces stepping ~1 %). The right aperture's far edge (x =
+// 1.9375) comes within 2R of the taper edge once the shear exceeds 0.0375 (z > ~1.42): the
+// cross-section is the 2-edge strip over the narrow part and a 3-edge ParallelEdgeCluster
+// over the wide part, while the pair link carries ONE mean separation (~0.29) into both.
+std::unique_ptr<mfem::ParMesh> MakeTaperStripMesh(double taper)
+{
+  constexpr double extent = 3.0;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(48, 4, 48, mfem::Element::HEXAHEDRON,
+                                                  extent, 1.0, extent);
+  for (int v = 0; v < serial.GetNV(); v++)
+  {
+    double *point = serial.GetVertex(v);
+    if (std::abs(point[0] - 1.5) < 1.0e-12)
+    {
+      point[0] += taper * std::clamp((point[2] - 0.25) / 2.5, 0.0, 1.0);
+    }
+  }
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent, xmax = 0.0;
+    double zmin = extent, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
+                               zmin >= 0.25 - 1.0e-12 && zmax <= 2.75 + 1.0e-12;
+    const bool right_aperture = xmin >= 1.5 - 1.0e-12 && xmax <= 1.9375 + 1.0e-12 &&
+                                zmin >= 0.25 - 1.0e-12 && zmax <= 2.75 + 1.0e-12;
+    if (on_plane && !left_aperture && !right_aperture)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// A Signature-keyed SameConductorStrip library (the features patch construction case's
+// form) written by the root rank: one model per (name, signature) with the isolated
+// fixture's matrices (the test is the match, not the coupon physics); Separation follows
+// the signature's SeparationOverR.
+void WriteSignatureStripLibrary(const fs::path &path, const std::string &name, double R,
+                                const std::vector<std::pair<std::string, json>> &models,
+                                const fs::path &fabricated_path, const fs::path &thin_path,
+                                const fs::path &points_path)
+{
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = {{"Version", 2},
+                    {"Name", name},
+                    {"MatchingRadius", R},
+                    {"CouponDepth", R},
+                    {"Models", json::array()}};
+    for (const auto &[model_name, signature] : models)
+    {
+      library["Models"].push_back(
+          {{"Name", model_name},
+           {"Topology", "SameConductorStrip"},
+           {"Signature", signature},
+           {"Separation", signature.at("SeparationOverR").get<double>() * R},
+           {"SeparationTolerance", 1.0e-8},
+           {"Reference", {0.0, 0.0, 0.0}},
+           {"FabricatedMatrix", fabricated_path.string()},
+           {"ThinMatrix", thin_path.string()},
+           {"BasisPoints", points_path.string()}});
+    }
+    std::ofstream output(path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+}
+
+}  // namespace
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired aperture",
                  "[surfaceresponseoperator][3d][maxwell][aperture][Serial][Parallel]")
 {
@@ -6941,52 +7088,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired ape
 #else
   json convex_maxwell_island_config = ConvexMaxwellIslandConfig();
   mfem::VectorConstantCoefficient field_coefficient = ConstantFieldCoefficient();
-
-  // Two aperture perimeters are disconnected edge-graph components even though the
-  // metal bridge between them is one physical PEC strip. Its outward-facing edges must
-  // select a strip coupon from local geometry instead of being rejected as different
-  // conductors.
-  auto MakePairedApertureMesh = []()
-  {
-    constexpr double extent = 3.0;
-    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(24, 4, 24, mfem::Element::HEXAHEDRON,
-                                                    extent, 1.0, extent);
-    for (int face = 0; face < serial.GetNumFaces(); face++)
-    {
-      int element1, element2;
-      serial.GetFaceElements(face, &element1, &element2);
-      if (element1 < 0 || element2 < 0)
-      {
-        continue;
-      }
-      mfem::Array<int> vertices;
-      serial.GetFaceVertices(face, vertices);
-      bool on_plane = true;
-      double xmin = extent, xmax = 0.0;
-      double zmin = extent, zmax = 0.0;
-      for (const int vertex : vertices)
-      {
-        const double *point = serial.GetVertex(vertex);
-        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
-        xmin = std::min(xmin, point[0]);
-        xmax = std::max(xmax, point[0]);
-        zmin = std::min(zmin, point[2]);
-        zmax = std::max(zmax, point[2]);
-      }
-      const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
-                                 zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
-      const bool right_aperture = xmin >= 1.5 - 1.0e-12 && xmax <= 2.0 + 1.0e-12 &&
-                                  zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
-      if (on_plane && !left_aperture && !right_aperture)
-      {
-        serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
-        serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
-      }
-    }
-    serial.FinalizeTopology();
-    serial.Finalize();
-    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
-  };
 
   auto strip_aperture_config = convex_maxwell_island_config;
   strip_aperture_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
@@ -7042,6 +7143,334 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired ape
   CHECK(strip_aperture_result.matched_length_fraction >
         no_strip_aperture_result.matched_length_fraction);
 
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator GDS scatter near-match",
+                 "[surfaceresponseoperator][3d][features][nearmatch][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // The identification fix round DESIGN section 4 (b) (decision 1075 Q1): a translational
+  // pair feature with no model within the signature tolerance (1e-3 R) matches the nearest
+  // model of its topology within max(SeparationTolerance, 5e-3 R) of its separation, Status
+  // NearMatched with the deviation recorded, placed like an exact match; beyond the band it
+  // stays Missing; Exact keeps precedence; Summary.NearMatched is always written. The
+  // paired-aperture strip (0.25 = 1.25 R at R = 0.2) against the strip library with the
+  // model's separation offset: 3e-3 R (0.0006) inside the band, 7e-3 R (0.0014) outside.
+  constexpr double R = 0.2;
+  const double tolerance_over_R = kSignatureParameterToleranceOverRadius;
+  REQUIRE(kGdsScatterOverRadius == 5.0e-3);
+  auto StripModelName = [](double offset_over_R)
+  {
+    return std::string("same-conductor-strip") + (offset_over_R >= 0.0 ? "+" : "") +
+           std::to_string(offset_over_R) + "R";
+  };
+  // A Signature-keyed strip library from the dry run's own strip feature: one model per
+  // offset, its Signature's SeparationOverR / Edges[1].OffsetOverR offset from the
+  // feature's.
+  auto WriteStripLibrary = [&](const std::string &tag, const json &strip_signature,
+                               const std::vector<double> &offsets_over_R)
+  {
+    const fs::path path = temp.temp_dir / ("fabrication-process-strip-" + tag + ".json");
+    const double s0 = strip_signature["SeparationOverR"].get<double>();
+    std::vector<std::pair<std::string, json>> models;
+    for (const double offset : offsets_over_R)
+    {
+      json signature = strip_signature;
+      signature["SeparationOverR"] = s0 + offset;
+      signature["Edges"][1]["OffsetOverR"] = s0 + offset;
+      models.emplace_back(StripModelName(offset), signature);
+    }
+    WriteSignatureStripLibrary(path, "unit-test-process-strip-" + tag, R, models,
+                               fabricated_path, thin_path, points_path);
+    return path;
+  };
+  struct Reading
+  {
+    std::string status;  // the strip features' Match.Status (one value, checked equal)
+    std::string model;
+    double deviation_over_R = -1.0;
+    double band_over_R = -1.0;
+    int near_matched_count = -1;
+    double near_matched_length = -1.0;
+    bool counts_has_near_matched = false;
+    std::string requirement_status;
+    int strip_patch_rows = 0;
+    json strip_signature;
+  };
+  auto Read = [&](const std::string &tag, const fs::path &library_path)
+  {
+    json config = IslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeAttributes"] = {
+        1, 2, 3, 4, 5, 6};
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakePairedApertureMesh());
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-nearmatch-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    Reading reading;
+    int strips = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "SameConductorStrip")
+      {
+        continue;
+      }
+      strips++;
+      reading.strip_signature = feature["Signature"];
+      const std::string status = feature["Match"]["Status"].get<std::string>();
+      if (reading.status.empty())
+      {
+        reading.status = status;
+      }
+      CHECK(status == reading.status);
+      if (feature["Match"].contains("Model"))
+      {
+        reading.model = feature["Match"]["Model"].get<std::string>();
+      }
+      if (feature["Match"].contains("NearMatch"))
+      {
+        CHECK(feature["Match"]["NearMatch"]["Model"] == feature["Match"]["Model"]);
+        reading.deviation_over_R =
+            feature["Match"]["NearMatch"]["SeparationDeviationOverR"].get<double>();
+        reading.band_over_R = feature["Match"]["NearMatch"]["BandOverR"].get<double>();
+      }
+    }
+    REQUIRE(strips > 0);
+    REQUIRE(manifest["Summary"].contains("NearMatched"));
+    reading.near_matched_count = manifest["Summary"]["NearMatched"]["Count"].get<int>();
+    reading.near_matched_length =
+        manifest["Summary"]["NearMatched"]["Length"].get<double>();
+    reading.counts_has_near_matched = manifest["Summary"]["Counts"].contains("NearMatched");
+    for (const auto &requirement : manifest["Requirements"])
+    {
+      if (requirement["Topology"] == "SameConductorStrip")
+      {
+        reading.requirement_status = requirement["Status"].get<std::string>();
+      }
+    }
+    std::ifstream patches(patches_path);
+    REQUIRE(patches);
+    std::string line;
+    std::getline(patches, line);  // header
+    while (std::getline(patches, line))
+    {
+      reading.strip_patch_rows += line.find("same-conductor-strip") != std::string::npos;
+    }
+    return reading;
+  };
+
+  // The dry run against the parametric strip library reads the strip's own signature (its
+  // models map three interface types, the sheet's features carry SA only: Missing).
+  const auto base = Read("base", strip_library_3d_path);
+  REQUIRE(base.strip_signature.is_object());
+  REQUIRE(base.near_matched_count == 0);
+  const json strip_signature = base.strip_signature;
+  const auto exact = Read("exact", WriteStripLibrary("exact", strip_signature, {0.0}));
+  CHECK(exact.status == "Matched");
+  CHECK(exact.requirement_status == "Exact");
+  CHECK(exact.near_matched_count == 0);
+  CHECK(exact.near_matched_length == 0.0);
+  CHECK_FALSE(exact.counts_has_near_matched);
+  CHECK(exact.strip_patch_rows > 0);
+
+  SECTION("3e-3 R inside the band: NearMatched, placed, the deviation recorded")
+  {
+    const auto near = Read("near", WriteStripLibrary("near", strip_signature, {3.0e-3}));
+    CHECK(near.status == "NearMatched");
+    CHECK(near.requirement_status == "NearMatched");
+    CHECK(near.model == StripModelName(3.0e-3));
+    // The deviation is read on the signature grid (1e-6 R quanta of SeparationOverR).
+    CHECK_THAT(near.deviation_over_R, WithinAbs(3.0e-3, 5.0e-6));
+    CHECK(near.deviation_over_R > tolerance_over_R);
+    CHECK_THAT(near.band_over_R, WithinAbs(kGdsScatterOverRadius, 1.0e-12));
+    CHECK(near.near_matched_count > 0);
+    CHECK(near.near_matched_length > 0.0);
+    CHECK(near.counts_has_near_matched);
+    CHECK(near.strip_patch_rows == exact.strip_patch_rows);
+  }
+  SECTION("7e-3 R outside the band: Missing, the empty Summary leaf")
+  {
+    const auto far = Read("far", WriteStripLibrary("far", strip_signature, {7.0e-3}));
+    CHECK(far.status == "Missing");
+    CHECK(far.requirement_status == "Missing");
+    CHECK(far.near_matched_count == 0);
+    CHECK_FALSE(far.counts_has_near_matched);
+    CHECK(far.strip_patch_rows == 0);
+  }
+  SECTION("two models in the band: the nearer one")
+  {
+    const auto nearer =
+        Read("nearer", WriteStripLibrary("nearer", strip_signature, {3.0e-3, -2.0e-3}));
+    CHECK(nearer.status == "NearMatched");
+    CHECK(nearer.model == StripModelName(-2.0e-3));
+    CHECK_THAT(nearer.deviation_over_R, WithinAbs(2.0e-3, 5.0e-6));
+  }
+  SECTION("Exact keeps precedence over a model in the band")
+  {
+    const auto both =
+        Read("both", WriteStripLibrary("both", strip_signature, {3.0e-3, 0.0}));
+    CHECK(both.status == "Matched");
+    CHECK(both.requirement_status == "Exact");
+    CHECK(both.model == StripModelName(0.0));
+    CHECK(both.near_matched_count == 0);
+  }
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator unpatched pair",
+                 "[surfaceresponseoperator][3d][features][unpatchedpair][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // UnpatchedPair (identification fix round DESIGN section 4 I-5 as ruled by decision 1075
+  // Q3): a matched translational pair whose two sides do not face each other at the
+  // signature's separation (the placement's PairPatchSeparationTolerance test) is recorded
+  // (Features[].Match.Status Unpatched + Reason; Diagnostics.UnpatchedPairs;
+  // Summary.UnpatchedPairs), never patched, never dropped silently. The reproducer of the
+  // mechanism (OI-PAIR-SEPARATION-MISMATCH; CTX-002 t6_2 feature 18): MakeTaperStripMesh —
+  // the pair link's single mean separation keys the narrow 2-edge part of the taper, whose
+  // sides lie > 10 % below it. Pass 1 (the 0.25 strip library): the taper pair is Missing
+  // and its key is read; pass 2 (a Signature-keyed model at that key): matched, then
+  // refused by the placement and recorded.
+  constexpr double R = 0.2;
+  constexpr double taper = 0.08;
+  auto Preflight = [&](const std::string &tag, const fs::path &library_path)
+  {
+    json config = IslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeAttributes"] = {
+        1, 2, 3, 4, 5, 6};
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakeTaperStripMesh(taper));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-unpatched-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    json manifest = json::parse(input);
+    int strip_patch_rows = 0;
+    {
+      std::ifstream patches(patches_path);
+      REQUIRE(patches);
+      std::string line;
+      std::getline(patches, line);
+      while (std::getline(patches, line))
+      {
+        strip_patch_rows += line.find("same-conductor-strip") != std::string::npos;
+      }
+    }
+    manifest["_StripPatchRows"] = strip_patch_rows;
+    return manifest;
+  };
+  // Pass 1: the taper strip against the 0.25 strip library.
+  const json first = Preflight("missing", strip_library_3d_path);
+  std::optional<double> separation_over_R;
+  json taper_signature;
+  int taper_strips = 0;
+  for (const auto &feature : first["Identification"]["Features"])
+  {
+    if (feature["Type"] != "SameConductorStrip")
+    {
+      continue;
+    }
+    const double s = feature["Signature"]["SeparationOverR"].get<double>();
+    if (s > 1.3)  // the taper's mean key (an exact 1.25 R strip would read 1.25)
+    {
+      taper_strips++;
+      separation_over_R = s;
+      taper_signature = feature["Signature"];
+      CHECK(feature["Match"]["Status"] == "Missing");
+    }
+  }
+  for (const auto &feature : first["Identification"]["Features"])
+  {
+    UNSCOPED_INFO("feature " << feature["Id"] << " " << feature["Type"] << " length "
+                             << feature["Length"] << " separation "
+                             << feature["Signature"].value("SeparationOverR", -1.0)
+                             << " edges "
+                             << (feature["Signature"].contains("Edges")
+                                     ? feature["Signature"]["Edges"].size()
+                                     : 0));
+  }
+  REQUIRE(separation_over_R.has_value());
+  INFO("taper strip key SeparationOverR " << *separation_over_R);
+  // The link's mean over the whole taper (1.25 -> 1.65 R: ~1.45 R), not the 2-edge part's.
+  CHECK(*separation_over_R > 1.35);
+  CHECK(*separation_over_R < 1.55);
+  CHECK_FALSE(first["Identification"]["Diagnostics"].contains("UnpatchedPairs"));
+  CHECK_FALSE(first["Summary"].contains("UnpatchedPairs"));
+  // Pass 2: a Signature-keyed strip model at the taper's key (its own signature).
+  const fs::path taper_library_path =
+      temp.temp_dir / "fabrication-process-strip-taper.json";
+  WriteSignatureStripLibrary(taper_library_path, "unit-test-process-strip-taper", R,
+                             {{"same-conductor-strip-taper-mean", taper_signature}},
+                             fabricated_path, thin_path, points_path);
+  const json second = Preflight("recorded", taper_library_path);
+  int unpatched_features = 0;
+  for (const auto &feature : second["Identification"]["Features"])
+  {
+    if (feature["Type"] != "SameConductorStrip" ||
+        feature["Signature"]["SeparationOverR"].get<double>() <= 1.3)
+    {
+      continue;
+    }
+    CHECK(feature["Match"]["Status"] == "Unpatched");
+    CHECK(feature["Match"]["Model"] == "same-conductor-strip-taper-mean");
+    CHECK_THAT(feature["Match"]["Reason"].get<std::string>(),
+               Catch::Matchers::ContainsSubstring("UnpatchedPair"));
+    unpatched_features++;
+  }
+  CHECK(unpatched_features == taper_strips);
+  REQUIRE(second["Identification"]["Diagnostics"].contains("UnpatchedPairs"));
+  const auto &record = second["Identification"]["Diagnostics"]["UnpatchedPairs"];
+  CHECK(record["Count"].get<int>() == taper_strips);
+  CHECK(record["Length"].get<double>() > 0.0);
+  for (const auto &entry : record["Features"])
+  {
+    CHECK(entry["Type"] == "SameConductorStrip");
+    CHECK_THAT(entry["SeparationOverR"].get<double>(),
+               WithinAbs(*separation_over_R, 1.0e-9));
+    // The sampled side-to-side mean reads the 2-edge part's own geometry (1.25 -> ~1.44
+    // R), below the key; the narrow end deviates from the key by > the 10 % tolerance.
+    CHECK(entry["GeometricSeparationOverR"].get<double>() < *separation_over_R);
+    CHECK(entry["GeometricSeparationOverR"].get<double>() > 1.2);
+    CHECK(entry["MaxDeviationRelative"].get<double>() > 0.10);
+  }
+  CHECK(second["Summary"]["UnpatchedPairs"]["Count"].get<int>() == taper_strips);
+  CHECK_THAT(second["Summary"]["UnpatchedPairs"]["Length"].get<double>(),
+             WithinAbs(record["Length"].get<double>(), 1.0e-12));
+  CHECK(second["_StripPatchRows"].get<int>() == 0);
 #endif
 }
 

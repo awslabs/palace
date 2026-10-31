@@ -14753,6 +14753,19 @@ void Identifier::Assign(IdentificationResult &result)
   std::vector<std::vector<int>> piece_stretch(runs.size());
   {
     const double tolerance = kSignatureParameterToleranceOverRadius * R;
+    // I-4 (identification fix round DESIGN section 4; decisions 1075 Q2 / 1077 Q1 (B)): a
+    // stretch of the isolated-edge remainder classes (IsolatedEdge / CurvedEdge: the
+    // unclaimed remainder between claims) shorter than kRemainderAbsorptionOverRadius x R
+    // (the GDS scatter bar) is RECORDED (Diagnostics.RemainderBelowBar), not joined: the
+    // absorption re-indexes the features and, acting on image segments, broke a
+    // mirror-formed cluster's contract on a card of record (C3), so the join stays at the
+    // signature tolerance for every stretch.
+    const double remainder_bar = kRemainderAbsorptionOverRadius * R;
+    auto RemainderClass = [&](int feature)
+    {
+      const std::string &type = features[static_cast<std::size_t>(feature)].type;
+      return type == "IsolatedEdge" || type == "CurvedEdge";
+    };
     struct ChainPiece
     {
       std::size_t run;
@@ -14911,6 +14924,13 @@ void Identifier::Assign(IdentificationResult &result)
             if (stretch.length < tolerance)
             {
               result.sub_tolerance_portions.isolated++;
+            }
+            else if (stretch.length < remainder_bar && RemainderClass(stretch.feature))
+            {
+              result.remainder_below_bar.push_back(
+                  {stretch.feature,
+                   features[static_cast<std::size_t>(stretch.feature)].type, chain.id,
+                   stretch.length});
             }
           }
         }
@@ -15866,6 +15886,14 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.sub_tolerance_portions.length);
   w.Pod(result.sub_tolerance_portions.max_length);
   w.Size(result.sub_tolerance_portions.isolated);
+  w.Size(result.remainder_below_bar.size());
+  for (const auto &stretch : result.remainder_below_bar)
+  {
+    w.Pod(stretch.feature);
+    w.String(stretch.type);
+    w.Pod(stretch.chain);
+    w.Pod(stretch.length);
+  }
   w.String(result.knife_edge_census);
   w.String(result.raw_zone_records);
   w.Size(result.unused_span_cap_allowances.size());
@@ -15912,6 +15940,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Pod(f.match_note.has_value());
     w.String(f.match_note.value_or(""));
     w.String(f.quantum_near_match.is_null() ? std::string() : f.quantum_near_match.dump());
+    w.String(f.near_match.is_null() ? std::string() : f.near_match.dump());
     w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
     w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
     w.String(f.blend_eigenvalues.is_null() ? std::string() : f.blend_eigenvalues.dump());
@@ -16019,6 +16048,14 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.sub_tolerance_portions.length = r.Pod<double>();
   result.sub_tolerance_portions.max_length = r.Pod<double>();
   result.sub_tolerance_portions.isolated = r.Size();
+  result.remainder_below_bar.resize(r.Size());
+  for (auto &stretch : result.remainder_below_bar)
+  {
+    stretch.feature = r.Pod<int>();
+    stretch.type = r.String();
+    stretch.chain = r.Pod<int>();
+    stretch.length = r.Pod<double>();
+  }
   result.knife_edge_census = r.String();
   result.raw_zone_records = r.String();
   result.unused_span_cap_allowances.resize(r.Size());
@@ -16083,6 +16120,9 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     const std::string near_match = r.String();
     f.quantum_near_match =
         near_match.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(near_match);
+    const std::string band_near_match = r.String();
+    f.near_match = band_near_match.empty() ? nlohmann::json(nullptr)
+                                           : nlohmann::json::parse(band_near_match);
     const std::string support = r.String();
     f.spatial_support =
         support.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(support);
@@ -16292,6 +16332,13 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     {
       entry["Match"]["Model"] = *feature.matched_model;
       entry["Match"]["Deviation"] = feature.match_deviation.value_or(0.0);
+    }
+    if (!feature.near_match.is_null())
+    {
+      // Matched within the GDS scatter band only (identification fix round DESIGN section
+      // 4, decision 1075 Q1): Status NearMatched, the separation deviation in R recorded.
+      entry["Match"]["Status"] = "NearMatched";
+      entry["Match"]["NearMatch"] = feature.near_match;
     }
     if (feature.match_note)
     {
@@ -16887,6 +16934,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "(OI-PERIODIC-ARRAY-COUPON: a periodic unit-cell coupon is a future library "
          "class). Basis: the census band of record; the response is continuous across 2R; "
          "no new number"},
+        {"RemainderAbsorptionOverR", kRemainderAbsorptionOverRadius},
         {"FacingGateExclusions",
          "audit A8 (facing_check.py): isolated / curved edges facing "
          "another edge and pair / stack sides facing a third edge "
@@ -17158,6 +17206,38 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"UnusedSpanCapAllowances", unused_span_cap_allowances},
       {"GeometryDigest", geometry_digest}};
+  if (!remainder_below_bar.empty())
+  {
+    // I-4 RECORD-ONLY (decisions 1075 Q2 / 1077 Q1 (B)): the isolated-edge-class remainder
+    // stretches between the signature tolerance and the GDS scatter bar, recorded where
+    // any exists (C1 of record: two), never joined.
+    nlohmann::json stretches = nlohmann::json::array();
+    double total = 0.0, longest = 0.0;
+    for (const auto &stretch : remainder_below_bar)
+    {
+      stretches.push_back({{"Feature", stretch.feature},
+                           {"Type", stretch.type},
+                           {"Chain", stretch.chain},
+                           {"Length", L(stretch.length)}});
+      total += stretch.length;
+      longest = std::max(longest, stretch.length);
+    }
+    manifest["Diagnostics"]["RemainderBelowBar"] = {
+        {"Count", remainder_below_bar.size()},
+        {"Length", L(total)},
+        {"MaxLength", L(longest)},
+        {"BarOverR", kRemainderAbsorptionOverRadius},
+        {"Treatment", "Recorded"},
+        {"Rule",
+         "I-4 (DESIGN section 4; decisions 1075 Q2 / 1077 Q1 (B)): an IsolatedEdge / "
+         "CurvedEdge stretch (the unclaimed remainder between claims) shorter than "
+         "RemainderAbsorptionOverR x R and not below the signature tolerance is "
+         "recorded here and kept as it is (its feature and patches unchanged; the "
+         "absorption into the neighbouring claim is deferred: it re-indexes the "
+         "features and, on image segments, can break a mirror-formed cluster's "
+         "contract)"},
+        {"Stretches", stretches}};
+  }
   if (!raw_zone_records.empty())
   {
     // The RAW zone records (UnclusterableComponents / TaperCrossings; decisions 1062 /

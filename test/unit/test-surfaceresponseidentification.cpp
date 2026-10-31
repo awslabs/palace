@@ -8778,3 +8778,143 @@ TEST_CASE("SurfaceResponseIdentificationKnifeEdgeHysteresis",
     }
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationRemainderAbsorption",
+          "[surfaceresponseidentification][Serial]")
+{
+  // I-4 (identification fix round DESIGN section 4; decisions 1075 Q2 / 1077 Q1 (B)): an
+  // isolated-edge remainder (IsolatedEdge / CurvedEdge stretch) shorter than
+  // kRemainderAbsorptionOverRadius x R (5e-3 R, the GDS scatter bar) and not below the
+  // signature tolerance is RECORDED (Diagnostics.RemainderBelowBar) and kept as it is: the
+  // sliver rule of decision 222 joins at the signature tolerance only (the absorption at
+  // the bar re-indexed the features and, on image segments, broke a mirror-formed cluster's
+  // contract on a card of record). Reproducer: body A (x in [0, 10], 5 R wide: no strip)
+  // and body B (x in [12, 13]) between two truncation cuts, B's lower cut raised by d above
+  // A's, so that the stack claim of A's x = 10 edge (facing B's x = 12 edge at R) starts at
+  // the foot of B's cut end and leaves an isolated remainder of length d at A's cut.
+  const double R = 2.0;
+  auto Remainders = [&](double d)
+  {
+    const std::vector<Point2> body_a = {
+        {0.0, -60.0}, {10.0, -60.0}, {10.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {12.0, -60.0 + d}, {13.0, -60.0 + d}, {13.0, 0.0}, {12.0, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    // The portions of A's x = 10 edge (the segments with x = 10 at both ends).
+    struct Reading
+    {
+      double isolated_length = 0.0;
+      int isolated_portions = 0;
+      double claimed_from = 0.0;  // the lowest y the non-isolated claims reach
+      std::size_t joined = 0;
+      std::vector<IdentificationResult::RemainderBelowBar> recorded;
+    } reading;
+    for (std::size_t i = 0; i < result.segments.size(); i++)
+    {
+      const auto &segment = result.segments[i];
+      if (segment.exclusion || std::abs(segment.key[0][0] - 10.0) > 1.0e-9 ||
+          std::abs(segment.key[1][0] - 10.0) > 1.0e-9)
+      {
+        continue;
+      }
+      for (const auto &portion : segment.portions)
+      {
+        const auto &feature = result.features[static_cast<std::size_t>(portion[2])];
+        const double y0 = std::min(segment.key[0][1], segment.key[1][1]);
+        if (feature.type == "IsolatedEdge")
+        {
+          reading.isolated_portions++;
+          reading.isolated_length += portion[1] - portion[0];
+        }
+        else
+        {
+          reading.claimed_from =
+              std::min(reading.claimed_from, y0 + std::min(portion[0], portion[1]));
+        }
+      }
+    }
+    reading.joined = result.sub_tolerance_portions.count;
+    reading.recorded = result.remainder_below_bar;
+    return reading;
+  };
+  SECTION("a remainder below the bar is recorded and kept")
+  {
+    const double d = 3.0e-3 * R;  // above the signature tolerance, below the bar
+    const auto reading = Remainders(d);
+    CHECK(reading.isolated_portions == 1);
+    CHECK_THAT(reading.isolated_length, WithinAbs(d, 1.0e-9));
+    CHECK_THAT(reading.claimed_from, WithinAbs(-60.0 + d, 1.0e-9));
+    CHECK(reading.joined == 0);
+    REQUIRE(reading.recorded.size() == 1);
+    CHECK(reading.recorded[0].type == "IsolatedEdge");
+    CHECK_THAT(reading.recorded[0].length, WithinAbs(d, 1.0e-9));
+    CHECK(reading.recorded[0].feature >= 0);
+  }
+  SECTION("a remainder above the bar is neither recorded nor joined")
+  {
+    const double d = 7.0e-3 * R;
+    const auto reading = Remainders(d);
+    CHECK(reading.isolated_portions == 1);
+    CHECK_THAT(reading.isolated_length, WithinAbs(d, 1.0e-9));
+    CHECK_THAT(reading.claimed_from, WithinAbs(-60.0 + d, 1.0e-9));
+    CHECK(reading.joined == 0);
+    CHECK(reading.recorded.empty());
+  }
+  SECTION("the record is the remainder class's: a non-remainder stretch is not recorded")
+  {
+    // Body A narrowed to a 1 R strip (x in [0, 2]): below B's cut its two edges compose a
+    // SameConductorStrip stretch of length d, not an isolated remainder; it stays its own
+    // feature and enters no record.
+    const double d = 3.0e-3 * R;
+    const std::vector<Point2> body_a = {{0.0, -60.0}, {2.0, -60.0}, {2.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {4.0, -60.0 + d}, {5.0, -60.0 + d}, {5.0, 0.0}, {4.0, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    int short_strips = 0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "SameConductorStrip" && feature.length < 3.0 * d)
+      {
+        short_strips++;
+        CHECK_THAT(feature.length, WithinAbs(2.0 * d, 1.0e-9));
+      }
+    }
+    CHECK(short_strips == 1);
+    CHECK(result.sub_tolerance_portions.count == 0);
+    CHECK(result.remainder_below_bar.empty());
+  }
+  SECTION("the manifest leaf Diagnostics.RemainderBelowBar")
+  {
+    const double d = 3.0e-3 * R;
+    const std::vector<Point2> body_a = {
+        {0.0, -60.0}, {10.0, -60.0}, {10.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {12.0, -60.0 + d}, {13.0, -60.0 + d}, {13.0, 0.0}, {12.0, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    const nlohmann::json manifest = result.ToJson(2.0);  // a length scale of 2
+    REQUIRE(manifest["Diagnostics"].contains("RemainderBelowBar"));
+    const auto &record = manifest["Diagnostics"]["RemainderBelowBar"];
+    CHECK(record["Count"] == 1);
+    // Lengths are written on the manifest's 1e-6 R grid (ToJson's snap).
+    CHECK_THAT(record["Length"].get<double>(), WithinAbs(2.0 * d, 1.0e-5));
+    CHECK_THAT(record["BarOverR"].get<double>(),
+               WithinAbs(kRemainderAbsorptionOverRadius, 0.0));
+    CHECK(record["Treatment"] == "Recorded");
+    CHECK(record["Stretches"][0]["Type"] == "IsolatedEdge");
+    // Above the bar: no leaf.
+    const std::vector<Point2> body_b_far = {
+        {12.0, -60.0 + 7.0e-3 * R}, {13.0, -60.0 + 7.0e-3 * R}, {13.0, 0.0}, {12.0, 0.0}};
+    const auto far_input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b_far, 0, 1.0, 0.0, {0, 2}}}, R);
+    CHECK_FALSE(IdentifyMetalPerimeter(far_input).ToJson(1.0)["Diagnostics"].contains(
+        "RemainderBelowBar"));
+  }
+}

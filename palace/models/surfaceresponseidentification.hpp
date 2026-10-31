@@ -237,6 +237,13 @@ struct IdentifiedFeature
   // quanta without an exact hash): {ModelKey, FeatureKey, MaxDeltaQuanta, DifferingNumbers,
   // Rule}. Manifest Features[].Match.QuantumNearMatch; the status stays Matched / Exact.
   nlohmann::json quantum_near_match;
+  // Near-match record of a translational feature (identification fix round DESIGN section
+  // 4, decision 1075 Q1; null unless a SameConductorStrip / SameConductorGap /
+  // DifferentConductorGap matched a model within max(SeparationTolerance,
+  // kGdsScatterOverRadius x R) without one within the signature tolerance):
+  // {Model, SeparationDeviationOverR, BandOverR, Rule}. Manifest Features[].Match.Status
+  // NearMatched + Match.NearMatch; the requirement record's Status NearMatched.
+  nlohmann::json near_match;
 
   // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
   // supervisor decision 282; null for every other feature): the claims-derived support box
@@ -374,6 +381,18 @@ struct IdentificationResult
     std::size_t isolated = 0;
   };
   SubTolerancePortions sub_tolerance_portions;
+  // I-4 RECORD-ONLY (identification fix round DESIGN section 4; decisions 1075 Q2 / 1077
+  // Q1 (B)): the isolated-edge-class remainder stretches (IsolatedEdge / CurvedEdge) of
+  // length in [the signature tolerance, kRemainderAbsorptionOverRadius x R), mesh units;
+  // recorded as Diagnostics.RemainderBelowBar where any exists, never joined.
+  struct RemainderBelowBar
+  {
+    int feature = -1;
+    std::string type;
+    int chain = -1;
+    double length = 0.0;
+  };
+  std::vector<RemainderBelowBar> remainder_below_bar;
   // Cluster extension (decision 85(2)): passes to closure, absorbed single-edge portions
   // and length, vertex features that became clusters; the pair / stack length within 2R of
   // a cluster's claimed perimeter (the stack-end third body, not absorbed), mesh units.
@@ -810,6 +829,22 @@ nlohmann::json FrameToJson(const std::array<double, 3> &origin,
 // angles come from straight arm directions and are exact).
 constexpr double kSignatureParameterToleranceOverRadius = 1.0e-3;
 constexpr double kSignatureAngleToleranceDegrees = 1.0e-2;
+// The GDS scatter band (identification fix round DESIGN section 4, decisions 1062 / 1075):
+// the corpus's database unit / fracturing grid is 1-5 nm, so a strip or gap width read on
+// one design scatters by several nm around its drawn value (CTX-002 t6_2: two 2.95-um
+// strips 6.6 nm apart). (i) A translational feature (SameConductorStrip / SameConductorGap
+// / DifferentConductorGap) with no model within the signature tolerance matches the
+// nearest model of its topology whose separation lies within max(the model's
+// SeparationTolerance, kGdsScatterOverRadius x R): status NearMatched, the deviation
+// recorded (Exact keeps precedence; a match-time rule: keys and hashes unchanged). (ii) An
+// isolated-edge-class remainder (IsolatedEdge / CurvedEdge stretch) shorter than
+// kRemainderAbsorptionOverRadius x R is absorbed into its neighbouring claim by the sliver
+// rule (decision 222) where every other stretch keeps the signature tolerance; remainders
+// between this bar and R stay features. (Decision 1077 Q1 (B): this round the remainders
+// below the bar are RECORDED only — Diagnostics.RemainderBelowBar — and nothing is
+// absorbed; kRemainderAbsorptionOverRadius is the record's bar.)
+constexpr double kGdsScatterOverRadius = 5.0e-3;
+constexpr double kRemainderAbsorptionOverRadius = kGdsScatterOverRadius;
 // Arc rule (USER decisions 117(4) and 121 / 122, 2026-09-28 — the CONCYCLICITY form): a run
 // of at least three consecutive joints of the perimeter path turning the same way (at most
 // 180 deg in total) is ONE arc iff its vertices lie on one circle within

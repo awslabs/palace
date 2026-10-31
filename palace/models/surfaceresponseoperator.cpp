@@ -1547,6 +1547,12 @@ struct LibrarySelection
   std::vector<WeightedModel> models;
   std::vector<std::array<double, 3>> conductor_references;
   double normalized_distance = 0.0;
+  // The GDS scatter near-match (DESIGN section 4 (b), decision 1075 Q1 (b)): one model
+  // within max(SeparationTolerance, kGdsScatterOverRadius x R) of the separation, taken
+  // only when neither an exact model nor an interpolation bracket exists; the deviation
+  // in R recorded. Status NearMatched.
+  bool near_matched = false;
+  double separation_deviation_over_R = 0.0;
 
   bool IsInterpolated() const { return models.size() > 1; }
 };
@@ -4466,7 +4472,54 @@ std::optional<LibrarySelection> FindLibraryModel(const ProcessLibrary &library,
   }
   if (!bracket)
   {
-    return std::nullopt;
+    // The GDS scatter near-match (identification fix round DESIGN section 4 (b), decision
+    // 1075 Q1 (b)): with no exact model and no interpolation bracket, the nearest model of
+    // the translational pair topologies within max(SeparationTolerance,
+    // kGdsScatterOverRadius x R) of the separation, the deviation recorded.
+    if (topology != LibraryTopology::SAME_CONDUCTOR_GAP &&
+        topology != LibraryTopology::DIFFERENT_CONDUCTOR_GAP &&
+        topology != LibraryTopology::SAME_CONDUCTOR_STRIP)
+    {
+      return std::nullopt;
+    }
+    std::optional<std::size_t> near;
+    double near_error = mfem::infinity();
+    for (std::size_t i = 0; i < library.models.size(); i++)
+    {
+      const auto &model = library.models[i];
+      if (model.topology != topology ||
+          !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition))
+      {
+        continue;
+      }
+      const double error = std::abs(model.separation - separation);
+      const double band = std::max(model.separation_tolerance,
+                                   kGdsScatterOverRadius * library.matching_radius);
+      if (error > band)
+      {
+        continue;
+      }
+      const bool prefer_conductor_state =
+          near && error == near_error &&
+          model.conductor_references.size() >
+              library.models[*near].conductor_references.size();
+      if (error < near_error || prefer_conductor_state)
+      {
+        near = i;
+        near_error = error;
+      }
+    }
+    if (!near)
+    {
+      return std::nullopt;
+    }
+    LibrarySelection selection;
+    selection.models.push_back({*near, 1.0});
+    selection.conductor_references = library.models[*near].conductor_references;
+    selection.normalized_distance = near_error / library.matching_radius;
+    selection.near_matched = true;
+    selection.separation_deviation_over_R = near_error / library.matching_radius;
+    return selection;
   }
 
   const auto &lower_model = library.models[bracket->first];
@@ -4538,8 +4591,10 @@ FindCurvedLibraryModel(const ProcessLibrary &library, LibraryTopology straight_t
               "Curvature interpolation requires a positive finite kappa = R / rho!");
   const auto anchor =
       FindLibraryModel(library, straight_topology, separation, boundary_condition);
-  if (!anchor || anchor->IsInterpolated())
+  if (!anchor || anchor->IsInterpolated() || anchor->near_matched)
   {
+    // The anchor is an exact coupon of the family's separation (its nodes are read within
+    // the exact SeparationTolerance below): neither an interpolation nor a near-match.
     reason = "no straight " + TopologyName(straight_topology) +
              " anchor coupon for the curvature family";
     return std::nullopt;
@@ -5993,6 +6048,12 @@ std::string BoundaryConditionName(MetalBoundaryConditionType type)
   return "Unknown";
 }
 
+// A pair's sample-to-partner distances must agree with its separation within twice the
+// pair tolerance (the mean separation of a 5 % taper is within 5 % of every sample; the
+// chord / inscribed readings add < 1 %). Defined here: the requirements' UnpatchedPair
+// record names it.
+constexpr double kPairPatchSeparationTolerance = 0.10;
+
 class AutomaticResponseRequirements
 {
 private:
@@ -6008,6 +6069,7 @@ private:
   // records, which are kept for comparison only under LegacyRequirements.
   std::map<std::string, Aggregate> legacy_requirements;
   nlohmann::json identification;
+  nlohmann::json unpatched_pairs = nlohmann::json::array();
   bool identification_active = false;
   std::string library_path;
   std::string library_name;
@@ -6139,6 +6201,12 @@ public:
   void ActivateIdentification() { identification_active = true; }
   bool IdentificationActive() const { return identification_active; }
   void SetIdentification(nlohmann::json value) { identification = std::move(value); }
+  // UnpatchedPair records of the placement (DESIGN section 4 I-5 / decision 1075 Q3):
+  // [{Id, Type, Length (mesh units, both sides), SeparationOverR,
+  // GeometricSeparationOverR, MaxDeviationRelative}]; written by Build as
+  // Identification.Diagnostics.UnpatchedPairs + Summary.UnpatchedPairs and as
+  // Features[].Match.Status Unpatched + Reason (only when any: otherwise no leaf).
+  void SetUnpatchedPairs(nlohmann::json value) { unpatched_pairs = std::move(value); }
 
   void AddFeatureRecord(nlohmann::json requirement, int count, double length)
   {
@@ -6168,8 +6236,10 @@ public:
     nlohmann::json requirement = {
         {"Dimension", dimension},
         {"Topology", TopologyIdentifier(topology)},
-        {"Status",
-         selection ? (selection->IsInterpolated() ? "Interpolated" : "Exact") : "Missing"},
+        {"Status", selection ? (selection->IsInterpolated() ? "Interpolated"
+                                : selection->near_matched   ? "NearMatched"
+                                                            : "Exact")
+                             : "Missing"},
         {"Geometry", geometry},
         {"Interfaces", interfaces},
         {"BoundaryCondition", BoundaryCondition(boundary_condition)}};
@@ -6186,6 +6256,14 @@ public:
       requirement["SelectedModels"] = std::move(models);
       requirement["NormalizedLibraryDistance"] =
           SnapDirection(selection->normalized_distance);
+      if (selection->near_matched)
+      {
+        requirement["NearMatch"] = {
+            {"SeparationDeviationOverR", selection->separation_deviation_over_R},
+            {"Rule", "DESIGN section 4 (b) / decision 1075 Q1 (b): no exact model and no "
+                     "interpolation bracket; the nearest model within "
+                     "max(SeparationTolerance, GdsScatterOverR x R) of the separation"}};
+      }
     }
     if (!reason.empty())
     {
@@ -6276,6 +6354,11 @@ public:
     {
       result["Identification"] = identification;
       result["LegacyRequirements"] = Entries(legacy_requirements, nullptr, nullptr);
+      // The GDS scatter near-match of DESIGN section 4 (decision 1075 Q1): the Summary leaf
+      // is always written (Count 0 and no Counts key on a manifest without one).
+      result["Summary"]["NearMatched"] = {
+          {"Count", counts.count("NearMatched") ? counts.at("NearMatched") : 0},
+          {"Length", lengths.count("NearMatched") ? lengths.at("NearMatched") : 0.0}};
       // The RAW zone classes of the identification fix round (decisions 1062 / 1065): a
       // Summary count where the class fired (absent otherwise: the cases of record are
       // bitwise).
@@ -6299,6 +6382,52 @@ public:
             {"Count", diagnostics["TaperCrossings"].value("Count", 0)},
             {"Length", diagnostics["TaperCrossings"].value("Length", 0.0)},
             {"Treatment", "ApproximatedByIsolatedEdge"}};
+      }
+      if (!unpatched_pairs.empty())
+      {
+        // UnpatchedPair (DESIGN section 4 I-5 as ruled by decision 1075 Q3): a matched
+        // translational pair whose two sides do not face each other at the signature's
+        // separation (the placement's consistency test) is recorded here and on its
+        // feature, never patched and never dropped silently; the formation defect is
+        // OI-PAIR-SEPARATION-MISMATCH (the separation is the pair link's, not the
+        // cross-section's).
+        double length = 0.0;
+        for (const auto &entry : unpatched_pairs)
+        {
+          length += entry.value("Length", 0.0);
+          const int id = entry.value("Id", -1);
+          for (auto &feature : result["Identification"]["Features"])
+          {
+            if (feature.value("Id", -2) == id)
+            {
+              feature["Match"]["Status"] = "Unpatched";
+              feature["Match"]["Reason"] =
+                  "UnpatchedPair: the two sides do not face each other at the signature's "
+                  "separation (sampled mean " +
+                  fmt::format("{:.6g}", entry.value("GeometricSeparationOverR", 0.0)) +
+                  " R vs " + fmt::format("{:.6g}", entry.value("SeparationOverR", 0.0)) +
+                  " R, max deviation " +
+                  fmt::format("{:.3g}", entry.value("MaxDeviationRelative", 0.0)) +
+                  " of the separation, tolerance " +
+                  fmt::format("{:.3g}", kPairPatchSeparationTolerance) +
+                  "); omitted by the placement, recorded (decision 1075 Q3; "
+                  "OI-PAIR-SEPARATION-MISMATCH)";
+            }
+          }
+        }
+        result["Identification"]["Diagnostics"]["UnpatchedPairs"] = {
+            {"Count", static_cast<int>(unpatched_pairs.size())},
+            {"Length", length},
+            {"Features", unpatched_pairs},
+            {"Rule", "a matched SameConductorStrip / SameConductorGap / "
+                     "DifferentConductorGap (or curved) pair whose side samples' feet on "
+                     "the other side deviate from the signature's separation by more than "
+                     "PairPatchSeparationTolerance x the separation is not patched (the "
+                     "placement's consistency test of record) and is recorded here "
+                     "(decision 1075 Q3); its perimeter stays raw and is read by the "
+                     "coverage as unmodelled; the A7 audit reads this record"}};
+        result["Summary"]["UnpatchedPairs"] = {
+            {"Count", static_cast<int>(unpatched_pairs.size())}, {"Length", length}};
       }
     }
     if (fallback_placed_count > 0)
@@ -7670,8 +7799,11 @@ void VerifySpatialEdgesInSignatureFrame(LibraryModel &model, double radius)
 class LibrarySignatureIndex
 {
 public:
+  // `near_band_over_R` > 0 enters the model into the GDS scatter near-match of DESIGN
+  // section 4 (decision 1075 Q1; the translational pair models only): the band on its
+  // separation in units of R, max(the model's SeparationTolerance, kGdsScatterOverRadius).
   void Add(nlohmann::json signature, const std::string &type, const std::string &name,
-           int rank = 0)
+           int rank = 0, double near_band_over_R = 0.0)
   {
     signature["Type"] = type;
     const std::size_t index = entries.size();
@@ -7680,7 +7812,7 @@ public:
     {
       by_topology[SplitSignatureParameters(orientation).topology_key].push_back(index);
     }
-    entries.push_back({std::move(signature), name, rank});
+    entries.push_back({std::move(signature), name, rank, near_band_over_R});
   }
 
   // The matched model, its normalised deviation (<= 1) and its signature, or nullopt.
@@ -7753,6 +7885,60 @@ public:
     }
     return Matched{std::get<2>(*best), std::get<0>(*best),
                    &entries[std::get<3>(*best)].signature};
+  }
+
+  // The GDS scatter near-match (identification fix round DESIGN section 4 (b), decision
+  // 1075 Q1), tried only after Match failed: among the models of the feature's topology
+  // key that carry a band, the one whose separation deviation (the signature deviation in
+  // R: the max over the lengths, both orientations) lies within its band, the nearest
+  // (then the smallest rank, then the name); nullopt when none. The record: the model, the
+  // deviation in R and the band in R.
+  struct NearMatched
+  {
+    std::string name;
+    double deviation_over_R = 0.0;
+    double band_over_R = 0.0;
+  };
+  std::optional<NearMatched> NearMatch(const nlohmann::json &feature_signature) const
+  {
+    const auto it =
+        by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
+    if (it == by_topology.end())
+    {
+      return std::nullopt;
+    }
+    std::optional<std::tuple<double, int, std::string, std::size_t>> best;
+    std::set<std::size_t> seen;
+    for (const std::size_t index : it->second)
+    {
+      if (!seen.insert(index).second || entries[index].near_band_over_R <= 0.0)
+      {
+        continue;
+      }
+      const auto deviation =
+          SignatureDeviation(feature_signature, entries[index].signature);
+      if (!deviation)
+      {
+        continue;
+      }
+      const double deviation_over_R = *deviation * kSignatureParameterToleranceOverRadius;
+      if (deviation_over_R > entries[index].near_band_over_R)
+      {
+        continue;
+      }
+      const std::tuple<double, int, std::string, std::size_t> candidate{
+          deviation_over_R, entries[index].rank, entries[index].name, index};
+      if (!best || candidate < *best)
+      {
+        best = candidate;
+      }
+    }
+    if (!best)
+    {
+      return std::nullopt;
+    }
+    return NearMatched{std::get<2>(*best), std::get<0>(*best),
+                       entries[std::get<3>(*best)].near_band_over_R};
   }
 
   // Two SpatialEdgeCluster models within 2 x kClusterQuantumNearMatchMaxQuanta quanta of
@@ -7876,6 +8062,7 @@ private:
     nlohmann::json signature;
     std::string name;
     int rank = 0;
+    double near_band_over_R = 0.0;  // 0: never near-matched (not a translational pair)
   };
   std::vector<Entry> entries;
   std::map<std::string, std::vector<std::size_t>> by_topology;
@@ -8110,12 +8297,22 @@ LibrarySignatureKeys(const ProcessLibrary &library,
               ? 1
               : 2;
     }
+    // The GDS scatter near-match band (DESIGN section 4 (b), decision 1075 Q1) of the
+    // translational pair models (Signature-keyed or parametric): max(the model's
+    // SeparationTolerance, 5e-3 R), in R; 0 for every other topology (never near-matched).
+    const bool translational_pair =
+        model.topology == LibraryTopology::SAME_CONDUCTOR_GAP ||
+        model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
+        model.topology == LibraryTopology::SAME_CONDUCTOR_STRIP;
+    const double near_band_over_R =
+        translational_pair ? std::max(model.separation_tolerance / R, kGdsScatterOverRadius)
+                           : 0.0;
     std::optional<std::pair<nlohmann::json, std::string>> key;  // signature, type
     if (model.identification_signature)
     {
       index.Add(*model.identification_signature,
                 model.identification_signature->at("Type").get<std::string>(), model.name,
-                rank);
+                rank, near_band_over_R);
       if (!model.legacy_contract_aliases.empty())
       {
         // Claims-only (decision 899 B2): no Box / Context in the Signature and no plan-view
@@ -8240,7 +8437,7 @@ LibrarySignatureKeys(const ProcessLibrary &library,
     }
     if (key)
     {
-      index.Add(key->first, key->second, model.name, rank);
+      index.Add(key->first, key->second, model.name, rank, near_band_over_R);
     }
   }
   return index;
@@ -8602,6 +8799,32 @@ IdentificationResult RunGeometryIdentification(
             " quanta)";
       }
     }
+    else if (const auto near = library_keys.NearMatch(feature.signature))
+    {
+      // The GDS scatter near-match (identification fix round DESIGN section 4 (b),
+      // decision 1075 Q1): a translational pair feature with no model within the signature
+      // tolerance takes the nearest model of its topology within
+      // max(SeparationTolerance, kGdsScatterOverRadius x R) on the separation; placed as
+      // an exact match (a match-time rule: the key and hash are the feature's own), the
+      // deviation recorded, Status NearMatched.
+      feature.matched_model = near->name;
+      feature.match_deviation =
+          near->deviation_over_R / kSignatureParameterToleranceOverRadius;
+      feature.near_match = {
+          {"Model", near->name},
+          {"SeparationDeviationOverR", near->deviation_over_R},
+          {"BandOverR", near->band_over_R},
+          {"Rule", "DESIGN section 4 (b) / decision 1075 Q1: the translational families "
+                   "(SameConductorStrip / SameConductorGap / DifferentConductorGap) match "
+                   "a model within max(SeparationTolerance, GdsScatterOverR x R) of their "
+                   "separation when none lies within the signature tolerance; the nearest; "
+                   "Exact keeps precedence; keys and hashes unchanged"}};
+      feature.match_note =
+          "GDS scatter near-match (DESIGN section 4): key " + feature.hash.substr(0, 12) +
+          " resolved to model \"" + near->name + "\" (separation deviation " +
+          fmt::format("{:.3e}", near->deviation_over_R) + " R within the band " +
+          fmt::format("{:.3e}", near->band_over_R) + " R)";
+    }
     else if (const auto *alias = library_keys.FindAlias(feature.hash))
     {
       // Legacy-contract alias (USER decision 283): the library lists this contract-3 key
@@ -8927,6 +9150,7 @@ IdentificationResult RunGeometryIdentification(
         feature.matched_model.reset();
         feature.match_deviation.reset();
         feature.quantum_near_match = nullptr;
+        feature.near_match = nullptr;
         feature.legacy_contract = nullptr;
         feature.match_note = reason;
         curvature_records.erase(feature.id);
@@ -8987,6 +9211,7 @@ IdentificationResult RunGeometryIdentification(
     {
       feature.matched_model.reset();
       feature.match_deviation.reset();
+      feature.near_match = nullptr;
       if (!feature.match_note || feature.match_note->find("MINOR-6") == std::string::npos)
       {
         feature.match_note = "mirror-formed " + feature.type +
@@ -9104,6 +9329,7 @@ IdentificationResult RunGeometryIdentification(
     double length = 0.0;
     std::set<std::string> models;
     bool exact = true;
+    nlohmann::json near_match;          // the GDS scatter near-match (DESIGN section 4)
     nlohmann::json curvature_family;    // the family selection of a curved feature
     nlohmann::json corner_family;       // the family selection of an interpolated corner
     std::set<std::string> notes;        // matching notes (family refusals)
@@ -9244,6 +9470,10 @@ IdentificationResult RunGeometryIdentification(
     {
       instance->second.models.insert(*feature.matched_model);
     }
+    if (!feature.near_match.is_null() && instance->second.near_match.is_null())
+    {
+      instance->second.near_match = feature.near_match;
+    }
     if (!feature.legacy_contract.is_null())
     {
       if (instance->second.legacy_contract.is_null())
@@ -9363,7 +9593,7 @@ IdentificationResult RunGeometryIdentification(
       int count = 0, feature_instances = 0;
       double length = 0.0;
       std::set<std::string> models, notes;
-      nlohmann::json curvature_family, corner_family, span_cap_allowance;
+      nlohmann::json curvature_family, corner_family, span_cap_allowance, near_match;
       nlohmann::json legacy_contract = nlohmann::json::array();
       bool exact = true, mirror_formed = false;
       nlohmann::json mirror_formed_contract;
@@ -9422,6 +9652,10 @@ IdentificationResult RunGeometryIdentification(
         if (corner_family.is_null() && !instance.corner_family.is_null())
         {
           corner_family = instance.corner_family;
+        }
+        if (near_match.is_null() && !instance.near_match.is_null())
+        {
+          near_match = instance.near_match;
         }
         exact = exact && instance.exact;
       }
@@ -9513,6 +9747,14 @@ IdentificationResult RunGeometryIdentification(
         }
         record["SelectedModels"] = selected;
       }
+      if (!near_match.is_null())
+      {
+        // The GDS scatter near-match (DESIGN section 4 (b), decision 1075 Q1): the key's
+        // features matched a model within the band only; Status NearMatched, the record
+        // carried (the key's instances share one signature, hence one outcome).
+        record["Status"] = "NearMatched";
+        record["NearMatch"] = near_match;
+      }
       if (!curvature_family.is_null())
       {
         // The family selection (anchor, nodes, weights, rule) is the recorded
@@ -9580,6 +9822,19 @@ struct FeaturePatchSummary
   // with a warning, never patched silently.
   std::vector<int> inconsistent_features;
   double inconsistent_length = 0.0;
+  // The record of every such pair (UnpatchedPair, identification fix round DESIGN section
+  // 4 I-5 / decision 1075 Q3): the manifest names it (Features[].Match.Status Unpatched;
+  // Diagnostics.UnpatchedPairs; Summary.UnpatchedPairs) instead of dropping it silently.
+  struct UnpatchedPair
+  {
+    int id = -1;
+    std::string type;
+    double length = 0.0;                     // mesh units (both sides)
+    double separation_over_R = 0.0;          // the signature's
+    double geometric_separation_over_R = 0;  // the mean sampled side-to-side distance
+    double max_deviation_relative = 0.0;     // max |sample - separation| / separation
+  };
+  std::vector<UnpatchedPair> unpatched_pairs;
   // Curvature (design (b)7): features patched by a curvature family blend, and the
   // straight-like features with a bend whose first-order term was evaluated (both family
   // nodes at 1 / StraightBendRadiusOverR found) or could not be (a node missing: the
@@ -10365,11 +10620,6 @@ std::optional<ProbeChordSnap> SnapProbeToDeviceChordAcrossMirror(
 
 namespace
 {
-
-// A pair's sample-to-partner distances must agree with its separation within twice the
-// pair tolerance (the mean separation of a 5 % taper is within 5 % of every sample; the
-// chord / inscribed readings add < 1 %).
-constexpr double kPairPatchSeparationTolerance = 0.10;
 
 // Longitudinal cells of a one-dimensional quadrature rule on the unit interval: the cell of
 // point q is [sum of the weights of the points before it, that sum + w_q] in the order of
@@ -11382,7 +11632,9 @@ FeaturePatchSummary BuildFeaturePatches(
       // Consistency of the two sides with the signature's separation before any patch.
       const double separation = feature.signature.at("SeparationOverR").get<double>() * R;
       bool consistent = true;
-      for (int k = 0; consistent && k < 2; k++)
+      double sampled_sum = 0.0, max_deviation = 0.0;
+      int sampled = 0;
+      for (int k = 0; k < 2; k++)
       {
         for (const auto &fp : *ordered[k].second)
         {
@@ -11390,27 +11642,35 @@ FeaturePatchSummary BuildFeaturePatches(
           {
             const Foot foot =
                 ClosestFoot(Interpolate(*fp.segment, t), *ordered[1 - k].second);
-            if (std::abs(Distance(Interpolate(*fp.segment, t), foot.point) - separation) >
+            const double distance = Distance(Interpolate(*fp.segment, t), foot.point);
+            sampled_sum += distance;
+            sampled++;
+            max_deviation = std::max(max_deviation, std::abs(distance - separation));
+            if (std::abs(distance - separation) >
                 kPairPatchSeparationTolerance * separation)
             {
               consistent = false;
-              break;
             }
-          }
-          if (!consistent)
-          {
-            break;
           }
         }
       }
       if (!consistent)
       {
+        // UnpatchedPair (DESIGN section 4 I-5 as ruled by decision 1075 Q3): recorded on
+        // the manifest, never patched, never dropped silently; the formation defect behind
+        // the mismatch is OI-PAIR-SEPARATION-MISMATCH.
         summary.inconsistent_features.push_back(feature.id);
         summary.inconsistent_length += feature_length;
+        summary.unpatched_pairs.push_back(
+            {feature.id, feature.type, feature_length, separation / R,
+             sampled > 0 ? sampled_sum / sampled / R : 0.0,
+             separation > 0.0 ? max_deviation / separation : 0.0});
         Mpi::Warning(
             "Feature {:d} ({}, {:.6e} length units): the two sides do not face each "
-            "other at its separation {:.6e}; the pair is omitted (not patched).\n",
-            feature.id, feature.type, feature_length, separation);
+            "other at its separation {:.6e} (sampled mean {:.6e}); the pair is omitted "
+            "(not patched; recorded UnpatchedPair).\n",
+            feature.id, feature.type, feature_length, separation,
+            sampled > 0 ? sampled_sum / sampled : 0.0);
         continue;
       }
       for (int k = 0; k < 2; k++)
@@ -13192,6 +13452,20 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             result, coordinate_scale, curved_matches, corner_matches,
                             mirror_band.image_frames, mirror_band.planes, &geometry_ledger);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    if (requirements && !summary.unpatched_pairs.empty())
+    {
+      nlohmann::json records = nlohmann::json::array();
+      for (const auto &pair : summary.unpatched_pairs)
+      {
+        records.push_back({{"Id", pair.id},
+                           {"Type", pair.type},
+                           {"Length", requirements->ScaleLength(pair.length)},
+                           {"SeparationOverR", pair.separation_over_R},
+                           {"GeometricSeparationOverR", pair.geometric_separation_over_R},
+                           {"MaxDeviationRelative", pair.max_deviation_relative}});
+      }
+      requirements->SetUnpatchedPairs(std::move(records));
+    }
     if (statistics)
     {
       statistics->context_near_match_verifications =
