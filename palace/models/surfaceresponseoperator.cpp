@@ -12275,8 +12275,12 @@ FeaturePatchSummary BuildFeaturePatches(
     // cannot be gated. ONE rule on both paths, the GeometryFailurePolicy form: under
     // RecordRaw the feature is not placed (its claims raw) and recorded; under FailClosed
     // the deferred abort names the model. `offsets` / `gap_directions` = the model's
-    // nominal cross-section in its frame (the probe grouping's rule, LocalPieces). Returns
-    // whether the feature was rejected.
+    // nominal cross-section in its frame (the probe grouping's rule, LocalPieces). The
+    // boundary semantics (decision 1093): a reference EXACTLY on an edge counts as on
+    // metal (LocalPieceOfOffset is inclusive); no tolerance - the generators write the
+    // references from the same exact numbers as the Edges, so a reference inside a gap by
+    // any amount is a defect that fails LOUDLY (never silently). Returns whether the
+    // feature was rejected.
     auto RejectIfReferenceInGap =
         [&](const std::vector<double> &offsets, const std::vector<int> &gap_directions)
     {
@@ -25902,7 +25906,13 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
         "and "
         "a spatial model without a TraceMesh, are recorded UnprobedModels (never a silent "
         "zero). The probes change no trace (the energies of a run with 0 exclusions are "
-        "unchanged).";
+        "unchanged). ReferenceInGap (decisions 1082 Q1 / 1093): every conductor reference "
+        "of a translational model must lie on a metal piece of the model's own nominal "
+        "cross-section; a reference exactly on an edge counts as on metal (inclusive), "
+        "with "
+        "no tolerance (the generators write the references from the same exact numbers as "
+        "the Edges); a reference in a gap is a library defect rejected at the placement "
+        "(RecordRaw: the feature raw and recorded; FailClosed: the deferred abort).";
     diagnostics["MaxwellFloorRule"] =
         "idfix B.3 (c) / SUPERVISOR AMENDMENT 3 C.1 (decisions 1061 Q3 (A) / 1062): on "
         "the Maxwell path Normalization = max(Amplitude, AmplitudeFloor x F) with F(s, f) "

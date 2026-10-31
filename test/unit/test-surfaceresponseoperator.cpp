@@ -7443,7 +7443,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
         model["Signature"] = signature;
         // One conductor reference per canonical conductor of the feature's own signature
-        // (the first edge of each), the fixture's Edges relabelled accordingly.
+        // (the first edge of each), the fixture's Edges relabelled accordingly. The
+        // reference sits at the MODEL's own exact Edges[k].Offset (decision 1093): the
+        // signature's OffsetOverR is quantised to 1e-6 R, and a reference built from it
+        // (12 / 11 -> 1.090909 x 11 = 11.999999) lands 1e-6 R inside the gap of the exact
+        // cross-section, which the ReferenceInGap rule (idfix R0-a, decision 1082 Q1:
+        // inclusive on an edge, no tolerance) rejects as a library defect - as the
+        // generators write the references from the same exact numbers as the Edges.
         json references = json::array();
         std::vector<int> conductors;
         for (std::size_t k = 0; k < signature["Edges"].size(); k++)
@@ -7453,8 +7459,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
               conductors.end())
           {
             conductors.push_back(conductor);
-            references.push_back(
-                {signature["Edges"][k]["OffsetOverR"].get<double>() * R, 0.0, 0.0});
+            references.push_back({model["Edges"][k]["Offset"].get<double>(), 0.0, 0.0});
           }
           model["Edges"][k]["Conductor"] = conductor;
         }
