@@ -11,8 +11,10 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -46,10 +48,10 @@ namespace
 // component, so every edge of the 4-edge cross-section (offsets 0 / 0.125 / 0.375 / 0.5,
 // gaps 0.125, strip 0.25, all below 2R = 0.4) carries conductor 1 - the one-label
 // ParallelEdgeCluster of the CHR-012 key a670c49a86d8 (gaps and strip 3 um = 1.58 R).
-mfem::Mesh MakeSerialShortedCpwMesh()
+// The metal plane of the stub: attribute 9 on the interior faces of y = 0.5 outside the two
+// slots; the mesh finalized.
+void AddShortedCpwMetalPlane(mfem::Mesh &serial)
 {
-  mfem::Mesh serial =
-      mfem::Mesh::MakeCartesian3D(16, 4, 16, mfem::Element::HEXAHEDRON, 2.0, 1.0, 2.0);
   for (int face = 0; face < serial.GetNumFaces(); face++)
   {
     int element1, element2;
@@ -87,6 +89,77 @@ mfem::Mesh MakeSerialShortedCpwMesh()
   }
   serial.FinalizeTopology();
   serial.Finalize();
+}
+
+mfem::Mesh MakeSerialShortedCpwMesh(mfem::Element::Type type = mfem::Element::HEXAHEDRON)
+{
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 4, 16, type, 2.0, 1.0, 2.0);
+  AddShortedCpwMetalPlane(serial);
+  return serial;
+}
+
+// The stub with a VOID (U-H14a), TETRAHEDRAL (the exact segment intersections the line
+// coverage reads exist on simplices only; a hexahedral mesh samples the lines blindly and
+// fails at the point location, the H9a site): the twelve tetrahedra of the two top-layer
+// cells y in [0.75, 1] over the STRIP (z in [0.875, 1.125]) at the x-cell `x_cell` (x in
+// [x_cell h, (x_cell + 1) h], h = 0.125) are removed, so the ring's top line (y = 0.8, z
+// from 0.8125 to 1.1875) of a patch at that x crosses a region no element covers while its
+// KNOTS (over the slots, z = 0.8125 / 1.1875) stay inside elements: the DomainBoundary pass
+// (which locates the basis points) keeps the patch and the line coverage is what fails.
+// The void's faces get the boundary attribute 7; the box walls keep the Cartesian
+// attributes; the metal plane is untouched (the void does not reach y = 0.5).
+mfem::Mesh MakeSerialShortedCpwMeshWithVoid(int x_cell)
+{
+  constexpr double h = 0.125;
+  mfem::Mesh base =
+      mfem::Mesh::MakeCartesian3D(16, 4, 16, mfem::Element::TETRAHEDRON, 2.0, 1.0, 2.0);
+  auto InVoid = [&](const mfem::Vector &centre)
+  {
+    return centre[1] > 0.75 && centre[2] > 0.875 && centre[2] < 1.125 &&
+           centre[0] > x_cell * h && centre[0] < (x_cell + 1) * h;
+  };
+  mfem::Mesh serial(3, base.GetNV(), base.GetNE() - 12, 0, 3);
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    serial.AddVertex(base.GetVertex(v));
+  }
+  int removed = 0;
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mfem::Vector centre(3);
+    base.GetElementCenter(e, centre);
+    if (InVoid(centre))
+    {
+      removed++;
+      continue;
+    }
+    serial.AddElement(base.GetElement(e)->Duplicate(&serial));
+  }
+  MFEM_VERIFY(removed == 12, "The stub void must remove exactly twelve tetrahedra!");
+  serial.FinalizeTopology(true);  // the boundary elements of every exterior face
+  // The wall attributes from the base mesh by the face's vertex set; a face no wall had
+  // (the void's) gets 7.
+  auto Key = [](const mfem::Array<int> &vertices)
+  {
+    std::vector<int> key(vertices.GetData(), vertices.GetData() + vertices.Size());
+    std::sort(key.begin(), key.end());
+    return key;
+  };
+  std::map<std::vector<int>, int> wall_attributes;
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mfem::Array<int> vertices;
+    base.GetBdrElementVertices(be, vertices);
+    wall_attributes[Key(vertices)] = base.GetBdrAttribute(be);
+  }
+  for (int be = 0; be < serial.GetNBE(); be++)
+  {
+    mfem::Array<int> vertices;
+    serial.GetBdrElementVertices(be, vertices);
+    const auto wall = wall_attributes.find(Key(vertices));
+    serial.SetBdrAttribute(be, wall != wall_attributes.end() ? wall->second : 7);
+  }
+  AddShortedCpwMetalPlane(serial);
   return serial;
 }
 
@@ -126,6 +199,87 @@ struct StubField
     }
   }
 };
+
+// The library of the stub tests: the convex library's header (R = 0.2, SA) with ONE
+// one-label 4-edge ParallelEdgeCluster model (offsets 0 / 0.125 / 0.375 / 0.5, GapDirection
+// + - + -, every Conductor 1, one Reference on the strip): a 4-knot ring contour around the
+// cross-section (the top knots at v = `ring_top_v` above the plane, the bottom ones at
+// v = -0.1 below it), diagonal response matrices. Written by the root; returns the path.
+fs::path WriteStubLibrary(const fs::path &directory, const fs::path &template_library,
+                          double ring_top_v, const std::string &suffix)
+{
+  const auto library_path =
+      directory / fmt::format("fabrication-process-r0a-stub-3d-{}.json", suffix);
+  const auto points_path = directory / fmt::format("r0a-stub-basis-points-{}.csv", suffix);
+  const auto domain_path = directory / fmt::format("r0a-stub-domain-{}.csv", suffix);
+  const auto surface_path = directory / fmt::format("r0a-stub-surface-{}.csv", suffix);
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(points_path);
+      output << "x,y,z\n"
+             << "0.0625," << ring_top_v << ",0.0\n"
+             << "0.4375," << ring_top_v << ",0.0\n"
+             << "0.4375,-0.1,0.0\n"
+             << "0.0625,-0.1,0.0\n";
+    }
+    {
+      std::ofstream output(domain_path);
+      output << "basis_i,basis_j,Q_ij (J)\n";
+      for (int i = 1; i <= 4; i++)
+      {
+        for (int j = i; j <= 4; j++)
+        {
+          output << i << "," << j << "," << (i == j ? 1.0e-12 : 0.0) << "\n";
+        }
+      }
+    }
+    {
+      std::ofstream output(surface_path);
+      output << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
+      for (int edge = 1; edge <= 4; edge++)
+      {
+        for (int i = 1; i <= 4; i++)
+        {
+          for (int j = i; j <= 4; j++)
+          {
+            output << "1," << edge << ",0.2," << i << "," << j << ","
+                   << (i == j ? 0.25e-12 : 0.0) << "," << (i == j ? 0.25e-12 : 0.0) << "\n";
+          }
+        }
+      }
+    }
+    std::ifstream input(template_library);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-r0a-stub-3d";
+    json model = library["Models"][0];
+    model["Name"] = "cpw-one-label-four-edge";
+    model["Topology"] = "ParallelEdgeCluster";
+    model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    model["BasisPoints"] = points_path.string();
+    model["FabricatedMatrix"] = domain_path.string();
+    model["ThinMatrix"] = domain_path.string();
+    model["FabricatedSurfaceMatrix"] = surface_path.string();
+    model["ThinSurfaceMatrix"] = surface_path.string();
+    model["Reference"] = {0.25, 0.0, 0.0};
+    model["EdgeOffsetTolerance"] = 1.0e-6;
+    model["Edges"] = {{{"Offset", 0.0}, {"GapDirection", 1}, {"Conductor", 1}},
+                      {{"Offset", 0.125}, {"GapDirection", -1}, {"Conductor", 1}},
+                      {{"Offset", 0.375}, {"GapDirection", 1}, {"Conductor", 1}},
+                      {{"Offset", 0.5}, {"GapDirection", -1}, {"Conductor", 1}}};
+    for (const char *key : {"Separation", "SeparationTolerance", "Angle", "AngleTolerance",
+                            "TraceMesh", "TraceMeshTriangles", "ConductorReferences"})
+    {
+      model.erase(key);
+    }
+    library["Models"] = {model};
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  return library_path;
+}
 
 }  // namespace
 
@@ -417,79 +571,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  // The library: the convex library's header (R = 0.2, SA) with ONE one-label 4-edge
-  // ParallelEdgeCluster model (offsets 0 / 0.125 / 0.375 / 0.5, GapDirection + - + -, every
-  // Conductor 1, one Reference on the strip): a 4-knot ring contour around the
-  // cross-section (above the gaps and below the plane), diagonal response matrices.
-  const auto library_path = temp.temp_dir / "fabrication-process-r0a-stub-3d.json";
-  const auto points_path = temp.temp_dir / "r0a-stub-basis-points.csv";
-  const auto domain_path = temp.temp_dir / "r0a-stub-domain.csv";
-  const auto surface_path = temp.temp_dir / "r0a-stub-surface.csv";
-  if (Mpi::Root(Mpi::World()))
-  {
-    {
-      std::ofstream output(points_path);
-      output << "x,y,z\n"
-             << "0.0625,0.1,0.0\n"
-             << "0.4375,0.1,0.0\n"
-             << "0.4375,-0.1,0.0\n"
-             << "0.0625,-0.1,0.0\n";
-    }
-    {
-      std::ofstream output(domain_path);
-      output << "basis_i,basis_j,Q_ij (J)\n";
-      for (int i = 1; i <= 4; i++)
-      {
-        for (int j = i; j <= 4; j++)
-        {
-          output << i << "," << j << "," << (i == j ? 1.0e-12 : 0.0) << "\n";
-        }
-      }
-    }
-    {
-      std::ofstream output(surface_path);
-      output << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
-      for (int edge = 1; edge <= 4; edge++)
-      {
-        for (int i = 1; i <= 4; i++)
-        {
-          for (int j = i; j <= 4; j++)
-          {
-            output << "1," << edge << ",0.2," << i << "," << j << ","
-                   << (i == j ? 0.25e-12 : 0.0) << "," << (i == j ? 0.25e-12 : 0.0) << "\n";
-          }
-        }
-      }
-    }
-    std::ifstream input(convex_library_3d_path);
-    REQUIRE(input);
-    json library = json::parse(input);
-    library["Name"] = "unit-test-process-r0a-stub-3d";
-    json model = library["Models"][0];
-    model["Name"] = "cpw-one-label-four-edge";
-    model["Topology"] = "ParallelEdgeCluster";
-    model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
-    model["BasisPoints"] = points_path.string();
-    model["FabricatedMatrix"] = domain_path.string();
-    model["ThinMatrix"] = domain_path.string();
-    model["FabricatedSurfaceMatrix"] = surface_path.string();
-    model["ThinSurfaceMatrix"] = surface_path.string();
-    model["Reference"] = {0.25, 0.0, 0.0};
-    model["EdgeOffsetTolerance"] = 1.0e-6;
-    model["Edges"] = {{{"Offset", 0.0}, {"GapDirection", 1}, {"Conductor", 1}},
-                      {{"Offset", 0.125}, {"GapDirection", -1}, {"Conductor", 1}},
-                      {{"Offset", 0.375}, {"GapDirection", 1}, {"Conductor", 1}},
-                      {{"Offset", 0.5}, {"GapDirection", -1}, {"Conductor", 1}}};
-    for (const char *key : {"Separation", "SeparationTolerance", "Angle", "AngleTolerance",
-                            "TraceMesh", "TraceMeshTriangles", "ConductorReferences"})
-    {
-      model.erase(key);
-    }
-    library["Models"] = {model};
-    std::ofstream output(library_path);
-    output << library.dump(2) << "\n";
-  }
-  Mpi::Barrier(Mpi::World());
+  // The library (WriteStubLibrary): the one-label 4-edge cluster model, the ring's top
+  // knots at v = 0.1.
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "r0a");
 
   json config = ConvexMaxwellIslandConfig();
   config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
@@ -762,6 +847,210 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     CHECK(excluded_a == excluded_b);
     CHECK(excluded_a > 0);
+  }
+#endif
+}
+
+// U-H14a (hardening-2 DESIGN row H14a; idfix DESIGN section 7 OI-MX-CONTOUR-COVERAGE-NC-
+// REFINEMENT part (2); decisions 1072 Q2 / 1074): a Maxwell contour line that leaves the
+// mesh beyond the crack tolerance no longer aborts under RecordRaw: its PATCH is excluded
+// (weight 0, every line dropped from the quadrature) and recorded MaxwellPatchExcluded, its
+// raw claim served RAW once as the DomainBoundary share; FailClosed keeps the abort (the
+// ledger's deferred Enforce). The fixture = the shorted CPW stub with a VOID in the top
+// layer over the strip and a ring whose top line (the knots at v = 0.3, y = 0.8, over the
+// slots) runs through it: exactly the patches whose origin lies in the void's x-cell are
+// excluded; the intact stub records nothing.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator excludes a Maxwell patch whose contour line "
+                 "leaves the mesh (H14a MaxwellPatchExcluded, the voided shorted CPW stub)",
+                 "[surfaceresponseoperator][geometryfallback][maxwell][h14a][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double h = 0.125;
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.3, "h14a");
+  json config = ConvexMaxwellIslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["TraceCoupling"] = "Collocated";
+  auto Build = [&](const json &run_config, mfem::Mesh serial,
+                   std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  auto StripAtGround = [](SpaceOperator &space)
+  {
+    GridFunction field(space.GetNDSpace(), true);
+    mfem::VectorFunctionCoefficient coefficient(3,
+                                                [](const mfem::Vector &, mfem::Vector &E)
+                                                {
+                                                  E.SetSize(3);
+                                                  E = 0.0;
+                                                  E[1] = 1.0;
+                                                });
+    field.Real().ProjectCoefficient(coefficient);
+    field.Imag() = 0.0;
+    ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+    field.Real().GetTrueDofs(E.Real());
+    field.Imag().GetTrueDofs(E.Imag());
+    return E;
+  };
+  auto InCell = [&](double x, int cell)
+  { return x - cell * h > 1.0e-9 && (cell + 1) * h - x > 1.0e-9; };
+
+  // The intact (tetrahedral) stub: the tall ring is covered everywhere, the ledger is
+  // empty; the void's x-cell = the one holding a patch origin strictly inside it (the
+  // root's patch table, broadcast), the expected exclusions = the patches whose origin
+  // lies in that cell.
+  int patch_count = 0;
+  int x_cell = -1;
+  int expected_excluded = 0;
+  double intact_domain_boundary_length = 0.0;
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata =
+        Build(config, MakeSerialShortedCpwMesh(mfem::Element::TETRAHEDRON), meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    patch_count = response.GetPatchCount();
+    REQUIRE(patch_count > 0);
+    CHECK(response.GetGeometryFallbacks().empty());
+    CHECK(response.GetMaxwellPatchExcludedPortionRecord().portions.empty());
+    intact_domain_boundary_length = response.GetDomainBoundaryPortionRecord().length;
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto &assignments = response.GetPatchAssignments();
+      REQUIRE(static_cast<int>(assignments.size()) == patch_count);
+      for (const auto &assignment : assignments)
+      {
+        const int cell = static_cast<int>(std::floor(assignment.origin[0] / h));
+        if (cell >= 1 && cell <= 14 && InCell(assignment.origin[0], cell))
+        {
+          x_cell = cell;
+          break;
+        }
+      }
+      for (const auto &assignment : assignments)
+      {
+        expected_excluded += InCell(assignment.origin[0], x_cell) ? 1 : 0;
+      }
+    }
+    Mpi::Broadcast(1, &x_cell, 0, Mpi::World());
+    Mpi::Broadcast(1, &expected_excluded, 0, Mpi::World());
+  }
+  REQUIRE(x_cell >= 1);
+  REQUIRE(expected_excluded >= 1);
+  REQUIRE(expected_excluded < patch_count);
+
+  SECTION(
+      "RecordRaw: exactly the void-cell patches are excluded, recorded, served raw once")
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(config, MakeSerialShortedCpwMeshWithVoid(x_cell), meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    // The identification and the placement are unchanged by the void (the same patches).
+    CHECK(response.GetPatchCount() == patch_count);
+    const auto &fallbacks = response.GetGeometryFallbacks();
+    REQUIRE(static_cast<int>(fallbacks.size()) == expected_excluded);
+    std::set<int> excluded_patches;
+    double recorded_length = 0.0;
+    for (const auto &entry : fallbacks)
+    {
+      CHECK(entry.cls == "MaxwellPatchExcluded");
+      CHECK(entry.site == "H14a/ResolveMaxwellLineCoverage");
+      CHECK(entry.what == "patch");
+      REQUIRE(entry.patches.size() == 1);
+      excluded_patches.insert(entry.patches.front());
+      CHECK(entry.models == std::vector<std::string>{"cpw-one-label-four-edge"});
+      CHECK_FALSE(entry.topology.empty());  // the model's topology label
+      CHECK_THAT(entry.reason, ContainsSubstring("leaves the finite-element mesh") &&
+                                   ContainsSubstring("excluded (weight 0)"));
+      CHECK(entry.length > 0.0);  // the length served raw = the raw claim's
+      recorded_length += entry.length;
+    }
+    CHECK(static_cast<int>(excluded_patches.size()) == expected_excluded);
+    if (Mpi::Root(Mpi::World()))
+    {
+      // The excluded set = the void-cell patches, weight 0 in the patch table; the others
+      // keep their weight.
+      for (const auto &assignment : response.GetPatchAssignments())
+      {
+        const bool inside = InCell(assignment.origin[0], x_cell);
+        CHECK(inside == (excluded_patches.count(assignment.global_index) > 0));
+        CHECK((inside ? assignment.weight == 0.0 : assignment.weight > 0.0));
+      }
+    }
+    // Counted ONCE (decision 1074, the P == S form): the class-named portions = the growth
+    // of the DomainBoundary portions = the geometry-fallback portions; every portion names
+    // the class.
+    const auto &h14a = response.GetMaxwellPatchExcludedPortionRecord();
+    REQUIRE_FALSE(h14a.portions.empty());
+    CHECK(h14a.length > 0.0);
+    CHECK_THAT(recorded_length, WithinRel(h14a.length, 1.0e-12));
+    CHECK_THAT(response.GetDomainBoundaryPortionRecord().length,
+               WithinRel(intact_domain_boundary_length + h14a.length, 1.0e-12));
+    double fallback_length = 0.0;
+    for (const auto &portion : response.GetGeometryFallbackPortions())
+    {
+      CHECK(portion.topology == "MaxwellPatchExcluded");
+      double length2 = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+      }
+      fallback_length += std::sqrt(length2);
+    }
+    CHECK_THAT(fallback_length, WithinRel(h14a.length, 1.0e-12));
+    for (const auto &portion : h14a.portions)
+    {
+      CHECK(portion.topology == "MaxwellPatchExcluded");
+    }
+    // The record the banner reads: the class, the count, the length share per Type.
+    const json record = response.GetGeometryFallbackRecord();
+    REQUIRE_FALSE(record.is_null());
+    CHECK(record["Count"].get<int>() == expected_excluded);
+    CHECK(record["Classes"].contains("MaxwellPatchExcluded"));
+    CHECK(record["Classes"]["MaxwellPatchExcluded"].get<int>() == expected_excluded);
+    CHECK_FALSE(response.IsRawFallback());
+    // The conductor-consistency gate skips the excluded patches (weight 0) and the field
+    // evaluation runs on the kept ones.
+    int stub_records = 0;
+    for (const auto &gate_record :
+         response.ApplyConductorConsistencyGate(StripAtGround(space), 0, 5.0, false))
+    {
+      if (gate_record.probe_kind == 1)
+      {
+        stub_records++;
+        CHECK(excluded_patches.count(gate_record.patch) == 0);
+        CHECK_FALSE(gate_record.excluded);
+      }
+    }
+    CHECK(stub_records == patch_count - expected_excluded);
+    CHECK(response.GetPatchWeight() > 0.0);
+  }
+
+  SECTION("FailClosed: the configuration aborts at its end, naming the class")
+  {
+    json fail_closed = config;
+    fail_closed["Solver"]["SurfaceResponseCorrection"]["GeometryFailurePolicy"] =
+        "FailClosed";
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(fail_closed, MakeSerialShortedCpwMeshWithVoid(x_cell), meshes);
+    SpaceOperator space(iodata, meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
+                      ContainsSubstring("GeometryFailurePolicy FailClosed") &&
+                          ContainsSubstring("MaxwellPatchExcluded"));
   }
 #endif
 }

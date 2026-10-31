@@ -28098,6 +28098,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     basis_points.push_back(std::move(points));
   }
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+  // The record lengths / points of this path (the conductor-consistency records, the raw
+  // portions) in mesh-file units, as on the electrostatic path (R0-a follow-up: the scale
+  // was left at 1 here).
+  mesh_coordinate_scale = coordinate_scale;
 
   // The placement-ownership stage (decision 818 R5) is the ONE function the electrostatic
   // constructor runs: the spatial-cluster priority over overlapping corner / vertex
@@ -28293,6 +28297,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
   maxwell_quadrature_order = 2 * std::max(1, iodata.solver.order) + 2;
   std::vector<MaxwellLineGeometry> line_geometry;
+  // H14a: the local patch of every line, and the record provenance of every local patch.
+  std::vector<int> line_patches;
+  std::vector<MaxwellPatchProvenance> patch_provenance;
+  patch_provenance.reserve(patches.size());
   auto AppendLine = [&](const mfem::Vector &p0, const mfem::Vector &p1)
   {
     MaxwellLineGeometry geometry;
@@ -28705,11 +28713,25 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         probes.push_back(std::move(probe));
       }
     }
+    // H14a: every line appended for this patch (contour lines and probe legs) belongs to
+    // it; the record's length = the claimed + raw-claimed length (the OverlapExcluded
+    // form).
+    line_patches.resize(maxwell_lines.size(), static_cast<int>(patch_index));
+    auto &provenance = patch_provenance.emplace_back();
+    for (const auto &claim : patch_config.provenance.claims)
+    {
+      provenance.length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    for (const auto &claim : patch_config.provenance.raw_claims)
+    {
+      provenance.length += Norm(Subtract(claim.p1, claim.p0));
+    }
+    provenance.origin = patch_config.origin;
   }
 
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
-    ConfigureMaxwellLines(line_geometry);
+    ConfigureMaxwellLines(line_geometry, line_patches, patch_provenance, geometry_ledger);
   }
   // OI-MX-LOOPGATE (decision 955): the step lengths weight the least-squares lift.
   maxwell_line_lengths.resize(line_geometry.size());
@@ -28800,7 +28822,7 @@ MaxwellLineCoverage ResolveMaxwellLineCoverage(
     std::vector<std::pair<double, double>> in_face_intervals, double line_length,
     double coordinate_scale, int line_index, const std::array<double, 3> &begin_point,
     const std::array<double, 3> &end_point, const std::vector<double> &element_diameters,
-    const std::vector<double> &in_face_diameters)
+    const std::vector<double> &in_face_diameters, MaxwellLineUncovered *uncovered)
 {
   constexpr double parameter_tolerance = 1.0e-10;
   const double floating_point_crack_tolerance = kMaxwellLineCrackUlps *
@@ -28948,20 +28970,33 @@ MaxwellLineCoverage ResolveMaxwellLineCoverage(
         CloseCrack(face_gap);
         continue;
       }
-      MFEM_VERIFY(
-          covered,
-          "Maxwell response contour line "
-              << line_index << " leaves the finite-element mesh over parameter "
-              << face_begin << " to " << face_end << " (begin = " << begin_point[0] << ", "
-              << begin_point[1] << ", " << begin_point[2] << "; end = " << end_point[0]
-              << ", " << end_point[1] << ", " << end_point[2] << ")! The gap is "
-              << face_gap << " mesh units, above the floating-point crack tolerance "
-              << crack_tolerance << " (max(" << kMaxwellLineCrackUlps
-              << " ULP of the coordinate scale " << coordinate_scale << ", "
-              << kMaxwellLineCrackLocalDiameterFraction << " x the local element diameter "
+      // The message of record (the former abort's text, in MFEM's message stream form:
+      // scientific, precision 16), whether reported or thrown.
+      std::ostringstream failure;
+      failure << std::setprecision(16) << std::scientific
+              << "Maxwell response contour line " << line_index
+              << " leaves the finite-element mesh over parameter " << face_begin << " to "
+              << face_end << " (begin = " << begin_point[0] << ", " << begin_point[1]
+              << ", " << begin_point[2] << "; end = " << end_point[0] << ", "
+              << end_point[1] << ", " << end_point[2] << ")! The gap is " << face_gap
+              << " mesh units, above the floating-point crack tolerance " << crack_tolerance
+              << " (max(" << kMaxwellLineCrackUlps << " ULP of the coordinate scale "
+              << coordinate_scale << ", " << kMaxwellLineCrackLocalDiameterFraction
+              << " x the local element diameter "
               << LocalElementDiameter(face_begin, face_end)
-              << ")); no element intersection, exact or in a coplanar face, "
-                 "covers it.");
+              << ")); no element intersection, exact or in a coplanar face, covers it.";
+      if (uncovered)
+      {
+        // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): the caller
+        // converts the failure (the patch excluded, MaxwellPatchExcluded); the first
+        // uncovered piece of the line is reported with its gap, the rest of the line is
+        // not resolved (the patch's lines are dropped from the quadrature).
+        uncovered->message = failure.str();
+        uncovered->gap = face_gap;
+        uncovered->tolerance = crack_tolerance;
+        return coverage;
+      }
+      MFEM_VERIFY(covered, failure.str());
     }
     // Consecutive uncovered pieces (split by an exact sliver) are one stretch.
     coverage.in_face_count += previous_in_face ? 0 : 1;
@@ -28971,11 +29006,192 @@ MaxwellLineCoverage ResolveMaxwellLineCoverage(
   return coverage;
 }
 
+void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
+    const std::vector<MaxwellUncoveredLine> &uncovered_lines,
+    const std::vector<MaxwellPatchProvenance> &patch_provenance,
+    GeometryFallbackLedger &geometry_ledger)
+{
+  // One record per excluded patch: its FIRST uncovered line (the lines run in construction
+  // order) with the count of its uncovered lines; the local patches excluded here.
+  struct LocalRecord
+  {
+    int patch = -1;  // local
+    int line = -1;
+    int uncovered_count = 0;
+    MaxwellLineUncovered report;
+  };
+  std::map<int, LocalRecord> local_records;
+  for (const auto &uncovered : uncovered_lines)
+  {
+    auto &record = local_records[uncovered.patch];
+    if (record.uncovered_count == 0)
+    {
+      record.patch = uncovered.patch;
+      record.line = uncovered.line;
+      record.report = uncovered.report;
+    }
+    record.uncovered_count++;
+  }
+  const int rank = Mpi::Rank(fespace.GetComm());
+  // The gathered form (every rank): [global patch, model index, feature, rank, local
+  // line, uncovered count, gap, tolerance, length, origin x / y / z] + the message text.
+  constexpr int record_size = 12;
+  std::vector<double> local_values;
+  std::string local_messages;
+  for (const auto &[local_patch, record] : local_records)
+  {
+    auto &patch = patches[local_patch];
+    const auto &provenance = patch_provenance[local_patch];
+    patch.weight = 0.0;
+    local_values.insert(local_values.end(),
+                        {static_cast<double>(patch.global_index),
+                         static_cast<double>(models[patch.model].idx),
+                         static_cast<double>(patch.feature), static_cast<double>(rank),
+                         static_cast<double>(record.line),
+                         static_cast<double>(record.uncovered_count), record.report.gap,
+                         record.report.tolerance, provenance.length, provenance.origin[0],
+                         provenance.origin[1], provenance.origin[2]});
+    local_messages += record.report.message;
+    local_messages += '\0';
+  }
+  const std::vector<double> values = AllgatherRecords(local_values);
+  if (values.empty())
+  {
+    return;
+  }
+  // The messages, concatenated with their terminators in the same rank order.
+  MFEM_VERIFY(local_messages.size() <=
+                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Maxwell uncovered-line messages exceed the MPI count limit!");
+  const int local_message_count = static_cast<int>(local_messages.size());
+  std::vector<int> message_counts(Mpi::Size(fespace.GetComm()));
+  Mpi::Allgather(1, &local_message_count, message_counts.data(), fespace.GetComm());
+  std::vector<int> message_offsets(message_counts.size());
+  int total_messages = 0;
+  for (std::size_t r = 0; r < message_counts.size(); r++)
+  {
+    message_offsets[r] = total_messages;
+    total_messages += message_counts[r];
+  }
+  std::string messages(static_cast<std::size_t>(total_messages), '\0');
+  Mpi::Allgatherv(local_message_count, local_messages.data(), messages.data(),
+                  message_counts.data(), message_offsets.data(), fespace.GetComm());
+  struct GatheredRecord
+  {
+    int patch = -1, model = -1, feature = -1, rank = -1, line = -1, uncovered_count = 0;
+    double gap = 0.0, tolerance = 0.0, length = 0.0;
+    std::array<double, 3> origin{};
+    std::string message;
+  };
+  std::vector<GatheredRecord> records;
+  MFEM_VERIFY(values.size() % record_size == 0, "Truncated Maxwell uncovered-line record!");
+  std::size_t message_cursor = 0;
+  for (std::size_t offset = 0; offset < values.size(); offset += record_size)
+  {
+    GatheredRecord record;
+    record.patch = static_cast<int>(std::llround(values[offset]));
+    record.model = static_cast<int>(std::llround(values[offset + 1]));
+    record.feature = static_cast<int>(std::llround(values[offset + 2]));
+    record.rank = static_cast<int>(std::llround(values[offset + 3]));
+    record.line = static_cast<int>(std::llround(values[offset + 4]));
+    record.uncovered_count = static_cast<int>(std::llround(values[offset + 5]));
+    record.gap = values[offset + 6];
+    record.tolerance = values[offset + 7];
+    record.length = values[offset + 8];
+    for (int d = 0; d < 3; d++)
+    {
+      record.origin[d] = values[offset + 9 + d];
+    }
+    const std::size_t terminator = messages.find('\0', message_cursor);
+    MFEM_VERIFY(terminator != std::string::npos,
+                "Truncated Maxwell uncovered-line message!");
+    record.message = messages.substr(message_cursor, terminator - message_cursor);
+    message_cursor = terminator + 1;
+    records.push_back(std::move(record));
+  }
+  std::sort(records.begin(), records.end(),
+            [](const auto &a, const auto &b) { return a.patch < b.patch; });
+  const std::map<int, std::string> model_names = GetModelNames();
+  for (const auto &record : records)
+  {
+    const auto model_it =
+        std::find_if(models.begin(), models.end(),
+                     [&](const ResponseModel &model) { return model.idx == record.model; });
+    MFEM_VERIFY(model_it != models.end(),
+                "Maxwell uncovered-line record names an unknown model!");
+    GeometryFallbackData entry;
+    entry.cls = "MaxwellPatchExcluded";
+    entry.site = "H14a/ResolveMaxwellLineCoverage";
+    entry.reason = fmt::format(
+        "Response patch {:d} ({}): {:d} of its Maxwell lines leave the finite-element mesh "
+        "(the first, local line {:d} of rank {:d}, by a gap of {:.6e} mesh units above the "
+        "crack tolerance {:.6e}); the patch is excluded (weight 0) and its claims are "
+        "served raw as the DomainBoundary share. {}",
+        record.patch + 1, model_names.at(record.model), record.uncovered_count, record.line,
+        record.rank, record.gap, record.tolerance, record.message);
+    // The raw claim (the DomainBoundary rule, built at the placement and replicated): the
+    // length served raw = the record's length (RawShareByLength); a two-dimensional mesh
+    // has no raw claims (nothing to serve raw): the placement's claimed length instead.
+    const auto claim = maxwell_patch_raw_claims.find(record.patch);
+    MFEM_VERIFY(claim != maxwell_patch_raw_claims.end() || !maxwell_loop_remainder_measured,
+                "MaxwellPatchExcluded patch " << record.patch << " ("
+                                              << model_names.at(record.model)
+                                              << ") without a raw claim record!");
+    entry.what = "patch";
+    entry.patches = {record.patch};
+    entry.models = {model_names.at(record.model)};
+    entry.features = {record.feature};
+    entry.length =
+        claim != maxwell_patch_raw_claims.end() ? claim->second.length : record.length;
+    entry.example_origin = record.origin;
+    entry.topology = model_it->topology;
+    geometry_ledger.Record(std::move(entry));
+    // The root's patch table (the patches CSV) follows the exclusion.
+    for (auto &assignment : patch_assignments)
+    {
+      if (assignment.global_index == record.patch)
+      {
+        assignment.weight = 0.0;
+      }
+    }
+    if (claim == maxwell_patch_raw_claims.end())
+    {
+      continue;
+    }
+    // ONCE: into the DomainBoundary portions (kept raw in the corrected interface
+    // energies), the geometry-fallback portions (the drivers' share measurement) and the
+    // class-named copy.
+    for (std::size_t i = 0; i < claim->second.portions.size(); i++)
+    {
+      auto portion = claim->second.portions[i];
+      portion.topology = "MaxwellPatchExcluded";
+      for (auto *portions : {&domain_boundary_portions, &geometry_fallback_portions,
+                             &maxwell_patch_excluded_portions})
+      {
+        AppendExcludedPatchPortion(*portions, static_cast<std::size_t>(record.patch),
+                                   portion, claim->second.translational[i],
+                                   conductor_consistency_claim_tolerance);
+      }
+    }
+  }
+  if (!maxwell_patch_excluded_portions.portions.empty())
+  {
+    ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
+        DescribeDomainBoundaryPortions(domain_boundary_portions, mesh_coordinate_scale);
+  }
+}
+
 void SurfaceResponseOperator::ConfigureMaxwellLines(
-    const std::vector<MaxwellLineGeometry> &line_geometry)
+    const std::vector<MaxwellLineGeometry> &line_geometry,
+    const std::vector<int> &line_patches,
+    const std::vector<MaxwellPatchProvenance> &patch_provenance,
+    GeometryFallbackLedger &geometry_ledger)
 {
   MFEM_ASSERT(line_geometry.size() == maxwell_lines.size(),
               "Inconsistent Maxwell line geometry!");
+  MFEM_ASSERT(line_patches.size() == maxwell_lines.size() &&
+                  patch_provenance.size() == patches.size(),
+              "Inconsistent Maxwell line ownership!");
   auto &mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
   const auto comm = fespace.GetComm();
   const int size = Mpi::Size(comm);
@@ -29256,25 +29472,43 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   double in_face_length = 0.0;
   const auto &line_rule =
       mfem::IntRules.Get(mfem::Geometry::SEGMENT, maxwell_quadrature_order);
+  // Pass 1: the coverage of every line. H14a (hardening-2 DESIGN; idfix DESIGN section 7;
+  // decisions 1072 Q2 / 1074): a line that leaves the mesh beyond the crack tolerance
+  // reports (instead of aborting) and its PATCH is excluded below: weight 0, every line of
+  // the patch dropped from the quadrature (zero line integrals: a zero chain and fit trace,
+  // a zero loop share, so its loop-fit equations are dropped in effect), its raw claim
+  // served RAW as the DomainBoundary share (the OverlapExcluded form), the record
+  // MaxwellPatchExcluded. Under FailClosed the ledger's deferred Enforce at the end of the
+  // configuration aborts with the former text.
+  std::vector<std::vector<std::pair<double, double>>> line_integration_intervals(
+      line_geometry.size());
+  std::vector<MaxwellUncoveredLine> uncovered_lines;
+  std::vector<bool> patch_excluded(patches.size(), false);
   for (std::size_t line_index = 0; line_index < line_geometry.size(); line_index++)
   {
     const auto &line = line_geometry[line_index];
-    auto &functional = maxwell_lines[line_index];
-    functional.point_offset = static_cast<int>(pending_points.size());
     std::array<double, 3> tangent{};
     for (int d = 0; d < dimension; d++)
     {
       tangent[d] = line.end[d] - line.begin[d];
     }
-    std::vector<std::pair<double, double>> integration_intervals;
     if (exact_intersections)
     {
+      MaxwellLineUncovered uncovered;
       auto coverage = ResolveMaxwellLineCoverage(
           std::move(line_intervals[line_index]),
           std::move(line_in_face_intervals[line_index]), Norm(tangent), coordinate_scale,
           static_cast<int>(line_index), line.begin, line.end,
-          line_interval_diameters[line_index], line_in_face_diameters[line_index]);
-      integration_intervals = std::move(coverage.intervals);
+          line_interval_diameters[line_index], line_in_face_diameters[line_index],
+          &uncovered);
+      if (uncovered.Reported())
+      {
+        uncovered_lines.push_back(
+            {line_patches[line_index], static_cast<int>(line_index), std::move(uncovered)});
+        patch_excluded[line_patches[line_index]] = true;
+        continue;
+      }
+      line_integration_intervals[line_index] = std::move(coverage.intervals);
       closed_crack_count += coverage.closed_crack_count;
       max_closed_crack = std::max(max_closed_crack, coverage.max_closed_crack);
       in_face_count += coverage.in_face_count;
@@ -29282,8 +29516,29 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     }
     else
     {
-      integration_intervals = std::move(line_intervals[line_index]);
+      line_integration_intervals[line_index] = std::move(line_intervals[line_index]);
     }
+  }
+  ExcludeMaxwellPatchesWithUncoveredLines(uncovered_lines, patch_provenance,
+                                          geometry_ledger);
+
+  // Pass 2: the quadrature points of every line of a kept patch.
+  for (std::size_t line_index = 0; line_index < line_geometry.size(); line_index++)
+  {
+    const auto &line = line_geometry[line_index];
+    auto &functional = maxwell_lines[line_index];
+    functional.point_offset = static_cast<int>(pending_points.size());
+    if (patch_excluded[line_patches[line_index]])
+    {
+      functional.point_count = 0;
+      continue;
+    }
+    std::array<double, 3> tangent{};
+    for (int d = 0; d < dimension; d++)
+    {
+      tangent[d] = line.end[d] - line.begin[d];
+    }
+    const auto &integration_intervals = line_integration_intervals[line_index];
 
     for (const auto &[begin, end] : integration_intervals)
     {

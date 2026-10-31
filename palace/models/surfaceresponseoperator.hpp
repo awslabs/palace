@@ -33,6 +33,7 @@ class IoData;
 class Mesh;
 class BoundaryModeOperator;
 class DistributedPointLocator;
+class GeometryFallbackLedger;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
@@ -84,6 +85,17 @@ struct ExcludedPatchPortions
   int geometric_cells = 0;    // translational own-edge intervals, split patches once
   int duplicate_patches = 0;  // excluded patches folded into an existing interval
   double length = 0.0;        // mesh units, over all portions
+};
+
+// H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): a Maxwell contour or
+// probe line's uncovered piece beyond the crack tolerance, as ResolveMaxwellLineCoverage
+// reports it when asked (the former abort's text, the gap and the tolerance in mesh units).
+struct MaxwellLineUncovered
+{
+  std::string message;
+  double gap = 0.0;
+  double tolerance = 0.0;
+  bool Reported() const { return !message.empty(); }
 };
 
 // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons the
@@ -660,6 +672,19 @@ private:
     std::vector<std::pair<int, double>> legs;  // (line, sign) from the anchor to the probe
   };
   std::vector<std::vector<MaxwellProbe>> maxwell_probes;
+  // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): per LOCAL patch, the
+  // provenance of a MaxwellPatchExcluded record (the OverlapExcluded form: the claimed +
+  // raw-claimed length, the origin).
+  struct MaxwellPatchProvenance
+  {
+    double length = 0.0;
+    std::array<double, 3> origin{};
+  };
+  // The raw claims of the patches ConfigureMaxwellLines excluded (a contour or probe line
+  // leaving the mesh beyond the crack tolerance, MaxwellPatchExcluded): ALSO appended to
+  // the DomainBoundary and geometry-fallback portions (served raw once, as the
+  // DomainBoundary share); this copy names the class for the exclusion-energy export.
+  ExcludedPatchPortions maxwell_patch_excluded_portions;
   int maxwell_quadrature_order = 0;
   // OI-MX-LOOPGATE: per local patch the least-squares structure, the line lengths (mesh
   // units) and, keyed by the placed patch index on every rank, every applied patch's raw
@@ -779,7 +804,25 @@ private:
       DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr,
       const std::vector<double> *point_band = nullptr);
-  void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry);
+  void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry,
+                             const std::vector<int> &line_patches,
+                             const std::vector<MaxwellPatchProvenance> &patch_provenance,
+                             GeometryFallbackLedger &geometry_ledger);
+  // H14a: a line ConfigureMaxwellLines could not cover, on the rank that owns its patch.
+  struct MaxwellUncoveredLine
+  {
+    int patch = -1;  // local
+    int line = -1;   // local
+    MaxwellLineUncovered report;
+  };
+  // The collective conversion of the uncovered lines (gathered to every rank, so the
+  // ledger, the raw portions and the root's patch table are rank-consistent): one
+  // MaxwellPatchExcluded record per excluded patch (its first uncovered line), the weight
+  // 0, the raw claim appended to the DomainBoundary / geometry-fallback portions once.
+  void ExcludeMaxwellPatchesWithUncoveredLines(
+      const std::vector<MaxwellUncoveredLine> &uncovered_lines,
+      const std::vector<MaxwellPatchProvenance> &patch_provenance,
+      GeometryFallbackLedger &geometry_ledger);
   void EvaluatePointValues(const Vector &x, Vector &values) const;
   void EvaluatePointValues(const Vector &xr, const Vector &xi, Vector &vr,
                            Vector &vi) const;
@@ -1226,6 +1269,12 @@ public:
   const auto &GetGeometryFallbackInterfaceTypes() const
   {
     return geometry_fallback_interface_types;
+  }
+  // H14a: the raw claims of the patches excluded for a line leaving the mesh
+  // (MaxwellPatchExcluded), the class-named copy (also in the DomainBoundary portions).
+  const ExcludedPatchPortions &GetMaxwellPatchExcludedPortionRecord() const
+  {
+    return maxwell_patch_excluded_portions;
   }
   // The parts of the SpatialClusterPriority-dropped coupons' raw claims outside every
   // matched cluster's box (OI-SCP-HOLE, decision 922; empty when no coupon is dropped or
@@ -2466,13 +2515,19 @@ struct MaxwellLineCoverage
   double in_face_length = 0.0;  // Mesh units.
 };
 // `element_diameters` / `in_face_diameters` parallel the intervals (empty = no local
-// element scale: the floating-point tolerance alone).
+// element scale: the floating-point tolerance alone). H14a (hardening-2 DESIGN; idfix
+// DESIGN section 7; decision 1074): with `uncovered` given, a piece no intersection covers
+// beyond the crack tolerance is REPORTED there (MaxwellLineUncovered above: the former
+// abort's text, the gap and the tolerance; the line's resolution stops at that piece)
+// instead of aborting, so that the operator can exclude the patch (MaxwellPatchExcluded);
+// without it the abort stands.
 MaxwellLineCoverage ResolveMaxwellLineCoverage(
     std::vector<std::pair<double, double>> element_intervals,
     std::vector<std::pair<double, double>> in_face_intervals, double line_length,
     double coordinate_scale, int line_index, const std::array<double, 3> &begin,
     const std::array<double, 3> &end, const std::vector<double> &element_diameters = {},
-    const std::vector<double> &in_face_diameters = {});
+    const std::vector<double> &in_face_diameters = {},
+    MaxwellLineUncovered *uncovered = nullptr);
 
 }  // namespace palace
 
