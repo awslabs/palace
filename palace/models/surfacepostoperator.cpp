@@ -1071,18 +1071,12 @@ SurfacePostOperator::SurfacePostOperator(
       auto classified_it = classified_edge_distance_trees.find(classified_key);
       if (classified_it == classified_edge_distance_trees.end())
       {
-        std::vector<std::array<double, 3>> process_normals;
-        if (data.localize_edge_energy)
-        {
-          process_normals = BuildMetalEdgeProcessNormals(
-              mesh, edges, classified_indices, [this](int attribute)
-              { return this->mat_op.GetLightSpeedMax(attribute); }, data.edge_frame_normal);
-        }
+        // No process normals (a truncation / fold segment has none to infer): the
+        // classified tree reads the plain distance, under LocalizeEdgeEnergy too.
         classified_it =
             classified_edge_distance_trees
                 .try_emplace(classified_key,
-                             BuildEdgeDistanceTree(edges, classified_indices,
-                                                   std::move(process_normals), false))
+                             BuildEdgeDistanceTree(edges, classified_indices, {}, false))
                 .first;
       }
       it->second.classified_edge_distance_tree = classified_it->second;

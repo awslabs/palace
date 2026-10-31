@@ -95,26 +95,10 @@ SumSegmentVectorsInCanonicalOrder(MPI_Comm comm, std::size_t segment_count,
     local_records.insert(local_records.end(), contribution.vector.begin(),
                          contribution.vector.end());
   }
-  MFEM_VERIFY(local_records.size() <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local metal edge frame data exceeds the MPI count limit!");
-  const int local_count = static_cast<int>(local_records.size());
-  std::vector<int> counts(Mpi::Size(comm));
-  Mpi::Allgather(1, &local_count, counts.data(), comm);
-  std::vector<int> offsets(counts.size());
-  int total = 0;
-  for (std::size_t rank = 0; rank < counts.size(); rank++)
-  {
-    offsets[rank] = total;
-    MFEM_VERIFY(counts[rank] <= std::numeric_limits<int>::max() - total,
-                "Global metal edge frame data exceeds the MPI count limit!");
-    total += counts[rank];
-  }
-  std::vector<double> records(total);
-  Mpi::Allgatherv(local_count, local_records.data(), records.data(), counts.data(),
-                  offsets.data(), comm);
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
+  const std::vector<double> records = Mpi::AllgatherLarge(local_records, comm);
 
-  std::vector<SegmentVectorContribution> contributions(total / 4);
+  std::vector<SegmentVectorContribution> contributions(records.size() / 4);
   for (std::size_t i = 0; i < contributions.size(); i++)
   {
     contributions[i].segment = static_cast<std::size_t>(std::llround(records[4 * i]));
@@ -252,6 +236,7 @@ void PackGeometry(const MetalEdgeGeometry &g, GeometryBuffers &b)
     }
     PackInts(b, seg.side_attributes);
     b.ints.push_back(seg.on_bounding_box ? 1 : 0);
+    b.ints.push_back(seg.duplicate_boundary ? 1 : 0);  // H10
   }
 }
 
@@ -321,6 +306,7 @@ void UnpackGeometry(const GeometryBuffers &b, MetalEdgeGeometry &g)
     }
     seg.side_attributes = UnpackInts(b, ip);
     seg.on_bounding_box = b.ints[ip++] != 0;
+    seg.duplicate_boundary = b.ints[ip++] != 0;  // H10
   }
   MFEM_VERIFY(ip == b.ints.size() && rp == b.reals.size(),
               "Broadcast metal perimeter buffers were not consumed exactly!");
@@ -737,28 +723,15 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   // chip-scale mesh replicated ~3 GB of them on every rank: 560 GiB at np192).
   MPI_Comm comm = mesh.GetComm();
   const bool root = Mpi::Root(comm);
-  MFEM_VERIFY(local_face_data.size() <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local metal face data exceeds the MPI count limit!");
-  const int local_count = static_cast<int>(local_face_data.size());
-  std::vector<int> counts(Mpi::Size(comm));
-  Mpi::Allgather(1, &local_count, counts.data(), comm);
-  std::vector<int> offsets(counts.size());
-  int total = 0;
-  for (std::size_t rank = 0; rank < counts.size(); rank++)
-  {
-    offsets[rank] = total;
-    MFEM_VERIFY(counts[rank] <= std::numeric_limits<int>::max() - total,
-                "Global metal face data exceeds the MPI count limit!");
-    total += counts[rank];
-  }
-  std::vector<double> face_data(root ? total : 0);
-  MPI_Gatherv(local_face_data.data(), local_count, mpi::DataType<double>(),
-              face_data.data(), counts.data(), offsets.data(), mpi::DataType<double>(), 0,
-              comm);
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds; the per-rank
+  // counts / offsets of the plan attribute every gathered face to its source rank below.
+  Mpi::LargeGatherPlan plan;
+  std::vector<double> face_data = Mpi::GatherLarge(local_face_data, 0, comm, &plan);
+  const auto &counts = plan.counts;
+  const auto &offsets = plan.offsets;
   local_face_data.clear();
   local_face_data.shrink_to_fit();
-  if (total == 0)
+  if (plan.total == 0)
   {
     return result;
   }
@@ -1125,8 +1098,37 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       Point centroid{};
       double area = 0.0;
       bool on_bounding_box = false;
+      // H10: the attributes of coincident boundary elements of OTHER metal attributes kept
+      // folded into this face (record_fallbacks).
+      std::set<int> duplicate_attributes;
     };
     std::vector<GlobalFace> faces;
+    // H10 / H11c (record_fallbacks): the recorded conversions, aggregated per class.
+    auto RecordFallback = [&](const std::string &cls, const std::string &reason,
+                              double length, const Point &origin)
+    {
+      auto it = std::find_if(result.fallbacks.begin(), result.fallbacks.end(),
+                             [&](const auto &entry) { return entry.cls == cls; });
+      if (it == result.fallbacks.end())
+      {
+        result.fallbacks.push_back({cls, reason, 0, 0.0, origin});
+        it = std::prev(result.fallbacks.end());
+      }
+      it->count++;
+      it->length += length;
+    };
+    auto LoopPerimeter = [&](const std::vector<Point> &loop)
+    {
+      double length = 0.0;
+      for (std::size_t i = 0; i < loop.size(); i++)
+      {
+        const auto &a = loop[i];
+        const auto &b = loop[(i + 1) % loop.size()];
+        length += std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) +
+                            (a[2] - b[2]) * (a[2] - b[2]));
+      }
+      return length;
+    };
     // Root-level perimeter (decision 899): canonical points that are refinement-generated
     // vertices on any copy.
     std::vector<bool> refinement_point;
@@ -1202,11 +1204,28 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
         std::sort(face_keys[g].begin(), face_keys[g].end());
         face_keys[g].erase(std::unique(face_keys[g].begin(), face_keys[g].end()),
                            face_keys[g].end());
-        MFEM_VERIFY(face_keys[g].size() >= 3, "A metal boundary face degenerates to fewer "
-                                              "than three distinct vertices!");
+        MFEM_VERIFY(surface.record_fallbacks || face_keys[g].size() >= 3,
+                    "A metal boundary face degenerates to fewer than three distinct "
+                    "vertices!");
       }
-      std::vector<std::size_t> face_order(gathered.size());
-      std::iota(face_order.begin(), face_order.end(), 0);
+      // H11c (record_fallbacks): a face with fewer than three distinct canonical vertices
+      // is SKIPPED (DegenerateFace, its loop's length recorded) and the faces are built
+      // without it.
+      std::vector<std::size_t> face_order;
+      face_order.reserve(gathered.size());
+      for (std::size_t g = 0; g < gathered.size(); g++)
+      {
+        if (face_keys[g].size() < 3)
+        {
+          RecordFallback("DegenerateFace",
+                         "metal boundary element degenerating to fewer than three distinct "
+                         "canonical vertices (two coincident vertices after the canonical "
+                         "merge): the face is skipped",
+                         LoopPerimeter(gathered[g].loop), gathered[g].loop.front());
+          continue;
+        }
+        face_order.push_back(g);
+      }
       std::sort(face_order.begin(), face_order.end(),
                 [&](std::size_t a, std::size_t b)
                 {
@@ -1215,7 +1234,8 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
                          std::tie(face_keys[b], gathered_loops[b], gathered[b].attribute,
                                   gathered[b].sides);
                 });
-      gathered_face.resize(gathered.size());
+      // A skipped degenerate face (H11c) keeps the sentinel: no global face.
+      gathered_face.assign(gathered.size(), std::numeric_limits<std::size_t>::max());
       for (const std::size_t g : face_order)
       {
         const auto &source = gathered[g];
@@ -1234,11 +1254,30 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
           if (face.attribute != source.attribute)
           {
             const auto &p = source.loop.front();
-            MFEM_ABORT(
-                "Coincident metal boundary elements carry different metal attributes "
-                << face.attribute << " and " << source.attribute << " (face at (" << p[0]
-                << ", " << p[1] << ", " << p[2]
-                << ")); drop or merge the duplicate boundary elements!");
+            if (surface.record_fallbacks)
+            {
+              // H10 (record_fallbacks): the duplicate face is kept ONCE (the first in the
+              // canonical order, as a same-attribute duplicate), the other attribute
+              // recorded on it; the segments it supports are excluded DuplicateBoundary by
+              // the identification. No mesh modification (decision 1001 Q4).
+              if (face.duplicate_attributes.insert(source.attribute).second)
+              {
+                RecordFallback(
+                    "DuplicateBoundary",
+                    "coincident metal boundary elements carrying different metal "
+                    "attributes: the first face is kept with both attributes recorded and "
+                    "the perimeter segments it supports are excluded",
+                    LoopPerimeter(source.loop), p);
+              }
+            }
+            else
+            {
+              MFEM_ABORT(
+                  "Coincident metal boundary elements carry different metal attributes "
+                  << face.attribute << " and " << source.attribute << " (face at (" << p[0]
+                  << ", " << p[1] << ", " << p[2]
+                  << ")); drop or merge the duplicate boundary elements!");
+            }
           }
         }
         auto &face = faces[entry->second];
@@ -1666,6 +1705,9 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       segment.on_bounding_box =
           std::all_of(distinct_faces.begin(), distinct_faces.end(),
                       [&](std::size_t f) { return faces[f].on_bounding_box; });
+      segment.duplicate_boundary =
+          std::any_of(distinct_faces.begin(), distinct_faces.end(), [&](std::size_t f)
+                      { return !faces[f].duplicate_attributes.empty(); });
       std::set<int> attributes;
       for (const std::size_t f : distinct_faces)
       {
@@ -1970,9 +2012,10 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       {
         const std::size_t f = gathered_face[g];
         const auto rank = static_cast<std::size_t>(gathered_rank[g]);
-        if (!retained[rank].insert(f).second)
+        if (f == std::numeric_limits<std::size_t>::max() ||
+            !retained[rank].insert(f).second)
         {
-          continue;
+          continue;  // a skipped degenerate face (H11c), or a face this rank already has
         }
         MetalSurfaceFace face;
         face.component = face_component[f];
@@ -2279,26 +2322,70 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       UnpackGeometry(buffers, result);
     }
   }
+  // H10 / H11c: the recorded conversions exist on the root (the gathered faces live there
+  // alone) and are broadcast so that every rank's geometry, and hence the identification's
+  // ledger, is the same.
+  if (surface.record_fallbacks)
+  {
+    std::vector<long long int> ints;
+    std::vector<double> reals;
+    std::string text;
+    if (root)
+    {
+      for (const auto &fallback : result.fallbacks)
+      {
+        ints.insert(ints.end(), {static_cast<long long int>(fallback.cls.size()),
+                                 static_cast<long long int>(fallback.reason.size()),
+                                 static_cast<long long int>(fallback.count)});
+        reals.insert(reals.end(), {fallback.length, fallback.origin[0], fallback.origin[1],
+                                   fallback.origin[2]});
+        text += fallback.cls + fallback.reason;
+      }
+    }
+    std::array<long long int, 3> sizes = {static_cast<long long int>(ints.size()),
+                                          static_cast<long long int>(reals.size()),
+                                          static_cast<long long int>(text.size())};
+    Mpi::Broadcast(3, sizes.data(), 0, comm);
+    ints.resize(static_cast<std::size_t>(sizes[0]));
+    reals.resize(static_cast<std::size_t>(sizes[1]));
+    text.resize(static_cast<std::size_t>(sizes[2]));
+    Mpi::BroadcastLarge(sizes[0], ints.data(), 0, comm);
+    Mpi::BroadcastLarge(sizes[1], reals.data(), 0, comm);
+    Mpi::BroadcastLarge(sizes[2], text.data(), 0, comm);
+    if (!root)
+    {
+      result.fallbacks.clear();
+      std::size_t cursor = 0;
+      for (std::size_t k = 0; k < ints.size() / 3; k++)
+      {
+        MetalEdgeGeometry::Fallback fallback;
+        const auto cls_size = static_cast<std::size_t>(ints[3 * k]);
+        const auto reason_size = static_cast<std::size_t>(ints[3 * k + 1]);
+        fallback.count = static_cast<int>(ints[3 * k + 2]);
+        fallback.cls = text.substr(cursor, cls_size);
+        fallback.reason = text.substr(cursor + cls_size, reason_size);
+        cursor += cls_size + reason_size;
+        fallback.length = reals[4 * k];
+        fallback.origin = {reals[4 * k + 1], reals[4 * k + 2], reals[4 * k + 3]};
+        result.fallbacks.push_back(std::move(fallback));
+      }
+    }
+  }
   if (surface.retain_faces)
   {
+    // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): the retained facets scattered from the
+    // root 64-bit sized, in rounds (the counts broadcast from the root).
     for (const bool reals : {false, true})
     {
-      std::vector<int> face_counts(counts.size(), 0), face_offsets(counts.size(), 0);
+      std::vector<std::int64_t> face_counts(counts.size(), 0);
       std::vector<long long int> send_ints;
       std::vector<double> send_reals;
       if (root)
       {
-        long long int offset = 0;
         for (std::size_t rank = 0; rank < counts.size(); rank++)
         {
-          const std::size_t n =
-              reals ? rank_faces[rank].reals.size() : rank_faces[rank].ints.size();
-          MFEM_VERIFY(offset + static_cast<long long int>(n) <=
-                          std::numeric_limits<int>::max(),
-                      "Retained metal facet data exceeds the MPI count limit!");
-          face_offsets[rank] = static_cast<int>(offset);
-          face_counts[rank] = static_cast<int>(n);
-          offset += static_cast<long long int>(n);
+          face_counts[rank] = static_cast<std::int64_t>(
+              reals ? rank_faces[rank].reals.size() : rank_faces[rank].ints.size());
           if (reals)
           {
             send_reals.insert(send_reals.end(), rank_faces[rank].reals.begin(),
@@ -2313,22 +2400,13 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
           }
         }
       }
-      int my_count = 0;
-      MPI_Scatter(face_counts.data(), 1, mpi::DataType<int>(), &my_count, 1,
-                  mpi::DataType<int>(), 0, comm);
       if (reals)
       {
-        local_faces.reals.resize(static_cast<std::size_t>(my_count));
-        MPI_Scatterv(send_reals.data(), face_counts.data(), face_offsets.data(),
-                     mpi::DataType<double>(), local_faces.reals.data(), my_count,
-                     mpi::DataType<double>(), 0, comm);
+        local_faces.reals = Mpi::ScattervLarge(send_reals, face_counts, 0, comm);
       }
       else
       {
-        local_faces.ints.resize(static_cast<std::size_t>(my_count));
-        MPI_Scatterv(send_ints.data(), face_counts.data(), face_offsets.data(),
-                     mpi::DataType<long long int>(), local_faces.ints.data(), my_count,
-                     mpi::DataType<long long int>(), 0, comm);
+        local_faces.ints = Mpi::ScattervLarge(send_ints, face_counts, 0, comm);
       }
     }
     std::size_t int_pos = 0, real_pos = 0;
@@ -2345,8 +2423,13 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
                              const std::vector<std::size_t> &segment_indices,
                              const std::function<double(int)> &material_score,
                              const std::optional<std::array<double, 3>> &fallback,
-                             std::vector<bool> *ambiguous_side)
+                             std::vector<bool> *ambiguous_side,
+                             std::vector<unsigned char> *unframed)
 {
+  if (unframed)
+  {
+    unframed->assign(segment_indices.size(), 0);
+  }
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic metal edge frames require a three-dimensional mesh!");
   MFEM_VERIFY(!segment_indices.empty(),
@@ -2648,6 +2731,13 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
         norm_squared += value * value;
       }
     }
+    if (norm_squared <= 1.0e-20 && unframed)
+    {
+      // H11b: left zero and flagged (UnorientedEdge) instead of the abort.
+      (*unframed)[i] = 1;
+      process_normal = {0.0, 0.0, 0.0};
+      continue;
+    }
     MFEM_VERIFY(norm_squared > 1.0e-20,
                 "Unable to infer a process normal for an automatic edge segment!");
     const double inverse_norm = 1.0 / std::sqrt(norm_squared);
@@ -2662,8 +2752,13 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
 std::vector<std::array<double, 3>>
 BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
                             const std::vector<std::size_t> &segment_indices,
-                            const std::vector<std::array<double, 3>> &process_normals)
+                            const std::vector<std::array<double, 3>> &process_normals,
+                            std::vector<unsigned char> *unframed)
 {
+  if (unframed)
+  {
+    unframed->resize(segment_indices.size(), 0);
+  }
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic metal edge frames require a three-dimensional mesh!");
   MFEM_VERIFY(!segment_indices.empty() && process_normals.size() == segment_indices.size(),
@@ -2863,6 +2958,13 @@ BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &
     {
       gap[d] = -inward_sum[3 * i + d];
       norm_squared += gap[d] * gap[d];
+    }
+    if (norm_squared <= 1.0e-20 && unframed)
+    {
+      // H11a: left zero and flagged (UnorientedEdge) instead of the abort.
+      (*unframed)[i] = 1;
+      gap = {0.0, 0.0, 0.0};
+      continue;
     }
     if (norm_squared <= 1.0e-20)
     {

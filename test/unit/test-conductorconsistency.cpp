@@ -889,15 +889,29 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(statistics["ModelCatalog"][0]["PatchWeight"].get<double>() == 1.0);
   }
 
-  SECTION("a conductor without a vertex on the process plane fails closed")
+  SECTION("a conductor without a vertex on the process plane is recorded untestable "
+          "(H9b: a library property, no abort)")
   {
+    // U-H9b (hardening-2 DESIGN row H9b, landed in the identification fix round's lane B):
+    // the former abort at this site is a coupon property, not device geometry; the model
+    // is listed UnprobedModels by name with the conductor, the gate skips it, the coupon
+    // stays applied.
     const auto files = WriteCoupon(temp.temp_dir, CouponVariant::CONDUCTOR_OFF_PLANE);
     test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
-    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
-                      ContainsSubstring("Conductor-consistency gate") &&
-                          ContainsSubstring("conductor 2") &&
-                          ContainsSubstring("gap-junction-off-plane") &&
-                          ContainsSubstring("no vertex on the process plane"));
+    SurfaceResponseOperator response(iodata, laplace);
+    REQUIRE(response.GetPatchCount() == 1);
+    CHECK_FALSE(response.HasConductorConsistencyProbes());
+    CHECK(response.ApplyConductorConsistencyGate(V[0], 1).empty());
+    const auto statistics = response.GetStatistics();
+    const auto &diagnostics = statistics["Diagnostics"]["ConductorConsistency"];
+    REQUIRE(diagnostics["UnprobedModels"].size() == 1);
+    const auto &unprobed = diagnostics["UnprobedModels"][0];
+    CHECK(unprobed["Model"] == "gap-junction-off-plane");
+    CHECK_THAT(unprobed["Reason"].get<std::string>(),
+               ContainsSubstring("conductor 2") &&
+                   ContainsSubstring("no vertex on the process plane"));
+    CHECK(response.GetElectrostaticResponse(V[0]).domain_correction != 0.0);
+    CHECK(statistics["ModelCatalog"][0]["PatchWeight"].get<double>() == 1.0);
   }
 #endif
 }

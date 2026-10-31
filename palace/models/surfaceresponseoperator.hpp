@@ -876,7 +876,7 @@ private:
   // closed when a conductor of the trace mesh has no vertex on the plane. A trace mesh
   // without any conductor vertex gets no probes (the constructor records the model under
   // Diagnostics.ConductorConsistency.UnprobedModels and warns).
-  static void ConfigureConductorConsistencyProbes(ResponseModel &model);
+  void ConfigureConductorConsistencyProbes(ResponseModel &model);
   // The Diagnostics.ConductorConsistency object with its defaults (tolerance, floor, the
   // counters, the empty lists and the rule), created on first use.
   nlohmann::json &ConductorConsistencyDiagnostics();

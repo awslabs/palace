@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <vector>
 #include <fmt/color.h>
 #include <fmt/format.h>
 #include <fmt/printf.h>
@@ -349,6 +350,206 @@ public:
     {
       const int n = static_cast<int>(std::min(max_chunk, len - offset));
       MPI_Bcast(buff + offset, n, mpi::DataType<T>(), root, comm);
+    }
+  }
+
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii); hardening-1 H16): the gathered perimeter
+  // / facet / patch tables of a chip-scale run exceed the int count of the classic MPI
+  // interface. The *Large forms below gather / scatter / reduce 64-bit-sized
+  // variable-length arrays in rounds of at most LargeChunk() elements per rank and INT_MAX
+  // / 2 per call, in rank order, so that every result is element-for-element the one-call
+  // form's (the P == S identity the unit tests read at forced small chunks). The default
+  // chunk is INT_MAX / 8; PALACE_LARGE_MESSAGE_CHUNK (a positive integer, read once)
+  // overrides it for the exactness runs at forced small batches.
+  static std::int64_t LargeChunk()
+  {
+    static const std::int64_t chunk = []()
+    {
+      const char *value = std::getenv("PALACE_LARGE_MESSAGE_CHUNK");
+      if (value && *value)
+      {
+        const long long parsed = std::atoll(value);
+        if (parsed > 0)
+        {
+          return static_cast<std::int64_t>(parsed);
+        }
+      }
+      return static_cast<std::int64_t>(std::numeric_limits<int>::max() / 8);
+    }();
+    return chunk;
+  }
+
+  // The per-rank 64-bit counts and offsets of a variable-length gather (every rank).
+  struct LargeGatherPlan
+  {
+    std::vector<std::int64_t> counts;
+    std::vector<std::int64_t> offsets;
+    std::int64_t total = 0;
+  };
+  static LargeGatherPlan PlanLargeGather(std::int64_t local_count, MPI_Comm comm)
+  {
+    LargeGatherPlan plan;
+    plan.counts.resize(Size(comm));
+    Allgather(1, &local_count, plan.counts.data(), comm);
+    plan.offsets.resize(plan.counts.size());
+    for (std::size_t rank = 0; rank < plan.counts.size(); rank++)
+    {
+      plan.offsets[rank] = plan.total;
+      plan.total += plan.counts[rank];
+    }
+    return plan;
+  }
+
+  // The per-rank counts of one round: at most `max_chunk` of the remaining elements per
+  // rank and INT_MAX / 2 in total.
+  static bool NextLargeRound(const LargeGatherPlan &plan, std::vector<std::int64_t> &sent,
+                             std::int64_t max_chunk, std::vector<int> &counts,
+                             std::vector<int> &displs)
+  {
+    const std::int64_t per_rank = std::max<std::int64_t>(
+        1,
+        std::min(max_chunk, static_cast<std::int64_t>(std::numeric_limits<int>::max() / 2) /
+                                static_cast<std::int64_t>(plan.counts.size())));
+    counts.assign(plan.counts.size(), 0);
+    displs.assign(plan.counts.size(), 0);
+    int total = 0;
+    bool any = false;
+    for (std::size_t rank = 0; rank < plan.counts.size(); rank++)
+    {
+      const std::int64_t remaining = plan.counts[rank] - sent[rank];
+      counts[rank] = static_cast<int>(std::min(per_rank, remaining));
+      displs[rank] = total;
+      total += counts[rank];
+      any = any || remaining > 0;
+    }
+    return any;
+  }
+
+  // Allgather of a variable-length array per rank, 64-bit sized, in rounds; the result on
+  // every rank is the concatenation in rank order. `plan` (optional) receives the per-rank
+  // counts / offsets.
+  template <typename T>
+  static std::vector<T> AllgatherLarge(const std::vector<T> &local, MPI_Comm comm,
+                                       LargeGatherPlan *plan_out = nullptr,
+                                       std::int64_t max_chunk = LargeChunk())
+  {
+    const LargeGatherPlan plan =
+        PlanLargeGather(static_cast<std::int64_t>(local.size()), comm);
+    std::vector<T> result(static_cast<std::size_t>(plan.total));
+    std::vector<std::int64_t> sent(plan.counts.size(), 0);
+    std::vector<int> counts, displs;
+    const int rank = Rank(comm);
+    while (NextLargeRound(plan, sent, max_chunk, counts, displs))
+    {
+      std::vector<T> round(static_cast<std::size_t>(displs.back() + counts.back()));
+      MPI_Allgatherv(local.data() + sent[rank], counts[rank], mpi::DataType<T>(),
+                     round.data(), counts.data(), displs.data(), mpi::DataType<T>(), comm);
+      for (std::size_t r = 0; r < counts.size(); r++)
+      {
+        std::copy_n(round.data() + displs[r], counts[r],
+                    result.data() + plan.offsets[r] + sent[r]);
+        sent[r] += counts[r];
+      }
+    }
+    if (plan_out)
+    {
+      *plan_out = plan;
+    }
+    return result;
+  }
+
+  // Gather of a variable-length array per rank onto the root, 64-bit sized, in rounds; the
+  // root's result is the concatenation in rank order, the other ranks' is empty.
+  template <typename T>
+  static std::vector<T> GatherLarge(const std::vector<T> &local, int root, MPI_Comm comm,
+                                    LargeGatherPlan *plan_out = nullptr,
+                                    std::int64_t max_chunk = LargeChunk())
+  {
+    const LargeGatherPlan plan =
+        PlanLargeGather(static_cast<std::int64_t>(local.size()), comm);
+    const int rank = Rank(comm);
+    std::vector<T> result(rank == root ? static_cast<std::size_t>(plan.total) : 0);
+    std::vector<std::int64_t> sent(plan.counts.size(), 0);
+    std::vector<int> counts, displs;
+    while (NextLargeRound(plan, sent, max_chunk, counts, displs))
+    {
+      std::vector<T> round(
+          rank == root ? static_cast<std::size_t>(displs.back() + counts.back()) : 0);
+      MPI_Gatherv(local.data() + sent[rank], counts[rank], mpi::DataType<T>(), round.data(),
+                  counts.data(), displs.data(), mpi::DataType<T>(), root, comm);
+      for (std::size_t r = 0; r < counts.size(); r++)
+      {
+        if (rank == root)
+        {
+          std::copy_n(round.data() + displs[r], counts[r],
+                      result.data() + plan.offsets[r] + sent[r]);
+        }
+        sent[r] += counts[r];
+      }
+    }
+    if (plan_out)
+    {
+      *plan_out = plan;
+    }
+    return result;
+  }
+
+  // Scatter of per-rank variable-length pieces from the root, 64-bit sized, in rounds: the
+  // root's `data` holds the pieces in rank order with the 64-bit `counts` (every rank
+  // passes its own expected count as counts[rank]; the counts are taken from the root).
+  template <typename T>
+  static std::vector<T> ScattervLarge(const std::vector<T> &data,
+                                      std::vector<std::int64_t> counts, int root,
+                                      MPI_Comm comm, std::int64_t max_chunk = LargeChunk())
+  {
+    const int rank = Rank(comm);
+    counts.resize(Size(comm));
+    Broadcast(static_cast<int>(counts.size()), counts.data(), root, comm);
+    LargeGatherPlan plan;
+    plan.counts = counts;
+    plan.offsets.resize(counts.size());
+    for (std::size_t r = 0; r < counts.size(); r++)
+    {
+      plan.offsets[r] = plan.total;
+      plan.total += counts[r];
+    }
+    std::vector<T> result(static_cast<std::size_t>(plan.counts[rank]));
+    std::vector<std::int64_t> sent(plan.counts.size(), 0);
+    std::vector<int> round_counts, displs;
+    while (NextLargeRound(plan, sent, max_chunk, round_counts, displs))
+    {
+      std::vector<T> round(
+          rank == root ? static_cast<std::size_t>(displs.back() + round_counts.back()) : 0);
+      if (rank == root)
+      {
+        for (std::size_t r = 0; r < round_counts.size(); r++)
+        {
+          std::copy_n(data.data() + plan.offsets[r] + sent[r], round_counts[r],
+                      round.data() + displs[r]);
+        }
+      }
+      MPI_Scatterv(round.data(), round_counts.data(), displs.data(), mpi::DataType<T>(),
+                   result.data() + sent[rank], round_counts[rank], mpi::DataType<T>(), root,
+                   comm);
+      for (std::size_t r = 0; r < round_counts.size(); r++)
+      {
+        sent[r] += round_counts[r];
+      }
+    }
+    return result;
+  }
+
+  // Element-wise MAX reduction of a 64-bit-sized array on every rank, in chunks.
+  template <typename T>
+  static void GlobalMaxLarge(std::vector<T> &values, MPI_Comm comm,
+                             std::int64_t max_chunk = LargeChunk())
+  {
+    const auto len = static_cast<std::int64_t>(values.size());
+    for (std::int64_t offset = 0; offset < len; offset += max_chunk)
+    {
+      const int n = static_cast<int>(std::min(max_chunk, len - offset));
+      MPI_Allreduce(MPI_IN_PLACE, values.data() + offset, n, mpi::DataType<T>(), MPI_MAX,
+                    comm);
     }
   }
 

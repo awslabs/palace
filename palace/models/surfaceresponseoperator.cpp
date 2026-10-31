@@ -8403,7 +8403,8 @@ IdentificationResult RunGeometryIdentification(
     std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr,
     std::map<int, FeatureCornerMatch> *corner_matches = nullptr,
     const mfem::ParMesh *mesh = nullptr, const ResponseCorrectionData *request = nullptr,
-    MirrorBandResult *mirror = nullptr, GeometryFallbackLedger *geometry_ledger = nullptr)
+    MirrorBandResult *mirror = nullptr, GeometryFallbackLedger *geometry_ledger = nullptr,
+    const std::set<std::size_t> *unoriented_segments = nullptr)
 {
   const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
@@ -8450,7 +8451,25 @@ IdentificationResult RunGeometryIdentification(
     segment.chain = source.physical_chain;
     segment.truncation = source.type == MetalEdgeSegmentType::TRUNCATION;
     segment.conductor = source.metal_component;
-    if (source.type == MetalEdgeSegmentType::PORT)
+    if (unoriented_segments && unoriented_segments->count(i))
+    {
+      // H11a / H11b (hardening-2 DESIGN): the frame builders could infer no gap direction
+      // / process normal for this segment (left zero and flagged): excluded first.
+      segment.exclusion = std::make_pair(
+          "UnorientedEdge", "physical metal edge whose gap direction or process normal "
+                            "could not be inferred from its faces (H11a / H11b)");
+    }
+    else if (source.duplicate_boundary)
+    {
+      // H10 (hardening-2 DESIGN): a segment supported by a face that was a duplicate
+      // boundary element of another metal attribute (the extraction kept the first face
+      // under record_fallbacks): excluded first in the chain.
+      segment.exclusion = std::make_pair(
+          "DuplicateBoundary",
+          "metal perimeter supported by coincident boundary elements of different metal "
+          "attributes (the duplicate kept once with both attributes recorded, H10)");
+    }
+    else if (source.type == MetalEdgeSegmentType::PORT)
     {
       segment.exclusion = std::make_pair(
           "Port", "metal perimeter bordering a port boundary face (LumpedPort / WavePort "
@@ -8520,6 +8539,104 @@ IdentificationResult RunGeometryIdentification(
     input.vertices[v].physical_type = geometry.vertices[v].physical_type;
     input.vertices[v].on_truncation_boundary = geometry.vertices[v].on_truncation_boundary;
     input.vertices[v].on_port_boundary = geometry.vertices[v].on_port_boundary;
+  }
+  // H11a / H11b: one UnorientedEdge entry for the unframed segments (their length).
+  if (geometry_ledger && unoriented_segments && !unoriented_segments->empty())
+  {
+    GeometryFallbackData entry;
+    entry.cls = "UnorientedEdge";
+    entry.site = "H11a-b/BuildMetalEdgeFrames:no-direction";
+    entry.what = "segment";
+    for (const std::size_t i : *unoriented_segments)
+    {
+      entry.length += Norm(Subtract(input.segments[i].p1, input.segments[i].p0));
+    }
+    entry.example_origin = input.segments[*unoriented_segments->begin()].p0;
+    entry.reason = fmt::format(
+        "{:d} physical metal edge segment(s) whose gap direction or process normal could "
+        "not be inferred from their faces (a norm below 1e-20): left unframed and excluded",
+        static_cast<int>(unoriented_segments->size()));
+    geometry_ledger->Record(std::move(entry));
+  }
+  // H10 / H11c (hardening-2 DESIGN): the extraction's recorded conversions (one per class)
+  // into the ledger; the extraction records only under record_fallbacks, which the
+  // identification's extraction sets on both the preflight and the solve.
+  if (geometry_ledger)
+  {
+    for (const auto &fallback : geometry.fallbacks)
+    {
+      GeometryFallbackData entry;
+      entry.cls = fallback.cls;
+      entry.site = fallback.cls == "DuplicateBoundary" ? "H10/metaledge:coincident-faces"
+                                                       : "H11c/metaledge:degenerate-face";
+      entry.what = fallback.cls == "DuplicateBoundary" ? "segment" : "face";
+      entry.reason = fmt::format("{} ({:d} face(s), perimeter {:.6e} mesh units)",
+                                 fallback.reason, fallback.count, fallback.length);
+      entry.length = fallback.length;
+      entry.example_origin = fallback.origin;
+      geometry_ledger->Record(std::move(entry));
+    }
+  }
+  // H13-I2 (hardening-2 DESIGN; the identification's former aborts 1052 / 1120 converted):
+  // a chain vertex where more than two non-excluded chain segments meet (a T of metal
+  // sheets of different attributes, a branching perimeter) cannot be ordered into a simple
+  // path or loop. With a ledger its INCIDENT segments get the input exclusion
+  // BranchingPerimeter (BuildRuns then splits the chain at the cut vertices, its existing
+  // ExclusionCut mechanism, and identifies the pieces: every chain component has vertex
+  // degree <= 2 by construction) and one entry per branching vertex is recorded; under
+  // FailClosed the ledger's deferred Enforce aborts. Without a ledger the identification's
+  // own verify stands. The input is replicated, so the record is rank-consistent.
+  if (geometry_ledger)
+  {
+    std::map<std::size_t, std::vector<std::size_t>> incident;
+    for (std::size_t i = 0; i < input.segments.size(); i++)
+    {
+      const auto &segment = input.segments[i];
+      if (segment.truncation || segment.exclusion || segment.chain < 0)
+      {
+        continue;
+      }
+      for (const std::size_t v : segment.vertices)
+      {
+        incident[v].push_back(i);
+      }
+    }
+    std::set<std::size_t> excluded;
+    for (const auto &[v, list] : incident)
+    {
+      if (list.size() <= 2)
+      {
+        continue;
+      }
+      GeometryFallbackData entry;
+      entry.cls = "BranchingPerimeter";
+      entry.site = "H13-I2/RunGeometryIdentification:branching-vertex";
+      entry.what = "segment";
+      entry.example_origin = input.vertices[v].coordinate;
+      std::set<int> chains;
+      for (const std::size_t i : list)
+      {
+        auto &segment = input.segments[i];
+        chains.insert(segment.chain);
+        if (excluded.insert(i).second)
+        {
+          entry.length += Norm(Subtract(segment.p1, segment.p0));
+          segment.exclusion = std::make_pair(
+              "BranchingPerimeter",
+              "metal perimeter segment incident to a chain vertex where more than two "
+              "chain segments meet (a branching perimeter cannot be ordered into a simple "
+              "path or loop); the chain is cut there and its pieces identified (H13-I2)");
+        }
+      }
+      entry.reason = fmt::format(
+          "A perimeter chain has a vertex with more than two chain segments: {:d} segments "
+          "of chain(s) {} meet at ({}, {}, {}); the incident segments are excluded "
+          "(BranchingPerimeter) and the chain is cut there",
+          static_cast<int>(list.size()), fmt::join(chains, " / "),
+          input.vertices[v].coordinate[0], input.vertices[v].coordinate[1],
+          input.vertices[v].coordinate[2]);
+      geometry_ledger->Record(std::move(entry));
+    }
   }
   // Mirror band (boundary-cut DESIGN 2.2): the truncation planes of the simulation-cut
   // attributes (collective; identical on every rank) and the extension of the input across
@@ -12386,6 +12503,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   [](const auto &model) { return model.plan_view_boundary.has_value(); });
   // The identification needs every metal face for the decision-73(3) cross-layer zones.
   surface.retain_global_faces = true;
+  // H10 / H11c (hardening-2 DESIGN): the former aborts of the extraction are recorded
+  // conversions on the preflight and the solve alike (the ledger decides FailClosed).
+  surface.record_fallbacks = true;
   // Root-level perimeter (decision 899, OI-CTX-ARC-ADAPT): on a nonconforming mesh the
   // identification sees the root level's perimeter (the initial mesh of the run that
   // refined it), so a saved adapted mesh reproduces the producing run's identification;
@@ -12639,13 +12759,17 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   int matched_nonregular_vertices = 0;
 
   std::map<std::size_t, EdgeSegment3D> segment_cache;
+  // H11a / H11b (hardening-2 DESIGN): the segments whose frame could not be inferred
+  // (UnorientedEdge): never cached, excluded by the identification first in its chain.
+  std::set<std::size_t> unoriented_segments;
   auto BuildSegments =
       [&](const EdgeGroup3D &group, const std::vector<std::size_t> &geometry_indices)
   {
     std::vector<std::size_t> missing;
     for (const auto geometry_index : geometry_indices)
     {
-      if (segment_cache.find(geometry_index) == segment_cache.end())
+      if (segment_cache.find(geometry_index) == segment_cache.end() &&
+          !unoriented_segments.count(geometry_index))
       {
         missing.push_back(geometry_index);
       }
@@ -12653,16 +12777,22 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     if (!missing.empty())
     {
       std::vector<bool> ambiguous_side;
+      std::vector<unsigned char> unframed;
       const auto process_normals = BuildMetalEdgeProcessNormals(
           mesh, geometry, missing,
           [&](int attribute) { return mat_op.GetLightSpeedMax(attribute); },
-          group.process_normal, &ambiguous_side);
+          group.process_normal, &ambiguous_side, &unframed);
       const auto gap_directions =
-          BuildMetalEdgeGapDirections(mesh, geometry, missing, process_normals);
+          BuildMetalEdgeGapDirections(mesh, geometry, missing, process_normals, &unframed);
       for (std::size_t i = 0; i < missing.size(); i++)
       {
         const std::size_t geometry_index = missing[i];
         const auto &source = geometry.segments[geometry_index];
+        if (unframed[i])
+        {
+          unoriented_segments.insert(geometry_index);
+          continue;
+        }
         EdgeSegment3D segment;
         segment.geometry_index = geometry_index;
         segment.p0 = geometry.vertices[source.vertices[0]].coordinate;
@@ -13002,37 +13132,24 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       statistics->mask_facets_packed_local += local_facets.size();
       statistics->mask_payload_scalars_local += local_records.size();
     }
-    MFEM_VERIFY(local_records.size() <=
-                    static_cast<std::size_t>(std::numeric_limits<int>::max()),
-                "Local plan-view facet data exceeds the MPI count limit!");
-    const int local_value_count = static_cast<int>(local_records.size());
-    std::vector<int> value_counts(Mpi::Size(mesh.GetComm()));
-    Mpi::Allgather(1, &local_value_count, value_counts.data(), mesh.GetComm());
-    std::vector<int> value_offsets(value_counts.size());
-    int total_values = 0;
-    for (std::size_t rank = 0; rank < value_counts.size(); rank++)
-    {
-      value_offsets[rank] = total_values;
-      MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
-                  "Global plan-view facet data exceeds the MPI count limit!");
-      total_values += value_counts[rank];
-    }
+    // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds; the plan's
+    // per-rank counts / offsets delimit every rank's records.
+    Mpi::LargeGatherPlan plan;
+    const std::vector<double> records =
+        Mpi::AllgatherLarge(local_records, mesh.GetComm(), &plan);
     if (statistics)
     {
-      statistics->mask_gathered_scalars += total_values;
+      statistics->mask_gathered_scalars += static_cast<long long int>(records.size());
     }
-    std::vector<double> records(total_values);
-    Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
-                    value_counts.data(), value_offsets.data(), mesh.GetComm());
 
     PlanViewGeometry result;
     result.lower = lower;
     result.upper = upper;
     result.process_axis = process_axis;
-    for (std::size_t rank = 0; rank < value_counts.size(); rank++)
+    for (std::size_t rank = 0; rank < plan.counts.size(); rank++)
     {
-      std::size_t offset = value_offsets[rank];
-      const std::size_t end = offset + value_counts[rank];
+      std::size_t offset = static_cast<std::size_t>(plan.offsets[rank]);
+      const std::size_t end = offset + static_cast<std::size_t>(plan.counts[rank]);
       while (offset < end)
       {
         MFEM_VERIFY(end - offset >= 2, "Truncated gathered plan-view facet record!");
@@ -13461,7 +13578,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       mesh.GetComm(), geometry, global_segments, library,
       requirements ? *requirements : law_describer, requirements, frame_normal_configured,
       request.span_cap_allowances, &curved_matches, &corner_matches, &mesh,
-      maxwell ? nullptr : &request, &mirror_band, &geometry_ledger);
+      maxwell ? nullptr : &request, &mirror_band, &geometry_ledger, &unoriented_segments);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (statistics)
@@ -23486,8 +23603,6 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   }
   result.tested_patches = static_cast<long long int>(candidates.size());
   result.tested_points = static_cast<long long int>(points.size());
-  MFEM_VERIFY(points.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Too many domain-boundary test points for one reduction!");
 
   // Every rank locates every point in its local mesh with the operator's locator and its
   // tolerances; the found flags are OR-reduced, so the decision is the partition's union.
@@ -23526,7 +23641,9 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   result.phase_times["find"] = Elapsed();
   if (!found.empty())
   {
-    Mpi::GlobalMax(static_cast<int>(found.size()), found.data(), comm);
+    // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): the reduction in chunks (64-bit
+    // sized).
+    Mpi::GlobalMaxLarge(found, comm);
   }
   result.phase_times["reduce"] = Elapsed();
   // Mirror (boundary-cut DESIGN 2.2.3): every outside point beyond a Natural plane within
@@ -24935,11 +25052,28 @@ void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel 
   }
   for (const int conductor : conductors)
   {
-    MFEM_VERIFY(plane_conductors.count(conductor),
-                "Conductor-consistency gate (decision 277): conductor "
-                    << conductor << " of the trace mesh of response model \"" << model.name
-                    << "\" has no vertex on the process plane (w = 0), so its metal "
-                       "cross-section on the box faces cannot be probed!");
+    if (!plane_conductors.count(conductor))
+    {
+      // H9b (hardening-2 DESIGN; the former abort at this site RECLASSIFIED LIBRARY): a
+      // coupon property, not device geometry. The model is recorded untestable
+      // (UnprobedModels, decision 279 MINOR-2) and the gate skips it; never a silent zero.
+      Mpi::Warning(fespace.GetComm(),
+                   "Conductor-consistency gate (decision 277) not evaluated for response "
+                   "model \"{}\": conductor {:d} of its trace mesh has no vertex on the "
+                   "process plane (w = 0), so its metal cross-section on the box faces "
+                   "cannot be probed\n",
+                   model.name, conductor);
+      ConductorConsistencyDiagnostics()["UnprobedModels"].push_back(
+          {{"Model", model.name},
+           {"ModelIndex", model.idx},
+           {"Reason", fmt::format("conductor {:d} of the trace mesh has no vertex on the "
+                                  "process plane (w = 0): its metal cross-section on the "
+                                  "box faces cannot be probed (H9b)",
+                                  conductor)}});
+      model.plane_conductor_vertices.clear();
+      model.off_plane_conductor_vertices.clear();
+      return;
+    }
   }
   if (model.plane_conductor_vertices.empty())
   {
@@ -25470,22 +25604,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                             static_cast<double>(snap.arc), snap.displacement});
     }
   }
-  MFEM_VERIFY(local_records.size() <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local conductor-consistency data exceeds the MPI count limit!");
-  const int local_value_count = static_cast<int>(local_records.size());
-  std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
-  Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
-  std::vector<int> value_offsets(value_counts.size());
-  int total_values = 0;
-  for (std::size_t rank = 0; rank < value_counts.size(); rank++)
-  {
-    value_offsets[rank] = total_values;
-    total_values += value_counts[rank];
-  }
-  std::vector<double> values(total_values);
-  Mpi::Allgatherv(local_value_count, local_records.data(), values.data(),
-                  value_counts.data(), value_offsets.data(), fespace.GetComm());
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
+  const std::vector<double> values = Mpi::AllgatherLarge(local_records, fespace.GetComm());
   std::vector<ConductorConsistencyRecord> records;
   for (std::size_t offset = 0; offset < values.size();)
   {
@@ -27451,16 +27571,22 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // (the element size at the patch's first basis point): the transmon device (17,395
   // translational patches, 35 mm of matched perimeter, 4 mm characteristic length) needs
   // 4.3e6 points on its initial mesh and 1.0e7 after 11 AMR cycles at p4 (measured).
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): the cap is an ESTIMATE and a warning,
+  // not an abort (the point tables are gathered 64-bit sized, in rounds): the stencil
+  // memory is estimated at ~0.7 kB per point (p5 tetrahedra) and printed with the warning.
   constexpr long long int maximum_experimental_mortar_points = 4000000000LL;
-  MFEM_VERIFY(config->trace_coupling !=
-                      ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR ||
-                  global_point_count <= maximum_experimental_mortar_points,
-              "Experimental SurfaceMortar trace quadrature requires "
-                  << global_point_count
-                  << " distributed points, exceeding its current safety limit of "
-                  << maximum_experimental_mortar_points
-                  << ". Assemble and compress the mortar projection before continuing "
-                     "this AMR level!");
+  if (config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR &&
+      global_point_count > maximum_experimental_mortar_points)
+  {
+    Mpi::Warning(
+        fespace.GetComm(),
+        "Experimental SurfaceMortar trace quadrature requires {:d} distributed "
+        "points, above the {:d} the stencil memory model was sized for (~{:.1f} TB "
+        "of stencils at p5 on tetrahedra over the ranks): assemble and compress the "
+        "mortar projection before continuing this AMR level\n",
+        global_point_count, maximum_experimental_mortar_points,
+        static_cast<double>(global_point_count) * 0.7e-9);
+  }
   std::array<int, 3> domain_mode_patch_count{};
   for (std::size_t p = 0; p < applied_patch_count; p++)
   {
@@ -29305,22 +29431,9 @@ void SurfaceResponseOperator::ExcludeMaxwellPatchesWithUncoveredLines(
     return;
   }
   // The messages, concatenated with their terminators in the same rank order.
-  MFEM_VERIFY(local_messages.size() <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Maxwell uncovered-line messages exceed the MPI count limit!");
-  const int local_message_count = static_cast<int>(local_messages.size());
-  std::vector<int> message_counts(Mpi::Size(fespace.GetComm()));
-  Mpi::Allgather(1, &local_message_count, message_counts.data(), fespace.GetComm());
-  std::vector<int> message_offsets(message_counts.size());
-  int total_messages = 0;
-  for (std::size_t r = 0; r < message_counts.size(); r++)
-  {
-    message_offsets[r] = total_messages;
-    total_messages += message_counts[r];
-  }
-  std::string messages(static_cast<std::size_t>(total_messages), '\0');
-  Mpi::Allgatherv(local_message_count, local_messages.data(), messages.data(),
-                  message_counts.data(), message_offsets.data(), fespace.GetComm());
+  const std::vector<char> gathered_messages = Mpi::AllgatherLarge(
+      std::vector<char>(local_messages.begin(), local_messages.end()), fespace.GetComm());
+  const std::string messages(gathered_messages.begin(), gathered_messages.end());
   struct GatheredRecord
   {
     int patch = -1, model = -1, feature = -1, rank = -1, line = -1, uncovered_count = 0;
@@ -31624,25 +31737,8 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
 std::vector<double>
 SurfaceResponseOperator::AllgatherRecords(const std::vector<double> &local_records) const
 {
-  MFEM_VERIFY(local_records.size() <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local per-patch response data exceeds the MPI count limit!");
-  const int local_value_count = static_cast<int>(local_records.size());
-  std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
-  Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
-  std::vector<int> value_offsets(value_counts.size());
-  int total_values = 0;
-  for (std::size_t rank = 0; rank < value_counts.size(); rank++)
-  {
-    value_offsets[rank] = total_values;
-    MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
-                "Global per-patch response data exceeds the MPI count limit!");
-    total_values += value_counts[rank];
-  }
-  std::vector<double> records(total_values);
-  Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
-                  value_counts.data(), value_offsets.data(), fespace.GetComm());
-  return records;
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
+  return Mpi::AllgatherLarge(local_records, fespace.GetComm());
 }
 
 std::vector<SurfaceResponseOperator::PatchContribution>
@@ -31807,24 +31903,8 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) c
     }
   }
 
-  MFEM_VERIFY(local_records.size() <=
-                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local patch-trace data exceeds the MPI count limit!");
-  const int local_value_count = static_cast<int>(local_records.size());
-  std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
-  Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
-  std::vector<int> value_offsets(value_counts.size());
-  int total_values = 0;
-  for (std::size_t rank = 0; rank < value_counts.size(); rank++)
-  {
-    value_offsets[rank] = total_values;
-    MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
-                "Global spatial patch-trace data exceeds the MPI count limit!");
-    total_values += value_counts[rank];
-  }
-  std::vector<double> records(total_values);
-  Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
-                  value_counts.data(), value_offsets.data(), fespace.GetComm());
+  // OI-SCALE-GATHER (idfix DESIGN section 9 (ii)): 64-bit sized, in rounds.
+  const std::vector<double> records = Mpi::AllgatherLarge(local_records, fespace.GetComm());
 
   std::vector<PatchTrace> traces;
   std::size_t offset = 0;
