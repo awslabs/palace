@@ -369,7 +369,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added an MFEM patch for [mfem/mfem#5711](https://github.com/mfem/mfem/pull/5711),
     which fixes current dipole sources on Nedelec spaces of order 2 and above on
     tetrahedra, prisms and pyramids.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1121](https://github.com/awslabs/palace/pull/1121).
 
 ## [0.18.1] - 2026-09-21
 
