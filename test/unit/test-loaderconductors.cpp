@@ -380,6 +380,115 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(result.matched_length_fraction < 1.0);  // the strip's ends stay unmatched
   }
 
+  // The geometric near-match PLACES its model (idfix DESIGN section 5 (b) / A.4; decisions
+  // 1079 Q4 / 1088 / 1089): the same coupon keyed by a Signature whose CONTEXT differs from
+  // the feature's inside the geometric context band (one context piece end moved 5e-2 R
+  // along x; the Context entries REVERSED = permuted; its plan view and second reference
+  // from the moved pieces) reads GeometricNearMatched AND is placed: the placement's
+  // context checks H5a (the agreement) and H5b (the model's context piece ends on the
+  // device edges) read the geometric band for that status, not the quantum near-match / the
+  // signature tolerance (the exec-B twin b4bc28485f58, context 7.7e-2 R permuted, was
+  // matched and then PlacementRejected at H5a before 1088). A context moved just OUTSIDE
+  // the band (1.1e-1 R) is Missing: the match refuses it, so the placement never sees it
+  // (both read ClusterGeometricNearDifference: the placement can accept nothing the match
+  // refused).
+  {
+    auto NearContextLibrary =
+        [&](double shift_over_R, bool permute, const std::string &name)
+    {
+      auto near_library = library;
+      near_library["Name"] = "unit-test-process-spatial-cluster-" + name + "-3d";
+      auto &near_model = near_library["Models"].back();
+      near_model["Name"] = name;
+      json near_signature = signature;
+      auto &context = near_signature["Context"];
+      REQUIRE(context.size() >= 2);
+      bool shifted = false;
+      std::vector<json> near_foreign;
+      for (auto &piece : context)
+      {
+        if (!shifted && piece["Chain"] == false)
+        {
+          piece["P"][0] = piece["P"][0].get<double>() + shift_over_R;
+          piece["P"][2] = piece["P"][2].get<double>() + shift_over_R;
+          shifted = true;
+        }
+        if (piece["Chain"] == false)
+        {
+          near_foreign.push_back(piece);
+        }
+      }
+      REQUIRE(shifted);
+      if (permute)
+      {
+        std::reverse(context.begin(), context.end());
+      }
+      near_model["Signature"] = near_signature;
+      near_model["ConductorReferences"] = {reference_1,
+                                           ReferenceInsidePiece(near_foreign[0], radius)};
+      near_model["PlanViewBoundary"] = {PlanViewComponent(1, claimed_pieces, radius),
+                                        PlanViewComponent(2, near_foreign, radius)};
+      const auto path =
+          temp.temp_dir / ("surface-process-spatial-cluster-" + name + "-3d.json");
+      WriteJsonOnRoot(path, near_library);
+      return path;
+    };
+    auto Preflight = [&](const fs::path &path, const std::string &name)
+    {
+      const auto manifest_path =
+          temp.temp_dir / ("surface-response-requirements-" + name + ".json");
+      if (Mpi::Root(Mpi::World()))
+      {
+        fs::remove(temp.temp_dir / "surface-response-patches.csv");
+      }
+      Mpi::Barrier(Mpi::World());
+      IoData near_iodata = MakeIoData(path);
+      WriteSurfaceResponseRequirements(near_iodata, mesh, manifest_path.string());
+      Mpi::Barrier(Mpi::World());
+      return ReadJsonAfterBarrier(manifest_path);
+    };
+    auto ModelRows = [&](const std::string &name)
+    {
+      const auto rows = ReadPatchRows(temp.temp_dir / "surface-response-patches.csv");
+      return std::count_if(rows.begin(), rows.end(),
+                           [&](const auto &row) { return row[3] == name; });
+    };
+    const json near = Preflight(NearContextLibrary(5.0e-2, true, "near-context-permuted"),
+                                "near-context-permuted");
+    const auto &near_features = near["Identification"]["Features"];
+    const auto near_feature = std::find_if(near_features.begin(), near_features.end(),
+                                           IsContextOnlyConductorCluster);
+    REQUIRE(near_feature != near_features.end());
+    CHECK((*near_feature)["Hash"] == (*feature)["Hash"]);
+    REQUIRE((*near_feature)["Match"]["Status"] == "GeometricNearMatched");
+    CHECK((*near_feature)["Match"]["Model"] == "near-context-permuted");
+    const auto &record = (*near_feature)["Match"]["GeometricNearMatch"];
+    CHECK_THAT(record["ContextDeviationOverR"].get<double>(), WithinAbs(5.0e-2, 1.0e-6));
+    CHECK(record["ContextPermuted"] == true);
+    CHECK(record["ClaimsDeviationOverR"].get<double>() <= 1.0e-9);
+    CHECK(near["Summary"]["GeometricNearMatched"]["Count"].get<int>() >= 1);
+    CHECK(!near["Identification"]["Diagnostics"].contains("GeometryFallbacks"));
+    CHECK(ModelRows("near-context-permuted") >= 1);
+    const auto &near_requirements = near["Requirements"];
+    const auto near_requirement = std::find_if(
+        near_requirements.begin(), near_requirements.end(),
+        [&](const json &entry) { return entry["Hash"] == (*feature)["Hash"]; });
+    REQUIRE(near_requirement != near_requirements.end());
+    CHECK((*near_requirement)["Status"] == "GeometricNearMatched");
+    CHECK((*near_requirement)["SelectedModels"][0]["Name"] == "near-context-permuted");
+    const json outside = Preflight(NearContextLibrary(1.1e-1, false, "far-context-outside"),
+                                   "far-context-outside");
+    const auto &outside_features = outside["Identification"]["Features"];
+    const auto outside_feature = std::find_if(
+        outside_features.begin(), outside_features.end(), IsContextOnlyConductorCluster);
+    REQUIRE(outside_feature != outside_features.end());
+    CHECK((*outside_feature)["Match"]["Status"] == "Missing");
+    CHECK(!(*outside_feature)["Match"].contains("GeometricNearMatch"));
+    CHECK(outside["Summary"]["GeometricNearMatched"]["Count"] == 0);
+    CHECK(!outside["Identification"]["Diagnostics"].contains("GeometryFallbacks"));
+    CHECK(ModelRows("far-context-outside") == 0);
+  }
+
   // Fail closed, kept: the same model whose plan view names conductor 1 only (two
   // references for one canonical conductor).
   {

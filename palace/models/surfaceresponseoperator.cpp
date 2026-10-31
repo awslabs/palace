@@ -10140,6 +10140,10 @@ struct FeaturePatchSummary
   // difference among them.
   std::size_t context_near_match_verifications = 0;
   double context_near_match_max_quanta = 0.0;
+  // Contract-3 placements of a GeometricNearMatched model whose Context agreed with the
+  // feature's within the geometric near-match band, not the quantum one (decisions 1088 /
+  // 1089): H5a / H5b read the geometric band for them.
+  std::size_t geometric_near_match_placements = 0;
   // Conductor probes of the spatial cluster patches snapped onto the device chord polyline
   // (decision 611 (2)): the snapped knots over all patches and the largest displacement
   // (mesh units).
@@ -12324,40 +12328,73 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto context_agreement = CompareClusterContexts(
             signature.value("Context", nlohmann::json::array()),
             feature.signature.value("Context", nlohmann::json(nullptr)));
+        // A GeometricNearMatched model (idfix DESIGN section 5 / A.4; decisions 1079 Q4 /
+        // 1088 / 1089): the model's Context agrees with the feature's within the GEOMETRIC
+        // band through the SAME function the match used (ClusterGeometricNearDifference:
+        // claims 1e-2 R, angles 0.1 deg, context 1e-1 R as a set, a one-to-one assignment,
+        // permutation allowed) — the quantum check cannot pass it (the twin b4bc28485f58's
+        // context differs from its model's by 7.7e-2 R, permuted). Every other status keeps
+        // the quantum check; beyond the geometric band H5a still rejects (RecordRaw).
+        const bool geometric_near_matched = !feature.geometric_near_match.is_null();
+        bool context_agrees =
+            feature.signature.contains("Context") && context_agreement.agrees;
+        std::optional<ClusterGeometricNearMatch> geometric_band;
+        if (!context_agrees && geometric_near_matched)
+        {
+          geometric_band = ClusterGeometricNearDifference(feature.signature, signature);
+          context_agrees = geometric_band->in_band;
+        }
         // H5a / H5b (readiness hardening, USER decision 1000 (b) / 1001): a refused
         // placement makes the feature Missing (raw) with the record PlacementRejected
         // (RejectFeature above). The runtime model registered above stays (0 patches).
         auto RejectPlacement = [&](const char *site, const std::string &reason)
         { RejectFeature("PlacementRejected", site, reason, patch.origin); };
-        if (geometry_ledger &&
-            !(feature.signature.contains("Context") && context_agreement.agrees))
+        const std::string context_reason =
+            geometric_near_matched
+                ? fmt::format(
+                      "The Context of model \"{}\" differs from the geometrically "
+                      "near-matched feature's beyond the geometric near-match band "
+                      "(context {:g} R / gap cosine {:g} vs {:g} R / {:g}; claims {:g} R; "
+                      "max {:g} quanta over {:d} differing number(s), or another topology)",
+                      model.name,
+                      geometric_band ? geometric_band->context_deviation_over_R : 0.0,
+                      geometric_band ? geometric_band->context_gap_cosine : 0.0,
+                      kGeometricNearMatchContextOverRadius, kGeometricNearMatchGapCosine,
+                      geometric_band ? geometric_band->claims_deviation_over_R : 0.0,
+                      context_agreement.max_delta_quanta,
+                      context_agreement.differing_paths.size())
+                : fmt::format(
+                      "The Context of model \"{}\" differs from the matched feature's "
+                      "beyond the cluster quantum near-match (max {:g} quanta over {:d} "
+                      "differing number(s), or another topology)",
+                      model.name, context_agreement.max_delta_quanta,
+                      context_agreement.differing_paths.size());
+        if (geometry_ledger && !context_agrees)
         {
-          RejectPlacement(
-              "H5a/BuildFeaturePatches:context-beyond-near-match",
-              fmt::format(
-                  "The Context of model \"{}\" differs from the matched feature's "
-                  "beyond the cluster quantum near-match (max {:g} quanta over {:d} "
-                  "differing number(s), or another topology)",
-                  model.name, context_agreement.max_delta_quanta,
-                  context_agreement.differing_paths.size()));
+          RejectPlacement("H5a/BuildFeaturePatches:context-beyond-near-match",
+                          context_reason);
           continue;
         }
-        MFEM_VERIFY(
-            feature.signature.contains("Context") && context_agreement.agrees,
-            "The Context of model \""
-                << model.name
-                << "\" differs from the matched feature's beyond the cluster quantum "
-                   "near-match (max "
-                << context_agreement.max_delta_quanta << " quanta over "
-                << context_agreement.differing_paths.size()
-                << " differing number(s), or another topology)!");
-        if (!context_agreement.exact)
+        MFEM_VERIFY(context_agrees, context_reason << "!");
+        if (geometric_band)
+        {
+          summary.geometric_near_match_placements++;
+        }
+        else if (!context_agreement.exact)
         {
           summary.context_near_match_verifications++;
           summary.context_near_match_max_quanta = std::max(
               summary.context_near_match_max_quanta, context_agreement.max_delta_quanta);
         }
-        const double tolerance = kSignatureParameterToleranceOverRadius * R;
+        // H5b: the model's context piece ends lie on a device edge within the signature
+        // tolerance; a GeometricNearMatched model's context lies within the geometric
+        // context band of the device's by construction (the match verified it), so that
+        // band is its tolerance here (decision 1089: the band the match verified, no new
+        // number); every other status keeps the signature tolerance.
+        const double tolerance =
+            (geometric_near_matched ? kGeometricNearMatchContextOverRadius
+                                    : kSignatureParameterToleranceOverRadius) *
+            R;
         auto Global = [&](double x, double y)
         {
           return Add(patch.origin,
@@ -13931,6 +13968,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           "quanta)\n",
           static_cast<int>(summary.context_near_match_verifications),
           summary.context_near_match_max_quanta);
+    }
+    if (summary.geometric_near_match_placements > 0)
+    {
+      Mpi::Print(
+          " Context (decisions 1088 / 1089): {:d} contract-3 placement(s) of a "
+          "geometrically near-matched model verified within the geometric near-match "
+          "band (context {:g} R), not the quantum one\n",
+          static_cast<int>(summary.geometric_near_match_placements),
+          kGeometricNearMatchContextOverRadius);
     }
     if (summary.probe_snaps > 0)
     {
