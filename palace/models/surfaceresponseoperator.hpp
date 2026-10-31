@@ -22,6 +22,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/surfaceresponsemirror.hpp"
+#include "models/surfaceresponseorientedbox.hpp"
 #include "utils/configfile.hpp"
 
 namespace palace
@@ -1656,7 +1657,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 // wholly inside pair already owned that a partial pair's box also contains (owned as
 // before, the owned length split equally among the owners: re-attributed, not newly owned).
 // Keys, boxes and the identification are untouched (a placement rule);
-// the geometry cache (version 20) stores the unplaced patches and this pass runs on every
+// the geometry cache (version 21) stores the unplaced patches and this pass runs on every
 // load, so no cache version change.
 struct ContinuationOwnership
 {
@@ -2148,20 +2149,12 @@ OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchDat
 // whose frame is 22.5 deg off the mesh axes; centres 2.014 R apart, the pairs' frames 21 /
 // 45 deg apart) are MEASURED a TRUE overlap of the coupon cubes (the separating-axis gap
 // -0.53 / -0.76 um; findings-from-exec-B F-B1 UPDATE, decision 1030): each is recorded
-// OverlapExcluded on the mesh-aligned and on the oriented test alike. Two vertex cubes of
-// frames rotated by theta overlap up to R (1 + |cos theta| + |sin theta|) apart while the
-// identification clusters vertex pairs below 2 R only (OI-VERTEX-PAIR-CUBE-OVERLAP, the
-// identification fix round); the SpatialClusterPriority (cluster vs vertex) branch keeps
-// the mesh-aligned test of record.
-struct OrientedSupportBox
-{
-  std::array<std::array<double, 3>, 3> axes = {
-      {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
-  std::array<double, 3> min{}, max{};
-};
+// OverlapExcluded on the mesh-aligned and on the oriented test alike. The identification's
+// vertex-vertex interaction rule is THIS test on the two sites' +-R vertex cubes (decision
+// 1062 A.5 (a): the identification fix round closed OI-VERTEX-PAIR-CUBE-OVERLAP by sharing
+// the one definition, surfaceresponseorientedbox.hpp); the SpatialClusterPriority (cluster
+// vs vertex) branch keeps the mesh-aligned test of record.
 OrientedSupportBox OrientedBoxOf(const SpatialSupportBounds &support);
-bool OrientedBoxesInteriorOverlap(const OrientedSupportBox &a, const OrientedSupportBox &b,
-                                  int dimension);
 
 // The SpatialClusterPriority pass of ApplyPlacementOwnership on a set of spatial supports
 // (the preflight's reading of the operator's rule): every pair of supports not already

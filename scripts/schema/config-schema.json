@@ -3343,6 +3343,10 @@
               "description": "Behavior when a detected edge cluster has no compatible coupon model. `Warn` disables correction for the affected interface group; `Error` terminates the simulation.",
               "default": "Warn"
             },
+            "KnifeEdgeCensus": {
+              "type": "boolean",
+              "description": "The identification's knife-edge census (`Identification.Diagnostics.KnifeEdgeCensus`: three extra identification passes at the band radii; a preflight diagnostic the solve reads from the preflight). Absent: on for `--surface-response-preflight`, off for a solve run (DESIGN section 9 (i) of the identification fix round, decision 1062). Diagnostic only: no feature, key or patch depends on it."
+            },
             "GeometryFailurePolicy": {
               "type": "string",
               "enum": [
@@ -3677,6 +3681,9 @@
               "Library"
             ],
             "GeometryFailurePolicy": [
+              "Library"
+            ],
+            "KnifeEdgeCensus": [
               "Library"
             ],
             "PatchConstruction": [

@@ -1873,7 +1873,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 20);
+      CHECK(cache["Version"] == 21);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3163,7 +3163,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 20);
+      CHECK(cache["Version"] == 21);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -4144,7 +4144,31 @@ TEST_CASE_METHOD(
       }
       CHECK(four_matched >= 1);
       CHECK(four["Summary"]["Counts"]["QuantumNearMatched"] == four_matched);
-      const json far = Preflight(Perturbed(5, "far-five-quanta"), "five");
+      // Five quanta: beyond the quantum near-match, inside the geometric band (F-B2, DESIGN
+      // section 5 / decision 1079: the quantum near-match stays the float-noise absorber
+      // underneath the geometric near-match) -> GeometricNearMatched, not Missing; at
+      // 2e-2 R (20,000 quanta) the key is Missing.
+      const json five = Preflight(Perturbed(5, "far-five-quanta"), "five");
+      int five_geometric = 0;
+      for (const auto &feature : five["Identification"]["Features"])
+      {
+        if (feature["Type"] == "SpatialEdgeCluster" &&
+            feature["Hash"] == (*cluster_feature)["Hash"])
+        {
+          CHECK(feature["Match"]["Status"] == "GeometricNearMatched");
+          CHECK(!feature["Match"].contains("QuantumNearMatch"));
+          CHECK(feature["Match"]["Model"] == "far-five-quanta");
+          // Five quanta on a portion end read through the arc's radial deviation (~5.4e-6).
+          CHECK_THAT(
+              feature["Match"]["GeometricNearMatch"]["ClaimsDeviationOverR"].get<double>(),
+              WithinAbs(5.0e-6, 1.0e-6));
+          five_geometric++;
+        }
+      }
+      CHECK(five["Summary"]["Counts"]["QuantumNearMatched"] == 0);
+      CHECK(five["Summary"]["GeometricNearMatched"]["Count"].get<int>() >= five_geometric);
+      CHECK(five_geometric >= 1);
+      const json far = Preflight(Perturbed(20000, "far-two-percent-R"), "far");
       for (const auto &feature : far["Identification"]["Features"])
       {
         if (feature["Type"] == "SpatialEdgeCluster" &&
@@ -4152,9 +4176,11 @@ TEST_CASE_METHOD(
         {
           CHECK(feature["Match"]["Status"] == "Missing");
           CHECK(!feature["Match"].contains("QuantumNearMatch"));
+          CHECK(!feature["Match"].contains("GeometricNearMatch"));
         }
       }
       CHECK(far["Summary"]["Counts"]["QuantumNearMatched"] == 0);
+      CHECK(far["Summary"]["GeometricNearMatched"]["Count"] == 0);
       // Two models one geometry: the exact model and the one-quantum model together.
       auto duplicate = signature_library;
       duplicate["Models"].push_back(Perturbed(1, "near-one-quantum")["Models"].back());
@@ -6933,6 +6959,153 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+namespace
+{
+
+// Two aperture perimeters are disconnected edge-graph components even though the metal
+// bridge between them is one physical PEC strip (x in [1.25, 1.5] on the plane y = 0.5 of
+// a 3 x 1 x 3 box, attribute 9: a 0.25 = 1.25 R SameConductorStrip at R = 0.2). Its
+// outward-facing edges must select a strip coupon from local geometry instead of being
+// rejected as different conductors (the paired aperture case); the GDS scatter near-match
+// case reads the strip against libraries whose strip separation is offset from 0.25.
+std::unique_ptr<mfem::ParMesh> MakePairedApertureMesh()
+{
+  constexpr double extent = 3.0;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(24, 4, 24, mfem::Element::HEXAHEDRON,
+                                                  extent, 1.0, extent);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent, xmax = 0.0;
+    double zmin = extent, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
+                               zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
+    const bool right_aperture = xmin >= 1.5 - 1.0e-12 && xmax <= 2.0 + 1.0e-12 &&
+                                zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
+    if (on_plane && !left_aperture && !right_aperture)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// The UnpatchedPair reproducer (OI-PAIR-SEPARATION-MISMATCH; CTX-002 t6_2 feature 18): the
+// paired-aperture sheet on a 48 x 4 x 48 grid (cells 0.0625) with the apertures over z in
+// [0.25, 2.75], the left one x in [0.75, 1.25], the right one x in [1.5, 1.9375], and the
+// strip's right edge (the x = 1.5 vertex column) sheared by `taper` x (z - 0.25) / 2.5: the
+// strip's width grows linearly from 0.25 to 0.25 + taper (R = 0.2; taper 0.08 = 32 mrad: a
+// bent pair, consecutive chord pieces stepping ~1 %). The right aperture's far edge (x =
+// 1.9375) comes within 2R of the taper edge once the shear exceeds 0.0375 (z > ~1.42): the
+// cross-section is the 2-edge strip over the narrow part and a 3-edge ParallelEdgeCluster
+// over the wide part, while the pair link carries ONE mean separation (~0.29) into both.
+std::unique_ptr<mfem::ParMesh> MakeTaperStripMesh(double taper)
+{
+  constexpr double extent = 3.0;
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(48, 4, 48, mfem::Element::HEXAHEDRON,
+                                                  extent, 1.0, extent);
+  for (int v = 0; v < serial.GetNV(); v++)
+  {
+    double *point = serial.GetVertex(v);
+    if (std::abs(point[0] - 1.5) < 1.0e-12)
+    {
+      point[0] += taper * std::clamp((point[2] - 0.25) / 2.5, 0.0, 1.0);
+    }
+  }
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = extent, xmax = 0.0;
+    double zmin = extent, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
+                               zmin >= 0.25 - 1.0e-12 && zmax <= 2.75 + 1.0e-12;
+    const bool right_aperture = xmin >= 1.5 - 1.0e-12 && xmax <= 1.9375 + 1.0e-12 &&
+                                zmin >= 0.25 - 1.0e-12 && zmax <= 2.75 + 1.0e-12;
+    if (on_plane && !left_aperture && !right_aperture)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// A Signature-keyed SameConductorStrip library (the features patch construction case's
+// form) written by the root rank: one model per (name, signature) with the isolated
+// fixture's matrices (the test is the match, not the coupon physics); Separation follows
+// the signature's SeparationOverR.
+void WriteSignatureStripLibrary(const fs::path &path, const std::string &name, double R,
+                                const std::vector<std::pair<std::string, json>> &models,
+                                const fs::path &fabricated_path, const fs::path &thin_path,
+                                const fs::path &points_path)
+{
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = {{"Version", 2},
+                    {"Name", name},
+                    {"MatchingRadius", R},
+                    {"CouponDepth", R},
+                    {"Models", json::array()}};
+    for (const auto &[model_name, signature] : models)
+    {
+      library["Models"].push_back(
+          {{"Name", model_name},
+           {"Topology", "SameConductorStrip"},
+           {"Signature", signature},
+           {"Separation", signature.at("SeparationOverR").get<double>() * R},
+           {"SeparationTolerance", 1.0e-8},
+           {"Reference", {0.0, 0.0, 0.0}},
+           {"FabricatedMatrix", fabricated_path.string()},
+           {"ThinMatrix", thin_path.string()},
+           {"BasisPoints", points_path.string()}});
+    }
+    std::ofstream output(path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+}
+
+}  // namespace
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired aperture",
                  "[surfaceresponseoperator][3d][maxwell][aperture][Serial][Parallel]")
 {
@@ -6941,52 +7114,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired ape
 #else
   json convex_maxwell_island_config = ConvexMaxwellIslandConfig();
   mfem::VectorConstantCoefficient field_coefficient = ConstantFieldCoefficient();
-
-  // Two aperture perimeters are disconnected edge-graph components even though the
-  // metal bridge between them is one physical PEC strip. Its outward-facing edges must
-  // select a strip coupon from local geometry instead of being rejected as different
-  // conductors.
-  auto MakePairedApertureMesh = []()
-  {
-    constexpr double extent = 3.0;
-    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(24, 4, 24, mfem::Element::HEXAHEDRON,
-                                                    extent, 1.0, extent);
-    for (int face = 0; face < serial.GetNumFaces(); face++)
-    {
-      int element1, element2;
-      serial.GetFaceElements(face, &element1, &element2);
-      if (element1 < 0 || element2 < 0)
-      {
-        continue;
-      }
-      mfem::Array<int> vertices;
-      serial.GetFaceVertices(face, vertices);
-      bool on_plane = true;
-      double xmin = extent, xmax = 0.0;
-      double zmin = extent, zmax = 0.0;
-      for (const int vertex : vertices)
-      {
-        const double *point = serial.GetVertex(vertex);
-        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
-        xmin = std::min(xmin, point[0]);
-        xmax = std::max(xmax, point[0]);
-        zmin = std::min(zmin, point[2]);
-        zmax = std::max(zmax, point[2]);
-      }
-      const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
-                                 zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
-      const bool right_aperture = xmin >= 1.5 - 1.0e-12 && xmax <= 2.0 + 1.0e-12 &&
-                                  zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
-      if (on_plane && !left_aperture && !right_aperture)
-      {
-        serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
-        serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
-      }
-    }
-    serial.FinalizeTopology();
-    serial.Finalize();
-    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
-  };
 
   auto strip_aperture_config = convex_maxwell_island_config;
   strip_aperture_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
@@ -7042,6 +7169,623 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator paired ape
   CHECK(strip_aperture_result.matched_length_fraction >
         no_strip_aperture_result.matched_length_fraction);
 
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator GDS scatter near-match",
+                 "[surfaceresponseoperator][3d][features][nearmatch][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // The identification fix round DESIGN section 4 (b) (decision 1075 Q1): a translational
+  // pair feature with no model within the signature tolerance (1e-3 R) matches the nearest
+  // model of its topology within max(SeparationTolerance, 5e-3 R) of its separation, Status
+  // NearMatched with the deviation recorded, placed like an exact match; beyond the band it
+  // stays Missing; Exact keeps precedence; Summary.NearMatched is always written. The
+  // paired-aperture strip (0.25 = 1.25 R at R = 0.2) against the strip library with the
+  // model's separation offset: 3e-3 R (0.0006) inside the band, 7e-3 R (0.0014) outside.
+  constexpr double R = 0.2;
+  const double tolerance_over_R = kSignatureParameterToleranceOverRadius;
+  REQUIRE(kGdsScatterOverRadius == 5.0e-3);
+  auto StripModelName = [](double offset_over_R)
+  {
+    return std::string("same-conductor-strip") + (offset_over_R >= 0.0 ? "+" : "") +
+           std::to_string(offset_over_R) + "R";
+  };
+  // A Signature-keyed strip library from the dry run's own strip feature: one model per
+  // offset, its Signature's SeparationOverR / Edges[1].OffsetOverR offset from the
+  // feature's.
+  auto WriteStripLibrary = [&](const std::string &tag, const json &strip_signature,
+                               const std::vector<double> &offsets_over_R)
+  {
+    const fs::path path = temp.temp_dir / ("fabrication-process-strip-" + tag + ".json");
+    const double s0 = strip_signature["SeparationOverR"].get<double>();
+    std::vector<std::pair<std::string, json>> models;
+    for (const double offset : offsets_over_R)
+    {
+      json signature = strip_signature;
+      signature["SeparationOverR"] = s0 + offset;
+      signature["Edges"][1]["OffsetOverR"] = s0 + offset;
+      models.emplace_back(StripModelName(offset), signature);
+    }
+    WriteSignatureStripLibrary(path, "unit-test-process-strip-" + tag, R, models,
+                               fabricated_path, thin_path, points_path);
+    return path;
+  };
+  struct Reading
+  {
+    std::string status;  // the strip features' Match.Status (one value, checked equal)
+    std::string model;
+    double deviation_over_R = -1.0;
+    double band_over_R = -1.0;
+    int near_matched_count = -1;
+    double near_matched_length = -1.0;
+    bool counts_has_near_matched = false;
+    std::string requirement_status;
+    int strip_patch_rows = 0;
+    json strip_signature;
+    bool has_taper_mean_keys = false;         // decision 1078 records: absent on a
+    bool has_placed_local_deviation = false;  // parallel strip
+  };
+  auto Read = [&](const std::string &tag, const fs::path &library_path)
+  {
+    json config = IslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeAttributes"] = {
+        1, 2, 3, 4, 5, 6};
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakePairedApertureMesh());
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-nearmatch-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    Reading reading;
+    int strips = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "SameConductorStrip")
+      {
+        continue;
+      }
+      strips++;
+      reading.strip_signature = feature["Signature"];
+      const std::string status = feature["Match"]["Status"].get<std::string>();
+      if (reading.status.empty())
+      {
+        reading.status = status;
+      }
+      CHECK(status == reading.status);
+      if (feature["Match"].contains("Model"))
+      {
+        reading.model = feature["Match"]["Model"].get<std::string>();
+      }
+      if (feature["Match"].contains("NearMatch"))
+      {
+        CHECK(feature["Match"]["NearMatch"]["Model"] == feature["Match"]["Model"]);
+        reading.deviation_over_R =
+            feature["Match"]["NearMatch"]["SeparationDeviationOverR"].get<double>();
+        reading.band_over_R = feature["Match"]["NearMatch"]["BandOverR"].get<double>();
+      }
+    }
+    REQUIRE(strips > 0);
+    REQUIRE(manifest["Summary"].contains("NearMatched"));
+    reading.near_matched_count = manifest["Summary"]["NearMatched"]["Count"].get<int>();
+    reading.near_matched_length =
+        manifest["Summary"]["NearMatched"]["Length"].get<double>();
+    reading.counts_has_near_matched = manifest["Summary"]["Counts"].contains("NearMatched");
+    reading.has_taper_mean_keys = manifest["Summary"].contains("TaperMeanKeys");
+    reading.has_placed_local_deviation =
+        manifest["Summary"].contains("PlacedLocalDeviation");
+    for (const auto &requirement : manifest["Requirements"])
+    {
+      if (requirement["Topology"] == "SameConductorStrip")
+      {
+        reading.requirement_status = requirement["Status"].get<std::string>();
+      }
+    }
+    std::ifstream patches(patches_path);
+    REQUIRE(patches);
+    std::string line;
+    std::getline(patches, line);  // header
+    while (std::getline(patches, line))
+    {
+      reading.strip_patch_rows += line.find("same-conductor-strip") != std::string::npos;
+    }
+    return reading;
+  };
+
+  // The dry run against the parametric strip library reads the strip's own signature (its
+  // models map three interface types, the sheet's features carry SA only: Missing).
+  const auto base = Read("base", strip_library_3d_path);
+  REQUIRE(base.strip_signature.is_object());
+  REQUIRE(base.near_matched_count == 0);
+  const json strip_signature = base.strip_signature;
+  const auto exact = Read("exact", WriteStripLibrary("exact", strip_signature, {0.0}));
+  CHECK(exact.status == "Matched");
+  CHECK_FALSE(exact.has_taper_mean_keys);
+  CHECK_FALSE(exact.has_placed_local_deviation);
+  CHECK(exact.requirement_status == "Exact");
+  CHECK(exact.near_matched_count == 0);
+  CHECK(exact.near_matched_length == 0.0);
+  CHECK_FALSE(exact.counts_has_near_matched);
+  CHECK(exact.strip_patch_rows > 0);
+
+  SECTION("3e-3 R inside the band: NearMatched, placed, the deviation recorded")
+  {
+    const auto near = Read("near", WriteStripLibrary("near", strip_signature, {3.0e-3}));
+    CHECK(near.status == "NearMatched");
+    CHECK(near.requirement_status == "NearMatched");
+    CHECK(near.model == StripModelName(3.0e-3));
+    // The deviation is read on the signature grid (1e-6 R quanta of SeparationOverR).
+    CHECK_THAT(near.deviation_over_R, WithinAbs(3.0e-3, 5.0e-6));
+    CHECK(near.deviation_over_R > tolerance_over_R);
+    CHECK_THAT(near.band_over_R, WithinAbs(kGdsScatterOverRadius, 1.0e-12));
+    CHECK(near.near_matched_count > 0);
+    CHECK(near.near_matched_length > 0.0);
+    CHECK(near.counts_has_near_matched);
+    CHECK(near.strip_patch_rows == exact.strip_patch_rows);
+  }
+  SECTION("7e-3 R outside the band: Missing, the empty Summary leaf")
+  {
+    const auto far = Read("far", WriteStripLibrary("far", strip_signature, {7.0e-3}));
+    CHECK(far.status == "Missing");
+    CHECK(far.requirement_status == "Missing");
+    CHECK(far.near_matched_count == 0);
+    CHECK_FALSE(far.counts_has_near_matched);
+    CHECK(far.strip_patch_rows == 0);
+  }
+  SECTION("two models in the band: the nearer one")
+  {
+    const auto nearer =
+        Read("nearer", WriteStripLibrary("nearer", strip_signature, {3.0e-3, -2.0e-3}));
+    CHECK(nearer.status == "NearMatched");
+    CHECK(nearer.model == StripModelName(-2.0e-3));
+    CHECK_THAT(nearer.deviation_over_R, WithinAbs(2.0e-3, 5.0e-6));
+  }
+  SECTION("Exact keeps precedence over a model in the band")
+  {
+    const auto both =
+        Read("both", WriteStripLibrary("both", strip_signature, {3.0e-3, 0.0}));
+    CHECK(both.status == "Matched");
+    CHECK(both.requirement_status == "Exact");
+    CHECK(both.model == StripModelName(0.0));
+    CHECK(both.near_matched_count == 0);
+  }
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator geometric near-match PEC",
+                 "[surfaceresponseoperator][3d][features][nearmatch][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // U-NEARMATCH-PEC (DESIGN A.10 G-3; A.5 (b) / decision 1079 Q4): a Missing
+  // ParallelEdgeCluster key matches a library model with the same EdgeCount / GapSide
+  // pattern / Conductor labels / Interfaces / Law whose every OffsetOverR lies within
+  // kGeometricNearMatchClaimsOverRadius (1e-2 R); at 1.1e-2 R (the design's named point,
+  // A.10 G-3) it stays Missing; Exact keeps
+  // precedence; Summary.GeometricNearMatched counts it; Library.GeometricNearPairs lists
+  // the library's in-band pairs. The CPW of cpw3d-surface-nc (edges at 0 / 12 / 32 / 44 um,
+  // R = 11) against the parallel-cluster library with the 4-edge model's offsets shifted.
+  constexpr double R = 11.0;
+  json config = Cpw3dLegacyConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  for (auto &interface : config["Boundaries"]["Postprocessing"]["Dielectric"])
+  {
+    interface["EdgeDistances"] = {0.2, 2.0, 11.0};
+  }
+  auto WriteShiftedLibrary = [&](const std::string &tag, const json &cluster_signature,
+                                 const std::vector<double> &shifts)
+  {
+    // shifts: one Signature-keyed 4-edge model per entry (the dry run's own cluster
+    // signature, as the features patch construction case keys its library; the parametric
+    // fixture model maps interfaces the sheet's features do not carry), its non-zero
+    // OffsetOverR and Edges offsets shifted by shift (R).
+    const fs::path path = temp.temp_dir / ("fabrication-process-pec-" + tag + ".json");
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ifstream input(parallel_cluster_library_3d_path);
+      REQUIRE(input);
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-pec-" + tag;
+      json cluster;
+      for (const auto &model : library["Models"])
+      {
+        if (model["Name"] == "cpw-four-edge-cluster")
+        {
+          cluster = model;
+        }
+      }
+      REQUIRE(!cluster.is_null());
+      library["Models"].erase(
+          std::remove_if(library["Models"].begin(), library["Models"].end(),
+                         [](const json &model)
+                         { return model["Topology"] == "ParallelEdgeCluster"; }),
+          library["Models"].end());
+      for (const double shift : shifts)
+      {
+        json model = cluster;
+        model["Name"] = std::string("cpw-four-edge-cluster") + (shift >= 0.0 ? "+" : "") +
+                        std::to_string(shift) + "R";
+        for (auto &edge : model["Edges"])
+        {
+          if (edge["Offset"].get<double>() > 0.0)
+          {
+            edge["Offset"] = edge["Offset"].get<double>() + shift * R;
+          }
+        }
+        json signature = cluster_signature;
+        for (auto &edge : signature["Edges"])
+        {
+          if (edge["OffsetOverR"].get<double>() > 0.0)
+          {
+            edge["OffsetOverR"] = edge["OffsetOverR"].get<double>() + shift;
+          }
+        }
+        model["Signature"] = signature;
+        // One conductor reference per canonical conductor of the feature's own signature
+        // (the first edge of each), the fixture's Edges relabelled accordingly.
+        json references = json::array();
+        std::vector<int> conductors;
+        for (std::size_t k = 0; k < signature["Edges"].size(); k++)
+        {
+          const int conductor = signature["Edges"][k]["Conductor"].get<int>();
+          if (std::find(conductors.begin(), conductors.end(), conductor) ==
+              conductors.end())
+          {
+            conductors.push_back(conductor);
+            references.push_back(
+                {signature["Edges"][k]["OffsetOverR"].get<double>() * R, 0.0, 0.0});
+          }
+          model["Edges"][k]["Conductor"] = conductor;
+        }
+        model["ConductorReferences"] = references;
+        if (conductors.size() != 2)
+        {
+          model.erase("OpenContourPaths");
+        }
+        library["Models"].push_back(model);
+      }
+      std::ofstream output(path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    return path;
+  };
+  struct Reading
+  {
+    std::string status, model;
+    double deviation_over_R = -1.0;
+    int geometric_count = -1;
+    json near_pairs;
+    int cluster_patch_rows = 0;
+    json cluster_signature;
+  };
+  auto Read = [&](const std::string &tag, const fs::path &library_path)
+  {
+    json run_config = config;
+    run_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        library_path.string();
+    IoData iodata(run_config, false);
+    auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+    Mesh device(std::move(mesh));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-pec-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, device, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    Reading reading;
+    int clusters = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "ParallelEdgeCluster")
+      {
+        continue;
+      }
+      clusters++;
+      reading.status = feature["Match"]["Status"].get<std::string>();
+      reading.model = feature["Match"].value("Model", std::string());
+      reading.cluster_signature = feature["Signature"];
+      if (feature["Match"].contains("GeometricNearMatch"))
+      {
+        reading.deviation_over_R =
+            feature["Match"]["GeometricNearMatch"]["MaxOffsetDeviationOverR"].get<double>();
+      }
+    }
+    REQUIRE(clusters > 0);
+    REQUIRE(manifest["Summary"].contains("GeometricNearMatched"));
+    reading.geometric_count =
+        manifest["Summary"]["GeometricNearMatched"]["Count"].get<int>();
+    reading.near_pairs = manifest["Library"]["GeometricNearPairs"];
+    std::ifstream patches(patches_path);
+    REQUIRE(patches);
+    std::string line;
+    std::getline(patches, line);
+    while (std::getline(patches, line))
+    {
+      reading.cluster_patch_rows += line.find("cpw-four-edge-cluster") != std::string::npos;
+    }
+    return reading;
+  };
+  // The dry run against the parametric library reads the CPW cluster's own signature.
+  const auto base = Read("base", parallel_cluster_library_3d_path);
+  REQUIRE(base.cluster_signature.is_object());
+  const json cluster_signature = base.cluster_signature;
+  const auto exact = Read("exact", WriteShiftedLibrary("exact", cluster_signature, {0.0}));
+  CHECK(exact.status == "Matched");
+  CHECK(exact.geometric_count == 0);
+  CHECK(exact.near_pairs.empty());
+  CHECK(exact.cluster_patch_rows > 0);
+  SECTION("5e-3 R on every offset: GeometricNearMatched, placed")
+  {
+    const auto near =
+        Read("near", WriteShiftedLibrary("near", cluster_signature, {5.0e-3}));
+    CHECK(near.status == "GeometricNearMatched");
+    CHECK(near.model == "cpw-four-edge-cluster+" + std::to_string(5.0e-3) + "R");
+    CHECK_THAT(near.deviation_over_R, WithinAbs(5.0e-3, 5.0e-6));
+    CHECK(near.geometric_count > 0);
+    CHECK(near.cluster_patch_rows == exact.cluster_patch_rows);
+  }
+  SECTION("1.1e-2 R: Missing")
+  {
+    const auto far = Read("far", WriteShiftedLibrary("far", cluster_signature, {1.1e-2}));
+    CHECK(far.status == "Missing");
+    CHECK(far.geometric_count == 0);
+    CHECK(far.cluster_patch_rows == 0);
+  }
+  SECTION("Exact precedence and the library's in-band pair listed")
+  {
+    const auto both =
+        Read("both", WriteShiftedLibrary("both", cluster_signature, {5.0e-3, 0.0}));
+    CHECK(both.status == "Matched");
+    CHECK(both.model == "cpw-four-edge-cluster+" + std::to_string(0.0) + "R");
+    CHECK(both.geometric_count == 0);
+    REQUIRE(both.near_pairs.size() == 1);
+    CHECK(both.near_pairs[0]["Class"] == "ParallelEdgeCluster");
+    CHECK_THAT(both.near_pairs[0]["MaxOffsetDeviationOverR"].get<double>(),
+               WithinAbs(5.0e-3, 5.0e-6));
+  }
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator knife-edge census flag",
+                 "[surfaceresponseoperator][3d][features][census][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // 9 (i) (DESIGN section 9 (b) (i); decision 1081): the preflight writes the knife-edge
+  // census by default (Identification.KnifeEdgeCensus an object); the config's
+  // ResponseCorrection.KnifeEdgeCensus overrides it (false: null; true: the object). A
+  // solve run (no requirements manifest) reads OFF by default: the census is a preflight
+  // diagnostic, verified byte-identical on the chain's Maxwell / transmon records.
+  auto Census = [&](const std::string &tag, std::optional<bool> flag)
+  {
+    json config = Cpw3dLegacyConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["Library"] = parallel_cluster_library_3d_path.string();
+    if (flag)
+    {
+      correction["KnifeEdgeCensus"] = *flag;
+    }
+    for (auto &interface : config["Boundaries"]["Postprocessing"]["Dielectric"])
+    {
+      interface["EdgeDistances"] = {0.2, 2.0, 11.0};
+    }
+    IoData iodata(config, false);
+    auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+    Mesh device(std::move(mesh));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-census-" + tag + ".json");
+    WriteSurfaceResponseRequirements(iodata, device, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    REQUIRE(manifest["Identification"].contains("KnifeEdgeCensus"));
+    return manifest["Identification"]["KnifeEdgeCensus"];
+  };
+  const json by_default = Census("default", std::nullopt);
+  CHECK(by_default.is_object());
+  CHECK(by_default.contains("ClusterComposition"));
+  CHECK(Census("off", false).is_null());
+  CHECK(Census("on", true).is_object());
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator unpatched pair",
+                 "[surfaceresponseoperator][3d][features][unpatchedpair][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // UnpatchedPair (identification fix round DESIGN section 4 I-5 as ruled by decision 1075
+  // Q3): a matched translational pair whose two sides do not face each other at the
+  // signature's separation (the placement's PairPatchSeparationTolerance test) is recorded
+  // (Features[].Match.Status Unpatched + Reason; Diagnostics.UnpatchedPairs;
+  // Summary.UnpatchedPairs), never patched, never dropped silently. The reproducer of the
+  // mechanism (OI-PAIR-SEPARATION-MISMATCH; CTX-002 t6_2 feature 18): MakeTaperStripMesh —
+  // the pair link's single mean separation keys the narrow 2-edge part of the taper, whose
+  // sides lie > 10 % below it. Pass 1 (the 0.25 strip library): the taper pair is Missing
+  // and its key is read; pass 2 (a Signature-keyed model at that key): matched, then
+  // refused by the placement and recorded.
+  constexpr double R = 0.2;
+  constexpr double taper = 0.08;
+  auto Preflight = [&](const std::string &tag, const fs::path &library_path)
+  {
+    json config = IslandConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeAttributes"] = {
+        1, 2, 3, 4, 5, 6};
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    Mesh mesh(MakeTaperStripMesh(taper));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-unpatched-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    json manifest = json::parse(input);
+    int strip_patch_rows = 0;
+    {
+      std::ifstream patches(patches_path);
+      REQUIRE(patches);
+      std::string line;
+      std::getline(patches, line);
+      while (std::getline(patches, line))
+      {
+        strip_patch_rows += line.find("same-conductor-strip") != std::string::npos;
+      }
+    }
+    manifest["_StripPatchRows"] = strip_patch_rows;
+    return manifest;
+  };
+  // Pass 1: the taper strip against the 0.25 strip library.
+  const json first = Preflight("missing", strip_library_3d_path);
+  std::optional<double> separation_over_R;
+  json taper_signature;
+  int taper_strips = 0;
+  for (const auto &feature : first["Identification"]["Features"])
+  {
+    if (feature["Type"] != "SameConductorStrip")
+    {
+      continue;
+    }
+    const double s = feature["Signature"]["SeparationOverR"].get<double>();
+    if (s > 1.3)  // the taper's mean key (an exact 1.25 R strip would read 1.25)
+    {
+      taper_strips++;
+      separation_over_R = s;
+      taper_signature = feature["Signature"];
+      CHECK(feature["Match"]["Status"] == "Missing");
+    }
+  }
+  for (const auto &feature : first["Identification"]["Features"])
+  {
+    UNSCOPED_INFO("feature " << feature["Id"] << " " << feature["Type"] << " length "
+                             << feature["Length"] << " separation "
+                             << feature["Signature"].value("SeparationOverR", -1.0)
+                             << " edges "
+                             << (feature["Signature"].contains("Edges")
+                                     ? feature["Signature"]["Edges"].size()
+                                     : 0));
+  }
+  REQUIRE(separation_over_R.has_value());
+  INFO("taper strip key SeparationOverR " << *separation_over_R);
+  // The link's mean over the whole taper (1.25 -> 1.65 R: ~1.45 R), not the 2-edge part's.
+  CHECK(*separation_over_R > 1.35);
+  CHECK(*separation_over_R < 1.55);
+  CHECK_FALSE(first["Identification"]["Diagnostics"].contains("UnpatchedPairs"));
+  CHECK_FALSE(first["Summary"].contains("UnpatchedPairs"));
+  // Pass 2: a Signature-keyed strip model at the taper's key (its own signature).
+  const fs::path taper_library_path =
+      temp.temp_dir / "fabrication-process-strip-taper.json";
+  WriteSignatureStripLibrary(taper_library_path, "unit-test-process-strip-taper", R,
+                             {{"same-conductor-strip-taper-mean", taper_signature}},
+                             fabricated_path, thin_path, points_path);
+  const json second = Preflight("recorded", taper_library_path);
+  int unpatched_features = 0;
+  for (const auto &feature : second["Identification"]["Features"])
+  {
+    if (feature["Type"] != "SameConductorStrip" ||
+        feature["Signature"]["SeparationOverR"].get<double>() <= 1.3)
+    {
+      continue;
+    }
+    CHECK(feature["Match"]["Status"] == "Unpatched");
+    CHECK(feature["Match"]["Model"] == "same-conductor-strip-taper-mean");
+    CHECK_THAT(feature["Match"]["Reason"].get<std::string>(),
+               Catch::Matchers::ContainsSubstring("UnpatchedPair"));
+    unpatched_features++;
+  }
+  CHECK(unpatched_features == taper_strips);
+  REQUIRE(second["Identification"]["Diagnostics"].contains("UnpatchedPairs"));
+  const auto &record = second["Identification"]["Diagnostics"]["UnpatchedPairs"];
+  CHECK(record["Count"].get<int>() == taper_strips);
+  CHECK(record["Length"].get<double>() > 0.0);
+  for (const auto &entry : record["Features"])
+  {
+    CHECK(entry["Type"] == "SameConductorStrip");
+    CHECK_THAT(entry["SeparationOverR"].get<double>(),
+               WithinAbs(*separation_over_R, 1.0e-9));
+    // The sampled side-to-side mean reads the 2-edge part's own geometry (1.25 -> ~1.44
+    // R), below the key; the narrow end deviates from the key by > the 10 % tolerance.
+    CHECK(entry["GeometricSeparationOverR"].get<double>() < *separation_over_R);
+    CHECK(entry["GeometricSeparationOverR"].get<double>() > 1.2);
+    CHECK(entry["MaxDeviationRelative"].get<double>() > 0.10);
+  }
+  CHECK(second["Summary"]["UnpatchedPairs"]["Count"].get<int>() == taper_strips);
+  CHECK_THAT(second["Summary"]["UnpatchedPairs"]["Length"].get<double>(),
+             WithinAbs(record["Length"].get<double>(), 1.0e-12));
+  CHECK(second["_StripPatchRows"].get<int>() == 0);
+  // OI-TAPER-MEAN-KEY (decision 1078, record-only): the taper pair and the 3-edge cluster
+  // composed from the taper link are recorded as keyed at the mean, in both passes.
+  for (const json *manifest : {&first, &second})
+  {
+    REQUIRE((*manifest)["Identification"]["Diagnostics"].contains("TaperMeanKeys"));
+    const auto &keys = (*manifest)["Identification"]["Diagnostics"]["TaperMeanKeys"];
+    CHECK(keys["Count"].get<int>() >= 1);
+    CHECK(keys["Length"].get<double>() > 0.0);
+    CHECK((*manifest)["Summary"]["TaperMeanKeys"]["Count"] == keys["Count"]);
+    bool strip_keyed = false;
+    for (const auto &feature : (*manifest)["Identification"]["Features"])
+    {
+      if (feature["Type"] == "SameConductorStrip" &&
+          feature["Signature"]["SeparationOverR"].get<double>() > 1.3)
+      {
+        strip_keyed = feature.contains("TaperMeanKey");
+        if (strip_keyed)
+        {
+          const auto &link = feature["TaperMeanKey"]["Links"][0];
+          CHECK(link["MinOverR"].get<double>() < 1.3);
+          CHECK(link["MaxOverR"].get<double>() > 1.55);
+          CHECK_THAT(link["MeanOverR"].get<double>(),
+                     WithinAbs(*separation_over_R, 2.0e-3));
+        }
+      }
+    }
+    CHECK(strip_keyed);
+  }
 #endif
 }
 
@@ -9265,7 +10009,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 20);
+    CHECK(stale["Version"] == 21);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
@@ -9287,7 +10031,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(thirteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 13") &&
-                          Catch::Matchers::ContainsSubstring("version 20"));
+                          Catch::Matchers::ContainsSubstring("version 21"));
     // Two version-14 caches existed before the fillet merge (decision 552 (3), the 527
     // rule): main's (the decision-537 own-cell pre-image WITHOUT the corner-arm extension
     // records) and the fillet lane's (the extension records WITHOUT the own-cell
@@ -9314,7 +10058,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fourteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 14") &&
-                            Catch::Matchers::ContainsSubstring("version 20"));
+                            Catch::Matchers::ContainsSubstring("version 21"));
     }
     // Two version-15 caches existed before the foreign-context merge (decision 559 (3), the
     // 527 rule): main's (the stacks + fillet additions of decision 552 (3) WITHOUT the
@@ -9342,7 +10086,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fifteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 15") &&
-                            Catch::Matchers::ContainsSubstring("version 20"));
+                            Catch::Matchers::ContainsSubstring("version 21"));
     }
     // A version-16 cache (main before the mirror-formed contract merge: no
     // MirrorFormedTopology / MirrorReach / MirrorEdgeWeights on the patches, decision 557
@@ -9362,7 +10106,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(sixteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 16") &&
-                          Catch::Matchers::ContainsSubstring("version 20"));
+                          Catch::Matchers::ContainsSubstring("version 21"));
     // A version-17 cache (main before the probe-snap lane: no ProbeSnaps on the patches,
     // decision 611 (2)) is refused by the version message, never misread for its missing
     // records.
@@ -9379,7 +10123,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 17") &&
-                          Catch::Matchers::ContainsSubstring("version 20"));
+                          Catch::Matchers::ContainsSubstring("version 21"));
     // A version-18 cache (main before decision 774: the same schema as version 19, but a
     // mirror-formed coupon's image-side probes recorded un-snapped) is refused by the
     // version message (decision 781; the 527 rule), never read for its stale ProbeSnaps.
@@ -9392,7 +10136,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 18") &&
-                          Catch::Matchers::ContainsSubstring("version 20"));
+                          Catch::Matchers::ContainsSubstring("version 21"));
     // A version-19 cache (main before the T5 excluded-corner containment rule: the same
     // schema, but written by a binary that places the UNGROWN model of a cluster the T5
     // binary grows once a library carries the grown model) is refused by the version
@@ -9407,7 +10151,23 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(nineteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 19") &&
-                          Catch::Matchers::ContainsSubstring("version 20"));
+                          Catch::Matchers::ContainsSubstring("version 21"));
+    // A version-20 cache (main before the idfix identification round: the same schema, but
+    // written by a binary that places two corner patches where the oriented SAT
+    // vertex-vertex rule forms one RAW cluster, and no patch where a near-matched model is
+    // placed) is refused by the version message (decision 1087; the 527 / 781 merge-order
+    // rule), never read for its stale placement.
+    nlohmann::json twenty = stale;
+    twenty["Version"] = 20;
+    const auto twenty_path = temp.temp_dir / "response-geometry-ownership-v20.json";
+    {
+      std::ofstream output(twenty_path);
+      output << twenty.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(twenty_path, data),
+                      Catch::Matchers::ContainsSubstring("cache version 20") &&
+                          Catch::Matchers::ContainsSubstring("version 21") &&
+                          Catch::Matchers::ContainsSubstring("separating-axis"));
   }
   SECTION("vertex ownership (rule B4): a corner patch on a chain piece end inside a "
           "contract-3 box is owned once; interior chain points, other planes, other boxes "

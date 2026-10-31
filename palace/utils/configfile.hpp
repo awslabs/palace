@@ -1426,6 +1426,11 @@ public:
       FAIL_CLOSED
     };
     std::optional<GeometryFailurePolicy> geometry_failure_policy = std::nullopt;
+    // The identification's knife-edge census (three extra identification passes at the band
+    // radii; Diagnostics.KnifeEdgeCensus): absent = on for --surface-response-preflight,
+    // off for a solve run (the solve reads the preflight's); set = as given (DESIGN section
+    // 9 (i) of the identification fix round). Diagnostic only.
+    std::optional<bool> knife_edge_census = std::nullopt;
 
     // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the
     // mirror-extended identification across the planar NATURAL vertical truncation planes

@@ -176,6 +176,12 @@ struct IdentificationInput
   // every ~10 s) so that a chip-scale identification can be monitored; unset = silent. Pure
   // diagnostics: nothing in the result depends on it.
   std::function<void(const std::string &)> log;
+  // The knife-edge census (Diagnostics.KnifeEdgeCensus: three extra identification passes
+  // at the band radii; a preflight diagnostic the solve reads from the preflight). DESIGN
+  // section 9 (i) (decision 1062): on by default for the preflight, off for a solve run,
+  // overridden by the config's ResponseCorrection.KnifeEdgeCensus. Diagnostic only: no
+  // feature, key or patch depends on it.
+  bool knife_edge_census = true;
 };
 
 struct IdentifiedPortion
@@ -237,6 +243,37 @@ struct IdentifiedFeature
   // quanta without an exact hash): {ModelKey, FeatureKey, MaxDeltaQuanta, DifferingNumbers,
   // Rule}. Manifest Features[].Match.QuantumNearMatch; the status stays Matched / Exact.
   nlohmann::json quantum_near_match;
+  // Near-match record of a translational feature (identification fix round DESIGN section
+  // 4, decision 1075 Q1; null unless a SameConductorStrip / SameConductorGap /
+  // DifferentConductorGap matched a model within max(SeparationTolerance,
+  // kGdsScatterOverRadius x R) without one within the signature tolerance):
+  // {Model, SeparationDeviationOverR, BandOverR, Rule}. Manifest Features[].Match.Status
+  // NearMatched + Match.NearMatch; the requirement record's Status NearMatched.
+  nlohmann::json near_match;
+  // TaperMeanKey record (OI-TAPER-MEAN-KEY, decision 1078; record-only; null unless a pair
+  // / stack feature's offsets came from a taper link: a chord group whose piece means span
+  // more than the pair tolerance, so the key is the link's mean separation, not a design
+  // cross-section): {Links[{ChainA, ChainB, MeanOverR, MinOverR, MaxOverR, RangeOverMean}],
+  // Rule} (the manifest adds the feature's final Length). Manifest Features[].TaperMeanKey;
+  // Diagnostics.TaperMeanKeys; Summary.TaperMeanKeys. The keying and the placement are
+  // unchanged.
+  nlohmann::json taper_mean_key;
+  // Geometric near-match record (F-B2, DESIGN section 5 / A.5 (b); decision 1079; null
+  // unless a Missing SpatialEdgeCluster or ParallelEdgeCluster key matched a model within
+  // the geometric bands without an exact / quantum / alias match): a cluster's {Model,
+  // ClaimsDeviationOverR, ClaimsAngleDegrees, ContextDeviationOverR, ContextGapCosine,
+  // ContextPermuted, Rule}; a parallel-edge cluster's {Model, MaxOffsetDeviationOverR,
+  // BandOverR, Rule}. Manifest Features[].Match.Status GeometricNearMatched +
+  // Match.GeometricNearMatch; the requirement record's Status GeometricNearMatched.
+  nlohmann::json geometric_near_match;
+  // I-1a / I-1b RECORD-ONLY (DESIGN sections 1 / 2, A.6; decision 1081; null unless a
+  // corner arm's run lies on a fitted arc): {Class (CornerWithArcArm / ArcArm /
+  // StraightLikeArm), Arms[2] in the frame's arm order ({ArmBendRadiusOverR,
+  // TangentShiftDegrees, ResidualOverR, StraightLike, FarVertexTurnDegrees, FarVertexJoint,
+  // BendSign} or null)}. Manifest Features[].CornerArmOnArc; Diagnostics.CornerArmOnArc;
+  // Summary.CornerArmOnArc. The key and the placement are the terminal chord's
+  // (OI-CORNER-ARM-CHORD, post-F).
+  nlohmann::json corner_arm_on_arc;
 
   // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
   // supervisor decision 282; null for every other feature): the claims-derived support box
@@ -374,6 +411,18 @@ struct IdentificationResult
     std::size_t isolated = 0;
   };
   SubTolerancePortions sub_tolerance_portions;
+  // I-4 RECORD-ONLY (identification fix round DESIGN section 4; decisions 1075 Q2 / 1077
+  // Q1 (B)): the isolated-edge-class remainder stretches (IsolatedEdge / CurvedEdge) of
+  // length in [the signature tolerance, kRemainderAbsorptionOverRadius x R), mesh units;
+  // recorded as Diagnostics.RemainderBelowBar where any exists, never joined.
+  struct RemainderBelowBar
+  {
+    int feature = -1;
+    std::string type;
+    int chain = -1;
+    double length = 0.0;
+  };
+  std::vector<RemainderBelowBar> remainder_below_bar;
   // Cluster extension (decision 85(2)): passes to closure, absorbed single-edge portions
   // and length, vertex features that became clusters; the pair / stack length within 2R of
   // a cluster's claimed perimeter (the stack-end third body, not absorbed), mesh units.
@@ -405,6 +454,16 @@ struct IdentificationResult
   // lies within a recorded band of every threshold of the rules (R, 2R, the 10R bend
   // radius, the 30 deg corner turn), in mesh units; serialised as JSON text.
   std::string knife_edge_census;
+  // RAW zone records of the identification fix round (decisions 1062 section 3 / 1065 /
+  // 1069): {UnclusterableComponents: {Count, Length, Cap, Components[{Chains, Length,
+  // Intervals}]}, TaperCrossings: {Count, Length, Treatment, Rule, Crossings[{Run, Chain,
+  // PartnerChain, Crossing, CrossingS, SeparationFarOverR, Interval, Length,
+  // RemainderLength, Treatment}]}} in mesh units, serialised as JSON text; empty when no
+  // zone fired (then no manifest leaf: the cases of record are bitwise). Manifest
+  // Identification.Diagnostics.{UnclusterableComponents, TaperCrossings}; the
+  // UnclusterableComponent zones are Exclusions of that class; the TaperCrossing stretches
+  // are recorded only (nothing withdrawn: Treatment ApproximatedByIsolatedEdge).
+  std::string raw_zone_records;
   // Spatial-support contract summary (decision 282): clusters keyed by the claims alone
   // (empty context, no growth), clusters keyed with Box + Context, clusters whose box grew
   // (T3), clusters no box satisfies the face rules (UnboxableFeature: a Missing
@@ -772,9 +831,9 @@ double SerializedPortionLengthOverR(const nlohmann::json &portion);
 // The handedness of a feature frame: +1 when Axes[2] = Axes[0] x Axes[1], -1 when Axes[2] =
 // -(Axes[0] x Axes[1]) (the canonical cluster frame is {x, y, n} with n the process normal
 // for both handedness values). Equal to IdentifiedFeature::chirality for a chiral key; a
-// mirror-symmetric key (chirality 0: both handedness values reach the minimal serialisation)
-// records the first minimal frame, whose handedness this reads (the mirror-formed contract's
-// Frame.Chirality, CONTRACT.md v3).
+// mirror-symmetric key (chirality 0: both handedness values reach the minimal
+// serialisation) records the first minimal frame, whose handedness this reads (the
+// mirror-formed contract's Frame.Chirality, CONTRACT.md v3).
 int FrameHandedness(const std::array<std::array<double, 3>, 3> &axes);
 
 // The manifest form of a feature frame, exactly as Features[].Frame is written: Origin in
@@ -800,6 +859,22 @@ nlohmann::json FrameToJson(const std::array<double, 3> &origin,
 // angles come from straight arm directions and are exact).
 constexpr double kSignatureParameterToleranceOverRadius = 1.0e-3;
 constexpr double kSignatureAngleToleranceDegrees = 1.0e-2;
+// The GDS scatter band (identification fix round DESIGN section 4, decisions 1062 / 1075):
+// the corpus's database unit / fracturing grid is 1-5 nm, so a strip or gap width read on
+// one design scatters by several nm around its drawn value (CTX-002 t6_2: two 2.95-um
+// strips 6.6 nm apart). (i) A translational feature (SameConductorStrip / SameConductorGap
+// / DifferentConductorGap) with no model within the signature tolerance matches the
+// nearest model of its topology whose separation lies within max(the model's
+// SeparationTolerance, kGdsScatterOverRadius x R): status NearMatched, the deviation
+// recorded (Exact keeps precedence; a match-time rule: keys and hashes unchanged). (ii) An
+// isolated-edge-class remainder (IsolatedEdge / CurvedEdge stretch) shorter than
+// kRemainderAbsorptionOverRadius x R is absorbed into its neighbouring claim by the sliver
+// rule (decision 222) where every other stretch keeps the signature tolerance; remainders
+// between this bar and R stay features. (Decision 1077 Q1 (B): this round the remainders
+// below the bar are RECORDED only — Diagnostics.RemainderBelowBar — and nothing is
+// absorbed; kRemainderAbsorptionOverRadius is the record's bar.)
+constexpr double kGdsScatterOverRadius = 5.0e-3;
+constexpr double kRemainderAbsorptionOverRadius = kGdsScatterOverRadius;
 // Arc rule (USER decisions 117(4) and 121 / 122, 2026-09-28 — the CONCYCLICITY form): a run
 // of at least three consecutive joints of the perimeter path turning the same way (at most
 // 180 deg in total) is ONE arc iff its vertices lie on one circle within
@@ -819,6 +894,10 @@ constexpr double kSignatureAngleToleranceDegrees = 1.0e-2;
 // Conventions.ArcFitToleranceOverR / ArcMaxJointTurnDegrees / SagittaOverR.
 constexpr double kArcFitToleranceOverRadius = kSignatureParameterToleranceOverRadius;
 constexpr double kArcMaxJointTurnDegrees = 50.0;
+// The CornerArmOnArc record's joint reading (decision 1081): an arm's far vertex turning
+// less than this is a joint of the chorded arc, else a polygon corner (the coarse-polygon
+// arcs the fitter accepts up to kArcMaxJointTurnDegrees); the legacy corner turn class.
+constexpr double kCornerArmOnArcJointTurnDegrees = 30.0;
 constexpr double kArcSagittaOverRadius = kJointNoiseSagittaOverRadius;
 
 struct SignatureParameters
@@ -904,6 +983,38 @@ struct ClusterContextAgreement
 };
 ClusterContextAgreement CompareClusterContexts(const nlohmann::json &model_context,
                                                const nlohmann::json &feature_context);
+
+// F-B2 (identification fix round DESIGN section 5 / A.4 / A.5 (b); decisions 1059 / 1079):
+// the GEOMETRIC near-match of a Missing SpatialEdgeCluster key to a library model, a
+// match-time rule (hash-time canonicalisation unchanged). The claims-only signatures (the
+// signature without Context: Portions, Box, Vertices, EdgeCount, labels) share one topology
+// key and their numbers agree within kGeometricNearMatchClaimsOverRadius (arc centres by
+// the radial deviation, gap directions by the cosine, angles by
+// kGeometricNearMatchAngleDegrees); the Contexts agree as SETS: equal entry counts per type
+// ({Chain, Conductor, GapRadial, Interfaces, Law, straight / Arc}) and a one-to-one
+// assignment of minimum total deviation whose every pair lies within
+// kGeometricNearMatchContextOverRadius (gap cosines within kGeometricNearMatchGapCosine);
+// Permuted = that assignment is not the identity. Exact keeps precedence; among several
+// models the smallest claims deviation. Basis (A.4 (b) / (c)): on the in-library pairs of
+// v3-j inside the band the within-R correction differs by <= 0.85 % (clusters) / 0.99 %
+// (clusters of parallel edges) per interface Type against the 2 % bar; the quantum
+// near-match (4 quanta) stays the float-noise absorber underneath.
+constexpr double kGeometricNearMatchClaimsOverRadius = 1.0e-2;
+constexpr double kGeometricNearMatchContextOverRadius = 1.0e-1;
+constexpr double kGeometricNearMatchAngleDegrees = 0.1;
+constexpr double kGeometricNearMatchGapCosine = 2.0e-2;
+struct ClusterGeometricNearMatch
+{
+  bool in_band = false;  // false: another topology / counts, or a number beyond the band
+  double claims_deviation_over_R = 0.0;   // the largest claims-side length deviation
+  double claims_gap_cosine = 0.0;         // the largest claims-side gap cosine deviation
+  double claims_angle_degrees = 0.0;      // the largest claims-side angle deviation
+  double context_deviation_over_R = 0.0;  // the largest assigned context length deviation
+  double context_gap_cosine = 0.0;        // the largest assigned context gap cosine
+  bool context_permuted = false;
+};
+ClusterGeometricNearMatch ClusterGeometricNearDifference(const nlohmann::json &feature,
+                                                         const nlohmann::json &model);
 
 // The Match.QuantumNearMatch record of a feature matched to a model within the quantum
 // near-match (null for an exact-hash match): {ModelKey, FeatureKey, MaxDeltaQuanta,
