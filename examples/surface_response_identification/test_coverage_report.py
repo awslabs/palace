@@ -707,6 +707,40 @@ def _strip_json_comments(text):
     return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
 
 
+class TestNearMatchedStatusRows(unittest.TestCase):
+    """DESIGN sections 4 / 5 (decisions 1075 Q1 / 1079 / 1096 (2)): NearMatched and GeometricNearMatched requirements
+    are CORRECTED rows of their own in the LENGTH partition, never Missing and never folded into Exact."""
+
+    def test_length_partition_rows(self):
+        reqs = [
+            {"Hash": "1" * 64, "Topology": "IsolatedEdge", "Status": "Exact", "TotalEdgeLength": 100.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "isolated-edge"}]},
+            {"Hash": "2" * 64, "Topology": "SameConductorStrip", "Status": "NearMatched", "TotalEdgeLength": 10.0,
+             "Signature": {}, "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "same-conductor-strip-2.91785um"}]},
+            {"Hash": "3" * 64, "Topology": "ParallelEdgeCluster", "Status": "GeometricNearMatched", "TotalEdgeLength": 30.0,
+             "Signature": {}, "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "parallel-edge-cluster-af972e5a4a5d"}]},
+            {"Hash": "4" * 64, "Topology": "CurvedEdge", "Status": "Missing", "TotalEdgeLength": 60.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": []}]
+        manifest = {"Requirements": reqs, "Summary": {"Counts": {"Exact": 1, "NearMatched": 1, "GeometricNearMatched": 1, "Missing": 1}},
+                    "Identification": {"Totals": {"AssignedLength": 200.0}, "Exclusions": [], "Diagnostics": {}}}
+        tmp = tempfile.mkdtemp(prefix="cov-nearmatched-")
+        try:
+            mpath = os.path.join(tmp, "surface-response-requirements.json")
+            _dump(manifest, mpath)
+            loaded = cr.load_manifest(mpath)
+            L = cr.length_partition(loaded, ["SA"])["types"]["SA"]
+            self.assertAlmostEqual(L["models_share"]["Exact"], 0.5)
+            self.assertAlmostEqual(L["models_share"]["NearMatched"], 0.05)
+            self.assertAlmostEqual(L["models_share"]["GeometricNearMatched"], 0.15)
+            self.assertAlmostEqual(L["raw_share"]["Missing"], 0.3)
+            self.assertAlmostEqual(L["raw_share_total"], 0.3)
+            self.assertEqual(loaded["models"]["same-conductor-strip-2.91785um"]["Status"], "NearMatched")
+            self.assertIn("NearMatched", cr.MODEL_STATUSES)
+            self.assertIn("GeometricNearMatched", cr.MODEL_STATUSES)
+        finally:
+            shutil.rmtree(tmp)
+
+
 class TestBandFileLocation(unittest.TestCase):
     """OI-SCHEMA-TEST-COVERAGE-BANDS (decision 1065): test-schema's "Example Configs" case parses EVERY *.json
     directly under examples/<dir>/ as a Palace config, so the committed band files live in data/ (the default

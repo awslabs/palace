@@ -32,10 +32,15 @@ import re
 import sys
 
 TYPES = ("SA", "MS", "MA")
-MODEL_STATUSES = ("Exact", "Interpolated", "QuantumNearMatched")
+# The corrected-model statuses, each its own row: NearMatched (the GDS scatter band of the translational
+# pairs) and GeometricNearMatched (the geometric band of the cluster keys) are CORRECTED by a near model,
+# never Missing, and are counted apart from Exact (identification fix round DESIGN sections 4 / 5; decisions
+# 1075 Q1 / 1079 / 1096 (2)).
+MODEL_STATUSES = ("Exact", "Interpolated", "QuantumNearMatched", "NearMatched", "GeometricNearMatched")
 # The manifest counts LegacyContract requirements as corrected by exact-contract models.
 STATUS_ROW = {"Exact": "Exact", "LegacyContract": "Exact", "Interpolated": "Interpolated",
-              "QuantumNearMatched": "QuantumNearMatched"}
+              "QuantumNearMatched": "QuantumNearMatched", "NearMatched": "NearMatched",
+              "GeometricNearMatched": "GeometricNearMatched"}
 RAW_ROWS = ("Missing", "SCP", "DomainBoundary", "ConductorConsistency", "GeometryFallbacks",
             "LoopRemainder", "Unclaimed")
 FALLBACK_CLASSES = ("OverlapExcluded", "UnlocatedPatch", "InterfaceMappingConflict", "KeyMismatch",
