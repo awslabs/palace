@@ -741,6 +741,91 @@ class TestNearMatchedStatusRows(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+class TestFixRoundRecordRows(unittest.TestCase):
+    """The identification fix round's record classes in the report (decision 1096 (4)): the RAW rows UnpatchedPairs (the
+    feature's length leaves its requirement's corrected row; 1077 Q3) and UnclusterableComponent (joins the total), the NAMED
+    rows (TaperCrossings / TaperMeanKeys / PlacedLocalDeviation / CornerArmOnArc / RemainderBelowBar), the exclusion-energy
+    export's Excluded:* energy rows, the ConductorConsistency summary and the GeometricNearPairs join."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cov-fixround-")
+        reqs = [
+            {"Hash": "a" * 64, "Topology": "IsolatedEdge", "Status": "Exact", "TotalEdgeLength": 100.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "isolated-edge"}]},
+            {"Hash": "b" * 64, "Topology": "SameConductorGap", "Status": "Exact", "TotalEdgeLength": 20.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "same-conductor-gap-2um"}]}]
+        manifest = {"Requirements": reqs, "Summary": {"Counts": {"Exact": 2}, "UnpatchedPairs": {"Count": 1, "Length": 8.0},
+                                                      "TaperCrossings": {"Count": 3, "Length": 1.5, "Treatment": "ApproximatedByIsolatedEdge"},
+                                                      "TaperMeanKeys": {"Count": 1, "Length": 20.0, "Treatment": "KeyedAtTheMean"},
+                                                      "PlacedLocalDeviation": {"Count": 1, "Length": 6.0}, "CornerArmOnArc": {"Count": 2, "Length": 4.0}},
+                    "Library": {"GeometricNearPairs": [{"Class": "ParallelEdgeCluster", "ModelA": "pec-A", "ModelB": "pec-B", "MaxOffsetDeviationOverR": 0.003}]},
+                    "Identification": {"Totals": {"AssignedLength": 120.0},
+                                       "Exclusions": [{"Class": "TruncationCut", "Count": 2, "Length": 30.0}, {"Class": "UnclusterableComponent", "Count": 5, "Length": 80.0}],
+                                       "Features": [{"Id": 7, "Hash": "b" * 64, "Type": "SameConductorGap", "Length": 8.0, "Match": {"Status": "Unpatched"}}],
+                                       "Diagnostics": {"UnpatchedPairs": {"Count": 1, "Length": 8.0, "Features": [{"Id": 7, "Type": "SameConductorGap", "Length": 8.0}]},
+                                                       "RemainderBelowBar": {"Count": 2, "Length": 0.01}}}}
+        self.mpath = os.path.join(self.tmp, "surface-response-requirements.json")
+        _dump(manifest, self.mpath)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_length_rows(self):
+        L = cr.length_partition(cr.load_manifest(self.mpath), ["SA"])
+        t = L["types"]["SA"]
+        self.assertAlmostEqual(t["total"], 200.0)                 # 120 assigned + 80 UnclusterableComponent
+        self.assertAlmostEqual(t["models"]["Exact"], 112.0)        # 120 - the 8 um unpatched
+        self.assertAlmostEqual(t["raw"]["UnpatchedPairs"], 8.0)
+        self.assertAlmostEqual(t["raw"]["UnclusterableComponent"], 80.0)
+        self.assertAlmostEqual(t["raw_share_total"], 88.0 / 200.0)
+        self.assertEqual(sorted(t["named"]), ["CornerArmOnArc", "PlacedLocalDeviation", "RemainderBelowBar", "TaperCrossings", "TaperMeanKeys"])
+        self.assertAlmostEqual(t["named"]["TaperMeanKeys"]["Share"], 0.1)
+        self.assertEqual(t["named"]["TaperCrossings"]["Treatment"], "ApproximatedByIsolatedEdge")
+        self.assertEqual(L["unpatched_pairs"][0]["Status"], "Exact")
+        self.assertEqual(L["identification_raw_exclusions"], {"UnclusterableComponent": 80.0})
+        self.assertEqual(len(L["geometric_near_pairs"]), 1)
+
+    def test_exclusion_energy_export_rows(self):
+        post = os.path.join(self.tmp, "postpro")
+        os.makedirs(post)
+        with open(os.path.join(post, "surface-response-exclusion-energy.csv"), "w") as f:
+            f.write("source,class,type,class portions,class length (m),raw energy (J),interface raw energy (J),share\n")
+            f.write("1,Claimed,SA,0,0,9e-17,1e-16,0.9\n1,NonManifold,SA,4,1e-5,6e-18,1e-16,0.06\n")
+            f.write("1,Unclaimed-other,SA,2,2e-6,4e-18,1e-16,0.04\n1,Total,SA,6,1.2e-5,1e-17,1e-16,0.1\n")
+            f.write("2,NonManifold,SA,4,1e-5,7e-18,1e-16,0.07\n")   # a second source block: not read
+        rows = cr.exclusion_energy_rows(post)
+        self.assertTrue(rows["present"])
+        self.assertEqual(sorted(rows["classes"]), ["NonManifold", "Unclaimed-other"])
+        self.assertAlmostEqual(rows["classes"]["NonManifold"]["SA"], 6e-18)
+        self.assertAlmostEqual(rows["claimed"]["SA"], 9e-17)
+        raw_rows, locations = cr.raw_class_energies(post, {1: {"Type": "SA"}}, [1], "ES")
+        self.assertAlmostEqual(raw_rows["Excluded:NonManifold"]["SA"], 6e-18)
+        self.assertEqual(locations["Excluded:NonManifold"][0]["portions"], 4.0)
+        self.assertFalse(cr.exclusion_energy_rows(self.tmp)["present"])
+
+    def test_conductor_summary_and_near_pairs_join(self):
+        palace = {"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {
+            "Count": 1, "TestedPatches": 5, "UnprobedModels": ["m-x"],
+            "Records": [{"FloorApplied": True, "SelfConsistentPreGate": True, "Maxwell": True}, {"FloorApplied": False}]}}}}
+        cc = cr.conductor_consistency_summary(palace)
+        self.assertEqual((cc["excluded"], cc["tested"], cc["floor_applied"], cc["pre_gate_records"], cc["unprobed_models"]), (1, 5, 1, 1, ["m-x"]))
+        palace["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"]["FloorAppliedPatches"] = 3
+        self.assertEqual(cr.conductor_consistency_summary(palace)["floor_applied"], 3)   # the leaf wins over the records
+        self.assertFalse(cr.conductor_consistency_summary({})["present"])
+        pairs = cr.near_pairs_rows([{"ModelA": "pec-A", "ModelB": "pec-B", "Class": "ParallelEdgeCluster"}],
+                                   {"Pairs": [{"ModelA": "pec-B", "ModelB": "pec-A", "CorrectionDifference": {"SA": {"Max": 0.03}}, "MaxOverTypes": 0.03, "Flagged": True}]})
+        self.assertTrue(pairs[0]["Flagged"])
+        self.assertAlmostEqual(pairs[0]["MaxOverTypes"], 0.03)
+        rows = cr.named_residuals("ES", {"types": {"SA": {}}}, {"types": {}}, {}, {}, None, True, {}, cc, pairs)
+        by_key = {r["term"]: r for r in rows}
+        self.assertTrue(by_key["SelfConsistentPreGate (the eigen conductor-consistency gate before the energies)"]["fired"])
+        self.assertTrue(by_key["FloorAppliedPatches (the conductor-consistency floor)"]["fired"])
+        self.assertTrue(by_key["UnprobedModels / ConductorConsistency exclusions"]["fired"])
+        near = by_key["GeometricNearPairs (the library's in-band model pairs)"]
+        self.assertTrue(near["fired"])
+        self.assertIn("FLAGGED 1", near["detail"])
+
+
 class TestBandFileLocation(unittest.TestCase):
     """OI-SCHEMA-TEST-COVERAGE-BANDS (decision 1065): test-schema's "Example Configs" case parses EVERY *.json
     directly under examples/<dir>/ as a Palace config, so the committed band files live in data/ (the default

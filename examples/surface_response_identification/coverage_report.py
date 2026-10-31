@@ -15,7 +15,7 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
      loop remainder, the UNCLAIMED remainder as its own row: OI-COVERAGE-EXCLUSION-ENERGY),
      in ENERGY (the PatchEnergy raw partition; a PROXY by length when absent) and in LENGTH.
   B  the NAMED RESIDUAL TABLE: the terms the band does not calibrate, with their bounds of record.
-  C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v2.json, written by
+  C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v3.json, written by
      coverage_calibration.py) and ONE label HIGH / MEDIUM / LOW with its reasons.
   D  QUOTABILITY: the AMR ladder (ft per Type and its steps), the DEPTH rule, the closure spread.
 
@@ -44,7 +44,27 @@ STATUS_ROW = {"Exact": "Exact", "LegacyContract": "Exact", "Interpolated": "Inte
 RAW_ROWS = ("Missing", "SCP", "DomainBoundary", "ConductorConsistency", "GeometryFallbacks",
             "LoopRemainder", "Unclaimed")
 FALLBACK_CLASSES = ("OverlapExcluded", "UnlocatedPatch", "InterfaceMappingConflict", "KeyMismatch",
-                    "NoMatchedFeature", "AllPatchesOutside", "NoPerimeter", "ContinuationUnresolved")
+                    "NoMatchedFeature", "AllPatchesOutside", "NoPerimeter", "ContinuationUnresolved",
+                    "ReferenceInGap", "MaxwellPatchExcluded", "BranchingPerimeter", "UnorientedEdge", "DegenerateFace",
+                    "DuplicateBoundary")
+# The identification fix round's record classes (decisions 1065 / 1069 / 1075 / 1077 / 1078 / 1081 / 1084 / 1085; 1096 (4)),
+# each a NAMED row of the report, read from the manifest:
+#  - RAW rows (uncorrected length): UnclusterableComponent / BranchingPerimeter (Identification.Exclusions classes the
+#    identification decides on physical targeted perimeter: the length joins the partition's total), UnpatchedPairs
+#    (Summary.UnpatchedPairs: matched pairs the placement refused; their length leaves the corrected rows by the feature's
+#    requirement Status: C1's 52.3 um Exact-never-placed, decision 1077 Q3);
+#  - NAMED residual rows (corrected length whose correction is an approximation, listed with its treatment): TaperCrossings
+#    (ApproximatedByIsolatedEdge, 1069), TaperMeanKeys (KeyedAtTheMean, 1078) + PlacedLocalDeviation (placed length whose
+#    local cross-section deviates > 10 %, 1078), CornerArmOnArc (the arm direction read on the chord, 1081), RemainderBelowBar
+#    (sub-bar remainders left as features, 1077 Q1 (B)).
+IDENTIFICATION_RAW_EXCLUSION_CLASSES = ("UnclusterableComponent", "BranchingPerimeter")
+NAMED_RECORD_ROWS = (
+    ("TaperCrossings", "Summary", "the monotone sub-2R stretch at a taper's 2R crossing stays claimed by the isolated-edge model (ApproximatedByIsolatedEdge; decision 1069)"),
+    ("TaperMeanKeys", "Summary", "features composed from a chord-group link whose separation range exceeds the 5 % pair tolerance are keyed at the link's MEAN cross-section (KeyedAtTheMean; OI-TAPER-MEAN-KEY, decision 1078)"),
+    ("PlacedLocalDeviation", "Summary", "placed PEC / pair / strip length whose local side separation deviates > 10 % from the keyed offset (decision 1078)"),
+    ("CornerArmOnArc", "Summary", "corners whose arm lies on a fitted arc keep the terminal chord's direction (record only; OI-CORNER-ARM-CHORD, decision 1081)"),
+    ("RemainderBelowBar", "Diagnostics", "isolated-edge remainders shorter than RemainderAbsorptionOverR x R left as features (record only; decision 1077 Q1 (B))"),
+)
 # DESIGN section 4: the class of a model = its requirement Topology, SpatialEdgeCluster split by
 # EdgeCount band (the PLAN A.1.3 cost classes S / M / L use the same cuts); the jjsa key named.
 SEC_BANDS = ((2, 3, "SpatialEdgeCluster-2-3"), (4, 8, "SpatialEdgeCluster-4-8"),
@@ -68,7 +88,9 @@ ENERGY_BOOKKEEPING_REL_TOL = 1e-9
 LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # The committed band files live in data/ (OI-SCHEMA-TEST-COVERAGE-BANDS, decision 1065: a non-config JSON at the
 # examples/<dir>/ level is read by test-schema's "Example Configs" case as a Palace config).
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v2.json")
+# v3 (idfix lane C, decision 1096 (4)): the re-fit on records-v3 (the new-binary manifests); every fitted number equals v2's (the
+# new records change the LENGTH partition and the named rows, not the ENERGY-mode raw shares / class levers the fit reads).
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v3.json")
 
 
 class MissingInput(Exception):
@@ -368,9 +390,41 @@ def length_partition(loaded, types, discovery=None):
             elif status == "DomainBoundary":
                 out[t]["raw"]["DomainBoundary"] = out[t]["raw"].get("DomainBoundary", 0.0) + length
     summary = manifest.get("Summary", {})
+    identification = manifest.get("Identification", {}) or {}
+    diagnostics = identification.get("Diagnostics", {}) or {}
     scp_outside = float((summary.get("SpatialClusterPriority") or {}).get("OutsideLength") or 0.0)
     db_raw = float((summary.get("DomainBoundary") or {}).get("RawPortionLength") or 0.0)
-    fallbacks = (manifest.get("Identification", {}).get("Diagnostics", {}) or {}).get("GeometryFallbacks") or {}
+    fallbacks = diagnostics.get("GeometryFallbacks") or {}
+    # UnpatchedPairs (decisions 1075 Q3 / 1077 Q3): the refused features' length leaves the corrected row of their
+    # requirement (by the feature's Hash -> Status / class) and becomes the RAW row UnpatchedPairs.
+    status_by_hash = {(r.get("Hash") or ""): (r.get("Status"), requirement_class(r), requirement_types(r, types))
+                      for r in manifest.get("Requirements", [])}
+    unpatched = (diagnostics.get("UnpatchedPairs") or {}).get("Features") or []
+    feature_hash = {f.get("Id"): f.get("Hash") for f in identification.get("Features", []) or []}
+    unpatched_rows = []
+    for entry in unpatched:
+        length = float(entry.get("Length") or 0.0)
+        status, cls, req_types = status_by_hash.get(feature_hash.get(entry.get("Id"), ""), (None, None, list(types)))
+        unpatched_rows.append({"Id": entry.get("Id"), "Type": entry.get("Type"), "Length": length, "Status": status, "Class": cls})
+        for t in req_types:
+            if t not in out:
+                continue
+            out[t]["raw"]["UnpatchedPairs"] = out[t]["raw"].get("UnpatchedPairs", 0.0) + length
+            row = STATUS_ROW.get(status)
+            if row is not None:
+                out[t]["models"][row] = out[t]["models"].get(row, 0.0) - length
+                out[t]["classes"][cls] = out[t]["classes"].get(cls, 0.0) - length
+    identification_raw = {}
+    for e in identification.get("Exclusions", []) or []:
+        if e.get("Class") in IDENTIFICATION_RAW_EXCLUSION_CLASSES:
+            identification_raw[e["Class"]] = identification_raw.get(e["Class"], 0.0) + float(e.get("Length") or 0.0)
+    named = {}
+    for name, where, treatment in NAMED_RECORD_ROWS:
+        record = (summary if where == "Summary" else diagnostics).get(name)
+        if not isinstance(record, dict):
+            continue
+        named[name] = {"Count": record.get("Count"), "Length": float(record.get("Length") or 0.0),
+                       "Treatment": record.get("Treatment"), "What": treatment}
     for t in types:
         if scp_outside:
             out[t]["raw"]["SCP"] = scp_outside
@@ -381,8 +435,12 @@ def length_partition(loaded, types, discovery=None):
                 continue
             name = "GeometryFallbacks:" + str(entry.get("Class"))
             out[t]["raw"][name] = out[t]["raw"].get(name, 0.0) + float(entry.get("Length") or 0.0)
+        for cls, length in identification_raw.items():
+            # physical targeted perimeter the identification withdrew RAW (not in AssignedLength): it joins the total
+            out[t]["raw"][cls] = length
         total = sum(out[t]["models"].values()) + sum(out[t]["raw"].values())
         out[t]["total"] = total
+        out[t]["named"] = {name: dict(v, Share=(v["Length"] / total if total else 0.0)) for name, v in named.items()}
         for part in ("models", "classes", "raw"):
             out[t][part + "_share"] = {k: (v / total if total else 0.0) for k, v in out[t][part].items()}
         out[t]["raw_share_total"] = sum(out[t]["raw"].values()) / total if total else 0.0
@@ -398,7 +456,9 @@ def length_partition(loaded, types, discovery=None):
                                     "ExampleOrigin": e.get("ExampleOrigin"), "Length": e.get("Length")}
                                    for e in fallbacks.get("Entries", []) or []][:20],
             "uncovered_by_type": (summary.get("Uncovered") or {}).get("ByType"),
-            "counts": summary.get("Counts")}
+            "counts": summary.get("Counts"),
+            "unpatched_pairs": unpatched_rows, "identification_raw_exclusions": identification_raw, "named_records": named,
+            "geometric_near_pairs": (manifest.get("Library") or {}).get("GeometricNearPairs") or []}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -474,7 +534,45 @@ def raw_class_energies(postpro, interfaces, targets, kind):
             for r in _first_eval_rows(loops):
                 _accumulate(acc, _sum_by_type(indexed_columns(r, "remainder energy"), interfaces, targets))
             rows_out["LoopRemainder"] = acc
+    exclusion = exclusion_energy_rows(postpro)
+    for cls, by_type in exclusion["classes"].items():
+        rows_out["Excluded:" + cls] = by_type
+        locations["Excluded:" + cls] = exclusion["portions"].get(cls, [])
     return rows_out, locations
+
+
+def exclusion_energy_rows(postpro):
+    """surface-response-exclusion-energy.csv (the section-8 export, DESIGN section 8 / decision 1076; Diagnostics.ExclusionEnergy
+    on): the within-R raw energy of the EXCLUDED / unclaimed portions per class x Type for the first excitation block (columns
+    by NAME: class, type, class portions, class length (m), raw energy (J), interface raw energy (J)); the Claimed and Total
+    rows are not classes. -> {"present", "classes": {class: {Type: J}}, "portions": {class: [...]}, "interface_raw": {Type: J},
+    "claimed": {Type: J}}; every dict empty when the file is absent (the records of record carry none: the flag is OFF)."""
+    rows = read_csv(os.path.join(postpro, "surface-response-exclusion-energy.csv"))
+    out = {"present": rows is not None, "classes": {}, "portions": {}, "interface_raw": {}, "claimed": {}}
+    if not rows:
+        return out
+    block_keys = [k for k in ("f (GHz)", "m", "exc", "source") if k in rows[0]]
+    first = tuple(rows[0].get(k) for k in block_keys)
+    for r in rows:
+        if tuple(r.get(k) for k in block_keys) != first:
+            continue
+        cls, t = str(r.get("class")), str(r.get("type"))
+        if t not in TYPES:
+            continue
+        energy = r.get("raw energy (J)")
+        if not is_number(energy):
+            continue
+        if cls == "Claimed":
+            out["claimed"][t] = out["claimed"].get(t, 0.0) + energy
+            continue
+        if cls == "Total":
+            continue
+        out["classes"].setdefault(cls, {})
+        out["classes"][cls][t] = out["classes"][cls].get(t, 0.0) + energy
+        out["portions"].setdefault(cls, []).append({"type": t, "portions": r.get("class portions"), "length_m": r.get("class length (m)")})
+        if is_number(r.get("interface raw energy (J)")):
+            out["interface_raw"][t] = r["interface raw energy (J)"]
+    return out
 
 
 def model_energies(postpro, interfaces, targets):
@@ -597,7 +695,9 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
     raw_rows, locations = raw_class_energies(postpro, interfaces, targets, kind)
     mode = "ENERGY" if partition is not None else "PROXY"
     anchors = anchor_models(partition, catalog, manifest_models)
-    out = {"mode": mode, "types": {}, "locations": locations, "anchor_mapped_models": []}
+    out = {"mode": mode, "types": {}, "locations": locations, "anchor_mapped_models": [],
+           "exclusion_export": {"present": any(k.startswith("Excluded:") for k in raw_rows),
+                                "classes": sorted(k[len("Excluded:"):] for k in raw_rows if k.startswith("Excluded:"))}}
     first_type = next(iter(W), None)
     for t, w in W.items():
         W_t = w["W"]
@@ -790,6 +890,18 @@ NAMED_RESIDUALS = (
      "bound": "S1 MS +1.76 after stretchfix; the transmon MS -1.73",
      "trigger": "Type MS with > 50 % of its within-R energy under IsolatedEdge models", "band_use": "listed as the MS bias context",
      "key": "ms_isolated"},
+    {"term": "SelfConsistentPreGate (the eigen conductor-consistency gate before the energies)", "decisions": "1064 (1)",
+     "bound": "a NAMED LIMITATION: on an eigenmode the gate reads the mode BEFORE the self-consistent correction (ft / ff exact, ft = the result of record); a driven run gates between the raw and the SC solve",
+     "trigger": "palace.json Diagnostics.ConductorConsistency Records[].SelfConsistentPreGate true", "band_use": "listed; no band change", "key": "pregate"},
+    {"term": "FloorAppliedPatches (the conductor-consistency floor)", "decisions": "B.3 (c) / C.1 / C.4; 1082 Q2",
+     "bound": "a patch whose pass rests on the amplitude floor (A_p < F = 1e-3 x the largest applied trace amplitude): FloorApplied does not imply a pass (C.4); the count is READ",
+     "trigger": "Diagnostics.ConductorConsistency.FloorAppliedPatches > 0 (or Records[].FloorApplied)", "band_use": "listed (information)", "key": "floor"},
+    {"term": "UnprobedModels / ConductorConsistency exclusions", "decisions": "1064 (2) / 1074 / 1082",
+     "bound": "a model class without a probe rule (UnprobedModels, RAW + exported) or a patch the gate excluded (ConductorConsistency RAW row; the LOW-CONFIDENCE banner)",
+     "trigger": "Diagnostics.ConductorConsistency.UnprobedModels non-empty or Count > 0", "band_use": "the RAW rows carry it", "key": "unprobed"},
+    {"term": "GeometricNearPairs (the library's in-band model pairs)", "decisions": "A.4 (c) / A.5 (b); 1079 Q1 (ii); 1097 Q4",
+     "bound": "a Missing key within the band of two models is served by the nearer; the pair's correction difference must be <= 2 % per Type (v3-j: max 0.99 %); a pair over the bar is RECORDED (geometric_near_pairs.py), never excluded",
+     "trigger": "the manifest's Library.GeometricNearPairs non-empty; --near-pairs adds CorrectionDifference", "band_use": "listed (information); flagged pairs named", "key": "near_pairs"},
 )
 
 GROWN_EXCESS_PT_PER_SHARE = 4.30  # +4.30 % of the grown box's MA energy (988 / 990)
@@ -843,9 +955,43 @@ def indicator_falls(postpro):
     return norms[-1] < norms[0]
 
 
-def named_residuals(kind, energy, lengths, ladder_types, flags, reference_order, ma_shell, manifest_models):
+def conductor_consistency_summary(palace):
+    """palace.json SurfaceResponse.Diagnostics.ConductorConsistency -> the counts the report names (decisions 1064 / 1082):
+    excluded patches, the floor-applied count (the FloorAppliedPatches leaf, else the Records' FloorApplied flags), the
+    SelfConsistentPreGate records (eigen), the UnprobedModels list; empty when the run wrote no block."""
+    block = (((palace or {}).get("SurfaceResponse") or {}).get("Diagnostics") or {}).get("ConductorConsistency") or {}
+    records = block.get("Records") or []
+    floor = block.get("FloorAppliedPatches")
+    if floor is None:
+        floor = sum(1 for r in records if r.get("FloorApplied"))
+    return {"present": bool(block), "excluded": int(block.get("Count") or 0), "tested": block.get("TestedPatches"),
+            "floor_applied": int(floor or 0), "pre_gate_records": sum(1 for r in records if r.get("SelfConsistentPreGate")),
+            "record_only": sum(1 for r in records if r.get("RecordOnly")),
+            "unprobed_models": list(block.get("UnprobedModels") or []), "maxwell": any(r.get("Maxwell") for r in records)}
+
+
+def near_pairs_rows(manifest_pairs, near_pairs_record):
+    """The manifest's Library.GeometricNearPairs joined with the geometric_near_pairs.py record (CorrectionDifference per pair,
+    the flag) when one is given: -> [{ModelA, ModelB, Class, deviations..., CorrectionDifference, Flagged}]."""
+    by_pair = {}
+    for p in ((near_pairs_record or {}).get("Pairs") or []):
+        by_pair[frozenset((p["ModelA"], p["ModelB"]))] = p
+    rows = []
+    for p in manifest_pairs or []:
+        row = {k: v for k, v in p.items()}
+        hit = by_pair.get(frozenset((p["ModelA"], p["ModelB"])))
+        row["CorrectionDifference"] = (hit or {}).get("CorrectionDifference")
+        row["MaxOverTypes"] = (hit or {}).get("MaxOverTypes")
+        row["Flagged"] = bool((hit or {}).get("Flagged"))
+        rows.append(row)
+    return rows
+
+
+def named_residuals(kind, energy, lengths, ladder_types, flags, reference_order, ma_shell, manifest_models, conductor=None, near_pairs=None):
     """-> list of rows {term, fired, detail}; the fired terms carry their band extensions per Type."""
     rows = []
+    conductor = conductor or {}
+    near_pairs = near_pairs or []
     # the grown coupons' within-R share: ENERGY where the run has the raw partition, else LENGTH (the proxy)
     grown_share = {t: acc.get("grown_share", 0.0) for t, acc in energy["types"].items()}
     for r in NAMED_RESIDUALS:
@@ -893,6 +1039,25 @@ def named_residuals(kind, energy, lengths, ladder_types, flags, reference_order,
             share = ms.get("classes_share", {}).get("IsolatedEdge", 0.0)
             fired = share > 0.5
             detail = f"IsolatedEdge {fmt_pct(share)} of the MS within-R energy" if fired else ""
+        elif k == "pregate":
+            fired = conductor.get("pre_gate_records", 0) > 0
+            detail = f"{conductor['pre_gate_records']} gate record(s) read before the self-consistent correction (eigen)" if fired else ""
+        elif k == "floor":
+            fired = conductor.get("floor_applied", 0) > 0
+            detail = (f"FloorAppliedPatches {conductor['floor_applied']} of {conductor.get('tested')} tested"
+                      + (" (Maxwell)" if conductor.get("maxwell") else "")) if fired else ""
+        elif k == "unprobed":
+            fired = bool(conductor.get("unprobed_models")) or conductor.get("excluded", 0) > 0
+            detail = (f"UnprobedModels {conductor.get('unprobed_models')}; ConductorConsistency excluded {conductor.get('excluded', 0)}"
+                      + (f"; RecordOnly records {conductor['record_only']} (a diagnostic form: not a run of record)" if conductor.get("record_only") else "")) if fired else ""
+        elif k == "near_pairs":
+            fired = bool(near_pairs)
+            flagged = [p for p in near_pairs if p.get("Flagged")]
+            detail = (f"{len(near_pairs)} in-band pair(s): " + "; ".join(
+                f"{p['ModelA'][-12:]} ~ {p['ModelB'][-12:]} ({p.get('Class')}"
+                + (f", max {p['MaxOverTypes']:.2e}" if p.get("MaxOverTypes") is not None else ", CorrectionDifference not supplied (--near-pairs)")
+                + (" FLAGGED > 2 %" if p.get("Flagged") else "") + ")" for p in near_pairs)
+                + (f"; FLAGGED {len(flagged)}" if flagged else "")) if fired else ""
         rows.append({"term": r["term"], "decisions": r["decisions"], "bound": r["bound"], "trigger": r["trigger"],
                      "band_use": r["band_use"], "fired": fired, "detail": detail, "extensions": ext})
     return rows
@@ -1065,7 +1230,7 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
 
 
 def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder_dir=None, reference_order=None,
-                 ma_reading="raw", label=None, port_form=None):
+                 ma_reading="raw", label=None, port_form=None, near_pairs_path=None):
     """The full report (dict) for one run. Raises MissingInput when a required input is absent."""
     config = read_json(os.path.join(postpro, "config_resolved.json"))
     palace = read_json(os.path.join(postpro, "palace.json"))
@@ -1089,8 +1254,10 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     flags = maxwell_flags(postpro, config, energies, port_form) if kind == "Maxwell" else {}
     if kind == "Maxwell":
         flags["indicator_falls"] = indicator_falls(ladder_dir or postpro)
+    conductor = conductor_consistency_summary(palace)
+    near_pairs = near_pairs_rows(lengths["geometric_near_pairs"], read_json(near_pairs_path) if near_pairs_path else None)
     residuals = named_residuals(kind, energy, lengths, lad["types"], flags, reference_order, ma_reading == "sharp",
-                               loaded["models"])
+                               loaded["models"], conductor, near_pairs)
     localize = any(v["LocalizeEdgeEnergy"] for v in interfaces.values())
     report = {
         "tool": "coverage_report.py", "label_name": label or os.path.basename(os.path.dirname(postpro.rstrip("/"))) or postpro,
@@ -1106,7 +1273,11 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
                     "mapped_models_share": {t: acc.get("mapped_models_share", 0.0) for t, acc in energy["types"].items()},
                     "length_bookkeeping_miss_um": lengths["bookkeeping_miss_um"], "assigned_length_um": lengths["assigned_length"],
                     "exclusions": lengths["exclusions"], "fallback_locations": lengths["fallback_locations"],
-                    "uncovered_by_type": lengths["uncovered_by_type"], "counts": lengths["counts"]},
+                    "uncovered_by_type": lengths["uncovered_by_type"], "counts": lengths["counts"],
+                    "named_records": lengths["named_records"], "unpatched_pairs": lengths["unpatched_pairs"],
+                    "identification_raw_exclusions": lengths["identification_raw_exclusions"],
+                    "exclusion_energy_export": energy.get("exclusion_export"),
+                    "conductor_consistency": conductor, "geometric_near_pairs": near_pairs},
         "block_B": residuals, "block_D": {"ladder": lad, "closure": energies.get("closure"), "flags": flags,
                                           "ff_vs_ft": {t: ((w["ff"] - w["ft"]) / w["ft"] if (w["ft"] and w["ff"] is not None) else None)
                                                        for t, w in W.items()}},
@@ -1146,7 +1317,10 @@ def build_preflight_report(manifest_path, palace_path=None, discovery_path=None,
               "block_A": {"length": lengths["types"], "length_bookkeeping_miss_um": lengths["bookkeeping_miss_um"],
                           "assigned_length_um": lengths["assigned_length"], "exclusions": lengths["exclusions"],
                           "fallback_locations": lengths["fallback_locations"], "uncovered_by_type": lengths["uncovered_by_type"],
-                          "counts": lengths["counts"]},
+                          "counts": lengths["counts"], "named_records": lengths["named_records"],
+                          "unpatched_pairs": lengths["unpatched_pairs"],
+                          "identification_raw_exclusions": lengths["identification_raw_exclusions"],
+                          "geometric_near_pairs": lengths["geometric_near_pairs"]},
               "block_B": "not available on a preflight", "block_C": "not available on a preflight (coverage only; no band)",
               "block_D": "not available on a preflight", "ready_criterion_1": ready,
               "label": {"label": "READY" if all(v["ready"] for v in ready.values()) else "NOT READY",
@@ -1222,7 +1396,10 @@ def render_markdown(report):
         for k in model_rows:
             lines.append(f"| corrected by {k} models | {fmt_pct(e.get('models_share', {}).get(k, 0.0)) if e else 'n/a'} | {fmt_pct(L.get('models_share', {}).get(k, 0.0))} |")
         for k in raw_rows:
-            lines.append(f"| RAW: {k} | {fmt_pct(e.get('raw_share', {}).get(k, 0.0)) if e else 'n/a'} | {fmt_pct(L.get('raw_share', {}).get(k, 0.0))} |")
+            # a RAW row the run exports no energy for (UnpatchedPairs, the identification-decided exclusions) sits inside
+            # the Unclaimed energy: said so, not printed as 0
+            energy_cell = (fmt_pct(e.get("raw_share", {}).get(k, 0.0)) if k in (e.get("raw") or {}) else "(in Unclaimed)") if e else "n/a"
+            lines.append(f"| RAW: {k} | {energy_cell} | {fmt_pct(L.get('raw_share', {}).get(k, 0.0))} |")
         if e:
             lines.append(f"| RAW total | {fmt_pct(e.get('raw_share_total'))} | {fmt_pct(L.get('raw_share_total', 0.0))} |")
             miss = e.get("bookkeeping_miss_rel", 0.0)
@@ -1231,14 +1408,32 @@ def render_markdown(report):
         sub = L.get("missing_sub", {})
         if any(sub.values()):
             lines.append(f"| Missing sub-classes (length) | | Unboxable {sub.get('Unboxable', 0):.2f} / Unbuildable {sub.get('Unbuildable', 0):.2f} / buildable {sub.get('buildable', 0):.2f} um |")
+        for name, v in (L.get("named") or {}).items():
+            # the NAMED residual rows (corrected length whose correction is an approximation; decisions 1069 / 1078 / 1081 / 1077)
+            lines.append(f"| NAMED: {name}{' (' + str(v['Treatment']) + ')' if v.get('Treatment') else ''} | | {fmt_pct(v['Share'])} ({v['Length']:.2f} um, {v.get('Count')}) |")
         lines.append("")
         lines.append("classes (ENERGY | LENGTH): " + "; ".join(
             f"{c} {fmt_pct(e.get('classes_share', {}).get(c, 0.0)) if e else 'n/a'} | {fmt_pct(L.get('classes_share', {}).get(c, 0.0))}"
             for c in sorted(set(list(L.get("classes_share", {})) + list((e or {}).get("classes_share", {}))))))
     if A.get("length_bookkeeping_miss_um") is not None and abs(A["length_bookkeeping_miss_um"]) > LENGTH_BOOKKEEPING_TOL_UM:
         lines.append(f"\nBOOKKEEPING MISS (length): requirements - AssignedLength = {A['length_bookkeeping_miss_um']:+.4f} um")
-    lines.append("\nExclusions (length by class; no per-class energy export: OI-COVERAGE-EXCLUSION-ENERGY): "
+    export = A.get("exclusion_energy_export") or {}
+    lines.append("\nExclusions (length by class" + ("; the per-class ENERGY export read: Excluded:* rows above (DESIGN section 8; classes "
+                 + ", ".join(export.get("classes", [])) + ")" if export.get("present")
+                 else "; no per-class energy export in this run: OI-COVERAGE-EXCLUSION-ENERGY, Diagnostics.ExclusionEnergy off") + "): "
                  + "; ".join(f"{x['Class']} {x['Count']} x {x['Length']:.1f} um" for x in A.get("exclusions", [])))
+    if A.get("identification_raw_exclusions"):
+        lines.append("Identification-decided RAW exclusions (not in AssignedLength; RAW rows above): "
+                     + "; ".join(f"{k} {v:.2f} um" for k, v in A["identification_raw_exclusions"].items()))
+    if A.get("unpatched_pairs"):
+        lines.append("UnpatchedPairs (decisions 1075 Q3 / 1077 Q3; OI-PAIR-SEPARATION-MISMATCH: matched, never placed, RAW): "
+                     + "; ".join(f"feature {u['Id']} {u['Type']} {u['Length']:.2f} um ({u['Status']})" for u in A["unpatched_pairs"]))
+    for name, v in (A.get("named_records") or {}).items():
+        lines.append(f"NAMED record {name}: count {v.get('Count')}, length {v['Length']:.2f} um" + (f", treatment {v['Treatment']}" if v.get("Treatment") else "") + f" - {v['What']}")
+    cc = A.get("conductor_consistency") or {}
+    if cc.get("present"):
+        lines.append(f"ConductorConsistency (palace.json): tested {cc.get('tested')}, excluded {cc.get('excluded')}, FloorAppliedPatches {cc.get('floor_applied')}, "
+                     f"SelfConsistentPreGate records {cc.get('pre_gate_records')}, UnprobedModels {cc.get('unprobed_models')}")
     if A.get("fallback_locations"):
         lines.append("GeometryFallbacks: " + "; ".join(f"{f['Class']} ({f['What']}) at {f['ExampleOrigin']} {f.get('Length', 0.0):.2f} um"
                                                       for f in A["fallback_locations"]))
@@ -1323,7 +1518,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("postpro", nargs="?", help="the run's postpro directory (omit with --preflight)")
     parser.add_argument("--manifest", required=True, help="the preflight manifest surface-response-requirements.json")
-    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v2.json)")
+    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v3.json)")
     parser.add_argument("--no-bands", action="store_true", help="coverage only (blocks A / B / D; no band, no label)")
     parser.add_argument("--discovery", help="the discovery closure manifest (UnbuildableRequirements keys)")
     parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run directory")
@@ -1335,6 +1530,7 @@ def main(argv=None):
                         help="sharp = the MA_sharp transformation (thin_ma_sharp) is applied to this run's reading")
     parser.add_argument("--preflight", action="store_true", help="the preflight-only form (manifest + palace.json)")
     parser.add_argument("--palace-json", help="palace.json of the preflight (optional with --preflight)")
+    parser.add_argument("--near-pairs", help="the geometric_near_pairs.py record of the run's library (CorrectionDifference per in-band pair; the pairs over the 2 %% bar named)")
     parser.add_argument("--label", help="the run's name in the report")
     parser.add_argument("--output", help="output directory (default: beside the postpro)")
     args = parser.parse_args(argv)
@@ -1347,7 +1543,7 @@ def main(argv=None):
                 parser.error("postpro is required without --preflight")
             bands = None if args.no_bands else load_bands(args.bands)
             report = build_report(args.postpro, args.manifest, bands, args.discovery, args.ladder_run, args.reference_order,
-                                  args.ma_reading, args.label, args.port_form)
+                                  args.ma_reading, args.label, args.port_form, args.near_pairs)
             out_dir = args.output or args.postpro
     except MissingInput as exc:
         print(f"coverage_report: MISSING INPUT {exc}", file=sys.stderr)
