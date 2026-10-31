@@ -405,6 +405,16 @@ struct IdentificationResult
   // lies within a recorded band of every threshold of the rules (R, 2R, the 10R bend
   // radius, the 30 deg corner turn), in mesh units; serialised as JSON text.
   std::string knife_edge_census;
+  // RAW zone records of the identification fix round (decisions 1062 section 3 / 1065 /
+  // 1069): {UnclusterableComponents: {Count, Length, Cap, Components[{Chains, Length,
+  // Intervals}]}, TaperCrossings: {Count, Length, Treatment, Rule, Crossings[{Run, Chain,
+  // PartnerChain, Crossing, CrossingS, SeparationFarOverR, Interval, Length,
+  // RemainderLength, Treatment}]}} in mesh units, serialised as JSON text; empty when no
+  // zone fired (then no manifest leaf: the cases of record are bitwise). Manifest
+  // Identification.Diagnostics.{UnclusterableComponents, TaperCrossings}; the
+  // UnclusterableComponent zones are Exclusions of that class; the TaperCrossing stretches
+  // are recorded only (nothing withdrawn: Treatment ApproximatedByIsolatedEdge).
+  std::string raw_zone_records;
   // Spatial-support contract summary (decision 282): clusters keyed by the claims alone
   // (empty context, no growth), clusters keyed with Box + Context, clusters whose box grew
   // (T3), clusters no box satisfies the face rules (UnboxableFeature: a Missing
@@ -772,9 +782,9 @@ double SerializedPortionLengthOverR(const nlohmann::json &portion);
 // The handedness of a feature frame: +1 when Axes[2] = Axes[0] x Axes[1], -1 when Axes[2] =
 // -(Axes[0] x Axes[1]) (the canonical cluster frame is {x, y, n} with n the process normal
 // for both handedness values). Equal to IdentifiedFeature::chirality for a chiral key; a
-// mirror-symmetric key (chirality 0: both handedness values reach the minimal serialisation)
-// records the first minimal frame, whose handedness this reads (the mirror-formed contract's
-// Frame.Chirality, CONTRACT.md v3).
+// mirror-symmetric key (chirality 0: both handedness values reach the minimal
+// serialisation) records the first minimal frame, whose handedness this reads (the
+// mirror-formed contract's Frame.Chirality, CONTRACT.md v3).
 int FrameHandedness(const std::array<std::array<double, 3>, 3> &axes);
 
 // The manifest form of a feature frame, exactly as Features[].Frame is written: Origin in

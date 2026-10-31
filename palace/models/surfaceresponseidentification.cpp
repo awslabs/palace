@@ -3337,6 +3337,40 @@ private:
   // run's plane (facing layers, walls, staples); vertices within 2R of such metal.
   std::vector<std::vector<Interval>> cross_layer;
   std::set<std::size_t> cross_layer_vertices;
+  // RAW zones of the identification fix round (decisions 1062 section 3 / 1065), per run:
+  // perimeter the rules withdraw from every model and record as an analytic exclusion
+  // (weight 0: no unmodelled correction is ever applied), like the CrossLayer zones.
+  //  - UnclusterableComponent (N-2): the elementary intervals whose cross-section
+  //    composition reached kStackCompositionCap — the WHOLE component (every chain of it
+  //    marks its own intervals, the component being the same from any member) is withdrawn
+  //    from the pair / stack composition, the cluster extension and the isolated-edge
+  //    remainder; rebuilt per pairs / stacks pass with the priority-2 claims.
+  //  - TaperCrossing (I-3; decision 1069 (C) revising 1065 Q2 (a)): the monotone
+  //    non-constant samples below 2R adjacent to a 2R crossing of a facing run
+  //    (BuildBentPairs) are RECORDED ONLY (the crossing position, the stretch, the part the
+  //    claims leave to the isolated-edge remainder, Treatment ApproximatedByIsolatedEdge);
+  //    nothing is withdrawn: on the cards of record the stretches are 0.05-0.3 um slivers
+  //    at 1.86-1.98 R where the isolated-edge model is nearly right.
+  std::vector<std::vector<Interval>> unclusterable_zones, taper_zones;
+  struct UnclusterableRecord
+  {
+    std::vector<int> chains;  // the component's member chains (ascending)
+    double length = 0.0;      // the withdrawn perimeter (mesh units)
+    std::size_t intervals = 0;
+  };
+  std::vector<UnclusterableRecord> unclusterable_records;
+  struct TaperCrossingRecord
+  {
+    std::size_t run = 0;
+    int chain = -1, partner_chain = -1;
+    Point3D crossing{};          // the point where the deciding reading crosses 2R
+    double crossing_s = 0.0;     // run parameter of the crossing
+    double separation_lo = 0.0;  // the deciding reading at the stretch's far end
+    double length = 0.0;         // the raw stretch (run parameter length)
+    Interval interval{};         // on the run
+    std::vector<std::pair<std::size_t, Interval>> zones;  // (run, interval) of the stretch
+  };
+  std::vector<TaperCrossingRecord> taper_records;
   std::vector<IdentifiedFeature> features;
   std::vector<double> feature_max_kappa;  // per feature, over its assigned portions
   // Number of sides a pair / parallel cluster must end up with after claim resolution
@@ -7011,10 +7045,228 @@ void Identifier::BuildBentPairs()
               moved_count = 0;
   double sliver_length = 0.0, moved_length = 0.0;
   std::ostringstream sliver_sites, moved_sites;
+  // The interaction verdict per sample (the identification fix round, decisions 1062
+  // section 3 / 1065): a sample interacts iff its deciding reading upper = C / cos(turn /
+  // 2) is strictly below 2R on the quantized grid (the rule of record) — read with
+  // HYSTERESIS on a run (I-2): the samples whose reading lies within the knife-edge band 2R
+  // (1 +- kKnifeEdgeBandRelative) form runs of chain-contiguous in-band samples of this
+  // chain facing this partner chain (across the pieces; a gap of more than R along the
+  // chain ends a run), and a run whose verdicts are mixed and NOT monotone takes ONE
+  // verdict, the majority by length (each sample weighs its spacing; a tie reads
+  // non-interacting, today's strict-less at exactly 2R); readings outside the band keep the
+  // pointwise rule. A run whose readings are monotone across 2R is a TAPER: its verdicts
+  // stay pointwise (the crossing is where the reading crosses 2R) and the I-3 record below
+  // takes the non-constant samples below 2R adjacent to the crossing as a TaperCrossing
+  // RECORD (the whole non-constant stretch adjacent to the crossing, monotone with it;
+  // decision 1069 (C): recorded only, nothing withdrawn, Treatment
+  // ApproximatedByIsolatedEdge; the pair's separation unchanged). Basis: the census band of
+  // record (a classification discontinuity at a measure-zero threshold is unstable under
+  // 1-10 nm chord / grid noise; the response is continuous across 2R); no new number.
+  const double band_lo = interaction * (1.0 - kKnifeEdgeBandRelative);
+  const double band_hi = interaction * (1.0 + kKnifeEdgeBandRelative);
+  auto Hysteresis = [&](const std::vector<Piece> &pieces, const std::vector<char> &constant,
+                        const std::vector<double> &upper, int own_chain, int partner_chain,
+                        std::vector<char> &interacting)
+  {
+    const std::size_t total = upper.size();
+    interacting.assign(total, 0);
+    // The reading of a sample: the deciding reading upper = C / cos(turn / 2) of a constant
+    // sample (the pair rule); a NON-constant sample has no pair reading (Classify's window
+    // maximum runs over the constant samples only: upper reads 0 there) and is decided by
+    // the event rule on the sampled closest-point distance d, so the band / taper tests
+    // read d / cos(turn / 2) for it (the same discretisation ambiguity).
+    std::vector<double> reading(total), weight(total), x(total), s(total);
+    std::vector<std::size_t> piece_of(total);
+    std::size_t k = 0;
+    for (std::size_t pi = 0; pi < pieces.size(); pi++)
+    {
+      const auto &piece = pieces[pi];
+      const std::size_t n = piece.samples.size();
+      const double length = piece.interval.second - piece.interval.first;
+      const double spacing = n > 1 ? length / static_cast<double>(n - 1) : length;
+      for (std::size_t q = 0; q < n; q++)
+      {
+        reading[k + q] = constant[k + q] != 0
+                             ? upper[k + q]
+                             : piece.samples[q].d / std::cos(0.5 * piece.samples[q].turn);
+        interacting[k + q] = quantizer.Less(reading[k + q], interaction) ? 1 : 0;
+        weight[k + q] = spacing;
+        x[k + q] = piece.samples[q].x;
+        s[k + q] = piece.samples[q].s;
+        piece_of[k + q] = pi;
+      }
+      k += n;
+    }
+    auto Contiguous = [&](std::size_t i)  // samples i and i + 1
+    { return piece_of[i] == piece_of[i + 1] || std::abs(x[i + 1] - x[i]) <= R + Tol(); };
+    if (std::getenv("PALACE_IDENTIFICATION_DEBUG_SAMPLES") && input.log && total > 0)
+    {
+      std::ostringstream dbg;
+      dbg << std::setprecision(6) << "  DEBUG samples of chain " << own_chain << " facing "
+          << partner_chain << ":";
+      for (std::size_t q = 0; q < total; q++)
+      {
+        dbg << (q % 6 == 0 ? "\n    " : "  ") << "x " << x[q] << " u " << reading[q] << " "
+            << (constant[q] ? "c" : "-") << (interacting[q] ? "i" : "-");
+      }
+      input.log(dbg.str() + "\n");
+    }
+    auto InBand = [&](std::size_t i)
+    {
+      return !quantizer.Less(reading[i], band_lo) && !quantizer.Less(band_hi, reading[i]);
+    };
+    auto Monotone = [&](std::size_t lo, std::size_t hi)  // [lo, hi)
+    {
+      bool non_decreasing = true, non_increasing = true;
+      for (std::size_t q = lo; q + 1 < hi; q++)
+      {
+        non_decreasing = non_decreasing && !quantizer.Less(reading[q + 1], reading[q]);
+        non_increasing = non_increasing && !quantizer.Less(reading[q], reading[q + 1]);
+      }
+      return non_decreasing || non_increasing;
+    };
+    // I-2: the in-band runs.
+    for (std::size_t i = 0; i < total;)
+    {
+      if (!InBand(i))
+      {
+        i++;
+        continue;
+      }
+      std::size_t j = i + 1;
+      while (j < total && InBand(j) && Contiguous(j - 1))
+      {
+        j++;
+      }
+      double w_in = 0.0, w_out = 0.0;
+      for (std::size_t q = i; q < j; q++)
+      {
+        (interacting[q] ? w_in : w_out) += weight[q];
+      }
+      if (w_in > 0.0 && w_out > 0.0 && !Monotone(i, j))
+      {
+        const char verdict = quantizer.Less(w_out, w_in) ? 1 : 0;
+        for (std::size_t q = i; q < j; q++)
+        {
+          interacting[q] = verdict;
+        }
+      }
+      i = j;
+    }
+    // I-3: the taper crossings (after the hysteresis).
+    for (std::size_t i = 0; i + 1 < total; i++)
+    {
+      if (!Contiguous(i) || interacting[i] == interacting[i + 1])
+      {
+        continue;
+      }
+      // The interacting side of the crossing and the direction away from it.
+      const bool inter_first = interacting[i] != 0;
+      const std::size_t inter_q = inter_first ? i : i + 1,
+                        outer_q = inter_first ? i + 1 : i;
+      std::vector<std::size_t> stretch;  // from the crossing outwards
+      for (std::size_t q = inter_q;; q = inter_first ? q - 1 : q + 1)
+      {
+        if (constant[q] != 0 || interacting[q] == 0)
+        {
+          break;
+        }
+        stretch.push_back(q);
+        if (inter_first ? (q == 0 || !Contiguous(q - 1))
+                        : (q + 1 >= total || !Contiguous(q)))
+        {
+          break;
+        }
+      }
+      if (stretch.empty())
+      {
+        continue;
+      }
+      // Monotone across the crossing: the readings from the far end to the first sample
+      // beyond 2R.
+      {
+        std::vector<double> readings;
+        for (auto it = stretch.rbegin(); it != stretch.rend(); ++it)
+        {
+          readings.push_back(reading[*it]);
+        }
+        readings.push_back(reading[outer_q]);
+        bool non_decreasing = true;
+        for (std::size_t q = 0; q + 1 < readings.size(); q++)
+        {
+          non_decreasing = non_decreasing && !quantizer.Less(readings[q + 1], readings[q]);
+        }
+        if (!non_decreasing)
+        {
+          continue;
+        }
+      }
+      // The crossing position: the reading interpolated to 2R between the two crossing
+      // samples when they share a run, else the interacting sample's cell edge.
+      const Piece &inter_piece = pieces[piece_of[inter_q]];
+      double s_cross = s[inter_q] + (inter_first ? 0.5 : -0.5) * weight[inter_q];
+      if (piece_of[inter_q] == piece_of[outer_q] &&
+          quantizer.Less(reading[inter_q], reading[outer_q]))
+      {
+        const double t =
+            (interaction - reading[inter_q]) / (reading[outer_q] - reading[inter_q]);
+        s_cross = s[inter_q] + std::clamp(t, 0.0, 1.0) * (s[outer_q] - s[inter_q]);
+      }
+      s_cross =
+          std::clamp(s_cross, inter_piece.interval.first, inter_piece.interval.second);
+      TaperCrossingRecord record;
+      record.run = inter_piece.run;
+      record.chain = own_chain;
+      record.partner_chain = partner_chain;
+      record.crossing_s = s_cross;
+      record.crossing = runs[inter_piece.run].At(s_cross);
+      record.separation_lo = reading[stretch.back()];
+      // The zone(s): the stretch's samples grouped by piece (one run each), each interval
+      // the samples' cells, the crossing end at s_cross.
+      std::size_t g = 0;
+      while (g < stretch.size())
+      {
+        std::size_t h = g;
+        while (h + 1 < stretch.size() && piece_of[stretch[h + 1]] == piece_of[stretch[g]])
+        {
+          h++;
+        }
+        const Piece &piece = pieces[piece_of[stretch[g]]];
+        double lo = piece.interval.second, hi = piece.interval.first;
+        for (std::size_t m = g; m <= h; m++)
+        {
+          lo = std::min(lo, s[stretch[m]] - 0.5 * weight[stretch[m]]);
+          hi = std::max(hi, s[stretch[m]] + 0.5 * weight[stretch[m]]);
+        }
+        lo = std::max(lo, piece.interval.first);
+        hi = std::min(hi, piece.interval.second);
+        if (g == 0)
+        {
+          (inter_first ? hi : lo) = s_cross;  // the crossing end
+        }
+        if (hi - lo > Tol())
+        {
+          taper_zones[piece.run].emplace_back(lo, hi);
+          record.zones.emplace_back(piece.run, Interval{lo, hi});
+          record.length += hi - lo;
+          if (g == 0)
+          {
+            record.interval = {lo, hi};
+          }
+        }
+        g = h + 1;
+      }
+      if (record.length > 0.0)
+      {
+        taper_records.push_back(record);
+      }
+    }
+  };
   auto Split = [&](const std::vector<Piece> &pieces, const std::vector<char> &constant,
                    const std::vector<double> &separation, const std::vector<double> &upper,
-                   std::vector<SubPiece> &out)
+                   const std::vector<char> &interacting, std::vector<SubPiece> &out)
   {
+    (void)upper;  // the interaction verdict per sample is `interacting` (Hysteresis)
     const double parameter_tolerance = kSignatureParameterToleranceOverRadius * R;
     const double min_exact_span = kExactStretchMinLengthOverRadius * R;
     enum class Kind
@@ -7069,10 +7321,9 @@ void Identifier::BuildBentPairs()
       while (i < n)
       {
         const bool c = constant[k + i];
-        const bool inter = quantizer.Less(upper[k + i], interaction);
+        const bool inter = interacting[k + i] != 0;
         std::size_t j = i;
-        while (j < n && constant[k + j] == c &&
-               quantizer.Less(upper[k + j], interaction) == inter)
+        while (j < n && constant[k + j] == c && (interacting[k + j] != 0) == inter)
         {
           j++;
         }
@@ -7418,11 +7669,17 @@ void Identifier::BuildBentPairs()
       {
         Classify(pieces_b, pieces_a, constant_b, separation_b, upper_b);
       }
-      std::vector<SubPiece> sub_a, sub_b;
-      Split(pieces_a, constant_a, separation_a, upper_a, sub_a);
+      std::vector<char> interacting_a, interacting_b;
+      Hysteresis(pieces_a, constant_a, upper_a, A.id, B.id, interacting_a);
       if (!self)
       {
-        Split(pieces_b, constant_b, separation_b, upper_b, sub_b);
+        Hysteresis(pieces_b, constant_b, upper_b, B.id, A.id, interacting_b);
+      }
+      std::vector<SubPiece> sub_a, sub_b;
+      Split(pieces_a, constant_a, separation_a, upper_a, interacting_a, sub_a);
+      if (!self)
+      {
+        Split(pieces_b, constant_b, separation_b, upper_b, interacting_b, sub_b);
       }
       if (std::getenv("PALACE_IDENTIFICATION_DEBUG_PIECES") && input.log)
       {
@@ -8849,6 +9106,12 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     bool exact;
   };
   std::vector<Assigned> assigned;
+  struct UnclusterableInterval
+  {
+    int chain;
+    double x0, x1;
+  };
+  std::vector<UnclusterableInterval> unclusterable_on_chain;
   for (const auto &[chain, sorted_breakpoints] : breakpoints)
   {
     const std::vector<double> list(sorted_breakpoints.begin(), sorted_breakpoints.end());
@@ -8878,6 +9141,18 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       }
       auto composition = Compose(chain, mid);
       const std::size_t k = composition.nodes.size();
+      if (composition.cap_reached)
+      {
+        // N-2 (decisions 1062 section 3 / 1065 Q3): a cross-section whose composition
+        // reaches the cap is no stack of k <= cap edges; the interval is withdrawn from the
+        // composition as part of an UnclusterableComponent (RAW, recorded) instead of a
+        // truncated stack — the former emission decomposed a periodic finger array
+        // position-dependently into pairs and isolated edges 2 um from their neighbours
+        // (DS-CAT-002 t4_5: 12,123 cap hits).
+        cap_hits++;
+        unclusterable_on_chain.push_back({chain, x0, x1});
+        continue;
+      }
       if (debug_log && (composition.nodes.size() < 2 || x1 - x0 > R))
       {
         std::ostringstream line;
@@ -8894,7 +9169,6 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         continue;
       }
       fallbacks += composition.geometric_fallback ? 1 : 0;
-      cap_hits += composition.cap_reached ? 1 : 0;
       std::vector<TranslationalEdge> edges;
       auto Edges = [&]()
       {
@@ -9169,6 +9443,40 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         }
       }
     }
+  }
+  // The UnclusterableComponent zones of this component (N-2): the capped intervals mapped
+  // onto their runs (the claim mapping above), one record per AssembleStack call = one
+  // cross-section component, its members the chains that marked intervals.
+  if (!unclusterable_on_chain.empty())
+  {
+    UnclusterableRecord record;
+    std::set<int> member_chains;
+    for (const auto &entry : unclusterable_on_chain)
+    {
+      const Chain &C = ChainOf(entry.chain);
+      member_chains.insert(entry.chain);
+      std::size_t kr =
+          std::min(static_cast<std::size_t>(std::upper_bound(C.run_offset.begin(),
+                                                             C.run_offset.end(), entry.x0) -
+                                            C.run_offset.begin()) -
+                       1,
+                   C.runs.size() - 1);
+      for (; kr < C.runs.size() && C.run_offset[kr] < entry.x1 - Tol(); kr++)
+      {
+        const double offset = C.run_offset[kr];
+        const Run &run = runs[C.runs[kr]];
+        const double s0 = std::max(entry.x0, offset) - offset;
+        const double s1 = std::min(entry.x1, offset + run.length) - offset;
+        if (s1 - s0 > Tol())
+        {
+          unclusterable_zones[C.runs[kr]].emplace_back(s0, s1);
+          record.length += s1 - s0;
+          record.intervals++;
+        }
+      }
+    }
+    record.chains.assign(member_chains.begin(), member_chains.end());
+    unclusterable_records.push_back(std::move(record));
   }
   StackTimer("end");
   stack_geometric_offsets += fallbacks;
@@ -9837,6 +10145,10 @@ double Identifier::ExtendClusters(bool measure_joint_claims)
     for (const auto &zone : cross_layer[r])
     {
       taken[r].push_back(zone);
+    }
+    for (const auto &zone : unclusterable_zones[r])
+    {
+      taken[r].push_back(zone);  // RAW: never absorbed into a cluster (N-2)
     }
   }
   // Claimed pieces of the clusters and the windows of the free sites, indexed by their
@@ -14026,8 +14338,11 @@ void Identifier::Assign(IdentificationResult &result)
         }
       }
     }
-    // CrossLayer zones are excluded before any feature claims the run.
+    // CrossLayer zones are excluded before any feature claims the run; so are the
+    // UnclusterableComponent zones (N-2: withdrawn from every model).
     std::vector<Interval> taken = cross_layer[r];
+    taken.insert(taken.end(), unclusterable_zones[r].begin(), unclusterable_zones[r].end());
+    taken = MergeIntervals(std::move(taken), Tol());
     for (const auto &claim : run_claims)
     {
       for (const auto &piece : SubtractIntervals({claim.interval}, taken, Tol()))
@@ -14277,6 +14592,7 @@ void Identifier::Assign(IdentificationResult &result)
     }
     stage.Progress(r, runs.size(), "isolated / curved edges");
     std::vector<Interval> taken = cross_layer[r];
+    taken.insert(taken.end(), unclusterable_zones[r].begin(), unclusterable_zones[r].end());
     for (const auto &[lo, hi, feature, side] : assigned[r])
     {
       (void)feature;
@@ -14284,6 +14600,20 @@ void Identifier::Assign(IdentificationResult &result)
       taken.push_back({lo, hi});
     }
     taken = MergeIntervals(taken, Tol());
+    // The TaperCrossing stretches (I-3, decision 1069 (C)): RECORDED ONLY — their portions
+    // stay claimed by today's features (the isolated-edge remainder as before; the model is
+    // nearly right on a sliver at 1.9-2 R and a zero correction would be the least accurate
+    // estimate); the part of each stretch the claims leave to the remainder is measured for
+    // the record (RemainderLength), never withdrawn.
+    std::vector<Interval> taper_effective;
+    for (const auto &zone : taper_zones[r])
+    {
+      for (const auto &piece : SubtractIntervals({zone}, taken, Tol()))
+      {
+        taper_effective.push_back(piece);
+      }
+    }
+    taper_zones[r] = MergeIntervals(std::move(taper_effective), Tol());
     const auto remainder = SubtractIntervals({Interval{0.0, runs[r].length}}, taken, Tol());
     if (!remainder.empty())
     {
@@ -14718,6 +15048,18 @@ void Identifier::Assign(IdentificationResult &result)
                                "planar metal edge within 2R of metal off its own plane "
                                "(facing layer, wall, staple)",
                                0, 0.0});
+  // The RAW zones of the identification fix round (decisions 1062 / 1065), the same
+  // analytic-exclusion form: UnclusterableComponent (N-2) and TaperCrossing (I-3); each
+  // record is kept only where it fires (0 on every case of record).
+  const int unclusterable_record = static_cast<int>(result.exclusions.size());
+  result.exclusions.push_back(
+      {"UnclusterableComponent",
+       "a parallel cross-section whose composition reached StackCompositionCap (" +
+           std::to_string(kStackCompositionCap) +
+           " members): the whole component is withdrawn from the pair / stack composition, "
+           "the cluster extension and the isolated-edge remainder and kept RAW (N-2, "
+           "decision 1065; OI-PERIODIC-ARRAY-COUPON names the missing unit-cell coupon)",
+       0, 0.0});
   for (std::size_t r = 0; r < runs.size(); r++)
   {
     if (runs[r].excluded)
@@ -14777,26 +15119,59 @@ void Identifier::Assign(IdentificationResult &result)
         result.assigned_length += s1 - s0;
       }
       std::sort(table.portions.begin(), table.portions.end());
-      for (const auto &zone : cross_layer[r])
+      auto ExcludeZones = [&](const std::vector<Interval> &zones, int record)
       {
-        const auto portion = SegmentPortion(zone.first, zone.second);
-        if (!portion)
+        for (const auto &zone : zones)
         {
-          continue;
+          const auto portion = SegmentPortion(zone.first, zone.second);
+          if (!portion)
+          {
+            continue;
+          }
+          const auto [s0, s1] = *portion;
+          table.excluded_portions.push_back({s0, s1, static_cast<double>(record)});
+          result.exclusions[record].count++;
+          result.exclusions[record].length += s1 - s0;
+          result.excluded_length += s1 - s0;
         }
-        const auto [s0, s1] = *portion;
-        table.excluded_portions.push_back(
-            {s0, s1, static_cast<double>(cross_layer_record)});
-        result.exclusions[cross_layer_record].count++;
-        result.exclusions[cross_layer_record].length += s1 - s0;
-        result.excluded_length += s1 - s0;
-      }
+      };
+      ExcludeZones(cross_layer[r], cross_layer_record);
+      ExcludeZones(unclusterable_zones[r], unclusterable_record);
       std::sort(table.excluded_portions.begin(), table.excluded_portions.end());
     }
   }
-  if (result.exclusions[cross_layer_record].count == 0)
+  // The analytic records that did not fire are removed and the excluded portions re-indexed
+  // (a removed record has no portion; the records of the segment-level exclusions above
+  // them keep their indices).
   {
-    result.exclusions.erase(result.exclusions.begin() + cross_layer_record);
+    std::vector<int> new_index(result.exclusions.size());
+    std::vector<IdentificationExclusion> kept;
+    for (std::size_t e = 0; e < result.exclusions.size(); e++)
+    {
+      const bool analytic = static_cast<int>(e) == cross_layer_record ||
+                            static_cast<int>(e) == unclusterable_record;
+      if (analytic && result.exclusions[e].count == 0)
+      {
+        new_index[e] = -1;
+        continue;
+      }
+      new_index[e] = static_cast<int>(kept.size());
+      kept.push_back(result.exclusions[e]);
+    }
+    if (kept.size() != result.exclusions.size())
+    {
+      for (auto &table : result.segments)
+      {
+        for (auto &portion : table.excluded_portions)
+        {
+          const int e = static_cast<int>(portion[2]);
+          MFEM_VERIFY(new_index[e] >= 0,
+                      "An excluded portion references a removed record!");
+          portion[2] = static_cast<double>(new_index[e]);
+        }
+      }
+      result.exclusions = std::move(kept);
+    }
   }
 
   // Drop features that ended up claiming nothing (translational spans fully inside clusters
@@ -15097,6 +15472,8 @@ IdentificationResult Identifier::Identify()
   BuildRunArcGeometry();
   claims.assign(runs.size(), {});
   bent_claims.assign(runs.size(), {});
+  unclusterable_zones.assign(runs.size(), {});
+  taper_zones.assign(runs.size(), {});
   stage.End(std::to_string(input.segments.size()) + " segments, " +
             std::to_string(input.vertices.size()) + " vertices, " +
             std::to_string(faces.size()) + " faces, " + std::to_string(runs.size()) +
@@ -15192,7 +15569,13 @@ IdentificationResult Identifier::Identify()
       stack_geometric_offsets = 0;
       stack_composition_cap_hits = 0;
       stack_images_merged = 0;
+      unclusterable_zones.assign(runs.size(), {});
+      unclusterable_records.clear();
       BuildPairsAndStacks();
+      for (auto &zones : unclusterable_zones)
+      {
+        zones = MergeIntervals(std::move(zones), Tol());
+      }
       stage.Begin("cluster extension (pass " + std::to_string(pass + 1) + ")");
       const std::size_t portions_before = extension_portions;
       const double absorbed = ExtendClusters();
@@ -15267,6 +15650,73 @@ IdentificationResult Identifier::Identify()
   Assign(result);
   stage.End(std::to_string(result.features.size()) + " features, " +
             std::to_string(result.exclusions.size()) + " exclusion classes");
+  // The RAW zone records of the identification fix round (mesh units; the manifest scales
+  // them): present only where a zone fired.
+  {
+    nlohmann::json records = nlohmann::json::object();
+    if (!unclusterable_records.empty())
+    {
+      nlohmann::json list = nlohmann::json::array();
+      double total = 0.0;
+      for (const auto &record : unclusterable_records)
+      {
+        list.push_back({{"Chains", record.chains},
+                        {"Length", record.length},
+                        {"Intervals", record.intervals}});
+        total += record.length;
+      }
+      records["UnclusterableComponents"] = {{"Count", unclusterable_records.size()},
+                                            {"Length", total},
+                                            {"Cap", kStackCompositionCap},
+                                            {"Components", list}};
+    }
+    if (!taper_records.empty())
+    {
+      nlohmann::json list = nlohmann::json::array();
+      double total = 0.0;
+      for (const auto &record : taper_records)
+      {
+        // The part of the stretch the claims left to the isolated-edge remainder (the
+        // cluster ball / the extension claim the rest): the record's zones intersected with
+        // the remainder zones of their runs — approximated by the isolated-edge model
+        // (decision 1069 (C)), never withdrawn.
+        double effective = 0.0;
+        for (const auto &[run, zone] : record.zones)
+        {
+          for (const auto &kept : taper_zones[run])
+          {
+            effective += std::max(0.0, std::min(zone.second, kept.second) -
+                                           std::max(zone.first, kept.first));
+          }
+        }
+        list.push_back({{"Run", record.run},
+                        {"Chain", record.chain},
+                        {"PartnerChain", record.partner_chain},
+                        {"Crossing", record.crossing},
+                        {"CrossingS", record.crossing_s},
+                        {"SeparationFarOverR", record.separation_lo / R},
+                        {"Interval", {record.interval.first, record.interval.second}},
+                        {"Length", record.length},
+                        {"RemainderLength", effective},
+                        {"Treatment", "ApproximatedByIsolatedEdge"}});
+        total += effective;
+      }
+      records["TaperCrossings"] = {
+          {"Count", taper_records.size()},
+          {"Length", total},
+          {"Treatment", "ApproximatedByIsolatedEdge"},
+          {"Rule",
+           "I-3 (decisions 1065 / 1069 (C)): the monotone non-constant stretch of a facing "
+           "run below 2R adjacent to its 2R crossing is RECORDED (position, lengths, the "
+           "far-end separation over R, the chains); its portions stay claimed by today's "
+           "features (the isolated-edge remainder: a near-correct model on a sliver at "
+           "1.9-2 R, where a zero correction would be the least accurate estimate) - "
+           "Length "
+           "= the remainder so approximated; 0 applied rows change"},
+          {"Crossings", list}};
+    }
+    result.raw_zone_records = records.empty() ? std::string() : records.dump();
+  }
   if (!runs.empty() && census_enabled)
   {
     stage.Begin("knife-edge census");
@@ -15417,6 +15867,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.sub_tolerance_portions.max_length);
   w.Size(result.sub_tolerance_portions.isolated);
   w.String(result.knife_edge_census);
+  w.String(result.raw_zone_records);
   w.Size(result.unused_span_cap_allowances.size());
   for (const auto &label : result.unused_span_cap_allowances)
   {
@@ -15569,6 +16020,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.sub_tolerance_portions.max_length = r.Pod<double>();
   result.sub_tolerance_portions.isolated = r.Size();
   result.knife_edge_census = r.String();
+  result.raw_zone_records = r.String();
   result.unused_span_cap_allowances.resize(r.Size());
   for (auto &label : result.unused_span_cap_allowances)
   {
@@ -16405,6 +16857,36 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                    1.0)},
         {"KnifeEdgeBandRelative", kKnifeEdgeBandRelative},
         {"KnifeEdgeSampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
+        {"KnifeEdgeHysteresis",
+         "the 2R interaction test of the bent-pair rule is read with hysteresis on a run "
+         "(the identification fix round, decisions 1062 section 3 / 1065): a sample "
+         "interacts iff its deciding reading upper = C / cos(turn / 2) is strictly below "
+         "2R (the rule of record); the samples whose reading lies within the knife-edge "
+         "band 2R (1 +- KnifeEdgeBandRelative) form runs of chain-contiguous in-band "
+         "samples of one chain facing one partner chain (a gap of more than R along the "
+         "chain ends a run), and a run whose verdicts are mixed and not monotone takes "
+         "ONE verdict, the majority by length (each sample weighs its spacing; a tie reads "
+         "non-interacting, the strict-less at exactly 2R), so one run gets one "
+         "description; "
+         "readings outside the band keep the pointwise rule. I-3: a run whose readings are "
+         "monotone across 2R is a taper, its verdicts stay pointwise and the non-constant "
+         "samples below 2R adjacent to the crossing (the whole non-constant stretch, "
+         "monotone with the crossing) are a TaperCrossing RECORD (decision 1069 (C)): the "
+         "crossing position, the stretch, the part the claims leave to the isolated-edge "
+         "remainder and Treatment ApproximatedByIsolatedEdge (Diagnostics.TaperCrossings, "
+         "Summary.TaperCrossings); the portions stay claimed by today's features (a "
+         "near-correct model on a sliver at 1.9-2 R: a zero correction would be the least "
+         "accurate estimate), 0 applied rows change, the pair's separation unchanged. N-2: "
+         "a parallel "
+         "cross-section whose composition reaches StackCompositionCap is an "
+         "UnclusterableComponent: the whole component is withdrawn from the pair / stack "
+         "composition, the cluster extension and the isolated-edge remainder and kept RAW "
+         "(Diagnostics.UnclusterableComponents; Exclusions class UnclusterableComponent; "
+         "the "
+         "cap stays 64) instead of the former position-dependent truncated stacks "
+         "(OI-PERIODIC-ARRAY-COUPON: a periodic unit-cell coupon is a future library "
+         "class). Basis: the census band of record; the response is continuous across 2R; "
+         "no new number"},
         {"FacingGateExclusions",
          "audit A8 (facing_check.py): isolated / curved edges facing "
          "another edge and pair / stack sides facing a third edge "
@@ -16676,6 +17158,50 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"UnusedSpanCapAllowances", unused_span_cap_allowances},
       {"GeometryDigest", geometry_digest}};
+  if (!raw_zone_records.empty())
+  {
+    // The RAW zone records (UnclusterableComponents / TaperCrossings; decisions 1062 /
+    // 1065): lengths and points to the manifest's length unit; present only where a zone
+    // fired (0 on every case of record).
+    nlohmann::json records = nlohmann::json::parse(raw_zone_records);
+    auto ScaleLengths = [&](nlohmann::json &node, auto &self) -> void
+    {
+      if (node.is_object())
+      {
+        for (auto &[key, value] : node.items())
+        {
+          if ((key == "Length" || key == "RemainderLength" || key == "CrossingS") &&
+              value.is_number())
+          {
+            value = L(value.get<double>());
+          }
+          else if ((key == "Crossing" || key == "Interval") && value.is_array())
+          {
+            for (auto &c : value)
+            {
+              c = L(c.get<double>());
+            }
+          }
+          else
+          {
+            self(value, self);
+          }
+        }
+      }
+      else if (node.is_array())
+      {
+        for (auto &item : node)
+        {
+          self(item, self);
+        }
+      }
+    };
+    ScaleLengths(records, ScaleLengths);
+    for (auto &[key, value] : records.items())
+    {
+      manifest["Diagnostics"][key] = value;
+    }
+  }
   if (!image_segment_list.empty())
   {
     // Mirror band: the image segments (never perimeter) listed apart.

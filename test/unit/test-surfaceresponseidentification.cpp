@@ -448,7 +448,7 @@ void CheckPartition(const IdentificationInput &input, const IdentificationResult
     {
       continue;
     }
-    REQUIRE(!segment.portions.empty());
+    REQUIRE((!segment.portions.empty() || !segment.excluded_portions.empty()));
     double cursor = 0.0, covered = 0.0;
     for (const auto &portion : segment.portions)
     {
@@ -459,7 +459,17 @@ void CheckPartition(const IdentificationInput &input, const IdentificationResult
       covered += portion[1] - portion[0];
       cursor = portion[1];
     }
-    CHECK_THAT(covered, WithinAbs(length, 1.0e-9));
+    // The analytic exclusion zones (CrossLayer / UnclusterableComponent / TaperCrossing)
+    // tile the segment with the portions.
+    double excluded_here = 0.0;
+    for (const auto &portion : segment.excluded_portions)
+    {
+      CHECK(portion[1] > portion[0]);
+      CHECK(portion[2] >= 0);
+      CHECK(portion[2] < static_cast<double>(result.exclusions.size()));
+      excluded_here += portion[1] - portion[0];
+    }
+    CHECK_THAT(covered + excluded_here, WithinAbs(length, 1.0e-9));
     assigned += covered;
   }
   CHECK_THAT(assigned + result.excluded_length, WithinAbs(result.perimeter_length, 1.0e-9));
@@ -8585,5 +8595,186 @@ TEST_CASE("SurfaceResponseIdentificationVertexPairOrientedSat",
     const auto same_plane = IdentifyMetalPerimeter(
         MakeInput({{pad_a, 0, 1.0}, {RotatedPad(c, c, 45.0), 1, 1.0}}, R));
     CHECK(Counts(same_plane).at("ConvexCorner") == 6);
+  }
+}
+
+// U-KNIFE / U-TAPER / U-UNCLUSTERABLE (the identification fix round, DESIGN section 3 as
+// ruled by decision 1065): the 2R hysteresis on a run, the TaperCrossing RAW zone and the
+// UnclusterableComponent RAW zone.
+TEST_CASE("SurfaceResponseIdentificationKnifeEdgeHysteresis",
+          "[surfaceresponseidentification][Serial]")
+{
+  const double R = 1.9, two_R = 2.0 * R;
+  const std::vector<Point2> pad_a = Rectangle(-50.0, -30.0, 150.0, 0.0);
+  // Pad B's bottom edge: a three-level profile a / b / a (60 + 80 + 52 um; 4-um ramps of
+  // 38 nm: noise joints, one chain) facing pad A's straight top edge.
+  auto PadB = [&](double y_a, double y_b)
+  {
+    return std::vector<Point2>{{-50.0, y_a}, {10.0, y_a},  {14.0, y_b},   {94.0, y_b},
+                               {98.0, y_a},  {150.0, y_a}, {150.0, 40.0}, {-50.0, 40.0}};
+  };
+  auto Summary = [&](const IdentificationResult &result, const std::string &type)
+  {
+    int count = 0;
+    double length = 0.0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == type)
+      {
+        count++;
+        length += feature.length;
+      }
+    }
+    return std::make_pair(count, length);
+  };
+  const double narrow = two_R * (1.0 - 0.005), wide = two_R * (1.0 + 0.005);
+  SECTION("I-2: the majority of an in-band run decides (narrow 112 um vs wide 80 um)")
+  {
+    const auto input = MakeInput({{pad_a, 0, 1.0}, {PadB(narrow, wide), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    // ONE description along the run: every facing sample interacts, so the pairs (two exact
+    // separations 38 nm apart = two keys, both interacting) cover both sides of the 200 um
+    // less the end clusters' claims (<= 2R each side) and no isolated edge faces the gap.
+    const auto [pairs, pair_length] = Summary(result, "SameConductorGap");
+    CHECK(pairs == 2);
+    CHECK(pair_length > 2.0 * (200.0 - 2.0 * two_R));
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "IsolatedEdge")
+      {
+        continue;
+      }
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const double y = 0.5 * (segment.p0[1] + segment.p1[1]), x = segment.p0[0];
+        const bool facing =
+            (std::abs(y) < 1.0e-9 || (y > 3.7 && y < 3.9)) && x > -46.0 && x < 146.0;
+        if (facing)
+        {
+          INFO("isolated edge facing the gap at (" << x << ", " << y << ")");
+          CHECK(false);
+        }
+      }
+    }
+    for (const auto &exclusion : result.exclusions)
+    {
+      CHECK(exclusion.cls != "TaperCrossing");
+    }
+  }
+  SECTION(
+      "I-2: the majority non-interacting (wide 112 um vs narrow 80 um): one description")
+  {
+    const auto input = MakeInput({{pad_a, 0, 1.0}, {PadB(wide, narrow), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(Summary(result, "SameConductorGap").first == 0);
+  }
+  SECTION("I-2: readings outside the band keep the pointwise rule")
+  {
+    // The middle section 5 % wide (far outside the band): ONE pair (two portions of one
+    // exact separation) over the narrow sections only, the middle isolated.
+    const auto input =
+        MakeInput({{pad_a, 0, 1.0}, {PadB(narrow, two_R * 1.05), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const auto [pairs, pair_length] = Summary(result, "SameConductorGap");
+    CHECK(pairs == 1);
+    CHECK(pair_length < 2.0 * 112.0);
+    CHECK(pair_length > 2.0 * (112.0 - 2.0 * two_R - 8.0));
+    CHECK(Summary(result, "IsolatedEdge").second > 2.0 * 70.0);
+  }
+  SECTION("I-3: a fast taper through 2R is RECORDED (decision 1069 (C)); nothing withdrawn")
+  {
+    // Pad B: flat at 1.5 R, a corner at x = 30, a 20.8-deg taper to 3.5 R at x = 40 (its
+    // own chain; the separation changes 25 % per R: non-constant), flat beyond. The
+    // crossing is recorded on both facing chains (pad A's edge at y = 0 and the taper at y
+    // ~ 2R, both at x in [30, 34]: the reading carries the 20.8-deg joint's ambiguity) with
+    // Treatment ApproximatedByIsolatedEdge; the features are those of the rule of record
+    // (no exclusion class, the partition unchanged by the record).
+    const std::vector<Point2> pad_b = {{-50.0, 1.5 * R}, {30.0, 1.5 * R}, {40.0, 3.5 * R},
+                                       {150.0, 3.5 * R}, {150.0, 40.0},   {-50.0, 40.0}};
+    const auto input = MakeInput({{pad_a, 0, 1.0}, {pad_b, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    REQUIRE(!result.raw_zone_records.empty());
+    const auto records = nlohmann::json::parse(result.raw_zone_records);
+    REQUIRE(records.contains("TaperCrossings"));
+    CHECK(records["TaperCrossings"]["Count"].get<int>() == 2);
+    CHECK(records["TaperCrossings"]["Treatment"] == "ApproximatedByIsolatedEdge");
+    bool on_pad_a = false, on_taper = false;
+    for (const auto &crossing : records["TaperCrossings"]["Crossings"])
+    {
+      CHECK(crossing["Length"].get<double>() > 1.0);
+      CHECK(crossing["RemainderLength"].get<double>() >= 0.0);
+      CHECK(crossing["Treatment"] == "ApproximatedByIsolatedEdge");
+      const double cx = crossing["Crossing"][0].get<double>(),
+                   cy = crossing["Crossing"][1].get<double>();
+      CHECK(cx > 30.0);
+      CHECK(cx < 34.0);
+      if (std::abs(cy) < 1.0e-9)
+      {
+        on_pad_a = true;
+      }
+      else
+      {
+        on_taper = true;
+        CHECK_THAT(cy, WithinAbs(two_R, 0.1 * R));
+      }
+    }
+    CHECK(on_pad_a);
+    CHECK(on_taper);
+    for (const auto &exclusion : result.exclusions)
+    {
+      CHECK(exclusion.cls != "TaperCrossing");
+    }
+    // The record changes no claim: no exclusion class, the partition unchanged.
+    CHECK(result.excluded_length == 0.0);
+  }
+  SECTION("N-2: a periodic finger array beyond the composition cap is one RAW record")
+  {
+    // 70 fingers 1 um wide at 2-um pitch (edges at 1-um pitch = 0.53 R: one translational
+    // component of 140 edges > kStackCompositionCap 64), 200 um long.
+    std::vector<LoopSpec> loops;
+    for (int f = 0; f < 70; f++)
+    {
+      const double x = 2.0 * f;
+      loops.push_back({Rectangle(x, 0.0, x + 1.0, 200.0), 0, 2.0});
+    }
+    const auto input = MakeInput(loops, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const auto raw = std::find_if(result.exclusions.begin(), result.exclusions.end(),
+                                  [](const IdentificationExclusion &e)
+                                  { return e.cls == "UnclusterableComponent"; });
+    REQUIRE(raw != result.exclusions.end());
+    CHECK(raw->length > 140.0 * 150.0);
+    REQUIRE(!result.raw_zone_records.empty());
+    const auto records = nlohmann::json::parse(result.raw_zone_records);
+    REQUIRE(records.contains("UnclusterableComponents"));
+    CHECK(records["UnclusterableComponents"]["Count"].get<int>() >= 1);
+    CHECK(records["UnclusterableComponents"]["Components"][0]["Chains"].size() >= 64);
+    // No pair / stack / isolated model inside the array (y in [20, 180]).
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "SameConductorGap" && feature.type != "SameConductorStrip" &&
+          feature.type != "ParallelEdgeCluster" && feature.type != "IsolatedEdge")
+      {
+        continue;
+      }
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const double y = 0.5 * (segment.p0[1] + segment.p1[1]);
+        const bool vertical = std::abs(segment.p0[0] - segment.p1[0]) < 1.0e-9;
+        if (vertical && y > 20.0 && y < 180.0)
+        {
+          INFO(feature.type << " inside the array at (" << segment.p0[0] << ", " << y
+                            << ")");
+          CHECK(false);
+        }
+      }
+    }
   }
 }

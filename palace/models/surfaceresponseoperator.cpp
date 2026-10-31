@@ -6276,6 +6276,30 @@ public:
     {
       result["Identification"] = identification;
       result["LegacyRequirements"] = Entries(legacy_requirements, nullptr, nullptr);
+      // The RAW zone classes of the identification fix round (decisions 1062 / 1065): a
+      // Summary count where the class fired (absent otherwise: the cases of record are
+      // bitwise).
+      for (const auto &exclusion :
+           identification.value("Exclusions", nlohmann::json::array()))
+      {
+        if (exclusion.value("Class", "") == "UnclusterableComponent")
+        {
+          result["Summary"]["UnclusterableComponent"] = {
+              {"Count", exclusion.value("Count", 0)},
+              {"Length", exclusion.value("Length", 0.0)}};
+        }
+      }
+      const auto &diagnostics =
+          identification.value("Diagnostics", nlohmann::json::object());
+      if (diagnostics.contains("TaperCrossings"))
+      {
+        // I-3 (decision 1069 (C)): the crossings recorded, their remainder approximated by
+        // the isolated-edge model (Count = crossings, Length = the approximated remainder).
+        result["Summary"]["TaperCrossings"] = {
+            {"Count", diagnostics["TaperCrossings"].value("Count", 0)},
+            {"Length", diagnostics["TaperCrossings"].value("Length", 0.0)},
+            {"Treatment", "ApproximatedByIsolatedEdge"}};
+      }
     }
     if (fallback_placed_count > 0)
     {
