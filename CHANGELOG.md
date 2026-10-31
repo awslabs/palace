@@ -133,6 +133,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed current dipole sources (`config["Domains"]["CurrentDipole"]`) with
+    `config["Solver"]["Order"]` of 2 and above on meshes with tetrahedra, prisms or
+    pyramids: the source ignored the orientation of the face degrees of freedom of the
+    element containing it, so its amplitude, sign and direction were wrong (the far field
+    of the short dipole antenna example was 46% too small). MFEM is patched with
+    [mfem/mfem#5711](https://github.com/mfem/mfem/pull/5711).
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Fixed the sign of the second-order absorbing boundary condition term (`"Absorbing"` with
     `"Order": 2`): it now matches β = μ⁻¹c₀/(2iω) in the documentation. Before, the extra term
     made the boundary reflect more than the first-order condition at oblique incidence.
