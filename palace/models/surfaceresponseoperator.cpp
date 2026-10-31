@@ -28991,9 +28991,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         anchor_offset += (anchor[d] - patch_config.origin[d]) * patch_config.axis_u[d];
       }
-      // The anchor lies on metal by the placement's ReferenceInGap rule (decision 1082
-      // Q1: a model whose reference lies in a gap is never placed; a cluster's anchors are
-      // the feet on its first sides): an invariant here, not a second rule.
+      // The anchor lies on metal BY THE ANCHOR CONSTRUCTION (the d1073 confirmation's
+      // MINOR-1): every translational Maxwell anchor is a device foot or a +-R offset of
+      // one - a PEC cluster's = the foot on its first side / ClosestFoot on the reference
+      // sides, a gap's = e1 - R axis_u, a strip's = the origin, a non-PEC pair's = e1, an
+      // isolated edge's = point - R axis_u or point - never the model's conductor
+      // references (ReferenceInGap, decision 1082 Q1, guards the ES reading of those): an
+      // invariant here, not a second rule.
       MFEM_ASSERT(LocalPieceOfOffset(offsets, gap_directions, pieces, anchor_offset) > 0,
                   "Response-correction patch "
                       << patch.global_index << " (model " << model.name
