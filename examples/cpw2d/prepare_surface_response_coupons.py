@@ -17,6 +17,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+IDENTIFICATION_TOOLS = ROOT.parent / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+import local_pieces as local_pieces_module  # noqa: E402
+
 STRAIGHT_BUILDER = ROOT / "build_surface_process_library.py"
 STRAIGHT_QUALIFIER = ROOT / "qualify_surface_response.py"
 CLUSTER_MESH = ROOT / "mesh" / "mesh_edge_cluster_coupon.jl"
@@ -999,15 +1004,22 @@ def normalize_parallel_edges(coupon, matching_radius):
     return edges
 
 
-def write_cluster_signature(root, edges):
+def write_cluster_signature(root, edges, local_pieces=False):
+    """The JSON signature (the key's labels, read by the response generator) and the mesher's CSV; with
+    local_pieces the CSV's Conductor column is the LOCAL piece (R0-b: the mesher tags the metal per piece through
+    its existing per-label tagging, no mesher change), the JSON unchanged."""
     data = {"Edges": edges}
     json_path = root / "cluster-signature.json"
     write_json(json_path, data)
     csv_path = root / "cluster-signature.csv"
+    labels = [edge["Conductor"] for edge in edges]
+    if local_pieces:
+        labels = local_pieces_module.local_pieces_of_parallel_edges(
+            [edge["Offset"] for edge in edges], [edge["GapDirection"] for edge in edges])
     lines = ["Offset,GapDirection,Conductor"]
     lines.extend(
-        f"{edge['Offset']:.17g},{edge['GapDirection']},{edge['Conductor']}"
-        for edge in edges
+        f"{edge['Offset']:.17g},{edge['GapDirection']},{label}"
+        for edge, label in zip(edges, labels)
     )
     csv_path.write_text("\n".join(lines) + "\n")
     return json_path, csv_path
@@ -1148,6 +1160,8 @@ def build_straight(coupons, args, parameters, cache):
             command.extend(["--julia-project", args.julia_project])
         if not isolated:
             command.append("--skip-isolated")
+        if getattr(args, "local_pieces", False):
+            command.append("--local-pieces")
         for topology, option in PAIRED_TOPOLOGIES.items():
             command.append(f"--{option}")
             command.extend(separations[topology])
@@ -1424,7 +1438,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
-    json_signature, csv_signature = write_cluster_signature(root, edges)
+    json_signature, csv_signature = write_cluster_signature(root, edges, getattr(args, "local_pieces", False))
     _, meshes = generate_parallel_cluster_meshes(
         root, csv_signature, args, parameters, spec, 1.0
     )
@@ -1465,6 +1479,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             args.coupon_depth,
             "--edge-offset-tolerance",
             args.edge_offset_tolerance,
+            *(["--local-pieces"] if getattr(args, "local_pieces", False) else []),
             "--library-name",
             f"{args.name}-parallel-cluster-p{final_order}",
             "--model-name",
@@ -2864,6 +2879,11 @@ def parse_args():
     parser.add_argument("--spatial-ring-size", type=int, default=16)
     parser.add_argument("--coupon-depth", type=float, default=1055.0)
     parser.add_argument("--edge-offset-tolerance", type=float, default=1.0e-3)
+    parser.add_argument("--local-pieces", action="store_true",
+                        help="R0-b, the generator side (identification fix round DESIGN A.3 (b); decisions 1064 (4) / 1096 (8)): the 2D "
+                             "coupons' conductor labels are their LOCAL metal pieces (one reference per piece; the parallel-cluster "
+                             "signature CSV and the same-conductor-gap mesher carry Conductor := piece; Edges[].LocalPiece / LocalPieces "
+                             "on the library entries). Default OFF: every output byte-identical to the one-reference form")
     parser.add_argument("--max-heldout-error", type=float, default=10.0)
     parser.add_argument("--max-fabricated-matrix-change", type=float, default=5.0)
     parser.add_argument("--max-fabricated-energy-change", type=float, default=10.0)
