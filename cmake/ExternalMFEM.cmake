@@ -441,6 +441,15 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://raw.githubusercontent.com/awslabs/palace/b22f654ab36fe01f1f3176349c60626efed1a6a2/extern/patch/mfem/mfem_pr5353.diff"
   c35f584090f97c84c12fc80e6d5c068512911d192132e18f5aa4254f507c5e4f
 )
+# https://github.com/mfem/mfem/pull/5711
+# DofTransformation in LinearForm::AssembleDelta (current dipoles on Nedelec spaces of
+# order 2 and above on elements with triangular faces), rebased onto the PR 5353
+# snapshot above, so it must be applied after it.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5711.diff
+  "https://raw.githubusercontent.com/awslabs/palace/80474366fa2bf54d0a0b28d7803c4008db92a6a3/extern/patch/mfem/mfem_pr5711.diff"
+  4613a04c1cad8953b640c415ad093f4206390bc9bc49ad5d7042ec3bb8f6b470
+)
 # https://github.com/mfem/mfem/pull/5494
 # NCMesh partition fixes; not yet in MFEM 4.10. Applied directly from the
 # upstream PR range, which uses FlipIndexSign (present as of 4.10).

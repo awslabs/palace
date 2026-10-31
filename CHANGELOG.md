@@ -366,6 +366,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Enzyme v0.0.303. ButterflyPACK stays at v4.1.0, as STRUMPACK 8.1.0 does not link
     against ButterflyPACK 5.0.0.
     [PR 1114](https://github.com/awslabs/palace/pull/1114).
+  - Added an MFEM patch for [mfem/mfem#5711](https://github.com/mfem/mfem/pull/5711),
+    which fixes current dipole sources on Nedelec spaces of order 2 and above on
+    tetrahedra, prisms and pyramids.
+    [PR 1121](https://github.com/awslabs/palace/pull/1121).
 
 ## [0.18.1] - 2026-09-21
 
