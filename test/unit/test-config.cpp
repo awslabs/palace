@@ -875,6 +875,25 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_policy}}));
 
+  // The knife-edge census flag (the identification fix round DESIGN section 9 (i); decision
+  // 1081): absent = unset (the operator decides: on for the preflight, off for a solve),
+  // an explicit boolean overrides, anything else is refused.
+  CHECK_FALSE(automatic.response_correction->knife_edge_census.has_value());
+  for (const bool census : {true, false})
+  {
+    auto census_config = automatic_correction;
+    census_config["KnifeEdgeCensus"] = census;
+    const config::ElectrostaticSolverData census_data(
+        json{{"ResponseCorrection", census_config}});
+    REQUIRE(census_data.response_correction);
+    REQUIRE(census_data.response_correction->knife_edge_census.has_value());
+    CHECK(*census_data.response_correction->knife_edge_census == census);
+  }
+  auto invalid_census = automatic_correction;
+  invalid_census["KnifeEdgeCensus"] = "On";
+  CHECK_THROWS(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_census}}));
+
   for (const auto &[name, mode, postprocess, self_consistent] :
        std::vector<std::tuple<const char *, CorrectionMode, bool, bool>>{
            {"PostprocessOnly", CorrectionMode::POSTPROCESS_ONLY, true, false},

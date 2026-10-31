@@ -1730,6 +1730,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_ABORT("Electrostatic response-correction \"UnmatchedPolicy\" must be "
                    "\"Warn\" or \"Error\"!");
       }
+      if (auto census = correction.find("KnifeEdgeCensus"); census != correction.end())
+      {
+        MFEM_VERIFY(census->is_boolean(),
+                    "Response-correction \"KnifeEdgeCensus\" must be a boolean!");
+        data.knife_edge_census = census->get<bool>();
+      }
       if (auto geometry_policy = correction.find("GeometryFailurePolicy");
           geometry_policy != correction.end())
       {

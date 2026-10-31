@@ -448,7 +448,7 @@ void CheckPartition(const IdentificationInput &input, const IdentificationResult
     {
       continue;
     }
-    REQUIRE(!segment.portions.empty());
+    REQUIRE((!segment.portions.empty() || !segment.excluded_portions.empty()));
     double cursor = 0.0, covered = 0.0;
     for (const auto &portion : segment.portions)
     {
@@ -459,7 +459,17 @@ void CheckPartition(const IdentificationInput &input, const IdentificationResult
       covered += portion[1] - portion[0];
       cursor = portion[1];
     }
-    CHECK_THAT(covered, WithinAbs(length, 1.0e-9));
+    // The analytic exclusion zones (CrossLayer / UnclusterableComponent / TaperCrossing)
+    // tile the segment with the portions.
+    double excluded_here = 0.0;
+    for (const auto &portion : segment.excluded_portions)
+    {
+      CHECK(portion[1] > portion[0]);
+      CHECK(portion[2] >= 0);
+      CHECK(portion[2] < static_cast<double>(result.exclusions.size()));
+      excluded_here += portion[1] - portion[0];
+    }
+    CHECK_THAT(covered + excluded_here, WithinAbs(length, 1.0e-9));
     assigned += covered;
   }
   CHECK_THAT(assigned + result.excluded_length, WithinAbs(result.perimeter_length, 1.0e-9));
@@ -6228,7 +6238,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     imaged.real_segments = static_cast<std::size_t>(chord);
     CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
   }
-  // 7. The geometry cache round trip of the record (version 20).
+  // 7. The geometry cache round trip of the record (version 22).
   {
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -6257,7 +6267,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     std::ifstream input(path);
     nlohmann::json cache = nlohmann::json::parse(input);
     input.close();
-    CHECK(cache["Version"] == 21);
+    CHECK(cache["Version"] == 22);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
     CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
     CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
@@ -6287,7 +6297,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
                       ContainsSubstring("cache version 17") &&
-                          ContainsSubstring("version 21"));
+                          ContainsSubstring("version 22"));
     // A version-18 cache (main before decision 774: the same schema, but a mirror-formed
     // coupon's image-side probes recorded un-snapped) is refused by the version message
     // (decision 781; the 527 rule), never read for its stale ProbeSnaps.
@@ -6300,7 +6310,7 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(eighteen_path, data),
                       ContainsSubstring("cache version 18") &&
-                          ContainsSubstring("version 21"));
+                          ContainsSubstring("version 22"));
     // A version-19 cache (main before the T5 excluded-corner containment rule, decision
     // 972: the same schema, but written by a binary that places the UNGROWN model of a
     // cluster the T5 binary grows) is refused by the version message (the 527 / 781
@@ -6314,12 +6324,14 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(nineteen_path, data),
                       ContainsSubstring("cache version 19") &&
-                          ContainsSubstring("version 21") &&
+                          ContainsSubstring("version 22") &&
                           ContainsSubstring("excluded corner window"));
-    // A version-20 cache (main before the identification fix round's R0-a, decision 1064
-    // (3): the same placement, but no conductor-consistency probes on its translational
-    // patches, so the gate could not read them) is refused by the version message, never
-    // read as a probe-less configuration.
+    // A version-20 cache (main before the identification fix round: the same placement
+    // and schema, but written by a binary without the oriented SAT vertex-vertex rule and
+    // the near-matched placement (lane A, decision 1087) and with no conductor-consistency
+    // probes on its translational patches (lane B, decision 1064 (3)), so the gate could
+    // not read them) is refused by the version message (the 527 / 781 merge-order rule),
+    // never read as a probe-less / stale-placement configuration.
     nlohmann::json twenty = cache;
     twenty["Version"] = 20;
     for (auto &patch : twenty["Patches"])
@@ -6334,8 +6346,24 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(twenty_path, data),
                       ContainsSubstring("cache version 20") &&
-                          ContainsSubstring("version 21") &&
-                          ContainsSubstring("conductor-consistency probes"));
+                          ContainsSubstring("version 22") &&
+                          ContainsSubstring("conductor-consistency probes") &&
+                          ContainsSubstring("GeometricNearMatched"));
+    // A version-21 cache (EITHER idfix lane's pre-merge binary: lane A's carries the SAT /
+    // near-match placement without the probes, lane B's the probes without that placement)
+    // is refused by the version message (the 527 / 1064 (3) / 1087 merge-order rule): the
+    // merged binary writes version 22.
+    nlohmann::json twenty_one = cache;
+    twenty_one["Version"] = 21;
+    const auto twenty_one_path = dir / "geometry-v21.json";
+    {
+      std::ofstream output(twenty_one_path);
+      output << twenty_one.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(twenty_one_path, data),
+                      ContainsSubstring("cache version 21") &&
+                          ContainsSubstring("version 22") &&
+                          ContainsSubstring("BOTH idfix lanes"));
   }
 }
 
@@ -8462,4 +8490,1031 @@ TEST_CASE("SurfaceResponseIdentification frame minimisation orders the key text"
     CHECK(canonical->key == canonical->signature.dump());
     CHECK(canonical->hash == Sha256Hex(canonical->key));
   }
+}
+
+// U-SAT-IDENT (the identification fix round, decisions 1058 MAJOR-3 / 1060 BLOCKER-1 / 1062
+// A.5 (a), B.1 (e), C.2, C.7): the identification's vertex-vertex clustering decision IS
+// the placement's oriented separating-axis verdict on the two sites' +-R coupon cubes.
+TEST_CASE("SurfaceResponseIdentificationVertexPairOrientedSat",
+          "[surfaceresponseidentification][Serial]")
+{
+  const double R = 1.9;
+  const double pi = std::acos(-1.0);
+  auto AxisBox = [&](const std::array<double, 3> &origin, double theta_deg, double w = 1.0)
+  {
+    const double t = theta_deg * pi / 180.0;
+    const std::array<std::array<double, 3>, 3> axes = {
+        {{std::cos(t), std::sin(t), 0.0},
+         {-std::sin(t) * w, std::cos(t) * w, 0.0},
+         {0.0, 0.0, w}}};
+    return VertexCubeBox(origin, axes, R);
+  };
+  // (1) The S1b-rc junction corners of record (hardening-2 local f3 / exec-B rrmeas J1; the
+  // frames of the patches CSV, plane z = 4.8 with w = -z): 1907f795ac80 (concave 158.743) /
+  // 041a034f3147 (concave 135) at 2.014 R, frames 21.3 deg apart, and 041a034f3147 /
+  // 3308d9541976 (concave 157.5) at 2.014 R, frames 45 deg apart, OVERLAP (= the record's
+  // H4a OverlapExcluded pairs, decision 1030); 3308d9541976 / 3a9773b1ff89 (91.15 deg) at
+  // 2.60 R, frames 22.5 deg apart, do NOT (the probe sat_scp_pairs_v1 of record).
+  {
+    auto Frame = [&](const std::array<double, 3> &origin, double ux, double uy)
+    {
+      const std::array<std::array<double, 3>, 3> axes = {
+          {{ux, uy, 0.0}, {uy, -ux, 0.0}, {0.0, 0.0, -1.0}}};  // y = n x x with n = -z
+      return VertexCubeBox(origin, axes, R);
+    };
+    const auto f79 = Frame({230.0, 0.0, 4.8}, -0.021692988272, 0.999764679442);
+    const auto f80 =
+        Frame({231.4644660941, -3.5355339059, 4.8}, -0.382683432365, 0.923879532511);
+    const auto f81 = Frame({235.0, -5.0, 4.8}, -0.923879532511, 0.382683432365);
+    const auto f82 = Frame({239.946975829, -5.0, 4.8}, -1.0, 0.0);
+    CHECK(OrientedBoxesInteriorOverlap(f79, f80, 3));
+    CHECK(OrientedBoxesInteriorOverlap(f80, f79, 3));
+    CHECK(OrientedBoxesInteriorOverlap(f80, f81, 3));
+    CHECK(!OrientedBoxesInteriorOverlap(f79, f81, 3));
+    CHECK(!OrientedBoxesInteriorOverlap(f81, f82, 3));
+    CHECK_THAT(std::hypot(231.4644660941 - 230.0, -3.5355339059) / R,
+               WithinAbs(2.014, 1.0e-3));
+  }
+  // (2) The reach of two R-cubes (decision 1062 C.2): parallel frames 2 R along an axis and
+  // 2 sqrt(2) R along the face diagonal (the review's diagonal case at 2.5 R overlaps);
+  // frames 45 deg apart (1 + sqrt 2) R = 2.414 R along a frame axis and 2.613 R along the
+  // 22.5-deg bisector; nothing beyond 2 sqrt(3) R.
+  {
+    const auto a = AxisBox({0.0, 0.0, 0.0}, 0.0);
+    auto At = [&](double d_over_R, double phi_deg, double theta_deg)
+    {
+      const double p = phi_deg * pi / 180.0;
+      return AxisBox({d_over_R * R * std::cos(p), d_over_R * R * std::sin(p), 0.0},
+                     theta_deg);
+    };
+    CHECK(OrientedBoxesInteriorOverlap(a, At(1.99, 0.0, 0.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.01, 0.0, 0.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.5, 45.0, 0.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.82, 45.0, 0.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.84, 45.0, 0.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.40, 0.0, 45.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.42, 0.0, 45.0), 3));
+    CHECK(OrientedBoxesInteriorOverlap(a, At(2.60, 22.5, 45.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, At(2.62, 22.5, 45.0), 3));
+    for (const double theta : {0.0, 10.0, 30.0, 45.0, 60.0})
+    {
+      for (const double phi : {0.0, 22.5, 45.0})
+      {
+        CHECK(!OrientedBoxesInteriorOverlap(
+            a, At(2.0 * std::sqrt(3.0) + 1.0e-3, phi, theta), 3));
+      }
+    }
+    // The cross-plane non-event (B.1 (e)): the review's S1 / S3p / S4 pairs overlap in 2D
+    // (d_xy 2.264 R, frames 45 deg apart) but sit on planes 4.8 um = 2.526 R apart.
+    const auto flipped = AxisBox({2.264 * R, 0.0, 4.8}, 45.0, -1.0);
+    CHECK(OrientedBoxesInteriorOverlap(a, AxisBox({2.264 * R, 0.0, 0.0}, 45.0), 3));
+    CHECK(!OrientedBoxesInteriorOverlap(a, flipped, 3));
+  }
+  // (3) The identification's decision == the SAT verdict on a (d, theta) grid: two 30-um
+  // pads whose nearest convex corners face each other along the diagonal at centre
+  // distance d, the second pad rotated by theta about its corner (every edge >= d from the
+  // other pad: no edge-edge / edge-vertex event below 2R). Clustered (one
+  // SpatialEdgeCluster of the two corners, 6 free corners) iff the cubes overlap; else 8
+  // corners, 0 clusters.
+  auto RotatedPad = [&](double corner_x, double corner_y, double theta_deg)
+  {
+    const double t = theta_deg * pi / 180.0, s = 30.0;
+    std::vector<Point2> pts;
+    for (const Point2 &q : {Point2{0.0, 0.0}, Point2{s, 0.0}, Point2{s, s}, Point2{0.0, s}})
+    {
+      pts.push_back({corner_x + q[0] * std::cos(t) - q[1] * std::sin(t),
+                     corner_y + q[0] * std::sin(t) + q[1] * std::cos(t)});
+    }
+    return pts;
+  };
+  const std::vector<Point2> pad_a = Rectangle(-30.0, -30.0, 0.0, 0.0);
+  auto Counts = [](const IdentificationResult &result)
+  {
+    std::map<std::string, int> counts;
+    for (const auto &feature : result.features)
+    {
+      counts[feature.type]++;
+    }
+    return counts;
+  };
+  int clustered = 0, separate = 0;
+  for (const double d_over_R : {2.05, 2.3, 2.5, 2.7, 2.9})
+  {
+    for (const double theta : {0.0, 15.0, 30.0, 45.0})
+    {
+      const double c = d_over_R * R / std::sqrt(2.0);
+      const bool overlap = OrientedBoxesInteriorOverlap(AxisBox({0.0, 0.0, 0.0}, 0.0),
+                                                        AxisBox({c, c, 0.0}, theta), 3);
+      const auto input = MakeInput({{pad_a, 0, 1.0}, {RotatedPad(c, c, theta), 1, 1.0}}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      INFO("d / R " << d_over_R << " theta " << theta << " SAT " << overlap);
+      CheckPartition(input, result);
+      auto counts = Counts(result);
+      CHECK(counts["ConvexCorner"] == (overlap ? 6 : 8));
+      CHECK(counts["SpatialEdgeCluster"] == (overlap ? 1 : 0));
+      (overlap ? clustered : separate)++;
+    }
+  }
+  CHECK(clustered >=
+        5);  // the grid reaches both verdicts (2.05 R x 4; 2.3 / 2.5 at 0 deg...)
+  CHECK(separate >= 5);
+  // (4) The same pair across planes (the flipped top chip 4.8 um = 2.526 R above): no
+  // site-site event across planes (SitePlane) and the 3D cubes are disjoint — 8 corners.
+  {
+    const double c = 2.264 * R / std::sqrt(2.0);
+    LoopSpec top{RotatedPad(c, c, 45.0), 1, 1.0, 4.8};
+    top.normal_sign = -1.0;
+    const auto input = MakeInput({{pad_a, 0, 1.0}, top}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    auto counts = Counts(result);
+    CHECK(counts["ConvexCorner"] == 8);
+    CHECK(counts["SpatialEdgeCluster"] == 0);
+    const auto same_plane = IdentifyMetalPerimeter(
+        MakeInput({{pad_a, 0, 1.0}, {RotatedPad(c, c, 45.0), 1, 1.0}}, R));
+    CHECK(Counts(same_plane).at("ConvexCorner") == 6);
+  }
+}
+
+// U-KNIFE / U-TAPER / U-UNCLUSTERABLE (the identification fix round, DESIGN section 3 as
+// ruled by decision 1065): the 2R hysteresis on a run, the TaperCrossing RAW zone and the
+// UnclusterableComponent RAW zone.
+TEST_CASE("SurfaceResponseIdentificationKnifeEdgeHysteresis",
+          "[surfaceresponseidentification][Serial]")
+{
+  const double R = 1.9, two_R = 2.0 * R;
+  const std::vector<Point2> pad_a = Rectangle(-50.0, -30.0, 150.0, 0.0);
+  // Pad B's bottom edge: a three-level profile a / b / a (60 + 80 + 52 um; 4-um ramps of
+  // 38 nm: noise joints, one chain) facing pad A's straight top edge.
+  auto PadB = [&](double y_a, double y_b)
+  {
+    return std::vector<Point2>{{-50.0, y_a}, {10.0, y_a},  {14.0, y_b},   {94.0, y_b},
+                               {98.0, y_a},  {150.0, y_a}, {150.0, 40.0}, {-50.0, 40.0}};
+  };
+  auto Summary = [&](const IdentificationResult &result, const std::string &type)
+  {
+    int count = 0;
+    double length = 0.0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == type)
+      {
+        count++;
+        length += feature.length;
+      }
+    }
+    return std::make_pair(count, length);
+  };
+  const double narrow = two_R * (1.0 - 0.005), wide = two_R * (1.0 + 0.005);
+  SECTION("I-2: the majority of an in-band run decides (narrow 112 um vs wide 80 um)")
+  {
+    const auto input = MakeInput({{pad_a, 0, 1.0}, {PadB(narrow, wide), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    // ONE description along the run: every facing sample interacts, so the pairs (two exact
+    // separations 38 nm apart = two keys, both interacting) cover both sides of the 200 um
+    // less the end clusters' claims (<= 2R each side) and no isolated edge faces the gap.
+    const auto [pairs, pair_length] = Summary(result, "SameConductorGap");
+    CHECK(pairs == 2);
+    CHECK(pair_length > 2.0 * (200.0 - 2.0 * two_R));
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "IsolatedEdge")
+      {
+        continue;
+      }
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const double y = 0.5 * (segment.p0[1] + segment.p1[1]), x = segment.p0[0];
+        const bool facing =
+            (std::abs(y) < 1.0e-9 || (y > 3.7 && y < 3.9)) && x > -46.0 && x < 146.0;
+        if (facing)
+        {
+          INFO("isolated edge facing the gap at (" << x << ", " << y << ")");
+          CHECK(false);
+        }
+      }
+    }
+    for (const auto &exclusion : result.exclusions)
+    {
+      CHECK(exclusion.cls != "TaperCrossing");
+    }
+  }
+  SECTION(
+      "I-2: the majority non-interacting (wide 112 um vs narrow 80 um): one description")
+  {
+    const auto input = MakeInput({{pad_a, 0, 1.0}, {PadB(wide, narrow), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(Summary(result, "SameConductorGap").first == 0);
+  }
+  SECTION("I-2: readings outside the band keep the pointwise rule")
+  {
+    // The middle section 5 % wide (far outside the band): ONE pair (two portions of one
+    // exact separation) over the narrow sections only, the middle isolated.
+    const auto input =
+        MakeInput({{pad_a, 0, 1.0}, {PadB(narrow, two_R * 1.05), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const auto [pairs, pair_length] = Summary(result, "SameConductorGap");
+    CHECK(pairs == 1);
+    CHECK(pair_length < 2.0 * 112.0);
+    CHECK(pair_length > 2.0 * (112.0 - 2.0 * two_R - 8.0));
+    CHECK(Summary(result, "IsolatedEdge").second > 2.0 * 70.0);
+  }
+  SECTION("I-3: a fast taper through 2R is RECORDED (decision 1069 (C)); nothing withdrawn")
+  {
+    // Pad B: flat at 1.5 R, a corner at x = 30, a 20.8-deg taper to 3.5 R at x = 40 (its
+    // own chain; the separation changes 25 % per R: non-constant), flat beyond. The
+    // crossing is recorded on both facing chains (pad A's edge at y = 0 and the taper at y
+    // ~ 2R, both at x in [30, 34]: the reading carries the 20.8-deg joint's ambiguity) with
+    // Treatment ApproximatedByIsolatedEdge; the features are those of the rule of record
+    // (no exclusion class, the partition unchanged by the record).
+    const std::vector<Point2> pad_b = {{-50.0, 1.5 * R}, {30.0, 1.5 * R}, {40.0, 3.5 * R},
+                                       {150.0, 3.5 * R}, {150.0, 40.0},   {-50.0, 40.0}};
+    const auto input = MakeInput({{pad_a, 0, 1.0}, {pad_b, 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    REQUIRE(!result.raw_zone_records.empty());
+    const auto records = nlohmann::json::parse(result.raw_zone_records);
+    REQUIRE(records.contains("TaperCrossings"));
+    CHECK(records["TaperCrossings"]["Count"].get<int>() == 2);
+    CHECK(records["TaperCrossings"]["Treatment"] == "ApproximatedByIsolatedEdge");
+    bool on_pad_a = false, on_taper = false;
+    for (const auto &crossing : records["TaperCrossings"]["Crossings"])
+    {
+      CHECK(crossing["Length"].get<double>() > 1.0);
+      CHECK(crossing["RemainderLength"].get<double>() >= 0.0);
+      CHECK(crossing["Treatment"] == "ApproximatedByIsolatedEdge");
+      const double cx = crossing["Crossing"][0].get<double>(),
+                   cy = crossing["Crossing"][1].get<double>();
+      CHECK(cx > 30.0);
+      CHECK(cx < 34.0);
+      if (std::abs(cy) < 1.0e-9)
+      {
+        on_pad_a = true;
+      }
+      else
+      {
+        on_taper = true;
+        CHECK_THAT(cy, WithinAbs(two_R, 0.1 * R));
+      }
+    }
+    CHECK(on_pad_a);
+    CHECK(on_taper);
+    for (const auto &exclusion : result.exclusions)
+    {
+      CHECK(exclusion.cls != "TaperCrossing");
+    }
+    // The record changes no claim: no exclusion class, the partition unchanged.
+    CHECK(result.excluded_length == 0.0);
+  }
+  SECTION("N-2: a periodic finger array beyond the composition cap is one RAW record")
+  {
+    // 70 fingers 1 um wide at 2-um pitch (edges at 1-um pitch = 0.53 R: one translational
+    // component of 140 edges > kStackCompositionCap 64), 200 um long.
+    std::vector<LoopSpec> loops;
+    for (int f = 0; f < 70; f++)
+    {
+      const double x = 2.0 * f;
+      loops.push_back({Rectangle(x, 0.0, x + 1.0, 200.0), 0, 2.0});
+    }
+    const auto input = MakeInput(loops, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const auto raw = std::find_if(result.exclusions.begin(), result.exclusions.end(),
+                                  [](const IdentificationExclusion &e)
+                                  { return e.cls == "UnclusterableComponent"; });
+    REQUIRE(raw != result.exclusions.end());
+    CHECK(raw->length > 140.0 * 150.0);
+    REQUIRE(!result.raw_zone_records.empty());
+    const auto records = nlohmann::json::parse(result.raw_zone_records);
+    REQUIRE(records.contains("UnclusterableComponents"));
+    CHECK(records["UnclusterableComponents"]["Count"].get<int>() >= 1);
+    CHECK(records["UnclusterableComponents"]["Components"][0]["Chains"].size() >= 64);
+    // No pair / stack / isolated model inside the array (y in [20, 180]).
+    for (const auto &feature : result.features)
+    {
+      if (feature.type != "SameConductorGap" && feature.type != "SameConductorStrip" &&
+          feature.type != "ParallelEdgeCluster" && feature.type != "IsolatedEdge")
+      {
+        continue;
+      }
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const double y = 0.5 * (segment.p0[1] + segment.p1[1]);
+        const bool vertical = std::abs(segment.p0[0] - segment.p1[0]) < 1.0e-9;
+        if (vertical && y > 20.0 && y < 180.0)
+        {
+          INFO(feature.type << " inside the array at (" << segment.p0[0] << ", " << y
+                            << ")");
+          CHECK(false);
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationRemainderAbsorption",
+          "[surfaceresponseidentification][Serial]")
+{
+  // I-4 (identification fix round DESIGN section 4; decisions 1075 Q2 / 1077 Q1 (B)): an
+  // isolated-edge remainder (IsolatedEdge / CurvedEdge stretch) shorter than
+  // kRemainderAbsorptionOverRadius x R (5e-3 R, the GDS scatter bar) and not below the
+  // signature tolerance is RECORDED (Diagnostics.RemainderBelowBar) and kept as it is: the
+  // sliver rule of decision 222 joins at the signature tolerance only (the absorption at
+  // the bar re-indexed the features and, on image segments, broke a mirror-formed cluster's
+  // contract on a card of record). Reproducer: body A (x in [0, 10], 5 R wide: no strip)
+  // and body B (x in [12, 13]) between two truncation cuts, B's lower cut raised by d above
+  // A's, so that the stack claim of A's x = 10 edge (facing B's x = 12 edge at R) starts at
+  // the foot of B's cut end and leaves an isolated remainder of length d at A's cut.
+  const double R = 2.0;
+  auto Remainders = [&](double d)
+  {
+    const std::vector<Point2> body_a = {
+        {0.0, -60.0}, {10.0, -60.0}, {10.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {12.0, -60.0 + d}, {13.0, -60.0 + d}, {13.0, 0.0}, {12.0, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    // The portions of A's x = 10 edge (the segments with x = 10 at both ends).
+    struct Reading
+    {
+      double isolated_length = 0.0;
+      int isolated_portions = 0;
+      double claimed_from = 0.0;  // the lowest y the non-isolated claims reach
+      std::size_t joined = 0;
+      std::vector<IdentificationResult::RemainderBelowBar> recorded;
+    } reading;
+    for (std::size_t i = 0; i < result.segments.size(); i++)
+    {
+      const auto &segment = result.segments[i];
+      if (segment.exclusion || std::abs(segment.key[0][0] - 10.0) > 1.0e-9 ||
+          std::abs(segment.key[1][0] - 10.0) > 1.0e-9)
+      {
+        continue;
+      }
+      for (const auto &portion : segment.portions)
+      {
+        const auto &feature = result.features[static_cast<std::size_t>(portion[2])];
+        const double y0 = std::min(segment.key[0][1], segment.key[1][1]);
+        if (feature.type == "IsolatedEdge")
+        {
+          reading.isolated_portions++;
+          reading.isolated_length += portion[1] - portion[0];
+        }
+        else
+        {
+          reading.claimed_from =
+              std::min(reading.claimed_from, y0 + std::min(portion[0], portion[1]));
+        }
+      }
+    }
+    reading.joined = result.sub_tolerance_portions.count;
+    reading.recorded = result.remainder_below_bar;
+    return reading;
+  };
+  SECTION("a remainder below the bar is recorded and kept")
+  {
+    const double d = 3.0e-3 * R;  // above the signature tolerance, below the bar
+    const auto reading = Remainders(d);
+    CHECK(reading.isolated_portions == 1);
+    CHECK_THAT(reading.isolated_length, WithinAbs(d, 1.0e-9));
+    CHECK_THAT(reading.claimed_from, WithinAbs(-60.0 + d, 1.0e-9));
+    CHECK(reading.joined == 0);
+    REQUIRE(reading.recorded.size() == 1);
+    CHECK(reading.recorded[0].type == "IsolatedEdge");
+    CHECK_THAT(reading.recorded[0].length, WithinAbs(d, 1.0e-9));
+    CHECK(reading.recorded[0].feature >= 0);
+  }
+  SECTION("a remainder above the bar is neither recorded nor joined")
+  {
+    const double d = 7.0e-3 * R;
+    const auto reading = Remainders(d);
+    CHECK(reading.isolated_portions == 1);
+    CHECK_THAT(reading.isolated_length, WithinAbs(d, 1.0e-9));
+    CHECK_THAT(reading.claimed_from, WithinAbs(-60.0 + d, 1.0e-9));
+    CHECK(reading.joined == 0);
+    CHECK(reading.recorded.empty());
+  }
+  SECTION("the record is the remainder class's: a non-remainder stretch is not recorded")
+  {
+    // Body A narrowed to a 1 R strip (x in [0, 2]): below B's cut its two edges compose a
+    // SameConductorStrip stretch of length d, not an isolated remainder; it stays its own
+    // feature and enters no record.
+    const double d = 3.0e-3 * R;
+    const std::vector<Point2> body_a = {{0.0, -60.0}, {2.0, -60.0}, {2.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {4.0, -60.0 + d}, {5.0, -60.0 + d}, {5.0, 0.0}, {4.0, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    int short_strips = 0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "SameConductorStrip" && feature.length < 3.0 * d)
+      {
+        short_strips++;
+        CHECK_THAT(feature.length, WithinAbs(2.0 * d, 1.0e-9));
+      }
+    }
+    CHECK(short_strips == 1);
+    CHECK(result.sub_tolerance_portions.count == 0);
+    CHECK(result.remainder_below_bar.empty());
+  }
+  SECTION("the manifest leaf Diagnostics.RemainderBelowBar")
+  {
+    const double d = 3.0e-3 * R;
+    const std::vector<Point2> body_a = {
+        {0.0, -60.0}, {10.0, -60.0}, {10.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {12.0, -60.0 + d}, {13.0, -60.0 + d}, {13.0, 0.0}, {12.0, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    const nlohmann::json manifest = result.ToJson(2.0);  // a length scale of 2
+    REQUIRE(manifest["Diagnostics"].contains("RemainderBelowBar"));
+    const auto &record = manifest["Diagnostics"]["RemainderBelowBar"];
+    CHECK(record["Count"] == 1);
+    // Lengths are written on the manifest's 1e-6 R grid (ToJson's snap).
+    CHECK_THAT(record["Length"].get<double>(), WithinAbs(2.0 * d, 1.0e-5));
+    CHECK_THAT(record["BarOverR"].get<double>(),
+               WithinAbs(kRemainderAbsorptionOverRadius, 0.0));
+    CHECK(record["Treatment"] == "Recorded");
+    CHECK(record["Stretches"][0]["Type"] == "IsolatedEdge");
+    // Above the bar: no leaf.
+    const std::vector<Point2> body_b_far = {
+        {12.0, -60.0 + 7.0e-3 * R}, {13.0, -60.0 + 7.0e-3 * R}, {13.0, 0.0}, {12.0, 0.0}};
+    const auto far_input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b_far, 0, 1.0, 0.0, {0, 2}}}, R);
+    CHECK_FALSE(IdentifyMetalPerimeter(far_input).ToJson(1.0)["Diagnostics"].contains(
+        "RemainderBelowBar"));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationTaperMeanKey",
+          "[surfaceresponseidentification][Serial]")
+{
+  // OI-TAPER-MEAN-KEY (decision 1078, record-only): a pair link whose chord-piece means
+  // span more than the pair tolerance (5 %) is a taper; its one length-weighted mean
+  // separation keys every cross-section composed from it. The features so keyed carry
+  // TaperMeanKey {Links[{ChainA, ChainB, MeanOverR, MinOverR, MaxOverR, RangeOverMean}],
+  // Length}; the manifest's Diagnostics.TaperMeanKeys lists them. Reproducer: body A (x in
+  // [0, 10]) facing body B whose edges are tilted so that the gap grows from 1.0 R to 1.25
+  // R over 60 (8 mrad: a bent pair of chord pieces) between two truncation cuts; the
+  // control is the same pair with parallel edges (an exact 1.0 R gap: no taper).
+  const double R = 2.0;
+  auto Identify = [&](double taper)
+  {
+    const std::vector<Point2> body_a = {
+        {0.0, -60.0}, {10.0, -60.0}, {10.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {12.0, -60.0}, {13.0, -60.0}, {13.0 + taper, 0.0}, {12.0 + taper, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    return IdentifyMetalPerimeter(input);
+  };
+  SECTION("a taper's features are keyed at the mean and recorded")
+  {
+    const auto result = Identify(0.5);  // the gap 2.0 -> 2.5 = 1.0 -> 1.25 R
+    std::vector<const IdentifiedFeature *> keyed;
+    for (const auto &feature : result.features)
+    {
+      if (!feature.taper_mean_key.is_null())
+      {
+        keyed.push_back(&feature);
+      }
+    }
+    for (const auto &feature : result.features)
+    {
+      UNSCOPED_INFO("feature " << feature.id << " " << feature.type << " length "
+                               << feature.length << " separation "
+                               << feature.signature.value("SeparationOverR", -1.0)
+                               << " exact " << feature.exact_parameters);
+    }
+    REQUIRE(!keyed.empty());
+    double keyed_length = 0.0;
+    for (const auto *feature : keyed)
+    {
+      CHECK(
+          (feature->type == "SameConductorGap" || feature->type == "ParallelEdgeCluster"));
+      const auto &links = feature->taper_mean_key["Links"];
+      REQUIRE(!links.empty());
+      bool taper_link = false;
+      for (const auto &link : links)
+      {
+        const double lo = link["MinOverR"].get<double>(),
+                     hi = link["MaxOverR"].get<double>();
+        const double mean = link["MeanOverR"].get<double>();
+        CHECK(hi > lo * 1.05);
+        CHECK(lo >= mean * 0.5);
+        CHECK(hi <= mean * 1.5);
+        CHECK_THAT(link["RangeOverMean"].get<double>(),
+                   WithinAbs((hi - lo) / mean, 1.0e-9));
+        taper_link = taper_link || (lo > 0.95 && lo < 1.05 && hi > 1.2 && hi < 1.3);
+      }
+      CHECK(taper_link);  // the 1.0 -> 1.25 R gap link
+      // The keyed separation is the mean, strictly inside the range.
+      if (feature->type == "SameConductorGap")
+      {
+        const double key = feature->signature["SeparationOverR"].get<double>();
+        CHECK(key > 1.05);
+        CHECK(key < 1.2);
+      }
+      keyed_length += feature->length;
+    }
+    CHECK(keyed_length > 0.0);
+    const nlohmann::json manifest = result.ToJson(1.0);
+    REQUIRE(manifest["Diagnostics"].contains("TaperMeanKeys"));
+    CHECK(manifest["Diagnostics"]["TaperMeanKeys"]["Count"].get<std::size_t>() ==
+          keyed.size());
+    CHECK_THAT(manifest["Diagnostics"]["TaperMeanKeys"]["Length"].get<double>(),
+               WithinAbs(keyed_length, 1.0e-5));
+    for (const auto &feature : manifest["Features"])
+    {
+      const bool recorded = feature.contains("TaperMeanKey");
+      const bool keyed_here =
+          std::any_of(keyed.begin(), keyed.end(), [&](const IdentifiedFeature *f)
+                      { return f->id == feature["Id"].get<int>(); });
+      CHECK(recorded == keyed_here);
+    }
+  }
+  SECTION("a parallel pair carries no record")
+  {
+    const auto result = Identify(0.0);
+    for (const auto &feature : result.features)
+    {
+      CHECK(feature.taper_mean_key.is_null());
+    }
+    CHECK_FALSE(result.ToJson(1.0)["Diagnostics"].contains("TaperMeanKeys"));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationClusterGeometricNearDifference",
+          "[surfaceresponseidentification][Serial]")
+{
+  // F-B2 (DESIGN section 5 / A.4; decision 1079): the geometric near-match comparison of
+  // two SpatialEdgeCluster keys. A synthetic 2-edge cluster key (two straight portions, a
+  // box, one vertex, three context entries of two types) against perturbed copies: the
+  // claims within / beyond ClaimsOverR, an angle within / beyond AngleDegrees, the context
+  // within / beyond ContextOverR, a gap cosine within / beyond GapCosine, a permuted
+  // context (matched as a set, Permuted recorded), a context of another count or type, and
+  // another EdgeCount.
+  const nlohmann::json base = {
+      {"Type", "SpatialEdgeCluster"},
+      {"EdgeCount", 2},
+      {"Box", {-1.5, -1.0, 1.5, 1.0}},
+      {"Portions",
+       {{{"P", {-1.0, -0.5, 1.0, -0.5}},
+         {"Gap", {0.0, 1.0}},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}},
+        {{"P", {-1.0, 0.5, 1.0, 0.5}},
+         {"Gap", {0.0, -1.0}},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}}}},
+      {"Vertices", {{{"P", {1.0, -0.5}}, {"TurnDegrees", 90.0}, {"Type", "ConvexCorner"}}}},
+      {"Context",
+       {{{"P", {-1.5, -1.0, 1.5, -1.0}},
+         {"Gap", {0.0, 1.0}},
+         {"Chain", true},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}},
+        {{"P", {-1.5, 1.0, 1.5, 1.0}},
+         {"Gap", {0.0, -1.0}},
+         {"Chain", true},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}},
+        {{"P", {1.5, -1.0, 1.5, 1.0}},
+         {"Gap", {-1.0, 0.0}},
+         {"Chain", false},
+         {"Conductor", 2},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}}}}};
+  auto Shifted = [&](const std::string &key, std::size_t entry, const std::string &field,
+                     std::size_t index, double delta)
+  {
+    nlohmann::json copy = base;
+    copy[key][entry][field][index] = copy[key][entry][field][index].get<double>() + delta;
+    return copy;
+  };
+  SECTION("identical keys lie in the band with zero deviations")
+  {
+    const auto d = ClusterGeometricNearDifference(base, base);
+    CHECK(d.in_band);
+    CHECK(d.claims_deviation_over_R == 0.0);
+    CHECK(d.context_deviation_over_R == 0.0);
+    CHECK_FALSE(d.context_permuted);
+  }
+  SECTION("claims within and beyond ClaimsOverR")
+  {
+    const auto in =
+        ClusterGeometricNearDifference(base, Shifted("Portions", 0, "P", 2, 5.0e-3));
+    CHECK(in.in_band);
+    CHECK_THAT(in.claims_deviation_over_R, WithinAbs(5.0e-3, 1.0e-12));
+    const auto out =
+        ClusterGeometricNearDifference(base, Shifted("Portions", 0, "P", 2, 2.0e-2));
+    CHECK_FALSE(out.in_band);
+    CHECK_THAT(out.claims_deviation_over_R, WithinAbs(2.0e-2, 1.0e-12));
+    nlohmann::json box = base;
+    box["Box"][3] = 1.0 + 5.0e-3;
+    CHECK(ClusterGeometricNearDifference(base, box).in_band);
+    box["Box"][3] = 1.0 + 1.5e-2;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, box).in_band);
+  }
+  SECTION("a claims angle within and beyond AngleDegrees")
+  {
+    nlohmann::json turn = base;
+    turn["Vertices"][0]["TurnDegrees"] = 90.05;
+    const auto in = ClusterGeometricNearDifference(base, turn);
+    CHECK(in.in_band);
+    CHECK_THAT(in.claims_angle_degrees, WithinAbs(0.05, 1.0e-9));
+    turn["Vertices"][0]["TurnDegrees"] = 90.2;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, turn).in_band);
+  }
+  SECTION(
+      "context within and beyond ContextOverR; a gap cosine within and beyond GapCosine")
+  {
+    const auto in =
+        ClusterGeometricNearDifference(base, Shifted("Context", 0, "P", 0, 5.0e-2));
+    CHECK(in.in_band);
+    CHECK_THAT(in.context_deviation_over_R, WithinAbs(5.0e-2, 1.0e-12));
+    CHECK(in.claims_deviation_over_R == 0.0);
+    CHECK_FALSE(ClusterGeometricNearDifference(base, Shifted("Context", 0, "P", 0, 2.0e-1))
+                    .in_band);
+    const auto gap_in =
+        ClusterGeometricNearDifference(base, Shifted("Context", 2, "Gap", 1, 1.0e-2));
+    CHECK(gap_in.in_band);
+    CHECK_THAT(gap_in.context_gap_cosine, WithinAbs(1.0e-2, 1.0e-12));
+    CHECK_FALSE(
+        ClusterGeometricNearDifference(base, Shifted("Context", 2, "Gap", 1, 5.0e-2))
+            .in_band);
+    // A claims gap cosine beyond GapCosine is out of band though the lengths agree; within
+    // it, the cosine is recorded on its own (ClaimsGapCosine, decision 1084 Q3) and the
+    // length deviation (the ranking) stays 0.
+    const auto claims_gap_in =
+        ClusterGeometricNearDifference(base, Shifted("Portions", 1, "Gap", 0, 1.0e-2));
+    CHECK(claims_gap_in.in_band);
+    CHECK_THAT(claims_gap_in.claims_gap_cosine, WithinAbs(1.0e-2, 1.0e-12));
+    CHECK(claims_gap_in.claims_deviation_over_R == 0.0);
+    CHECK_FALSE(
+        ClusterGeometricNearDifference(base, Shifted("Portions", 1, "Gap", 0, 5.0e-2))
+            .in_band);
+  }
+  SECTION("a permuted context is matched as a set and recorded")
+  {
+    nlohmann::json permuted = base;
+    std::swap(permuted["Context"][0], permuted["Context"][1]);
+    permuted["Context"][1]["P"][0] = -1.5 + 3.0e-2;  // the entry now at index 1 = base's 0
+    const auto d = ClusterGeometricNearDifference(base, permuted);
+    CHECK(d.in_band);
+    CHECK(d.context_permuted);
+    CHECK_THAT(d.context_deviation_over_R, WithinAbs(3.0e-2, 1.0e-12));
+    // The one-to-one assignment: swapping the two chain entries' Gap signs changes their
+    // nearest partner, so the identity costs 2.0 (cosines) while the swap costs 0.
+    nlohmann::json swapped_gaps = base;
+    swapped_gaps["Context"][0]["Gap"] = {0.0, -1.0};
+    swapped_gaps["Context"][0]["P"] = {-1.5, 1.0, 1.5, 1.0};
+    swapped_gaps["Context"][1]["Gap"] = {0.0, 1.0};
+    swapped_gaps["Context"][1]["P"] = {-1.5, -1.0, 1.5, -1.0};
+    const auto s = ClusterGeometricNearDifference(base, swapped_gaps);
+    CHECK(s.in_band);
+    CHECK(s.context_permuted);
+    CHECK(s.context_deviation_over_R == 0.0);
+  }
+  SECTION("another context count, type or EdgeCount is no near match")
+  {
+    nlohmann::json fewer = base;
+    fewer["Context"].erase(2);
+    CHECK_FALSE(ClusterGeometricNearDifference(base, fewer).in_band);
+    nlohmann::json other_type = base;
+    other_type["Context"][2]["Conductor"] = 3;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, other_type).in_band);
+    nlohmann::json other_count = base;
+    other_count["EdgeCount"] = 3;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, other_count).in_band);
+    nlohmann::json other_claims_type = base;
+    other_claims_type["Portions"][0]["Conductor"] = 2;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, other_claims_type).in_band);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationCornerArmOnArc",
+          "[surfaceresponseidentification][Serial]")
+{
+  // U-STRAIGHTLIKE as RECORD-ONLY (DESIGN A.10 G-3; sections 1 / 2 + A.6; decision 1081): a
+  // 90-degree corner whose second arm is a chorded arc keeps the terminal chord's key; the
+  // arm on the arc is recorded. (a) A real arc (r = 20 R, 30 degrees in six chords): the
+  // key reads the chord's 92.5, the record carries ArmBendRadiusOverR 20, a tangent shift
+  // of 2.5 degrees, a joint far vertex, class ArcArm. (b) A straight-like arc (r = 1000 R,
+  // 0.1 degree in four chords: total sagitta 3.8e-4 R < ArcFitToleranceOverR): the record
+  // reads StraightLike, class StraightLikeArm. (c) An arc of r = 5 R (60 degrees in six
+  // chords): class CornerWithArcArm, recorded only — the key is the chord's (95.0) like any
+  // corner.
+  const double R = 2.0;
+  const double pi = std::acos(-1.0);
+  auto Body = [&](double r, double turn_degrees, int chords)
+  {
+    // The corner at the origin: arm 1 along +x; arm 2 the arc tangent to +y at the origin,
+    // centre (-r, 0), bending toward -x; a straight tail along the end tangent; a frame
+    // closing the body far from the corner.
+    std::vector<Point2> points = {{0.0, 0.0}, {60.0, 0.0}, {60.0, 80.0}, {-80.0, 80.0}};
+    const double turn = turn_degrees * pi / 180.0;
+    std::vector<Point2> arc;
+    for (int k = chords; k >= 1; k--)
+    {
+      const double theta = turn * k / chords;
+      arc.push_back({-r + r * std::cos(theta), r * std::sin(theta)});
+    }
+    const Point2 end = arc.front();
+    const Point2 tail = {end[0] - 20.0 * std::sin(turn), end[1] + 20.0 * std::cos(turn)};
+    points.push_back({-80.0, tail[1]});
+    points.push_back(tail);
+    points.insert(points.end(), arc.begin(), arc.end());
+    return points;
+  };
+  struct Reading
+  {
+    IdentifiedFeature corner;
+    nlohmann::json manifest;
+  };
+  auto Corner = [&](const std::vector<Point2> &body)
+  {
+    const auto input = MakeInput({{body, 0, 1.0, 0.0, {}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const IdentifiedFeature *corner = nullptr;
+    for (const auto &feature : result.features)
+    {
+      if ((feature.type == "ConvexCorner" || feature.type == "ConcaveCorner") &&
+          std::hypot(feature.origin[0], feature.origin[1], feature.origin[2]) < 1.0e-9)
+      {
+        corner = &feature;
+      }
+    }
+    REQUIRE(corner != nullptr);
+    return Reading{*corner, result.ToJson(1.0)};
+  };
+  auto ArcArm = [](const IdentifiedFeature &corner)
+  {
+    REQUIRE(!corner.corner_arm_on_arc.is_null());
+    const auto &arms = corner.corner_arm_on_arc["Arms"];
+    REQUIRE(arms.size() == 2);
+    const bool first = !arms[0].is_null();
+    CHECK(first != !arms[1].is_null());  // exactly one arm on the arc
+    return arms[first ? 0 : 1];
+  };
+  SECTION("a real arc arm: the chord key, the arc recorded (class ArcArm)")
+  {
+    const auto reading = Corner(Body(20.0 * R, 30.0, 6));
+    CHECK_THAT(reading.corner.signature["AngleDegrees"].get<double>(),
+               WithinAbs(92.5, 2.0e-3));
+    CHECK_FALSE(reading.corner.signature.contains("Class"));
+    CHECK_FALSE(reading.corner.signature.contains("ArmBendRadiusOverR"));
+    const auto arm = ArcArm(reading.corner);
+    CHECK(reading.corner.corner_arm_on_arc["Class"] == "ArcArm");
+    CHECK_THAT(arm["ArmBendRadiusOverR"].get<double>(), WithinAbs(20.0, 1.0e-3));
+    CHECK_THAT(arm["TangentShiftDegrees"].get<double>(), WithinAbs(2.5, 2.0e-3));
+    CHECK(arm["ResidualOverR"].get<double>() <= kArcFitToleranceOverRadius);
+    CHECK_FALSE(arm["StraightLike"].get<bool>());
+    CHECK(arm["FarVertexJoint"].get<bool>());
+    CHECK_THAT(arm["FarVertexTurnDegrees"].get<double>(), WithinAbs(5.0, 2.0e-3));
+    REQUIRE(reading.manifest["Diagnostics"].contains("CornerArmOnArc"));
+    const auto &record = reading.manifest["Diagnostics"]["CornerArmOnArc"];
+    CHECK(record["Count"].get<int>() >= 1);
+    CHECK(record["ClassCounts"]["ArcArm"].get<int>() >= 1);
+    CHECK(record["Treatment"] == "KeyedByTheArmChord");
+  }
+  SECTION("a straight-like arc arm: recorded StraightLike")
+  {
+    const auto reading = Corner(Body(1000.0 * R, 0.1, 4));
+    CHECK_THAT(reading.corner.signature["AngleDegrees"].get<double>(),
+               WithinAbs(90.0125, 2.0e-3));
+    const auto arm = ArcArm(reading.corner);
+    CHECK(arm["StraightLike"].get<bool>());
+    CHECK(reading.corner.corner_arm_on_arc["Class"] == "StraightLikeArm");
+    // The straight-like arc's fitted circle is not resolved: its tangent shift is wobble,
+    // bounded by sqrt(2 ArcFitToleranceOverR R / r) (A.6 / B.4 (A)); the ideal chord shift
+    // would be 0.0125 degrees.
+    const double bound_degrees =
+        std::sqrt(2.0 * kArcFitToleranceOverRadius / 1000.0) * 180.0 / pi;
+    CHECK(arm["TangentShiftDegrees"].get<double>() <= bound_degrees);
+    CHECK(arm["TangentShiftDegrees"].get<double>() > 0.0);
+  }
+  SECTION("an arc arm of r < 10 R: the class CornerWithArcArm, the key the chord's")
+  {
+    const auto reading = Corner(Body(5.0 * R, 60.0, 6));
+    CHECK_THAT(reading.corner.signature["AngleDegrees"].get<double>(),
+               WithinAbs(95.0, 2.0e-3));
+    CHECK_FALSE(reading.corner.signature.contains("Class"));
+    CHECK(reading.corner.corner_arm_on_arc["Class"] == "CornerWithArcArm");
+    const auto arm = ArcArm(reading.corner);
+    CHECK_THAT(arm["ArmBendRadiusOverR"].get<double>(), WithinAbs(5.0, 1.0e-3));
+    CHECK(reading.manifest["Diagnostics"]["CornerArmOnArc"]["ClassCounts"].value(
+              "CornerWithArcArm", 0) >= 1);
+  }
+  SECTION("a straight arm carries no record")
+  {
+    const std::vector<Point2> square = {{0.0, 0.0}, {60.0, 0.0}, {60.0, 60.0}, {0.0, 60.0}};
+    const auto reading = Corner(square);
+    CHECK(reading.corner.corner_arm_on_arc.is_null());
+    CHECK_FALSE(reading.manifest["Diagnostics"].contains("CornerArmOnArc"));
+  }
+}
+
+// U-SAT-IDENT, the S3p configuration (DESIGN B.1 (e); decision 1084 Q2): the geometry AS IT
+// IS. The design's probe (sat_scp_pairs_v1) read the cluster KeyText Vertices[].P as mesh
+// units; they are in units of R, so its "real vertex 0.63 R from feature 19 / image vertex
+// 2.010 R, frames 22.5 deg apart" was feature 19's OWN vertex (d = 0) and its OWN image
+// across the wall y = 90: feature 19 (ConvexCorner 157.5, a 22.5-deg turn) lies 2.5 um =
+// 1.316 R from the wall, its image 5.0 um = 2.632 R away with the mirrored frame (45 deg
+// apart). The +-R cubes are DISJOINT (the separating axis is the wall normal: each cube
+// reaches R (cos 22.5 + sin 22.5) = 1.3066 R, 2.613 R < 2.632 R), so the SAT cannot join
+// the two sites: whatever the extended run forms there is formed by the arm events of the
+// mirror band, with or without the SAT (a NON-EVENT fixture: failing-first is impossible
+// by construction; run on the base model sources it passes identically).
+TEST_CASE("SurfaceResponseIdentificationVertexPairMirrorNonEvent",
+          "[surfaceresponseidentification][mirror][Serial]")
+{
+  const double R = 1.9;
+  const double pi = std::acos(-1.0);
+  const double c = std::cos(22.5 * pi / 180.0), s = std::sin(22.5 * pi / 180.0);
+  const double wall = 2.5;  // the corner at the origin, the wall y = 2.5 = 1.316 R
+  // (1) The frames of record (plane z = 4.8, w = -z; feature 19's first arm runs to the
+  // wall): the cubes of the corner and of its image are disjoint along the wall normal.
+  auto Frame = [&](const std::array<double, 3> &origin, double ux, double uy)
+  {
+    const std::array<std::array<double, 3>, 3> axes = {
+        {{ux, uy, 0.0}, {uy, -ux, 0.0}, {0.0, 0.0, -1.0}}};  // y = n x x with n = -z
+    return VertexCubeBox(origin, axes, R);
+  };
+  const auto corner = Frame({0.0, 0.0, 4.8}, -c, s);
+  const auto image = Frame({0.0, 2.0 * wall, 4.8}, -c, -s);
+  CHECK_THAT(2.0 * wall / R, WithinAbs(2.632, 1.0e-3));
+  CHECK_FALSE(OrientedBoxesInteriorOverlap(corner, image, 3));
+  CHECK_FALSE(OrientedBoxesInteriorOverlap(image, corner, 3));
+  CHECK_THAT(2.0 * R * (c + s), WithinAbs(2.613 * R, 1.0e-3 * R));
+  CHECK(2.0 * R * (c + s) < 2.0 * wall);
+  // The same two frames brought to 2.60 R (inside the reach along the wall normal) DO
+  // overlap: the verdict is the distance's, not the frames'.
+  CHECK(OrientedBoxesInteriorOverlap(corner, Frame({0.0, 2.60 * R, 4.8}, -c, -s), 3));
+  // (2) The configuration identified with the wall: metal above its lower boundary, which
+  // runs along y = 0 from x = 60 to the corner at the origin and then rises at 22.5 deg to
+  // the wall (the arm 6.53 um long), the polygon cut by the wall (truncation edge 3).
+  std::vector<MirrorPlane> planes(1);
+  planes[0].attribute = 7;
+  planes[0].normal = {0.0, 1.0, 0.0};
+  planes[0].offset = wall;  // Inside(p) = offset - n . p > 0 on the metal side
+  planes[0].faces = 1;
+  planes[0].status = "Natural";
+  planes[0].box_min = {-1.0e9, -1.0e9, -1.0e9};
+  planes[0].box_max = {1.0e9, 1.0e9, 1.0e9};
+  const double x_wall = -wall * c / s;  // the arm meets the wall at x = -6.036
+  LoopSpec metal{
+      {Point2{x_wall, wall}, Point2{0.0, 0.0}, Point2{60.0, 0.0}, Point2{60.0, wall}},
+      0,
+      1.0};
+  metal.truncation_edges = {3};
+  const auto input = MakeInput({metal}, R);
+  const auto real = IdentifyMetalPerimeter(input);
+  CheckPartition(input, real);
+  const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+  REQUIRE(extension.image_segments > 0);
+  const auto extended = IdentifyMetalPerimeter(extension.input);
+  auto Describe = [](const IdentificationResult &result)
+  {
+    std::ostringstream out;
+    for (const auto &feature : result.features)
+    {
+      out << feature.id << ":" << feature.type << " L " << feature.length << " V "
+          << feature.vertices.size() << "; ";
+    }
+    return out.str();
+  };
+  INFO("real: " << Describe(real));
+  INFO("extended: " << Describe(extended));
+  // The real run: the corner (turn 22.5) is a ConvexCorner site 1.316 R below the wall
+  // (the other ConvexCorner is the pad's far 90-deg corner at x = 60).
+  int real_corners = 0;
+  for (const auto &feature : real.features)
+  {
+    if (feature.type == "ConvexCorner" &&
+        std::hypot(feature.origin[0], feature.origin[1]) < 1.0e-9)
+    {
+      real_corners++;
+      CHECK_THAT(feature.signature.at("AngleDegrees").get<double>(),
+                 WithinAbs(157.5, 1.0e-6));
+    }
+  }
+  CHECK(real_corners == 1);
+  // The extended run: the corner's image is a vertex site 2.632 R away on the same plane;
+  // the two are never one SAT event (the cubes above). The arm and its image converge at
+  // the wall (a 45-deg joint): their edge-edge events form ONE mirror-formed
+  // SpatialEdgeCluster of 2 vertices = the corner and its image (the record's cluster 57:
+  // 2 vertices, 4 edges), with or without the SAT. Read and frozen below.
+  std::size_t joined = 0, clusters = 0;
+  for (const auto &feature : extended.features)
+  {
+    if (feature.type != "SpatialEdgeCluster")
+    {
+      continue;
+    }
+    bool has_corner = false, has_image = false;
+    for (const std::size_t v : feature.vertices)
+    {
+      const auto &p = extension.input.vertices[v].coordinate;
+      has_corner |= std::hypot(p[0], p[1]) < 1.0e-9;
+      has_image |= std::hypot(p[0], p[1] - 2.0 * wall) < 1.0e-9;
+    }
+    clusters++;
+    joined += has_corner && has_image ? 1 : 0;
+    CHECK(feature.vertices.size() == 2);
+  }
+  CHECK(clusters == 1);
+  CHECK(joined == 1);
+  // The merge: a mirror-formed cluster has no mirror placement (Unmerged); the real corner
+  // is read as a real feature touched by it (decision 481 / 557), as feature 19 of record.
+  IdentificationResult merged;
+  const auto summary = MergeMirrorIdentification(real, extended, extension, planes, merged);
+  INFO("merged: " << Describe(merged));
+  CHECK(summary.unmerged_features.size() == 1);
+  CHECK(summary.unmerged_features[0]["Type"] == "SpatialEdgeCluster");
+  int unmerged_corners = 0;
+  for (const auto &feature : merged.features)
+  {
+    if (feature.type == "ConvexCorner" &&
+        std::hypot(feature.origin[0], feature.origin[1]) < 1.0e-9)
+    {
+      unmerged_corners++;
+      REQUIRE(feature.mirror.is_object());
+      CHECK(feature.mirror.at("Status") == "Unmerged");
+    }
+  }
+  CHECK(unmerged_corners == 1);
+}
+
+// 9 (i) (DESIGN section 9 (b) (i); decisions 1081 / 1084 Q6): the knife-edge census is a
+// diagnostic switched by IdentificationInput::knife_edge_census — OFF removes the census
+// (Diagnostics.KnifeEdgeCensus null) and changes no feature; the memory-estimate log line
+// prints either way and names the census state.
+TEST_CASE("SurfaceResponseIdentificationKnifeEdgeCensusFlag",
+          "[surfaceresponseidentification][Serial]")
+{
+  const double R = 1.9;
+  auto Run = [&](bool census, std::vector<std::string> &log)
+  {
+    auto input = MakeInput({{Rectangle(0.0, 0.0, 8.0, 8.0), 0, 1.0},
+                            {Rectangle(11.0, 0.0, 14.0, 8.0), 1, 1.0},
+                            {Rectangle(17.82, 0.0, 25.82, 8.0), 2, 1.0}},
+                           R);
+    input.knife_edge_census = census;
+    input.log = [&log](const std::string &line) { log.push_back(line); };
+    return IdentifyMetalPerimeter(input);
+  };
+  std::vector<std::string> log_on, log_off;
+  const auto on = Run(true, log_on);
+  const auto off = Run(false, log_off);
+  CHECK_FALSE(on.knife_edge_census.empty());
+  CHECK(off.knife_edge_census.empty());
+  CHECK(nlohmann::json::parse(on.knife_edge_census).contains("ClusterComposition"));
+  const auto manifest_on = on.ToJson(1.0), manifest_off = off.ToJson(1.0);
+  CHECK(manifest_on["KnifeEdgeCensus"].is_object());
+  CHECK(manifest_off["KnifeEdgeCensus"].is_null());
+  // Diagnostic only: the features, keys and portions are identical.
+  auto features = [](nlohmann::json manifest)
+  {
+    manifest.erase("KnifeEdgeCensus");
+    return manifest["Features"].dump() + manifest["Totals"].dump();
+  };
+  CHECK(features(manifest_on) == features(manifest_off));
+  CHECK(on.features.size() == off.features.size());
+  auto estimate_line = [](const std::vector<std::string> &log)
+  {
+    for (const auto &line : log)
+    {
+      if (line.find("Identification memory estimate") != std::string::npos)
+      {
+        return line;
+      }
+    }
+    return std::string();
+  };
+  const std::string line_on = estimate_line(log_on), line_off = estimate_line(log_off);
+  REQUIRE_FALSE(line_on.empty());
+  REQUIRE_FALSE(line_off.empty());
+  CHECK(line_on.find("candidate run pairs") != std::string::npos);
+  CHECK(line_on.find("MB") != std::string::npos);
+  CHECK(line_on.find("census ON") != std::string::npos);
+  CHECK(line_off.find("census OFF") != std::string::npos);
+  // The default is ON (the preflight; the operator turns it off for a solve).
+  CHECK(IdentificationInput{}.knife_edge_census);
 }

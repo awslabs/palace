@@ -1993,7 +1993,7 @@ TEST_CASE("Response-correction ConductorConsistency.RecordOnly is read and bound
 // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1072 Q3 /
 // 1074): the config leaf Diagnostics.ExclusionEnergy; the identification's excluded /
 // unclaimed portions by class close the perimeter partition (perimeter = assigned +
-// excluded + unclaimed-other) and travel with the v21 cache as a required leaf; the
+// excluded + unclaimed-other) and travel with the v22 cache as a required leaf; the
 // electrostatic driver writes surface-response-exclusion-energy.csv when the leaf is on and
 // nothing else changes (every other table bitwise ON vs OFF).
 TEST_CASE("Response-correction Diagnostics.ExclusionEnergy is read and bounded",
@@ -2072,7 +2072,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(perimeter > 0.0);
   REQUIRE(excluded > 0.0);  // the ground plane's rim and its untargeted perimeter
 
-  // The operator writes the geometry cache (version 21) as it is built.
+  // The operator writes the geometry cache (version 22) as it is built.
   const auto cache_path = temp.temp_dir / "s8-geometry-cache.json";
   std::vector<std::unique_ptr<Mesh>> meshes;
   {
@@ -2147,7 +2147,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                ? length_by_class.at("Unclaimed-other")
                                : 0.0;
   CHECK_THAT(unclaimed, WithinAbs(perimeter - assigned - excluded, 1.0e-9 * perimeter));
-  // The cache (version 21) carries the portions as a REQUIRED leaf: a round trip returns
+  // The cache (version 22) carries the portions as a REQUIRED leaf: a round trip returns
   // them; a cache without the leaf is refused by name (decision 1072 Q3).
   REQUIRE(fs::exists(cache_path));
   const auto stale_path = temp.temp_dir / "s8-geometry-cache-stale.json";
@@ -2155,7 +2155,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     std::ifstream input(cache_path);
     json cache = json::parse(input);
-    REQUIRE(cache.at("Version").get<int>() == 21);
+    REQUIRE(cache.at("Version").get<int>() == 22);
     REQUIRE(cache.at("ExclusionPortions").size() == identification_portions.size());
     cache.erase("ExclusionPortions");
     std::ofstream output(stale_path);
