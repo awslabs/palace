@@ -590,7 +590,9 @@ void BaseSolver::SaveMetadata(const SurfaceResponseOperator &response) const
   // per Type is the energy table's; a RecordOnly run is named a DIAGNOSTIC, never a run of
   // record.
   if (const auto diagnostics = statistics.find("Diagnostics");
-      diagnostics != statistics.end() && diagnostics->contains("ConductorConsistency"))
+      diagnostics != statistics.end() && diagnostics->is_object() &&
+      diagnostics->contains("ConductorConsistency") &&
+      (*diagnostics)["ConductorConsistency"].is_object())
   {
     const auto &gate = (*diagnostics)["ConductorConsistency"];
     const int excluded = gate.value("Count", 0);
