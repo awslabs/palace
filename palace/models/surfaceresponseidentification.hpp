@@ -1007,6 +1007,7 @@ struct ClusterGeometricNearMatch
 {
   bool in_band = false;  // false: another topology / counts, or a number beyond the band
   double claims_deviation_over_R = 0.0;   // the largest claims-side length deviation
+  double claims_gap_cosine = 0.0;         // the largest claims-side gap cosine deviation
   double claims_angle_degrees = 0.0;      // the largest claims-side angle deviation
   double context_deviation_over_R = 0.0;  // the largest assigned context length deviation
   double context_gap_cosine = 0.0;        // the largest assigned context gap cosine

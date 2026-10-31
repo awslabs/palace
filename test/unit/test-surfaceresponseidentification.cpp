@@ -9120,7 +9120,14 @@ TEST_CASE("SurfaceResponseIdentificationClusterGeometricNearDifference",
     CHECK_FALSE(
         ClusterGeometricNearDifference(base, Shifted("Context", 2, "Gap", 1, 5.0e-2))
             .in_band);
-    // A claims gap cosine beyond GapCosine is out of band though the lengths agree.
+    // A claims gap cosine beyond GapCosine is out of band though the lengths agree; within
+    // it, the cosine is recorded on its own (ClaimsGapCosine, decision 1084 Q3) and the
+    // length deviation (the ranking) stays 0.
+    const auto claims_gap_in =
+        ClusterGeometricNearDifference(base, Shifted("Portions", 1, "Gap", 0, 1.0e-2));
+    CHECK(claims_gap_in.in_band);
+    CHECK_THAT(claims_gap_in.claims_gap_cosine, WithinAbs(1.0e-2, 1.0e-12));
+    CHECK(claims_gap_in.claims_deviation_over_R == 0.0);
     CHECK_FALSE(
         ClusterGeometricNearDifference(base, Shifted("Portions", 1, "Gap", 0, 5.0e-2))
             .in_band);
@@ -9284,4 +9291,192 @@ TEST_CASE("SurfaceResponseIdentificationCornerArmOnArc",
     CHECK(reading.corner.corner_arm_on_arc.is_null());
     CHECK_FALSE(reading.manifest["Diagnostics"].contains("CornerArmOnArc"));
   }
+}
+
+// U-SAT-IDENT, the S3p configuration (DESIGN B.1 (e); decision 1084 Q2): the geometry AS IT
+// IS. The design's probe (sat_scp_pairs_v1) read the cluster KeyText Vertices[].P as mesh
+// units; they are in units of R, so its "real vertex 0.63 R from feature 19 / image vertex
+// 2.010 R, frames 22.5 deg apart" was feature 19's OWN vertex (d = 0) and its OWN image
+// across the wall y = 90: feature 19 (ConvexCorner 157.5, a 22.5-deg turn) lies 2.5 um =
+// 1.316 R from the wall, its image 5.0 um = 2.632 R away with the mirrored frame (45 deg
+// apart). The +-R cubes are DISJOINT (the separating axis is the wall normal: each cube
+// reaches R (cos 22.5 + sin 22.5) = 1.3066 R, 2.613 R < 2.632 R), so the SAT cannot join
+// the two sites: whatever the extended run forms there is formed by the arm events of the
+// mirror band, with or without the SAT (a NON-EVENT fixture: failing-first is impossible
+// by construction; run on the base model sources it passes identically).
+TEST_CASE("SurfaceResponseIdentificationVertexPairMirrorNonEvent",
+          "[surfaceresponseidentification][mirror][Serial]")
+{
+  const double R = 1.9;
+  const double pi = std::acos(-1.0);
+  const double c = std::cos(22.5 * pi / 180.0), s = std::sin(22.5 * pi / 180.0);
+  const double wall = 2.5;  // the corner at the origin, the wall y = 2.5 = 1.316 R
+  // (1) The frames of record (plane z = 4.8, w = -z; feature 19's first arm runs to the
+  // wall): the cubes of the corner and of its image are disjoint along the wall normal.
+  auto Frame = [&](const std::array<double, 3> &origin, double ux, double uy)
+  {
+    const std::array<std::array<double, 3>, 3> axes = {
+        {{ux, uy, 0.0}, {uy, -ux, 0.0}, {0.0, 0.0, -1.0}}};  // y = n x x with n = -z
+    return VertexCubeBox(origin, axes, R);
+  };
+  const auto corner = Frame({0.0, 0.0, 4.8}, -c, s);
+  const auto image = Frame({0.0, 2.0 * wall, 4.8}, -c, -s);
+  CHECK_THAT(2.0 * wall / R, WithinAbs(2.632, 1.0e-3));
+  CHECK_FALSE(OrientedBoxesInteriorOverlap(corner, image, 3));
+  CHECK_FALSE(OrientedBoxesInteriorOverlap(image, corner, 3));
+  CHECK_THAT(2.0 * R * (c + s), WithinAbs(2.613 * R, 1.0e-3 * R));
+  CHECK(2.0 * R * (c + s) < 2.0 * wall);
+  // The same two frames brought to 2.60 R (inside the reach along the wall normal) DO
+  // overlap: the verdict is the distance's, not the frames'.
+  CHECK(OrientedBoxesInteriorOverlap(corner, Frame({0.0, 2.60 * R, 4.8}, -c, -s), 3));
+  // (2) The configuration identified with the wall: metal above its lower boundary, which
+  // runs along y = 0 from x = 60 to the corner at the origin and then rises at 22.5 deg to
+  // the wall (the arm 6.53 um long), the polygon cut by the wall (truncation edge 3).
+  std::vector<MirrorPlane> planes(1);
+  planes[0].attribute = 7;
+  planes[0].normal = {0.0, 1.0, 0.0};
+  planes[0].offset = wall;  // Inside(p) = offset - n . p > 0 on the metal side
+  planes[0].faces = 1;
+  planes[0].status = "Natural";
+  planes[0].box_min = {-1.0e9, -1.0e9, -1.0e9};
+  planes[0].box_max = {1.0e9, 1.0e9, 1.0e9};
+  const double x_wall = -wall * c / s;  // the arm meets the wall at x = -6.036
+  LoopSpec metal{
+      {Point2{x_wall, wall}, Point2{0.0, 0.0}, Point2{60.0, 0.0}, Point2{60.0, wall}},
+      0,
+      1.0};
+  metal.truncation_edges = {3};
+  const auto input = MakeInput({metal}, R);
+  const auto real = IdentifyMetalPerimeter(input);
+  CheckPartition(input, real);
+  const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+  REQUIRE(extension.image_segments > 0);
+  const auto extended = IdentifyMetalPerimeter(extension.input);
+  auto Describe = [](const IdentificationResult &result)
+  {
+    std::ostringstream out;
+    for (const auto &feature : result.features)
+    {
+      out << feature.id << ":" << feature.type << " L " << feature.length << " V "
+          << feature.vertices.size() << "; ";
+    }
+    return out.str();
+  };
+  INFO("real: " << Describe(real));
+  INFO("extended: " << Describe(extended));
+  // The real run: the corner (turn 22.5) is a ConvexCorner site 1.316 R below the wall
+  // (the other ConvexCorner is the pad's far 90-deg corner at x = 60).
+  int real_corners = 0;
+  for (const auto &feature : real.features)
+  {
+    if (feature.type == "ConvexCorner" &&
+        std::hypot(feature.origin[0], feature.origin[1]) < 1.0e-9)
+    {
+      real_corners++;
+      CHECK_THAT(feature.signature.at("AngleDegrees").get<double>(),
+                 WithinAbs(157.5, 1.0e-6));
+    }
+  }
+  CHECK(real_corners == 1);
+  // The extended run: the corner's image is a vertex site 2.632 R away on the same plane;
+  // the two are never one SAT event (the cubes above). The arm and its image converge at
+  // the wall (a 45-deg joint): their edge-edge events form ONE mirror-formed
+  // SpatialEdgeCluster of 2 vertices = the corner and its image (the record's cluster 57:
+  // 2 vertices, 4 edges), with or without the SAT. Read and frozen below.
+  std::size_t joined = 0, clusters = 0;
+  for (const auto &feature : extended.features)
+  {
+    if (feature.type != "SpatialEdgeCluster")
+    {
+      continue;
+    }
+    bool has_corner = false, has_image = false;
+    for (const std::size_t v : feature.vertices)
+    {
+      const auto &p = extension.input.vertices[v].coordinate;
+      has_corner |= std::hypot(p[0], p[1]) < 1.0e-9;
+      has_image |= std::hypot(p[0], p[1] - 2.0 * wall) < 1.0e-9;
+    }
+    clusters++;
+    joined += has_corner && has_image ? 1 : 0;
+    CHECK(feature.vertices.size() == 2);
+  }
+  CHECK(clusters == 1);
+  CHECK(joined == 1);
+  // The merge: a mirror-formed cluster has no mirror placement (Unmerged); the real corner
+  // is read as a real feature touched by it (decision 481 / 557), as feature 19 of record.
+  IdentificationResult merged;
+  const auto summary = MergeMirrorIdentification(real, extended, extension, planes, merged);
+  INFO("merged: " << Describe(merged));
+  CHECK(summary.unmerged_features.size() == 1);
+  CHECK(summary.unmerged_features[0]["Type"] == "SpatialEdgeCluster");
+  int unmerged_corners = 0;
+  for (const auto &feature : merged.features)
+  {
+    if (feature.type == "ConvexCorner" &&
+        std::hypot(feature.origin[0], feature.origin[1]) < 1.0e-9)
+    {
+      unmerged_corners++;
+      REQUIRE(feature.mirror.is_object());
+      CHECK(feature.mirror.at("Status") == "Unmerged");
+    }
+  }
+  CHECK(unmerged_corners == 1);
+}
+
+// 9 (i) (DESIGN section 9 (b) (i); decisions 1081 / 1084 Q6): the knife-edge census is a
+// diagnostic switched by IdentificationInput::knife_edge_census — OFF removes the census
+// (Diagnostics.KnifeEdgeCensus null) and changes no feature; the memory-estimate log line
+// prints either way and names the census state.
+TEST_CASE("SurfaceResponseIdentificationKnifeEdgeCensusFlag",
+          "[surfaceresponseidentification][Serial]")
+{
+  const double R = 1.9;
+  auto Run = [&](bool census, std::vector<std::string> &log)
+  {
+    auto input = MakeInput({{Rectangle(0.0, 0.0, 8.0, 8.0), 0, 1.0},
+                            {Rectangle(11.0, 0.0, 14.0, 8.0), 1, 1.0},
+                            {Rectangle(17.82, 0.0, 25.82, 8.0), 2, 1.0}},
+                           R);
+    input.knife_edge_census = census;
+    input.log = [&log](const std::string &line) { log.push_back(line); };
+    return IdentifyMetalPerimeter(input);
+  };
+  std::vector<std::string> log_on, log_off;
+  const auto on = Run(true, log_on);
+  const auto off = Run(false, log_off);
+  CHECK_FALSE(on.knife_edge_census.empty());
+  CHECK(off.knife_edge_census.empty());
+  CHECK(nlohmann::json::parse(on.knife_edge_census).contains("ClusterComposition"));
+  const auto manifest_on = on.ToJson(1.0), manifest_off = off.ToJson(1.0);
+  CHECK(manifest_on["KnifeEdgeCensus"].is_object());
+  CHECK(manifest_off["KnifeEdgeCensus"].is_null());
+  // Diagnostic only: the features, keys and portions are identical.
+  auto features = [](nlohmann::json manifest)
+  {
+    manifest.erase("KnifeEdgeCensus");
+    return manifest["Features"].dump() + manifest["Totals"].dump();
+  };
+  CHECK(features(manifest_on) == features(manifest_off));
+  CHECK(on.features.size() == off.features.size());
+  auto estimate_line = [](const std::vector<std::string> &log)
+  {
+    for (const auto &line : log)
+    {
+      if (line.find("Identification memory estimate") != std::string::npos)
+      {
+        return line;
+      }
+    }
+    return std::string();
+  };
+  const std::string line_on = estimate_line(log_on), line_off = estimate_line(log_off);
+  REQUIRE_FALSE(line_on.empty());
+  REQUIRE_FALSE(line_off.empty());
+  CHECK(line_on.find("candidate run pairs") != std::string::npos);
+  CHECK(line_on.find("MB") != std::string::npos);
+  CHECK(line_on.find("census ON") != std::string::npos);
+  CHECK(line_off.find("census OFF") != std::string::npos);
+  // The default is ON (the preflight; the operator turns it off for a solve).
+  CHECK(IdentificationInput{}.knife_edge_census);
 }

@@ -223,6 +223,11 @@ constexpr std::size_t kClusterExtensionMaxPasses = 12;
 // (Identifier::ClusterCompositionBand).
 constexpr double kKnifeEdgeBandRelative = 0.01;
 constexpr double kKnifeEdgeSampleSpacingOverRadius = 0.5;
+// The I-2 hysteresis run (BuildBentPairs): chain-contiguous in-band samples of one chain
+// facing one partner chain; a gap of more than this many R along the chain between two
+// consecutive in-band samples ends a run (decision 1084 Q4: the number named, the leaf
+// Conventions.KnifeEdgeRunGapOverR).
+constexpr double kKnifeEdgeRunGapOverRadius = 1.0;
 
 // ---------------------------------------------------------------------------------------
 // Vector helpers
@@ -2082,7 +2087,10 @@ ClusterGeometricNearMatch ClusterGeometricNearDifference(const nlohmann::json &f
   {
     return out;
   }
-  out.claims_deviation_over_R = std::max(claims.max_length_over_R, claims.max_gap_cosine);
+  // Lengths (in R), gap cosines and angles are three bands with their own units: each is
+  // recorded and checked on its own (decision 1084 Q3); the length term alone ranks.
+  out.claims_deviation_over_R = claims.max_length_over_R;
+  out.claims_gap_cosine = claims.max_gap_cosine;
   out.claims_angle_degrees = claims.max_angle_degrees;
   if (claims.max_length_over_R > kGeometricNearMatchClaimsOverRadius ||
       claims.max_gap_cosine > kGeometricNearMatchGapCosine ||
@@ -7416,18 +7424,19 @@ void Identifier::BuildBentPairs()
   // 2) is strictly below 2R on the quantized grid (the rule of record) — read with
   // HYSTERESIS on a run (I-2): the samples whose reading lies within the knife-edge band 2R
   // (1 +- kKnifeEdgeBandRelative) form runs of chain-contiguous in-band samples of this
-  // chain facing this partner chain (across the pieces; a gap of more than R along the
-  // chain ends a run), and a run whose verdicts are mixed and NOT monotone takes ONE
-  // verdict, the majority by length (each sample weighs its spacing; a tie reads
-  // non-interacting, today's strict-less at exactly 2R); readings outside the band keep the
-  // pointwise rule. A run whose readings are monotone across 2R is a TAPER: its verdicts
-  // stay pointwise (the crossing is where the reading crosses 2R) and the I-3 record below
-  // takes the non-constant samples below 2R adjacent to the crossing as a TaperCrossing
-  // RECORD (the whole non-constant stretch adjacent to the crossing, monotone with it;
-  // decision 1069 (C): recorded only, nothing withdrawn, Treatment
-  // ApproximatedByIsolatedEdge; the pair's separation unchanged). Basis: the census band of
-  // record (a classification discontinuity at a measure-zero threshold is unstable under
-  // 1-10 nm chord / grid noise; the response is continuous across 2R); no new number.
+  // chain facing this partner chain (across the pieces; a gap of more than
+  // kKnifeEdgeRunGapOverRadius x R along the chain ends a run), and a run whose verdicts
+  // are mixed and NOT monotone takes ONE verdict, the majority by length (each sample
+  // weighs its spacing; a tie reads non-interacting, today's strict-less at exactly 2R);
+  // readings outside the band keep the pointwise rule. A run whose readings are monotone
+  // across 2R is a TAPER: its verdicts stay pointwise (the crossing is where the reading
+  // crosses 2R) and the I-3 record below takes the non-constant samples below 2R adjacent
+  // to the crossing as a TaperCrossing RECORD (the whole non-constant stretch adjacent to
+  // the crossing, monotone with it; decision 1069 (C): recorded only, nothing withdrawn,
+  // Treatment ApproximatedByIsolatedEdge; the pair's separation unchanged). Basis: the
+  // census band of record (a classification discontinuity at a measure-zero threshold is
+  // unstable under 1-10 nm chord / grid noise; the response is continuous across 2R); no
+  // new number.
   const double band_lo = interaction * (1.0 - kKnifeEdgeBandRelative);
   const double band_hi = interaction * (1.0 + kKnifeEdgeBandRelative);
   auto Hysteresis = [&](const std::vector<Piece> &pieces, const std::vector<char> &constant,
@@ -7464,7 +7473,10 @@ void Identifier::BuildBentPairs()
       k += n;
     }
     auto Contiguous = [&](std::size_t i)  // samples i and i + 1
-    { return piece_of[i] == piece_of[i + 1] || std::abs(x[i + 1] - x[i]) <= R + Tol(); };
+    {
+      return piece_of[i] == piece_of[i + 1] ||
+             std::abs(x[i + 1] - x[i]) <= kKnifeEdgeRunGapOverRadius * R + Tol();
+    };
     if (std::getenv("PALACE_IDENTIFICATION_DEBUG_SAMPLES") && input.log && total > 0)
     {
       std::ostringstream dbg;
@@ -17462,14 +17474,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                    1.0)},
         {"KnifeEdgeBandRelative", kKnifeEdgeBandRelative},
         {"KnifeEdgeSampleSpacingOverR", kKnifeEdgeSampleSpacingOverRadius},
+        {"KnifeEdgeRunGapOverR", kKnifeEdgeRunGapOverRadius},
         {"KnifeEdgeHysteresis",
          "the 2R interaction test of the bent-pair rule is read with hysteresis on a run "
          "(the identification fix round, decisions 1062 section 3 / 1065): a sample "
          "interacts iff its deciding reading upper = C / cos(turn / 2) is strictly below "
          "2R (the rule of record); the samples whose reading lies within the knife-edge "
          "band 2R (1 +- KnifeEdgeBandRelative) form runs of chain-contiguous in-band "
-         "samples of one chain facing one partner chain (a gap of more than R along the "
-         "chain ends a run), and a run whose verdicts are mixed and not monotone takes "
+         "samples of one chain facing one partner chain (a gap of more than "
+         "KnifeEdgeRunGapOverR x R along the chain ends a run), and a run whose verdicts "
+         "are "
+         "mixed and not monotone takes "
          "ONE verdict, the majority by length (each sample weighs its spacing; a tie reads "
          "non-interacting, the strict-less at exactly 2R), so one run gets one "
          "description; "

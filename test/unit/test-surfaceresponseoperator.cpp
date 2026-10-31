@@ -7379,7 +7379,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // U-NEARMATCH-PEC (DESIGN A.10 G-3; A.5 (b) / decision 1079 Q4): a Missing
   // ParallelEdgeCluster key matches a library model with the same EdgeCount / GapSide
   // pattern / Conductor labels / Interfaces / Law whose every OffsetOverR lies within
-  // kGeometricNearMatchClaimsOverRadius (1e-2 R); at 1.5e-2 R it stays Missing; Exact keeps
+  // kGeometricNearMatchClaimsOverRadius (1e-2 R); at 1.1e-2 R (the design's named point,
+  // A.10 G-3) it stays Missing; Exact keeps
   // precedence; Summary.GeometricNearMatched counts it; Library.GeometricNearPairs lists
   // the library's in-band pairs. The CPW of cpw3d-surface-nc (edges at 0 / 12 / 32 / 44 um,
   // R = 11) against the parallel-cluster library with the 4-edge model's offsets shifted.
@@ -7552,9 +7553,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(near.geometric_count > 0);
     CHECK(near.cluster_patch_rows == exact.cluster_patch_rows);
   }
-  SECTION("1.5e-2 R: Missing")
+  SECTION("1.1e-2 R: Missing")
   {
-    const auto far = Read("far", WriteShiftedLibrary("far", cluster_signature, {1.5e-2}));
+    const auto far = Read("far", WriteShiftedLibrary("far", cluster_signature, {1.1e-2}));
     CHECK(far.status == "Missing");
     CHECK(far.geometric_count == 0);
     CHECK(far.cluster_patch_rows == 0);
@@ -7571,6 +7572,54 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THAT(both.near_pairs[0]["MaxOffsetDeviationOverR"].get<double>(),
                WithinAbs(5.0e-3, 5.0e-6));
   }
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator knife-edge census flag",
+                 "[surfaceresponseoperator][3d][features][census][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // 9 (i) (DESIGN section 9 (b) (i); decision 1081): the preflight writes the knife-edge
+  // census by default (Identification.KnifeEdgeCensus an object); the config's
+  // ResponseCorrection.KnifeEdgeCensus overrides it (false: null; true: the object). A
+  // solve run (no requirements manifest) reads OFF by default: the census is a preflight
+  // diagnostic, verified byte-identical on the chain's Maxwell / transmon records.
+  auto Census = [&](const std::string &tag, std::optional<bool> flag)
+  {
+    json config = Cpw3dLegacyConfig();
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["Library"] = parallel_cluster_library_3d_path.string();
+    if (flag)
+    {
+      correction["KnifeEdgeCensus"] = *flag;
+    }
+    for (auto &interface : config["Boundaries"]["Postprocessing"]["Dielectric"])
+    {
+      interface["EdgeDistances"] = {0.2, 2.0, 11.0};
+    }
+    IoData iodata(config, false);
+    auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+    Mesh device(std::move(mesh));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-census-" + tag + ".json");
+    WriteSurfaceResponseRequirements(iodata, device, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    REQUIRE(manifest["Identification"].contains("KnifeEdgeCensus"));
+    return manifest["Identification"]["KnifeEdgeCensus"];
+  };
+  const json by_default = Census("default", std::nullopt);
+  CHECK(by_default.is_object());
+  CHECK(by_default.contains("ClusterComposition"));
+  CHECK(Census("off", false).is_null());
+  CHECK(Census("on", true).is_object());
 #endif
 }
 

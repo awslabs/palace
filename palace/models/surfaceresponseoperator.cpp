@@ -8090,6 +8090,7 @@ public:
                              {"ModelB", entries[j].name},
                              {"Class", "SpatialEdgeCluster"},
                              {"ClaimsDeviationOverR", difference.claims_deviation_over_R},
+                             {"ClaimsGapCosine", difference.claims_gap_cosine},
                              {"ClaimsAngleDegrees", difference.claims_angle_degrees},
                              {"ContextDeviationOverR", difference.context_deviation_over_R},
                              {"ContextGapCosine", difference.context_gap_cosine},
@@ -9117,6 +9118,7 @@ IdentificationResult RunGeometryIdentification(
       feature.geometric_near_match = {
           {"Model", geometric->name},
           {"ClaimsDeviationOverR", d.claims_deviation_over_R},
+          {"ClaimsGapCosine", d.claims_gap_cosine},
           {"ClaimsAngleDegrees", d.claims_angle_degrees},
           {"ContextDeviationOverR", d.context_deviation_over_R},
           {"ContextGapCosine", d.context_gap_cosine},
@@ -9124,7 +9126,8 @@ IdentificationResult RunGeometryIdentification(
           {"Rule",
            "DESIGN section 5 / A.4 / decision 1079: the claims-only signatures share "
            "one topology key and agree within GeometricNearMatchBands.ClaimsOverR "
-           "(angles within AngleDegrees), the Contexts agree as sets (equal counts "
+           "(lengths; gap cosines within GapCosine, angles within AngleDegrees), the "
+           "Contexts agree as sets (equal counts "
            "per type, a one-to-one assignment of minimum total deviation within "
            "ContextOverR / GapCosine); Exact, the quantum near-match and the legacy "
            "aliases keep precedence; the smallest claims deviation among several; "
