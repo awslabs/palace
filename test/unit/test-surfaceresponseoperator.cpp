@@ -7200,6 +7200,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::string requirement_status;
     int strip_patch_rows = 0;
     json strip_signature;
+    bool has_taper_mean_keys = false;         // decision 1078 records: absent on a
+    bool has_placed_local_deviation = false;  // parallel strip
   };
   auto Read = [&](const std::string &tag, const fs::path &library_path)
   {
@@ -7260,6 +7262,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     reading.near_matched_length =
         manifest["Summary"]["NearMatched"]["Length"].get<double>();
     reading.counts_has_near_matched = manifest["Summary"]["Counts"].contains("NearMatched");
+    reading.has_taper_mean_keys = manifest["Summary"].contains("TaperMeanKeys");
+    reading.has_placed_local_deviation =
+        manifest["Summary"].contains("PlacedLocalDeviation");
     for (const auto &requirement : manifest["Requirements"])
     {
       if (requirement["Topology"] == "SameConductorStrip")
@@ -7286,6 +7291,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const json strip_signature = base.strip_signature;
   const auto exact = Read("exact", WriteStripLibrary("exact", strip_signature, {0.0}));
   CHECK(exact.status == "Matched");
+  CHECK_FALSE(exact.has_taper_mean_keys);
+  CHECK_FALSE(exact.has_placed_local_deviation);
   CHECK(exact.requirement_status == "Exact");
   CHECK(exact.near_matched_count == 0);
   CHECK(exact.near_matched_length == 0.0);
@@ -7471,6 +7478,34 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator unpatched 
   CHECK_THAT(second["Summary"]["UnpatchedPairs"]["Length"].get<double>(),
              WithinAbs(record["Length"].get<double>(), 1.0e-12));
   CHECK(second["_StripPatchRows"].get<int>() == 0);
+  // OI-TAPER-MEAN-KEY (decision 1078, record-only): the taper pair and the 3-edge cluster
+  // composed from the taper link are recorded as keyed at the mean, in both passes.
+  for (const json *manifest : {&first, &second})
+  {
+    REQUIRE((*manifest)["Identification"]["Diagnostics"].contains("TaperMeanKeys"));
+    const auto &keys = (*manifest)["Identification"]["Diagnostics"]["TaperMeanKeys"];
+    CHECK(keys["Count"].get<int>() >= 1);
+    CHECK(keys["Length"].get<double>() > 0.0);
+    CHECK((*manifest)["Summary"]["TaperMeanKeys"]["Count"] == keys["Count"]);
+    bool strip_keyed = false;
+    for (const auto &feature : (*manifest)["Identification"]["Features"])
+    {
+      if (feature["Type"] == "SameConductorStrip" &&
+          feature["Signature"]["SeparationOverR"].get<double>() > 1.3)
+      {
+        strip_keyed = feature.contains("TaperMeanKey");
+        if (strip_keyed)
+        {
+          const auto &link = feature["TaperMeanKey"]["Links"][0];
+          CHECK(link["MinOverR"].get<double>() < 1.3);
+          CHECK(link["MaxOverR"].get<double>() > 1.55);
+          CHECK_THAT(link["MeanOverR"].get<double>(),
+                     WithinAbs(*separation_over_R, 2.0e-3));
+        }
+      }
+    }
+    CHECK(strip_keyed);
+  }
 #endif
 }
 

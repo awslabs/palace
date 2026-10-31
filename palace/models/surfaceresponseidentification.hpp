@@ -244,6 +244,14 @@ struct IdentifiedFeature
   // {Model, SeparationDeviationOverR, BandOverR, Rule}. Manifest Features[].Match.Status
   // NearMatched + Match.NearMatch; the requirement record's Status NearMatched.
   nlohmann::json near_match;
+  // TaperMeanKey record (OI-TAPER-MEAN-KEY, decision 1078; record-only; null unless a pair
+  // / stack feature's offsets came from a taper link: a chord group whose piece means span
+  // more than the pair tolerance, so the key is the link's mean separation, not a design
+  // cross-section): {Links[{ChainA, ChainB, MeanOverR, MinOverR, MaxOverR, RangeOverMean}],
+  // Rule} (the manifest adds the feature's final Length). Manifest Features[].TaperMeanKey;
+  // Diagnostics.TaperMeanKeys; Summary.TaperMeanKeys. The keying and the placement are
+  // unchanged.
+  nlohmann::json taper_mean_key;
 
   // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
   // supervisor decision 282; null for every other feature): the claims-derived support box

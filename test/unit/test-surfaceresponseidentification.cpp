@@ -8918,3 +8918,101 @@ TEST_CASE("SurfaceResponseIdentificationRemainderAbsorption",
         "RemainderBelowBar"));
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationTaperMeanKey",
+          "[surfaceresponseidentification][Serial]")
+{
+  // OI-TAPER-MEAN-KEY (decision 1078, record-only): a pair link whose chord-piece means
+  // span more than the pair tolerance (5 %) is a taper; its one length-weighted mean
+  // separation keys every cross-section composed from it. The features so keyed carry
+  // TaperMeanKey {Links[{ChainA, ChainB, MeanOverR, MinOverR, MaxOverR, RangeOverMean}],
+  // Length}; the manifest's Diagnostics.TaperMeanKeys lists them. Reproducer: body A (x in
+  // [0, 10]) facing body B whose edges are tilted so that the gap grows from 1.0 R to 1.25
+  // R over 60 (8 mrad: a bent pair of chord pieces) between two truncation cuts; the
+  // control is the same pair with parallel edges (an exact 1.0 R gap: no taper).
+  const double R = 2.0;
+  auto Identify = [&](double taper)
+  {
+    const std::vector<Point2> body_a = {
+        {0.0, -60.0}, {10.0, -60.0}, {10.0, 0.0}, {0.0, 0.0}};
+    const std::vector<Point2> body_b = {
+        {12.0, -60.0}, {13.0, -60.0}, {13.0 + taper, 0.0}, {12.0 + taper, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0, 2}}, {body_b, 0, 1.0, 0.0, {0, 2}}}, R);
+    return IdentifyMetalPerimeter(input);
+  };
+  SECTION("a taper's features are keyed at the mean and recorded")
+  {
+    const auto result = Identify(0.5);  // the gap 2.0 -> 2.5 = 1.0 -> 1.25 R
+    std::vector<const IdentifiedFeature *> keyed;
+    for (const auto &feature : result.features)
+    {
+      if (!feature.taper_mean_key.is_null())
+      {
+        keyed.push_back(&feature);
+      }
+    }
+    for (const auto &feature : result.features)
+    {
+      UNSCOPED_INFO("feature " << feature.id << " " << feature.type << " length "
+                               << feature.length << " separation "
+                               << feature.signature.value("SeparationOverR", -1.0)
+                               << " exact " << feature.exact_parameters);
+    }
+    REQUIRE(!keyed.empty());
+    double keyed_length = 0.0;
+    for (const auto *feature : keyed)
+    {
+      CHECK(
+          (feature->type == "SameConductorGap" || feature->type == "ParallelEdgeCluster"));
+      const auto &links = feature->taper_mean_key["Links"];
+      REQUIRE(!links.empty());
+      bool taper_link = false;
+      for (const auto &link : links)
+      {
+        const double lo = link["MinOverR"].get<double>(),
+                     hi = link["MaxOverR"].get<double>();
+        const double mean = link["MeanOverR"].get<double>();
+        CHECK(hi > lo * 1.05);
+        CHECK(lo >= mean * 0.5);
+        CHECK(hi <= mean * 1.5);
+        CHECK_THAT(link["RangeOverMean"].get<double>(),
+                   WithinAbs((hi - lo) / mean, 1.0e-9));
+        taper_link = taper_link || (lo > 0.95 && lo < 1.05 && hi > 1.2 && hi < 1.3);
+      }
+      CHECK(taper_link);  // the 1.0 -> 1.25 R gap link
+      // The keyed separation is the mean, strictly inside the range.
+      if (feature->type == "SameConductorGap")
+      {
+        const double key = feature->signature["SeparationOverR"].get<double>();
+        CHECK(key > 1.05);
+        CHECK(key < 1.2);
+      }
+      keyed_length += feature->length;
+    }
+    CHECK(keyed_length > 0.0);
+    const nlohmann::json manifest = result.ToJson(1.0);
+    REQUIRE(manifest["Diagnostics"].contains("TaperMeanKeys"));
+    CHECK(manifest["Diagnostics"]["TaperMeanKeys"]["Count"].get<std::size_t>() ==
+          keyed.size());
+    CHECK_THAT(manifest["Diagnostics"]["TaperMeanKeys"]["Length"].get<double>(),
+               WithinAbs(keyed_length, 1.0e-5));
+    for (const auto &feature : manifest["Features"])
+    {
+      const bool recorded = feature.contains("TaperMeanKey");
+      const bool keyed_here =
+          std::any_of(keyed.begin(), keyed.end(), [&](const IdentifiedFeature *f)
+                      { return f->id == feature["Id"].get<int>(); });
+      CHECK(recorded == keyed_here);
+    }
+  }
+  SECTION("a parallel pair carries no record")
+  {
+    const auto result = Identify(0.0);
+    for (const auto &feature : result.features)
+    {
+      CHECK(feature.taper_mean_key.is_null());
+    }
+    CHECK_FALSE(result.ToJson(1.0)["Diagnostics"].contains("TaperMeanKeys"));
+  }
+}

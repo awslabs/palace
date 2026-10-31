@@ -6070,6 +6070,7 @@ private:
   std::map<std::string, Aggregate> legacy_requirements;
   nlohmann::json identification;
   nlohmann::json unpatched_pairs = nlohmann::json::array();
+  nlohmann::json placed_local_deviation = nlohmann::json::array();
   bool identification_active = false;
   std::string library_path;
   std::string library_name;
@@ -6207,6 +6208,15 @@ public:
   // Identification.Diagnostics.UnpatchedPairs + Summary.UnpatchedPairs and as
   // Features[].Match.Status Unpatched + Reason (only when any: otherwise no leaf).
   void SetUnpatchedPairs(nlohmann::json value) { unpatched_pairs = std::move(value); }
+  // The placed-length local-deviation record (OI-TAPER-MEAN-KEY, decision 1078;
+  // record-only): [{Id, Type, Model, DeviatingLength, PlacedLength}] (mesh units) for every
+  // placed pair / strip / stack feature with a deviating sample; written by Build as
+  // Identification.Diagnostics.PlacedLocalDeviation + Summary.PlacedLocalDeviation (only
+  // when any: otherwise no leaf).
+  void SetPlacedLocalDeviation(nlohmann::json value)
+  {
+    placed_local_deviation = std::move(value);
+  }
 
   void AddFeatureRecord(nlohmann::json requirement, int count, double length)
   {
@@ -6382,6 +6392,45 @@ public:
             {"Count", diagnostics["TaperCrossings"].value("Count", 0)},
             {"Length", diagnostics["TaperCrossings"].value("Length", 0.0)},
             {"Treatment", "ApproximatedByIsolatedEdge"}};
+      }
+      if (diagnostics.contains("TaperMeanKeys"))
+      {
+        // OI-TAPER-MEAN-KEY (decision 1078, record-only): the features keyed by a taper
+        // link's mean (Count = features, Length = their length).
+        result["Summary"]["TaperMeanKeys"] = {
+            {"Count", diagnostics["TaperMeanKeys"].value("Count", 0)},
+            {"Length", diagnostics["TaperMeanKeys"].value("Length", 0.0)},
+            {"Treatment", "KeyedAtTheMean"}};
+      }
+      if (!placed_local_deviation.empty())
+      {
+        // OI-TAPER-MEAN-KEY (decision 1078, record-only): the placed pair / strip / stack
+        // side length whose local side separation deviates from the keyed offset by more
+        // than the placement's tolerance (the mean approximation's reach on the device).
+        double deviating = 0.0, placed = 0.0;
+        for (const auto &entry : placed_local_deviation)
+        {
+          deviating += entry.value("DeviatingLength", 0.0);
+          placed += entry.value("PlacedLength", 0.0);
+        }
+        result["Identification"]["Diagnostics"]["PlacedLocalDeviation"] = {
+            {"Count", static_cast<int>(placed_local_deviation.size())},
+            {"Length", deviating},
+            {"PlacedLength", placed},
+            {"ToleranceRelative", kPairPatchSeparationTolerance},
+            {"Features", placed_local_deviation},
+            {"Rule",
+             "decision 1078 (record-only): for every placed pair / strip / stack "
+             "patch the local side separation at the sample (the pair placement's "
+             "foot test) is read against the keyed offset; the side length of the "
+             "cells deviating by more than PairPatchSeparationTolerance x the offset "
+             "is recorded per feature (Length) with the feature's placed side length "
+             "(PlacedLength): how much placed length is corrected with a "
+             "cross-section that differs locally by more than the tolerance (a "
+             "taper's mean key); the placement is unchanged"}};
+        result["Summary"]["PlacedLocalDeviation"] = {
+            {"Count", static_cast<int>(placed_local_deviation.size())},
+            {"Length", deviating}};
       }
       if (!unpatched_pairs.empty())
       {
@@ -9835,6 +9884,18 @@ struct FeaturePatchSummary
     double max_deviation_relative = 0.0;     // max |sample - separation| / separation
   };
   std::vector<UnpatchedPair> unpatched_pairs;
+  // The placed pair / strip / stack side length whose LOCAL side separation (the
+  // placement's foot test at the sample) deviates from the keyed offset by more than
+  // kPairPatchSeparationTolerance (OI-TAPER-MEAN-KEY, decision 1078; record-only): per
+  // feature, the deviating and the total placed side length, mesh units.
+  struct PlacedLocalDeviation
+  {
+    std::string type;
+    std::string model;
+    double deviating_length = 0.0;
+    double placed_length = 0.0;
+  };
+  std::map<int, PlacedLocalDeviation> placed_local_deviation;
   // Curvature (design (b)7): features patched by a curvature family blend, and the
   // straight-like features with a bend whose first-order term was evaluated (both family
   // nodes at 1 / StraightBendRadiusOverR found) or could not be (a node missing: the
@@ -11207,6 +11268,10 @@ FeaturePatchSummary BuildFeaturePatches(
   // cell of the portion (the cells tile the portion; a split's co-located patches and the
   // sides of a pair carry the full cell whatever their weight factors).
   const auto quadrature_cells = LongitudinalQuadratureCells(quadrature);
+  // Set by the pair / stack placers for the sample being placed (decision 1078): whether
+  // the local side separation deviates from the keyed offset by more than
+  // kPairPatchSeparationTolerance; unset by the other placers.
+  std::optional<bool> sample_local_deviation;
   auto Quadrature = [&](const FramedPortion &fp, double side_factor,
                         std::size_t model_index, int runtime,
                         const IdentifiedFeature &feature, const auto &Place,
@@ -11230,6 +11295,7 @@ FeaturePatchSummary BuildFeaturePatches(
       const auto &ip = quadrature.IntPoint(q);
       const double t = fp.a + (fp.b - fp.a) * ip.x;
       const Point3D point = Interpolate(*fp.segment, t);
+      bool first_term = true;
       for (const auto &[term_model, term_runtime, model_weight] : terms)
       {
         if (model_weight <= 0.0)
@@ -11238,7 +11304,22 @@ FeaturePatchSummary BuildFeaturePatches(
         }
         const auto &term = library.models[term_model];
         ResponsePatchData patch;
+        sample_local_deviation.reset();
         Place(point, patch);
+        if (first_term && sample_local_deviation)
+        {
+          // OI-TAPER-MEAN-KEY (decision 1078, record-only): the pair / stack placers read
+          // the local side separation at the sample against the keyed offset; the cell's
+          // side length is counted once per quadrature point.
+          auto &record = summary.placed_local_deviation[feature.id];
+          record.type = feature.type;
+          record.model = model.name;
+          const double cell_length =
+              (fp.b - fp.a) * (quadrature_cells[q][1] - quadrature_cells[q][0]);
+          record.placed_length += cell_length;
+          record.deviating_length += *sample_local_deviation ? cell_length : 0.0;
+        }
+        first_term = false;
         patch.conductor_references = term.conductor_references;
         patch.weight =
             model_weight * side_factor * (fp.b - fp.a) * ip.weight / term.coupon_depth;
@@ -11694,6 +11775,8 @@ FeaturePatchSummary BuildFeaturePatches(
                 const Foot foot = ClosestFoot(point, other);
                 const Point3D e1 = k == 0 ? point : foot.point;
                 const Point3D e2 = k == 0 ? foot.point : point;
+                sample_local_deviation = std::abs(Distance(e1, e2) - separation) >
+                                         kPairPatchSeparationTolerance * separation;
                 const EdgeSegment3D &first = k == 0 ? *fp.segment : *foot.segment;
                 const EdgeSegment3D &second = k == 0 ? *foot.segment : *fp.segment;
                 patch.origin = Scale(0.5, Add(e1, e2));
@@ -11781,6 +11864,13 @@ FeaturePatchSummary BuildFeaturePatches(
       const std::vector<FramedPortion> &first_side = *ordered.front().second;
       const std::vector<FramedPortion> &last_side = *ordered.back().second;
       const double side_factor = 1.0 / static_cast<double>(ordered.size());
+      // The keyed offsets (the signature's Edges in the canonical order = `ordered`), for
+      // the local-deviation record of decision 1078.
+      std::vector<double> keyed_offsets;
+      for (const auto &edge : feature.signature.value("Edges", nlohmann::json::array()))
+      {
+        keyed_offsets.push_back(edge.value("OffsetOverR", 0.0) * R);
+      }
       for (std::size_t k = 0; k < ordered.size(); k++)
       {
         for (const auto &fp : *ordered[k].second)
@@ -11791,6 +11881,15 @@ FeaturePatchSummary BuildFeaturePatches(
               {
                 patch.origin = k == 0 ? point : ClosestFoot(point, first_side).point;
                 const Point3D far = ClosestFoot(patch.origin, last_side).point;
+                if (keyed_offsets.size() == ordered.size())
+                {
+                  // Side k's local offset from the first side (the far side's for k = 0)
+                  // against its keyed offset.
+                  const std::size_t j = k == 0 ? ordered.size() - 1 : k;
+                  const double local = Distance(patch.origin, k == 0 ? far : point);
+                  sample_local_deviation = std::abs(local - keyed_offsets[j]) >
+                                           kPairPatchSeparationTolerance * keyed_offsets[j];
+                }
                 patch.axis_u = Normalize(Subtract(far, patch.origin));
                 patch.axis_v = axis_v;
                 patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
@@ -13465,6 +13564,26 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                            {"MaxDeviationRelative", pair.max_deviation_relative}});
       }
       requirements->SetUnpatchedPairs(std::move(records));
+    }
+    if (requirements)
+    {
+      nlohmann::json records = nlohmann::json::array();
+      for (const auto &[id, record] : summary.placed_local_deviation)
+      {
+        if (record.deviating_length > 0.0)
+        {
+          records.push_back(
+              {{"Id", id},
+               {"Type", record.type},
+               {"Model", record.model},
+               {"DeviatingLength", requirements->ScaleLength(record.deviating_length)},
+               {"PlacedLength", requirements->ScaleLength(record.placed_length)}});
+        }
+      }
+      if (!records.empty())
+      {
+        requirements->SetPlacedLocalDeviation(std::move(records));
+      }
     }
     if (statistics)
     {

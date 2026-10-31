@@ -3678,6 +3678,12 @@ private:
   {
     int chain_a = -1, chain_b = -1;
     LinkSeparation separation;  // per curvature class
+    // The group's CHORD pieces' smallest and largest sample reading (OI-TAPER-MEAN-KEY,
+    // decision 1078; 0 / 0 without a chord piece): a group whose range exceeds the pair
+    // tolerance is a TAPER, and every
+    // cross-section composed from its link reads the mean as its offset (recorded as
+    // TaperMeanKey on the feature; nothing changes in the keying this round).
+    double mean_min = 0.0, mean_max = 0.0;
     Point3D lead_point{}, lateral_ab{};
     std::size_t run_a = 0, run_b = 0;              // the runs at the lead pair of points
     std::array<std::vector<LinkPiece>, 2> pieces;  // side 0 on chain a, side 1 on chain b
@@ -7033,6 +7039,10 @@ void Identifier::BuildBentPairs()
     bool interacting;
     double separation;
     bool exact;
+    // The smallest and largest sample reading of the sub-piece (the exact value for an
+    // exact piece): a taper's range lives inside its pieces as much as between them
+    // (OI-TAPER-MEAN-KEY, decision 1078).
+    double separation_min = 0.0, separation_max = 0.0;
     // The one partner run every sample's foot lies on (a non-exact sub-piece after the
     // partner-run cut; an exact one when its feet happen to lie on one run), else absent.
     std::optional<std::size_t> foot_run;
@@ -7515,9 +7525,11 @@ void Identifier::BuildBentPairs()
           }
           const bool exact_piece = st.kind == Kind::Exact;
           double value = 0.0;
+          double value_min = std::numeric_limits<double>::infinity(), value_max = 0.0;
           if (exact_piece)
           {
             value = st.sum / st.count;
+            value_min = value_max = value;
             exact_stretch_count++;  // one sub-piece per exact stretch
           }
           else
@@ -7527,7 +7539,10 @@ void Identifier::BuildBentPairs()
             for (std::size_t q = lo_q; q < hi_q; q++)
             {
               const auto &exact = piece.samples[q].exact;
-              value += exact ? *exact : separation[k + q];
+              const double reading = exact ? *exact : separation[k + q];
+              value += reading;
+              value_min = std::min(value_min, reading);
+              value_max = std::max(value_max, reading);
             }
             value /= static_cast<double>(hi_q - lo_q);
             // Fragmentation census: a non-exact stretch shorter than R between two exact
@@ -7591,6 +7606,8 @@ void Identifier::BuildBentPairs()
                          inter,
                          value,
                          exact_piece,
+                         value_min,
+                         value_max,
                          foot_run});
         }
         i = j;
@@ -8039,12 +8056,26 @@ void Identifier::BuildBentPairs()
         link.run_b = lead_on_a ? qb.run : lead->piece->run;
         link.lateral_ab = lead_on_a ? lateral : Scale(-1.0, lateral);
         link.lead_point = lead_on_a ? pa : runs[qb.run].At(qb.s);
+        link.mean_min = std::numeric_limits<double>::infinity();
+        link.mean_max = -std::numeric_limits<double>::infinity();
         for (const std::size_t i : group)
         {
           const SubPiece &piece = *grouped[i].piece;
           link.pieces[static_cast<std::size_t>(grouped[i].side)].push_back(
               {piece.run, piece.interval, piece.curved, piece.max_kappa, piece.separation,
                piece.exact});
+          if (!piece.exact)
+          {
+            // The chord pieces' sample readings (a taper reads as chords: no two exactly
+            // parallel runs; its range lives inside a piece as much as between pieces); an
+            // exact group's pieces agree within the pair tolerance by rule.
+            link.mean_min = std::min(link.mean_min, piece.separation_min);
+            link.mean_max = std::max(link.mean_max, piece.separation_max);
+          }
+        }
+        if (!std::isfinite(link.mean_min))
+        {
+          link.mean_min = link.mean_max = 0.0;  // no chord piece: never a taper
         }
         // One separation per link and curvature class (decision 85(1)): the length-weighted
         // mean of the class's EXACT piece separations when it has any, else of its chord
@@ -8606,13 +8637,21 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     int chain_a, chain_b;
     LinkSeparation separation;  // per curvature class
     std::array<std::vector<LinkPiece>, 2> pieces;
+    double mean_min = 0.0, mean_max = 0.0;  // the chord readings' range (TaperMeanKey)
     bool Self() const { return chain_a == chain_b; }
+    // A taper link (OI-TAPER-MEAN-KEY, decision 1078): the group's mean range exceeds the
+    // pair tolerance, so its one mean separation keys a varying cross-section.
+    bool Taper() const
+    {
+      return mean_min > 0.0 && mean_max > mean_min * (1.0 + kPairSeparationTolerance);
+    }
   };
   std::vector<ELink> elinks;
   for (const std::size_t i : link_items)
   {
     const PairLink &link = pair_links[i];
-    elinks.push_back({link.chain_a, link.chain_b, link.separation, link.pieces});
+    elinks.push_back({link.chain_a, link.chain_b, link.separation, link.pieces,
+                      link.mean_min, link.mean_max});
   }
   for (const std::size_t j : span_items)
   {
@@ -8645,7 +8684,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
       const bool tilt_exact =
           quantizer.Less(deviation, kSignatureParameterToleranceOverRadius * R);
       const ClassSeparation exact{midpoint_value, tilt_exact, true};
-      ELink e{runs[lower.run].chain, runs[upper.run].chain, {exact, exact}, {}};
+      ELink e{runs[lower.run].chain, runs[upper.run].chain, {exact, exact}, {},
+              midpoint_value,        midpoint_value};
       e.pieces[0].push_back(
           {lower.run, lower.interval, false, 0.0, exact.value, tilt_exact});
       e.pieces[1].push_back(
@@ -8892,6 +8932,9 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     // Lateral positions of the partner feet that are cluster / window metal (taken): a
     // taken member between two members of the cross-section interrupts it.
     std::vector<double> taken_positions;
+    // The taper links among the consecutive links whose separations entered the offsets
+    // (TaperMeanKey, decision 1078).
+    std::vector<std::size_t> taper_links;
   };
   std::size_t fallbacks = 0, cap_hits = 0;
   auto Compose = [&](int chain, double x)
@@ -9052,6 +9095,10 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
             const ClassSeparation &of_class = link.separation[composition.curved ? 1 : 0];
             separation = of_class.value;
             composition.exact = composition.exact && of_class.exact;
+            if (link.Taper())
+            {
+              composition.taper_links.push_back(e);
+            }
           }
         }
       }
@@ -9104,6 +9151,7 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     std::array<Point3D, 3> axes;
     int sides;
     bool exact;
+    std::vector<std::size_t> taper_links;  // TaperMeanKey (decision 1078)
   };
   std::vector<Assigned> assigned;
   struct UnclusterableInterval
@@ -9279,7 +9327,8 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
                           first.point,
                           {runs[first.run].tangent, composition.lateral, n_ref},
                           static_cast<int>(k),
-                          composition.exact});
+                          composition.exact,
+                          composition.taper_links});
     }
     // Adjacent elementary intervals of one feature and side merge.
     for (auto &entry : on_chain)
@@ -9291,6 +9340,14 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
         assigned.back().x1 = entry.x1;
         assigned.back().max_kappa = std::max(assigned.back().max_kappa, entry.max_kappa);
         assigned.back().exact = assigned.back().exact && entry.exact;
+        for (const std::size_t e : entry.taper_links)
+        {
+          auto &links = assigned.back().taper_links;
+          if (std::find(links.begin(), links.end(), e) == links.end())
+          {
+            links.push_back(e);
+          }
+        }
       }
       else
       {
@@ -9420,6 +9477,41 @@ void Identifier::AssembleStack(const std::vector<std::size_t> &link_items,
     feature_sides[feature] = lead.sides;
     features[feature].exact_parameters = std::all_of(
         members.begin(), members.end(), [&](std::size_t i) { return assigned[i].exact; });
+    {
+      // TaperMeanKey (OI-TAPER-MEAN-KEY, decision 1078; record-only): the feature's
+      // offsets came from at least one taper link (a chord group whose piece means span
+      // more than the pair tolerance): its key is the link's MEAN separation, not a design
+      // cross-section; recorded with the links' mean / min / max and the feature's length.
+      std::set<std::size_t> taper_links;
+      for (const std::size_t i : members)
+      {
+        taper_links.insert(assigned[i].taper_links.begin(), assigned[i].taper_links.end());
+      }
+      if (!taper_links.empty())
+      {
+        nlohmann::json links = nlohmann::json::array();
+        for (const std::size_t e : taper_links)
+        {
+          const ELink &link = elinks[e];
+          const double mean = link.separation[lead.curved ? 1 : 0].value;
+          links.push_back({{"ChainA", link.chain_a},
+                           {"ChainB", link.chain_b},
+                           {"MeanOverR", mean / R},
+                           {"MinOverR", link.mean_min / R},
+                           {"MaxOverR", link.mean_max / R},
+                           {"RangeOverMean", (link.mean_max - link.mean_min) / mean}});
+        }
+        features[feature].taper_mean_key = {
+            {"Links", links},
+            {"Rule",
+             "OI-TAPER-MEAN-KEY (decision 1078, record-only): a pair link whose "
+             "chord-piece means span more than the pair tolerance (5 %) is a taper; "
+             "its one length-weighted mean separation enters every cross-section "
+             "composed from it, so this feature's keyed offsets are the taper's "
+             "mean, not a design cross-section; keyed and placed as today, recorded "
+             "here (Diagnostics.TaperMeanKeys, Summary.TaperMeanKeys)"}};
+      }
+    }
     for (const std::size_t i : members)
     {
       const Assigned &entry = assigned[i];
@@ -15941,6 +16033,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.String(f.match_note.value_or(""));
     w.String(f.quantum_near_match.is_null() ? std::string() : f.quantum_near_match.dump());
     w.String(f.near_match.is_null() ? std::string() : f.near_match.dump());
+    w.String(f.taper_mean_key.is_null() ? std::string() : f.taper_mean_key.dump());
     w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
     w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
     w.String(f.blend_eigenvalues.is_null() ? std::string() : f.blend_eigenvalues.dump());
@@ -16123,6 +16216,9 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     const std::string band_near_match = r.String();
     f.near_match = band_near_match.empty() ? nlohmann::json(nullptr)
                                            : nlohmann::json::parse(band_near_match);
+    const std::string taper_mean_key = r.String();
+    f.taper_mean_key = taper_mean_key.empty() ? nlohmann::json(nullptr)
+                                              : nlohmann::json::parse(taper_mean_key);
     const std::string support = r.String();
     f.spatial_support =
         support.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(support);
@@ -16283,6 +16379,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       real_segments > 0 && real_segments < segments.size() ? real_segments
                                                            : segments.size();
   nlohmann::json feature_list = nlohmann::json::array();
+  nlohmann::json taper_mean_keys = nlohmann::json::array();  // decision 1078 (record-only)
+  double taper_mean_key_length = 0.0;
   for (const auto &feature : features)
   {
     nlohmann::json portions = nlohmann::json::array();
@@ -16339,6 +16437,18 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       // 4, decision 1075 Q1): Status NearMatched, the separation deviation in R recorded.
       entry["Match"]["Status"] = "NearMatched";
       entry["Match"]["NearMatch"] = feature.near_match;
+    }
+    if (!feature.taper_mean_key.is_null())
+    {
+      // OI-TAPER-MEAN-KEY (decision 1078, record-only): the feature's offsets are a taper
+      // link's mean; the record with its length in the manifest's unit.
+      entry["TaperMeanKey"] = feature.taper_mean_key;
+      entry["TaperMeanKey"]["Length"] = L(feature.length);  // the feature's final length
+      taper_mean_keys.push_back({{"Id", feature.id},
+                                 {"Type", feature.type},
+                                 {"Length", L(feature.length)},
+                                 {"Links", feature.taper_mean_key["Links"]}});
+      taper_mean_key_length += feature.length;
     }
     if (feature.match_note)
     {
@@ -17206,6 +17316,25 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"UnusedSpanCapAllowances", unused_span_cap_allowances},
       {"GeometryDigest", geometry_digest}};
+  if (!taper_mean_keys.empty())
+  {
+    // OI-TAPER-MEAN-KEY (decision 1078, record-only): the features keyed by a taper link's
+    // mean separation (C1 of record: the launcher flares), present only where any exists.
+    manifest["Diagnostics"]["TaperMeanKeys"] = {
+        {"Count", taper_mean_keys.size()},
+        {"Length", L(taper_mean_key_length)},
+        {"PairToleranceRelative", kPairSeparationTolerance},
+        {"Treatment", "KeyedAtTheMean"},
+        {"Rule", "OI-TAPER-MEAN-KEY (decision 1078, record-only): a pair link whose "
+                 "chord-piece means span more than the pair tolerance is a taper (a CPW "
+                 "launcher flare); its one length-weighted mean separation enters every "
+                 "cross-section composed from it, so these features' keyed offsets are the "
+                 "taper's mean, not a design cross-section; keyed, matched and placed as "
+                 "today (the mean approximation of record), recorded here for the coverage "
+                 "report and the stage-E out-of-sample measurement; the remedy after stage "
+                 "F = local-separation keying + interpolation across the 2D families"},
+        {"Features", taper_mean_keys}};
+  }
   if (!remainder_below_bar.empty())
   {
     // I-4 RECORD-ONLY (decisions 1075 Q2 / 1077 Q1 (B)): the isolated-edge-class remainder
