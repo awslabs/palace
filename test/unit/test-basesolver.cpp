@@ -7,6 +7,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
@@ -15,8 +16,11 @@
 #include "utils/configfile.hpp"
 #include "utils/dorfler.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
 
 using namespace palace;
+using json = nlohmann::json;
 
 namespace
 {
@@ -510,4 +514,82 @@ TEST_CASE("ElementsEligibleForMarking reads the element size of the mesh statist
   CHECK(CountElementsBelowSize(mesh, h_child * (1.0 - 1.0e-12)) == 0);
   CHECK(CountElementsBelowSize(mesh, h_child * (1.0 + 1.0e-12)) == 8);
   CHECK(CountElementsBelowSize(mesh, h_parent * (1.0 + 1.0e-12)) == 9);
+}
+
+// OI-ADAPT-SAVEMESH-OVERWRITE (idfix DESIGN section 7; decision 1072 Q1): the mesh writer
+// never writes THROUGH the symlink SaveIteration left.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RemoveSymlinkBeforeWrite leaves the archived target untouched",
+                 "[basesolver][savemesh][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  CreateFile(temp_dir / "palace.json", "{}");
+  CreateFile(temp_dir / "box.mesh", "iteration1 mesh");
+  SaveIteration(comm, temp_dir, 1, 2);
+  REQUIRE(fs::is_symlink(temp_dir / "box.mesh"));
+  if (Mpi::Root(comm))
+  {
+    CHECK(mesh::RemoveSymlinkBeforeWrite(temp_dir / "box.mesh"));
+    CHECK(!fs::exists(fs::symlink_status(temp_dir / "box.mesh")));
+    CreateFile(temp_dir / "box.mesh", "iteration2 mesh");
+    // The top-level file is real, the archived iteration keeps its own bytes.
+    CHECK(!fs::is_symlink(temp_dir / "box.mesh"));
+    CHECK(ReadFile(temp_dir / "box.mesh") == "iteration2 mesh");
+    CHECK(ReadFile(temp_dir / "iteration01" / "box.mesh") == "iteration1 mesh");
+    // A real file or a missing path is left alone.
+    CHECK(!mesh::RemoveSymlinkBeforeWrite(temp_dir / "box.mesh"));
+    CHECK(ReadFile(temp_dir / "box.mesh") == "iteration2 mesh");
+    CHECK(!mesh::RemoveSymlinkBeforeWrite(temp_dir / "absent.mesh"));
+  }
+  Mpi::Barrier(comm);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh with SaveAdaptMesh keeps the archived iteration mesh",
+                 "[basesolver][savemesh][Serial][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const fs::path output = temp_dir / "out";
+  if (Mpi::Root(comm))
+  {
+    fs::create_directories(output);
+  }
+  Mpi::Barrier(comm);
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", output.string()}}},
+                 {"Model",
+                  {{"Mesh", (temp_dir / "box.mesh").string()},
+                   {"Refinement", {{"SaveAdaptMesh", true}}}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", {{"Ground", {{"Attributes", {1, 2, 3, 4, 5, 6}}}}}},
+                 {"Solver", {{"Order", 1}, {"Electrostatic", json::object()}}}};
+  IoData iodata(config, false);
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON));
+  serial_mesh->EnsureNCMesh(true);
+  auto mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  serial_mesh.reset();
+
+  // Iteration 1: the writer saves out/box.mesh, SaveIteration archives it and leaves the
+  // symlink out/box.mesh -> iteration01/box.mesh.
+  mesh::RebalanceMesh(iodata, mesh);
+  REQUIRE(fs::is_regular_file(fs::symlink_status(output / "box.mesh")));
+  if (Mpi::Root(comm))
+  {
+    CreateFile(output / "palace.json", "{}");
+  }
+  SaveIteration(comm, output, 1, 2);
+  REQUIRE(fs::is_symlink(output / "box.mesh"));
+  const std::string archived = ReadFile(output / "iteration01" / "box.mesh");
+  REQUIRE(!archived.empty());
+
+  // Iteration 2: the mesh is refined and saved again. The archived iteration-1 mesh is
+  // byte-identical before and after; the top-level file is a real file with the new mesh.
+  mesh->UniformRefinement();
+  mesh::RebalanceMesh(iodata, mesh);
+  Mpi::Barrier(comm);
+  CHECK(!fs::is_symlink(output / "box.mesh"));
+  CHECK(fs::is_regular_file(output / "box.mesh"));
+  CHECK(ReadFile(output / "iteration01" / "box.mesh") == archived);
+  CHECK(ReadFile(output / "box.mesh") != archived);
+  Mpi::Barrier(comm);
 }

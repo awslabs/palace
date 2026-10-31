@@ -594,11 +594,18 @@ public:
   // segment shorter than the element the box portion is the whole segment and the rule is
   // the former one to the bit. ResolveMaxwellLineCoverage consults the in-face intervals
   // only where the exact intervals leave a true gap.
+  // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (idfix DESIGN section 7; decision 1072 Q2): when
+  // `interval_diameters` / `in_face_diameters` are given they receive, parallel to the
+  // intervals, the diameter of each interval's element (mfem GetElementSize(e, 2): the
+  // largest singular value of the element Jacobian at its centre), the local length scale
+  // the coverage resolution's crack tolerance reads.
   void FindSegmentIntersections(const std::array<double, 3> &p0,
                                 const std::array<double, 3> &p1, double tolerance,
                                 std::vector<std::pair<double, double>> &intervals,
                                 std::vector<std::pair<double, double>> &in_face_intervals,
-                                std::vector<int> &candidates) const
+                                std::vector<int> &candidates,
+                                std::vector<double> *interval_diameters = nullptr,
+                                std::vector<double> *in_face_diameters = nullptr) const
   {
     MFEM_ASSERT(linear_mesh, "Exact segment intersections require a linear mesh!");
     candidates.clear();
@@ -606,6 +613,15 @@ public:
     std::sort(candidates.begin(), candidates.end());
     intervals.clear();
     in_face_intervals.clear();
+    if (interval_diameters)
+    {
+      interval_diameters->clear();
+    }
+    if (in_face_diameters)
+    {
+      in_face_diameters->clear();
+    }
+    auto ElementDiameter = [&](int element) { return mesh.GetElementSize(element, 2); };
     constexpr double reference_tolerance = 64.0 * std::numeric_limits<double>::epsilon();
     for (const int element : candidates)
     {
@@ -661,6 +677,10 @@ public:
       if (end > begin)
       {
         intervals.emplace_back(begin, end);
+        if (interval_diameters)
+        {
+          interval_diameters->push_back(ElementDiameter(element));
+        }
       }
       // The segment's portion inside the element's box (a candidate: never empty; the
       // ends of the whole segment when the box contains it).
@@ -693,6 +713,10 @@ public:
       if (face_end > face_begin)
       {
         in_face_intervals.emplace_back(face_begin, face_end);
+        if (in_face_diameters)
+        {
+          in_face_diameters->push_back(ElementDiameter(element));
+        }
       }
     }
   }
@@ -28765,21 +28789,58 @@ FindMaxwellSegmentIntersections(mfem::ParMesh &mesh, int dimension,
   MaxwellSegmentIntersections intersections;
   std::vector<int> candidates;
   locator.FindSegmentIntersections(begin, end, MaxwellLineBoxTolerance(coordinate_scale),
-                                   intersections.exact, intersections.in_face, candidates);
+                                   intersections.exact, intersections.in_face, candidates,
+                                   &intersections.exact_diameters,
+                                   &intersections.in_face_diameters);
   return intersections;
 }
 
-MaxwellLineCoverage
-ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
-                           std::vector<std::pair<double, double>> in_face_intervals,
-                           double line_length, double coordinate_scale, int line_index,
-                           const std::array<double, 3> &begin_point,
-                           const std::array<double, 3> &end_point)
+MaxwellLineCoverage ResolveMaxwellLineCoverage(
+    std::vector<std::pair<double, double>> element_intervals,
+    std::vector<std::pair<double, double>> in_face_intervals, double line_length,
+    double coordinate_scale, int line_index, const std::array<double, 3> &begin_point,
+    const std::array<double, 3> &end_point, const std::vector<double> &element_diameters,
+    const std::vector<double> &in_face_diameters)
 {
   constexpr double parameter_tolerance = 1.0e-10;
-  const double crack_tolerance = kMaxwellLineCrackUlps *
-                                 std::numeric_limits<double>::epsilon() *
-                                 std::max(coordinate_scale, line_length);
+  const double floating_point_crack_tolerance = kMaxwellLineCrackUlps *
+                                                std::numeric_limits<double>::epsilon() *
+                                                std::max(coordinate_scale, line_length);
+  MFEM_VERIFY(element_diameters.empty() ||
+                  element_diameters.size() == element_intervals.size(),
+              "Maxwell line coverage: the element diameters must parallel the intervals!");
+  MFEM_VERIFY(in_face_diameters.empty() ||
+                  in_face_diameters.size() == in_face_intervals.size(),
+              "Maxwell line coverage: the in-face element diameters must parallel the "
+              "in-face intervals!");
+  // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (decision 1072 Q2): the local element diameter at
+  // a crack [begin, end] = the MAX over the elements of the intervals BOUNDING it (an
+  // interval ending at `begin` or starting at `end`, exact or in-face) of mfem
+  // GetElementSize(e, 2); 0 when no diameters were supplied (the former rule).
+  auto LocalElementDiameter = [&](double begin, double end)
+  {
+    double diameter = 0.0;
+    auto Scan = [&](const std::vector<std::pair<double, double>> &intervals,
+                    const std::vector<double> &diameters)
+    {
+      for (std::size_t k = 0; k < diameters.size(); k++)
+      {
+        if (std::abs(intervals[k].second - begin) <= parameter_tolerance ||
+            std::abs(intervals[k].first - end) <= parameter_tolerance)
+        {
+          diameter = std::max(diameter, diameters[k]);
+        }
+      }
+    };
+    Scan(element_intervals, element_diameters);
+    Scan(in_face_intervals, in_face_diameters);
+    return diameter;
+  };
+  auto CrackTolerance = [&](double begin, double end)
+  {
+    return std::max(floating_point_crack_tolerance, kMaxwellLineCrackLocalDiameterFraction *
+                                                        LocalElementDiameter(begin, end));
+  };
   MaxwellLineCoverage coverage;
   auto SnapEnds = [&](std::vector<std::pair<double, double>> &intervals)
   {
@@ -28853,7 +28914,7 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
       previous_in_face = false;
       continue;
     }
-    if (gap <= crack_tolerance)
+    if (gap <= CrackTolerance(begin, end))
     {
       CloseCrack(gap);
       previous_in_face = false;
@@ -28881,23 +28942,26 @@ ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_interv
         in_face_length += face_gap;
         continue;
       }
+      const double crack_tolerance = CrackTolerance(face_begin, face_end);
       if (face_gap <= crack_tolerance)
       {
         CloseCrack(face_gap);
         continue;
       }
-      MFEM_VERIFY(covered,
-                  "Maxwell response contour line "
-                      << line_index << " leaves the finite-element mesh over parameter "
-                      << face_begin << " to " << face_end << " (begin = " << begin_point[0]
-                      << ", " << begin_point[1] << ", " << begin_point[2]
-                      << "; end = " << end_point[0] << ", " << end_point[1] << ", "
-                      << end_point[2] << ")! The gap is " << face_gap
-                      << " mesh units, above the floating-point crack tolerance "
-                      << crack_tolerance << " (" << kMaxwellLineCrackUlps
-                      << " ULP of the coordinate scale " << coordinate_scale
-                      << "); no element intersection, exact or in a coplanar face, "
-                         "covers it.");
+      MFEM_VERIFY(
+          covered,
+          "Maxwell response contour line "
+              << line_index << " leaves the finite-element mesh over parameter "
+              << face_begin << " to " << face_end << " (begin = " << begin_point[0] << ", "
+              << begin_point[1] << ", " << begin_point[2] << "; end = " << end_point[0]
+              << ", " << end_point[1] << ", " << end_point[2] << ")! The gap is "
+              << face_gap << " mesh units, above the floating-point crack tolerance "
+              << crack_tolerance << " (max(" << kMaxwellLineCrackUlps
+              << " ULP of the coordinate scale " << coordinate_scale << ", "
+              << kMaxwellLineCrackLocalDiameterFraction << " x the local element diameter "
+              << LocalElementDiameter(face_begin, face_end)
+              << ")); no element intersection, exact or in a coplanar face, "
+                 "covers it.");
     }
     // Consecutive uncovered pieces (split by an exact sliver) are one stretch.
     coverage.in_face_count += previous_in_face ? 0 : 1;
@@ -28954,6 +29018,10 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   std::vector<std::vector<std::pair<double, double>>> line_intervals(line_geometry.size());
   std::vector<std::vector<std::pair<double, double>>> line_in_face_intervals(
       line_geometry.size());
+  // The element diameter of every interval (parallel to the intervals; OI-MX-CONTOUR-
+  // COVERAGE-NC-REFINEMENT), computed on the owning rank and gathered with the bounds.
+  std::vector<std::vector<double>> line_interval_diameters(line_geometry.size());
+  std::vector<std::vector<double>> line_in_face_diameters(line_geometry.size());
   if (exact_intersections)
   {
     constexpr int routing_box_count = 8;
@@ -29053,12 +29121,13 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
                    query_receive_coordinate_counts.data(),
                    query_receive_coordinate_offsets.data(), comm);
 
-    // Per destination rank: the line index, 0 (exact) / 1 (in-face) and the bounds of
-    // every returned interval.
+    // Per destination rank: the line index, 0 (exact) / 1 (in-face) and the bounds + the
+    // element diameter of every returned interval.
     std::vector<std::vector<int>> returned_indices(size);
     std::vector<std::vector<int>> returned_kinds(size);
     std::vector<std::vector<double>> returned_bounds(size);
     std::vector<std::pair<double, double>> intersections, in_face_intersections;
+    std::vector<double> intersection_diameters, in_face_intersection_diameters;
     std::vector<int> candidates;
     for (int source = 0; source < size; source++)
     {
@@ -29071,21 +29140,24 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
           begin[d] = query_receive_coordinates[6 * packed + d];
           finish[d] = query_receive_coordinates[6 * packed + 3 + d];
         }
-        locator.FindSegmentIntersections(begin, finish, box_tolerance, intersections,
-                                         in_face_intersections, candidates);
-        for (const auto &[interval_begin, interval_end] : intersections)
+        locator.FindSegmentIntersections(
+            begin, finish, box_tolerance, intersections, in_face_intersections, candidates,
+            &intersection_diameters, &in_face_intersection_diameters);
+        for (std::size_t k = 0; k < intersections.size(); k++)
         {
           returned_indices[source].push_back(query_receive_indices[packed]);
           returned_kinds[source].push_back(0);
-          returned_bounds[source].push_back(interval_begin);
-          returned_bounds[source].push_back(interval_end);
+          returned_bounds[source].push_back(intersections[k].first);
+          returned_bounds[source].push_back(intersections[k].second);
+          returned_bounds[source].push_back(intersection_diameters[k]);
         }
-        for (const auto &[interval_begin, interval_end] : in_face_intersections)
+        for (std::size_t k = 0; k < in_face_intersections.size(); k++)
         {
           returned_indices[source].push_back(query_receive_indices[packed]);
           returned_kinds[source].push_back(1);
-          returned_bounds[source].push_back(interval_begin);
-          returned_bounds[source].push_back(interval_end);
+          returned_bounds[source].push_back(in_face_intersections[k].first);
+          returned_bounds[source].push_back(in_face_intersections[k].second);
+          returned_bounds[source].push_back(in_face_intersection_diameters[k]);
         }
       }
     }
@@ -29105,7 +29177,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     std::vector<double> interval_send_bounds;
     interval_send_indices.reserve(interval_send_total);
     interval_send_kinds.reserve(interval_send_total);
-    interval_send_bounds.reserve(2 * interval_send_total);
+    interval_send_bounds.reserve(3 * interval_send_total);
     for (int rank = 0; rank < size; rank++)
     {
       interval_send_indices.insert(interval_send_indices.end(),
@@ -29124,14 +29196,14 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
     Mpi::Alltoallv(interval_send_kinds.data(), interval_send_counts.data(),
                    interval_send_offsets.data(), interval_receive_kinds.data(),
                    interval_receive_counts.data(), interval_receive_offsets.data(), comm);
-    const auto interval_send_bound_counts = ScaleCommunicationPlan(interval_send_counts, 2);
+    const auto interval_send_bound_counts = ScaleCommunicationPlan(interval_send_counts, 3);
     const auto interval_send_bound_offsets =
-        ScaleCommunicationPlan(interval_send_offsets, 2);
+        ScaleCommunicationPlan(interval_send_offsets, 3);
     const auto interval_receive_bound_counts =
-        ScaleCommunicationPlan(interval_receive_counts, 2);
+        ScaleCommunicationPlan(interval_receive_counts, 3);
     const auto interval_receive_bound_offsets =
-        ScaleCommunicationPlan(interval_receive_offsets, 2);
-    std::vector<double> interval_receive_bounds(2 * interval_receive_total);
+        ScaleCommunicationPlan(interval_receive_offsets, 3);
+    std::vector<double> interval_receive_bounds(3 * interval_receive_total);
     Mpi::Alltoallv(interval_send_bounds.data(), interval_send_bound_counts.data(),
                    interval_send_bound_offsets.data(), interval_receive_bounds.data(),
                    interval_receive_bound_counts.data(),
@@ -29141,8 +29213,11 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
       const int line = interval_receive_indices[i];
       MFEM_ASSERT(line >= 0 && line < static_cast<int>(line_intervals.size()),
                   "Invalid returned Maxwell line index!");
-      (interval_receive_kinds[i] == 0 ? line_intervals : line_in_face_intervals)[line]
-          .emplace_back(interval_receive_bounds[2 * i], interval_receive_bounds[2 * i + 1]);
+      const bool exact = interval_receive_kinds[i] == 0;
+      (exact ? line_intervals : line_in_face_intervals)[line].emplace_back(
+          interval_receive_bounds[3 * i], interval_receive_bounds[3 * i + 1]);
+      (exact ? line_interval_diameters : line_in_face_diameters)[line].push_back(
+          interval_receive_bounds[3 * i + 2]);
     }
   }
   else
@@ -29197,7 +29272,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
       auto coverage = ResolveMaxwellLineCoverage(
           std::move(line_intervals[line_index]),
           std::move(line_in_face_intervals[line_index]), Norm(tangent), coordinate_scale,
-          static_cast<int>(line_index), line.begin, line.end);
+          static_cast<int>(line_index), line.begin, line.end,
+          line_interval_diameters[line_index], line_in_face_diameters[line_index]);
       integration_intervals = std::move(coverage.intervals);
       closed_crack_count += coverage.closed_crack_count;
       max_closed_crack = std::max(max_closed_crack, coverage.max_closed_crack);
@@ -31978,6 +32054,16 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
     // R0-a: the conductor-consistency probes' legs (idfix DESIGN B.3 (d) / C.3), beside the
     // contour lines they are not part of.
     result["Correction"]["ProbeLines"] = Distribution(probe_line_count);
+    // OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (decision 1072 Q2): the FROZEN crack tolerance
+    // rule of the contour-line coverage, by name.
+    result["Correction"]["ContourCrackToleranceRule"] = fmt::format(
+        "a piece of a contour line no element intersection covers is closed as a crack iff "
+        "its length <= max({:.0f} ULP x max(coordinate scale, line length), {:.0e} x the "
+        "local element diameter), the local element diameter = the max over the elements "
+        "of the intervals bounding the piece (exact or in-face) of mfem GetElementSize(e, "
+        "2) (the largest singular value of the element Jacobian at its centre); a longer "
+        "piece fails closed",
+        kMaxwellLineCrackUlps, kMaxwellLineCrackLocalDiameterFraction);
   }
   const long long int stencil_rows =
       point_dof_offsets.empty() ? 0 : point_dof_offsets.size() - 1;

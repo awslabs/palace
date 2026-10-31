@@ -2424,6 +2424,16 @@ nlohmann::json DescribeDomainBoundaryPortions(const ExcludedPatchPortions &porti
 // untouched by this pass: a line without a true gap is bitwise the pre-existing
 // resolution. A piece neither pass covers still fails closed.
 constexpr double kMaxwellLineCrackUlps = 4096.0;
+// OI-MX-CONTOUR-COVERAGE-NC-REFINEMENT (idfix DESIGN section 7; decision 1072 Q2; FROZEN):
+// a hanging-face closure crack of a nonconforming refinement is O(eps x h), not O(eps x the
+// domain) (the 3.06e-11 crack of the NC-refined S1b-rc mesh against the 5.69e-13 ULP
+// tolerance), so the crack tolerance of a piece is max(kMaxwellLineCrackUlps x eps x
+// max(coordinate_scale, line_length), kMaxwellLineCrackLocalDiameterFraction x the local
+// element diameter), the local element diameter = the MAX over the elements of the
+// intervals bounding the piece (exact or in-face) of mfem GetElementSize(e, 2) (the largest
+// singular value of the element Jacobian at its centre). Where no crack exists the
+// resolution is bitwise the former one (the tolerance only widens where a crack is).
+constexpr double kMaxwellLineCrackLocalDiameterFraction = 1.0e-6;
 
 // The bounding-box tolerance of the Maxwell line locator (ConfigureMaxwellLines): the
 // candidate search and the box portion of the coplanarity test above.
@@ -2437,6 +2447,9 @@ struct MaxwellSegmentIntersections
 {
   std::vector<std::pair<double, double>> exact;
   std::vector<std::pair<double, double>> in_face;
+  // The element diameter (GetElementSize(e, 2)) of each interval's element, parallel.
+  std::vector<double> exact_diameters;
+  std::vector<double> in_face_diameters;
 };
 MaxwellSegmentIntersections
 FindMaxwellSegmentIntersections(mfem::ParMesh &mesh, int dimension,
@@ -2452,12 +2465,14 @@ struct MaxwellLineCoverage
   int in_face_count = 0;
   double in_face_length = 0.0;  // Mesh units.
 };
-MaxwellLineCoverage
-ResolveMaxwellLineCoverage(std::vector<std::pair<double, double>> element_intervals,
-                           std::vector<std::pair<double, double>> in_face_intervals,
-                           double line_length, double coordinate_scale, int line_index,
-                           const std::array<double, 3> &begin,
-                           const std::array<double, 3> &end);
+// `element_diameters` / `in_face_diameters` parallel the intervals (empty = no local
+// element scale: the floating-point tolerance alone).
+MaxwellLineCoverage ResolveMaxwellLineCoverage(
+    std::vector<std::pair<double, double>> element_intervals,
+    std::vector<std::pair<double, double>> in_face_intervals, double line_length,
+    double coordinate_scale, int line_index, const std::array<double, 3> &begin,
+    const std::array<double, 3> &end, const std::vector<double> &element_diameters = {},
+    const std::vector<double> &in_face_diameters = {});
 
 }  // namespace palace
 

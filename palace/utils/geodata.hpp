@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
+#include "utils/filesystem.hpp"
 
 namespace palace
 {
@@ -398,6 +399,16 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
+
+// OI-ADAPT-SAVEMESH-OVERWRITE (idfix DESIGN section 7; decision 1072 Q1): SaveIteration
+// archives an iteration's output files and leaves relative symlinks behind, so a later
+// std::ofstream on the top-level path would write THROUGH the link into the archived
+// iteration folder (the saved adaptive mesh of iteration N replaced by iteration N + 1's,
+// unsolved). A mesh writer under Problem.Output calls this on the WRITING rank before
+// opening its stream: a symlink at `path` is removed so that the stream creates a REAL
+// file at the top-level path (the next SaveIteration moves it and re-links). Returns
+// whether a link was removed; a real file or a missing path is left alone.
+bool RemoveSymlinkBeforeWrite(const fs::path &path);
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);

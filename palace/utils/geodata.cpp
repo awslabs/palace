@@ -3010,6 +3010,10 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
       BlockTimer bt1(Timer::IO);
       if (Mpi::Root(comm))
       {
+        // OI-ADAPT-SAVEMESH-OVERWRITE: never write through the symlink SaveIteration left
+        // (the archived iteration's mesh would be replaced by this unsolved one); the root
+        // writes a real top-level file and the barrier below orders the other ranks.
+        RemoveSymlinkBeforeWrite(sfile);
         std::ofstream fo(sfile);
         // mfem::ofgzstream fo(sfile, true);  // Use zlib compression if available
         // fo << std::fixed;
@@ -3067,6 +3071,16 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
     }
   }
   return ratio;
+}
+
+bool RemoveSymlinkBeforeWrite(const fs::path &path)
+{
+  if (!fs::is_symlink(fs::symlink_status(path)))
+  {
+    return false;
+  }
+  fs::remove(path);
+  return true;
 }
 
 }  // namespace mesh
