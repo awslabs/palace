@@ -8588,7 +8588,9 @@ IdentificationResult RunGeometryIdentification(
   // own verify stands. The input is replicated, so the record is rank-consistent.
   if (geometry_ledger)
   {
-    std::map<std::size_t, std::vector<std::size_t>> incident;
+    // PER CHAIN (the identification's own incidence, BuildRuns): chains of different metal
+    // meeting at one vertex (a point contact) each have two segments there.
+    std::map<std::pair<int, std::size_t>, std::vector<std::size_t>> incident;
     for (std::size_t i = 0; i < input.segments.size(); i++)
     {
       const auto &segment = input.segments[i];
@@ -8598,12 +8600,13 @@ IdentificationResult RunGeometryIdentification(
       }
       for (const std::size_t v : segment.vertices)
       {
-        incident[v].push_back(i);
+        incident[{segment.chain, v}].push_back(i);
       }
     }
     std::set<std::size_t> excluded;
-    for (const auto &[v, list] : incident)
+    for (const auto &[key, list] : incident)
     {
+      const std::size_t v = key.second;
       if (list.size() <= 2)
       {
         continue;

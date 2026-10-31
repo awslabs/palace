@@ -1705,15 +1705,24 @@ TEST_CASE(
   }
 }
 
-TEST_CASE_METHOD(
-    test::SurfaceResponseFiles,
-    "Geometry fallback H13-I2 BranchingPerimeter: a chain vertex with more than "
-    "two chain segments cuts the chain and records the incident segments",
-    "[surfaceresponseoperator][geometryfallback][h13][3d][Serial][Parallel]")
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Geometry fallback H13-I2 BranchingPerimeter: a pinched perimeter is two "
+                 "chains at the junction (GUARDED by the extraction's chain rule)",
+                 "[surfaceresponseoperator][geometryfallback][h13][3d][Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // U-H13b (hardening-2 DESIGN row H13-I2): the identification's former abort "a perimeter
+  // chain has a vertex with more than two chain segments" is UNREACHABLE by construction:
+  // the extraction's physical chains stop at every non-regular vertex (corners, endpoints,
+  // junctions), so the pinch vertex (2, 0.5, 2) where the hole's loop and the corner notch
+  // meet with four perimeter segments ends FOUR chains of two segments there, and the
+  // identification's per-chain incidence never exceeds two. The conversion in
+  // RunGeometryIdentification (the per-chain pass: the incident segments excluded
+  // BranchingPerimeter with a record, the chain cut) is the safety net for a chain the
+  // extraction would leave branched; this fixture reads it NOT firing on the pinch (0
+  // records, the construction continues under both policies), the control alike.
   json config = IslandConfig();
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
@@ -1730,76 +1739,23 @@ TEST_CASE_METHOD(
         std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
     return iodata;
   };
-  // The control: the hole alone (every chain vertex has two segments): no record.
+  for (const bool pinched : {false, true})
   {
+    CAPTURE(pinched);
     std::vector<std::unique_ptr<Mesh>> meshes;
-    IoData iodata = Build(config, false, meshes);
+    IoData iodata = Build(config, pinched, meshes);
     LaplaceOperator laplace(iodata, meshes);
     SurfaceResponseOperator response(iodata, laplace);
     CHECK(response.GetGeometryFallbacks().empty());
     CHECK(response.GetPatchCount() > 0);
-  }
-  // RecordRaw (the solve default): ONE BranchingPerimeter record at the pinch vertex, the
-  // four incident segments excluded (their length), the construction continues and the
-  // other perimeter is identified; the preflight manifest carries the same record.
-  {
-    std::vector<std::unique_ptr<Mesh>> meshes;
-    IoData iodata = Build(config, true, meshes);
-    LaplaceOperator laplace(iodata, meshes);
-    SurfaceResponseOperator response(iodata, laplace);
-    CHECK_FALSE(response.IsRawFallback());
-    CHECK(response.GetPatchCount() > 0);
-    const auto &fallbacks = response.GetGeometryFallbacks();
-    REQUIRE(fallbacks.size() == 1);
-    const auto &entry = fallbacks.front();
-    CHECK(entry.cls == "BranchingPerimeter");
-    CHECK(entry.site == "H13-I2/RunGeometryIdentification:branching-vertex");
-    CHECK(entry.what == "segment");
-    CHECK_THAT(entry.reason, ContainsSubstring("more than two chain segments") &&
-                                 ContainsSubstring("4 segments"));
-    CHECK_THAT(entry.length, WithinRel(1.0, 1.0e-9));  // 4 x h = 4 x 0.25
-    CHECK_THAT(entry.example_origin[0], WithinAbs(2.0, 1.0e-12));
-    CHECK_THAT(entry.example_origin[1], WithinAbs(0.5, 1.0e-12));
-    CHECK_THAT(entry.example_origin[2], WithinAbs(2.0, 1.0e-12));
-    const json record = response.GetGeometryFallbackRecord();
-    CHECK(record.at("Classes").at("BranchingPerimeter").get<int>() == 1);
-    // The excluded segments carry the class into the identification's exclusion list and
-    // the exclusion-energy portions (by name).
-    bool listed = false;
+    bool branching = false;
     for (const auto &portion : response.GetIdentificationExclusionPortions())
     {
-      listed = listed || portion.topology == "BranchingPerimeter";
+      branching = branching || portion.topology == "BranchingPerimeter";
     }
-    CHECK(listed);
-    // The preflight: FailClosed by default (the manifest is written, then the deferred
-    // abort names the class); with the RecordRaw leaf it returns and the manifest carries
-    // the record.
-    const auto manifest_path = temp.temp_dir / "surface-response-requirements-h13.json";
-    if (Mpi::Size(Mpi::World()) == 1)
-    {
-      // The preflight's deferred abort follows the root's manifest write (a rank reaching
-      // it first would leave the others in a collective): read in the serial run.
-      CHECK_THROWS_WITH(
-          WriteSurfaceResponseRequirements(iodata, *meshes.front(), manifest_path.string()),
-          ContainsSubstring("GeometryFailurePolicy FailClosed") &&
-              ContainsSubstring("BranchingPerimeter"));
-    }
-    json record_raw = config;
-    record_raw["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
-        "RecordRaw";
-    IoData raw_iodata(record_raw, false);
-    raw_iodata.boundaries.cracked_attributes.insert(9);
-    WriteSurfaceResponseRequirements(raw_iodata, *meshes.front(), manifest_path.string());
-    Mpi::Barrier(Mpi::World());
-    const json manifest = ReadJson(manifest_path);
-    const auto &preflight = manifest.at("Identification").at("Diagnostics");
-    REQUIRE(preflight.contains("GeometryFallbacks"));
-    CHECK(preflight.at("GeometryFallbacks")
-              .at("Classes")
-              .at("BranchingPerimeter")
-              .get<int>() == 1);
+    CHECK_FALSE(branching);
   }
-  // FailClosed: the deferred abort names the class.
+  // FailClosed constructs too (nothing recorded).
   {
     json fail_closed = config;
     fail_closed["Solver"]["Electrostatic"]["ResponseCorrection"]["GeometryFailurePolicy"] =
@@ -1807,9 +1763,7 @@ TEST_CASE_METHOD(
     std::vector<std::unique_ptr<Mesh>> meshes;
     IoData iodata = Build(fail_closed, true, meshes);
     LaplaceOperator laplace(iodata, meshes);
-    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
-                      ContainsSubstring("GeometryFailurePolicy FailClosed") &&
-                          ContainsSubstring("BranchingPerimeter"));
+    CHECK_NOTHROW(SurfaceResponseOperator(iodata, laplace));
   }
 #endif
 }
