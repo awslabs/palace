@@ -90,6 +90,7 @@ LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # examples/<dir>/ level is read by test-schema's "Example Configs" case as a Palace config).
 # v3 (idfix lane C, decision 1096 (4)): the re-fit on records-v3 (the new-binary manifests); every fitted number equals v2's (the
 # new records change the LENGTH partition and the named rows, not the ENERGY-mode raw shares / class levers the fit reads).
+# RG-8's calibration WITH the exclusion-energy column (DESIGN 8 (e); records with the export ON) = coverage_bands_v4 (decision 1101).
 DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v3.json")
 
 
@@ -1121,6 +1122,9 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
             g = cal.get("median_g", 0.0)
             g_source = "the calibration median (no raw partition)"
         r = acc.get("raw_share_total", 0.0)
+        # The gap term reads the TOTAL raw share (the "fully wrong" bound) until records with the exclusion-energy export ON
+        # exist: DESIGN 8 (b)'s per-class bound b_class lands with coverage_bands_v4 (RG-8; decision 1101). The Excluded:<class>
+        # rows this report prints are read by name and do not change r here.
         gap = 100.0 * r * abs(g)
         lo = b - H - gap
         hi = b + H + gap
