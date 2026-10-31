@@ -70,6 +70,7 @@ chords).
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -173,6 +174,9 @@ def gate(name, passed, detail, evaluable=True):
     return {"Gate": name, "Status": status, "Detail": detail}
 
 
+MIRROR_FORMED_PAIR_RULE = ("decision 557 (the mirror-formed pair form) / identification fix round decision 1085 Q7: a pair whose other side "
+                           "is the image of its real side across a mirror plane is placed ONCE on its real side with side factor 1/2; A10 "
+                           "checks the real side against the claims and labels the image side (no device perimeter there)")
 MIRROR_FORMED_RULE = ("decision 557 (4) / impl-B5 CONTRACT.md section 4: a mirror-formed cluster is placed ONCE on its REAL half; the "
                       "model's real edges (EdgeWeights 1.0) are checked on the claimed portions, its image edges (0.0, never "
                       "applied to a cell) lie beyond the mirror plane by construction and are labelled, not checked; Context "
@@ -649,9 +653,27 @@ def model_cluster_edges(model, radius_library):
     return None, None
 
 
-def placement_gates(identification, patches, library, radius):
-    """Gates A10 on the placement of every matched cluster / corner / stack / pair model;
-    returns (gates, summary)."""
+# The Match statuses of a PLACED feature (identification fix round DESIGN sections 4 / 5; decisions 1075 Q1 /
+# 1079): a near-matched feature is corrected by its near model and audited like a Matched one; an Unpatched
+# feature (decision 1075 Q3, UnpatchedPair) has no patch and is read by audit.py's A7-unpatched-pairs gate.
+PLACED_MATCH_STATUSES = ("Matched", "NearMatched", "GeometricNearMatched")
+
+
+def a10_sample(feature_ids, sample, seed_text):
+    """DESIGN section 9 (b) (iii): the deterministic A10 budget. With `sample` = None every feature is audited
+    (the tile form); else at most `sample` features per class, chosen by the sha256 of (seed, feature id) so the
+    choice depends on the manifest, not on the run (the sampled fraction is printed in the gate detail)."""
+    ids = sorted(int(i) for i in feature_ids)
+    if sample is None or len(ids) <= sample:
+        return ids, 1.0
+    ranked = sorted(ids, key=lambda i: hashlib.sha256(f"{seed_text}:{i}".encode()).hexdigest())
+    chosen = sorted(ranked[:sample])
+    return chosen, sample / len(ids)
+
+
+def placement_gates(identification, patches, library, radius, a10_sample_size=None):
+    """Gates A10 on the placement of every matched cluster / corner / stack / pair model (or a deterministic
+    sample of `a10_sample_size` features per class, DESIGN 9 (b) (iii)); returns (gates, summary)."""
     signature_tol = SIGNATURE_TOLERANCE_OVER_R * radius
     cluster_tolerance_base, cluster_terms = cluster_tolerance_over_r(identification)
     radius_library = float(library["MatchingRadius"])
@@ -667,9 +689,28 @@ def placement_gates(identification, patches, library, radius):
 
     results = {"Clusters": [], "Corners": [], "Stacks": [], "Pairs": []}
     not_evaluable = []
+    # The A10 budget: the placed features per class, sampled deterministically when asked.
+    class_of = {}
+    for feature_id in rows_by_feature:
+        feature = features.get(feature_id)
+        if feature is None or feature["Match"]["Status"] not in PLACED_MATCH_STATUSES:
+            continue
+        kind = feature["Type"]
+        key = "Clusters" if kind in CLUSTER_TYPES else "Corners" if kind in CORNER_TYPES else \
+            "Stacks" if kind in STACK_TYPES else "Pairs" if kind in PAIR_TYPES else None
+        if key is not None:
+            class_of.setdefault(key, []).append(feature_id)
+    seed_text = str(identification.get("GeometryDigest", ""))
+    sampled = {}
+    sampled_fraction = {}
+    for key, ids in class_of.items():
+        sampled[key], sampled_fraction[key] = a10_sample(ids, a10_sample_size, seed_text)
+    audited_ids = {i for ids in sampled.values() for i in ids}
     for feature_id, rows in sorted(rows_by_feature.items()):
         feature = features.get(feature_id)
-        if feature is None or feature["Match"]["Status"] != "Matched":
+        if feature is None or feature["Match"]["Status"] not in PLACED_MATCH_STATUSES:
+            continue
+        if feature_id not in audited_ids:
             continue
         kind = feature["Type"]
         # A feature's patches may refer to several runtime models (a straight-like bend
@@ -843,7 +884,26 @@ def placement_gates(identification, patches, library, radius):
             strip = kind in STRIP_TYPES
             convexity_checks = 0
             convexity_not_evaluable = 0
-            if len(ordered) != 2:
+            mirror_formed_pair = len(ordered) == 1 and bool(feature.get("ImagePortions"))
+            if mirror_formed_pair:
+                # A mirror-formed pair (decision 557's form; identification fix round decision 1085 Q7): one REAL
+                # side on the device perimeter, the other side its IMAGE across the mirror plane where the device
+                # has no perimeter. The model's real side is the one the claims hold (the nearer of the two mapped
+                # sides on the first patch); it is checked, the image side is labelled, not checked.
+                image_sides = []
+                real_side = None
+                for row in rows:
+                    origin, axes = row["Origin"], row["Axes"]
+                    mapped = [origin + sign * 0.5 * separation * axes[0] for sign in (-1.0, 1.0)]
+                    if real_side is None:
+                        real_side = min((0, 1), key=lambda k: claimed.distance(mapped[k], side=ordered[0], chords=True))
+                    record(f"patch {row['Patch']} real side {real_side}", claimed.distance(mapped[real_side], side=ordered[0], chords=True),
+                           mapped[real_side], max(chord_sagitta(row), PAIR_SEPARATION_TOLERANCE * 0.5 * separation - tol))
+                    image_sides.append({"Patch": row["Patch"], "Side": 1 - real_side, "Mapped": [float(x) for x in mapped[1 - real_side]]})
+                entry["MirrorFormed"] = {"Record": (feature.get("Mirror") or {}).get("Status"), "RealSide": real_side,
+                                         "ImageEdges": image_sides, "Planes": (feature.get("Mirror") or {}).get("Planes"),
+                                         "Rule": MIRROR_FORMED_PAIR_RULE}
+            elif len(ordered) != 2:
                 entry["Defects"].append({"Point": "side count", "DeviationOverR": math.inf, "Mapped": None, "Sides": len(ordered)})
                 entry["Checks"] += 1
             else:
@@ -895,6 +955,9 @@ def placement_gates(identification, patches, library, radius):
             "ConvexityNotEvaluable": sum(e.get("ConvexityNotEvaluable", 0) for e in entries),
             "MirrorFormedFeatures": sum(1 for e in entries if "MirrorFormed" in e),
             "ImageEdges": sum(len(e["MirrorFormed"]["ImageEdges"]) for e in entries if "MirrorFormed" in e),
+            "PlacedFeatures": len(class_of.get(key, [])),
+            "SampledFraction": sampled_fraction.get(key, 1.0),
+            "SampleSize": a10_sample_size,
             "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
             "Basis": "model geometry (library units x R_mesh / R_library) mapped through the dry-run patch frame lies on the feature's claimed portions (straight segments; arcs on their fitted circle within the claimed range, the range parameterised by the run's on-circle joints as the identification does) within the tolerance: for a cluster model the fit tolerance + the quantum terms (ToleranceTerms), else the signature parameter tolerance; stack / pair patches on the mesh chords within the chord sagitta and the pair rule's 5 % of the offset (a slow taper wider than 5 % about its mean fails by construction: the coupon at the mean separation); a mirror-formed cluster's real edges only, its image edges labelled (MirrorFormed.ImageEdges)",
         }
