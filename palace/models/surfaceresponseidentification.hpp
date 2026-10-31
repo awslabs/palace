@@ -176,6 +176,12 @@ struct IdentificationInput
   // every ~10 s) so that a chip-scale identification can be monitored; unset = silent. Pure
   // diagnostics: nothing in the result depends on it.
   std::function<void(const std::string &)> log;
+  // The knife-edge census (Diagnostics.KnifeEdgeCensus: three extra identification passes
+  // at the band radii; a preflight diagnostic the solve reads from the preflight). DESIGN
+  // section 9 (i) (decision 1062): on by default for the preflight, off for a solve run,
+  // overridden by the config's ResponseCorrection.KnifeEdgeCensus. Diagnostic only: no
+  // feature, key or patch depends on it.
+  bool knife_edge_census = true;
 };
 
 struct IdentifiedPortion
@@ -260,6 +266,14 @@ struct IdentifiedFeature
   // BandOverR, Rule}. Manifest Features[].Match.Status GeometricNearMatched +
   // Match.GeometricNearMatch; the requirement record's Status GeometricNearMatched.
   nlohmann::json geometric_near_match;
+  // I-1a / I-1b RECORD-ONLY (DESIGN sections 1 / 2, A.6; decision 1081; null unless a
+  // corner arm's run lies on a fitted arc): {Class (CornerWithArcArm / ArcArm /
+  // StraightLikeArm), Arms[2] in the frame's arm order ({ArmBendRadiusOverR,
+  // TangentShiftDegrees, ResidualOverR, StraightLike, FarVertexTurnDegrees, FarVertexJoint,
+  // BendSign} or null)}. Manifest Features[].CornerArmOnArc; Diagnostics.CornerArmOnArc;
+  // Summary.CornerArmOnArc. The key and the placement are the terminal chord's
+  // (OI-CORNER-ARM-CHORD, post-F).
+  nlohmann::json corner_arm_on_arc;
 
   // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
   // supervisor decision 282; null for every other feature): the claims-derived support box
@@ -880,6 +894,10 @@ constexpr double kRemainderAbsorptionOverRadius = kGdsScatterOverRadius;
 // Conventions.ArcFitToleranceOverR / ArcMaxJointTurnDegrees / SagittaOverR.
 constexpr double kArcFitToleranceOverRadius = kSignatureParameterToleranceOverRadius;
 constexpr double kArcMaxJointTurnDegrees = 50.0;
+// The CornerArmOnArc record's joint reading (decision 1081): an arm's far vertex turning
+// less than this is a joint of the chorded arc, else a polygon corner (the coarse-polygon
+// arcs the fitter accepts up to kArcMaxJointTurnDegrees); the legacy corner turn class.
+constexpr double kCornerArmOnArcJointTurnDegrees = 30.0;
 constexpr double kArcSagittaOverRadius = kJointNoiseSagittaOverRadius;
 
 struct SignatureParameters

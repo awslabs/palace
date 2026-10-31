@@ -9162,3 +9162,126 @@ TEST_CASE("SurfaceResponseIdentificationClusterGeometricNearDifference",
     CHECK_FALSE(ClusterGeometricNearDifference(base, other_claims_type).in_band);
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationCornerArmOnArc",
+          "[surfaceresponseidentification][Serial]")
+{
+  // U-STRAIGHTLIKE as RECORD-ONLY (DESIGN A.10 G-3; sections 1 / 2 + A.6; decision 1081): a
+  // 90-degree corner whose second arm is a chorded arc keeps the terminal chord's key; the
+  // arm on the arc is recorded. (a) A real arc (r = 20 R, 30 degrees in six chords): the
+  // key reads the chord's 92.5, the record carries ArmBendRadiusOverR 20, a tangent shift
+  // of 2.5 degrees, a joint far vertex, class ArcArm. (b) A straight-like arc (r = 1000 R,
+  // 0.1 degree in four chords: total sagitta 3.8e-4 R < ArcFitToleranceOverR): the record
+  // reads StraightLike, class StraightLikeArm. (c) An arc of r = 5 R (60 degrees in six
+  // chords): class CornerWithArcArm, recorded only — the key is the chord's (95.0) like any
+  // corner.
+  const double R = 2.0;
+  const double pi = std::acos(-1.0);
+  auto Body = [&](double r, double turn_degrees, int chords)
+  {
+    // The corner at the origin: arm 1 along +x; arm 2 the arc tangent to +y at the origin,
+    // centre (-r, 0), bending toward -x; a straight tail along the end tangent; a frame
+    // closing the body far from the corner.
+    std::vector<Point2> points = {{0.0, 0.0}, {60.0, 0.0}, {60.0, 80.0}, {-80.0, 80.0}};
+    const double turn = turn_degrees * pi / 180.0;
+    std::vector<Point2> arc;
+    for (int k = chords; k >= 1; k--)
+    {
+      const double theta = turn * k / chords;
+      arc.push_back({-r + r * std::cos(theta), r * std::sin(theta)});
+    }
+    const Point2 end = arc.front();
+    const Point2 tail = {end[0] - 20.0 * std::sin(turn), end[1] + 20.0 * std::cos(turn)};
+    points.push_back({-80.0, tail[1]});
+    points.push_back(tail);
+    points.insert(points.end(), arc.begin(), arc.end());
+    return points;
+  };
+  struct Reading
+  {
+    IdentifiedFeature corner;
+    nlohmann::json manifest;
+  };
+  auto Corner = [&](const std::vector<Point2> &body)
+  {
+    const auto input = MakeInput({{body, 0, 1.0, 0.0, {}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const IdentifiedFeature *corner = nullptr;
+    for (const auto &feature : result.features)
+    {
+      if ((feature.type == "ConvexCorner" || feature.type == "ConcaveCorner") &&
+          std::hypot(feature.origin[0], feature.origin[1], feature.origin[2]) < 1.0e-9)
+      {
+        corner = &feature;
+      }
+    }
+    REQUIRE(corner != nullptr);
+    return Reading{*corner, result.ToJson(1.0)};
+  };
+  auto ArcArm = [](const IdentifiedFeature &corner)
+  {
+    REQUIRE(!corner.corner_arm_on_arc.is_null());
+    const auto &arms = corner.corner_arm_on_arc["Arms"];
+    REQUIRE(arms.size() == 2);
+    const bool first = !arms[0].is_null();
+    CHECK(first != !arms[1].is_null());  // exactly one arm on the arc
+    return arms[first ? 0 : 1];
+  };
+  SECTION("a real arc arm: the chord key, the arc recorded (class ArcArm)")
+  {
+    const auto reading = Corner(Body(20.0 * R, 30.0, 6));
+    CHECK_THAT(reading.corner.signature["AngleDegrees"].get<double>(),
+               WithinAbs(92.5, 2.0e-3));
+    CHECK_FALSE(reading.corner.signature.contains("Class"));
+    CHECK_FALSE(reading.corner.signature.contains("ArmBendRadiusOverR"));
+    const auto arm = ArcArm(reading.corner);
+    CHECK(reading.corner.corner_arm_on_arc["Class"] == "ArcArm");
+    CHECK_THAT(arm["ArmBendRadiusOverR"].get<double>(), WithinAbs(20.0, 1.0e-3));
+    CHECK_THAT(arm["TangentShiftDegrees"].get<double>(), WithinAbs(2.5, 2.0e-3));
+    CHECK(arm["ResidualOverR"].get<double>() <= kArcFitToleranceOverRadius);
+    CHECK_FALSE(arm["StraightLike"].get<bool>());
+    CHECK(arm["FarVertexJoint"].get<bool>());
+    CHECK_THAT(arm["FarVertexTurnDegrees"].get<double>(), WithinAbs(5.0, 2.0e-3));
+    REQUIRE(reading.manifest["Diagnostics"].contains("CornerArmOnArc"));
+    const auto &record = reading.manifest["Diagnostics"]["CornerArmOnArc"];
+    CHECK(record["Count"].get<int>() >= 1);
+    CHECK(record["ClassCounts"]["ArcArm"].get<int>() >= 1);
+    CHECK(record["Treatment"] == "KeyedByTheArmChord");
+  }
+  SECTION("a straight-like arc arm: recorded StraightLike")
+  {
+    const auto reading = Corner(Body(1000.0 * R, 0.1, 4));
+    CHECK_THAT(reading.corner.signature["AngleDegrees"].get<double>(),
+               WithinAbs(90.0125, 2.0e-3));
+    const auto arm = ArcArm(reading.corner);
+    CHECK(arm["StraightLike"].get<bool>());
+    CHECK(reading.corner.corner_arm_on_arc["Class"] == "StraightLikeArm");
+    // The straight-like arc's fitted circle is not resolved: its tangent shift is wobble,
+    // bounded by sqrt(2 ArcFitToleranceOverR R / r) (A.6 / B.4 (A)); the ideal chord shift
+    // would be 0.0125 degrees.
+    const double bound_degrees =
+        std::sqrt(2.0 * kArcFitToleranceOverRadius / 1000.0) * 180.0 / pi;
+    CHECK(arm["TangentShiftDegrees"].get<double>() <= bound_degrees);
+    CHECK(arm["TangentShiftDegrees"].get<double>() > 0.0);
+  }
+  SECTION("an arc arm of r < 10 R: the class CornerWithArcArm, the key the chord's")
+  {
+    const auto reading = Corner(Body(5.0 * R, 60.0, 6));
+    CHECK_THAT(reading.corner.signature["AngleDegrees"].get<double>(),
+               WithinAbs(95.0, 2.0e-3));
+    CHECK_FALSE(reading.corner.signature.contains("Class"));
+    CHECK(reading.corner.corner_arm_on_arc["Class"] == "CornerWithArcArm");
+    const auto arm = ArcArm(reading.corner);
+    CHECK_THAT(arm["ArmBendRadiusOverR"].get<double>(), WithinAbs(5.0, 1.0e-3));
+    CHECK(reading.manifest["Diagnostics"]["CornerArmOnArc"]["ClassCounts"].value(
+              "CornerWithArcArm", 0) >= 1);
+  }
+  SECTION("a straight arm carries no record")
+  {
+    const std::vector<Point2> square = {{0.0, 0.0}, {60.0, 0.0}, {60.0, 60.0}, {0.0, 60.0}};
+    const auto reading = Corner(square);
+    CHECK(reading.corner.corner_arm_on_arc.is_null());
+    CHECK_FALSE(reading.manifest["Diagnostics"].contains("CornerArmOnArc"));
+  }
+}

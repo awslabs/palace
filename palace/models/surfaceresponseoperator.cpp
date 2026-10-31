@@ -6409,6 +6409,15 @@ public:
             {"Length", diagnostics["TaperCrossings"].value("Length", 0.0)},
             {"Treatment", "ApproximatedByIsolatedEdge"}};
       }
+      if (diagnostics.contains("CornerArmOnArc"))
+      {
+        // I-1a / I-1b record-only (decision 1081): the corners keyed by the arm chord whose
+        // arm runs onto a fitted arc.
+        result["Summary"]["CornerArmOnArc"] = {
+            {"Count", diagnostics["CornerArmOnArc"].value("Count", 0)},
+            {"Length", diagnostics["CornerArmOnArc"].value("Length", 0.0)},
+            {"Treatment", "KeyedByTheArmChord"}};
+      }
       if (diagnostics.contains("TaperMeanKeys"))
       {
         // OI-TAPER-MEAN-KEY (decision 1078, record-only): the features keyed by a taper
@@ -8814,6 +8823,11 @@ IdentificationResult RunGeometryIdentification(
       }
       // Stage counts, wall times and progress of the identification.
       input.log = [](const std::string &line) { Mpi::Print("{}", line); };
+      // DESIGN section 9 (i): the knife-edge census is a preflight diagnostic (on for the
+      // preflight, off for a solve run) unless the config says otherwise.
+      input.knife_edge_census = request && request->knife_edge_census
+                                    ? *request->knife_edge_census
+                                    : requirements != nullptr;
       result = IdentifyMetalPerimeter(input);
       if (mirror_band.extended)
       {
@@ -8823,6 +8837,7 @@ IdentificationResult RunGeometryIdentification(
         auto extension = ExtendIdentificationInputAcrossMirrorPlanes(
             input, mirror_band.planes, band_over_radius);
         extension.input.log = input.log;
+        extension.input.knife_edge_census = input.knife_edge_census;
         const IdentificationResult extended = IdentifyMetalPerimeter(extension.input);
         IdentificationResult merged;
         mirror_summary = MergeMirrorIdentification(result, extended, extension,

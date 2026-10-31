@@ -3504,6 +3504,15 @@ struct VertexFeatureSite
   // junction: in the angular order of arm_angles) and the endpoint's gap direction: the
   // feature frame of the patch construction is built from them.
   std::vector<Point3D> arm_directions;
+  // I-1a / I-1b RECORD-ONLY (identification fix round DESIGN sections 1 / 2, A.6; decisions
+  // 1059 (A) / 1081): per corner arm (the order of arm_directions) the fitted arc the arm's
+  // run lies on, if any (both run endpoints concyclic within kArcFitToleranceOverRadius x
+  // R): {ArmBendRadiusOverR, TangentShiftDegrees (the tangent-vs-chord angle), the
+  // concyclicity ResidualOverR, StraightLike (the arc's total sagitta below the fit
+  // tolerance), FarVertexTurnDegrees, FarVertexJoint (turn below
+  // kCornerArmOnArcJointTurnDegrees: a joint, else a polygon corner), BendSign}; null for a
+  // straight arm. The arm DIRECTION stays the terminal chord's (the keying of record).
+  std::vector<nlohmann::json> arm_arc_records;
   Point3D gap_direction{};
   std::vector<std::pair<std::size_t, Interval>> window;  // run, interval claimed
   std::vector<std::size_t> runs_at_site;                 // runs incident to the site
@@ -3517,7 +3526,7 @@ class Identifier
 public:
   explicit Identifier(const IdentificationInput &input_)
     : original_input(input_), faces(input_.faces), quantizer(input_.radius),
-      R(input_.radius)
+      R(input_.radius), census_enabled(input_.knife_edge_census)
   {
     // Working copy of the segments and vertices: the arc rule (design (b) 4 / 7, decision
     // 82(3)) merges the chains through the corner vertices it absorbs and demotes those
@@ -4200,15 +4209,15 @@ private:
     std::array<Point3D, 3> axes = {Point3D{}, Point3D{}, n_site};
     if (site.type == "ConvexCorner" || site.type == "ConcaveCorner")
     {
-      if (signature)
-      {
-        *signature = CanonicalCornerSignature(site.interfaces, site.boundary_law,
-                                              site.angle_degrees, site.corner_radius / R);
-      }
       Point3D first = site.arm_directions[0], second = site.arm_directions[1];
       if (Dot(Cross(n_site, first), second) < 0.0)
       {
         std::swap(first, second);
+      }
+      if (signature)
+      {
+        *signature = CanonicalCornerSignature(site.interfaces, site.boundary_law,
+                                              site.angle_degrees, site.corner_radius / R);
       }
       axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
       axes[1] = Normalize(Cross(n_site, axes[0]));
@@ -4256,6 +4265,96 @@ private:
   Point3D ArmDirection(std::size_t run, std::size_t v) const
   {
     return runs[run].start_vertex == v ? runs[run].tangent : Scale(-1.0, runs[run].tangent);
+  }
+
+  // I-1a / I-1b RECORD-ONLY (DESIGN sections 1 / 2, A.6 (b); decisions 1059 (A) / 1081):
+  // the fitted arc a corner arm lies on, if any. The arm's RUN (the manifest's Segments[]
+  // entry: the collinear mesh segments of one chord) has BOTH endpoints concyclic with a
+  // fitted arc's circle within kArcFitToleranceOverRadius x R (the arcs adjacent to the
+  // run: the arc one of its mesh segments belongs to or whose arm segment it is). Recorded,
+  // never applied to the key: the circle's tangent at the vertex vs the chord
+  // (TangentShiftDegrees), the radius, the bend's sense, the concyclicity residual, whether
+  // the arc is straight-like (its total sagitta radius x (1 - cos(turn / 2)) below the fit
+  // tolerance: its curvature is not resolved) and whether the arm's far vertex is a joint
+  // (its turn below kCornerArmOnArcJointTurnDegrees) or a polygon corner (the
+  // coarse-polygon reading of C4 / C3 25 / O3 6 the dry run of 1081 found).
+  struct ArmArc
+  {
+    Point3D tangent{};
+    double radius = 0.0;
+    int sign = 0;
+    double shift_degrees = 0.0;
+    double residual = 0.0;  // mesh units
+    bool straight_like = false;
+    double far_vertex_turn_degrees = 0.0;
+    bool far_vertex_joint = false;
+  };
+  std::optional<ArmArc> ArmOnFittedArc(std::size_t run, std::size_t v,
+                                       const Point3D &n_site) const
+  {
+    const Run &arm = runs[run];
+    if (arm.segments.empty() || arcs.empty())
+    {
+      return std::nullopt;
+    }
+    const Point3D &p_vertex = input.vertices[v].coordinate;
+    const Point3D p_far = arm.start_vertex == v ? arm.end : arm.start;
+    const std::size_t far_vertex =
+        arm.start_vertex == v ? arm.end_vertex : arm.start_vertex;
+    const double tolerance = kArcFitToleranceOverRadius * R;
+    for (const Arc &arc : arcs)
+    {
+      bool adjacent = false;
+      for (const RunSegment &piece : arm.segments)
+      {
+        adjacent = adjacent || arc.segment_before == piece.segment ||
+                   arc.segment_after == piece.segment ||
+                   std::find(arc.segments.begin(), arc.segments.end(), piece.segment) !=
+                       arc.segments.end();
+      }
+      if (!adjacent || arc.radius <= 0.0)
+      {
+        continue;
+      }
+      const double residual =
+          std::max(std::abs(Distance(p_vertex, arc.center) - arc.radius),
+                   std::abs(Distance(p_far, arc.center) - arc.radius));
+      if (residual > tolerance)
+      {
+        continue;
+      }
+      const Point3D radial = Normalize(Sub(p_vertex, arc.center));
+      const Point3D chord = Sub(p_far, p_vertex);
+      const Point3D tangent = Normalize(Sub(chord, Scale(Dot(chord, radial), radial)));
+      ArmArc out;
+      out.tangent = tangent;
+      out.radius = arc.radius;
+      out.sign = Dot(Cross(chord, Sub(arc.center, p_vertex)), n_site) > 0.0 ? 1 : -1;
+      out.shift_degrees = std::acos(std::clamp(Dot(Normalize(chord), tangent), -1.0, 1.0)) *
+                          180.0 / std::acos(-1.0);
+      out.residual = residual;
+      out.straight_like = arc.radius * (1.0 - std::cos(0.5 * arc.turn)) < tolerance;
+      // The far vertex's turn: the angle between this run and the one continuing past it.
+      std::vector<std::size_t> beyond;
+      for (const std::size_t other : RunsAtVertex(far_vertex))
+      {
+        if (other != run)
+        {
+          beyond.push_back(other);
+        }
+      }
+      if (beyond.size() == 1)
+      {
+        const Point3D onward = ArmDirection(beyond.front(), far_vertex);  // away from it
+        out.far_vertex_turn_degrees =
+            std::acos(std::clamp(Dot(Normalize(chord), onward), -1.0, 1.0)) * 180.0 /
+            std::acos(-1.0);
+        out.far_vertex_joint =
+            out.far_vertex_turn_degrees < kCornerArmOnArcJointTurnDegrees;
+      }
+      return out;
+    }
+    return std::nullopt;
   }
 
   void DetectArcs();
@@ -4789,6 +4888,24 @@ void Identifier::ClassifyVertices()
     {
       const Point3D da = ArmDirection(incident[0], v);
       const Point3D db = ArmDirection(incident[1], v);
+      // I-1a / I-1b RECORD-ONLY (DESIGN sections 1 / 2 + A.6; decision 1081): an arm whose
+      // run lies on a fitted arc is recorded (Diagnostics.CornerArmOnArc); the direction
+      // and the key stay the terminal chord's (OI-CORNER-ARM-CHORD, post-F).
+      site.arm_arc_records = {nullptr, nullptr};
+      const Point3D n_corner = SiteProcessNormal(site);
+      for (std::size_t k = 0; k < 2; k++)
+      {
+        if (const auto arm = ArmOnFittedArc(incident[k], v, n_corner))
+        {
+          site.arm_arc_records[k] = {{"ArmBendRadiusOverR", arm->radius / R},
+                                     {"TangentShiftDegrees", arm->shift_degrees},
+                                     {"ResidualOverR", arm->residual / R},
+                                     {"StraightLike", arm->straight_like},
+                                     {"FarVertexTurnDegrees", arm->far_vertex_turn_degrees},
+                                     {"FarVertexJoint", arm->far_vertex_joint},
+                                     {"BendSign", arm->sign}};
+        }
+      }
       site.arm_directions = {da, db};
       const double wedge =
           std::acos(std::clamp(Dot(da, db), -1.0, 1.0)) * 180.0 / std::acos(-1.0);
@@ -14617,6 +14734,32 @@ void Identifier::Assign(IdentificationResult &result)
     site_feature[static_cast<std::size_t>(&site - sites.data())] = feature;
     features[feature].origin = site.point;
     features[feature].axes = axes;
+    if (site.arm_arc_records.size() == 2 &&
+        (!site.arm_arc_records[0].is_null() || !site.arm_arc_records[1].is_null()))
+    {
+      // I-1a / I-1b RECORD-ONLY (decision 1081): the arms' arc records in the frame's arm
+      // order (x = the first arm) and the corner's class: CornerWithArcArm when an arm lies
+      // on a non-straight-like arc of r < StraightBendRadiusOverR x R (no coupon family
+      // models it: the straight-arm model of record stays placed), ArcArm when on a
+      // straight-like-or-wider arc, StraightLikeArm when every arc arm is straight-like.
+      const bool swapped =
+          Dot(Cross(axes[2], site.arm_directions[0]), site.arm_directions[1]) < 0.0;
+      nlohmann::json arms = {site.arm_arc_records[swapped ? 1 : 0],
+                             site.arm_arc_records[swapped ? 0 : 1]};
+      std::string cls = "StraightLikeArm";
+      for (const auto &arm : arms)
+      {
+        if (arm.is_null() || arm.value("StraightLike", false))
+        {
+          continue;
+        }
+        const double radius = arm.value("ArmBendRadiusOverR", 0.0);
+        cls = radius > 0.0 && radius < kStraightBendRadiusOverRadius ? "CornerWithArcArm"
+              : cls == "CornerWithArcArm"                            ? cls
+                                                                     : "ArcArm";
+      }
+      features[feature].corner_arm_on_arc = {{"Class", cls}, {"Arms", arms}};
+    }
     for (const auto &[r, interval] : site.window)
     {
       claims[r].push_back({feature, 1, interval});
@@ -15830,6 +15973,38 @@ IdentificationResult Identifier::Identify()
             std::to_string(faces.size()) + " faces, " + std::to_string(runs.size()) +
             " runs, " + std::to_string(chains.size()) + " chains, run grid " +
             std::to_string(run_grid->Cells()) + " cells");
+  if (input.log && !runs.empty())
+  {
+    // F-5 / OI-ROOTEXTRACT-COST (DESIGN section 9 (i), decision 1062): a memory ESTIMATE
+    // at the start of the identification, before the run-pair tables are built — the
+    // candidate run pairs within the interaction reach read from the run grid (the pair /
+    // event tables scale with them), the arcs, the runs and the segments; diagnostic only.
+    const double reach = kInteractionDistanceOverRadius * R;
+    long long int candidate_pairs = 0;
+    for (std::size_t r = 0; r < runs.size(); r++)
+    {
+      for (const std::size_t other : RunsNearRun(r, reach))
+      {
+        candidate_pairs += other > r ? 1 : 0;
+      }
+    }
+    // Per-item sizes of the working tables (the pair pieces with their samples, the run /
+    // chain records, the segments), rounded up from the structs of this file.
+    const double estimate_mb = (static_cast<double>(candidate_pairs) * 320.0 +
+                                static_cast<double>(runs.size()) * 1024.0 +
+                                static_cast<double>(input.segments.size()) * 384.0 +
+                                static_cast<double>(arcs.size()) * 512.0) /
+                               1.0e6;
+    std::ostringstream line;
+    line << "  Identification memory estimate: " << runs.size() << " runs, " << arcs.size()
+         << " arcs, " << candidate_pairs << " candidate run pairs within "
+         << kInteractionDistanceOverRadius << " R (run grid) -> ~" << std::setprecision(3)
+         << estimate_mb << " MB of identification tables on the root rank (" << 320
+         << " B per pair + 1 KB per run + 384 B per segment + 512 B per arc; the "
+            "knife-edge census "
+         << (census_enabled ? "ON: three more passes at the band radii" : "OFF") << ")\n";
+    input.log(line.str());
+  }
   if (!runs.empty())
   {
     stage.Begin("planes / exclusions");
@@ -16275,6 +16450,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.String(f.taper_mean_key.is_null() ? std::string() : f.taper_mean_key.dump());
     w.String(f.geometric_near_match.is_null() ? std::string()
                                               : f.geometric_near_match.dump());
+    w.String(f.corner_arm_on_arc.is_null() ? std::string() : f.corner_arm_on_arc.dump());
     w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
     w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
     w.String(f.blend_eigenvalues.is_null() ? std::string() : f.blend_eigenvalues.dump());
@@ -16464,6 +16640,10 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     f.geometric_near_match = geometric_near_match.empty()
                                  ? nlohmann::json(nullptr)
                                  : nlohmann::json::parse(geometric_near_match);
+    const std::string corner_arm_on_arc = r.String();
+    f.corner_arm_on_arc = corner_arm_on_arc.empty()
+                              ? nlohmann::json(nullptr)
+                              : nlohmann::json::parse(corner_arm_on_arc);
     const std::string support = r.String();
     f.spatial_support =
         support.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(support);
@@ -16626,6 +16806,9 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
   nlohmann::json feature_list = nlohmann::json::array();
   nlohmann::json taper_mean_keys = nlohmann::json::array();  // decision 1078 (record-only)
   double taper_mean_key_length = 0.0;
+  nlohmann::json corner_arm_on_arc_records = nlohmann::json::array();  // decision 1081
+  double corner_arm_on_arc_length = 0.0;
+  std::map<std::string, int> corner_arm_on_arc_classes;
   for (const auto &feature : features)
   {
     nlohmann::json portions = nlohmann::json::array();
@@ -16689,6 +16872,19 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       // 1079): Status GeometricNearMatched, the deviations recorded.
       entry["Match"]["Status"] = "GeometricNearMatched";
       entry["Match"]["GeometricNearMatch"] = feature.geometric_near_match;
+    }
+    if (!feature.corner_arm_on_arc.is_null())
+    {
+      // I-1a / I-1b RECORD-ONLY (decision 1081): the corner's arms on fitted arcs and its
+      // class; the key stays the chord's.
+      entry["CornerArmOnArc"] = feature.corner_arm_on_arc;
+      corner_arm_on_arc_records.push_back({{"Id", feature.id},
+                                           {"Type", feature.type},
+                                           {"Length", L(feature.length)},
+                                           {"Class", feature.corner_arm_on_arc["Class"]},
+                                           {"Arms", feature.corner_arm_on_arc["Arms"]}});
+      corner_arm_on_arc_length += feature.length;
+      corner_arm_on_arc_classes[feature.corner_arm_on_arc["Class"].get<std::string>()]++;
     }
     if (!feature.taper_mean_key.is_null())
     {
@@ -17297,6 +17493,32 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "class). Basis: the census band of record; the response is continuous across 2R; "
          "no new number"},
         {"RemainderAbsorptionOverR", kRemainderAbsorptionOverRadius},
+        {"ArmBendRadius",
+         "I-1a / I-1b (the identification fix round DESIGN sections 1 / 2, A.6; decisions "
+         "1059 "
+         "(A) / 1081 RECORD-ONLY): a corner arm whose run has both endpoints concyclic "
+         "with a "
+         "fitted arc's circle within ArcFitToleranceOverR x R is RECORDED "
+         "(Diagnostics.CornerArmOnArc: ArmBendRadiusOverR, the tangent-vs-chord shift, the "
+         "residual, straight-like, the far vertex joint / corner) while the key and the "
+         "arm "
+         "direction stay the terminal chord's; the class CornerWithArcArm (an arm on a "
+         "non-straight-like arc of r < StraightBendRadiusOverR x R) is a record, not a "
+         "key; "
+         "the tangent re-key (OI-CORNER-ARM-CHORD, post-F) needs its bounds (standalone "
+         "corners only; a joint far vertex) and the stage-E out-of-sample measurement"},
+        {"StraightLikeArcSagitta",
+         {{"OverR", kArcFitToleranceOverRadius},
+          {"Rule",
+           "an arc is straight-like iff its total sagitta r (1 - cos(TurnDegrees / 2)) "
+           "is below ArcFitToleranceOverR x R: the whole arc fits a straight line "
+           "within the fitter's own tolerance, its curvature is not resolved and a "
+           "corner arm on it keeps the terminal chord's direction (A.6 (b))"}}},
+        {"StraightLikeResidualShiftRule",
+         "an arm chord on a straight-like arc of radius r hides a tangent shift of at most "
+         "sqrt(2 ArcFitToleranceOverR R / r) rad (the fitter's own resolution limit; A.6 / "
+         "B.4 (A)): the audit's A10 bar reads the actual asin(L / 2r) against it for every "
+         "straight-like arc carrying a corner"},
         {"GeometricNearMatchBands",
          {{"ClaimsOverR", kGeometricNearMatchClaimsOverRadius},
           {"ContextOverR", kGeometricNearMatchContextOverRadius},
@@ -17594,6 +17816,31 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"UnusedSpanCapAllowances", unused_span_cap_allowances},
       {"GeometryDigest", geometry_digest}};
+  if (!corner_arm_on_arc_records.empty())
+  {
+    // I-1a / I-1b RECORD-ONLY (decision 1081; OI-CORNER-ARM-CHORD post-F): the corners
+    // whose arm runs onto a fitted arc, keyed by the arm chord as today.
+    manifest["Diagnostics"]["CornerArmOnArc"] = {
+        {"Count", corner_arm_on_arc_records.size()},
+        {"Length", L(corner_arm_on_arc_length)},
+        {"ClassCounts", corner_arm_on_arc_classes},
+        {"JointTurnDegrees", kCornerArmOnArcJointTurnDegrees},
+        {"Treatment", "KeyedByTheArmChord"},
+        {"Rule",
+         "I-1a / I-1b (DESIGN sections 1 / 2, A.6; decision 1081, record-only): a "
+         "corner whose arm run has both endpoints concyclic with a fitted arc's "
+         "circle within ArcFitToleranceOverR x R is recorded with the arc's radius "
+         "over R, the tangent-vs-chord shift, the concyclicity residual, whether the "
+         "arc is straight-like (StraightLikeArcSagitta) and whether the arm's far "
+         "vertex is a joint (turn below JointTurnDegrees) or a polygon corner; its "
+         "key stays the terminal chord's (the keying of record) and the class "
+         "CornerWithArcArm (an arm on a non-straight-like arc of r < "
+         "StraightBendRadiusOverR x R, no coupon family models it) is recorded only; "
+         "the re-key by the tangent (OI-CORNER-ARM-CHORD) needs the bounds the dry "
+         "run showed (standalone corners only; a joint far vertex) and is measured "
+         "out of sample in stage E"},
+        {"Corners", corner_arm_on_arc_records}};
+  }
   if (!taper_mean_keys.empty())
   {
     // OI-TAPER-MEAN-KEY (decision 1078, record-only): the features keyed by a taper link's
