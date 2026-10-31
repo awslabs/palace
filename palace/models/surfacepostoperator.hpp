@@ -34,10 +34,17 @@ struct BoundaryData;
 struct SurfaceFluxData;
 struct InterfaceDielectricData;
 struct FarFieldPostData;
+struct SolverData;
 
 }  // namespace config
 
 enum class ProblemType : char;
+
+// Whether the run's surface-response correction (electrostatic ResponseCorrection or
+// Maxwell SurfaceResponseCorrection) requests the exclusion-energy export
+// (Diagnostics.ExclusionEnergy; idfix DESIGN section 8): the SurfacePostOperator builds the
+// CLASSIFIED edge trees the export partitions against only then.
+bool ExclusionEnergyRequested(const config::SolverData &solver);
 
 // Mesh-independent automatic edge-distance geometry retained across AMR iterations. Only
 // aggregate edge-distance trees are cached; mesh-segment-localized diagnostics are rebuilt.
@@ -166,6 +173,11 @@ private:
   // the revolution measure 2 pi x (the libCEED operators carry it in their geometry data).
   const bool axisymmetric;
 
+  // The exclusion-energy export's CLASSIFIED edge tree (idfix DESIGN section 8; decision
+  // 1076) is built per automatic-edge interface only when Diagnostics.ExclusionEnergy is
+  // requested (the d1073 review's MINOR-5: an unrequested tree is memory with no reader).
+  const bool classified_edge_trees;
+
   struct LocalVolumeEdgeEnergyCache
   {
     const EdgeDistanceTree *edge_distance_tree;
@@ -253,7 +265,8 @@ public:
       mfem::ParFiniteElementSpace &nd_fespace,
       const std::unordered_set<int> *cracked_attributes = nullptr,
       const config::BoundaryData *boundaries = nullptr,
-      std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr);
+      std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr,
+      bool classified_edge_trees = false);
   SurfacePostOperator(
       const IoData &iodata, const MaterialOperator &mat_op,
       mfem::ParFiniteElementSpace &h1_fespace, mfem::ParFiniteElementSpace &nd_fespace,

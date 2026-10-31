@@ -146,7 +146,7 @@ PostOperator<solver_t>::PostOperator(
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
                  fem_op->GetH1Space(), fem_op->GetNDSpace(), cracked_attributes,
-                 &boundaries, surface_post_geometry),
+                 &boundaries, surface_post_geometry, ExclusionEnergyRequested(solver)),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.

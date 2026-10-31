@@ -820,15 +820,25 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
   attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
 }
 
+bool ExclusionEnergyRequested(const config::SolverData &solver)
+{
+  return (solver.electrostatic.response_correction &&
+          solver.electrostatic.response_correction->exclusion_energy) ||
+         (solver.surface_response_correction &&
+          solver.surface_response_correction->exclusion_energy);
+}
+
 SurfacePostOperator::SurfacePostOperator(
     const config::BoundaryPostData &postpro, ProblemType problem_type,
     const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h1_fespace,
     mfem::ParFiniteElementSpace &nd_fespace,
     const std::unordered_set<int> *cracked_attributes,
     const config::BoundaryData *boundaries,
-    std::shared_ptr<const SurfacePostGeometry> *automatic_geometry)
+    std::shared_ptr<const SurfacePostGeometry> *automatic_geometry,
+    bool classified_edge_trees)
   : mat_op(mat_op), h1_fespace(h1_fespace), nd_fespace(nd_fespace),
-    axisymmetric(mat_op.GetMesh().IsAxisymmetric())
+    axisymmetric(mat_op.GetMesh().IsAxisymmetric()),
+    classified_edge_trees(classified_edge_trees)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_SURFACE_POST);
 
@@ -1057,7 +1067,13 @@ SurfacePostOperator::SurfacePostOperator(
         new_automatic_geometry->automatic_edge_distance_trees.emplace(idx, tree_it->second);
       }
       // The exclusion-energy export's CLASSIFIED tree (decision 1076): every segment of the
-      // interface, physical or not, under the same exclusion rules; cached alike.
+      // interface, physical or not, under the same exclusion rules; cached alike. Built
+      // only when the export is requested (d1073 MINOR-5): every other table reads the
+      // physical tree above, so an unrequested run holds no second tree.
+      if (!classified_edge_trees)
+      {
+        continue;
+      }
       auto classified_indices =
           GetInterfaceMetalEdgeSegmentIndices(edges, idx, data.type, false);
       ExcludeMetalEdgeSegmentIndices(mesh, edges, data.edge_exclude_attributes,
@@ -1168,7 +1184,8 @@ SurfacePostOperator::SurfacePostOperator(
     std::shared_ptr<const SurfacePostGeometry> *automatic_geometry)
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
                         nd_fespace, &iodata.boundaries.cracked_attributes,
-                        &iodata.boundaries, automatic_geometry)
+                        &iodata.boundaries, automatic_geometry,
+                        ExclusionEnergyRequested(iodata.solver))
 {
 }
 

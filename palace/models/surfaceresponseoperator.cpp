@@ -11682,6 +11682,51 @@ FeaturePatchSummary BuildFeaturePatches(
       }
       geometry_ledger->Record(std::move(record));
     };
+    // ReferenceInGap (idfix R0-a; decision 1082 Q1, the d1073 review's MINOR-3): a
+    // translational model whose conductor reference lies in a GAP of its own cross-section
+    // (LocalPieceOfOffset == 0: no metal piece holds it) is a LIBRARY defect: the
+    // conductor-consistency probes of both paths read against that reference (the
+    // electrostatic potential there; the Maxwell leg chain starts there), so the coupon
+    // cannot be gated. ONE rule on both paths, the GeometryFailurePolicy form: under
+    // RecordRaw the feature is not placed (its claims raw) and recorded; under FailClosed
+    // the deferred abort names the model. `offsets` / `gap_directions` = the model's
+    // nominal cross-section in its frame (the probe grouping's rule, LocalPieces). Returns
+    // whether the feature was rejected.
+    auto RejectIfReferenceInGap =
+        [&](const std::vector<double> &offsets, const std::vector<int> &gap_directions)
+    {
+      const auto pieces = LocalPiecesOfParallelEdges(offsets, gap_directions);
+      for (std::size_t k = 0; k < model.conductor_references.size(); k++)
+      {
+        const double u = model.conductor_references[k][0];
+        if (LocalPieceOfOffset(offsets, gap_directions, pieces, u) > 0)
+        {
+          continue;
+        }
+        std::string edges;
+        for (std::size_t j = 0; j < offsets.size(); j++)
+        {
+          edges += fmt::format("{}{:.6e} ({})", j > 0 ? ", " : "", offsets[j],
+                               gap_directions[j] > 0 ? "gap +u" : "gap -u");
+        }
+        const std::string reason = fmt::format(
+            "Response model \"{}\" (feature {:d}, {}): conductor reference {:d} at "
+            "lateral offset {:.6e} lies in a gap of its cross-section (edges at {}), so "
+            "the conductor-consistency probes have no metal reference to read against (a "
+            "library defect: every reference must lie on metal; idfix R0-a, decision "
+            "1082)",
+            model.name, feature.id, feature.type, k + 1, u, edges);
+        if (geometry_ledger)
+        {
+          RejectFeature("ReferenceInGap",
+                        "R0a/BuildAutomaticResponseData3D:reference-in-gap", reason,
+                        feature.origin);
+          return true;
+        }
+        MFEM_ABORT(reason << "!");
+      }
+      return false;
+    };
     if (geometry_ledger && !CanMapLibraryInterfaces(model, targets_by_slot))
     {
       // (iii) OI-MX-R2A-COMPARATOR-FORM (decision 1018 Q6): the feature's portions carry
@@ -11734,6 +11779,10 @@ FeaturePatchSummary BuildFeaturePatches(
     {
       // R0-a: one edge at u = 0, its gap on the +u side (AxisU points from the metal into
       // the gap), one metal piece, conductor 1.
+      if (RejectIfReferenceInGap({0.0}, {1}))
+      {
+        continue;
+      }
       const std::vector<const std::vector<FramedPortion> *> probe_sides = {&portions};
       auto Probe = [&](ResponsePatchData &patch)
       { ConductorProbes(patch, probe_sides, {1}, {1}); };
@@ -11829,6 +11878,13 @@ FeaturePatchSummary BuildFeaturePatches(
             "Feature {:d} ({}, {:.6e} length units): the two sides do not face each "
             "other at its separation {:.6e}; the pair is omitted (not patched).\n",
             feature.id, feature.type, feature_length, separation);
+        continue;
+      }
+      // ReferenceInGap: the pair's cross-section = its two edges at -+ separation / 2 (a
+      // gap's metal outside them, a strip's between them).
+      if (RejectIfReferenceInGap({-0.5 * separation, 0.5 * separation},
+                                 strip ? std::vector<int>{-1, 1} : std::vector<int>{1, -1}))
+      {
         continue;
       }
       for (int k = 0; k < 2; k++)
@@ -11975,6 +12031,20 @@ FeaturePatchSummary BuildFeaturePatches(
                       << model.name
                       << "\" carries no Edges (Offset / GapDirection / Conductor): its "
                          "conductor-consistency probes cannot be formed (idfix R0-a)!");
+      {
+        // ReferenceInGap: the model's Edges are its cross-section.
+        std::vector<double> edge_offsets;
+        std::vector<int> edge_gaps;
+        for (const auto &edge : model.cluster_edges)
+        {
+          edge_offsets.push_back(edge.offset);
+          edge_gaps.push_back(edge.gap_direction);
+        }
+        if (RejectIfReferenceInGap(edge_offsets, edge_gaps))
+        {
+          continue;
+        }
+      }
       std::vector<const std::vector<FramedPortion> *> probe_sides;
       std::vector<int> probe_gaps, probe_conductors;
       for (std::size_t k = 0; k < ordered.size(); k++)
@@ -25129,10 +25199,16 @@ void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel 
 bool SurfaceResponseOperator::HasConductorConsistencyProbes() const
 {
   int local = 0;
-  for (const auto &patch : patches)
+  for (std::size_t p = 0; p < patches.size(); p++)
   {
+    const auto &patch = patches[p];
+    // The electrostatic mortar's plane conductor vertices, a translational patch's edge
+    // probes, or (the Maxwell path) a spatial patch's trace-mesh plane conductor vertices
+    // (maxwell_probes; found missing here by the 1064 (2) strip-end fixture: a Maxwell
+    // window whose only probed patches are spatial would have skipped the gate).
     if (!models[patch.model].plane_conductor_vertices.empty() ||
-        !patch.conductor_probes.empty())
+        !patch.conductor_probes.empty() ||
+        (p < maxwell_probes.size() && !maxwell_probes[p].empty()))
     {
       local = 1;
       break;
@@ -25153,6 +25229,7 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
     diagnostics["ClaimLength"] = 0.0;
     diagnostics["CellLength"] = 0.0;
     diagnostics["TestedPatches"] = 0;
+    diagnostics["FloorAppliedPatches"] = 0;
     diagnostics["ExcludedPatches"] = nlohmann::json::array();
     diagnostics["Records"] = nlohmann::json::array();
     diagnostics["UnprobedModels"] = nlohmann::json::array();
@@ -25668,11 +25745,13 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   // the excluded patches' claim / cell lengths totalled next to the DomainBoundary record.
   std::map<int, std::string> model_names = GetModelNames();
   auto &diagnostics = ConductorConsistencyDiagnostics();
-  int excluded_count = 0, record_only_count = 0;
+  int excluded_count = 0, record_only_count = 0, floor_applied_count = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
   int max_patch = -1;
   for (const auto &record : records)
   {
+    const bool floor_applied = record.normalization > record.amplitude;
+    floor_applied_count += floor_applied ? 1 : 0;
     nlohmann::json entry = {
         {"Patch", record.patch},
         {"Model", model_names.at(record.model)},
@@ -25685,7 +25764,7 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
         {"State", record.state},
         {"ExcitationPotential", record.excitation_potential},
         {"Normalization", record.normalization},
-        {"FloorApplied", record.normalization > record.amplitude},
+        {"FloorApplied", floor_applied},
         {"MaxDeviation", record.max_deviation},
         {"MaxRatio", record.max_ratio},
         {"MaxRatioOverState",
@@ -25772,6 +25851,12 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   diagnostics["CellLength"] = diagnostics["CellLength"].get<double>() + excluded_cells;
   diagnostics["TestedPatches"] =
       diagnostics["TestedPatches"].get<int>() + static_cast<int>(records.size());
+  // B.3 (f) / SUPERVISOR AMENDMENT 3 C.4 (decision 1082 Q2): the count of tested patches
+  // whose normalization is the floor (FloorApplied), totalled over the gate passes of the
+  // operator like TestedPatches (per pass in the log line below): the G-5 reading of the
+  // records' floor-rested passes. NEW leaf FloorAppliedPatches (allow-listed by name).
+  diagnostics["FloorAppliedPatches"] =
+      diagnostics.value("FloorAppliedPatches", 0) + floor_applied_count;
   if (!conductor_consistency_portions.portions.empty())
   {
     // Written only once something is excluded: a solve with 0 exclusions records nothing
@@ -25804,7 +25889,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     const bool maxwell_records = records.front().maxwell;
     Mpi::Print(" Conductor-consistency gate (decision 277; idfix R0-a), {} {:d}{}: {:d} "
                "patch(es) probed ({:d} spatial, {:d} translational), max ratio {:.3e} "
-               "(patch {:d}, 0-based), {:d} excluded{} (tolerance {:.3e}; amplitude floor "
+               "(patch {:d}, 0-based), {:d} excluded{}, {:d} FloorApplied (tolerance "
+               "{:.3e}; amplitude floor "
                "{:.3e} x {} {:.6e}; claims {:.6e}, cells {:.6e} mesh-file units left "
                "uncorrected)\n",
                maxwell_records ? "source" : "excitation", source,
@@ -25817,7 +25903,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
                                  "DIAGNOSTIC run, not a run of record)",
                                  record_only_count)
                    : std::string(),
-               kConductorConsistencyTolerance, kConductorConsistencyAmplitudeFloor,
+               floor_applied_count, kConductorConsistencyTolerance,
+               kConductorConsistencyAmplitudeFloor,
                maxwell_records ? "the largest applied trace amplitude"
                                : "the excitation potential",
                excitation_potential, excluded_claims, excluded_cells);
@@ -28904,12 +28991,16 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         anchor_offset += (anchor[d] - patch_config.origin[d]) * patch_config.axis_u[d];
       }
-      MFEM_VERIFY(LocalPieceOfOffset(offsets, gap_directions, pieces, anchor_offset) > 0,
+      // The anchor lies on metal by the placement's ReferenceInGap rule (decision 1082
+      // Q1: a model whose reference lies in a gap is never placed; a cluster's anchors are
+      // the feet on its first sides): an invariant here, not a second rule.
+      MFEM_ASSERT(LocalPieceOfOffset(offsets, gap_directions, pieces, anchor_offset) > 0,
                   "Response-correction patch "
                       << patch.global_index << " (model " << model.name
                       << "): its Maxwell conductor anchor (lateral offset " << anchor_offset
-                      << ") lies in a gap of its cross-section, so the R0-a probe chain "
-                         "cannot start on metal (a placement defect)!");
+                      << ") lies in a gap of its cross-section (the placement's "
+                         "ReferenceInGap rule admits none)!");
+      MFEM_CONTRACT_VAR(pieces);
       for (const auto &probe_data : patch.conductor_probes)
       {
         const auto &edge = edges[probe_data.edge];

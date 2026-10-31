@@ -207,9 +207,12 @@ struct StubField
 // one-label 4-edge ParallelEdgeCluster model (offsets 0 / 0.125 / 0.375 / 0.5, GapDirection
 // + - + -, every Conductor 1, one Reference on the strip): a 4-knot ring contour around the
 // cross-section (the top knots at v = `ring_top_v` above the plane, the bottom ones at
-// v = -0.1 below it), diagonal response matrices. Written by the root; returns the path.
+// v = -0.1 below it), diagonal response matrices; `reference` = the model's Reference (the
+// default on the strip; a reference in a slot is the ReferenceInGap fixture). Written by
+// the root; returns the path.
 fs::path WriteStubLibrary(const fs::path &directory, const fs::path &template_library,
-                          double ring_top_v, const std::string &suffix)
+                          double ring_top_v, const std::string &suffix,
+                          std::array<double, 3> reference = {0.25, 0.0, 0.0})
 {
   const auto library_path =
       directory / fmt::format("fabrication-process-r0a-stub-3d-{}.json", suffix);
@@ -265,7 +268,7 @@ fs::path WriteStubLibrary(const fs::path &directory, const fs::path &template_li
     model["ThinMatrix"] = domain_path.string();
     model["FabricatedSurfaceMatrix"] = surface_path.string();
     model["ThinSurfaceMatrix"] = surface_path.string();
-    model["Reference"] = {0.25, 0.0, 0.0};
+    model["Reference"] = {reference[0], reference[1], reference[2]};
     model["EdgeOffsetTolerance"] = 1.0e-6;
     model["Edges"] = {{{"Offset", 0.0}, {"GapDirection", 1}, {"Conductor", 1}},
                       {{"Offset", 0.125}, {"GapDirection", -1}, {"Conductor", 1}},
@@ -275,6 +278,303 @@ fs::path WriteStubLibrary(const fs::path &directory, const fs::path &template_li
                             "TraceMesh", "TraceMeshTriangles", "ConductorReferences"})
     {
       model.erase(key);
+    }
+    library["Models"] = {model};
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  return library_path;
+}
+
+// The OPEN-ENDED CPW stub of the 1064 (2) spatial fixture (decision 1082 Q3): the shorted
+// CPW stub's plane (AddShortedCpwMetalPlane's slots, x from 0.5 into the wall) on a 3 x 1 x
+// 2 box whose STRIP ENDS at x = 2.25 — beyond it the two slots merge into one bare region
+// z in [0.75, 1.25] — so the strip's two convex end corners with the ground edges 0.125
+// away on both sides form a SpatialEdgeCluster at x = 2.25 holding THREE metal pieces
+// (ground-left, strip, ground-right) in its box; the 4-edge stack x in (0.5, 2.25) stays
+// the stub's translational PEC feature (1.75 long: the end windows leave a span) and the
+// short's corner cluster at x = 0.5 is as in every stub case. `island` false = the strip is
+// shorted to the ground at x = 0.5 (ONE metal component: the end cluster has ONE canonical
+// label, the records' one-label multi-piece form); `island` true = the strip starts at
+// x = 0.75 as its own component (the end cluster has TWO labels, the junction-lead form).
+// The ground edges beyond the end face each other at 0.5 > 2R (no pair); the end is 0.75
+// from the wall.
+mfem::Mesh MakeSerialOpenCpwMesh(bool island)
+{
+  const double strip_begin = island ? 0.75 : 0.5;
+  constexpr double strip_end = 2.25;
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(24, 4, 16, mfem::Element::HEXAHEDRON, 3.0, 1.0, 2.0);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double xmin = 3.0, xmax = 0.0, zmin = 2.0, zmax = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      xmin = std::min(xmin, point[0]);
+      xmax = std::max(xmax, point[0]);
+      zmin = std::min(zmin, point[2]);
+      zmax = std::max(zmax, point[2]);
+    }
+    if (!on_plane)
+    {
+      continue;
+    }
+    const bool in_slot_x = xmin >= 0.5 - 1.0e-12;
+    const bool in_slot_a = zmin >= 0.75 - 1.0e-12 && zmax <= 0.875 + 1.0e-12;
+    const bool in_slot_b = zmin >= 1.125 - 1.0e-12 && zmax <= 1.25 + 1.0e-12;
+    const bool in_strip_band = zmin >= 0.875 - 1.0e-12 && zmax <= 1.125 + 1.0e-12;
+    const bool beyond_strip = in_strip_band && xmin >= strip_end - 1.0e-12;
+    const bool before_strip =
+        in_strip_band && xmin >= 0.5 - 1.0e-12 && xmax <= strip_begin + 1.0e-12;
+    if ((in_slot_x && (in_slot_a || in_slot_b)) || beyond_strip || before_strip)
+    {
+      continue;  // bare dielectric
+    }
+    serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+    serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return serial;
+}
+
+// The strip-end cluster as the identification keys it: its Features[] entry of the
+// requirements manifest (Signature / Frame), read by an electrostatic geometry-only
+// preflight of the open-ended CPW mesh against a library without a spatial model (the
+// decision-632 placeholder form of test-conductorconsistency's Signature-keyed case). The
+// ONE SpatialEdgeCluster feature whose frame origin lies at x > 1.5 (the strip end at
+// x = 2.25; the short's / the island-start cluster lies at x <= 0.75; the stack between
+// them is translational).
+json IdentifyStripEndCluster(const test::SurfaceResponseFiles &files,
+                             const fs::path &library, const fs::path &directory,
+                             bool island)
+{
+  json config = files.IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  mfem::Mesh serial = MakeSerialOpenCpwMesh(island);
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
+  if (Mpi::Root(Mpi::World()))
+  {
+    fs::create_directories(directory);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto manifest_path = directory / "surface-response-requirements.json";
+  WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+  Mpi::Barrier(Mpi::World());
+  std::ifstream input(manifest_path);
+  REQUIRE(input);
+  const json manifest = json::parse(input);
+  json end_cluster;
+  int end_clusters = 0;
+  for (const auto &feature : manifest["Identification"]["Features"])
+  {
+    if (feature["Type"] == "SpatialEdgeCluster" &&
+        feature["Frame"]["Origin"][0].get<double>() > 1.5)
+    {
+      end_cluster = feature;
+      end_clusters++;
+    }
+  }
+  REQUIRE(end_clusters == 1);
+  REQUIRE(end_cluster["Match"]["Status"] == "Missing");
+  // The key the identification gave the cluster (information for the log): its frame and
+  // its support box (units of R; the face rules grow it along the slots).
+  Mpi::Print("Strip-end cluster keyed: Frame {} Box {}\n", end_cluster["Frame"].dump(),
+             end_cluster["Signature"].value("Box", json()).dump());
+  return end_cluster;
+}
+
+// The frame of an identified feature (Features[].Frame: Origin + Axes u / v / n, mesh units
+// here: the unit tests' coordinate scale is 1): device point -> model-frame (u, v, w).
+struct FeatureFrame
+{
+  std::array<double, 3> origin{};
+  std::array<std::array<double, 3>, 3> axes{};
+  explicit FeatureFrame(const json &frame)
+  {
+    origin = frame["Origin"].get<std::array<double, 3>>();
+    axes = frame["Axes"].get<std::array<std::array<double, 3>, 3>>();
+  }
+  std::array<double, 3> Local(const std::array<double, 3> &point) const
+  {
+    std::array<double, 3> local{};
+    for (int a = 0; a < 3; a++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        local[a] += (point[d] - origin[d]) * axes[a][d];
+      }
+    }
+    return local;
+  }
+};
+
+// The support box of an identified spatial cluster, [u0, v0, u1, v1] in units of R: the
+// hashed Signature's Box (a contract-3 key) or, for a claims-only key, the SpatialSupport
+// record's.
+std::array<double, 4> FeatureBoxOverR(const json &feature)
+{
+  if (feature["Signature"].contains("Box"))
+  {
+    return feature["Signature"]["Box"].get<std::array<double, 4>>();
+  }
+  REQUIRE(feature.contains("SpatialSupport"));
+  REQUIRE(feature["SpatialSupport"].contains("Box"));
+  return feature["SpatialSupport"]["Box"].get<std::array<double, 4>>();
+}
+
+// The spatial-cluster coupon of the strip-end cluster, keyed by the identification's own
+// Signature (the model's frame = the feature's canonical frame): BasisPoints = an 8-knot
+// ring at w = +0.1 in a 1.5 R square about the frame origin (inside the mesh whatever the
+// frame's in-plane orientation; the identification's support box is far larger here, its
+// face rules grow it over the slots); an explicit TraceMesh whose conductor vertices are
+// the given device points on the plane w = 0 (`ground_points` on the two grounds' metal,
+// `strip_points` on the strip's); `two_references` false = ONE reference (`ground_anchor`)
+// and every conductor vertex 'conductor 1' (the records' one-label multi-piece form); true
+// = ConductorReferences {ground_anchor, strip_anchor}, the strip vertices 'conductor 2' and
+// two OpenContourPaths (knots 1-4 and 8-5, conductor 1 -> 2). Diagonal response matrices.
+// Written by the root; returns the library path.
+fs::path WriteStripEndClusterLibrary(
+    const fs::path &directory, const fs::path &template_library, const json &feature,
+    const std::vector<std::array<double, 3>> &ground_points,
+    const std::vector<std::array<double, 3>> &strip_points,
+    const std::array<double, 3> &ground_anchor, const std::array<double, 3> &strip_anchor,
+    bool two_references, const std::string &suffix)
+{
+  constexpr double R = 0.2, ring_w = 0.1, half = 1.5 * R;
+  const FeatureFrame frame(feature["Frame"]);
+  const std::vector<std::array<double, 2>> ring = {
+      {-half, -half}, {0.0, -half}, {half, -half}, {half, 0.0},
+      {half, half},   {0.0, half},  {-half, half}, {-half, 0.0}};
+  const int basis_size = static_cast<int>(ring.size()) + (two_references ? 1 : 0);
+  const auto library_path =
+      directory / fmt::format("fabrication-process-r0a-stripend-3d-{}.json", suffix);
+  const auto points_path =
+      directory / fmt::format("r0a-stripend-basis-points-{}.csv", suffix);
+  const auto vertices_path =
+      directory / fmt::format("r0a-stripend-trace-vertices-{}.csv", suffix);
+  const auto triangles_path =
+      directory / fmt::format("r0a-stripend-trace-triangles-{}.csv", suffix);
+  const auto domain_path = directory / fmt::format("r0a-stripend-domain-{}.csv", suffix);
+  const auto surface_path = directory / fmt::format("r0a-stripend-surface-{}.csv", suffix);
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(points_path);
+      output << "x,y,z\n";
+      for (const auto &knot : ring)
+      {
+        output << fmt::format("{:.16e},{:.16e},{:.16e}\n", knot[0], knot[1], ring_w);
+      }
+    }
+    {
+      std::ofstream output(vertices_path);
+      output << "vertex,x,y,z,basis,conductor\n";
+      int index = 0;
+      for (const auto &knot : ring)
+      {
+        index++;
+        output << fmt::format("{:d},{:.16e},{:.16e},{:.16e},{:d},0\n", index, knot[0],
+                              knot[1], ring_w, index);
+      }
+      for (const auto &point : ground_points)
+      {
+        const auto local = frame.Local(point);
+        output << fmt::format("{:d},{:.16e},{:.16e},{:.16e},0,1\n", ++index, local[0],
+                              local[1], local[2]);
+      }
+      for (const auto &point : strip_points)
+      {
+        const auto local = frame.Local(point);
+        output << fmt::format("{:d},{:.16e},{:.16e},{:.16e},0,{:d}\n", ++index, local[0],
+                              local[1], local[2], two_references ? 2 : 1);
+      }
+    }
+    {
+      // A fan of the ring's edges onto the first conductor vertex (vertex 9).
+      std::ofstream output(triangles_path);
+      output << "triangle,vertex_i,vertex_j,vertex_k\n";
+      for (std::size_t i = 0; i < ring.size(); i++)
+      {
+        output << fmt::format("{:d},{:d},{:d},9\n", i + 1, i + 1,
+                              (i + 1) % ring.size() + 1);
+      }
+    }
+    {
+      std::ofstream output(domain_path);
+      output << "basis_i,basis_j,Q_ij (J)\n";
+      for (int i = 1; i <= basis_size; i++)
+      {
+        for (int j = i; j <= basis_size; j++)
+        {
+          output << i << "," << j << "," << (i == j ? 1.0e-12 : 0.0) << "\n";
+        }
+      }
+    }
+    {
+      std::ofstream output(surface_path);
+      output << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
+      for (int i = 1; i <= basis_size; i++)
+      {
+        for (int j = i; j <= basis_size; j++)
+        {
+          output << "1,1," << R << "," << i << "," << j << "," << (i == j ? 0.25e-12 : 0.0)
+                 << "," << (i == j ? 0.25e-12 : 0.0) << "\n";
+        }
+      }
+    }
+    std::ifstream input(template_library);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-r0a-stripend-3d-" + suffix;
+    json model = library["Models"][0];
+    model["Name"] = "strip-end-cluster-" + suffix;
+    model["Topology"] = "SpatialEdgeCluster";
+    model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    model["Signature"] = feature["Signature"];
+    model["BasisPoints"] = points_path.string();
+    model["TraceMesh"] = {{"Vertices", vertices_path.string()},
+                          {"Triangles", triangles_path.string()}};
+    model["FabricatedMatrix"] = domain_path.string();
+    model["ThinMatrix"] = domain_path.string();
+    model["FabricatedSurfaceMatrix"] = surface_path.string();
+    model["ThinSurfaceMatrix"] = surface_path.string();
+    for (const char *key :
+         {"Separation", "SeparationTolerance", "Angle", "AngleTolerance", "Edges",
+          "Reference", "ConductorReferences", "OpenContourPaths", "ContourGroups"})
+    {
+      model.erase(key);
+    }
+    const auto ground = frame.Local(ground_anchor);
+    if (two_references)
+    {
+      const auto strip = frame.Local(strip_anchor);
+      model["ConductorReferences"] = {{ground[0], ground[1], 0.0},
+                                      {strip[0], strip[1], 0.0}};
+      model["OpenContourPaths"] = {
+          {{"Indices", {1, 2, 3, 4}}, {"StartConductor", 1}, {"EndConductor", 2}},
+          {{"Indices", {8, 7, 6, 5}}, {"StartConductor", 1}, {"EndConductor", 2}}};
+    }
+    else
+    {
+      model["Reference"] = {ground[0], ground[1], 0.0};
     }
     library["Models"] = {model};
     std::ofstream output(library_path);
@@ -731,6 +1031,82 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(response.GetPatchWeight() == 0.0);
   }
 
+  SECTION("(g) the probe path is the end-face w = 0 leg, not a chord: a ramp V(x) = x")
+  {
+    // B.3 (g) / C.3 (decision 1082 Q4): with E_z = -x / 0.125 in slot A (+x / 0.125 in
+    // slot B) at EVERY x (no jump, so the field is exactly representable in ND1 on the
+    // hexes: E_z linear in x; curl E || y, zero flux through the ring's x = const plane),
+    // the strip probe on the end face at x_e reads P = V(x_e) = x_e along the straight
+    // w = 0 leg across slot A at that face, while a straight CHORD from the anchor at the
+    // patch origin's cross-section (x_c) to the same probe point would read the mean
+    // (x_c + x_e) / 2: the record's D equals x_e to roundoff and differs from the chord by
+    // |x_e - x_c| / 2, so 'at the probe's v' is load-bearing (the rule discriminates).
+    GridFunction field(space.GetNDSpace(), true);
+    mfem::VectorFunctionCoefficient coefficient(3,
+                                                [](const mfem::Vector &x, mfem::Vector &E)
+                                                {
+                                                  E.SetSize(3);
+                                                  E = 0.0;
+                                                  if (x[2] > 0.75 && x[2] < 0.875)
+                                                  {
+                                                    E[2] = -x[0] / 0.125;
+                                                  }
+                                                  else if (x[2] > 1.125 && x[2] < 1.25)
+                                                  {
+                                                    E[2] = x[0] / 0.125;
+                                                  }
+                                                });
+    field.Real().ProjectCoefficient(coefficient);
+    field.Imag() = 0.0;
+    ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+    field.Real().GetTrueDofs(E.Real());
+    field.Imag().GetTrueDofs(E.Imag());
+    std::map<int, double> origin_x;  // the root's patch table
+    if (Mpi::Root(Mpi::World()))
+    {
+      for (const auto &assignment : response.GetPatchAssignments())
+      {
+        origin_x[assignment.global_index] = assignment.origin[0];
+      }
+    }
+    const auto records =
+        StubRecords(response.ApplyConductorConsistencyGate(E, 0, 5.0, false));
+    REQUIRE(records.size() == static_cast<std::size_t>(patch_count));
+    int discriminated = 0;
+    for (const auto &record : records)
+    {
+      // The worst probe: a strip edge (1 / 2, piece 2) at one end face, on the plane.
+      CHECK(record.worst_piece == 2);
+      CHECK((record.worst_edge == 1 || record.worst_edge == 2));
+      CHECK((record.worst_end_face == 0 || record.worst_end_face == 1));
+      CHECK_THAT(record.worst_point[1], WithinAbs(0.5, 1.0e-9));
+      CHECK((std::abs(record.worst_point[2] - 0.875) < 1.0e-9 ||
+             std::abs(record.worst_point[2] - 1.125) < 1.0e-9));
+      const double x_e = record.worst_point[0];
+      CHECK(x_e > 0.5);
+      // D = V(x_e) along the end-face leg (exactly, the field being in the space).
+      CHECK_THAT(record.max_deviation, WithinRel(x_e, 1.0e-9));
+      CHECK(record.excluded);
+      if (Mpi::Root(Mpi::World()))
+      {
+        REQUIRE(origin_x.count(record.patch) == 1);
+        const double x_c = origin_x.at(record.patch);
+        const double chord = 0.5 * (x_c + x_e);
+        // The end face is off the origin's cross-section by a finite part of the cell.
+        CHECK(std::abs(x_e - x_c) > 1.0e-3);
+        CHECK(std::abs(x_e - x_c) <= record.cell_length + 1.0e-9);
+        CHECK_THAT(std::abs(record.max_deviation - chord),
+                   WithinRel(0.5 * std::abs(x_e - x_c), 1.0e-6));
+        CHECK(std::abs(record.max_deviation - chord) > 1.0e-3);
+        discriminated++;
+      }
+    }
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK(discriminated == patch_count);
+    }
+  }
+
   SECTION("(d) a ~0-field copy of the stub reads through the floor: kept, FloorApplied")
   {
     // The strip at V on x in [1.5, 2] (excluded) and at 5e-6 V on x in [0.5, 1] (A_p below
@@ -781,6 +1157,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(floored_kept > 0);
     CHECK(zero_kept > 0);
     CHECK(excluded + floored_kept == patch_count);
+    // The FloorApplied COUNT leaf (decision 1082 Q2; B.3 (f) / C.4: read per record form):
+    // the floored records of this pass (every one kept here).
+    const auto statistics = response.GetStatistics();
+    const auto &diagnostics = statistics["Diagnostics"]["ConductorConsistency"];
+    CHECK(diagnostics["FloorAppliedPatches"].get<int>() == floored_kept);
+    CHECK(diagnostics["TestedPatches"].get<int>() == patch_count);
   }
 
   SECTION("(f) two sources gated in either order give identical verdicts and floors")
@@ -1054,6 +1436,371 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
                       ContainsSubstring("GeometryFailurePolicy FailClosed") &&
                           ContainsSubstring("MaxwellPatchExcluded"));
+  }
+#endif
+}
+
+// ReferenceInGap (idfix R0-a; decision 1082 Q1, the d1073 review's MINOR-3): a model
+// whose conductor reference lies in a GAP of its own cross-section is a library defect
+// recorded by name on BOTH paths at the placement (ONE rule, the GeometryFailurePolicy
+// form): under RecordRaw the feature is not placed (its claims raw) and recorded; under
+// FailClosed the configuration aborts at its end naming the class and the model. A
+// reference ON an edge (inclusive) or on metal is placed as before.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator records a model whose conductor reference lies "
+                 "in a gap of its cross-section (ReferenceInGap, both paths)",
+                 "[surfaceresponseoperator][geometryfallback][conductorconsistency][r0a]"
+                 "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // The Maxwell path on the shorted CPW stub: the one-label 4-edge model (edges at 0 /
+  // 0.125 / 0.375 / 0.5) with its Reference in slot A (u = 0.0625).
+  json config = ConvexMaxwellIslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["TraceCoupling"] = "Collocated";
+  auto Build = [&](json run_config, const fs::path &library,
+                   std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    run_config["Solver"]["SurfaceResponseCorrection"]["Library"] = library.string();
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  const auto in_gap = WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1,
+                                       "reference-in-gap", {0.0625, 0.0, 0.0});
+  const auto on_edge = WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1,
+                                        "reference-on-edge", {0.125, 0.0, 0.0});
+
+  SECTION("RecordRaw (a solve): the feature is not placed, its claims raw, recorded")
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(config, in_gap, meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    // The only matched model is the defective one: nothing is placed (the short's corner
+    // cluster is unmatched, raw, as in every stub case), so the run also carries the H1
+    // whole-run NoMatchedFeature record; the ReferenceInGap record(s) name the feature.
+    CHECK(response.GetPatchCount() == 0);
+    std::vector<ResponseCorrectionData::GeometryFallbackData> fallbacks;
+    bool no_matched_feature = false;
+    for (const auto &entry : response.GetGeometryFallbacks())
+    {
+      if (entry.cls == "NoMatchedFeature")
+      {
+        no_matched_feature = true;
+        continue;
+      }
+      fallbacks.push_back(entry);
+    }
+    CHECK(no_matched_feature);
+    REQUIRE_FALSE(fallbacks.empty());
+    for (const auto &entry : fallbacks)
+    {
+      CHECK(entry.cls == "ReferenceInGap");
+      CHECK(entry.site == "R0a/BuildAutomaticResponseData3D:reference-in-gap");
+      CHECK(entry.what == "feature");
+      CHECK(entry.models == std::vector<std::string>{"cpw-one-label-four-edge"});
+      CHECK(entry.topology == "ParallelEdgeCluster");
+      CHECK(entry.length > 0.0);
+      CHECK_THAT(entry.reason,
+                 ContainsSubstring("conductor reference 1 at lateral offset 6.25") &&
+                     ContainsSubstring("lies in a gap of its cross-section") &&
+                     ContainsSubstring("cpw-one-label-four-edge"));
+    }
+    const auto record = response.GetStatistics()["Diagnostics"]["GeometryFallbacks"];
+    CHECK(record["Classes"]["ReferenceInGap"].get<int>() ==
+          static_cast<int>(fallbacks.size()));
+  }
+
+  SECTION("FailClosed: the configuration aborts at its end, naming the class and model")
+  {
+    json fail_closed = config;
+    fail_closed["Solver"]["SurfaceResponseCorrection"]["GeometryFailurePolicy"] =
+        "FailClosed";
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(fail_closed, in_gap, meshes);
+    SpaceOperator space(iodata, meshes);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, space),
+                      ContainsSubstring("GeometryFailurePolicy FailClosed") &&
+                          ContainsSubstring("ReferenceInGap"));
+  }
+
+  SECTION("a reference ON an edge lies on metal (inclusive): placed, no record")
+  {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(config, on_edge, meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    CHECK(response.GetPatchCount() > 0);
+    CHECK(response.GetGeometryFallbacks().empty());
+  }
+
+  SECTION("the electrostatic path shares the rule: the island's isolated-edge model with "
+          "its reference in the gap (u > 0) is recorded, not placed")
+  {
+    const auto library_path = temp.temp_dir / "fabrication-process-r0a-reference-gap.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ifstream input(convex_library_3d_path);
+      REQUIRE(input);
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-r0a-reference-gap-3d";
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      }
+      REQUIRE(library["Models"][0]["Topology"] == "IsolatedEdge");
+      library["Models"][0]["Reference"] = {0.1, 0.0, 0.0};  // into the gap (+u)
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    json island = IslandConfig();
+    auto &island_correction = island["Solver"]["Electrostatic"]["ResponseCorrection"];
+    island_correction.erase("PatchConstruction");
+    island_correction["Library"] = library_path.string();
+    island_correction["TraceCoupling"] = "SurfaceMortar";
+    island_correction["MortarOversampling"] = 2;
+    // A rejected feature is unmatched (raw): the run's UnmatchedPolicy applies to it as to
+    // every Missing feature (Error would abort the run by that policy, not by this rule).
+    island_correction["UnmatchedPolicy"] = "Warn";
+    IoData iodata(island, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    const auto &fallbacks = response.GetGeometryFallbacks();
+    REQUIRE_FALSE(fallbacks.empty());
+    for (const auto &entry : fallbacks)
+    {
+      CHECK(entry.cls == "ReferenceInGap");
+      CHECK(entry.topology == "IsolatedEdge");
+      CHECK(entry.models.front() == "isolated");
+    }
+  }
+#endif
+}
+
+// U-R0a's SPATIAL case (decision 1064 (2); decision 1082 Q3; idfix DESIGN A.3 (c) / B.3 /
+// C.3): the Maxwell probes of a spatial model = its TraceMesh's plane conductor vertices,
+// each read along ONE straight plane leg from its OWN conductor's anchor. On the strip-end
+// cluster of the open-ended CPW stub (three metal pieces in its box: ground-left, the
+// strip, ground-right; the records' one-label multi-piece class, A.3 (c)) under the stub's
+// synthetic field with the strip at V against both grounds (E_z across the two slots): G1 =
+// the one-label cluster served by a ONE-reference model (the anchor on ground-left): the
+// strip vertices are read from the ground anchor across slot A, D ~ V, A_p ~ V -> EXCLUDED,
+// FloorApplied false (the ground-right vertices read V - V = 0 across both slots); G1b =
+// the same model with the strip AT the ground potential (a field normal to the plane only):
+// kept, D ~ 0; G2 = the strip as an island (two labels) served by a TWO-reference model
+// {ground, strip}: every vertex is read from its own piece's anchor, D ~ 0 -> KEPT, the
+// conductor state = V. The models are keyed by the identification's own Signature and
+// placed in its Frame (the decision-632 placeholder form), so no hand key enters the test.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator conductor-consistency gate on a spatial cluster "
+                 "(R0-a, the one-label multi-piece strip end; decision 1064 (2))",
+                 "[surfaceresponseoperator][conductorconsistency][r0a][maxwell][spatial]"
+                 "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double V = 1.0;
+  // The identification library (the stub's one-label PEC model: no spatial model, so the
+  // strip-end cluster is Missing and keyed; the 4-edge stack matches it as in every stub
+  // case).
+  const auto identification_library =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "stripend-id");
+  // The device points of the coupon's metal (mesh units; all on the plane y = 0.5): three
+  // on ground-left (z < 0.75), three on ground-right (z > 1.25), three on the strip (z in
+  // (0.875, 1.125), x < 2.25); the anchors on ground-left and on the strip.
+  const std::vector<std::array<double, 3>> ground_points = {
+      {2.125, 0.5, 0.6875}, {2.25, 0.5, 0.6875}, {2.375, 0.5, 0.6875},
+      {2.125, 0.5, 1.3125}, {2.25, 0.5, 1.3125}, {2.375, 0.5, 1.3125}};
+  const std::vector<std::array<double, 3>> strip_points = {
+      {2.1875, 0.5, 1.0}, {2.125, 0.5, 0.9375}, {2.125, 0.5, 1.0625}};
+  const std::array<double, 3> ground_anchor = {2.15625, 0.5, 0.6875};
+  const std::array<double, 3> strip_anchor = {2.15625, 0.5, 1.0};
+  auto OnPlane = [](const json &feature, const std::array<double, 3> &point)
+  {
+    const FeatureFrame frame(feature["Frame"]);
+    return std::abs(frame.Local(point)[2]) < 1.0e-9;
+  };
+  json config = ConvexMaxwellIslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["TraceCoupling"] = "Collocated";
+  auto Build =
+      [&](const fs::path &library, bool island, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    json run_config = config;
+    run_config["Solver"]["SurfaceResponseCorrection"]["Library"] = library.string();
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = MakeSerialOpenCpwMesh(island);
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  // The strip at V against both grounds on x in [1.75, 3] (the end cluster's ring and
+  // beyond; StubField: E_z = -V / 0.125 in slot A, +V / 0.125 in slot B, zero elsewhere:
+  // curl-free where the ring lies). `normal` = a field normal to the plane only (the strip
+  // at the ground potential: nothing across the slots).
+  auto Field = [](SpaceOperator &space, bool normal)
+  {
+    GridFunction field(space.GetNDSpace(), true);
+    StubField stub;
+    stub.amplitude = V;
+    stub.x0 = 1.75;
+    stub.x1 = 3.0;
+    mfem::VectorFunctionCoefficient coefficient(
+        3,
+        [normal, &stub](const mfem::Vector &x, mfem::Vector &E)
+        {
+          if (normal)
+          {
+            E.SetSize(3);
+            E = 0.0;
+            E[1] = 1.0;
+            return;
+          }
+          stub(x, E);
+        });
+    field.Real().ProjectCoefficient(coefficient);
+    field.Imag() = 0.0;
+    ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+    field.Real().GetTrueDofs(E.Real());
+    field.Imag().GetTrueDofs(E.Imag());
+    return E;
+  };
+  auto SpatialRecords =
+      [](const std::vector<SurfaceResponseOperator::ConductorConsistencyRecord> &records)
+  {
+    std::vector<SurfaceResponseOperator::ConductorConsistencyRecord> spatial;
+    for (const auto &record : records)
+    {
+      if (record.probe_kind == 0)
+      {
+        spatial.push_back(record);
+      }
+    }
+    return spatial;
+  };
+  const auto tolerance = SurfaceResponseOperator::kConductorConsistencyTolerance;
+
+  SECTION("G1 / G1b: one label, three pieces, one reference")
+  {
+    const json feature = IdentifyStripEndCluster(*this, identification_library,
+                                                 temp.temp_dir / "stripend-g1", false);
+    for (const auto &point : ground_points)
+    {
+      REQUIRE(OnPlane(feature, point));
+    }
+    for (const auto &point : strip_points)
+    {
+      REQUIRE(OnPlane(feature, point));
+    }
+    const auto library = WriteStripEndClusterLibrary(
+        temp.temp_dir, convex_library_3d_path, feature, ground_points, strip_points,
+        ground_anchor, strip_anchor, false, "g1");
+    // G1: the strip at V -> the strip vertices read V from the ground anchor: EXCLUDED.
+    {
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      IoData iodata = Build(library, false, meshes);
+      SpaceOperator space(iodata, meshes);
+      SurfaceResponseOperator response(iodata, space);
+      REQUIRE(response.HasConductorConsistencyProbes());
+      const auto records = SpatialRecords(
+          response.ApplyConductorConsistencyGate(Field(space, false), 0, 5.0, false));
+      REQUIRE(records.size() == 1);
+      const auto &record = records.front();
+      CHECK(record.maxwell);
+      CHECK(record.plane_knots == 9);
+      CHECK(record.state == 0.0);  // a one-reference model has no conductor state
+      CHECK(record.worst_conductor == 1);
+      // The worst probe: a strip vertex, read across slot A from the ground anchor.
+      CHECK(record.worst_point[2] > 0.875);
+      CHECK(record.worst_point[2] < 1.125);
+      CHECK_THAT(record.worst_point[1], WithinAbs(0.5, 1.0e-9));
+      CHECK_THAT(record.max_deviation, WithinRel(V, 0.2));
+      CHECK(record.max_ratio > 10 * tolerance);
+      CHECK(record.normalization == record.amplitude);  // FloorApplied false
+      CHECK(record.excluded);
+      CHECK_FALSE(response.GetConductorConsistencyPortions().empty());
+      const auto statistics = response.GetStatistics();
+      const auto &diagnostics = statistics["Diagnostics"]["ConductorConsistency"];
+      CHECK(diagnostics["Count"].get<int>() >= 1);
+      CHECK(diagnostics["FloorAppliedPatches"].get<int>() == 0);
+      for (const auto &entry : diagnostics["Records"])
+      {
+        if (entry["ProbeKind"] == "SpatialVertex")
+        {
+          CHECK(entry["Excluded"].get<bool>());
+          CHECK_FALSE(entry["FloorApplied"].get<bool>());
+        }
+      }
+    }
+    // G1b: the strip at the ground potential (a field normal to the plane only): KEPT.
+    {
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      IoData iodata = Build(library, false, meshes);
+      SpaceOperator space(iodata, meshes);
+      SurfaceResponseOperator response(iodata, space);
+      const auto records = SpatialRecords(
+          response.ApplyConductorConsistencyGate(Field(space, true), 0, 5.0, false));
+      REQUIRE(records.size() == 1);
+      const auto &record = records.front();
+      CHECK(record.plane_knots == 9);
+      CHECK(record.amplitude > 0.0);  // the anchor line up to the ring reads E_y x 0.1
+      CHECK(record.normalization == record.amplitude);
+      CHECK(record.max_ratio < 1.0e-8);
+      CHECK_FALSE(record.excluded);
+    }
+  }
+
+  SECTION("G2: the strip as an island (two labels), two references: kept, the state = V")
+  {
+    const json feature = IdentifyStripEndCluster(*this, identification_library,
+                                                 temp.temp_dir / "stripend-g2", true);
+    for (const auto &point : ground_points)
+    {
+      REQUIRE(OnPlane(feature, point));
+    }
+    for (const auto &point : strip_points)
+    {
+      REQUIRE(OnPlane(feature, point));
+    }
+    const auto library = WriteStripEndClusterLibrary(
+        temp.temp_dir, convex_library_3d_path, feature, ground_points, strip_points,
+        ground_anchor, strip_anchor, true, "g2");
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(library, true, meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    REQUIRE(response.HasConductorConsistencyProbes());
+    const auto records = SpatialRecords(
+        response.ApplyConductorConsistencyGate(Field(space, false), 0, 5.0, false));
+    REQUIRE(records.size() == 1);
+    const auto &record = records.front();
+    CHECK(record.plane_knots == 9);
+    // The lift carries the ground-to-strip voltage as the conductor state; every vertex
+    // reads ~0 against its own anchor.
+    CHECK_THAT(record.state, WithinRel(V, 0.2));
+    CHECK(record.amplitude >= record.state);
+    CHECK(record.normalization == record.amplitude);
+    CHECK(record.max_ratio < 1.0e-6);
+    CHECK_FALSE(record.excluded);
+    CHECK(response.GetConductorConsistencyPortions().empty());
   }
 #endif
 }
