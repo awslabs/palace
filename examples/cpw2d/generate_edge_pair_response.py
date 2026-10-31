@@ -362,6 +362,10 @@ def write_heldout(
     return trace
 
 
+# R0-b, the generator side (identification fix round DESIGN A.3 (b); decision 1064 (4) (a); 1096 (8)): --local-pieces.
+LOCAL_PIECES_RULE = ("identification fix round DESIGN A.3 (b) / decision 1064 (4) (a): a SameConductorGap's two metal sides are two "
+                     "LOCAL pieces (one conductor reference each, the two-conductor open-contour basis); the key is unchanged; "
+                     "conductor_state_count = 1")
 # See generate_edge_response.EDGE_DISTANCES (the same rule; decision 66 part C).
 DEFAULT_EDGE_DISTANCES = [0.2]
 EDGE_DISTANCES = list(DEFAULT_EDGE_DISTANCES)
@@ -553,6 +557,7 @@ def write_library(
     metal_thickness,
     substrate_permittivity,
     interface_layers,
+    local_pieces=False,
 ):
     half_gap = 0.5 * separation
     topology = (
@@ -588,12 +593,18 @@ def write_library(
     }
     model.update(curved_model_fields(topology, topology_name, separation, radius))
     reference_offset = half_gap + 0.5 * radius
-    if different_conductors:
+    if different_conductors or local_pieces:
+        # Two conductor references: the DifferentConductorGap's two conductors, or (R0-b, identification fix
+        # round DESIGN A.3 (b); decision 1064 (4) (a)) a SameConductorGap's two LOCAL metal pieces, carried by the
+        # top-level LocalPieces = 2 leaf the library reader requires for plural references on this topology.
         model["ConductorReferences"] = [
             [-reference_offset, 0.0, 0.0],
             [reference_offset, 0.0, 0.0],
         ]
         model["OpenContourPaths"] = open_contour_paths
+        if local_pieces:
+            model["LocalPieces"] = 2
+            model["LocalPiecesRule"] = LOCAL_PIECES_RULE
     elif strip:
         model["Reference"] = [0.0, 0.0, 0.0]
     else:
@@ -654,6 +665,11 @@ def main():
     topology = parser.add_mutually_exclusive_group()
     topology.add_argument("--different-conductors", action="store_true")
     topology.add_argument("--strip", action="store_true")
+    topology.add_argument("--local-pieces", action="store_true",
+                          help="R0-b (DESIGN A.3 (b); decision 1064 (4) (a)): a SameConductorGap whose two metal sides are two LOCAL "
+                               "pieces: the two-conductor basis / configs (the meshes must be tagged in the mesher's 'different' mode) "
+                               "and a SameConductorGap library entry with LocalPieces = 2, two ConductorReferences and OpenContourPaths. "
+                               "Default OFF: the one-reference form, byte-identical")
     parser.add_argument("--axisymmetric-radius", type=float, default=0.0,
                         help="curved coupon: inner edge radius rho (um) in the (r, z) half-plane "
                              "(0 = straight); the mesh must be placed the same way")
@@ -662,6 +678,9 @@ def main():
                              "its gap direction (convex = metal inside the bend: e1 inner for a "
                              "gap, outer for a strip; concave = the mirrored placement)")
     args = parser.parse_args()
+    # The two-conductor BASIS form (a conductor state + open contour paths; the 'different' mesh tags): the
+    # DifferentConductorGap's, and the SameConductorGap's under --local-pieces (its two sides = two local pieces).
+    two_conductor_form = args.different_conductors or args.local_pieces
     global PLACEMENT
     PLACEMENT = PairPlacement(args.axisymmetric_radius, args.convexity, args.separation,
                               args.strip)
@@ -708,7 +727,7 @@ def main():
         args.metal_thickness,
         args.basis_size,
         args.samples,
-        args.different_conductors,
+        two_conductor_form,
         args.strip,
     )
     heldout_trace = write_heldout(
@@ -731,7 +750,7 @@ def main():
             traces,
             conductor_trace,
             fabricated,
-            args.different_conductors,
+            two_conductor_form,
             args.order,
             args.coupon_depth,
             args.substrate_permittivity,
@@ -748,7 +767,7 @@ def main():
             [heldout_trace],
             conductor_trace,
             fabricated,
-            args.different_conductors,
+            two_conductor_form,
             args.order,
             args.coupon_depth,
             args.substrate_permittivity,
@@ -759,7 +778,7 @@ def main():
             "Attributes": [1],
             "DataFile": str(heldout_trace),
         }
-        if args.different_conductors:
+        if two_conductor_form:
             potential["TerminalAttributes"] = (
                 [7, 8, 9] if fabricated else [7]
             )
@@ -784,6 +803,7 @@ def main():
             args.metal_thickness,
             args.substrate_permittivity,
             interface_layers,
+            args.local_pieces,
         )
     )
 

@@ -710,6 +710,35 @@ class IdentificationGateTest(AuditGateTest):
         _, gates, _ = self.run_gates(self.v2_manifest(ident))
         self.assertEqual(gates["A1-vertex-census"], "FAIL")
 
+    def test_identification_raw_exclusion_keeps_the_length_partition(self):
+        """Identification fix round (decisions 1065 Q3 / 1084 / 1085): a cross-section component the identification
+        withdraws RAW (UnclusterableComponent) is PHYSICAL targeted perimeter for the mesh census; A1-length-partition
+        reads assigned = targeted - the recorded class length (CAT-002 t4_5: the deficit was exactly that length).
+        An unrecorded withdrawal (a segment excluded under an unknown class) still fails."""
+        ident = self.identification()
+        first = next(s for s in ident["Segments"] if "Portions" in s and len(s["Portions"]) == 1 and "ExcludedPortions" not in s
+                     and abs(s["Portions"][0][1] - s["Portions"][0][0] - s["Length"]) < 1e-12)
+        feature_id = first["Portions"][0][2]
+        feature = next(f for f in ident["Features"] if f["Id"] == feature_id)
+        withdrawn = float(first["Length"])
+        feature["Portions"] = [p for p in feature["Portions"] if p[0] != ident["Segments"].index(first)]
+        feature["Length"] -= withdrawn
+        del first["Portions"]
+        first["Exclusion"] = {"Class": "UnclusterableComponent", "Reason": "test: over the composition cap"}
+        ident["Exclusions"].append({"Class": "UnclusterableComponent", "Reason": "test", "Count": 1, "Length": withdrawn})
+        ident["Totals"]["AssignedLength"] -= withdrawn
+        ident["Totals"]["ExcludedLength"] += withdrawn
+        _, gates, result = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A1-length-partition"], "PASS")
+        self.assertAlmostEqual(result["ByGate"]["A1-length-partition"]["IdentificationRawExcluded"]["UnclusterableComponent"], withdrawn)
+        self.assertAlmostEqual(result["ByGate"]["A1-length-partition"]["Deficit"], 0.0)
+        # the same withdrawal under a class the audit does not know = a deficit (FAIL)
+        first["Exclusion"]["Class"] = "SomethingElse"
+        ident["Exclusions"][-1]["Class"] = "SomethingElse"
+        _, gates, result = self.run_gates(self.v2_manifest(ident))
+        self.assertEqual(gates["A1-length-partition"], "FAIL")
+        self.assertAlmostEqual(result["ByGate"]["A1-length-partition"]["Deficit"], withdrawn)
+
     def test_compare_uses_the_geometry_digest(self):
         ident = self.identification()
         other_path = os.path.join(self.directory.name, "other.json")
@@ -777,9 +806,58 @@ class PatchGateTest(unittest.TestCase):
 
     def test_complete_dry_run_passes(self):
         status, detail, summary = self.gates(self.identification(), self.patches())
-        self.assertEqual(status, {"A7-patch-features": "PASS", "A7-patch-exclusions": "PASS", "A7-patch-coverage": "PASS", "A7-patch-weights": "PASS"})
+        self.assertEqual(status, {"A7-patch-features": "PASS", "A7-unpatched-pairs": "PASS", "A7-patch-exclusions": "PASS", "A7-patch-coverage": "PASS", "A7-patch-weights": "PASS"})
         self.assertAlmostEqual(summary["CoveredLength"], 11.0)  # the unmatched edge (1.0) is not covered
         self.assertAlmostEqual(summary["CoveredFractionOfAssigned"], 11.0 / 12.0)
+
+    def test_near_matched_features_are_placed_features(self):
+        """Decisions 1075 Q1 / 1079: a NearMatched / GeometricNearMatched feature is patched like a Matched one
+        (A7-patch-features counts it in the placed set, by status)."""
+        ident = self.identification()
+        ident["Features"][0]["Match"] = {"Status": "GeometricNearMatched", "Model": "iso"}
+        ident["Features"][1]["Match"] = {"Status": "NearMatched", "Model": "strip"}
+        status, detail, _ = self.gates(ident, self.patches())
+        self.assertEqual(status["A7-patch-features"], "PASS")
+        self.assertEqual(detail["A7-patch-features"]["ByMatchStatus"], {"GeometricNearMatched": 1, "NearMatched": 1, "Matched": 1})
+
+    def test_unpatched_pair_is_recorded_and_carries_no_patch(self):
+        """Decisions 1075 Q3 / 1077 Q3 (OI-PAIR-SEPARATION-MISMATCH): an Unpatched pair = exactly one entry of
+        Diagnostics.UnpatchedPairs with no patch; a silent omission (unpatched but unrecorded) or a record of a
+        patched feature FAILS."""
+        ident = self.identification()
+        ident["Features"][1]["Match"] = {"Status": "Unpatched", "Model": "strip", "Reason": "UnpatchedPair: test"}
+        rows = [r for r in self.patches() if r["Feature"] != 1]
+        ident["Diagnostics"] = {"UnpatchedPairs": {"Count": 1, "Length": 4.0, "Features": [{"Id": 1, "Type": "SameConductorStrip", "Length": 4.0}]}}
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-unpatched-pairs"], "PASS")
+        self.assertEqual(status["A7-patch-features"], "PASS")
+        self.assertAlmostEqual(detail["A7-unpatched-pairs"]["UnpatchedLength"], 4.0)
+        # the silent omission of the base record (C1's 52.3 um): unpatched, unrecorded
+        ident["Diagnostics"] = {}
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-unpatched-pairs"], "FAIL")
+        self.assertEqual(detail["A7-unpatched-pairs"]["UnpatchedNotRecorded"], [1])
+        # a recorded feature that still carries patches
+        ident["Diagnostics"] = {"UnpatchedPairs": {"Count": 1, "Length": 4.0, "Features": [{"Id": 1}]}}
+        status, detail, _ = self.gates(ident, self.patches())
+        self.assertEqual(status["A7-unpatched-pairs"], "FAIL")
+        self.assertEqual(detail["A7-unpatched-pairs"]["UnpatchedWithPatches"], [1])
+
+    def test_mirror_formed_pair_side_factor_is_one_half(self):
+        """Decision 557's mirror-formed pair form / identification fix round decision 1085 Q7: a pair with one
+        real side and its image (ImagePortions) is placed once on the real side with side factor 1/2."""
+        ident = self.identification()
+        # the strip's two portions on ONE chain, its other side an image across a plane
+        ident["Features"][1]["Sides"] = [0, 0]
+        ident["Features"][1]["ImagePortions"] = [[9, 0.0, 2.0, 1], [10, 0.0, 2.0, 1]]
+        ident["Features"][1]["Mirror"] = {"Status": "Modelled", "Planes": [5], "RealLength": 4.0, "ImageLength": 4.0}
+        status, detail, _ = self.gates(ident, self.patches())
+        self.assertEqual(status["A7-patch-weights"], "PASS")
+        # without the image the single-side strip reads side factor 1 and the 0.5 rows are defects
+        del ident["Features"][1]["ImagePortions"]
+        status, detail, _ = self.gates(ident, self.patches())
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "side factor")
 
     def test_mirror_formed_configuration_weight_is_the_real_length_fraction(self):
         # An unmerged mirror-formed CONFIGURATION placed by its REQUIREMENT CONTRACT (decision 557 (4); impl-B5

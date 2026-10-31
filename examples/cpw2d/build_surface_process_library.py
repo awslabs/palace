@@ -167,6 +167,11 @@ def material_options(args):
 
 
 def pair_mesh_command(args, kind, width, mode, output):
+    # R0-b (identification fix round DESIGN A.3 (b); decision 1064 (4) (a)): under --local-pieces a same-conductor
+    # gap's two metal sides are two LOCAL pieces, meshed in the mesher's 'different' mode (Conductor := piece; the
+    # existing per-label tagging, no mesher change).
+    if mode == "same" and getattr(args, "local_pieces", False):
+        mode = "different"
     return julia_command(args) + [
         PAIR_MESH_GENERATOR,
         kind,
@@ -212,6 +217,8 @@ def pair_response_command(args, width, topology_flag, directory):
     ]
     if topology_flag:
         command.append(topology_flag)
+    elif getattr(args, "local_pieces", False):
+        command.append("--local-pieces")   # the same-conductor gap under R0-b (its own flag, exclusive with the others)
     return command
 
 
@@ -257,7 +264,7 @@ def palace_command(args, config):
 
 
 def coupon_spec(args, topology, width):
-    return {
+    spec = {
         "Version": 1,
         "Topology": topology,
         "Separation": width,
@@ -306,6 +313,11 @@ def coupon_spec(args, topology, width):
             (PAIR_MESH_GENERATOR, PAIR_RESPONSE_GENERATOR, Path(__file__))
         ),
     }
+    if topology == "same-conductor-gap" and getattr(args, "local_pieces", False):
+        # R0-b: a two-piece coupon is not the one-reference coupon (no cache reuse across the forms); the key is
+        # added only when the option is on so that every default spec stays byte-identical.
+        spec["LocalPieces"] = 2
+    return spec
 
 
 def isolated_spec(args):
@@ -485,6 +497,9 @@ def parse_args():
         help="Default separation sweep for all three paired topologies",
     )
     parser.add_argument("--same-conductor-gaps", type=float, nargs="*")
+    parser.add_argument("--local-pieces", action="store_true",
+                        help="R0-b (DESIGN A.3 (b); decision 1064 (4) (a)): a same-conductor gap's two sides as two LOCAL pieces "
+                             "(the 'different' mesh mode + the generator's --local-pieces: LocalPieces = 2, two references). Default OFF")
     parser.add_argument("--different-conductor-gaps", type=float, nargs="*")
     parser.add_argument("--same-conductor-strips", type=float, nargs="*")
     parser.add_argument(

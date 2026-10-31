@@ -5,9 +5,27 @@
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parent.parent / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+import local_pieces  # noqa: E402
+
+# R0-b, the GENERATOR side (identification fix round DESIGN A.3 (b); decisions 1058 MAJOR-1, 1064 (4), 1096 (8)):
+# with --local-pieces the coupon's conductor labels are its LOCAL metal pieces (local_pieces.local_pieces_of_parallel_edges,
+# the C++'s rule by name: a CPW = ground-left / strip / ground-right = 3 pieces), not the identification's GLOBAL
+# labels: one ConductorReference per piece, the OpenContourPaths between consecutive pieces (the existing two-conductor
+# form generalised to P pieces), the mesh tagged per piece (the planner's cluster-signature CSV carries Conductor := piece)
+# and the library entry's Edges[] keep the key's Conductor labels and gain LocalPiece. DEFAULT OFF: every output is
+# byte-identical to the one-reference form.
+LOCAL_PIECES_RULE = ("identification fix round DESIGN A.3 (b) / decision 1064 (4): one conductor reference per metal piece "
+                     "disconnected WITHIN the coupon's cross-section (the pieces the Edges' GapDirections bound; "
+                     "local_pieces.local_pieces_of_parallel_edges == the C++ LocalPiecesOfParallelEdges); Edges[].Conductor "
+                     "stays the key label (0 re-keys); conductor_state_count = pieces - 1")
 
 
 INTERFACE_PROPERTIES = {
@@ -494,7 +512,12 @@ def write_library(
     interface_layers,
     model_name,
     edge_offset_tolerance,
+    pieces=None,
 ):
+    edges = [dict(edge) for edge in edges]
+    if pieces is not None:
+        for edge, piece in zip(edges, pieces):
+            edge["LocalPiece"] = int(piece)
     model = {
         "Name": model_name,
         "Topology": "ParallelEdgeCluster",
@@ -514,14 +537,16 @@ def write_library(
         "CouponDepth": coupon_depth,
     }
     if len(references) == 1:
-        # One conductor: the reference point alone; the free knots are one closed contour
-        # (Palace: ContourGroups default) and OpenContourPaths would need two conductors.
+        # One conductor (or one local PIECE): the reference point alone; the free knots are one
+        # closed contour (Palace: ContourGroups default) and OpenContourPaths would need two.
         if open_paths:
-            raise ValueError("A single-conductor cluster has no open contour paths")
+            raise ValueError("A single-piece cluster has no open contour paths")
         model["Reference"] = references[0]
     else:
         model["ConductorReferences"] = references
         model["OpenContourPaths"] = open_paths
+    if pieces is not None:
+        model["LocalPiecesRule"] = LOCAL_PIECES_RULE
     library = {
         "Version": 3,
         "TraceLiftVersion": 2,
@@ -570,6 +595,10 @@ def main():
     parser.add_argument("--library-name", required=True)
     parser.add_argument("--model-name")
     parser.add_argument("--substrate-permittivity", type=float, default=11.47)
+    parser.add_argument("--local-pieces", action="store_true",
+                        help="R0-b (DESIGN A.3 (b)): label the coupon's metal by its LOCAL pieces (one conductor reference per piece, "
+                             "OpenContourPaths between them, Edges[].LocalPiece); the meshes must be tagged per piece (the planner's "
+                             "cluster-signature CSV with Conductor := piece). Default: the identification's labels (byte-identical outputs)")
     for interface, (permittivity, thickness) in INTERFACE_PROPERTIES.items():
         parser.add_argument(f"--{interface.lower()}-thickness", type=float, default=thickness)
         parser.add_argument(
@@ -585,6 +614,11 @@ def main():
 
     spec_path = args.spec.expanduser().resolve()
     data, offsets, directions, conductors = load_edges(spec_path)
+    pieces = None
+    if args.local_pieces:
+        pieces = np.asarray(local_pieces.local_pieces_of_parallel_edges(offsets.tolist(), directions.tolist()))
+        # every basis / config / heldout label below is the LOCAL piece; the key's labels stay on the library entry
+        conductors = pieces
     if args.model_name:
         model_name = args.model_name
     else:
@@ -592,6 +626,8 @@ def main():
             json.dumps(data["Edges"], sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()[:12]
         model_name = f"parallel-edge-cluster-{signature}"
+        if args.local_pieces:
+            model_name = local_pieces.local_pieces_model_name(model_name, pieces.tolist())   # the piece form's Name
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     (
@@ -714,6 +750,7 @@ def main():
             interface_layers,
             model_name,
             args.edge_offset_tolerance,
+            pieces,
         )
     )
 

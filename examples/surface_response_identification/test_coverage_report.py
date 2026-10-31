@@ -674,5 +674,201 @@ class RecordS1Test(unittest.TestCase):
         self.assertEqual(report["block_D"]["ladder"]["types"]["SA"]["status"], "quotable")
 
 
+def _strip_json_comments(text):
+    """// and /* */ comments outside strings and trailing commas removed (the C++ PreprocessFile of the schema test)."""
+    out = []
+    i = 0
+    in_string = False
+    while i < len(text):
+        c = text[i]
+        if in_string:
+            out.append(c)
+            if c == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 1
+            elif c == '"':
+                in_string = False
+        elif c == '"':
+            in_string = True
+            out.append(c)
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = len(text) if j < 0 else j
+            continue
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = len(text) if j < 0 else j + 2
+            continue
+        else:
+            out.append(c)
+        i += 1
+    # the trailing commas Palace's preprocessor tolerates
+    import re
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+class TestNearMatchedStatusRows(unittest.TestCase):
+    """DESIGN sections 4 / 5 (decisions 1075 Q1 / 1079 / 1096 (2)): NearMatched and GeometricNearMatched requirements
+    are CORRECTED rows of their own in the LENGTH partition, never Missing and never folded into Exact."""
+
+    def test_length_partition_rows(self):
+        reqs = [
+            {"Hash": "1" * 64, "Topology": "IsolatedEdge", "Status": "Exact", "TotalEdgeLength": 100.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "isolated-edge"}]},
+            {"Hash": "2" * 64, "Topology": "SameConductorStrip", "Status": "NearMatched", "TotalEdgeLength": 10.0,
+             "Signature": {}, "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "same-conductor-strip-2.91785um"}]},
+            {"Hash": "3" * 64, "Topology": "ParallelEdgeCluster", "Status": "GeometricNearMatched", "TotalEdgeLength": 30.0,
+             "Signature": {}, "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "parallel-edge-cluster-af972e5a4a5d"}]},
+            {"Hash": "4" * 64, "Topology": "CurvedEdge", "Status": "Missing", "TotalEdgeLength": 60.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": []}]
+        manifest = {"Requirements": reqs, "Summary": {"Counts": {"Exact": 1, "NearMatched": 1, "GeometricNearMatched": 1, "Missing": 1}},
+                    "Identification": {"Totals": {"AssignedLength": 200.0}, "Exclusions": [], "Diagnostics": {}}}
+        tmp = tempfile.mkdtemp(prefix="cov-nearmatched-")
+        try:
+            mpath = os.path.join(tmp, "surface-response-requirements.json")
+            _dump(manifest, mpath)
+            loaded = cr.load_manifest(mpath)
+            L = cr.length_partition(loaded, ["SA"])["types"]["SA"]
+            self.assertAlmostEqual(L["models_share"]["Exact"], 0.5)
+            self.assertAlmostEqual(L["models_share"]["NearMatched"], 0.05)
+            self.assertAlmostEqual(L["models_share"]["GeometricNearMatched"], 0.15)
+            self.assertAlmostEqual(L["raw_share"]["Missing"], 0.3)
+            self.assertAlmostEqual(L["raw_share_total"], 0.3)
+            self.assertEqual(loaded["models"]["same-conductor-strip-2.91785um"]["Status"], "NearMatched")
+            self.assertIn("NearMatched", cr.MODEL_STATUSES)
+            self.assertIn("GeometricNearMatched", cr.MODEL_STATUSES)
+        finally:
+            shutil.rmtree(tmp)
+
+
+class TestFixRoundRecordRows(unittest.TestCase):
+    """The identification fix round's record classes in the report (decision 1096 (4)): the RAW rows UnpatchedPairs (the
+    feature's length leaves its requirement's corrected row; 1077 Q3) and UnclusterableComponent (joins the total), the NAMED
+    rows (TaperCrossings / TaperMeanKeys / PlacedLocalDeviation / CornerArmOnArc / RemainderBelowBar), the exclusion-energy
+    export's Excluded:* energy rows, the ConductorConsistency summary and the GeometricNearPairs join."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cov-fixround-")
+        reqs = [
+            {"Hash": "a" * 64, "Topology": "IsolatedEdge", "Status": "Exact", "TotalEdgeLength": 100.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "isolated-edge"}]},
+            {"Hash": "b" * 64, "Topology": "SameConductorGap", "Status": "Exact", "TotalEdgeLength": 20.0, "Signature": {},
+             "Interfaces": [{"Type": "SA"}], "SelectedModels": [{"Name": "same-conductor-gap-2um"}]}]
+        manifest = {"Requirements": reqs, "Summary": {"Counts": {"Exact": 2}, "UnpatchedPairs": {"Count": 1, "Length": 8.0},
+                                                      "TaperCrossings": {"Count": 3, "Length": 1.5, "Treatment": "ApproximatedByIsolatedEdge"},
+                                                      "TaperMeanKeys": {"Count": 1, "Length": 20.0, "Treatment": "KeyedAtTheMean"},
+                                                      "PlacedLocalDeviation": {"Count": 1, "Length": 6.0}, "CornerArmOnArc": {"Count": 2, "Length": 4.0}},
+                    "Library": {"GeometricNearPairs": [{"Class": "ParallelEdgeCluster", "ModelA": "pec-A", "ModelB": "pec-B", "MaxOffsetDeviationOverR": 0.003}]},
+                    "Identification": {"Totals": {"AssignedLength": 120.0},
+                                       "Exclusions": [{"Class": "TruncationCut", "Count": 2, "Length": 30.0}, {"Class": "UnclusterableComponent", "Count": 5, "Length": 80.0}],
+                                       "Features": [{"Id": 7, "Hash": "b" * 64, "Type": "SameConductorGap", "Length": 8.0, "Match": {"Status": "Unpatched"}}],
+                                       "Diagnostics": {"UnpatchedPairs": {"Count": 1, "Length": 8.0, "Features": [{"Id": 7, "Type": "SameConductorGap", "Length": 8.0}]},
+                                                       "RemainderBelowBar": {"Count": 2, "Length": 0.01}}}}
+        self.mpath = os.path.join(self.tmp, "surface-response-requirements.json")
+        _dump(manifest, self.mpath)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_length_rows(self):
+        L = cr.length_partition(cr.load_manifest(self.mpath), ["SA"])
+        t = L["types"]["SA"]
+        self.assertAlmostEqual(t["total"], 200.0)                 # 120 assigned + 80 UnclusterableComponent
+        self.assertAlmostEqual(t["models"]["Exact"], 112.0)        # 120 - the 8 um unpatched
+        self.assertAlmostEqual(t["raw"]["UnpatchedPairs"], 8.0)
+        self.assertAlmostEqual(t["raw"]["UnclusterableComponent"], 80.0)
+        self.assertAlmostEqual(t["raw_share_total"], 88.0 / 200.0)
+        self.assertEqual(sorted(t["named"]), ["CornerArmOnArc", "PlacedLocalDeviation", "RemainderBelowBar", "TaperCrossings", "TaperMeanKeys"])
+        self.assertAlmostEqual(t["named"]["TaperMeanKeys"]["Share"], 0.1)
+        self.assertEqual(t["named"]["TaperCrossings"]["Treatment"], "ApproximatedByIsolatedEdge")
+        self.assertEqual(L["unpatched_pairs"][0]["Status"], "Exact")
+        self.assertEqual(L["identification_raw_exclusions"], {"UnclusterableComponent": 80.0})
+        self.assertEqual(len(L["geometric_near_pairs"]), 1)
+
+    def test_exclusion_energy_export_rows(self):
+        post = os.path.join(self.tmp, "postpro")
+        os.makedirs(post)
+        with open(os.path.join(post, "surface-response-exclusion-energy.csv"), "w") as f:
+            f.write("source,class,type,class portions,class length (m),raw energy (J),interface raw energy (J),share\n")
+            f.write("1,Claimed,SA,0,0,9e-17,1e-16,0.9\n1,NonManifold,SA,4,1e-5,6e-18,1e-16,0.06\n")
+            f.write("1,Unclaimed-other,SA,2,2e-6,4e-18,1e-16,0.04\n1,Total,SA,6,1.2e-5,1e-17,1e-16,0.1\n")
+            f.write("2,NonManifold,SA,4,1e-5,7e-18,1e-16,0.07\n")   # a second source block: not read
+        rows = cr.exclusion_energy_rows(post)
+        self.assertTrue(rows["present"])
+        self.assertEqual(sorted(rows["classes"]), ["NonManifold", "Unclaimed-other"])
+        self.assertAlmostEqual(rows["classes"]["NonManifold"]["SA"], 6e-18)
+        self.assertAlmostEqual(rows["claimed"]["SA"], 9e-17)
+        raw_rows, locations = cr.raw_class_energies(post, {1: {"Type": "SA"}}, [1], "ES")
+        self.assertAlmostEqual(raw_rows["Excluded:NonManifold"]["SA"], 6e-18)
+        self.assertEqual(locations["Excluded:NonManifold"][0]["portions"], 4.0)
+        self.assertFalse(cr.exclusion_energy_rows(self.tmp)["present"])
+
+    def test_conductor_summary_and_near_pairs_join(self):
+        palace = {"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {
+            "Count": 1, "TestedPatches": 5, "UnprobedModels": ["m-x"],
+            "Records": [{"FloorApplied": True, "SelfConsistentPreGate": True, "Maxwell": True}, {"FloorApplied": False}]}}}}
+        cc = cr.conductor_consistency_summary(palace)
+        self.assertEqual((cc["excluded"], cc["tested"], cc["floor_applied"], cc["pre_gate_records"], cc["unprobed_models"]), (1, 5, 1, 1, ["m-x"]))
+        palace["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"]["FloorAppliedPatches"] = 3
+        self.assertEqual(cr.conductor_consistency_summary(palace)["floor_applied"], 3)   # the leaf wins over the records
+        self.assertFalse(cr.conductor_consistency_summary({})["present"])
+        pairs = cr.near_pairs_rows([{"ModelA": "pec-A", "ModelB": "pec-B", "Class": "ParallelEdgeCluster"}],
+                                   {"Pairs": [{"ModelA": "pec-B", "ModelB": "pec-A", "CorrectionDifference": {"SA": {"Max": 0.03}}, "MaxOverTypes": 0.03, "Flagged": True}]})
+        self.assertTrue(pairs[0]["Flagged"])
+        self.assertAlmostEqual(pairs[0]["MaxOverTypes"], 0.03)
+        rows = cr.named_residuals("ES", {"types": {"SA": {}}}, {"types": {}}, {}, {}, None, True, {}, cc, pairs)
+        by_key = {r["term"]: r for r in rows}
+        self.assertTrue(by_key["SelfConsistentPreGate (the eigen conductor-consistency gate before the energies)"]["fired"])
+        self.assertTrue(by_key["FloorAppliedPatches (the conductor-consistency floor)"]["fired"])
+        self.assertTrue(by_key["UnprobedModels / ConductorConsistency exclusions"]["fired"])
+        near = by_key["GeometricNearPairs (the library's in-band model pairs)"]
+        self.assertTrue(near["fired"])
+        self.assertIn("FLAGGED 1", near["detail"])
+
+
+class TestBandFileLocation(unittest.TestCase):
+    """OI-SCHEMA-TEST-COVERAGE-BANDS (decision 1065): test-schema's "Example Configs" case parses EVERY *.json
+    directly under examples/<dir>/ as a Palace config, so the committed band files live in data/ (the default
+    path of the tool) and no non-config JSON may sit at the package level."""
+
+    def test_default_band_file_is_in_data_and_loads(self):
+        here = os.path.dirname(os.path.abspath(cr.__file__))
+        self.assertEqual(os.path.dirname(cr.DEFAULT_BANDS), os.path.join(here, "data"))
+        self.assertTrue(os.path.isfile(cr.DEFAULT_BANDS), cr.DEFAULT_BANDS)
+        bands = cr.load_bands(cr.DEFAULT_BANDS)
+        self.assertIn("families", bands)
+        self.assertTrue(bands.get("version"))
+
+    def test_no_json_at_the_package_level(self):
+        here = os.path.dirname(os.path.abspath(cr.__file__))
+        stray = sorted(f for f in os.listdir(here) if f.endswith(".json"))
+        self.assertEqual(stray, [], "a non-config JSON at examples/<dir>/ level fails test-schema 'Example Configs'")
+
+    def test_examples_level_json_are_palace_configs(self):
+        """The test-schema walk emulated (test/unit/test-schema.cpp: every *.json directly under examples/<dir>/,
+        comments stripped, parsed, validated): the config schema requires exactly the five top-level sections."""
+        examples = os.path.dirname(os.path.dirname(os.path.abspath(cr.__file__)))
+        schema_path = os.path.join(os.path.dirname(examples), "scripts", "schema", "config-schema.json")
+        with open(schema_path) as f:
+            schema = json.load(f)
+        required = set(schema["required"])
+        allowed = set(schema["properties"])
+        found = 0
+        for entry in sorted(os.listdir(examples)):
+            sub = os.path.join(examples, entry)
+            if not os.path.isdir(sub):
+                continue
+            for name in sorted(os.listdir(sub)):
+                if not name.endswith(".json"):
+                    continue
+                found += 1
+                with open(os.path.join(sub, name)) as f:
+                    text = f.read()
+                config = json.loads(_strip_json_comments(text))
+                keys = set(config)
+                self.assertTrue(required <= keys <= allowed, f"{sub}/{name}: top-level keys {sorted(keys)}")
+        self.assertGreater(found, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

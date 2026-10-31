@@ -234,6 +234,11 @@ def _segment_key(p0, p1, decimals=7):
 
 
 # Audit edge kind -> manifest exclusion class (FOLD edges are NonPlanar exclusions).
+# The Exclusion classes the identification decides on PHYSICAL targeted perimeter (the mesh census cannot
+# know them): read by A1-length-partition (identification fix round decisions 1065 Q3 / 1084 / 1085).
+IDENTIFICATION_RAW_EXCLUSION_CLASSES = ("UnclusterableComponent", "BranchingPerimeter")
+# The Match statuses of a PLACED feature (decisions 1075 Q1 / 1079): audited like Matched by A7 / A10.
+PLACED_MATCH_STATUSES = ("Matched", "NearMatched", "GeometricNearMatched")
 EXCLUSION_CLASS_OF_AUDIT_KIND = {"NONPLANAR": "NonPlanar", "FOLD": "NonPlanar", "CROSS_LAYER": "CrossLayer", "NONMANIFOLD": "NonManifold", "EMBEDDED": "UndeterminedProcessSide", "BOX": "SimulationBoundary", "PORT": "Port"}
 VERTEX_FEATURE_TYPES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
 
@@ -374,11 +379,24 @@ def identification_gates(identification, perimeter, census, radius, targets, com
         excluded_length += sum(b - a for a, b, f in excluded_portions)
         covered_segments += 1
     targeted_length = census["TargetedPhysicalLength"]
+    # The identification-DECIDED RAW exclusion classes (identification fix round decisions 1065 Q3 / 1084 /
+    # 1085; hardening-2 H13-I2): PHYSICAL targeted perimeter the mesh census counts but the identification
+    # withdraws by its own rule and records in Exclusions by class (UnclusterableComponent: a cross-section
+    # component over the StackCompositionCap, RAW + recorded; BranchingPerimeter: segments at a chain vertex
+    # of degree > 2). The partition then reads assigned = targeted - these recorded lengths.
+    identification_raw = {}
+    for e in exclusion_records:
+        if e.get("Class") in IDENTIFICATION_RAW_EXCLUSION_CLASSES:
+            identification_raw[e["Class"]] = identification_raw.get(e["Class"], 0.0) + float(e.get("Length") or 0.0)
+    identification_raw_length = sum(identification_raw.values())
+    expected_assigned = targeted_length - identification_raw_length
     gates.append(
         gate(
             "A1-length-partition",
-            abs(assigned_length + excluded_length - manifest_length) <= 1.0e-6 * max(manifest_length, radius) and abs(assigned_length - targeted_length) <= 1.0e-6 * max(targeted_length, radius),
-            {"AssignedLength": assigned_length, "ExcludedLength": excluded_length, "ManifestPerimeterLength": manifest_length, "AuditTargetedPhysicalLength": targeted_length, "Deficit": targeted_length - assigned_length},
+            abs(assigned_length + excluded_length - manifest_length) <= 1.0e-6 * max(manifest_length, radius) and abs(assigned_length - expected_assigned) <= 1.0e-6 * max(expected_assigned, radius),
+            {"AssignedLength": assigned_length, "ExcludedLength": excluded_length, "ManifestPerimeterLength": manifest_length, "AuditTargetedPhysicalLength": targeted_length,
+             "IdentificationRawExcluded": identification_raw, "ExpectedAssignedLength": expected_assigned, "Deficit": expected_assigned - assigned_length,
+             "Basis": "assigned + excluded = the manifest perimeter; assigned = the audit's targeted physical length minus the identification-decided RAW exclusion classes it records (" + ", ".join(IDENTIFICATION_RAW_EXCLUSION_CLASSES) + ")"},
         )
     )
     unassigned = [j for j, s in enumerate(segments) if "Exclusion" not in s and not s.get("Portions") and not s.get("ExcludedPortions")]
@@ -497,6 +515,7 @@ def identification_gates(identification, perimeter, census, radius, targets, com
 
 PATCH_LONGITUDINAL_TYPES = ("IsolatedEdge", "CurvedEdge", "SameConductorGap", "DifferentConductorGap", "SameConductorStrip", "CurvedSameConductorGap", "CurvedDifferentConductorGap", "CurvedSameConductorStrip", "ParallelEdgeCluster")
 PATCH_SINGLE_TYPES = VERTEX_FEATURE_TYPES + ("SpatialEdgeCluster",)
+MIRROR_FORMED_PAIR_TYPES = ("SameConductorGap", "DifferentConductorGap", "SameConductorStrip", "CurvedSameConductorGap", "CurvedDifferentConductorGap", "CurvedSameConductorStrip")
 
 
 def load_patches(path):
@@ -519,19 +538,38 @@ def patch_gates(identification, patches, radius):
     tol = 1.0e-6 * radius
     features = {f["Id"]: f for f in identification["Features"]}
     segments = identification["Segments"]
-    matched = {f["Id"] for f in features.values() if f["Match"]["Status"] == "Matched"}
+    matched = {f["Id"] for f in features.values() if f["Match"]["Status"] in PLACED_MATCH_STATUSES}
+    unpatched = {f["Id"] for f in features.values() if f["Match"]["Status"] == "Unpatched"}
     rows_by_feature = defaultdict(list)
     for row in patches:
         rows_by_feature[row["Feature"]].append(row)
     patched = set(rows_by_feature)
 
-    # A7-patch-features: the patched set is exactly the matched set.
+    # A7-patch-features: the patched set is exactly the placed set (Matched / NearMatched / GeometricNearMatched).
     unknown = sorted(f for f in patched if f not in features)
     gates.append(
         gate(
             "A7-patch-features",
             patched == matched and not unknown,
-            {"MatchedFeatures": len(matched), "PatchedFeatures": len(patched), "MatchedNotPatched": sorted(matched - patched)[:20], "PatchedNotMatched": sorted(patched - matched)[:20], "UnknownFeatureIds": unknown[:20], "Patches": len(patches)},
+            {"MatchedFeatures": len(matched), "PatchedFeatures": len(patched), "MatchedNotPatched": sorted(matched - patched)[:20], "PatchedNotMatched": sorted(patched - matched)[:20], "UnknownFeatureIds": unknown[:20], "Patches": len(patches),
+             "ByMatchStatus": dict(Counter(f["Match"]["Status"] for f in features.values() if f["Id"] in matched))},
+        )
+    )
+    # A7-unpatched-pairs (identification fix round decisions 1075 Q3 / 1077 Q3; OI-PAIR-SEPARATION-MISMATCH): a
+    # matched pair the placement refuses (its sides do not face at the signature's separation) is RAW and
+    # RECORDED: every Unpatched feature is exactly one entry of Diagnostics.UnpatchedPairs (and vice versa),
+    # carries no patch, and the Summary leaf's length is the features' length (C1's 52.3 um were silent before).
+    record = identification.get("Diagnostics", {}).get("UnpatchedPairs") or {}
+    recorded = {int(f["Id"]) for f in record.get("Features", []) or []}
+    unpatched_length = sum(float(features[f]["Length"]) for f in unpatched)
+    recorded_length = float(record.get("Length") or 0.0)
+    gates.append(
+        gate(
+            "A7-unpatched-pairs",
+            unpatched == recorded and not (unpatched & patched) and (not unpatched or abs(recorded_length - unpatched_length) <= 1.0e-6 * max(unpatched_length, radius)),
+            {"UnpatchedFeatures": len(unpatched), "RecordedFeatures": len(recorded), "UnpatchedNotRecorded": sorted(unpatched - recorded)[:20], "RecordedNotUnpatched": sorted(recorded - unpatched)[:20],
+             "UnpatchedWithPatches": sorted(unpatched & patched)[:20], "UnpatchedLength": unpatched_length, "RecordedLength": recorded_length,
+             "Basis": "Features[].Match.Status Unpatched == Diagnostics.UnpatchedPairs.Features (none patched; the recorded length = the features' length): RAW + recorded, never silent (decision 1075 Q3)"},
         )
     )
 
@@ -605,9 +643,15 @@ def patch_gates(identification, patches, radius):
             else:
                 covered_length += sum(b - a for _, a, b in intervals)
             # Side factor: 1 / number of sides of the feature (pairs 1/2, clusters 1/n;
-            # the manifest's Sides labels, both sides of a pair may share one chain).
+            # the manifest's Sides labels, both sides of a pair may share one chain). A MIRROR-FORMED
+            # pair (decision 557's form; identification fix round decision 1085 Q7: the real side on the
+            # device perimeter, the other side its image across the mirror plane, ImagePortions) is placed
+            # once on its real side with side factor 1/2: its image side counts as a side.
             sides = set(feature.get("Sides", [])) or {segments[seg]["Chain"] for seg, _, _ in portions}
+            mirror_formed_pair = feature["Type"] in MIRROR_FORMED_PAIR_TYPES and bool(feature.get("ImagePortions")) and len(sides) == 1
             expected_side = 1.0 / len(sides) if feature["Type"] not in ("IsolatedEdge", "CurvedEdge") else 1.0
+            if mirror_formed_pair:
+                expected_side = 0.5
             for key, group in groups.items():
                 quadrature = sum(r["QuadratureWeight"] * r["ModelWeight"] for r in group)
                 portion_length = key[2] - key[1]
@@ -666,7 +710,7 @@ def patch_gates(identification, patches, radius):
             {"Defects": len(coverage_defects), "Examples": coverage_defects[:10], "CoveredLength": covered_length, "MatchedLength": matched_length, "AssignedLength": assigned_length, "CoveredFractionOfAssigned": covered_length / assigned_length if assigned_length else None, "Basis": "every portion of a matched longitudinal feature is one quadrature interval; a vertex / cluster feature is one patch"},
         )
     )
-    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2), plus Diagnostics.CornerArmTrim.Cells, decision 394 F1, minus Diagnostics.CornerArmExtension.Cells, decision 511); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster"}))
+    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2), plus Diagnostics.CornerArmTrim.Cells, decision 394 F1, minus Diagnostics.CornerArmExtension.Cells, decision 511); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster (1/2 for a mirror-formed pair: its image side counts, decision 557 / 1085 Q7)"}))
     # The mirror band (boundary-cut DESIGN 2.2; decisions 442 / 454): the planes, the images,
     # the features continued through a plane and the mirror-formed ones, listed apart from
     # the library gaps so the coupon lane can decide per key (decision 315 class) whether a
@@ -776,7 +820,8 @@ def run_audit(args):
                 progress("placement gates (A10)")
                 with open(library_path) as source:
                     library = json.load(source)
-                placement_gate_list, placement_summary = placement_check.placement_gates(identification, placement_check.load_patches(patches_path), library, radius)
+                placement_gate_list, placement_summary = placement_check.placement_gates(
+                    identification, placement_check.load_patches(patches_path), library, radius, a10_sample_size=getattr(args, "a10_sample", None))
                 gates.extend(placement_gate_list)
                 placement_summary["Library"] = os.path.abspath(library_path)
                 patch_summary["Placement"] = placement_summary
@@ -1049,6 +1094,9 @@ def main(argv=None):
     parser.add_argument("--patches", help="surface-response-patches.csv of the patch dry run (default: next to the manifest)")
     parser.add_argument("--library", help="process-library.json the preflight ran with, for the A10 placement gates (default: the manifest's Library.Path)")
     parser.add_argument("--radius", type=float, help="matching radius in mesh units (default: manifest)")
+    parser.add_argument("--a10-sample", type=int, help="the A10 placement budget (DESIGN 9 (b) (iii)): audit at most N features per class "
+                        "(corners / pairs / stacks / clusters), chosen deterministically by the sha256 of (GeometryDigest, feature id); "
+                        "the sampled fraction is printed in the gate detail (default: every feature, the tile form)")
     parser.add_argument("--output-prefix", help="write <prefix>.json and <prefix>.md")
     args = parser.parse_args(argv)
     result = run_audit(args)

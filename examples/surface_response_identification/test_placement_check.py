@@ -295,6 +295,70 @@ class CornerStackPair(unittest.TestCase):
         gates, _ = PC.placement_gates(identification, patches, library, R)
         self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-pairs")["Status"], "FAIL")
 
+    def test_mirror_formed_pair_real_side_checked_image_side_labelled(self):
+        """Decision 557's mirror-formed pair form / identification fix round decision 1085 Q7: a pair whose one side
+        is real (y = 0) and the other its image across the wall y = -0.5 has ONE claimed side; A10 checks the model's
+        real side against the claims and labels the image side (no device perimeter there); a misplaced real side
+        still fails; the same feature without ImagePortions is the side-count defect of record."""
+        segments = [{"Key": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], "Length": 10.0, "Chain": 0}]
+        pair = {"Id": 9, "Type": "SameConductorGap", "Signature": {"SeparationOverR": 0.5}, "Hash": "m", "Chirality": 1, "Length": 10.0,
+                "Portions": [[0, 0.0, 10.0]], "Sides": [0], "ImagePortions": [[77, 0.0, 10.0, 1]],
+                "Mirror": {"Status": "Modelled", "Planes": [5], "RealLength": 10.0, "ImageLength": 10.0},
+                "Frame": {"Origin": [0.0, 0.0, 0.0], "Axes": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]},
+                "Match": {"Status": "Matched", "Model": "pair"}}
+        identification = {"MatchingRadius": R, "Segments": segments, "Arcs": [], "Features": [pair]}
+        library = {"MatchingRadius": R, "Models": [{"Name": "pair", "Topology": "SameConductorGap", "Separation": 1.0}]}
+        _, axes = frame((0.0, 0.0, 0.0), 90.0)   # U = +y
+        # the gap midline at y = -0.5: the real side y = 0 is the +U side (index 1), the image at y = -1.0
+        patches = [patch(9, "pair", np.asarray([4.0, -0.5, 0.0]), axes, segment=0, index=0)]
+        gates, _ = PC.placement_gates(identification, patches, library, R)
+        g = next(g for g in gates if g["Gate"] == "A10-placement-pairs")
+        self.assertEqual(g["Status"], "PASS", g["Detail"])
+        self.assertEqual(g["Detail"]["MirrorFormedFeatures"], 1)
+        self.assertEqual(g["Detail"]["ImageEdges"], 1)
+        # a misplaced real side (the midline moved by 0.2 = 10 % of R > the signature tolerance) fails
+        patches = [patch(9, "pair", np.asarray([4.0, -0.3, 0.0]), axes, segment=0, index=0)]
+        gates, _ = PC.placement_gates(identification, patches, library, R)
+        self.assertEqual(next(g for g in gates if g["Gate"] == "A10-placement-pairs")["Status"], "FAIL")
+        # without the image record a one-sided pair is the side-count defect
+        del pair["ImagePortions"]
+        patches = [patch(9, "pair", np.asarray([4.0, -0.5, 0.0]), axes, segment=0, index=0)]
+        gates, _ = PC.placement_gates(identification, patches, library, R)
+        g = next(g for g in gates if g["Gate"] == "A10-placement-pairs")
+        self.assertEqual(g["Status"], "FAIL")
+        self.assertEqual(g["Detail"]["Examples"][0]["Defects"][0]["Point"], "side count")
+
+    def test_a10_sample_is_deterministic_and_bounded(self):
+        """DESIGN 9 (b) (iii): the A10 budget audits at most N features per class, chosen by the sha256 of
+        (GeometryDigest, id): the same choice on every run and under any input order; the fraction is printed."""
+        ids = list(range(40))
+        chosen, fraction = PC.a10_sample(ids, 7, "digest-x")
+        self.assertEqual(len(chosen), 7)
+        self.assertEqual(fraction, 7 / 40)
+        self.assertEqual(chosen, PC.a10_sample(list(reversed(ids)), 7, "digest-x")[0])
+        self.assertNotEqual(chosen, PC.a10_sample(ids, 7, "digest-y")[0])
+        self.assertEqual(PC.a10_sample(ids, None, "digest-x"), (ids, 1.0))
+        self.assertEqual(PC.a10_sample(ids, 100, "digest-x"), (ids, 1.0))
+        # through the gates: 3 corners, a budget of 2 -> 2 audited, the fraction 2/3 in the detail
+        segments = [{"Key": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], "Length": 1.0, "Chain": 0},
+                    {"Key": [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]], "Length": 1.0, "Chain": 0}]
+        features, patches = [], []
+        for i in range(3):
+            features.append({"Id": i, "Type": "ConvexCorner", "Signature": {"AngleDegrees": 90.0}, "Hash": f"c{i}", "Chirality": 1, "Length": 2.0,
+                             "Portions": [[0, 0.0, 1.0], [1, 0.0, 1.0]], "Vertices": [1], "Frame": {"Origin": [1.0, 0.0, 0.0], "Axes": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]},
+                             "Match": {"Status": "Matched", "Model": "corner"}})
+            _, axes = frame((1.0, 0.0, 0.0), 180.0)
+            patches.append(patch(i, "corner", np.asarray([1.0, 0.0, 0.0]), axes, segment=-1, index=0))
+        identification = {"MatchingRadius": R, "Segments": segments, "Arcs": [], "Features": features, "GeometryDigest": "g"}
+        library = {"MatchingRadius": R, "Models": [{"Name": "corner", "Topology": "ConvexCorner", "Angle": 90.0, "CornerRadius": 0.0}]}
+        gates, _ = PC.placement_gates(identification, patches, library, R, a10_sample_size=2)
+        g = next(g for g in gates if g["Gate"] == "A10-placement-corners")
+        self.assertEqual(g["Detail"]["Features"], 2)
+        self.assertEqual(g["Detail"]["PlacedFeatures"], 3)
+        self.assertAlmostEqual(g["Detail"]["SampledFraction"], 2 / 3)
+        gates_all, _ = PC.placement_gates(identification, patches, library, R)
+        self.assertEqual(next(g for g in gates_all if g["Gate"] == "A10-placement-corners")["Detail"]["SampledFraction"], 1.0)
+
     def test_curved_pair_convexity_side(self):
         # A concentric curved gap (inner arc radius 3 R, outer 3.5 R, separation 0.5 R) on
         # 1-chord-per-5-deg polylines, side 0 = the inner arc; a curvature-family runtime

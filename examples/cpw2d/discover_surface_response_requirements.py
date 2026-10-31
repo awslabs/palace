@@ -22,6 +22,7 @@ import prepare_surface_response_coupons as planner
 IDENTIFICATION_TOOLS = Path(__file__).resolve().parent.parent / "surface_response_identification"
 if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+import identification_constants  # noqa: E402
 import signature_library  # noqa: E402
 
 SPATIAL_COUPON_TOOLS = Path(__file__).resolve().parent.parent / "cpw3d_surface" / "spatial_coupon"
@@ -402,6 +403,112 @@ def placeholder_model(requirement, matching_radius, fabrication=None):
     return digest, model
 
 
+# The near-match band families of the discovery (identification fix round DESIGN sections 4 / 5 and
+# A.5; decisions 1075 Q1, 1079 Q4, 1097 Q2): within one pass, Missing keys of ONE family that lie
+# within the binary's near-match band of an already-planned placeholder get NO placeholder of their
+# own (ServedByPlaceholder) and are read NearMatched / GeometricNearMatched by the binary on the next
+# pass -> one coupon per band family, not one per drawn copy. The REPRESENTATIVE of a family is
+# ORDER-INDEPENDENT (the decision-1053 principle): the pass's new Missing candidates are sorted by
+# (TotalEdgeLength DESC, Hash ASC) and served greedily against the representatives known so far.
+#  - a translational pair (SameConductorGap / DifferentConductorGap / SameConductorStrip): the same
+#    Type / Law / edge pattern (Conductor, GapSide, Interfaces) with |dSeparation| <= max(the
+#    placeholder's SeparationTolerance, GDS_SCATTER_OVER_RADIUS x R) = the C++ FindLibraryModel band;
+#  - a ParallelEdgeCluster: the same EdgeCount / GapSide / Conductor / Interfaces / Law pattern with
+#    every |dOffsetOverR| <= GEOMETRIC_NEAR_MATCH_CLAIMS_OVER_RADIUS in either orientation of the
+#    translational signature (the C++ reads both);
+#  - SpatialEdgeCluster keys keep today's dedup (a NAMED GAP: the geometric near-match's one-to-one
+#    context assignment is the C++'s; a second copy of an SEC key in the SAME pass gets its own
+#    placeholder, and the binary serves it GeometricNearMatched once the first coupon exists).
+# A served key that the binary still reports Missing with its representative's placeholder present
+# is a band disagreement between this reader and the C++: the closure STOPS by name (fail closed).
+SERVED_BY_PLACEHOLDER = "ServedByPlaceholder"
+SERVED_RULE = ("identification fix round DESIGN sections 4 / 5 / A.5; decisions 1075 Q1, 1079 Q4, 1097 Q2: a Missing "
+               "key within the binary's near-match band of an already-planned placeholder of its family gets no "
+               "placeholder (one coupon per band family); the binary reads it NearMatched / GeometricNearMatched on "
+               "the next pass; representatives are order-independent (total length DESC, Hash ASC)")
+
+
+def _edge_pattern(edge):
+    return (int(edge.get("Conductor", 1)), int(edge.get("GapSide", 0)),
+            tuple(edge.get("Interfaces") or ()), str(edge.get("Law", "")))
+
+
+def band_family(requirement):
+    """(family key, numbers) of a version-2 requirement the band dedup applies to, else None. The
+    numbers = (separation over R,) for a pair, the tuple of OffsetOverR for a ParallelEdgeCluster;
+    the family key carries everything else the near-match compares."""
+    signature = requirement.get("Signature")
+    if not isinstance(signature, dict) or unboxable_requirement(requirement):
+        return None
+    topology = signature.get("Type")
+    edges = signature.get("Edges") or []
+    if topology in identification_constants.TRANSLATIONAL_PAIR_TOPOLOGIES and "SeparationOverR" in signature:
+        pattern = tuple(_edge_pattern(e) for e in edges)
+        return (topology, pattern), (float(signature["SeparationOverR"]),)
+    if topology == "ParallelEdgeCluster" and edges:
+        pattern = tuple(_edge_pattern(e) for e in edges)
+        return (topology, pattern), tuple(float(e["OffsetOverR"]) for e in edges)
+    return None
+
+
+def band_family_orientations(requirement):
+    """The family readings of a requirement in both orientations of its translational signature
+    (a ParallelEdgeCluster read from either end; a pair is symmetric)."""
+    first = band_family(requirement)
+    if first is None:
+        return []
+    out = [first]
+    if first[0][0] == "ParallelEdgeCluster":
+        mirrored = signature_library.mirror_translational(requirement["Signature"])
+        other = band_family({"Signature": mirrored})
+        if other is not None and other != first:
+            out.append(other)
+    return out
+
+
+def band_deviation_over_R(family_key, numbers, other_numbers):
+    """The near-match deviation (in R) between two members of one family, or None when their
+    counts differ: a pair's |dSeparation|; a cluster's max |dOffset|."""
+    if len(numbers) != len(other_numbers):
+        return None
+    return max(abs(a - b) for a, b in zip(numbers, other_numbers))
+
+
+def band_over_R(family_key, separation_tolerance_over_R=0.0):
+    """The family's near-match band in R (the placeholder's SeparationTolerance is max(1e-9 R, 1e-12):
+    the GDS scatter band governs)."""
+    if family_key[0] == "ParallelEdgeCluster":
+        return identification_constants.GEOMETRIC_NEAR_MATCH_CLAIMS_OVER_RADIUS
+    return max(float(separation_tolerance_over_R), identification_constants.GDS_SCATTER_OVER_RADIUS)
+
+
+def serving_representative(requirement, representatives):
+    """(the representative's Hash, deviation over R, band over R) of the known representative
+    serving this Missing requirement within the band, else None. `representatives` = {family key:
+    [(Hash, numbers), ...]} of every placeholder planned so far (earlier passes + this pass)."""
+    best = None
+    for family_key, numbers in band_family_orientations(requirement):
+        band = band_over_R(family_key)
+        for rep_hash, rep_numbers in representatives.get(family_key, []):
+            deviation = band_deviation_over_R(family_key, numbers, rep_numbers)
+            if deviation is None or deviation > band:
+                continue
+            if best is None or (deviation, rep_hash) < (best[1], best[0]):
+                best = (rep_hash, deviation, band)
+    return best
+
+
+def candidate_order(requirement):
+    """The order-independent processing order of one pass's new Missing keys (decision 1097 Q2):
+    total length DESC, then Hash ASC."""
+    return (-float(requirement.get("TotalEdgeLength") or 0.0), str(requirement.get("Hash", "")))
+
+
+def register_representative(requirement, representatives):
+    for family_key, numbers in band_family_orientations(requirement)[:1]:
+        representatives.setdefault(family_key, []).append((requirement["Hash"], numbers))
+
+
 def run_preflight(palace, config_path, log_path):
     command = [str(palace), "--surface-response-preflight", str(config_path)]
     print("+ " + shlex.join(command), flush=True)
@@ -424,7 +531,22 @@ def restore_source_status(manifest, source_library, placeholder_requirements):
             for model in selected
             if model.get("Name") in placeholder_requirements
         ]
-        if placeholders:
+        if placeholders and requirement["Status"] in identification_constants.NEAR_MATCHED_STATUSES:
+            # Decisions 1075 Q1 / 1079 / 1097 Q3: a key the binary near-matched to a PLACEHOLDER
+            # is served by the coupon planned for the placeholder's requirement (one coupon per
+            # band family): its Status stays NearMatched / GeometricNearMatched (counted apart
+            # from Exact / Interpolated / Missing; not planned), the placeholder's name goes,
+            # the serving requirement is named.
+            source = placeholder_requirements[placeholders[0]]
+            requirement["ServedByRequirement"] = source["Hash"]
+            requirement["Reason"] = (
+                f"{requirement['Status']} within the near-match band to the placeholder of "
+                f"requirement {source['Hash'][:12]}: served by the coupon planned for it "
+                "(decisions 1075 / 1079 / 1097 Q3; no coupon of its own)"
+            )
+            requirement.pop("SelectedModels", None)
+            requirement.pop("NormalizedLibraryDistance", None)
+        elif placeholders:
             # Use the requirement which created the selected virtual model. The production
             # matcher may describe the same match in model-local coordinates on later
             # passes; feeding that transformed description back to the coupon generator
@@ -443,8 +565,11 @@ def restore_source_status(manifest, source_library, placeholder_requirements):
             requirement.pop("SelectedModels", None)
             requirement.pop("NormalizedLibraryDistance", None)
         status = requirement["Status"]
-        counts[status] += int(requirement["Count"])
-        lengths[status] += float(requirement.get("TotalEdgeLength", 0.0))
+        # Every status the binary writes is counted under its own name (NearMatched /
+        # GeometricNearMatched / DomainBoundary / QuantumNearMatched / LegacyContract beside the
+        # three of the version-1 form); only Missing decides Complete.
+        counts[status] = counts.get(status, 0) + int(requirement["Count"])
+        lengths[status] = lengths.get(status, 0.0) + float(requirement.get("TotalEdgeLength", 0.0))
     result["Summary"] = {"Counts": counts, "TotalEdgeLengths": lengths}
     if "GeometryFallbacks" in manifest.get("Summary", {}):
         # The geometry fallbacks of the final preflight (USER decision 1000 (b)) survive the
@@ -508,6 +633,9 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
     known = set()
     placeholder_names = set()
     placeholder_requirements = {}
+    placeholder_hashes = set()      # the requirement Hashes whose placeholders exist
+    representatives = {}            # band family key -> [(Hash, numbers)] (decision 1097 Q2)
+    served = {}                     # Hash -> the ServedByPlaceholder record
     omitted = {}
     unplaceable = {}
     unboxable = {}
@@ -519,6 +647,7 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
         pass_root.mkdir(parents=True, exist_ok=True)
         library_path = pass_root / "process-library.json"
         write_json(library_path, virtual_library)
+        placeholder_hashes_before_pass = set(placeholder_hashes)
         pass_config = copy.deepcopy(config)
         pass_config["Problem"]["Output"] = str(pass_root / "postpro")
         pass_response = response_section(pass_config)
@@ -562,9 +691,27 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
         # The placeholders both preflights of this pass were run with (a placeholder added
         # from the discovery view is not in the production view's library yet).
         placed_before_pass = set(known)
+        # The pass's NEW Missing keys (not yet known), collected first and then planned in the
+        # order-independent family order (decision 1097 Q2), one entry per Hash.
+        new_candidates = {}
         for current_manifest in (manifest, production_manifest):
             for requirement in current_manifest["Requirements"]:
                 if requirement["Status"] != "Missing":
+                    continue
+                if requirement.get("Hash") in served:
+                    record = served[requirement["Hash"]]
+                    if record["Representative"] in placeholder_hashes_before_pass:
+                        # Its representative's placeholder was in this pass's library and the
+                        # binary still reads the key Missing: this reader's band and the
+                        # C++'s disagree. Never silent (fail closed by name).
+                        raise RuntimeError(
+                            f"band disagreement: requirement {requirement['Hash'][:12]} "
+                            f"({requirement['Topology']}) was ServedByPlaceholder of "
+                            f"{record['Representative'][:12]} (deviation "
+                            f"{record['DeviationOverR']:.3e} R <= band {record['BandOverR']:.3e} R) "
+                            "but the binary reports it Missing with that placeholder present; "
+                            f"see {pass_root / 'postpro/surface-response-requirements.json'}"
+                        )
                     continue
                 prefix = omitted_prefix(requirement, omit_requirements)
                 if prefix is not None:
@@ -641,13 +788,34 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
                             },
                         )
                     continue
-                known.add(digest)
-                placeholder_names.add(model["Name"])
-                placeholder_requirements[model["Name"]] = copy.deepcopy(requirement)
-                virtual_library["Models"].append(model)
-                added.append(
-                    {"Id": digest, "Topology": requirement["Topology"]}
+                new_candidates.setdefault(requirement["Hash"], (requirement, digest, model))
+        # The family rule: total length DESC, Hash ASC; a candidate within the band of a known
+        # representative (an earlier pass's or this pass's) is served by it, else it becomes one.
+        for requirement, digest, model in sorted(new_candidates.values(), key=lambda c: candidate_order(c[0])):
+            if digest in known:
+                continue
+            serving = serving_representative(requirement, representatives)
+            if serving is not None:
+                rep_hash, deviation, band = serving
+                served[requirement["Hash"]] = requirement_record(
+                    requirement,
+                    Representative=rep_hash,
+                    DeviationOverR=deviation,
+                    BandOverR=band,
+                    Family=band_family(requirement)[0][0],
+                    Rule=SERVED_RULE,
+                    Pass=pass_index,
                 )
+                continue
+            known.add(digest)
+            placeholder_names.add(model["Name"])
+            placeholder_requirements[model["Name"]] = copy.deepcopy(requirement)
+            placeholder_hashes.add(requirement["Hash"])
+            register_representative(requirement, representatives)
+            virtual_library["Models"].append(model)
+            added.append(
+                {"Id": digest, "Topology": requirement["Topology"]}
+            )
         history.append(
             {
                 "Pass": pass_index,
@@ -655,6 +823,7 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
                 "DiscoverySummary": manifest["Summary"],
                 "ProductionSummary": production_manifest["Summary"],
                 "AddedPlaceholders": added,
+                "ServedByPlaceholder": [record for record in served.values() if record["Pass"] == pass_index],
                 "GeometryFallbacks": geometry_fallbacks_record(production_manifest),
             }
         )
@@ -696,6 +865,13 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
                 f"can close it ({record['Declaration']})"
             )
     final_manifest["UnplaceableRequirements"] = unplaceable_records
+    served_records = [served[key] for key in sorted(served)]
+    if served_records:
+        final_manifest["ServedByPlaceholder"] = served_records
+        final_manifest["Summary"]["ServedByPlaceholder"] = {
+            "Count": len(served_records),
+            "TotalEdgeLength": sum(float(r.get("TotalEdgeLength") or 0.0) for r in served_records),
+        }
     unboxable_records = [unboxable[key] for key in sorted(unboxable)]
     unbuildable_records = [unbuildable[key] for key in sorted(unbuildable)]
     for requirement in final_manifest["Requirements"]:
@@ -733,6 +909,7 @@ def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
         "OmittedRequirements": omitted_records,
         "UnplaceableRequirements": unplaceable_records,
         "CompleteAgainstSourceLibrary": final_manifest["Complete"],
+        "ServedByPlaceholder": served_records,
     }
     if unboxable_records:
         closure_history["UnboxableRequirements"] = unboxable_records
