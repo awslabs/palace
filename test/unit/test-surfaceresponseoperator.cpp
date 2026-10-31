@@ -4144,7 +4144,31 @@ TEST_CASE_METHOD(
       }
       CHECK(four_matched >= 1);
       CHECK(four["Summary"]["Counts"]["QuantumNearMatched"] == four_matched);
-      const json far = Preflight(Perturbed(5, "far-five-quanta"), "five");
+      // Five quanta: beyond the quantum near-match, inside the geometric band (F-B2, DESIGN
+      // section 5 / decision 1079: the quantum near-match stays the float-noise absorber
+      // underneath the geometric near-match) -> GeometricNearMatched, not Missing; at
+      // 2e-2 R (20,000 quanta) the key is Missing.
+      const json five = Preflight(Perturbed(5, "far-five-quanta"), "five");
+      int five_geometric = 0;
+      for (const auto &feature : five["Identification"]["Features"])
+      {
+        if (feature["Type"] == "SpatialEdgeCluster" &&
+            feature["Hash"] == (*cluster_feature)["Hash"])
+        {
+          CHECK(feature["Match"]["Status"] == "GeometricNearMatched");
+          CHECK(!feature["Match"].contains("QuantumNearMatch"));
+          CHECK(feature["Match"]["Model"] == "far-five-quanta");
+          // Five quanta on a portion end read through the arc's radial deviation (~5.4e-6).
+          CHECK_THAT(
+              feature["Match"]["GeometricNearMatch"]["ClaimsDeviationOverR"].get<double>(),
+              WithinAbs(5.0e-6, 1.0e-6));
+          five_geometric++;
+        }
+      }
+      CHECK(five["Summary"]["Counts"]["QuantumNearMatched"] == 0);
+      CHECK(five["Summary"]["GeometricNearMatched"]["Count"].get<int>() >= five_geometric);
+      CHECK(five_geometric >= 1);
+      const json far = Preflight(Perturbed(20000, "far-two-percent-R"), "far");
       for (const auto &feature : far["Identification"]["Features"])
       {
         if (feature["Type"] == "SpatialEdgeCluster" &&
@@ -4152,9 +4176,11 @@ TEST_CASE_METHOD(
         {
           CHECK(feature["Match"]["Status"] == "Missing");
           CHECK(!feature["Match"].contains("QuantumNearMatch"));
+          CHECK(!feature["Match"].contains("GeometricNearMatch"));
         }
       }
       CHECK(far["Summary"]["Counts"]["QuantumNearMatched"] == 0);
+      CHECK(far["Summary"]["GeometricNearMatched"]["Count"] == 0);
       // Two models one geometry: the exact model and the one-quantum model together.
       auto duplicate = signature_library;
       duplicate["Models"].push_back(Perturbed(1, "near-one-quantum")["Models"].back());
@@ -7339,6 +7365,211 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(both.requirement_status == "Exact");
     CHECK(both.model == StripModelName(0.0));
     CHECK(both.near_matched_count == 0);
+  }
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator geometric near-match PEC",
+                 "[surfaceresponseoperator][3d][features][nearmatch][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // U-NEARMATCH-PEC (DESIGN A.10 G-3; A.5 (b) / decision 1079 Q4): a Missing
+  // ParallelEdgeCluster key matches a library model with the same EdgeCount / GapSide
+  // pattern / Conductor labels / Interfaces / Law whose every OffsetOverR lies within
+  // kGeometricNearMatchClaimsOverRadius (1e-2 R); at 1.5e-2 R it stays Missing; Exact keeps
+  // precedence; Summary.GeometricNearMatched counts it; Library.GeometricNearPairs lists
+  // the library's in-band pairs. The CPW of cpw3d-surface-nc (edges at 0 / 12 / 32 / 44 um,
+  // R = 11) against the parallel-cluster library with the 4-edge model's offsets shifted.
+  constexpr double R = 11.0;
+  json config = Cpw3dLegacyConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  for (auto &interface : config["Boundaries"]["Postprocessing"]["Dielectric"])
+  {
+    interface["EdgeDistances"] = {0.2, 2.0, 11.0};
+  }
+  auto WriteShiftedLibrary = [&](const std::string &tag, const json &cluster_signature,
+                                 const std::vector<double> &shifts)
+  {
+    // shifts: one Signature-keyed 4-edge model per entry (the dry run's own cluster
+    // signature, as the features patch construction case keys its library; the parametric
+    // fixture model maps interfaces the sheet's features do not carry), its non-zero
+    // OffsetOverR and Edges offsets shifted by shift (R).
+    const fs::path path = temp.temp_dir / ("fabrication-process-pec-" + tag + ".json");
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ifstream input(parallel_cluster_library_3d_path);
+      REQUIRE(input);
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-pec-" + tag;
+      json cluster;
+      for (const auto &model : library["Models"])
+      {
+        if (model["Name"] == "cpw-four-edge-cluster")
+        {
+          cluster = model;
+        }
+      }
+      REQUIRE(!cluster.is_null());
+      library["Models"].erase(
+          std::remove_if(library["Models"].begin(), library["Models"].end(),
+                         [](const json &model)
+                         { return model["Topology"] == "ParallelEdgeCluster"; }),
+          library["Models"].end());
+      for (const double shift : shifts)
+      {
+        json model = cluster;
+        model["Name"] = std::string("cpw-four-edge-cluster") + (shift >= 0.0 ? "+" : "") +
+                        std::to_string(shift) + "R";
+        for (auto &edge : model["Edges"])
+        {
+          if (edge["Offset"].get<double>() > 0.0)
+          {
+            edge["Offset"] = edge["Offset"].get<double>() + shift * R;
+          }
+        }
+        json signature = cluster_signature;
+        for (auto &edge : signature["Edges"])
+        {
+          if (edge["OffsetOverR"].get<double>() > 0.0)
+          {
+            edge["OffsetOverR"] = edge["OffsetOverR"].get<double>() + shift;
+          }
+        }
+        model["Signature"] = signature;
+        // One conductor reference per canonical conductor of the feature's own signature
+        // (the first edge of each), the fixture's Edges relabelled accordingly.
+        json references = json::array();
+        std::vector<int> conductors;
+        for (std::size_t k = 0; k < signature["Edges"].size(); k++)
+        {
+          const int conductor = signature["Edges"][k]["Conductor"].get<int>();
+          if (std::find(conductors.begin(), conductors.end(), conductor) ==
+              conductors.end())
+          {
+            conductors.push_back(conductor);
+            references.push_back(
+                {signature["Edges"][k]["OffsetOverR"].get<double>() * R, 0.0, 0.0});
+          }
+          model["Edges"][k]["Conductor"] = conductor;
+        }
+        model["ConductorReferences"] = references;
+        if (conductors.size() != 2)
+        {
+          model.erase("OpenContourPaths");
+        }
+        library["Models"].push_back(model);
+      }
+      std::ofstream output(path);
+      output << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    return path;
+  };
+  struct Reading
+  {
+    std::string status, model;
+    double deviation_over_R = -1.0;
+    int geometric_count = -1;
+    json near_pairs;
+    int cluster_patch_rows = 0;
+    json cluster_signature;
+  };
+  auto Read = [&](const std::string &tag, const fs::path &library_path)
+  {
+    json run_config = config;
+    run_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        library_path.string();
+    IoData iodata(run_config, false);
+    auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+    Mesh device(std::move(mesh));
+    const fs::path manifest_path =
+        temp.temp_dir / ("surface-response-requirements-pec-" + tag + ".json");
+    const fs::path patches_path = temp.temp_dir / "surface-response-patches.csv";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove(patches_path);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, device, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    Reading reading;
+    int clusters = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] != "ParallelEdgeCluster")
+      {
+        continue;
+      }
+      clusters++;
+      reading.status = feature["Match"]["Status"].get<std::string>();
+      reading.model = feature["Match"].value("Model", std::string());
+      reading.cluster_signature = feature["Signature"];
+      if (feature["Match"].contains("GeometricNearMatch"))
+      {
+        reading.deviation_over_R =
+            feature["Match"]["GeometricNearMatch"]["MaxOffsetDeviationOverR"].get<double>();
+      }
+    }
+    REQUIRE(clusters > 0);
+    REQUIRE(manifest["Summary"].contains("GeometricNearMatched"));
+    reading.geometric_count =
+        manifest["Summary"]["GeometricNearMatched"]["Count"].get<int>();
+    reading.near_pairs = manifest["Library"]["GeometricNearPairs"];
+    std::ifstream patches(patches_path);
+    REQUIRE(patches);
+    std::string line;
+    std::getline(patches, line);
+    while (std::getline(patches, line))
+    {
+      reading.cluster_patch_rows += line.find("cpw-four-edge-cluster") != std::string::npos;
+    }
+    return reading;
+  };
+  // The dry run against the parametric library reads the CPW cluster's own signature.
+  const auto base = Read("base", parallel_cluster_library_3d_path);
+  REQUIRE(base.cluster_signature.is_object());
+  const json cluster_signature = base.cluster_signature;
+  const auto exact = Read("exact", WriteShiftedLibrary("exact", cluster_signature, {0.0}));
+  CHECK(exact.status == "Matched");
+  CHECK(exact.geometric_count == 0);
+  CHECK(exact.near_pairs.empty());
+  CHECK(exact.cluster_patch_rows > 0);
+  SECTION("5e-3 R on every offset: GeometricNearMatched, placed")
+  {
+    const auto near =
+        Read("near", WriteShiftedLibrary("near", cluster_signature, {5.0e-3}));
+    CHECK(near.status == "GeometricNearMatched");
+    CHECK(near.model == "cpw-four-edge-cluster+" + std::to_string(5.0e-3) + "R");
+    CHECK_THAT(near.deviation_over_R, WithinAbs(5.0e-3, 5.0e-6));
+    CHECK(near.geometric_count > 0);
+    CHECK(near.cluster_patch_rows == exact.cluster_patch_rows);
+  }
+  SECTION("1.5e-2 R: Missing")
+  {
+    const auto far = Read("far", WriteShiftedLibrary("far", cluster_signature, {1.5e-2}));
+    CHECK(far.status == "Missing");
+    CHECK(far.geometric_count == 0);
+    CHECK(far.cluster_patch_rows == 0);
+  }
+  SECTION("Exact precedence and the library's in-band pair listed")
+  {
+    const auto both =
+        Read("both", WriteShiftedLibrary("both", cluster_signature, {5.0e-3, 0.0}));
+    CHECK(both.status == "Matched");
+    CHECK(both.model == "cpw-four-edge-cluster+" + std::to_string(0.0) + "R");
+    CHECK(both.geometric_count == 0);
+    REQUIRE(both.near_pairs.size() == 1);
+    CHECK(both.near_pairs[0]["Class"] == "ParallelEdgeCluster");
+    CHECK_THAT(both.near_pairs[0]["MaxOffsetDeviationOverR"].get<double>(),
+               WithinAbs(5.0e-3, 5.0e-6));
   }
 #endif
 }

@@ -1923,6 +1923,245 @@ ClusterContextAgreement CompareClusterContexts(const nlohmann::json &model_conte
   return out;
 }
 
+namespace
+{
+
+// The per-field deviations of two cluster-class signatures of one topology key (lengths in
+// R, arc centres by the radial deviation, gap-direction cosines apart, angles in degrees);
+// comparable = false when the topology keys or the parameter counts differ.
+struct ClusterFieldDeviations
+{
+  bool comparable = false;
+  double max_length_over_R = 0.0;
+  double max_gap_cosine = 0.0;
+  double max_angle_degrees = 0.0;
+};
+
+ClusterFieldDeviations ClusterFieldDeviationsOf(const nlohmann::json &a,
+                                                const nlohmann::json &b)
+{
+  ClusterFieldDeviations out;
+  const SignatureParameters pa = SplitSignatureParameters(a),
+                            pb = SplitSignatureParameters(b);
+  if (pa.topology_key != pb.topology_key ||
+      pa.lengths_over_R.size() != pb.lengths_over_R.size() ||
+      pa.angles_degrees.size() != pb.angles_degrees.size())
+  {
+    return out;
+  }
+  out.comparable = true;
+  std::map<std::string, double> arc_deviations;
+  CollectArcDeviations(a, b, "", arc_deviations);
+  for (std::size_t i = 0; i < pa.lengths_over_R.size(); i++)
+  {
+    double delta = std::abs(pa.lengths_over_R[i] - pb.lengths_over_R[i]);
+    const std::string &path = i < pa.length_paths.size() ? pa.length_paths[i] : "";
+    if (const auto prefix = ArcCentrePathPrefix(path))
+    {
+      const auto deviation = arc_deviations.find(*prefix);
+      if (deviation != arc_deviations.end())
+      {
+        delta = deviation->second * kSignatureLengthQuantumOverRadius;
+      }
+    }
+    if (path.find(".Gap[") != std::string::npos || path.rfind("Gap[", 0) == 0)
+    {
+      out.max_gap_cosine = std::max(out.max_gap_cosine, delta);
+    }
+    else
+    {
+      out.max_length_over_R = std::max(out.max_length_over_R, delta);
+    }
+  }
+  for (std::size_t i = 0; i < pa.angles_degrees.size(); i++)
+  {
+    out.max_angle_degrees = std::max(out.max_angle_degrees,
+                                     std::abs(pa.angles_degrees[i] - pb.angles_degrees[i]));
+  }
+  return out;
+}
+
+// The type of a context entry (decision 1079 Q2): everything but its numbers.
+std::string ContextEntryType(const nlohmann::json &entry)
+{
+  nlohmann::json type = {{"Chain", entry.value("Chain", false)},
+                         {"Conductor", entry.value("Conductor", 0)},
+                         {"GapRadial", entry.value("GapRadial", 0)},
+                         {"Interfaces", entry.value("Interfaces", nlohmann::json::array())},
+                         {"Law", entry.value("Law", std::string())},
+                         {"Arc", entry.contains("Arc")}};
+  return type.dump();
+}
+
+// The minimum-total-cost one-to-one assignment of n rows to n columns (the Hungarian
+// algorithm, O(n^3); the context entry counts per type are small): assignment[i] = j.
+std::vector<std::size_t> MinimumCostAssignment(const std::vector<std::vector<double>> &cost)
+{
+  const std::size_t n = cost.size();
+  std::vector<double> u(n + 1, 0.0), v(n + 1, 0.0);
+  std::vector<std::size_t> p(n + 1, 0), way(n + 1, 0);
+  for (std::size_t i = 1; i <= n; i++)
+  {
+    p[0] = i;
+    std::size_t j0 = 0;
+    std::vector<double> minv(n + 1, std::numeric_limits<double>::infinity());
+    std::vector<bool> used(n + 1, false);
+    do
+    {
+      used[j0] = true;
+      const std::size_t i0 = p[j0];
+      double delta = std::numeric_limits<double>::infinity();
+      std::size_t j1 = 0;
+      for (std::size_t j = 1; j <= n; j++)
+      {
+        if (!used[j])
+        {
+          const double cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
+          if (cur < minv[j])
+          {
+            minv[j] = cur;
+            way[j] = j0;
+          }
+          if (minv[j] < delta)
+          {
+            delta = minv[j];
+            j1 = j;
+          }
+        }
+      }
+      for (std::size_t j = 0; j <= n; j++)
+      {
+        if (used[j])
+        {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        }
+        else
+        {
+          minv[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] != 0);
+    do
+    {
+      const std::size_t j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0 != 0);
+  }
+  std::vector<std::size_t> assignment(n, 0);
+  for (std::size_t j = 1; j <= n; j++)
+  {
+    if (p[j] > 0)
+    {
+      assignment[p[j] - 1] = j - 1;
+    }
+  }
+  return assignment;
+}
+
+}  // namespace
+
+ClusterGeometricNearMatch ClusterGeometricNearDifference(const nlohmann::json &feature,
+                                                         const nlohmann::json &model)
+{
+  ClusterGeometricNearMatch out;
+  if (!IsClusterSignature(feature) || !IsClusterSignature(model) ||
+      feature.value("EdgeCount", -1) != model.value("EdgeCount", -2))
+  {
+    return out;
+  }
+  // (i) The claims side: the signatures without their Context.
+  nlohmann::json claims_feature = feature, claims_model = model;
+  claims_feature.erase("Context");
+  claims_model.erase("Context");
+  const ClusterFieldDeviations claims =
+      ClusterFieldDeviationsOf(claims_feature, claims_model);
+  if (!claims.comparable)
+  {
+    return out;
+  }
+  out.claims_deviation_over_R = std::max(claims.max_length_over_R, claims.max_gap_cosine);
+  out.claims_angle_degrees = claims.max_angle_degrees;
+  if (claims.max_length_over_R > kGeometricNearMatchClaimsOverRadius ||
+      claims.max_gap_cosine > kGeometricNearMatchGapCosine ||
+      claims.max_angle_degrees > kGeometricNearMatchAngleDegrees)
+  {
+    return out;
+  }
+  // (ii) The Context as a set: equal counts per type, the one-to-one assignment of minimum
+  // total deviation per type, every assigned pair within the band.
+  const nlohmann::json empty = nlohmann::json::array();
+  const nlohmann::json &context_feature =
+      feature.contains("Context") ? feature.at("Context") : empty;
+  const nlohmann::json &context_model =
+      model.contains("Context") ? model.at("Context") : empty;
+  if (!context_feature.is_array() || !context_model.is_array() ||
+      context_feature.size() != context_model.size())
+  {
+    return out;
+  }
+  std::map<std::string, std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+      by_type;
+  for (std::size_t i = 0; i < context_feature.size(); i++)
+  {
+    by_type[ContextEntryType(context_feature[i])].first.push_back(i);
+  }
+  for (std::size_t j = 0; j < context_model.size(); j++)
+  {
+    by_type[ContextEntryType(context_model[j])].second.push_back(j);
+  }
+  auto Entry = [](const nlohmann::json &entry)
+  {
+    return nlohmann::json{{"Type", "SpatialEdgeCluster"},
+                          {"Context", nlohmann::json::array({entry})}};
+  };
+  for (const auto &[type, members] : by_type)
+  {
+    (void)type;
+    const auto &[rows, columns] = members;
+    if (rows.size() != columns.size())
+    {
+      return out;  // a type present on one side only, or in different numbers
+    }
+    const std::size_t n = rows.size();
+    std::vector<std::vector<double>> cost(n, std::vector<double>(n, 0.0));
+    std::vector<std::vector<ClusterFieldDeviations>> deviations(
+        n, std::vector<ClusterFieldDeviations>(n));
+    for (std::size_t r = 0; r < n; r++)
+    {
+      for (std::size_t c = 0; c < n; c++)
+      {
+        deviations[r][c] = ClusterFieldDeviationsOf(Entry(context_feature[rows[r]]),
+                                                    Entry(context_model[columns[c]]));
+        const auto &d = deviations[r][c];
+        cost[r][c] =
+            d.comparable
+                ? std::max(d.max_length_over_R / kGeometricNearMatchContextOverRadius,
+                           d.max_gap_cosine / kGeometricNearMatchGapCosine)
+                : 1.0e6;
+      }
+    }
+    const std::vector<std::size_t> assignment = MinimumCostAssignment(cost);
+    for (std::size_t r = 0; r < n; r++)
+    {
+      const auto &d = deviations[r][assignment[r]];
+      if (!d.comparable || d.max_length_over_R > kGeometricNearMatchContextOverRadius ||
+          d.max_gap_cosine > kGeometricNearMatchGapCosine)
+      {
+        return out;
+      }
+      out.context_deviation_over_R =
+          std::max(out.context_deviation_over_R, d.max_length_over_R);
+      out.context_gap_cosine = std::max(out.context_gap_cosine, d.max_gap_cosine);
+      out.context_permuted = out.context_permuted || rows[r] != columns[assignment[r]];
+    }
+  }
+  out.in_band = true;
+  return out;
+}
+
 void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances)
 {
   for (auto &allowance : allowances)
@@ -16034,6 +16273,8 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.String(f.quantum_near_match.is_null() ? std::string() : f.quantum_near_match.dump());
     w.String(f.near_match.is_null() ? std::string() : f.near_match.dump());
     w.String(f.taper_mean_key.is_null() ? std::string() : f.taper_mean_key.dump());
+    w.String(f.geometric_near_match.is_null() ? std::string()
+                                              : f.geometric_near_match.dump());
     w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
     w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
     w.String(f.blend_eigenvalues.is_null() ? std::string() : f.blend_eigenvalues.dump());
@@ -16219,6 +16460,10 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     const std::string taper_mean_key = r.String();
     f.taper_mean_key = taper_mean_key.empty() ? nlohmann::json(nullptr)
                                               : nlohmann::json::parse(taper_mean_key);
+    const std::string geometric_near_match = r.String();
+    f.geometric_near_match = geometric_near_match.empty()
+                                 ? nlohmann::json(nullptr)
+                                 : nlohmann::json::parse(geometric_near_match);
     const std::string support = r.String();
     f.spatial_support =
         support.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(support);
@@ -16437,6 +16682,13 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       // 4, decision 1075 Q1): Status NearMatched, the separation deviation in R recorded.
       entry["Match"]["Status"] = "NearMatched";
       entry["Match"]["NearMatch"] = feature.near_match;
+    }
+    if (!feature.geometric_near_match.is_null())
+    {
+      // Matched within the geometric bands only (F-B2, DESIGN section 5 / A.5 (b); decision
+      // 1079): Status GeometricNearMatched, the deviations recorded.
+      entry["Match"]["Status"] = "GeometricNearMatched";
+      entry["Match"]["GeometricNearMatch"] = feature.geometric_near_match;
     }
     if (!feature.taper_mean_key.is_null())
     {
@@ -17045,6 +17297,32 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "class). Basis: the census band of record; the response is continuous across 2R; "
          "no new number"},
         {"RemainderAbsorptionOverR", kRemainderAbsorptionOverRadius},
+        {"GeometricNearMatchBands",
+         {{"ClaimsOverR", kGeometricNearMatchClaimsOverRadius},
+          {"ContextOverR", kGeometricNearMatchContextOverRadius},
+          {"AngleDegrees", kGeometricNearMatchAngleDegrees},
+          {"GapCosine", kGeometricNearMatchGapCosine},
+          {"Rule",
+           "F-B2 (the identification fix round DESIGN section 5 / A.4 / A.5 (b); decisions "
+           "1059 / 1079): a Missing SpatialEdgeCluster key matches a library model whose "
+           "claims-only signature (Portions, Box, Vertices, EdgeCount, labels; no Context) "
+           "has the same topology key and whose claims numbers agree within ClaimsOverR "
+           "(arc centres by the radial deviation, gap directions within GapCosine, turns "
+           "within AngleDegrees) and whose Context agrees as a SET: equal entry counts per "
+           "type {Chain, Conductor, GapRadial, Interfaces, Law, straight / Arc} and a "
+           "one-to-one assignment of minimum total deviation with every pair within "
+           "ContextOverR (gap cosines within GapCosine); a Missing ParallelEdgeCluster key "
+           "matches a model with the same EdgeCount / GapSide pattern / Conductor labels / "
+           "Interfaces / Law whose every OffsetOverR agrees within ClaimsOverR (both "
+           "orientations; curved stacks exact-only). Exact (and the quantum near-match, "
+           "the "
+           "legacy aliases) keep precedence; among several models the smallest claims (max "
+           "offset) deviation; Status GeometricNearMatched with the deviations recorded; a "
+           "match-time rule: keys and hashes unchanged. Basis: on the in-library pairs of "
+           "v3-j inside the bands the within-R correction differs by <= 0.85 % (clusters) "
+           "/ "
+           "0.99 % (parallel-edge clusters) per interface Type against the 2 % bar (the "
+           "calibration of record; Library.GeometricNearPairs lists the pairs)"}}},
         {"FacingGateExclusions",
          "audit A8 (facing_check.py): isolated / curved edges facing "
          "another edge and pair / stack sides facing a third edge "

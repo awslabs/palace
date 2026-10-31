@@ -9016,3 +9016,149 @@ TEST_CASE("SurfaceResponseIdentificationTaperMeanKey",
     CHECK_FALSE(result.ToJson(1.0)["Diagnostics"].contains("TaperMeanKeys"));
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationClusterGeometricNearDifference",
+          "[surfaceresponseidentification][Serial]")
+{
+  // F-B2 (DESIGN section 5 / A.4; decision 1079): the geometric near-match comparison of
+  // two SpatialEdgeCluster keys. A synthetic 2-edge cluster key (two straight portions, a
+  // box, one vertex, three context entries of two types) against perturbed copies: the
+  // claims within / beyond ClaimsOverR, an angle within / beyond AngleDegrees, the context
+  // within / beyond ContextOverR, a gap cosine within / beyond GapCosine, a permuted
+  // context (matched as a set, Permuted recorded), a context of another count or type, and
+  // another EdgeCount.
+  const nlohmann::json base = {
+      {"Type", "SpatialEdgeCluster"},
+      {"EdgeCount", 2},
+      {"Box", {-1.5, -1.0, 1.5, 1.0}},
+      {"Portions",
+       {{{"P", {-1.0, -0.5, 1.0, -0.5}},
+         {"Gap", {0.0, 1.0}},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}},
+        {{"P", {-1.0, 0.5, 1.0, 0.5}},
+         {"Gap", {0.0, -1.0}},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}}}},
+      {"Vertices", {{{"P", {1.0, -0.5}}, {"TurnDegrees", 90.0}, {"Type", "ConvexCorner"}}}},
+      {"Context",
+       {{{"P", {-1.5, -1.0, 1.5, -1.0}},
+         {"Gap", {0.0, 1.0}},
+         {"Chain", true},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}},
+        {{"P", {-1.5, 1.0, 1.5, 1.0}},
+         {"Gap", {0.0, -1.0}},
+         {"Chain", true},
+         {"Conductor", 1},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}},
+        {{"P", {1.5, -1.0, 1.5, 1.0}},
+         {"Gap", {-1.0, 0.0}},
+         {"Chain", false},
+         {"Conductor", 2},
+         {"Interfaces", {"MA", "MS", "SA"}},
+         {"Law", "{\"Type\":\"PEC\"}"}}}}};
+  auto Shifted = [&](const std::string &key, std::size_t entry, const std::string &field,
+                     std::size_t index, double delta)
+  {
+    nlohmann::json copy = base;
+    copy[key][entry][field][index] = copy[key][entry][field][index].get<double>() + delta;
+    return copy;
+  };
+  SECTION("identical keys lie in the band with zero deviations")
+  {
+    const auto d = ClusterGeometricNearDifference(base, base);
+    CHECK(d.in_band);
+    CHECK(d.claims_deviation_over_R == 0.0);
+    CHECK(d.context_deviation_over_R == 0.0);
+    CHECK_FALSE(d.context_permuted);
+  }
+  SECTION("claims within and beyond ClaimsOverR")
+  {
+    const auto in =
+        ClusterGeometricNearDifference(base, Shifted("Portions", 0, "P", 2, 5.0e-3));
+    CHECK(in.in_band);
+    CHECK_THAT(in.claims_deviation_over_R, WithinAbs(5.0e-3, 1.0e-12));
+    const auto out =
+        ClusterGeometricNearDifference(base, Shifted("Portions", 0, "P", 2, 2.0e-2));
+    CHECK_FALSE(out.in_band);
+    CHECK_THAT(out.claims_deviation_over_R, WithinAbs(2.0e-2, 1.0e-12));
+    nlohmann::json box = base;
+    box["Box"][3] = 1.0 + 5.0e-3;
+    CHECK(ClusterGeometricNearDifference(base, box).in_band);
+    box["Box"][3] = 1.0 + 1.5e-2;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, box).in_band);
+  }
+  SECTION("a claims angle within and beyond AngleDegrees")
+  {
+    nlohmann::json turn = base;
+    turn["Vertices"][0]["TurnDegrees"] = 90.05;
+    const auto in = ClusterGeometricNearDifference(base, turn);
+    CHECK(in.in_band);
+    CHECK_THAT(in.claims_angle_degrees, WithinAbs(0.05, 1.0e-9));
+    turn["Vertices"][0]["TurnDegrees"] = 90.2;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, turn).in_band);
+  }
+  SECTION(
+      "context within and beyond ContextOverR; a gap cosine within and beyond GapCosine")
+  {
+    const auto in =
+        ClusterGeometricNearDifference(base, Shifted("Context", 0, "P", 0, 5.0e-2));
+    CHECK(in.in_band);
+    CHECK_THAT(in.context_deviation_over_R, WithinAbs(5.0e-2, 1.0e-12));
+    CHECK(in.claims_deviation_over_R == 0.0);
+    CHECK_FALSE(ClusterGeometricNearDifference(base, Shifted("Context", 0, "P", 0, 2.0e-1))
+                    .in_band);
+    const auto gap_in =
+        ClusterGeometricNearDifference(base, Shifted("Context", 2, "Gap", 1, 1.0e-2));
+    CHECK(gap_in.in_band);
+    CHECK_THAT(gap_in.context_gap_cosine, WithinAbs(1.0e-2, 1.0e-12));
+    CHECK_FALSE(
+        ClusterGeometricNearDifference(base, Shifted("Context", 2, "Gap", 1, 5.0e-2))
+            .in_band);
+    // A claims gap cosine beyond GapCosine is out of band though the lengths agree.
+    CHECK_FALSE(
+        ClusterGeometricNearDifference(base, Shifted("Portions", 1, "Gap", 0, 5.0e-2))
+            .in_band);
+  }
+  SECTION("a permuted context is matched as a set and recorded")
+  {
+    nlohmann::json permuted = base;
+    std::swap(permuted["Context"][0], permuted["Context"][1]);
+    permuted["Context"][1]["P"][0] = -1.5 + 3.0e-2;  // the entry now at index 1 = base's 0
+    const auto d = ClusterGeometricNearDifference(base, permuted);
+    CHECK(d.in_band);
+    CHECK(d.context_permuted);
+    CHECK_THAT(d.context_deviation_over_R, WithinAbs(3.0e-2, 1.0e-12));
+    // The one-to-one assignment: swapping the two chain entries' Gap signs changes their
+    // nearest partner, so the identity costs 2.0 (cosines) while the swap costs 0.
+    nlohmann::json swapped_gaps = base;
+    swapped_gaps["Context"][0]["Gap"] = {0.0, -1.0};
+    swapped_gaps["Context"][0]["P"] = {-1.5, 1.0, 1.5, 1.0};
+    swapped_gaps["Context"][1]["Gap"] = {0.0, 1.0};
+    swapped_gaps["Context"][1]["P"] = {-1.5, -1.0, 1.5, -1.0};
+    const auto s = ClusterGeometricNearDifference(base, swapped_gaps);
+    CHECK(s.in_band);
+    CHECK(s.context_permuted);
+    CHECK(s.context_deviation_over_R == 0.0);
+  }
+  SECTION("another context count, type or EdgeCount is no near match")
+  {
+    nlohmann::json fewer = base;
+    fewer["Context"].erase(2);
+    CHECK_FALSE(ClusterGeometricNearDifference(base, fewer).in_band);
+    nlohmann::json other_type = base;
+    other_type["Context"][2]["Conductor"] = 3;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, other_type).in_band);
+    nlohmann::json other_count = base;
+    other_count["EdgeCount"] = 3;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, other_count).in_band);
+    nlohmann::json other_claims_type = base;
+    other_claims_type["Portions"][0]["Conductor"] = 2;
+    CHECK_FALSE(ClusterGeometricNearDifference(base, other_claims_type).in_band);
+  }
+}

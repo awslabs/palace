@@ -252,6 +252,14 @@ struct IdentifiedFeature
   // Diagnostics.TaperMeanKeys; Summary.TaperMeanKeys. The keying and the placement are
   // unchanged.
   nlohmann::json taper_mean_key;
+  // Geometric near-match record (F-B2, DESIGN section 5 / A.5 (b); decision 1079; null
+  // unless a Missing SpatialEdgeCluster or ParallelEdgeCluster key matched a model within
+  // the geometric bands without an exact / quantum / alias match): a cluster's {Model,
+  // ClaimsDeviationOverR, ClaimsAngleDegrees, ContextDeviationOverR, ContextGapCosine,
+  // ContextPermuted, Rule}; a parallel-edge cluster's {Model, MaxOffsetDeviationOverR,
+  // BandOverR, Rule}. Manifest Features[].Match.Status GeometricNearMatched +
+  // Match.GeometricNearMatch; the requirement record's Status GeometricNearMatched.
+  nlohmann::json geometric_near_match;
 
   // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
   // supervisor decision 282; null for every other feature): the claims-derived support box
@@ -957,6 +965,37 @@ struct ClusterContextAgreement
 };
 ClusterContextAgreement CompareClusterContexts(const nlohmann::json &model_context,
                                                const nlohmann::json &feature_context);
+
+// F-B2 (identification fix round DESIGN section 5 / A.4 / A.5 (b); decisions 1059 / 1079):
+// the GEOMETRIC near-match of a Missing SpatialEdgeCluster key to a library model, a
+// match-time rule (hash-time canonicalisation unchanged). The claims-only signatures (the
+// signature without Context: Portions, Box, Vertices, EdgeCount, labels) share one topology
+// key and their numbers agree within kGeometricNearMatchClaimsOverRadius (arc centres by
+// the radial deviation, gap directions by the cosine, angles by
+// kGeometricNearMatchAngleDegrees); the Contexts agree as SETS: equal entry counts per type
+// ({Chain, Conductor, GapRadial, Interfaces, Law, straight / Arc}) and a one-to-one
+// assignment of minimum total deviation whose every pair lies within
+// kGeometricNearMatchContextOverRadius (gap cosines within kGeometricNearMatchGapCosine);
+// Permuted = that assignment is not the identity. Exact keeps precedence; among several
+// models the smallest claims deviation. Basis (A.4 (b) / (c)): on the in-library pairs of
+// v3-j inside the band the within-R correction differs by <= 0.85 % (clusters) / 0.99 %
+// (clusters of parallel edges) per interface Type against the 2 % bar; the quantum
+// near-match (4 quanta) stays the float-noise absorber underneath.
+constexpr double kGeometricNearMatchClaimsOverRadius = 1.0e-2;
+constexpr double kGeometricNearMatchContextOverRadius = 1.0e-1;
+constexpr double kGeometricNearMatchAngleDegrees = 0.1;
+constexpr double kGeometricNearMatchGapCosine = 2.0e-2;
+struct ClusterGeometricNearMatch
+{
+  bool in_band = false;  // false: another topology / counts, or a number beyond the band
+  double claims_deviation_over_R = 0.0;   // the largest claims-side length deviation
+  double claims_angle_degrees = 0.0;      // the largest claims-side angle deviation
+  double context_deviation_over_R = 0.0;  // the largest assigned context length deviation
+  double context_gap_cosine = 0.0;        // the largest assigned context gap cosine
+  bool context_permuted = false;
+};
+ClusterGeometricNearMatch ClusterGeometricNearDifference(const nlohmann::json &feature,
+                                                         const nlohmann::json &model);
 
 // The Match.QuantumNearMatch record of a feature matched to a model within the quantum
 // near-match (null for an exact-hash match): {ModelKey, FeatureKey, MaxDeltaQuanta,
