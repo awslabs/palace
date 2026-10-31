@@ -1,0 +1,15 @@
+dataset,solution,element,order,resolution_kind,resolution,h,primary_dofs,potential_l2_error,electric_l2_error
+cartesian-smooth,non-homogeneous,hexahedron,1,N,4,0.25,125,0.09675756955263333,1.1109420315575615
+cartesian-smooth,non-homogeneous,hexahedron,1,N,8,0.125,729,0.025440966345351937,0.5406544300353869
+cartesian-smooth,non-homogeneous,hexahedron,1,N,16,0.0625,4913,0.006419393969724679,0.2679415258799519
+cartesian-smooth,non-homogeneous,hexahedron,2,N,4,0.25,729,0.0077013127000636625,0.20350998296928927
+cartesian-smooth,non-homogeneous,hexahedron,2,N,8,0.125,4913,0.0009889719202282462,0.05161380324051771
+cartesian-smooth,non-homogeneous,hexahedron,2,N,16,0.0625,35937,0.00012465325680770218,0.012949532538742158
+cartesian-smooth,non-homogeneous,hexahedron,3,N,4,0.25,2197,0.000693733837664833,0.026632186388676676
+cartesian-smooth,non-homogeneous,hexahedron,3,N,8,0.125,15625,4.4424550226918024e-5,0.0033842740602143674
+cartesian-smooth,non-homogeneous,hexahedron,3,N,16,0.0625,117649,2.7955412748858124e-6,0.0004247881252147986
+curved-polynomial,polynomial,curved-tetrahedron,2,refinement,0,1.0,549,0.21330437965155194,1.4033136921497842
+curved-polynomial,polynomial,curved-tetrahedron,2,refinement,1,0.5,3689,0.03255817710947109,0.37110401988470104
+curved-polynomial,polynomial,curved-tetrahedron,2,refinement,2,0.25,26961,0.004420107981954892,0.09530834393106415
+affine-polynomial,polynomial,hexahedron,2,N,4,0.25,729,3.685672831390015e-14,4.4832842871777913e-13
+affine-polynomial,polynomial,tetrahedron,2,N,4,0.25,729,5.0566761494469087e-14,7.857716106252735e-13
