@@ -18961,7 +18961,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 20},
+  nlohmann::json cache = {{"Version", 21},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -19115,10 +19115,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 20,
+      data.value("Version", 0) == 21,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 20 carries the feature, mesh segment, chain stretch, own-edge "
+          << " (version 21 carries the feature, mesh segment, chain stretch, own-edge "
              "offset and own-cell pre-image (decision 537) of every patch, the claims, "
              "support box, chain and foreign (Chain: false, decision 553) context pieces "
              "of every spatial cluster patch, the raw claims of every vertex coupon "
@@ -19151,7 +19151,15 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "version-19 cache written by a pre-T5 binary with a library carrying a "
              "T5-grown model places the UNGROWN model where the T5 binary places the grown "
              "one, a divergence the cache's patch content cannot show (the 527 / 781 "
-             "merge-order rule); delete a stale cache)!");
+             "merge-order rule); version 21 is written by the binary that clusters two "
+             "vertex sites whose +-R coupon cubes overlap under the oriented "
+             "separating-axis test (the identification's vertex-vertex rule, idfix DESIGN "
+             "A.5 (a) / B.1) and places a Missing cluster or pair key near-matched to a "
+             "library model (GeometricNearMatched / NearMatched, idfix sections 4 / 5; "
+             "decisions 1062 / 1087): a version-20 cache written by a pre-idfix binary "
+             "carries that binary's two corner patches where this binary forms one RAW "
+             "cluster, and no patch where this binary places the near-matched model, a "
+             "divergence the cache's patch content cannot show; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -19360,7 +19368,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
            snap.at("Distance").get<double>()});
     }
     MFEM_VERIFY(entry.contains("ProbeSnapsComputed"),
-                "Response-geometry cache version 20 patch of model "
+                "Response-geometry cache version 21 patch of model "
                     << patch.model
                     << " carries no ProbeSnapsComputed (a cache written before decision "
                        "632); delete the stale cache!");
@@ -25132,7 +25140,7 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
         "MaxDisplacement and the Knots (Knot = trace vertex, Segment / Arc of the "
         "identification, Displacement in mesh-file units) are recorded per patch; the "
         "snaps are computed at the placement and travel with the geometry cache "
-        "(version 20); a spatial patch placed WITHOUT them (the model's trace data not "
+        "(version 21); a spatial patch placed WITHOUT them (the model's trace data not "
         "readable at the placement - a discovery placeholder, which the geometry-only "
         "preflight places and never solves; ProbeSnapsComputed false) is refused by a "
         "solve on every rank alike (decision 632). Tolerance and AmplitudeFloor are "

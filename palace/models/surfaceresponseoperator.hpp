@@ -1657,7 +1657,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
 // wholly inside pair already owned that a partial pair's box also contains (owned as
 // before, the owned length split equally among the owners: re-attributed, not newly owned).
 // Keys, boxes and the identification are untouched (a placement rule);
-// the geometry cache (version 20) stores the unplaced patches and this pass runs on every
+// the geometry cache (version 21) stores the unplaced patches and this pass runs on every
 // load, so no cache version change.
 struct ContinuationOwnership
 {
