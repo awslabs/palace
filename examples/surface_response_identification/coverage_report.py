@@ -20,7 +20,7 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
      a SECOND partition (Excluded:<class> rows beside the physical one, EXCLUDED_ROW_PREFIX),
      UnprobedModels among them is APPLIED energy.
   B  the NAMED RESIDUAL TABLE: the terms the band does not calibrate, with their bounds of record.
-  C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v3.json, written by
+  C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v5.json, written by
      coverage_calibration.py) and ONE label HIGH / MEDIUM / LOW with its reasons; the gap term
      100 x [r_other |g| + sum_c r_c b_c] (band_table; b_CornerArmTrim = |g_corner|).
   D  QUOTABILITY: the AMR ladder (ft per Type and its steps), the DEPTH rule, the closure spread.
@@ -96,8 +96,12 @@ LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # examples/<dir>/ level is read by test-schema's "Example Configs" case as a Palace config).
 # v3 (idfix lane C, decision 1096 (4)): the re-fit on records-v3 (the new-binary manifests); every fitted number equals v2's (the
 # new records change the LENGTH partition and the named rows, not the ENERGY-mode raw shares / class levers the fit reads).
-# RG-8's calibration WITH the exclusion-energy column (DESIGN 8 (e); records with the export ON) = coverage_bands_v4 (decision 1101).
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v3.json")
+# RG-8's calibration WITH the exclusion-energy column (DESIGN 8 (e); records with the export ON) = coverage_bands_v4 (decision 1101;
+# the re-grade lane's record, not committed: its per-class gap form is band_table's since decision 1128).
+# v5 (idfix covfix, decisions 1125 / 1126 (4) / 1128 / 1129): the v3 fit re-run with the corrected reader (the Total row, the F2
+# owner credit, UnprobedModels applied, the two partitions): the fitted numbers + LOO identical to v3; median_g and every run's
+# gap term move (the band file's "note" says which and why). v2 / v3 kept.
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v5.json")
 
 
 class MissingInput(Exception):
@@ -1676,7 +1680,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("postpro", nargs="?", help="the run's postpro directory (omit with --preflight)")
     parser.add_argument("--manifest", required=True, help="the preflight manifest surface-response-requirements.json")
-    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v3.json)")
+    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v5.json)")
     parser.add_argument("--no-bands", action="store_true", help="coverage only (blocks A / B / D; no band, no label)")
     parser.add_argument("--discovery", help="the discovery closure manifest (UnbuildableRequirements keys)")
     parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run directory")

@@ -7,11 +7,14 @@ only -> M0, the LOO coverage counting, the widening factor, the Wilson CI, bitwi
 import json
 import os
 import random
+import shutil
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coverage_calibration as cc  # noqa: E402
+import coverage_report as cr  # noqa: E402
 
 
 def make_cells(n, law, noise=0.3, seed=7):
@@ -125,6 +128,41 @@ class FitTest(unittest.TestCase):
                  {"pred": {"SA": {"classes_share_length": {"IsolatedEdge": 0.5, "ConvexCorner": 0.01}},
                            "MS": {"classes_share_length": {}}, "MA_sharp": {"classes_share_length": {}}}}]
         self.assertEqual(cc.class_census(cells), {"IsolatedEdge": 2, "ConvexCorner": 1})
+
+    def test_v5_band_file_is_the_default_and_restates_v3s_fit(self):
+        """data/coverage_bands_v5.json (covfix lane, decisions 1125 / 1126 (4) / 1128 / 1129): the default band file; its fitted
+        numbers and LOO coverage + CI per family x Type equal v3's (the predictors are untouched by the reader fixes); median_g
+        moves (g reads the credited raw); the note says which numbers move and why."""
+        here = os.path.dirname(os.path.abspath(cr.__file__))
+        v5 = cr.load_bands(os.path.join(here, "data", "coverage_bands_v5.json"))
+        v3 = cr.load_bands(os.path.join(here, "data", "coverage_bands_v3.json"))
+        self.assertEqual(os.path.basename(cr.DEFAULT_BANDS), "coverage_bands_v5.json")
+        self.assertEqual(v5["version"], "v5")
+        self.assertIn("IDENTICAL to v3", v5.get("note", ""))
+        for family, fam in v3["families"].items():
+            self.assertEqual(fam["class_census"], v5["families"][family]["class_census"])
+            for t, e3 in fam["types"].items():
+                e5 = v5["families"][family]["types"][t]
+                for key in ("model", "coefficients", "H_pt", "widened", "n", "median_residual_pt", "n_energy_mode"):
+                    self.assertEqual(e3[key], e5[key], f"{family} {t} {key}")
+                self.assertEqual({k: v for k, v in e3["loo_coverage"].items() if k != "cells"},
+                                 {k: v for k, v in e5["loo_coverage"].items() if k != "cells"}, f"{family} {t} loo")
+                if t != "C":
+                    self.assertNotEqual(e3["median_g"], e5["median_g"], f"{family} {t} median_g")
+
+    def test_note_option_is_stamped(self):
+        records = {"families": {}}
+        tmp = tempfile.mkdtemp(prefix="covcal-")
+        try:
+            rec = os.path.join(tmp, "records.json")
+            with open(rec, "w") as f:
+                json.dump(records, f)
+            out = os.path.join(tmp, "bands.json")
+            cc.main(["--records", rec, "--output", out, "--tag", "t", "--note", "why the numbers move", "--quiet"])
+            with open(out) as f:
+                self.assertEqual(json.load(f)["note"], "why the numbers move")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

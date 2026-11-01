@@ -307,6 +307,8 @@ def main(argv=None):
     parser.add_argument("--fit-date", help="ISO date stamped in the file (default: today, UTC)")
     parser.add_argument("--lean-output", help="also write the band file WITHOUT the per-cell evaluation (the copy "
                         "committed as data/coverage_bands_v<n>.json: the fitted numbers + the provenance shas)")
+    parser.add_argument("--note", help="a provenance note stamped in the file (bands[\"note\"]: which numbers move vs the previous "
+                        "version and why; decision 1126 (4))")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
     log = (lambda s: None) if args.quiet else (lambda s: print(s, flush=True))
@@ -327,6 +329,8 @@ def main(argv=None):
     bands = {"version": args.tag, "tool": "coverage_calibration.py", "fit_date": args.fit_date or datetime.date.today().isoformat(),
              "target_coverage": TARGET_COVERAGE, "residual_quantile": RESIDUAL_QUANTILE, "dev_set_caveat": DEV_SET_CAVEAT,
              "families": {}, "provenance": {"inputs": inputs, "n_per_family": {}}}
+    if args.note:
+        bands["note"] = args.note
     loaded = {}
     for family, spec in records.get("families", {}).items():
         log(f"family {family}: {len(spec.get('calibrate', []))} calibration + {len(spec.get('test', []))} test cells")
