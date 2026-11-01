@@ -750,7 +750,10 @@ PAIRED_CONDUCTOR_LABELS = {
 
 def canonical_conductor_labels(labels):
     """One-based Conductor labels in order of first appearance (normalize_parallel_edges' canonical form; a 0-based
-    coupon row reads the same as its 1-based model)."""
+    coupon row reads the same as its 1-based model). Any row is RENUMBERED to this form (a non-canonical row such as
+    (2, 1, 1, 2) reads as (1, 2, 2, 1), where normalize_parallel_edges refuses it on the coupon side): the matcher compares
+    conductor PARTITIONS, which is the label-aware match up to a relabelling (review d1147 MINOR-1); on every row the planner
+    admits (canonical or 0-based) the two agree."""
     labels = [int(label) for label in labels]
     order = []
     for label in labels:
