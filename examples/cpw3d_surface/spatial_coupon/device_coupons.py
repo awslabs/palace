@@ -718,14 +718,15 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             # An Unsupported preparation is built by NO family (its Reason beside names why: a boundary law
             # unverified, an unknown topology, or a piece form that is not derivable - decision 1145); every other
             # method is a 2D family built by the planner (confirmation d1140 MINOR-C: one Rule text per case).
-            rule = ("not a coupon of the Gmsh-only spatial library: Preparation.Method Unsupported, built by no family "
-                    "(its Reason beside)" if method == "Unsupported" else
-                    f"not a coupon of the Gmsh-only spatial library: built by its own family ({method})")
+            out_of_scope_rule = (
+                "not a coupon of the Gmsh-only spatial library: Preparation.Method Unsupported, built by no family "
+                "(its Reason beside)" if method == "Unsupported" else
+                f"not a coupon of the Gmsh-only spatial library: built by its own family ({method})")
             record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": method,
                                          "Reason": coupon["Preparation"].get("Reason"),
                                          "DeviceOccurrences": coupon["DeviceOccurrences"],
                                          "DeviceEdgeLength": coupon["DeviceEdgeLength"],
-                                         "Rule": rule})
+                                         "Rule": out_of_scope_rule})
             continue
         contract = None
         flag_only = False
