@@ -2902,6 +2902,26 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 PREPARE.with_heldout_escalation(build, SimpleNamespace(basis_size=96, samples=1200, heldout_escalation=False), "coupon-d")
             self.assertEqual(calls, [(96, 1200)])
 
+    def test_non_heldout_failure_at_the_escalated_attempt_propagates_fail_closed(self):
+        # review d1126 MINOR-5 / decision 1133 Q3 (a): a NON-held-out failure at the 1.5x attempt (e.g. mesh convergence) is
+        # not escalated again and propagates as the builder's own error; the first record keeps its Attempt-1 block as
+        # written (Outcome HeldOutFailure, Escalation 144 / 1800) with no second-attempt cross-reference (no write beyond 1116)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = SimpleNamespace(basis_size=96, samples=1200, heldout_escalation=True)
+            build, calls = self.escalation_builder(root, ["heldout", "fail"])
+            with self.assertRaisesRegex(RuntimeError, "^probe convergence failed$"):
+                PREPARE.with_heldout_escalation(build, args, "coupon-e")
+            self.assertEqual(calls, [(96, 1200), (144, 1800)])                      # no third attempt
+            first = PREPARE.load_json(root / "attempt-0" / "qualification.json")
+            self.assertTrue(first["HeldOutFailure"])
+            block = first["HeldOutEscalation"]
+            self.assertEqual((block["Attempt"], block["Outcome"], block["Escalation"]), (1, "HeldOutFailure", {"BasisSize": 144, "Samples": 1800}))
+            self.assertEqual(sorted(block), ["Attempt", "Escalation", "Factor", "Outcome", "Rule", "Settings"])
+            second = PREPARE.load_json(root / "attempt-1" / "qualification.json")
+            self.assertEqual((second["Passed"], second["HeldOutFailure"]), (False, False))
+            self.assertNotIn("HeldOutEscalation", second)
+
     def test_recorded_heldout_failure_is_not_resolved_and_the_rule_is_default_on(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
