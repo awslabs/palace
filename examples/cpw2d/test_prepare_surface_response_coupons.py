@@ -2826,6 +2826,127 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             )
             self.assertFalse(manifest["Passed"])
 
+    # --- the held-out escalation rule (decisions 1116 / 1126 (6) / 1128 Q3) ---
+
+    def test_heldout_only_failure_and_escalated_args(self):
+        passed = {"Passed": True, "MatrixChecks": [{"Passed": True}], "ConvergenceChecks": [], "HeldoutChecks": [{"Passed": True}]}
+        heldout = {"Passed": False, "MatrixChecks": [{"Passed": True}], "ConvergenceChecks": [{"Passed": True}],
+                   "HeldoutChecks": [{"Passed": True}, {"Quantity": "interface-2", "RelativeErrorPercent": 11.09, "Passed": False}]}
+        matrix = {"Passed": False, "MatrixChecks": [{"Passed": False}], "ConvergenceChecks": [], "HeldoutChecks": [{"Passed": False}]}
+        self.assertFalse(PREPARE.heldout_only_failure(passed))
+        self.assertTrue(PREPARE.heldout_only_failure(heldout))            # the RG-7 L2 case: MS +11.09 % alone
+        self.assertFalse(PREPARE.heldout_only_failure(matrix))            # not a held-out-only failure: no escalation
+        args = SimpleNamespace(basis_size=96, samples=1200, orders=[2, 3], force=False)
+        escalated = PREPARE.escalated_args(args)
+        self.assertEqual((escalated.basis_size, escalated.samples), (144, 1800))   # RG-7's escalation of record
+        self.assertEqual((args.basis_size, args.samples), (96, 1200))             # the original untouched
+        odd = PREPARE.escalated_args(SimpleNamespace(basis_size=50, samples=50))
+        self.assertEqual((odd.basis_size, odd.samples), (76, 76))                 # 75 -> even 76; samples >= basis
+        self.assertEqual(PREPARE.HELDOUT_ESCALATION_FACTOR, 1.5)
+
+    def escalation_builder(self, root, outcomes):
+        """A builder recording the (basis, samples) it was called with; outcomes[i] = 'heldout' / 'fail' / 'ok' per call."""
+        calls = []
+
+        def build(args):
+            index = len(calls)
+            calls.append((args.basis_size, args.samples))
+            path = root / f"attempt-{index}" / "qualification.json"
+            path.parent.mkdir(parents=True)
+            if outcomes[index] == "ok":
+                PREPARE.write_json(path, {"Passed": True, "HeldOutFailure": False})
+                return root / f"attempt-{index}" / "process-library.json", path
+            PREPARE.write_json(path, {"Passed": False, "HeldOutFailure": outcomes[index] == "heldout"})
+            if outcomes[index] == "heldout":
+                raise PREPARE.HeldOutQualificationFailure("held-out failed", path)
+            raise RuntimeError("probe convergence failed")
+        return build, calls
+
+    def test_heldout_escalation_retries_once_at_1p5x_and_records_both_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = SimpleNamespace(basis_size=96, samples=1200, heldout_escalation=True)
+            build, calls = self.escalation_builder(root, ["heldout", "ok"])
+            library, qualification = PREPARE.with_heldout_escalation(build, args, "coupon-a")
+            self.assertEqual(calls, [(96, 1200), (144, 1800)])
+            self.assertEqual(library, root / "attempt-1" / "process-library.json")
+            second = PREPARE.load_json(qualification)["HeldOutEscalation"]
+            self.assertEqual((second["Attempt"], second["Outcome"], second["Settings"]), (2, "Qualified", {"BasisSize": 144, "Samples": 1800}))
+            self.assertEqual(second["FirstAttempt"], {"Qualification": str(root / "attempt-0" / "qualification.json"), "BasisSize": 96, "Samples": 1200})
+            first = PREPARE.load_json(root / "attempt-0" / "qualification.json")["HeldOutEscalation"]
+            self.assertEqual((first["Attempt"], first["Outcome"], first["EscalatedTo"]), (1, "HeldOutFailure", str(qualification)))
+            self.assertEqual(first["Escalation"], {"BasisSize": 144, "Samples": 1800})
+            self.assertIn("decision 1116", first["Rule"])
+
+    def test_heldout_escalation_second_failure_is_unqualified_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = SimpleNamespace(basis_size=96, samples=1200, heldout_escalation=True)
+            build, calls = self.escalation_builder(root, ["heldout", "heldout"])
+            with self.assertRaisesRegex(RuntimeError, r"coupon-b: Unqualified \(fail closed.*basis 96 / samples 1200.*1.5x escalation basis 144 / samples 1800"):
+                PREPARE.with_heldout_escalation(build, args, "coupon-b")
+            self.assertEqual(calls, [(96, 1200), (144, 1800)])                      # exactly ONE retry
+            second = PREPARE.load_json(root / "attempt-1" / "qualification.json")["HeldOutEscalation"]
+            self.assertTrue(second["Unqualified"])
+            self.assertEqual((second["Attempt"], second["Outcome"]), (2, "HeldOutFailure"))
+            first = PREPARE.load_json(root / "attempt-0" / "qualification.json")["HeldOutEscalation"]
+            self.assertTrue(first["Unqualified"])
+            self.assertEqual(first["SecondAttempt"], str(root / "attempt-1" / "qualification.json"))
+            # a non-held-out failure is never escalated; the rule switched off never retries
+            build, calls = self.escalation_builder(root / "matrix", ["fail", "ok"])
+            with self.assertRaisesRegex(RuntimeError, "probe convergence failed"):
+                PREPARE.with_heldout_escalation(build, args, "coupon-c")
+            self.assertEqual(calls, [(96, 1200)])
+            build, calls = self.escalation_builder(root / "off", ["heldout", "ok"])
+            with self.assertRaises(PREPARE.HeldOutQualificationFailure):
+                PREPARE.with_heldout_escalation(build, SimpleNamespace(basis_size=96, samples=1200, heldout_escalation=False), "coupon-d")
+            self.assertEqual(calls, [(96, 1200)])
+
+    def test_recorded_heldout_failure_is_not_resolved_and_the_rule_is_default_on(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "qualification.json"
+            PREPARE.write_json(path, {"Fingerprint": "k", "Passed": False, "HeldOutFailure": True})
+            args = SimpleNamespace(force=False)
+            with self.assertRaisesRegex(PREPARE.HeldOutQualificationFailure, "recorded, not re-solved"):
+                PREPARE.raise_recorded_heldout_failure(PREPARE.load_json(path), "k", path, args, "Parallel-cluster")
+            PREPARE.raise_recorded_heldout_failure(PREPARE.load_json(path), "other-key", path, args, "Parallel-cluster")   # another fingerprint
+            PREPARE.raise_recorded_heldout_failure({"Fingerprint": "k", "Passed": False, "HeldOutFailure": False}, "k", path, args, "x")
+            PREPARE.raise_recorded_heldout_failure(PREPARE.load_json(path), "k", path, SimpleNamespace(force=True), "x")      # --force rebuilds
+            # default ON through the planner's execute: the manifest records the rule and the families
+            coupon = endpoint_coupon()
+            coupon["Id"] = "pec"
+            coupon["Topology"] = "ParallelEdgeCluster"
+            coupon["Preparation"] = {"Method": "ParallelClusterCoupon"}
+            plan = {"SourceManifest": "requirements.json", "Coupons": [coupon]}
+            source = root / "source.json"
+            source.write_text('{"Version": 3, "Fabrication": {}}\n')
+            args = SimpleNamespace(cache=root / "cache", output=root / "output", name="lib", basis_size=96, samples=1200)
+            seen = []
+
+            def build(coupon, args, parameters, cache):
+                seen.append((args.basis_size, args.samples))
+                if len(seen) == 1:
+                    first = root / "first-qualification.json"
+                    PREPARE.write_json(first, {"Passed": False, "HeldOutFailure": True})
+                    raise PREPARE.HeldOutQualificationFailure("held-out", first)
+                second = root / "second-qualification.json"
+                PREPARE.write_json(second, {"Passed": True})
+                return root / "escalated-library.json", second
+
+            with (mock.patch.object(PREPARE, "process_parameters", return_value={}),
+                  mock.patch.object(PREPARE, "build_parallel_cluster", side_effect=build),
+                  mock.patch.object(PREPARE, "run", return_value=0)):
+                self.assertTrue(PREPARE.execute(plan, source, args))
+            self.assertEqual(seen, [(96, 1200), (144, 1800)])
+            self.assertEqual(plan["Execution"]["Failures"], [])
+            manifest = PREPARE.load_json(root / "output" / "library" / "qualification-manifest.json")
+            self.assertEqual(manifest["GeneratedLibraries"], [str(root / "escalated-library.json")])
+            self.assertEqual(manifest["HeldOutEscalation"]["Enabled"], True)
+            self.assertEqual(manifest["HeldOutEscalation"]["Families"], ["StraightEdgeBuilder", "ParallelClusterCoupon"])
+            self.assertEqual(manifest["HeldOutEscalation"]["NotApplicable"], ["CornerCoupon", "SpatialCoupon"])
+            self.assertEqual(PREPARE.load_json(root / "second-qualification.json")["HeldOutEscalation"]["Outcome"], "Qualified")
+
     def test_execute_parallel_coupon_jobs_preserves_plan_order(self):
         coupons = []
         for index in range(3):

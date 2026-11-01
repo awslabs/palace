@@ -1100,6 +1100,104 @@ def add_local_pieces_form(spec, args):
     return spec
 
 
+# The held-out escalation rule (decisions 1116 / 1126 (6) / 1128 Q3; the evidence: RG-7's one-reference 3 / 3 / 3 coupon
+# FAILED its held-out check at the planner defaults (basis 96 / samples 1200: fabricated MS +11.09 % vs the 10 % bar, PBS 83667)
+# and QUALIFIED at 1.5x (basis 144 / samples 1800: MS +6.40 %, PBS 83740); T2 ran on that library). On a held-out-ONLY failure
+# (the matrix + convergence checks pass) ONE retry at 1.5x --basis-size / --samples; a second failure = Unqualified, fail closed.
+# Only the two 2D families carry the lever: ParallelClusterCoupon (per coupon) and StraightEdgeBuilder (family-wide); corner /
+# spatial coupons are not escalated. The escalated build has its own cache root and model Name (the fingerprint carries
+# BasisSize / Samples: d54065837782 at the defaults -> 9c177156962b at 1.5x on RG-7). Default ON (--no-heldout-escalation).
+HELDOUT_ESCALATION_FACTOR = 1.5
+HELDOUT_ESCALATION_FAMILIES = ("StraightEdgeBuilder", "ParallelClusterCoupon")
+HELDOUT_ESCALATION_NOT_APPLICABLE = ("CornerCoupon", "SpatialCoupon")
+HELDOUT_ESCALATION_RULE = ("decision 1116: on a held-out-only qualification failure ONE retry at 1.5x --basis-size / --samples; a "
+                           "second failure = Unqualified (fail closed); the two attempts' records point at each other")
+
+
+class HeldOutQualificationFailure(RuntimeError):
+    """A coupon family failed its qualification ONLY on the held-out checks (the matrix / convergence checks passed); the
+    escalation rule applies. qualification_path = the attempt's planner record (already written)."""
+
+    def __init__(self, message, qualification_path):
+        super().__init__(message)
+        self.qualification_path = Path(qualification_path)
+
+
+def heldout_only_failure(report):
+    """True when a qualify_surface_response.py report fails ONLY on its HeldoutChecks."""
+    if report.get("Passed"):
+        return False
+    other = list(report.get("MatrixChecks") or []) + list(report.get("ConvergenceChecks") or [])
+    heldout = list(report.get("HeldoutChecks") or [])
+    return all(check.get("Passed") for check in other) and any(not check.get("Passed") for check in heldout)
+
+
+def escalated_args(args, factor=HELDOUT_ESCALATION_FACTOR):
+    """A copy of the planner arguments at factor x --basis-size (rounded up to an even number: the generators require it) and
+    factor x --samples (at least the basis size); everything else identical."""
+    escalated = copy.copy(args)
+    basis = int(math.ceil(args.basis_size * factor))
+    escalated.basis_size = basis + (basis % 2)
+    escalated.samples = max(int(math.ceil(args.samples * factor)), escalated.basis_size)
+    return escalated
+
+
+def record_heldout_escalation(qualification_path, block):
+    """Merge `block` into the planner record's HeldOutEscalation (the coupon's record of the rule's course)."""
+    qualification = load_json(qualification_path)
+    qualification["HeldOutEscalation"] = {**(qualification.get("HeldOutEscalation") or {}), **block}
+    write_json(qualification_path, qualification)
+
+
+def with_heldout_escalation(builder, args, label):
+    """Run builder(args); on a HeldOutQualificationFailure retry ONCE with escalated_args (when the rule is on); a second
+    held-out failure = Unqualified, fail closed, both records cross-referenced. -> (library, qualification path)."""
+    if not getattr(args, "heldout_escalation", True):
+        return builder(args)
+    try:
+        return builder(args)
+    except HeldOutQualificationFailure as first:
+        escalated = escalated_args(args)
+        settings = {"BasisSize": args.basis_size, "Samples": args.samples}
+        escalated_settings = {"BasisSize": escalated.basis_size, "Samples": escalated.samples}
+        print(f"Held-out qualification failed for {label} at basis {args.basis_size} / samples {args.samples}: ONE escalation "
+              f"at {HELDOUT_ESCALATION_FACTOR}x (basis {escalated.basis_size} / samples {escalated.samples}; {HELDOUT_ESCALATION_RULE})",
+              flush=True)
+        record_heldout_escalation(first.qualification_path, {"Rule": HELDOUT_ESCALATION_RULE, "Attempt": 1, "Factor": HELDOUT_ESCALATION_FACTOR,
+                                                              "Settings": settings, "Outcome": "HeldOutFailure", "Escalation": escalated_settings})
+        try:
+            library, qualification_path = builder(escalated)
+        except HeldOutQualificationFailure as second:
+            record_heldout_escalation(second.qualification_path, {"Rule": HELDOUT_ESCALATION_RULE, "Attempt": 2, "Factor": HELDOUT_ESCALATION_FACTOR,
+                                                                   "Settings": escalated_settings, "Outcome": "HeldOutFailure", "Unqualified": True,
+                                                                   "FirstAttempt": {"Qualification": str(first.qualification_path), **settings}})
+            record_heldout_escalation(first.qualification_path, {"SecondAttempt": str(second.qualification_path), "Unqualified": True})
+            raise RuntimeError(
+                f"{label}: Unqualified (fail closed, {HELDOUT_ESCALATION_RULE}): the held-out check failed at basis {args.basis_size} / "
+                f"samples {args.samples} ({first.qualification_path}) and at the {HELDOUT_ESCALATION_FACTOR}x escalation basis "
+                f"{escalated.basis_size} / samples {escalated.samples} ({second.qualification_path})") from second
+        record_heldout_escalation(qualification_path, {"Rule": HELDOUT_ESCALATION_RULE, "Attempt": 2, "Factor": HELDOUT_ESCALATION_FACTOR,
+                                                       "Settings": escalated_settings, "Outcome": "Qualified",
+                                                       "FirstAttempt": {"Qualification": str(first.qualification_path), **settings}})
+        record_heldout_escalation(first.qualification_path, {"EscalatedTo": str(qualification_path)})
+        return library, qualification_path
+
+
+def raise_recorded_heldout_failure(qualification, key, qualification_path, args, family):
+    """A cache root whose record is a held-out failure at THESE settings (the same fingerprint) is not re-solved: the recorded
+    failure is raised again so that the escalation (or the fail-closed verdict) follows from the record; --force rebuilds."""
+    if (
+        qualification
+        and qualification.get("Fingerprint") == key
+        and qualification.get("HeldOutFailure")
+        and not args.force
+    ):
+        raise HeldOutQualificationFailure(
+            f"{family} held-out qualification failed at these settings (recorded, not re-solved; --force rebuilds): {qualification_path}",
+            qualification_path,
+        )
+
+
 def build_straight(coupons, args, parameters, cache):
     for coupon in coupons:
         require_verified_boundary_conditions(coupon)
@@ -1137,6 +1235,7 @@ def build_straight(coupons, args, parameters, cache):
     ):
         print(f"Reusing completed straight-edge cache {root}")
         return final_library, qualification_path
+    raise_recorded_heldout_failure(qualification, key, qualification_path, args, "Straight-edge")
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
@@ -1216,6 +1315,7 @@ def build_straight(coupons, args, parameters, cache):
     previous = order_roots[args.orders[-2]]
     current = order_roots[args.orders[-1]]
     checks = []
+    reports = []
     passed = True
     for coupon in coupons:
         old_coupon = straight_coupon_directory(previous, coupon)
@@ -1250,6 +1350,9 @@ def build_straight(coupons, args, parameters, cache):
             }
         )
         passed = passed and code == 0 and result.get("Passed", False)
+        reports.append(result)
+    # held-out-ONLY when every failing coupon of the family fails on its held-out checks alone
+    heldout_failure = not passed and all(r.get("Passed") or heldout_only_failure(r) for r in reports)
     qualification = {
         "Version": 1,
         "Fingerprint": key,
@@ -1257,8 +1360,11 @@ def build_straight(coupons, args, parameters, cache):
         "Library": str(final_library),
         "Checks": checks,
         "Passed": passed,
+        "HeldOutFailure": heldout_failure,
     }
     write_json(qualification_path, qualification)
+    if heldout_failure:
+        raise HeldOutQualificationFailure(f"Straight-edge held-out qualification failed: {qualification_path}", qualification_path)
     if not passed:
         raise RuntimeError(f"Straight-edge qualification failed: {qualification_path}")
     stamp_library_boundary_conditions(final_library, coupons)
@@ -1473,6 +1579,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             None if getattr(args, "probe_study_only", False) else final_library,
             qualification_path,
         )
+    raise_recorded_heldout_failure(qualification, key, qualification_path, args, "Parallel-cluster")
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
@@ -1648,6 +1755,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
     )
     response = load_json(response_report)
     passed = response_code == 0 and response.get("Passed", False)
+    heldout_failure = not passed and heldout_only_failure(response)
     qualification = {
         "Version": 1,
         "Fingerprint": key,
@@ -1657,8 +1765,13 @@ def build_parallel_cluster(coupon, args, parameters, cache):
         "ConvergenceReport": str(convergence_report),
         "MeshConvergenceReport": str(mesh_convergence_report),
         "Passed": passed,
+        "HeldOutFailure": heldout_failure,
     }
     write_json(qualification_path, qualification)
+    if heldout_failure:
+        raise HeldOutQualificationFailure(
+            f"Parallel-cluster held-out qualification failed: {qualification_path}", qualification_path
+        )
     if not passed:
         raise RuntimeError(
             f"Parallel-cluster qualification failed: {qualification_path}"
@@ -2644,7 +2757,9 @@ def execute(plan, library_path, args):
                 (
                     straight,
                     "StraightEdgeBuilder",
-                    lambda: build_straight(straight, args, parameters, cache),
+                    lambda: with_heldout_escalation(
+                        lambda a: build_straight(straight, a, parameters, cache), args, "straight-edge family"
+                    ),
                 )
             )
         )
@@ -2653,8 +2768,8 @@ def execute(plan, library_path, args):
     for coupon in missing:
         method = coupon["Preparation"]["Method"]
         if method == "ParallelClusterCoupon":
-            builder = lambda coupon=coupon: build_parallel_cluster(
-                coupon, args, parameters, cache
+            builder = lambda coupon=coupon: with_heldout_escalation(
+                lambda a, coupon=coupon: build_parallel_cluster(coupon, a, parameters, cache), args, coupon["Id"]
             )
         elif method == "CornerCoupon":
             builder = lambda coupon=coupon: build_corner(
@@ -2716,6 +2831,9 @@ def execute(plan, library_path, args):
         "Failures": failures,
         "Skipped": skipped,
         "SignatureModels": stamped,
+        "HeldOutEscalation": {"Rule": HELDOUT_ESCALATION_RULE, "Enabled": getattr(args, "heldout_escalation", True),
+                              "Factor": HELDOUT_ESCALATION_FACTOR, "Families": list(HELDOUT_ESCALATION_FAMILIES),
+                              "NotApplicable": list(HELDOUT_ESCALATION_NOT_APPLICABLE)},
         "GeometryComplete": geometry_complete,
         "ProbeStudyComplete": probe_study_complete,
         "QualificationRequired": not coverage_only and not probe_study_only,
@@ -2924,11 +3042,15 @@ def parse_args():
                              "on the library entries; the straight / parallel-cluster cache keys carry the form and the PEC model Name "
                              "the -pieces<P> suffix). Default OFF: every output byte-identical to the one-reference form")
     parser.add_argument("--max-heldout-error", type=float, default=10.0)
+    parser.add_argument("--no-heldout-escalation", action="store_true",
+                        help=f"switch the held-out escalation rule OFF ({HELDOUT_ESCALATION_RULE}; default ON for "
+                             f"{' / '.join(HELDOUT_ESCALATION_FAMILIES)})")
     parser.add_argument("--max-fabricated-matrix-change", type=float, default=5.0)
     parser.add_argument("--max-fabricated-energy-change", type=float, default=10.0)
     parser.add_argument("--max-domain-defect-change", type=float, default=5.0)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    args.heldout_escalation = not args.no_heldout_escalation
     args.output = args.output.expanduser().resolve()
     args.cache = (
         args.cache.expanduser().resolve()
