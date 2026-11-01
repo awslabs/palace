@@ -1661,10 +1661,10 @@ def generate_parallel_cluster_meshes(
 
 
 def parallel_cluster_spec(coupon, edges, args, parameters, local_pieces=None):
-    """The parallel-cluster planner cache spec; `local_pieces` None = the coupon's planned form (coupon_local_pieces)."""
+    """The parallel-edge-cluster planner cache spec (its fingerprint names the cache root and the model Name);
+    `local_pieces` None = the coupon's planned form (coupon_local_pieces)."""
     if local_pieces is None:
         local_pieces = coupon_local_pieces(coupon)
-    """The parallel-edge-cluster planner cache spec (its fingerprint names the cache root and the model Name)."""
     resolution = process_resolution(
         parameters, args.cluster_lc_fine, args.min_process_feature_elements
     )
@@ -3207,8 +3207,9 @@ def parse_args():
                              "signature CSV and the same-conductor-gap mesher carry Conductor := piece; Edges[].LocalPiece / LocalPieces "
                              "on the library entries; the straight / parallel-cluster cache keys carry the form and the model Name "
                              "the -pieces<P> suffix). THE DEFAULT since decision 1136 (4) for every coupon whose cross-section / plan "
-                             "view holds a label with >= 2 pieces (Preparation.LocalPieces in the plan); this flag names the default "
-                             "explicitly and is refused with --one-reference")
+                             "view holds a label with >= 2 pieces (Preparation.LocalPieces in the plan): this flag is the explicit NAME "
+                             "of that default and has NO effect beyond refusing --one-reference (kept for command-line compatibility "
+                             "with the records; decision 1145 Q2)")
     parser.add_argument("--one-reference", action="store_true",
                         help="opt out of the piece-form default (decision 1136 (4)): every coupon in the one-reference form (the ES "
                              "record form of v3-j; every output byte-identical to the pre-1136 planner)")

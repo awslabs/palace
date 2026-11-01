@@ -291,7 +291,6 @@ def piece_form_models(models, radius, fab, keys):
             out.append(model)
             continue
         model = json.loads(json.dumps(model))
-        _, model_edges = G.cluster_coupon(record_of(model), radius, fab["MetalThickness"], fab["OveretchDepth"], local_pieces=True)
         coupon, model_edges = G.cluster_coupon(record_of(model), radius, fab["MetalThickness"], fab["OveretchDepth"],
                                                local_pieces=True)
         assert [e["Point"] for e in model_edges] == [e["Point"] for e in model["Edges"]]
