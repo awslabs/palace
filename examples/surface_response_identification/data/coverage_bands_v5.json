@@ -363,7 +363,7 @@
       "note": "WIDENED x 1.2076: the unwidened LOO coverage is 10 / 12",
       "widen_k": 1.2076149972605659
      },
-     "median_g": 1.482992416934947,
+     "median_g": 1.4829924166730344,
      "median_residual_pt": 1.158540246681472,
      "model": "M0",
      "n": 12,
@@ -511,10 +511,10 @@
  },
  "fit_date": "2026-11-01",
  "full_record": {
-  "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/idfix/covfix/results/calibration/coverage-bands-v5-covfix-full.json",
-  "sha256": "828063fdec6206962e4d46231dfa6ea04c27345077d965acddcc9ab6ea757b33"
+  "path": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/idfix/covfix/results/calibration/coverage-bands-v5-fixup-full.json",
+  "sha256": "393e70c6bb7510c5a1070f7f0dbcb571047f649aabde4ff8fa0251022f95edf0"
  },
- "note": "v5 (covfix lane, decisions 1125 / 1126 (4) / 1128 / 1129) = the v3 fit re-run with the corrected reader: the fitted numbers (model, coefficients, H, widened, n, the LOO coverage and its CI90) are IDENTICAL to v3 on every family x Type (the predictors = the LENGTH class shares and the AMR ladder, untouched); what moves: (a) median_g per Type (g now reads the raw energy credited to the SCP-dropped coupons' owner clusters: ES SA -0.101 -> -0.134, MS -0.187 -> -0.215, MA 1.618 -> 1.473; Maxwell SA -0.072 -> -0.101, MS -0.171 -> -0.210, MA 1.647 -> 1.483), (b) every run's gap term (the Unclaimed remainder = the SCP-dropped in-box windows is CREDITED to the owners (F2), the raw-class Total row is no longer double-counted, the exclusion export's classes are a second partition at their b_c): the bands narrow on every window with an SCP drop (max band end move 17.46 pt: O3 MA_sharp gap 17.53 -> 0.07), in-band 125 / 139 -> 121 / 139 (4 cells now OUT: ES ctx003-C1 MS +3.90, ES sct002-S7-rc MS +2.56, Maxwell sct002-S1 MA_sharp -1.13, Maxwell sct002-S1b-rc MA_sharp -2.84), full_band_coverage_calibrate ES MS 1.0 -> 0.9 / Maxwell MA 1.0 -> 0.917; 4 labels MEDIUM -> HIGH (ES S4 / C1, Maxwell C2p / S4: their only not-HIGH reason was the RAW Unclaimed > 1 % now credited). The records carry no exclusion export, so the per-class gap form equals the TOTAL raw x |g| form on them (1128 Q1 (b)). The full per-cell evaluation and the comparison = the covfix lane record (results/calibration/coverage-bands-v5-covfix-full.json, results/bands-v5-vs-v3.{json,md}).",
+ "note": "v5 (covfix lane, decisions 1125 / 1126 (4) / 1128 / 1129; re-fit under decision 1133 after the review d1126) = the v3 fit re-run with the corrected reader: the fitted numbers (model, coefficients, H, widened, n, the LOO coverage and its CI90) are IDENTICAL to v3 on every family x Type (the predictors = the LENGTH class shares and the AMR ladder, untouched); what moves: (a) median_g per Type (g now reads the raw energy credited to the SCP-dropped coupons' owner clusters: ES SA -0.101 -> -0.134, MS -0.187 -> -0.215, MA 1.618 -> 1.473; Maxwell SA -0.072 -> -0.101, MS -0.171 -> -0.210, MA 1.647 -> 1.483), (b) every run's gap term (the Unclaimed remainder = the SCP-dropped in-box windows is CREDITED to the owners (F2), the raw-class Total row is no longer double-counted, the exclusion export's classes are a second partition at their b_c): the bands narrow on every window with an SCP drop (max band end move 17.46 pt: O3 MA_sharp gap 17.53 -> 0.07), in-band 125 / 139 -> 121 / 139 (4 cells now OUT: ES ctx003-C1 MS +3.90, ES sct002-S7-rc MS +2.56, Maxwell sct002-S1 MA_sharp -1.13, Maxwell sct002-S1b-rc MA_sharp -2.84), full_band_coverage_calibrate ES MS 1.0 -> 0.9 / Maxwell MA 1.0 -> 0.917. The records carry no exclusion export, so the per-class gap form equals the TOTAL raw x |g| form on them (1128 Q1 (b)). RE-FIT (decision 1133, review d1126 MAJOR-1): the Maxwell loop-remainder CSV's Total row is now skipped like the raw-class CSVs' (ctx003-C1 Maxwell's LoopRemainder row halves, share 1e-10 of W_t): the only band-file change is Maxwell MA median_g 1.482992416934947 -> 1.4829924166730344 (ctx003-C1 is the median cell); and the label rule 1133 (ii) (an SCP owner credit > 1 % of W_t caps the label at MEDIUM) moves the labels of the full record (the fit does not read labels). The full per-cell evaluation and the comparison = the covfix lane record (results/calibration/coverage-bands-v5-fixup-full.json, results/bands-v5-vs-v3.{json,md}; the pre-fix v5 files coverage-bands-v5-covfix{,-full}.json kept).",
  "provenance": {
   "inputs": [
    {
