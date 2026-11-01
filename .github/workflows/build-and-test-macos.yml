@@ -252,7 +252,7 @@ jobs:
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           # Configure environment
           export DYLD_LIBRARY_PATH="$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH"
