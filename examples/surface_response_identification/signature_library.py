@@ -468,7 +468,10 @@ def refuse_duplicate_signatures(models, *, library="library"):
     whatever its form. Two models of one key tie on (deviation, rank) in the C++ matcher and the lexicographically smaller
     Name serves the key SILENTLY (surfaceresponseoperator.cpp; proved on S1 by the lane-C confirmation): RG-7's one-reference
     and -pieces3 forms of a670c49a86d8 live in separate libraries. Every library ASSEMBLY tool calls this on the models it is
-    about to write and raises DuplicateSignatureError naming the models; returns the models unchanged otherwise."""
+    about to write and raises DuplicateSignatureError naming the models; returns the models unchanged otherwise. The refusal is
+    on EXACT canonical equality of the Signature (json sort_keys): two Signatures that differ in any value, however close (the
+    one-quantum PEC pair of DESIGN A.5 (b), OffsetOverR 1e-6 apart), are two keys here; their tie in the matcher's
+    tolerance-based exact match is the C++ load-time refusal's (decision 1103 (b), post-freeze) - no tolerance is applied here."""
     duplicates = duplicate_signature_models(models)
     if duplicates:
         raise DuplicateSignatureError(

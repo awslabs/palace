@@ -753,7 +753,11 @@ def scp_owner_credit(remainder, scp_dropped, manifest_models):
     box; 100 % on O4 / O1 / S5 / S7, 99.7 % on O3 by the diagnosis). It is CREDITED to the owner cluster models' Status / class
     in proportion to each dropped coupon's in-box window length. PREMISE (named by the review d1117): the owner corrects its
     in-box region (the SCP contract of record), supported by the letters, not separately measured. No credit when the
-    remainder is <= 0, when no coupon was dropped, or when an owner is not a manifest model (recorded). -> (credited J, record)."""
+    remainder is <= 0, when no coupon was dropped, or when an owner is not a manifest model (recorded). -> (credited J, record).
+    EXTENT (review d1126 MINOR-4): the WHOLE remainder is credited whenever >= 1 drop exists and the remainder > 0; no record
+    carries the in-box windows' own energy, so a non-SCP residual (O3's 0.3 %) is credited too, and the credits of the windows
+    the diagnosis did not split (S1 / S4 / C1 / C2 ...) rest on its 19-window correlation (UNCLAIMED > 0 <=> drops >= 1). A
+    credit > 1 % of W_t caps the label at MEDIUM (SCP_OWNER_CREDIT_MEDIUM_BAR; decision 1133 (ii))."""
     record = {"energy": 0.0, "owners": [], "dropped": len(scp_dropped), "in_box_length_um": 0.0,
               "rule": "the Unclaimed remainder credited to the SCP-dropped coupons' OWNER clusters by in-box window length "
                       "(WindowLength - OutsideLength); the OutsideLength part stays the SCP RAW row",
@@ -1025,8 +1029,8 @@ NAMED_RESIDUALS = (
      "bound": "a patch whose pass rests on the amplitude floor (A_p < F = 1e-3 x the largest applied trace amplitude): FloorApplied does not imply a pass (C.4); the count is READ",
      "trigger": "Diagnostics.ConductorConsistency.FloorAppliedPatches > 0 (or Records[].FloorApplied)", "band_use": "listed (information)", "key": "floor"},
     {"term": "UnprobedModels / ConductorConsistency exclusions", "decisions": "1064 (2) / 1074 / 1082",
-     "bound": "a model class without a probe rule (UnprobedModels, RAW + exported) or a patch the gate excluded (ConductorConsistency RAW row; the LOW-CONFIDENCE banner)",
-     "trigger": "Diagnostics.ConductorConsistency.UnprobedModels non-empty or Count > 0", "band_use": "the RAW rows carry it", "key": "unprobed"},
+     "bound": "a model class without a probe rule (UnprobedModels: APPLIED energy the gate cannot probe, reported from the exclusion export, in no RAW row; decisions 1123 / 1126 (3)) or a patch the gate excluded (ConductorConsistency RAW row; the LOW-CONFIDENCE banner)",
+     "trigger": "Diagnostics.ConductorConsistency.UnprobedModels non-empty or Count > 0", "band_use": "the ConductorConsistency RAW row carries the excluded patches; UnprobedModels is applied energy (listed, no band change)", "key": "unprobed"},
     {"term": "GeometricNearPairs (the library's in-band model pairs)", "decisions": "A.4 (c) / A.5 (b); 1079 Q1 (ii); 1097 Q4",
      "bound": "a Missing key within the band of two models is served by the nearer; the pair's correction difference must be <= 2 % per Type (v3-j: max 0.99 %); a pair over the bar is RECORDED (geometric_near_pairs.py), never excluded",
      "trigger": "the manifest's Library.GeometricNearPairs non-empty; --near-pairs adds CorrectionDifference", "band_use": "listed (information); flagged pairs named", "key": "near_pairs"},
@@ -1259,8 +1263,11 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
         # |g| when the run has no corner model), TruncationCut / NonManifold / NonPlanar / every other class |g| (TruncationCut
         # labelled "fully wrong" until a mirror-off record exists; 1119); r_other = the physical partition's raw share (the
         # in-label recorded rows + the Unclaimed remainder after the F2 owner credit). Without the export (the records of
-        # record) it reduces to the TOTAL raw share x |g|; where the label exceeds sum_c r_c it equals the re-grade's v4 form,
-        # otherwise it is more conservative by sum_c r_c |g| (no clamp).
+        # record) it reduces to the TOTAL raw share x |g|. Relation to the re-grade's v4 form (regrade/tools/
+        # coverage_calibration_v4_regrade_v1.py: r_other = max(R_L - sum_c r_c, 0) with R_L the label-based raw share; review
+        # d1126 MAJOR-2 / decision 1133 (i)): gap_v5 - gap_v4 = min(R_L, sum_c r_c) |g| >= 0 - v5 >= v4 always; EQUAL only where
+        # R_L = 0 (RG-8 C4 / O2, and O4 / O3 once the F2 credit empties the remainder), more conservative by sum_c r_c |g| where
+        # R_L > sum_c r_c (RG-8 S7), by R_L |g| otherwise (no clamp).
         excluded = acc.get("excluded_shares") or {}
         r_other = acc.get("raw_share_physical", r - sum(excluded.values()))
         g_corner = acc.get("g_corner")
