@@ -29,6 +29,45 @@ INTERFACE_DEFAULTS = {
 }
 INTERFACE_LOSS = {"SA": 0.002, "MS": 0.0003, "MA": 0.03}
 
+# R0-b, the SPATIAL Edges-only form (idfix decisions 1100 / 1136 (2); the 2D form: generate_edge_cluster_response.py):
+# with --local-pieces the coupon's conductor labels are its LOCAL metal pieces (Edges[].LocalPiece / PlanViewFacets[].
+# LocalPiece, written by cluster_signature_geometry.cluster_coupon(local_pieces=True) = one piece per metal face of the
+# plan-view arrangement), not the identification's GLOBAL labels: one ConductorReference per piece, the OpenContourPaths
+# between the pieces (the existing multi-conductor form), the mesher's signature / mask / boundary CSVs tagged per piece
+# (Conductor := piece; no .jl change), and the library entry's Edges[] keep the key's Conductor labels and gain
+# LocalPiece; PlanViewBoundary stays the label form (the C++ matches it by string equality). DEFAULT OFF: every output
+# is byte-identical to the one-reference form.
+LOCAL_PIECES_RULE = ("identification fix round R0-b (decisions 1100 / 1136 (2)), the spatial Edges-only form: one conductor "
+                     "reference per metal piece of the coupon's plan view (cluster_signature_geometry.local_pieces_of_arrangement:"
+                     " one piece per metal face of the arrangement of the chain segments and the box, numbered by (Conductor, "
+                     "smallest quantized vertex)); Edges[].Conductor stays the key label (0 re-keys); PlanViewBoundary unchanged;"
+                     " conductor_state_count = pieces - 1")
+
+
+def local_pieces_coupon(coupon):
+    """The coupon with Conductor := LocalPiece on every Edge and PlanViewFacet (the generator's internal labelling under
+    --local-pieces); fails closed (ValueError, by name) when any Edge or facet lacks LocalPiece or when the pieces are not
+    exactly 1..P (P = Geometry.LocalPieces when present, else the largest piece)."""
+    relabelled = json.loads(json.dumps(coupon))
+    geometry = relabelled.get("Geometry", {})
+    if relabelled.get("Topology") != "SpatialEdgeCluster":
+        raise ValueError("--local-pieces applies to a SpatialEdgeCluster coupon only")
+    pieces = set()
+    for kind, entries in (("Edge", geometry.get("Edges", [])), ("PlanViewFacet", geometry.get("PlanViewFacets", []))):
+        for index, entry in enumerate(entries, start=1):
+            piece = entry.get("LocalPiece")
+            if not isinstance(piece, int) or isinstance(piece, bool) or piece <= 0:
+                raise ValueError(f"--local-pieces: {kind} {index} carries no positive LocalPiece (the coupon must be built by "
+                                 "cluster_signature_geometry.cluster_coupon(local_pieces=True))")
+            entry["Conductor"] = piece
+            pieces.add(piece)
+    if not geometry.get("Edges") or not geometry.get("PlanViewFacets"):
+        raise ValueError("--local-pieces needs the coupon's Edges and PlanViewFacets")
+    count = int(geometry.get("LocalPieces", max(pieces)))
+    if pieces != set(range(1, count + 1)):
+        raise ValueError(f"--local-pieces: the pieces {sorted(pieces)} are not 1..{count}")
+    return relabelled
+
 
 def load_json(path):
     try:
@@ -213,7 +252,10 @@ def frame_from_geometry(topology, geometry):
     return np.vstack((axis_x, axis_y, normal))
 
 
-def normalize_geometry(coupon, radius, span_cap_over_r=None):
+def normalize_geometry(coupon, radius, span_cap_over_r=None, canonical_labels=True):
+    """`canonical_labels` False (the --local-pieces form: the labels are the pieces, numbered by
+    cluster_signature_geometry's rule, not by first appearance along the Edges): the labels must be
+    exactly 1..P, in any order."""
     topology = coupon["Topology"]
     geometry = coupon.get("Geometry", {})
     frame = frame_from_geometry(topology, geometry)
@@ -291,8 +333,10 @@ def normalize_geometry(coupon, radius, span_cap_over_r=None):
         conductor = edge["Conductor"]
         if conductor not in labels:
             labels.append(conductor)
-        if conductor != labels.index(conductor) + 1:
+        if canonical_labels and conductor != labels.index(conductor) + 1:
             raise ValueError("Conductor labels are not canonical")
+    if not canonical_labels and sorted(labels) != list(range(1, len(labels) + 1)):
+        raise ValueError("Local-piece labels are not 1..P")
     if topology != "SpatialEdgeCluster" and labels != [1]:
         raise ValueError("Endpoint and junction coupons require one conductor")
     # The claims within half the plan span cap of the origin (the default 16 R cap: 8 R; a
@@ -1695,6 +1739,7 @@ def write_library(
     fabrication,
     model_name,
     interior_trace_count=0,
+    local_pieces=False,
 ):
     topology = coupon["Topology"]
     geometry = coupon["Geometry"]
@@ -1742,6 +1787,10 @@ def write_library(
                     "BoundaryCondition", coupon["BoundaryCondition"]
                 )
             )
+            if not local_pieces:
+                # the one-reference form never carries the leaf (a coupon built with the
+                # pieces, generated without --local-pieces, is the plain default form)
+                edge.pop("LocalPiece", None)
             model["Edges"].append(edge)
         model["EdgePositionTolerance"] = 1.0e-6 * radius
         model["EdgeAngleTolerance"] = 1.0e-6
@@ -1749,6 +1798,9 @@ def write_library(
             model["Reference"] = references[0]
         else:
             model["ConductorReferences"] = references
+        if local_pieces:
+            # the Edges above carry the coupon's LocalPiece with the key's Conductor labels
+            model["LocalPiecesRule"] = LOCAL_PIECES_RULE
     else:
         raise ValueError(f"Unsupported spatial topology {topology}")
     if "PlanViewBoundary" in geometry:
@@ -2606,6 +2658,17 @@ def main():
     parser.add_argument("--order", type=int, default=2)
     parser.add_argument("--model-name", required=True)
     parser.add_argument(
+        "--local-pieces",
+        action="store_true",
+        help=(
+            "R0-b (decisions 1100 / 1136 (2)): label the coupon's metal by its LOCAL pieces (the coupon's "
+            "Edges[].LocalPiece / PlanViewFacets[].LocalPiece from cluster_signature_geometry.cluster_coupon"
+            "(local_pieces=True)): one conductor reference per piece, OpenContourPaths between them, the mesher "
+            "CSVs tagged per piece, the library entry's Edges keep the key labels and carry LocalPiece. Default: "
+            "the identification's labels (byte-identical outputs)"
+        ),
+    )
+    parser.add_argument(
         "--signature-only",
         action="store_true",
         help="Validate the coupon and write only mesh-signature.csv",
@@ -2647,6 +2710,9 @@ def main():
 
     coupon_path = args.coupon.expanduser().resolve()
     coupon = load_json(coupon_path)
+    # The library entry reads `coupon` (the key's labels); every other consumer reads `labelled`
+    # (= coupon, or its piece-labelled copy under --local-pieces).
+    labelled = coupon
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     failure_path = output / "generation-failure.json"
@@ -2662,9 +2728,12 @@ def main():
         parser.error(str(error))
 
     try:
-        frame, edges, facets = normalize_geometry(coupon, args.radius, args.support_span_cap)
+        if args.local_pieces:
+            labelled = local_pieces_coupon(coupon)
+        frame, edges, facets = normalize_geometry(labelled, args.radius, args.support_span_cap,
+                                                  canonical_labels=not args.local_pieces)
         validate_plan_view_geometry(edges, args.radius, facets)
-        interfaces = model_interfaces(coupon)
+        interfaces = model_interfaces(labelled)
     except ValueError as error:
         stop("SpatialGeometry", error)
     failure_path.unlink(missing_ok=True)
@@ -2673,7 +2742,7 @@ def main():
         args.radius,
         args.metal_thickness,
         args.overetch_depth,
-        coupon.get("Geometry", {}).get("SupportBox"),
+        labelled.get("Geometry", {}).get("SupportBox"),
     )
     # The near-collinear merge of the boundary loops (design A3 (1)) is carried into the mask
     # BEFORE anything consumes it (decision 391 MAJOR-1: the frame check below and
@@ -2846,11 +2915,12 @@ def main():
             contour_groups,
             zero_indices,
             paths,
-            reference_points(coupon, edges, facets, frame, args.radius),
+            reference_points(labelled, edges, facets, frame, args.radius),
             interfaces,
             fabrication,
             args.model_name,
             interior_trace_count=interior_trace_count,
+            local_pieces=args.local_pieces,
         )
         write_basis_contract(
             output,
@@ -3047,11 +3117,12 @@ def main():
         contour_groups,
         zero_indices,
         paths,
-        reference_points(coupon, edges, facets, frame, args.radius),
+        reference_points(labelled, edges, facets, frame, args.radius),
         interfaces,
         fabrication,
         args.model_name,
         interior_trace_count=interior_trace_count,
+        local_pieces=args.local_pieces,
     )
     print(output / "mesh-signature.csv")
     print(output / "spatial_thin.json")

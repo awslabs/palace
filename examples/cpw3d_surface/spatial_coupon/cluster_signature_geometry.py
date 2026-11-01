@@ -1069,6 +1069,13 @@ def plan_view_faces(segments, box, radius):
     """Faces of the planar arrangement of the chain segments and the box boundary: a list of
     (polygon points ccw, metal flag, conductor). Fails closed on crossing chains, on a face
     whose bounding chain segments disagree, and on a face bounded by the box alone."""
+    return [(face["Polygon"], face["Metal"], face["Conductor"]) for face in plan_view_arrangement(segments, box, radius)]
+
+
+def plan_view_arrangement(segments, box, radius):
+    """plan_view_faces with the arrangement's structure per face: {Polygon (ccw), Metal, Conductor, Owners (the
+    indices of the chain segments bounding it, sorted), Nodes (the quantized node keys of its cycle, in order)}. The
+    same faces, in the same order, with the same values (plan_view_faces reads them from here)."""
     quantum = 1.0e-9 * radius
     tolerance = 1.0e-7 * radius
     (x0, y0), (x1, y1) = box
@@ -1151,7 +1158,7 @@ def plan_view_faces(segments, box, radius):
         area = 0.5 * sum(p[0] * q[1] - p[1] * q[0] for p, q in zip(polygon, polygon[1:] + polygon[:1]))
         if area <= 0.0:
             continue   # the outer face (clockwise)
-        metal, conductors = set(), set()
+        metal, conductors, owners = set(), set(), set()
         for index in cycle:
             start, stop, owner = half_edges[index]
             if owner is None:
@@ -1161,6 +1168,7 @@ def plan_view_faces(segments, box, radius):
             left = np.asarray((-d[1], d[0]))
             metal.add(_dot2(left, gap) < 0.0)
             conductors.add(segments[owner]["Conductor"])
+            owners.add(owner)
         if not metal:
             raise SignatureGeometryError("a face of the coupon box is bounded by no chain segment")
         if len(metal) != 1:
@@ -1168,10 +1176,68 @@ def plan_view_faces(segments, box, radius):
         is_metal = metal.pop()
         if is_metal and len(conductors) != 1:
             raise SignatureGeometryError("a metal face is bounded by portions of different conductors")
-        faces.append((polygon, is_metal, conductors.pop() if is_metal else None))
+        faces.append({"Polygon": polygon, "Metal": is_metal, "Conductor": conductors.pop() if is_metal else None,
+                      "Owners": sorted(owners), "Nodes": [half_edges[index][0] for index in cycle]})
     if not faces:
         raise SignatureGeometryError("the plan-view arrangement has no faces")
     return faces
+
+
+LOCAL_PIECES_RULE = ("idfix R0-b, the SPATIAL Edges-only form (decisions 1100 / 1136 (2) / 1142): one conductor reference per"
+                     " metal piece of the coupon's plan view = one METAL FACE of the arrangement of the chain segments and the"
+                     " box (cluster_signature_geometry.plan_view_arrangement); every Edge row (claim or context) bounds exactly"
+                     " one metal face, its LocalPiece; pieces numbered 1..P with the CONTEXT-ONLY pieces (no claim row) first,"
+                     " then the claim-bearing pieces, each group by (Conductor ascending, then the smallest quantized vertex of"
+                     " the face) - so the C++ reader's count, max(Edges[].LocalPiece) over the entry's claims, is P (decision"
+                     " 1142, amending 1100's order); two metal faces sharing a vertex are refused by name; Edges[].Conductor"
+                     " stays the key label (0 re-keys), PlanViewBoundary unchanged (the label form)")
+
+
+def local_pieces_of_arrangement(faces, row_count, claim_count=None):
+    """The LOCAL METAL PIECES of a plan-view arrangement (LOCAL_PIECES_RULE): -> (pieces, table) with pieces[i] the
+    piece (1..P) of the chain segment i (= Edge row i) for i < row_count, and table = [{Piece, Conductor, Face,
+    Claimed}] in piece order (Face = the index into `faces`). The first `claim_count` rows are the claims (default:
+    every row): a piece bounded by none of them is CONTEXT-ONLY and numbered first (decision 1142: the library entry's
+    Edges are the claims and the C++ reader counts the pieces as their largest LocalPiece, so the last piece must bear
+    a claim). Invariant to the order of the rows (the faces are geometric). Fails closed (SignatureGeometryError, by
+    name) on two metal faces touching at a vertex (or a metal face touching itself), on a row bounding no or several
+    metal faces, on a metal face bounded by no row (a piece without an edge: a reference the C++ reader cannot count)
+    and on an arrangement without a claim-bearing piece."""
+    if claim_count is None:
+        claim_count = row_count
+    if not 0 < claim_count <= row_count:
+        raise SignatureGeometryError(f"local_pieces_of_arrangement: {claim_count} claims of {row_count} rows")
+    metal = [index for index, face in enumerate(faces) if face["Metal"]]
+    node_faces = {}
+    for index in metal:
+        for key in faces[index]["Nodes"]:
+            node_faces.setdefault(key, []).append(index)
+    touching = sorted((key, sorted(set(indices))) for key, indices in node_faces.items() if len(indices) > 1)
+    if touching:
+        key, indices = touching[0]
+        raise SignatureGeometryError(
+            f"metal pieces touch at a vertex (quantized node {key}; metal faces {indices}): the local pieces of this"
+            f" plan view are undefined (refused by name, idfix R0-b / decision 1100); {len(touching)} such vertex(es)")
+    claimed = {index: any(owner < claim_count for owner in faces[index]["Owners"]) for index in metal}
+    ordered = sorted(metal, key=lambda index: (claimed[index], faces[index]["Conductor"], min(faces[index]["Nodes"])))
+    if not any(claimed.values()):
+        raise SignatureGeometryError("no metal face of the plan view bounds a claim row")
+    piece_of_face = {index: piece for piece, index in enumerate(ordered, start=1)}
+    pieces = []
+    for row in range(row_count):
+        bounded = [index for index in metal if row in faces[index]["Owners"]]
+        if len(bounded) != 1:
+            raise SignatureGeometryError(
+                f"Edge row {row} bounds {len(bounded)} metal face(s) of the plan view (exactly one is its local piece)")
+        pieces.append(piece_of_face[bounded[0]])
+    for index in ordered:
+        if not any(owner < row_count for owner in faces[index]["Owners"]):
+            raise SignatureGeometryError(
+                f"metal face {index} (piece {piece_of_face[index]}, conductor {faces[index]['Conductor']}) is bounded by"
+                " no Edge row: a local piece without an edge")
+    table = [{"Piece": piece_of_face[index], "Conductor": faces[index]["Conductor"], "Face": index, "Claimed": claimed[index]}
+             for index in ordered]
+    return pieces, table
 
 
 def triangulate(polygon):
@@ -1229,11 +1295,13 @@ def model_edges(record, radius):
     return exact_portion_edges(portions, rows)
 
 
-def cluster_coupon(record, radius, metal_thickness, overetch):
+def cluster_coupon(record, radius, metal_thickness, overetch, local_pieces=False):
     """The spatial generator's coupon (Topology, Geometry {Edges, EdgeCount, PlanViewFacets,
     PlanViewBoundary, MaskRegularization, Signature}, Interfaces, BoundaryCondition) of a
     version-2 SpatialEdgeCluster requirement record, plus the model's exact-portion Edges:
-    (coupon, model_edges)."""
+    (coupon, model_edges). With `local_pieces` (idfix R0-b, LOCAL_PIECES_RULE) every Edge row,
+    every PlanViewFacet and every model edge carries LocalPiece, and Geometry.LocalPieces = the
+    piece count P; the default output is unchanged."""
     signature = record["Signature"] if "Signature" in record else record["Geometry"]["Signature"]
     portions = portions_from_signature(signature, radius)
     vertices = vertex_points(signature, radius)
@@ -1296,16 +1364,31 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
         coupon["Geometry"]["ForeignEdges"] = foreign_edge_segments(pieces)
         coupon["Geometry"]["ContextEdgeCount"] = len(pieces)
         conductors = {p["Conductor"] for p in portions} | {p["Conductor"] for p in pieces}
-    faces = plan_view_faces(segments, box, radius)
+    faces = plan_view_arrangement(segments, box, radius)
+    piece_of_face = {}
+    if local_pieces:
+        rows = coupon["Geometry"]["Edges"]
+        pieces, table = local_pieces_of_arrangement(faces, len(rows), len(portions))   # the claims = the first rows
+        piece_of_face = {entry["Face"]: entry["Piece"] for entry in table}
+        for row, piece in zip(rows, pieces):
+            row["LocalPiece"] = piece
+        for row, piece in zip(exact_rows, pieces):   # the claims = the first len(portions) rows (segments[i] <-> rows[i])
+            row["LocalPiece"] = piece
+        coupon["Geometry"]["LocalPieces"] = len(table)
+        coupon["Geometry"]["LocalPiecesRule"] = LOCAL_PIECES_RULE
     facets = []
-    for polygon, is_metal, conductor in faces:
+    for index, face in enumerate(faces):
+        polygon, is_metal, conductor = face["Polygon"], face["Metal"], face["Conductor"]
         if not is_metal:
             continue
         for triangle in triangulate(polygon):
             # frame^T (x, y, 0) by scalar arithmetic (the scalar rule; see to_local above).
             points = [[(float(frame[0][i]) * x + float(frame[1][i]) * y) + float(frame[2][i]) * 0.0 for i in range(3)]
                       for x, y in triangle]
-            facets.append({"Conductor": conductor, "Points": points})
+            facet = {"Conductor": conductor, "Points": points}
+            if local_pieces:
+                facet["LocalPiece"] = piece_of_face[index]
+            facets.append(facet)
     if {f["Conductor"] for f in facets} != conductors:
         raise SignatureGeometryError("the plan-view mask does not cover every conductor of the signature")
     coupon["Geometry"]["PlanViewFacets"] = facets
