@@ -959,6 +959,70 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
   };
 }
 
+// Reference-free check of the absorbing boundary reflection in the waveguide_absorbing
+// case: a rectangular PEC waveguide (width a) driven in TE10 by a wave port and terminated
+// by an absorbing boundary. On a flat boundary the TE10 field E_y = sin(kx x) e^{-i β z}
+// is an eigenfunction of the boundary operator, which imposes n × ∇ × E = i k_eff E_t
+// instead of the exact i β E_t, so |S11| = |β - k_eff| / (β + k_eff), with k_eff = k for
+// first order and k - kx²/(2k) for second order (curl-curl coefficient 1/(2ik)). The
+// opposite sign of the second-order term (k + kx²/(2k)) reflects more than first order.
+palace::test::CustomCheck TestAbsorbingReflection(int order, double atol_lin)
+{
+  return [order, atol_lin](palace::Table &actual, palace::Table &,
+                           const std::filesystem::path &)
+  {
+    constexpr double c0 = 299792458.0;
+    constexpr double a = 20.0e-3;  // Guide width (m), see mesh/mesh.jl
+    const double kx = std::numbers::pi / a;
+    const palace::Column *freq = nullptr, *s11 = nullptr;
+    for (auto &c : actual)
+    {
+      if (c.header_text.find("f (GHz)") != std::string::npos)
+      {
+        freq = &c;
+      }
+      else if (c.header_text.find("|S[1][1]| (dB)") != std::string::npos)
+      {
+        s11 = &c;
+      }
+    }
+    REQUIRE(freq);
+    REQUIRE(s11);
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const double k = 2.0 * std::numbers::pi * freq->data[r] * 1.0e9 / c0;
+      const double beta = std::sqrt(k * k - kx * kx);
+      const double k_eff = (order == 1) ? k : k - kx * kx / (2.0 * k);
+      const double r_exact = std::abs(beta - k_eff) / (beta + k_eff);
+      const double s11_lin = std::pow(10.0, s11->data[r] / 20.0);
+      INFO("f = " << freq->data[r] << " GHz: |S11| = " << s11_lin << ", closed form "
+                  << r_exact);
+      CHECK_THAT(s11_lin, Catch::Matchers::WithinAbs(r_exact, atol_lin));
+    }
+  };
+}
+
+// An online run on the mesh of the region written by an offline run in the same staging
+// directory: the reference diff at the case tolerances, then the outputs of the offline run
+// (in postpro/<offline>) reproduced to rounding.
+palace::test::CustomCheck TestOfflineRunReproduced(const std::string &offline,
+                                                   palace::test::RegressionOptions opts)
+{
+  return [offline, opts](palace::Table &actual, palace::Table &reference,
+                         const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    palace::TableWithCSVFile offline_file(
+        (actual_path.parent_path().parent_path() / offline / actual_path.filename())
+            .string(),
+        /*load_existing_file=*/true);
+    palace::test::RegressionOptions rounding = opts;
+    rounding.rtol = 1.0e-10;
+    rounding.atol = 0.0;
+    palace::test::CompareCSVFiles(actual, offline_file.table, rounding);
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -1460,8 +1524,8 @@ TEST_CASE("substructuring_magnetostatic_two_sided_swapped",
 }
 
 // An online run on the mesh of the region, for a surface-current port standing on a
-// two-sided film of the environment: the mesh holds the whole film, with both its sides.
-// The references are regular simulations.
+// two-sided film of the environment, which the mesh holds as a plain boundary under the
+// port (the environment DOFs are not solved for). The references are regular simulations.
 TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
           "[Serial][Parallel][GPU][Regression]")
 {
@@ -1474,6 +1538,117 @@ TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_port_online_region.json",
                                   "two_sided_port_online_region", opts);
+}
+
+// Two-sided films crossing the interface (λ = 0.1 μm, d = 0.2 μm), whose interface DOFs on
+// them have a version on each side: a flux-loop washer with the hole in the region (in the
+// environment when swapped) and a surface-current port across the interface, the washer as
+// a film without a flux loop driven by that port ("ground") or by a port inside the region
+// ("inner", whose mesh of the region holds no environment element on the film), and a film
+// ending on the interface in the region (in the environment when swapped, "end"). The
+// online runs are on the meshes of the region of their offline runs, which they reproduce.
+// The references are regular simulations; the smallest output is the current-flux mutual
+// of about 4.9e-14 H.
+TEST_CASE("substructuring_magnetostatic_two_sided_cross",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_cross.json", "two_sided_cross",
+                                  opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_cross_swapped",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_cross_swapped.json",
+                                  "two_sided_cross_swapped", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_cross_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_cross.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_cross", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_cross_online_region.json",
+                                  "two_sided_cross_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_ground_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_ground.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_ground", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_ground_online_region.json",
+                                  "two_sided_ground_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_inner_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_inner.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_inner", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_inner_online_region.json",
+                                  "two_sided_inner_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_end_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_end.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_end", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_end_online_region.json",
+                                  "two_sided_end_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_end_swapped_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_end_swapped.json";
+  opts.custom_checks["terminal-M.csv"] =
+      TestOfflineRunReproduced("two_sided_end_swapped", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_end_swapped_online_region.json",
+                                  "two_sided_end_swapped_online_region", opts);
 }
 
 #if defined(MFEM_USE_MUMPS)  // driven substructuring needs MUMPS
@@ -1902,6 +2077,33 @@ TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
   opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_adaptive.json",
                                   "driven_wave_tm_adaptive", opts);
+}
+
+// Rectangular waveguide terminated by a first- or second-order absorbing boundary;
+// |S11| is checked against its closed form (TestAbsorbingReflection), the other outputs
+// against the reference.
+TEST_CASE("waveguide_absorbing_order1", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestAbsorbingReflection(1, 1.0e-3);
+  palace::test::RunRegressionCase("waveguide_absorbing", "waveguide_absorbing_order1.json",
+                                  "order1", opts);
+}
+
+TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestAbsorbingReflection(2, 1.0e-3);
+  palace::test::RunRegressionCase("waveguide_absorbing", "waveguide_absorbing_order2.json",
+                                  "order2", opts);
 }
 
 // Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port

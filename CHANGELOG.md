@@ -77,7 +77,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     limit (`"DirectMaxSize"`). Magnetostatic substructuring supports `"FluxLoop"` and
     `"SurfaceCurrent"` excitations, alone or together (flux loops also grouped or held at
     zero fluxoid), with the films and `"Superconductor"` boundaries as London sheets
-    (kinetic inductance included; `"TwoSided"` films inside the region or the environment).
+    (kinetic inductance included, also of `"TwoSided"` films crossing the interface).
     Adds substructuring examples in `examples/transmon` and `examples/substructuring`
     (5 x 5 lattices of qubits and of flux loops, on separate rings and on one plate).
     SchemaVer 4-2-0.
@@ -163,6 +163,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the sign of the second-order absorbing boundary condition term (`"Absorbing"` with
+    `"Order": 2`): it now matches β = μ⁻¹c₀/(2iω) in the documentation. Before, the extra term
+    made the boundary reflect more than the first-order condition at oblique incidence.
+    [PR 1070](https://github.com/awslabs/palace/pull/1070).
   - Fixed cracking of interior boundaries in meshes with quadrilateral faces, where a
     cracked face with three vertices on the crack front (at a corner of the crack) merged
     with its twin and broke parallel mesh construction.
@@ -387,6 +391,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added an MFEM patch for [mfem/mfem#5610](https://github.com/mfem/mfem/pull/5610),
     which keeps host hypre matrix products from reading a device-resident row cache.
     [PR 992](https://github.com/awslabs/palace/pull/992).
+  - Bumped the superbuild dependencies to their latest releases: libCEED v1.0.1,
+    SuperLU_DIST v9.3.1, json-schema-validator 2.4.1, fmt 12.2.0, Umpire v2026.07.2, and
+    Enzyme v0.0.303. ButterflyPACK stays at v4.1.0, as STRUMPACK 8.1.0 does not link
+    against ButterflyPACK 5.0.0.
+    [PR 1114](https://github.com/awslabs/palace/pull/1114).
   - The superbuild and the Spack recipe patch MFEM with
     [mfem/mfem#5518](https://github.com/mfem/mfem/pull/5518), which fixes the orientation of
     some shared faces of a parallel `mfem::ParSubMesh`: spaces with several DOFs per face

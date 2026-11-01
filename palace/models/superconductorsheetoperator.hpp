@@ -98,11 +98,12 @@ public:
   // assembled as (a + b)(u⁺·v⁺ + u⁻·v⁻) − b(u⁺ + u⁻)·(v⁺ + v⁻): the first term per element
   // with its own DOFs, the second as the film mass of nd_fespace on the summed versions.
   // One-sided sheets are integrated by the element adjacent to each boundary element, so a
-  // sheet on one side of a film reads that side's versions.
-  std::unique_ptr<mfem::HypreParMatrix>
-  AssembleBrokenSheetMatrix(const FiniteElementSpace &nd_fespace,
-                            const FiniteElementSpace &broken_nd_fespace,
-                            const CrackSides &sides) const;
+  // sheet on one side of a film reads that side's versions. With domain_attributes, only
+  // the faces bounding elements with these domain attributes are assembled (a film face
+  // with both neighbors among them, or a one-sided sheet whose adjacent element is).
+  std::unique_ptr<mfem::HypreParMatrix> AssembleBrokenSheetMatrix(
+      const FiniteElementSpace &nd_fespace, const FiniteElementSpace &broken_nd_fespace,
+      const CrackSides &sides, const std::vector<int> *domain_attributes = nullptr) const;
 };
 
 }  // namespace palace

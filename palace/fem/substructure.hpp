@@ -68,8 +68,10 @@ struct SignatureMap
 std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
                                        const std::vector<double> &saved, int width);
 
-// The map from the saved to the current H(curl) signatures (width 12), aborting unless the
-// current signatures equal M times the saved ones within a relative tolerance.
+// The map from the saved to the current H(curl) signatures, aborting unless the current
+// signatures equal M times the saved ones within a relative tolerance. A 13th column (width
+// 13) tells the versions of a DOF of a broken space apart, which must match one to one: a
+// side moment, zero for the other DOFs, which flips with the orientation as the others.
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width);
 
@@ -139,11 +141,14 @@ std::string RegionMeshPath(const std::string &model_path);
 
 // Write a mesh of the region for online substructuring runs, from rank 0 in mesh length
 // units (coordinates times length_scale): the region, and the environment elements touching
-// the marked local true DOFs, with their boundary elements. Collective.
+// the marked local true DOFs, with their boundary elements. The local boundary elements
+// marked in plain_bdr (if not empty) are written with the attribute of the boundary faces
+// the submesh generates. Collective.
 void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes,
-                     const std::vector<char> &keep, double length_scale);
+                     const std::vector<char> &keep, double length_scale,
+                     const std::vector<char> &plain_bdr = {});
 
 }  // namespace palace
 
