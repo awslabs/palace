@@ -486,6 +486,14 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff"
   917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964
 )
+# https://github.com/mfem/mfem/pull/5714
+# Gmsh meshes with boundary elements of a different order than the volume elements, which
+# the Gmsh reader of MFEM 4.10 rejects.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5714.diff
+  "https://github.com/mfem/mfem/commit/c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff"
+  3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
