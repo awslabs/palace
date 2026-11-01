@@ -83,6 +83,9 @@ struct RegressionOptions
   // A configuration of the same case run first in the same staging directory, without
   // comparison (e.g. an offline run writing the model an online run reads).
   std::string setup_config;
+  // Called on every process with the staging directory after the setup run, and after the
+  // run (e.g. to interrupt the setup run's outputs for a restart, and check the run's).
+  std::function<void(const std::filesystem::path &)> after_setup, after_run;
 };
 
 // Column-wise diff of one CSV at the case tolerances. Exposed so a custom check can keep

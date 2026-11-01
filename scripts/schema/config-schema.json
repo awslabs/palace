@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-0",
+  "$id": "urn:palace:schema:4-2-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2935,7 +2935,7 @@
     "Substructuring": {
       "type": "object",
       "title": "Substructuring",
-      "description": "Substructuring for electrostatic and magnetostatic simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together.",
+      "description": "Substructuring for electrostatic, magnetostatic and driven simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together; driven substructuring, uniform and adaptive frequency sweeps.",
       "additionalProperties": false,
       "required": ["Region", "Environment"],
       "properties": {
@@ -2990,7 +2990,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 2000000,
-          "description": "Number of unknowns up to which the environment and the region are factored with a sparse direct solver; larger ones are solved by preconditioned conjugate gradients (geometric multigrid, BoomerAMG or AMS). Magnetostatic environments at order 2 and higher are always factored, and an environment with superconductor sheets must be."
+          "description": "Number of unknowns up to which the environment and the region of electrostatic and magnetostatic substructuring are factored with a sparse direct solver; larger ones are solved by preconditioned conjugate gradients (geometric multigrid, BoomerAMG or AMS). Magnetostatic environments at order 2 and higher are always factored, and an environment with superconductor sheets must be."
         }
       }
     },

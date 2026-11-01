@@ -256,6 +256,87 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
+  SECTION("Driven substructuring")
+  {
+    auto make_config = [](const json &driven, const json &extra_boundaries)
+    {
+      json boundaries = {{"LumpedPort",
+                          {{{"Index", 1},
+                            {"R", 50.0},
+                            {"Attributes", {4}},
+                            {"Direction", "+X"},
+                            {"Excitation", true}}}}};
+      boundaries.update(extra_boundaries);
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                  {"Boundaries", boundaries},
+                  {"Solver",
+                   {{"Driven", driven},
+                    {"Substructuring",
+                     {{"Region", {{"Attributes", {1}}}},
+                      {"Environment", {{"Attributes", {2}}}}}}}}};
+    };
+    const json uniform = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}};
+#if defined(MFEM_USE_MUMPS)
+    CHECK_NOTHROW(IoData(make_config(uniform, json::object()), false));
+#endif
+    json adaptive = uniform;
+    adaptive["AdaptiveTol"] = 1.0e-3;
+#if defined(MFEM_USE_MUMPS)
+    CHECK_NOTHROW(IoData(make_config(adaptive, json::object()), false));
+#endif
+    adaptive["AdaptiveCircuitSynthesis"] = true;
+    CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
+                      Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+#if defined(MFEM_USE_MUMPS)
+    json gpu = make_config(uniform, json::object());
+    gpu["Solver"]["Device"] = "GPU";
+    CHECK_NOTHROW(IoData(gpu, false));
+#endif
+#if defined(MFEM_USE_MUMPS)
+    const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
+    CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
+#endif
+    json amr = make_config(uniform, json::object());
+    amr["Model"]["Refinement"] = {{"MaxIts", 1}, {"MaxNCLevels", 0}};
+    amr["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    amr["Solver"]["Substructuring"]["Mode"] = "Online";
+    CHECK_THROWS_WITH(IoData(amr, false),
+                      Catch::Matchers::ContainsSubstring("driven substructuring refines"));
+    const json periodic = {
+        {"Periodic",
+         {{"BoundaryPairs", {{{"DonorAttributes", {5}}, {"ReceiverAttributes", {6}}}}}}}};
+    CHECK_THROWS_WITH(IoData(make_config(uniform, periodic), false),
+                      Catch::Matchers::ContainsSubstring("periodic boundaries"));
+#if defined(MFEM_USE_MUMPS)
+    json saved = make_config(uniform, json::object());
+    saved["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Substructuring"]["Mode"] = "Online";
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {
+        {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {4}}, {"Type", "Electric"}}}}};
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Substructuring"].erase("Mode");
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-6;
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {{"Dielectric",
+                                              {{{"Index", 1},
+                                                {"Attributes", {4}},
+                                                {"Thickness", 1.0e-3},
+                                                {"Permittivity", 10.0}}}}};
+    CHECK_THROWS_WITH(IoData(saved, false), Catch::Matchers::ContainsSubstring(
+                                                "does not compute interface dielectric"));
+#endif
+#if defined(MFEM_USE_MUMPS)
+    json fields = uniform;
+    fields["Save"] = {1.0};
+    CHECK_NOTHROW(IoData(make_config(fields, json::object()), false));
+#endif
+  }
+
   SECTION("Magnetostatic substructuring excitations")
   {
     const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};

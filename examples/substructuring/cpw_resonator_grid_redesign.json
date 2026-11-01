@@ -1,0 +1,203 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/cpw_resonator_grid_redesign"
+  },
+  "Model": {
+    "Mesh": "mesh/cpw_resonator_grid_substructuring.msh2",
+    "L0": 1e-06
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          2,
+          11
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [
+          10
+        ],
+        "Permeability": [
+          0.99999975,
+          0.99999975,
+          0.99999979
+        ],
+        "Permittivity": [
+          9.3,
+          9.3,
+          11.5
+        ],
+        "LossTan": [
+          3e-05,
+          3e-05,
+          8.6e-05
+        ],
+        "MaterialAxes": [
+          [
+            0.8,
+            0.6,
+            0.0
+          ],
+          [
+            -0.6,
+            0.8,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": [
+          0.99999975,
+          0.99999975,
+          0.99999979
+        ],
+        "Permittivity": [
+          9.3372,
+          9.3372,
+          11.546
+        ],
+        "LossTan": [
+          3e-05,
+          3e-05,
+          8.6e-05
+        ],
+        "MaterialAxes": [
+          [
+            0.8,
+            0.6,
+            0.0
+          ],
+          [
+            -0.6,
+            0.8,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [
+            1,
+            2
+          ]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        4
+      ]
+    },
+    "Absorbing": {
+      "Attributes": [
+        3
+      ],
+      "Order": 1
+    },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          5
+        ],
+        "R": 50.0,
+        "Direction": "+X"
+      },
+      {
+        "Index": 2,
+        "Attributes": [
+          6
+        ],
+        "R": 50.0,
+        "Direction": "+X"
+      },
+      {
+        "Index": 3,
+        "Attributes": [
+          7
+        ],
+        "R": 50.0,
+        "Direction": "+X",
+        "Excitation": 3
+      },
+      {
+        "Index": 4,
+        "Attributes": [
+          8
+        ],
+        "R": 50.0,
+        "Direction": "+X",
+        "Excitation": 4
+      },
+      {
+        "Index": 5,
+        "Attributes": [
+          9
+        ],
+        "R": 50.0,
+        "Direction": "+X"
+      },
+      {
+        "Index": 6,
+        "Attributes": [
+          10
+        ],
+        "R": 50.0,
+        "Direction": "+X"
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {
+      "MinFreq": 18.2,
+      "MaxFreq": 18.38,
+      "FreqStep": 0.005
+    },
+    "Linear": {
+      "KSPType": "GMRES",
+      "Tol": 1e-10,
+      "MaxIts": 500
+    },
+    "Substructuring": {
+      "Region": {
+        "Attributes": [
+          1,
+          2
+        ]
+      },
+      "Environment": {
+        "Attributes": [
+          10,
+          11
+        ]
+      },
+      "Mode": "Online",
+      "SaveModel": "postpro/cpw_resonator_grid_environment.model"
+    }
+  }
+}
