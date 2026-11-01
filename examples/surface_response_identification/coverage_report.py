@@ -82,8 +82,8 @@ HIGH_EXACT_SHARE = 0.95
 CLASS_MATERIAL_SHARE = 0.05
 RAW_CLASS_HIGH_BAR = 0.01
 RAW_CLASS_LOW_BAR = 0.10
-# Decision 1133 (ii): the F2 owner credit rests on an unmeasured premise (the owner cluster corrects its in-box region;
-# decision 1125), so a credit > 1 % of W_t on any Type limits the label to MEDIUM.
+# Decision 1132 MINOR-1 (the FREEZE ruling; relayed as 1133 (ii)): the F2 owner credit rests on an unmeasured premise (the
+# owner cluster corrects its in-box region; decision 1125), so a credit > 1 % of W_t on any Type limits the label to MEDIUM.
 SCP_OWNER_CREDIT_MEDIUM_BAR = 0.01
 CALIBRATED_MIN_WINDOWS = 3
 # The DEPTH rule (DESIGN 1.2): the last ft step > 0.3 pt is not quotable; a step ratio >= 0.7 over the
@@ -1265,9 +1265,10 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
         # in-label recorded rows + the Unclaimed remainder after the F2 owner credit). Without the export (the records of
         # record) it reduces to the TOTAL raw share x |g|. Relation to the re-grade's v4 form (regrade/tools/
         # coverage_calibration_v4_regrade_v1.py: r_other = max(R_L - sum_c r_c, 0) with R_L the label-based raw share; review
-        # d1126 MAJOR-2 / decision 1133 (i)): gap_v5 - gap_v4 = min(R_L, sum_c r_c) |g| >= 0 - v5 >= v4 always; EQUAL only where
-        # R_L = 0 (RG-8 C4 / O2, and O4 / O3 once the F2 credit empties the remainder), more conservative by sum_c r_c |g| where
-        # R_L > sum_c r_c (RG-8 S7), by R_L |g| otherwise (no clamp).
+        # d1126 MAJOR-2 / decision 1133 (i)): gap_v5 - gap_v4 = min(R_L, sum_c r_c) |g| >= 0 - v5 >= v4 always; EQUAL where
+        # R_L = 0 (RG-8 C4 / O2, and O4 / O3 once the F2 credit empties the remainder) or where sum_c r_c = 0 (no export: both
+        # forms reduce to R_L |g|), more conservative by sum_c r_c |g| where R_L > sum_c r_c (RG-8 S7), by R_L |g| otherwise
+        # (no clamp).
         excluded = acc.get("excluded_shares") or {}
         r_other = acc.get("raw_share_physical", r - sum(excluded.values()))
         g_corner = acc.get("g_corner")
