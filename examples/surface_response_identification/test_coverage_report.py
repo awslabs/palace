@@ -71,8 +71,15 @@ def write_surface_q(dirpath, scale=1.0, e_elec=1.0e-12):
             f.write(_wide_row([1.0, 0, i, 1.9e-6, E_OUT[i], 0.0, 0.0, 0.0]) + "\n")
 
 
-def write_fixture(root, raw_partition=True, iterations=("quotable",)):
-    """A synthetic ES postpro + manifest. iterations: 'quotable' (steps shrinking) or 'depth' (not shrinking)."""
+def write_fixture(root, raw_partition=True, iterations=("quotable",), total_row=False, scp_dropped=None, export_rows=None,
+                  raw_labels=None, uncovered=None):
+    """A synthetic ES postpro + manifest. iterations: 'quotable' (steps shrinking) or 'depth' (not shrinking).
+    total_row: the binary's `Total` sum row appended to the uncovered CSV (the records of record carry it; decision 1125).
+    scp_dropped: Identification.Diagnostics.SpatialClusterPriority.Patches entries (the F2 record; decision 1126 (2)).
+    export_rows: surface-response-exclusion-energy.csv lines after the header (class,type,...; decision 1129).
+    raw_labels / uncovered: overrides of RAW_LABELS / UNCOVERED."""
+    raw_labels = RAW_LABELS if raw_labels is None else raw_labels
+    uncovered = UNCOVERED if uncovered is None else uncovered
     post = os.path.join(root, "postpro")
     os.makedirs(post, exist_ok=True)
     config = {"Problem": {"Type": "Electrostatic"},
@@ -98,14 +105,21 @@ def write_fixture(root, raw_partition=True, iterations=("quotable",)):
     if raw_partition:
         with open(os.path.join(post, "surface-response-model-raw-energy.csv"), "w") as f:
             f.write("source,evaluation,label," + ",".join(f"raw energy[{i}] (J)" for i in (1, 2, 3)) + "\n")
-            for label, by_i in RAW_LABELS.items():
+            for label, by_i in raw_labels.items():
                 f.write(f"1,0,{label}," + ",".join(f"{by_i[i]:+.12e}" for i in (1, 2, 3)) + "\n")
         with open(os.path.join(post, "surface-response-model-raw-groups.csv"), "w") as f:
             f.write("label,model,patches,weight length (m)\nm1+m2,1,30,+3.0e-06\nm1+m2,2,3,+1.0e-06\nm3,3,4,+4.0e-07\n")
     with open(os.path.join(post, "surface-response-uncovered-energy.csv"), "w") as f:
         f.write("source,evaluation,type,portions,length (m),clipped by spatial support (m)," + ",".join(
             f"uncovered raw energy[{i}] (J),uncovered share[{i}]" for i in (1, 2, 3)) + "\n")
-        f.write("1,0,CurvedEdge,2,+5.0e-06,+0.0," + ",".join(f"{UNCOVERED[i]:+.12e},0.0" for i in (1, 2, 3)) + "\n")
+        f.write("1,0,CurvedEdge,2,+5.0e-06,+0.0," + ",".join(f"{uncovered[i]:+.12e},0.0" for i in (1, 2, 3)) + "\n")
+        if total_row:
+            f.write("1,0,Total,2,+5.0e-06,+0.0," + ",".join(f"{uncovered[i]:+.12e},0.0" for i in (1, 2, 3)) + "\n")
+    if export_rows is not None:
+        with open(os.path.join(post, "surface-response-exclusion-energy.csv"), "w") as f:
+            f.write("source,class,type,class portions,class length (m),raw energy (J),interface raw energy (J),share\n")
+            for row in export_rows:
+                f.write("1," + row + "\n")
     with open(os.path.join(post, "error-indicators.csv"), "w") as f:
         f.write("Norm,Minimum,Maximum,Mean\n+1.0e-01,0,0,0\n")
     steps = {"quotable": (0.4, 0.9, 0.98), "depth": (0.4, 0.55, 0.7)}[iterations[0]]
@@ -129,6 +143,11 @@ def write_fixture(root, raw_partition=True, iterations=("quotable",)):
                     "Counts": {"Exact": 2, "Interpolated": 1, "Missing": 1}},
         "Identification": {"Totals": {"AssignedLength": 500.0}, "Exclusions": [{"Class": "NonManifold", "Count": 4, "Length": 40.0}],
                            "Diagnostics": {"GeometryFallbacks": {"Entries": []}}}}
+    if scp_dropped is not None:
+        manifest["Identification"]["Diagnostics"]["SpatialClusterPriority"] = {
+            "Count": len(scp_dropped), "OutsideLength": sum(p.get("OutsideLength", 0.0) for p in scp_dropped), "Patches": scp_dropped,
+            "WindowLength": sum(p["WindowLength"] for p in scp_dropped)}
+        manifest["Summary"]["SpatialClusterPriority"]["OutsideLength"] = sum(p.get("OutsideLength", 0.0) for p in scp_dropped)
     mpath = os.path.join(root, "surface-response-requirements.json")
     _dump(manifest, mpath)
     return post, mpath
@@ -669,7 +688,15 @@ class RecordS1Test(unittest.TestCase):
         e = report["block_A"]["energy"]["SA"]
         self.assertAlmostEqual(e["W"], 7.3893e-16, delta=1e-20)   # E_surf raw[1] - E_out[1] of the final solve
         self.assertLess(abs(e["bookkeeping_miss_rel"]), 1e-9)
-        self.assertAlmostEqual(e["unclaimed_share"], 0.0531, delta=0.0005)  # OI-COVERAGE-EXCLUSION-ENERGY: every raw class 0
+        # OI-COVERAGE-UNCLAIMED-INCELL (decisions 1124 / 1125 / 1126 (2)): S1's 5.31 % unclaimed remainder (8 SCP-dropped vertex
+        # coupons, 32.29 um in-box, 4 owner clusters, all Exact) is CREDITED to the owners; the printed Unclaimed is 0
+        credit = e["scp_owner_credit"]
+        self.assertAlmostEqual(credit["share"], 0.0531, delta=0.0005)
+        self.assertEqual((credit["dropped"], len(credit["owners"])), (8, 4))
+        self.assertAlmostEqual(credit["in_box_length_um"], 32.287, delta=0.001)
+        self.assertTrue(all(o["status"] == "Exact" for o in credit["owners"]))
+        self.assertAlmostEqual(e["unclaimed_share"], 0.0, delta=1e-12)
+        self.assertAlmostEqual(e["raw_share_total"], 0.0, delta=1e-12)   # every recorded raw class 0 on S1; no export
         self.assertEqual(report["block_D"]["ladder"]["types"]["SA"]["solves"], 9)
         self.assertEqual(report["block_D"]["ladder"]["types"]["SA"]["status"], "quotable")
 
@@ -825,6 +852,129 @@ class TestFixRoundRecordRows(unittest.TestCase):
         self.assertTrue(near["fired"])
         self.assertIn("FLAGGED 1", near["detail"])
 
+
+class TestCovfixRound(unittest.TestCase):
+    """The pre-freeze coverage fixes (decisions 1125 / 1126 / 1128 / 1129): (1) the raw-class CSVs' Total row is not a class;
+    (2) F2: the Unclaimed remainder credited to the SCP-dropped coupons' OWNER clusters by in-box length; (3) UnprobedModels =
+    applied, in no RAW row; (4) the exclusion export's classes = a second partition beside the physical one (a C4-type record
+    with the label 0 and an O4-type record with the label above the export) and the per-class gap term."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covfix-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_total_row_of_a_raw_class_csv_is_not_a_class(self):
+        post, manifest = write_fixture(self.tmp, total_row=True)
+        report = cr.build_report(post, manifest, None, ma_reading="sharp")
+        for t, i in (("SA", 1), ("MS", 2), ("MA", 3)):
+            e = report["block_A"]["energy"][t]
+            self.assertAlmostEqual(e["raw"]["Missing"], UNCOVERED[i], delta=1e-28)          # main: 2 x UNCOVERED
+            self.assertAlmostEqual(e["raw"]["Unclaimed"], RAW_LABELS["unclaimed"][i] - UNCOVERED[i], delta=1e-28)
+        self.assertEqual(report["block_A"]["energy_locations"]["Missing"], [{"type": "CurvedEdge", "portions": 2.0, "length_m": 5e-06}])
+
+    SCP = [{"Patch": 6, "Feature": 7, "Model": "convex-corner-45deg", "Topology": "convex corner", "WindowLength": 3.8, "OutsideLength": 0.0,
+            "Owner": {"Model": "spatialedgecluster_edgecount-3_a5e14f9da16f", "Patch": 0, "Feature": 1}},
+           {"Patch": 9, "Feature": 8, "Model": "convex-corner-90deg", "Topology": "convex corner", "WindowLength": 3.8, "OutsideLength": 2.8,
+            "Owner": {"Model": "concave-corner-150deg@corner-angle157.5-cubic", "Patch": 1, "Feature": 2}}]
+
+    def test_f2_unclaimed_remainder_credited_to_the_owner_clusters_by_in_box_length(self):
+        post, manifest = write_fixture(self.tmp, total_row=True, scp_dropped=self.SCP)
+        report = cr.build_report(post, manifest, None, ma_reading="sharp")
+        e = report["block_A"]["energy"]["SA"]
+        remainder = RAW_LABELS["unclaimed"][1] - UNCOVERED[1]          # 0.5e-16: the label minus the in-label Missing row
+        credit = e["scp_owner_credit"]
+        self.assertAlmostEqual(credit["energy"], remainder, delta=1e-28)
+        self.assertAlmostEqual(credit["in_box_length_um"], 3.8 + 1.0)   # the second coupon's 2.8 um outside stay the SCP RAW row
+        owners = {o["model"]: o for o in credit["owners"]}
+        self.assertAlmostEqual(owners["spatialedgecluster_edgecount-3_a5e14f9da16f"]["energy"], remainder * 3.8 / 4.8, delta=1e-28)
+        self.assertEqual((owners["spatialedgecluster_edgecount-3_a5e14f9da16f"]["status"], owners["spatialedgecluster_edgecount-3_a5e14f9da16f"]["class"]),
+                         ("Exact", "SpatialEdgeCluster-2-3"))
+        self.assertEqual(owners["concave-corner-150deg@corner-angle157.5-cubic"]["status"], "Interpolated")
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.0, delta=1e-28)
+        self.assertAlmostEqual(e["models"]["Exact"], 6.2e-16 + remainder * 3.8 / 4.8, delta=1e-28)
+        self.assertAlmostEqual(e["classes"]["ConcaveCorner"], 2.0e-16 + remainder * 1.0 / 4.8, delta=1e-28)
+        self.assertAlmostEqual(e["raw_share_total"], UNCOVERED[1] / W[1], places=9)
+        # g over the credited raw: fab 8.6e-16 vs raw 8.2e-16 + 0.5e-16
+        self.assertAlmostEqual(e["g"], (8.6e-16 - 8.7e-16) / 8.7e-16, places=9)
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+        self.assertEqual(len(report["block_A"]["scp_dropped"]), 2)
+        self.assertIn("F2 OWNER CREDIT", cr.render_markdown(report))
+        self.assertIn("not separately measured", cr.render_markdown(report))
+
+    def test_f2_no_credit_without_a_drop_or_with_a_negative_remainder(self):
+        post, manifest = write_fixture(self.tmp)
+        e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
+        self.assertEqual(e["scp_owner_credit"]["energy"], 0.0)
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], RAW_LABELS["unclaimed"][1] - UNCOVERED[1], delta=1e-28)
+        shutil.rmtree(self.tmp)
+        big = {1: 0.9e-16, 2: 1.8e-16, 3: 0.18e-16}      # the recorded Missing row above the label: a negative remainder
+        post, manifest = write_fixture(self.tmp, scp_dropped=self.SCP, uncovered=big)
+        e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
+        self.assertEqual(e["scp_owner_credit"]["energy"], 0.0)
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.8e-16 - 0.9e-16, delta=1e-28)
+
+    def test_unprobed_models_is_applied_energy_not_a_raw_row(self):
+        rows = ["Claimed,SA,0,0,9e-17,1e-16,0.9", "UnprobedModels,SA,3,2e-6,5e-18,1e-16,0.05", "CornerArmTrim,SA,2,1e-6,3e-18,1e-16,0.03",
+                "Total,SA,5,3e-6,1e-16,1e-16,1.0"]
+        post, manifest = write_fixture(self.tmp, export_rows=rows)
+        export = cr.exclusion_energy_rows(post)
+        self.assertEqual(sorted(export["classes"]), ["CornerArmTrim"])
+        self.assertAlmostEqual(export["applied_unprobed"]["SA"], 5e-18)
+        raw_rows, _ = cr.raw_class_energies(post, {1: {"Type": "SA"}}, [1], "ES")
+        self.assertNotIn("Excluded:UnprobedModels", raw_rows)                     # main: a RAW row in the gap
+        report = cr.build_report(post, manifest, None, ma_reading="sharp")
+        self.assertAlmostEqual(report["block_A"]["energy"]["SA"]["unprobed_applied"], 5e-18)
+        self.assertAlmostEqual(report["block_A"]["exclusion_energy_export"]["applied_unprobed_J"]["SA"], 5e-18)
+        self.assertIn("UnprobedModels (the export's class of APPLIED patches", cr.render_markdown(report))
+
+    def test_export_classes_are_a_second_partition_beside_the_physical_one(self):
+        # a C4-type record: the 'unclaimed' label 0 and no Missing energy, yet CornerArmTrim > 0 in the export
+        zero = {1: 0.0, 2: 0.0, 3: 0.0}
+        labels = dict(RAW_LABELS, unclaimed=zero, m3={1: 2.8e-16, 2: 5.6e-16, 3: 0.56e-16})   # the labels still sum to W_t
+        rows = ["Claimed,SA,0,0,9e-17,1e-16,0.9", "CornerArmTrim,SA,2,1e-6,4e-18,1e-16,0.04", "NonManifold,SA,1,1e-6,1e-18,1e-16,0.01",
+                "Total,SA,3,2e-6,9.5e-17,1e-16,0.95"]
+        post, manifest = write_fixture(self.tmp, raw_labels=labels, uncovered=zero, export_rows=rows)
+        e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.0, delta=1e-28)                   # main: -5e-18 (negative)
+        self.assertAlmostEqual(e["raw"]["Excluded:CornerArmTrim"], 4e-18, delta=1e-28)
+        self.assertAlmostEqual(e["raw_share_total"], 5e-18 / W[1], places=9)
+        self.assertAlmostEqual(e["raw_share_physical"], 0.0, places=12)
+        self.assertEqual(e["excluded_shares"], {"CornerArmTrim": 4e-18 / W[1], "NonManifold": 1e-18 / W[1]})
+        self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)     # the physical partition sums to W_t
+        shutil.rmtree(self.tmp)
+        # an O4-type record: the label above the export; the remainder is the label minus the in-label rows only
+        post, manifest = write_fixture(self.tmp, export_rows=rows, total_row=True)
+        e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.8e-16 - 0.3e-16, delta=1e-28)       # main: 0.5e-16 - 5e-18
+        self.assertAlmostEqual(e["raw_share_total"], (0.8e-16 + 5e-18) / W[1], places=9)
+        self.assertAlmostEqual(e["raw_share_physical"], 0.8e-16 / W[1], places=9)
+
+    def test_gap_term_per_class_reduces_to_total_raw_without_the_export(self):
+        bands = cr.load_bands(write_bands(os.path.join(self.tmp, "bands.json")))
+        post, manifest = write_fixture(self.tmp, total_row=True)
+        row = cr.build_report(post, manifest, bands, ma_reading="sharp")["block_C"]["SA"]
+        self.assertEqual(row["gap_parts"]["classes"], {})
+        self.assertAlmostEqual(row["gap_pt"], 100.0 * row["raw_share"] * abs(row["g"]), places=9)   # the TOTAL raw x |g| form
+        self.assertAlmostEqual(row["gap_parts"]["r_other"], row["raw_share"], places=12)
+        shutil.rmtree(self.tmp)
+        rows = ["Claimed,SA,0,0,9e-17,1e-16,0.9", "CornerArmTrim,SA,2,1e-6,4e-18,1e-16,0.04", "TruncationCut,SA,1,1e-6,1e-18,1e-16,0.01",
+                "UnprobedModels,SA,3,2e-6,5e-18,1e-16,0.05"]
+        post, manifest = write_fixture(self.tmp, total_row=True, export_rows=rows)
+        report = cr.build_report(post, manifest, bands, ma_reading="sharp")
+        e = report["block_A"]["energy"]["SA"]
+        row = report["block_C"]["SA"]
+        g_corner = (1.9e-16 - 2.0e-16) / 2.0e-16          # m3: fab 1.9 vs raw 2.0 (the only corner-class model)
+        self.assertAlmostEqual(e["g_corner"], g_corner, places=9)
+        parts = row["gap_parts"]["classes"]
+        self.assertEqual(sorted(parts), ["CornerArmTrim", "TruncationCut"])                 # UnprobedModels in no part
+        self.assertAlmostEqual(parts["CornerArmTrim"]["b_c"], abs(g_corner), places=9)
+        self.assertAlmostEqual(parts["TruncationCut"]["b_c"], abs(row["g"]), places=9)
+        expected = 100.0 * (e["raw_share_physical"] * abs(row["g"]) + 4e-18 / W[1] * abs(g_corner) + 1e-18 / W[1] * abs(row["g"]))
+        self.assertAlmostEqual(row["gap_pt"], expected, places=9)
+        self.assertAlmostEqual(row["gap_parts"]["r_other"], 0.8e-16 / W[1], places=9)        # the label-based raw share
+        self.assertGreater(row["gap_pt"], 100.0 * (row["raw_share"] - 5e-18 / W[1]) * abs(row["g"]) - 1e-12)
 
 class TestBandFileLocation(unittest.TestCase):
     """OI-SCHEMA-TEST-COVERAGE-BANDS (decision 1065): test-schema's "Example Configs" case parses EVERY *.json
