@@ -339,6 +339,28 @@ class ProcessLibraryWriterTest(unittest.TestCase):
         self.assertTrue(preflight["PreflightOnly"])
         self.assertEqual(preflight["Models"][0]["ThinMatrix"], "models/model-p/thin-domain-response-matrix.csv")
 
+    def test_two_models_of_one_signature_stop_the_writer(self):
+        """OI-LIBRARY-DUPLICATE-SIGNATURE (decisions 1103 / 1126 (5) / 1128 Q4): two cases whose source models carry one
+        canonical Signature under different Names are refused by name before the library is returned; distinct Signatures
+        assemble; a Signature-less model never collides."""
+        root = self.tmp / "root"
+        signature = {"EdgeCount": 2, "Portions": [{"Conductor": 1, "Gap": [-1.0, 0.0], "P": [-0.26, -3.16, -0.26, -0.26]}], "Type": "SpatialEdgeCluster"}
+        cases = [self.case("case-a", "model_a", thin=True, root=root), self.case("case-b", "model_b", thin=True, root=root)]
+        for case_id, keys in (("case-a", ("EdgeCount", "Portions", "Type")), ("case-b", ("Type", "Portions", "EdgeCount"))):
+            source = self.tmp / "sources" / case_id / "process-library.json"
+            library = json.loads(source.read_text())
+            library["Models"][0]["Signature"] = {k: signature[k] for k in keys}        # one Signature, two key orders
+            source.write_text(json.dumps(library, indent=2) + "\n")
+        with self.assertRaisesRegex(ValueError, "OI-LIBRARY-DUPLICATE-SIGNATURE.*model_a, model_b"):
+            self.write(cases, root)
+        source = self.tmp / "sources" / "case-b" / "process-library.json"
+        library = json.loads(source.read_text())
+        library["Models"][0]["Signature"]["EdgeCount"] = 3
+        source.write_text(json.dumps(library, indent=2) + "\n")
+        self.assertEqual([m["Name"] for m in self.write(cases, root)["Models"]], ["model_a", "model_b"])
+        cases.append(self.case("case-c", "model_c", thin=True, root=root))
+        self.assertEqual(len(self.write(cases, root)["Models"]), 3)
+
     def test_run_pairs_a_finished_thin_run_with_the_previous_library(self):
         """write_process_library --run: the thin qualify run's library-qualification.json (its
         recorded stage layout and reducer, the manifest through its build record) supplies the

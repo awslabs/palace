@@ -447,6 +447,40 @@ def signature_hash(signature):
     return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
 
 
+class DuplicateSignatureError(ValueError):
+    """Two models of one library carry one canonical Signature (OI-LIBRARY-DUPLICATE-SIGNATURE; fail closed, by name)."""
+
+
+def duplicate_signature_models(models):
+    """{signature hash: [model Names]} for every canonical Signature (json sort_keys) that two or more models of one
+    library carry; a model without a Signature is keyed by its Name alone and never collides here."""
+    by_signature = {}
+    for model in models:
+        signature = model.get("Signature")
+        if signature is None:
+            continue
+        by_signature.setdefault(signature_hash(signature), []).append(str(model.get("Name")))
+    return {key: names for key, names in by_signature.items() if len(names) > 1}
+
+
+def refuse_duplicate_signatures(models, *, library="library"):
+    """OI-LIBRARY-DUPLICATE-SIGNATURE (decisions 1103 / 1126 (5) / 1128 Q4): a library holds AT MOST ONE model per signature,
+    whatever its form. Two models of one key tie on (deviation, rank) in the C++ matcher and the lexicographically smaller
+    Name serves the key SILENTLY (surfaceresponseoperator.cpp; proved on S1 by the lane-C confirmation): RG-7's one-reference
+    and -pieces3 forms of a670c49a86d8 live in separate libraries. Every library ASSEMBLY tool calls this on the models it is
+    about to write and raises DuplicateSignatureError naming the models; returns the models unchanged otherwise. The refusal is
+    on EXACT canonical equality of the Signature (json sort_keys): two Signatures that differ in any value, however close (the
+    one-quantum PEC pair of DESIGN A.5 (b), OffsetOverR 1e-6 apart), are two keys here; their tie in the matcher's
+    tolerance-based exact match is the C++ load-time refusal's (decision 1103 (b), post-freeze) - no tolerance is applied here."""
+    duplicates = duplicate_signature_models(models)
+    if duplicates:
+        raise DuplicateSignatureError(
+            f"{library}: {len(duplicates)} signature(s) carried by more than one model (OI-LIBRARY-DUPLICATE-SIGNATURE, decision "
+            "1103: at most one model per signature per library): "
+            + "; ".join(f"{key[:12]} <- {', '.join(sorted(names))}" for key, names in sorted(duplicates.items())))
+    return models
+
+
 class SignatureKeyError(ValueError):
     """A requirement's key does not agree with its Signature / KeyText (fail closed, by name)."""
 

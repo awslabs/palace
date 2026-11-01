@@ -132,6 +132,9 @@ for path in (str(HERE), str(TOOLS)):
     if path not in sys.path:
         sys.path.insert(0, path)
 import build_configs  # noqa: E402
+if str(TOOLS.parents[1] / "surface_response_identification") not in sys.path:
+    sys.path.insert(0, str(TOOLS.parents[1] / "surface_response_identification"))
+from signature_library import refuse_duplicate_signatures  # noqa: E402
 import build_plan  # noqa: E402
 import case_inputs  # noqa: E402
 from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
@@ -1869,6 +1872,9 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
                           "files copied into this root); a model of the same Name is replaced by this run's; the previous "
                           "file is not modified"}
         models = kept + models
+    # OI-LIBRARY-DUPLICATE-SIGNATURE (decisions 1103 / 1126 (5)): the kept + this run's models hold at most one model per
+    # Signature (a model of another Name of one key is refused by name before the library is returned / written).
+    refuse_duplicate_signatures(models, library=str(Path(root) / "process-library.json"))
     header = consistent_header(headers) or {}
     not_loadable = [model["Name"] for model in models if model["NotLoadable"] is not None]
     unpaired = {case_id: result["ThinCase"] for case_id, result in thin.items() if case_id not in paired}

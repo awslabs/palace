@@ -36,6 +36,9 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import nearkey_detection as detection  # noqa: E402
+if str(HERE.parents[1] / "surface_response_identification") not in sys.path:
+    sys.path.insert(0, str(HERE.parents[1] / "surface_response_identification"))
+from signature_library import refuse_duplicate_signatures  # noqa: E402
 import nearkey_predictor as predictor  # noqa: E402
 import nearkey_transplant as transplant  # noqa: E402
 
@@ -492,7 +495,8 @@ def check_reused_model(model, rule, *, measurement_only=False):
 def assemble_library(library, reused_models, *, rule, name, note=None, measurement_only=False, library_path=None):
     """The base library with the reused models added (or, under a measurement-only assembly keeping the
     exact names, replacing the exact models of the same Name) and the NearKeyReuse header; every model passes
-    check_reused_model first (decision 438 (1), fail closed)."""
+    check_reused_model first (decision 438 (1), fail closed); two models of one Signature in the assembled
+    library are refused by name (OI-LIBRARY-DUPLICATE-SIGNATURE, decisions 1103 / 1126 (5))."""
     out = copy.deepcopy(library)
     out["Name"] = name
     replaced = 0
@@ -507,6 +511,7 @@ def assemble_library(library, reused_models, *, rule, name, note=None, measureme
             replaced += 1
         else:
             out["Models"].append(model)
+    refuse_duplicate_signatures(out["Models"], library=name)
     out["NearKeyReuse"] = library_header(rule, reused_models)
     out["NearKeyReuse"]["Replaced"] = replaced
     if measurement_only:

@@ -674,6 +674,17 @@ class ReuseRecords(unittest.TestCase):
         self.assertEqual(demo["NearKeyReuse"]["Replaced"], 1)
         self.assertIn("NEVER a library of record", demo["Note"])
 
+    def test_assemble_refuses_two_models_of_one_signature(self):
+        """OI-LIBRARY-DUPLICATE-SIGNATURE (decisions 1103 / 1126 (5) / 1128 Q4): a reused model stamped with a Signature a base
+        model already carries (another Name) is refused by name; a distinct Signature assembles."""
+        library = {"Name": "base", "Version": 3, "MatchingRadius": RADIUS, "Models": [copy.deepcopy(FIXTURE["Donor"])]}
+        the_rule = rule()
+        twin = self.reused_model(the_rule, Signature=copy.deepcopy(FIXTURE["Donor"]["Signature"]))
+        with self.assertRaisesRegex(ValueError, "OI-LIBRARY-DUPLICATE-SIGNATURE.*" + ", ".join(sorted([FIXTURE["Donor"]["Name"], twin["Name"]]))):
+            reuse.assemble_library(library, [twin], rule=the_rule, name="twin")
+        distinct = self.reused_model(the_rule, Signature=copy.deepcopy(FIXTURE["Transmon4Edge"]["Signature"]))
+        self.assertEqual(len(reuse.assemble_library(library, [distinct], rule=the_rule, name="ok")["Models"]), 2)
+
     def test_assemble_is_fail_closed_per_model(self):
         """Decision 438 (1) / review MAJOR-1: the four reproduced acceptances are refusals, plus every listed check."""
         library = {"Name": "base", "Version": 3, "MatchingRadius": RADIUS, "Models": []}

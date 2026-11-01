@@ -148,6 +148,31 @@ class SpatialSupportContractTest(unittest.TestCase):
         self.assertEqual(L.conductor_count({"Type": "SpatialEdgeCluster", "Signature": self.SIGNATURE}), 2)
 
 
+
+class DuplicateSignatureRefusalTest(unittest.TestCase):
+    """OI-LIBRARY-DUPLICATE-SIGNATURE (decisions 1103 / 1126 (5) / 1128 Q4): the assembly tools' shared refusal."""
+
+    def test_refuses_two_models_of_one_canonical_signature_by_name(self):
+        signature = {"Type": "ParallelEdgeCluster", "Edges": [{"Conductor": 1, "GapSide": 1, "OffsetOverR": 0.0}]}
+        reordered = {"Edges": [{"OffsetOverR": 0.0, "GapSide": 1, "Conductor": 1}], "Type": "ParallelEdgeCluster"}
+        models = [{"Name": "parallel-edge-cluster-9c177156962b", "Signature": signature},
+                  {"Name": "parallel-edge-cluster-9c177156962b-pieces3", "Signature": reordered},
+                  {"Name": "isolated-edge"}, {"Name": "convex-corner-45deg", "Signature": {"Type": "ConvexCorner", "AngleDegrees": 45.0}}]
+        self.assertEqual(L.duplicate_signature_models(models),
+                         {L.signature_hash(signature): ["parallel-edge-cluster-9c177156962b", "parallel-edge-cluster-9c177156962b-pieces3"]})
+        with self.assertRaisesRegex(L.DuplicateSignatureError, "lib.json: 1 signature.*OI-LIBRARY-DUPLICATE-SIGNATURE.*decision 1103.*"
+                                                                "parallel-edge-cluster-9c177156962b, parallel-edge-cluster-9c177156962b-pieces3"):
+            L.refuse_duplicate_signatures(models, library="lib.json")
+        self.assertTrue(issubclass(L.DuplicateSignatureError, ValueError))
+        rest = models[1:]
+        self.assertIs(L.refuse_duplicate_signatures(rest), rest)                  # one model per signature: unchanged
+        # the Edges ORDER is part of the key: another order is another signature; Signature-less models never collide
+        other_order = {"Type": "ParallelEdgeCluster", "Edges": [{"Conductor": 1, "GapSide": 1, "OffsetOverR": 1.0},
+                                                                 {"Conductor": 1, "GapSide": 1, "OffsetOverR": 0.0}]}
+        self.assertEqual(L.duplicate_signature_models([{"Name": "a", "Signature": other_order}, {"Name": "b", "Signature": dict(other_order, Edges=other_order["Edges"][::-1])},
+                                                       {"Name": "c"}, {"Name": "d"}]), {})
+
+
 if __name__ == "__main__":
     unittest.main()
 

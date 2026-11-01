@@ -14,9 +14,15 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
      SCP holes, DomainBoundary, ConductorConsistency, GeometryFallbacks per class, the Maxwell
      loop remainder, the UNCLAIMED remainder as its own row: OI-COVERAGE-EXCLUSION-ENERGY),
      in ENERGY (the PatchEnergy raw partition; a PROXY by length when absent) and in LENGTH.
+     The pre-freeze fixes (decisions 1125 / 1126 / 1128 / 1129): the raw-class CSVs' Total row
+     is not a class; the Unclaimed remainder = the SCP-dropped vertex coupons' in-box windows,
+     CREDITED to their OWNER clusters (F2, scp_owner_credit); the exclusion export's classes are
+     a SECOND partition (Excluded:<class> rows beside the physical one, EXCLUDED_ROW_PREFIX),
+     UnprobedModels among them is APPLIED energy.
   B  the NAMED RESIDUAL TABLE: the terms the band does not calibrate, with their bounds of record.
-  C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v3.json, written by
-     coverage_calibration.py) and ONE label HIGH / MEDIUM / LOW with its reasons.
+  C  the PREDICTED ERROR BAND per Type from a calibration file (data/coverage_bands_v5.json, written by
+     coverage_calibration.py) and ONE label HIGH / MEDIUM / LOW with its reasons; the gap term
+     100 x [r_other |g| + sum_c r_c b_c] (band_table; b_CornerArmTrim = |g_corner|).
   D  QUOTABILITY: the AMR ladder (ft per Type and its steps), the DEPTH rule, the closure spread.
 
 Pure Python (no numpy); exit 0 when the report was written, 2 when a required input is missing.
@@ -76,6 +82,9 @@ HIGH_EXACT_SHARE = 0.95
 CLASS_MATERIAL_SHARE = 0.05
 RAW_CLASS_HIGH_BAR = 0.01
 RAW_CLASS_LOW_BAR = 0.10
+# Decision 1132 MINOR-1 (the FREEZE ruling; relayed as 1133 (ii)): the F2 owner credit rests on an unmeasured premise (the
+# owner cluster corrects its in-box region; decision 1125), so a credit > 1 % of W_t on any Type limits the label to MEDIUM.
+SCP_OWNER_CREDIT_MEDIUM_BAR = 0.01
 CALIBRATED_MIN_WINDOWS = 3
 # The DEPTH rule (DESIGN 1.2): the last ft step > 0.3 pt is not quotable; a step ratio >= 0.7 over the
 # last three solves is not shrinking (DEPTH-UNBOUNDED); the Richardson tail is capped at 3 x the step.
@@ -90,8 +99,12 @@ LENGTH_BOOKKEEPING_TOL_UM = 1e-6
 # examples/<dir>/ level is read by test-schema's "Example Configs" case as a Palace config).
 # v3 (idfix lane C, decision 1096 (4)): the re-fit on records-v3 (the new-binary manifests); every fitted number equals v2's (the
 # new records change the LENGTH partition and the named rows, not the ENERGY-mode raw shares / class levers the fit reads).
-# RG-8's calibration WITH the exclusion-energy column (DESIGN 8 (e); records with the export ON) = coverage_bands_v4 (decision 1101).
-DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v3.json")
+# RG-8's calibration WITH the exclusion-energy column (DESIGN 8 (e); records with the export ON) = coverage_bands_v4 (decision 1101;
+# the re-grade lane's record, not committed: its per-class gap form is band_table's since decision 1128).
+# v5 (idfix covfix, decisions 1125 / 1126 (4) / 1128 / 1129): the v3 fit re-run with the corrected reader (the Total row, the F2
+# owner credit, UnprobedModels applied, the two partitions): the fitted numbers + LOO identical to v3; median_g and every run's
+# gap term move (the band file's "note" says which and why). v2 / v3 kept.
+DEFAULT_BANDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "coverage_bands_v5.json")
 
 
 class MissingInput(Exception):
@@ -352,7 +365,26 @@ def load_manifest(path):
         if topo not in by_topology or length > by_topology[topo]["Length"]:
             by_topology[topo] = {"Status": req.get("Status"), "Class": requirement_class(req), "Length": length,
                                  "Hash": (req.get("Hash") or "")[:12]}
-    return {"models": models, "by_topology": by_topology, "manifest": manifest, "path": path, "sha256": sha256_file(path)}
+    return {"models": models, "by_topology": by_topology, "manifest": manifest, "path": path, "sha256": sha256_file(path),
+            "scp_dropped": scp_dropped_coupons(manifest)}
+
+
+def scp_dropped_coupons(manifest):
+    """The vertex / corner coupons SpatialClusterPriority DROPPED inside an owner cluster's box, from the manifest's
+    Identification.Diagnostics.SpatialClusterPriority.Patches[] (the record the OI-COVERAGE-UNCLAIMED-INCELL diagnosis
+    read; decisions 1124 / 1125): -> [{patch, feature, model, topology, owner_model, owner_patch, window_length_um,
+    outside_length_um, in_box_length_um}]. in_box = WindowLength - OutsideLength (the part the owner coupon corrects by the SCP
+    contract; the OutsideLength part is the SCP RAW row). Empty when the manifest carries no such block."""
+    block = ((manifest.get("Identification") or {}).get("Diagnostics") or {}).get("SpatialClusterPriority") or {}
+    out = []
+    for p in block.get("Patches") or []:
+        owner = p.get("Owner") or {}
+        window = float(p.get("WindowLength") or 0.0)
+        outside = float(p.get("OutsideLength") or 0.0)
+        out.append({"patch": p.get("Patch"), "feature": p.get("Feature"), "model": p.get("Model"), "topology": p.get("Topology"),
+                    "owner_model": owner.get("Model"), "owner_patch": owner.get("Patch"), "window_length_um": window,
+                    "outside_length_um": outside, "in_box_length_um": max(window - outside, 0.0)})
+    return out
 
 
 def length_partition(loaded, types, discovery=None):
@@ -472,6 +504,19 @@ RAW_CSV_FILES = {
     "SCP": ("surface-response-spatial-cluster-priority-energy.csv", "spatialclusterpriority raw energy"),
     "ConductorConsistency": ("surface-response-conductor-consistency-energy.csv", "conductorconsistency raw energy"),
 }
+# The binary's sum row in every raw-class CSV (its `type` column) and in the Maxwell loop-remainder CSV (its `model` column).
+RAW_CSV_TOTAL_ROW = "Total"
+# The exclusion-energy export's rows in the ENERGY column: Excluded:<class>. Decision 1129: the export's classes are a SECOND,
+# overlapping partition of the within-R energy (the CLASSIFIED edge tree, every segment incl. the exclusion segments) while the
+# raw partition's labels come from the PHYSICAL tree; their energy sits under CLAIMED labels there (RG-8 C4: the 'unclaimed'
+# label 0 J vs CornerArmTrim 0.69 % SA). So they are NOT subtracted from the unclaimed label; they stay RAW rows beside it,
+# bounded in the gap term by their b_c (band_table: CornerArmTrim |g_corner|, the others |g|): questionable-model energy, the
+# nearest physical patch's coupon may not represent the cut / fold / non-manifold / trimmed edge. Decision 1096 (4)'s premise
+# ("the Excluded rows partition the former Unclaimed") is superseded by 1129.
+EXCLUDED_ROW_PREFIX = "Excluded:"
+# The export's class of APPLIED patches the conductor-consistency gate cannot probe: corrected energy, never a RAW row
+# (decisions 1123 / 1126 (3)).
+UNPROBED_MODELS_CLASS = "UnprobedModels"
 
 
 def _eval0(rows):
@@ -502,7 +547,9 @@ def _accumulate(dst, add):
 
 
 def raw_class_energies(postpro, interfaces, targets, kind):
-    """The recorded RAW classes' within-R raw energy per Type: {row: {Type: J}} plus their locations."""
+    """The recorded RAW classes' within-R raw energy per Type: {row: {Type: J}} plus their locations. The binary writes a
+    `Total` row (type == "Total") after the per-type rows of every raw-class CSV: it is the SUM of the rows above it, never a
+    class (decision 1125: summing it doubled Missing / DomainBoundary / SCP / ConductorConsistency on every report of record)."""
     rows_out = {}
     locations = {}
     for row_name, (fname, prefix) in RAW_CSV_FILES.items():
@@ -511,6 +558,8 @@ def raw_class_energies(postpro, interfaces, targets, kind):
             continue
         acc = {}
         for r in _first_eval_rows(rows):
+            if str(r.get("type")) == RAW_CSV_TOTAL_ROW:
+                continue
             _accumulate(acc, _sum_by_type(indexed_columns(r, prefix), interfaces, targets))
             if r.get("portions", 0) or r.get("length (m)", 0):
                 locations.setdefault(row_name, []).append({"type": r.get("type"), "portions": r.get("portions"),
@@ -529,16 +578,20 @@ def raw_class_energies(postpro, interfaces, targets, kind):
                 locations.setdefault(name, []).append({"type": t, "count": r.get("count"),
                                                        "length_m": r.get("length (m)")})
     if kind == "Maxwell":
+        # the loop-remainder CSV's sum row is in its `model` column ("m<idx>" rows, then "Total"; postoperator.cpp:2769): the
+        # same rule as the four raw-class CSVs above (review d1126 MAJOR-1: ctx003-C1 Maxwell read 2 x its loop remainder)
         loops = read_csv(os.path.join(postpro, "surface-response-loop-remainder-energy.csv"))
         if loops is not None:
             acc = {}
             for r in _first_eval_rows(loops):
+                if str(r.get("model")) == RAW_CSV_TOTAL_ROW:
+                    continue
                 _accumulate(acc, _sum_by_type(indexed_columns(r, "remainder energy"), interfaces, targets))
             rows_out["LoopRemainder"] = acc
     exclusion = exclusion_energy_rows(postpro)
     for cls, by_type in exclusion["classes"].items():
-        rows_out["Excluded:" + cls] = by_type
-        locations["Excluded:" + cls] = exclusion["portions"].get(cls, [])
+        rows_out[EXCLUDED_ROW_PREFIX + cls] = by_type
+        locations[EXCLUDED_ROW_PREFIX + cls] = exclusion["portions"].get(cls, [])
     return rows_out, locations
 
 
@@ -546,10 +599,13 @@ def exclusion_energy_rows(postpro):
     """surface-response-exclusion-energy.csv (the section-8 export, DESIGN section 8 / decision 1076; Diagnostics.ExclusionEnergy
     on): the within-R raw energy of the EXCLUDED / unclaimed portions per class x Type for the first excitation block (columns
     by NAME: class, type, class portions, class length (m), raw energy (J), interface raw energy (J)); the Claimed and Total
-    rows are not classes. -> {"present", "classes": {class: {Type: J}}, "portions": {class: [...]}, "interface_raw": {Type: J},
-    "claimed": {Type: J}}; every dict empty when the file is absent (the records of record carry none: the flag is OFF)."""
+    rows are not classes. UnprobedModels (the raw claims of APPLIED patches the conductor-consistency gate cannot probe;
+    surfaceresponseoperator.hpp RecordUnprobedPatchClaims) is corrected energy: it is reported under "applied_unprobed" and
+    never as a class (decisions 1123 / 1126 (3)). -> {"present", "classes": {class: {Type: J}}, "portions": {class: [...]},
+    "interface_raw": {Type: J}, "claimed": {Type: J}, "applied_unprobed": {Type: J}}; every dict empty when the file is
+    absent (the records of record carry none: the flag is OFF)."""
     rows = read_csv(os.path.join(postpro, "surface-response-exclusion-energy.csv"))
-    out = {"present": rows is not None, "classes": {}, "portions": {}, "interface_raw": {}, "claimed": {}}
+    out = {"present": rows is not None, "classes": {}, "portions": {}, "interface_raw": {}, "claimed": {}, "applied_unprobed": {}}
     if not rows:
         return out
     block_keys = [k for k in ("f (GHz)", "m", "exc", "source") if k in rows[0]]
@@ -567,6 +623,9 @@ def exclusion_energy_rows(postpro):
             out["claimed"][t] = out["claimed"].get(t, 0.0) + energy
             continue
         if cls == "Total":
+            continue
+        if cls == UNPROBED_MODELS_CLASS:
+            out["applied_unprobed"][t] = out["applied_unprobed"].get(t, 0.0) + energy
             continue
         out["classes"].setdefault(cls, {})
         out["classes"][cls][t] = out["classes"][cls].get(t, 0.0) + energy
@@ -688,25 +747,77 @@ def classify_model(idx, catalog, manifest_models, by_topology=None, mapped=None,
     return STATUS_ROW.get(info["Status"], str(info["Status"])), info["Class"], info
 
 
-def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_models, W, lengths, by_topology=None):
+def scp_owner_credit(remainder, scp_dropped, manifest_models):
+    """F2 (decisions 1124 / 1125 / 1126 (2) / 1128 Q2): the Unclaimed remainder of one Type (the unclaimed label minus the
+    in-label recorded RAW rows) is the SCP-dropped vertex coupons' in-box windows (the arms / wedges inside an owner cluster's
+    box; 100 % on O4 / O1 / S5 / S7, 99.7 % on O3 by the diagnosis). It is CREDITED to the owner cluster models' Status / class
+    in proportion to each dropped coupon's in-box window length. PREMISE (named by the review d1117): the owner corrects its
+    in-box region (the SCP contract of record), supported by the letters, not separately measured. No credit when the
+    remainder is <= 0, when no coupon was dropped, or when an owner is not a manifest model (recorded). -> (credited J, record).
+    EXTENT (review d1126 MINOR-4): the WHOLE remainder is credited whenever >= 1 drop exists and the remainder > 0; no record
+    carries the in-box windows' own energy, so a non-SCP residual (O3's 0.3 %) is credited too, and the credits of the windows
+    the diagnosis did not split (S1 / S4 / C1 / C2 ...) rest on its 19-window correlation (UNCLAIMED > 0 <=> drops >= 1). A
+    credit > 1 % of W_t caps the label at MEDIUM (SCP_OWNER_CREDIT_MEDIUM_BAR; decision 1133 (ii))."""
+    record = {"energy": 0.0, "owners": [], "dropped": len(scp_dropped), "in_box_length_um": 0.0,
+              "rule": "the Unclaimed remainder credited to the SCP-dropped coupons' OWNER clusters by in-box window length "
+                      "(WindowLength - OutsideLength); the OutsideLength part stays the SCP RAW row",
+              "premise": "the owner cluster corrects its in-box region (the SpatialClusterPriority contract of record): supported by "
+                         "the letters of record, not separately measured (decision 1125)"}
+    by_owner = {}
+    for c in scp_dropped:
+        if c["in_box_length_um"] > 0.0 and c.get("owner_model"):
+            by_owner[c["owner_model"]] = by_owner.get(c["owner_model"], 0.0) + c["in_box_length_um"]
+    total = sum(by_owner.values())
+    record["in_box_length_um"] = total
+    if remainder <= 0.0 or total <= 0.0:
+        return 0.0, record
+    credited = 0.0
+    for owner, length in sorted(by_owner.items()):
+        info = manifest_models.get(owner)
+        if info is None:
+            record["owners"].append({"model": owner, "in_box_length_um": length, "status": None, "class": None, "energy": 0.0,
+                                     "note": "owner not a manifest model: not credited"})
+            continue
+        e = remainder * length / total
+        credited += e
+        record["owners"].append({"model": owner, "in_box_length_um": length, "status": STATUS_ROW.get(info["Status"], str(info["Status"])),
+                                 "class": info["Class"], "grown": bool(info.get("Grown")), "energy": e})
+    record["energy"] = credited
+    return credited, record
+
+
+def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_models, W, lengths, by_topology=None, scp_dropped=None):
     """Block A ENERGY column per Type. ENERGY mode when the raw partition exists; else the PROXY
-    (model rows = W_t x the LENGTH share; the recorded RAW rows' own energies; Unclaimed = the remainder)."""
+    (model rows = W_t x the LENGTH share; the recorded RAW rows' own energies; Unclaimed = the remainder).
+    Two partitions of the within-R energy are read (decision 1129): the PHYSICAL-tree one (the model labels + the in-label
+    recorded RAW rows + the Unclaimed remainder, which sums to W_t) and the exclusion export's CLASSIFIED-tree classes
+    (Excluded:<class> RAW rows beside it, never subtracted from the label). The F2 owner credit (scp_owner_credit) moves the
+    Unclaimed remainder to the owner clusters' rows; g_corner = the correction ratio over the corner-class models (the
+    CornerArmTrim bound of band_table)."""
     partition = raw_partition(postpro, interfaces, targets)
     fab = model_energies(postpro, interfaces, targets)
     raw_rows, locations = raw_class_energies(postpro, interfaces, targets, kind)
+    exclusion = exclusion_energy_rows(postpro)
     mode = "ENERGY" if partition is not None else "PROXY"
     anchors = anchor_models(partition, catalog, manifest_models)
+    scp_dropped = scp_dropped if scp_dropped is not None else []
     out = {"mode": mode, "types": {}, "locations": locations, "anchor_mapped_models": [],
-           "exclusion_export": {"present": any(k.startswith("Excluded:") for k in raw_rows),
-                                "classes": sorted(k[len("Excluded:"):] for k in raw_rows if k.startswith("Excluded:"))}}
+           "exclusion_export": {"present": exclusion["present"],
+                                "classes": sorted(k[len(EXCLUDED_ROW_PREFIX):] for k in raw_rows if k.startswith(EXCLUDED_ROW_PREFIX)),
+                                "applied_unprobed_J": exclusion["applied_unprobed"],
+                                "reading": "a second, overlapping partition (the classified tree): questionable-model energy under "
+                                           "claimed labels of the physical tree, bounded conservatively at b_c in the gap term; "
+                                           "not subtracted from the unclaimed label (decision 1129)"}}
     first_type = next(iter(W), None)
     for t, w in W.items():
         W_t = w["W"]
         acc = {"W": W_t, "E_out": w["E_out"], "models": {}, "classes": {}, "raw": {}, "unclaimed_label": None,
-               "fab_total": 0.0, "raw_models_total": 0.0, "g": None, "grown": 0.0, "mapped_models": 0.0}
+               "fab_total": 0.0, "raw_models_total": 0.0, "g": None, "g_corner": None, "grown": 0.0, "mapped_models": 0.0,
+               "scp_owner_credit": None, "unprobed_applied": exclusion["applied_unprobed"].get(t, 0.0)}
         fab_t = sum(v.get(t, 0.0) for v in fab.values())
         acc["fab_total"] = fab_t
         if partition is not None:
+            raw_corner = fab_corner = 0.0
             for label, by_type in partition["labels"].items():
                 e = by_type.get(t, 0.0)
                 if label == "unclaimed":
@@ -722,18 +833,33 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
                     acc["models"][status] = acc["models"].get(status, 0.0) + e * share
                     acc["classes"][cls] = acc["classes"].get(cls, 0.0) + e * share
                     acc["raw_models_total"] += e * share
+                    if cls in CORNER_CLASSES:
+                        raw_corner += e * share
+                        fab_corner += fab.get(m, {}).get(t, 0.0) * share
                     if (info or {}).get("Grown"):
                         acc["grown"] += e * share
                     if catalog.get(m, {}).get("Name") not in manifest_models:
                         acc["mapped_models"] += e * share
             for row_name, by_type in raw_rows.items():
                 acc["raw"][row_name] = by_type.get(t, 0.0)
-            recorded_raw = sum(acc["raw"].values())
-            acc["raw"]["Unclaimed"] = (acc["unclaimed_label"] or 0.0) - recorded_raw
+            recorded_in_label = sum(v for k, v in acc["raw"].items() if not k.startswith(EXCLUDED_ROW_PREFIX))
+            remainder = (acc["unclaimed_label"] or 0.0) - recorded_in_label
+            credited, acc["scp_owner_credit"] = scp_owner_credit(remainder, scp_dropped, manifest_models)
+            for owner in acc["scp_owner_credit"]["owners"]:
+                if owner["status"] is None:
+                    continue
+                acc["models"][owner["status"]] = acc["models"].get(owner["status"], 0.0) + owner["energy"]
+                acc["classes"][owner["class"]] = acc["classes"].get(owner["class"], 0.0) + owner["energy"]
+                acc["raw_models_total"] += owner["energy"]
+                if owner.get("grown"):
+                    acc["grown"] += owner["energy"]
+            acc["raw"]["Unclaimed"] = remainder - credited
             if acc["raw_models_total"] > 0.0:
                 acc["g"] = (fab_t - acc["raw_models_total"]) / acc["raw_models_total"]
-            total = sum(acc["models"].values()) + sum(acc["raw"].values())
-            acc["bookkeeping_miss_rel"] = (total - W_t) / W_t if W_t else 0.0
+            if raw_corner > 0.0:
+                acc["g_corner"] = (fab_corner - raw_corner) / raw_corner
+            physical = sum(acc["models"].values()) + sum(v for k, v in acc["raw"].items() if not k.startswith(EXCLUDED_ROW_PREFIX))
+            acc["bookkeeping_miss_rel"] = (physical - W_t) / W_t if W_t else 0.0
         else:
             L = lengths["types"].get(t, {})
             for status, share in L.get("models_share", {}).items():
@@ -745,17 +871,22 @@ def energy_partition(postpro, interfaces, targets, kind, catalog, manifest_model
             for row_name, share in L.get("raw_share", {}).items():
                 if row_name not in acc["raw"]:
                     acc["raw"][row_name] = W_t * share
-            acc["raw"]["Unclaimed"] = W_t - sum(acc["models"].values()) - sum(acc["raw"].values())
+            acc["raw"]["Unclaimed"] = W_t - sum(acc["models"].values()) - sum(v for k, v in acc["raw"].items()
+                                                                               if not k.startswith(EXCLUDED_ROW_PREFIX))
             acc["raw_models_total"] = sum(acc["models"].values())
             acc["grown"] = W_t * L.get("grown_share", 0.0)
             acc["bookkeeping_miss_rel"] = 0.0
         for part in ("models", "classes", "raw"):
             acc[part + "_share"] = {k: (v / W_t if W_t else 0.0) for k, v in acc[part].items()}
         acc["raw_share_total"] = sum(acc["raw"].values()) / W_t if W_t else 0.0
+        acc["excluded_shares"] = {k[len(EXCLUDED_ROW_PREFIX):]: v for k, v in acc["raw_share"].items() if k.startswith(EXCLUDED_ROW_PREFIX)}
+        acc["raw_share_physical"] = acc["raw_share_total"] - sum(acc["excluded_shares"].values())
         acc["exact_share"] = acc["models_share"].get("Exact", 0.0)
         acc["grown_share"] = acc["grown"] / W_t if W_t else 0.0
         acc["unclaimed_share"] = acc["raw_share"].get("Unclaimed", 0.0)
         acc["mapped_models_share"] = acc["mapped_models"] / W_t if W_t else 0.0
+        if acc["scp_owner_credit"] is not None:
+            acc["scp_owner_credit"]["share"] = acc["scp_owner_credit"]["energy"] / W_t if W_t else 0.0
         out["types"][t] = acc
     return out
 
@@ -898,8 +1029,8 @@ NAMED_RESIDUALS = (
      "bound": "a patch whose pass rests on the amplitude floor (A_p < F = 1e-3 x the largest applied trace amplitude): FloorApplied does not imply a pass (C.4); the count is READ",
      "trigger": "Diagnostics.ConductorConsistency.FloorAppliedPatches > 0 (or Records[].FloorApplied)", "band_use": "listed (information)", "key": "floor"},
     {"term": "UnprobedModels / ConductorConsistency exclusions", "decisions": "1064 (2) / 1074 / 1082",
-     "bound": "a model class without a probe rule (UnprobedModels, RAW + exported) or a patch the gate excluded (ConductorConsistency RAW row; the LOW-CONFIDENCE banner)",
-     "trigger": "Diagnostics.ConductorConsistency.UnprobedModels non-empty or Count > 0", "band_use": "the RAW rows carry it", "key": "unprobed"},
+     "bound": "a model class without a probe rule (UnprobedModels: APPLIED energy the gate cannot probe, reported from the exclusion export, in no RAW row; decisions 1123 / 1126 (3)) or a patch the gate excluded (ConductorConsistency RAW row; the LOW-CONFIDENCE banner)",
+     "trigger": "Diagnostics.ConductorConsistency.UnprobedModels non-empty or Count > 0", "band_use": "the ConductorConsistency RAW row carries the excluded patches; UnprobedModels is applied energy (listed, no band change)", "key": "unprobed"},
     {"term": "GeometricNearPairs (the library's in-band model pairs)", "decisions": "A.4 (c) / A.5 (b); 1079 Q1 (ii); 1097 Q4",
      "bound": "a Missing key within the band of two models is served by the nearer; the pair's correction difference must be <= 2 % per Type (v3-j: max 0.99 %); a pair over the bar is RECORDED (geometric_near_pairs.py), never excluded",
      "trigger": "the manifest's Library.GeometricNearPairs non-empty; --near-pairs adds CorrectionDifference", "band_use": "listed (information); flagged pairs named", "key": "near_pairs"},
@@ -1069,6 +1200,10 @@ def named_residuals(kind, energy, lengths, ladder_types, flags, reference_order,
 # --------------------------------------------------------------------------------------------------
 
 CORNER_CLASSES = ("ConvexCorner", "ConcaveCorner")
+# The exclusion export's class bounds b_c of the gap term (decisions 1117 / 1119 / 1128 Q1 (b)); a class not listed is |g|.
+EXCLUDED_CLASS_BOUND_RULES = {"CornerArmTrim": "|g_corner| (1117); |g| when the run has no corner model",
+                              "TruncationCut": "|g| (1119: 'fully wrong' until a mirror-off record exists on the PROXY set)",
+                              "NonManifold": "|g| (1117)", "NonPlanar": "|g| (1117)"}
 
 
 def class_predictors(lengths_t):
@@ -1122,10 +1257,29 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
             g = cal.get("median_g", 0.0)
             g_source = "the calibration median (no raw partition)"
         r = acc.get("raw_share_total", 0.0)
-        # The gap term reads the TOTAL raw share (the "fully wrong" bound) until records with the exclusion-energy export ON
-        # exist: DESIGN 8 (b)'s per-class bound b_class lands with coverage_bands_v4 (RG-8; decision 1101). The Excluded:<class>
-        # rows this report prints are read by name and do not change r here.
-        gap = 100.0 * r * abs(g)
+        # The gap term (DESIGN 8 (b); decisions 1117 / 1119 / 1128 Q1 (b) / 1129): gap = 100 x [r_other |g| + sum_c r_c b_c] with
+        # r_c = the exclusion export's class share of W_t (the Excluded:<class> RAW rows: the classified-tree partition, beside
+        # the physical one) and b_c the class's bound: CornerArmTrim |g_corner| (the corner-class correction ratio of the run;
+        # |g| when the run has no corner model), TruncationCut / NonManifold / NonPlanar / every other class |g| (TruncationCut
+        # labelled "fully wrong" until a mirror-off record exists; 1119); r_other = the physical partition's raw share (the
+        # in-label recorded rows + the Unclaimed remainder after the F2 owner credit). Without the export (the records of
+        # record) it reduces to the TOTAL raw share x |g|. Relation to the re-grade's v4 form (regrade/tools/
+        # coverage_calibration_v4_regrade_v1.py: r_other = max(R_L - sum_c r_c, 0) with R_L the label-based raw share; review
+        # d1126 MAJOR-2 / decision 1133 (i)): gap_v5 - gap_v4 = min(R_L, sum_c r_c) |g| >= 0 - v5 >= v4 always; EQUAL where
+        # R_L = 0 (RG-8 C4 / O2, and O4 / O3 once the F2 credit empties the remainder) or where sum_c r_c = 0 (no export: both
+        # forms reduce to R_L |g|), more conservative by sum_c r_c |g| where R_L > sum_c r_c (RG-8 S7), by R_L |g| otherwise
+        # (no clamp).
+        excluded = acc.get("excluded_shares") or {}
+        r_other = acc.get("raw_share_physical", r - sum(excluded.values()))
+        g_corner = acc.get("g_corner")
+        parts = {}
+        for cls, r_c in sorted(excluded.items()):
+            if cls == "CornerArmTrim" and g_corner is not None and not proxy:
+                b_c, rule = abs(g_corner), "|g_corner| (1117)"
+            else:
+                b_c, rule = abs(g), EXCLUDED_CLASS_BOUND_RULES.get(cls, "|g|")
+            parts[cls] = {"r_c": r_c, "b_c": b_c, "rule": rule, "term_pt": 100.0 * r_c * b_c}
+        gap = 100.0 * r_other * abs(g) + sum(p["term_pt"] for p in parts.values())
         lo = b - H - gap
         hi = b + H + gap
         if proxy or acc.get("g") is None:
@@ -1161,8 +1315,10 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
                     hi -= e["tail_pt"]
                 ext_notes.append(f"{res['term']}: {e['status']} tail {fmt_pt(e['tail_pt'])} (band extended {'down' if e['tail_pt'] >= 0 else 'up'})")
         row.update({"model": cal.get("model"), "coefficients": cal.get("coefficients"), "bias_pt": b, "H_pt": cal.get("H_pt"),
-                    "widened": cal.get("widened", 1.0), "gap_pt": gap, "g": g, "g_source": g_source,
-                    "raw_share": r, "low_pt": lo, "high_pt": hi, "extensions": ext_notes,
+                    "widened": cal.get("widened", 1.0), "gap_pt": gap, "g": g, "g_source": g_source, "g_corner": g_corner,
+                    "raw_share": r, "gap_parts": {"r_other": r_other, "classes": parts,
+                                                  "rule": "gap = 100 x [r_other |g| + sum_c r_c b_c] (1117 / 1119 / 1128 / 1129)"},
+                    "low_pt": lo, "high_pt": hi, "extensions": ext_notes,
                     "loo_coverage": cal.get("loo_coverage"), "loo_coverage_unwidened": unwidened_loo(cal), "n": cal.get("n"),
                     "median_residual_pt": cal.get("median_residual_pt")})
         out[t] = row
@@ -1208,6 +1364,10 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
                 reasons_not_high.append(f"{t}: RAW {row_name} {fmt_pct(share)} > 1 %")
         if acc["raw_share_total"] > RAW_CLASS_LOW_BAR:
             reasons_low.append(f"{t}: RAW total {fmt_pct(acc['raw_share_total'])} > 10 %")
+        credit_share = (acc.get("scp_owner_credit") or {}).get("share", 0.0)
+        if credit_share > SCP_OWNER_CREDIT_MEDIUM_BAR:
+            reasons_not_high.append(f"{t}: SCP owner credit {fmt_pct(credit_share)} > 1 % of W_t (premise unmeasured; decision 1133): "
+                                    "capped at MEDIUM")
         lad = ladder_types.get(t, {})
         if lad.get("status") == "DEPTH-UNBOUNDED":
             reasons_low.append(f"{t}: DEPTH-UNBOUNDED (step ratio {lad.get('step_ratio')})")
@@ -1252,7 +1412,8 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     loaded = load_manifest(manifest_path)
     discovery = read_json(discovery_path) if discovery_path else None
     lengths = length_partition(loaded, types, discovery)
-    energy = energy_partition(postpro, interfaces, targets, kind, catalog, loaded["models"], W, lengths, loaded["by_topology"])
+    energy = energy_partition(postpro, interfaces, targets, kind, catalog, loaded["models"], W, lengths, loaded["by_topology"],
+                              loaded["scp_dropped"])
     proxy = energy["mode"] == "PROXY"
     lad = ladder(postpro, interfaces, targets, kind, ladder_dir)
     flags = maxwell_flags(postpro, config, energies, port_form) if kind == "Maxwell" else {}
@@ -1281,6 +1442,8 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
                     "named_records": lengths["named_records"], "unpatched_pairs": lengths["unpatched_pairs"],
                     "identification_raw_exclusions": lengths["identification_raw_exclusions"],
                     "exclusion_energy_export": energy.get("exclusion_export"),
+                    "scp_dropped": loaded["scp_dropped"],
+                    "scp_owner_credit": {t: acc.get("scp_owner_credit") for t, acc in energy["types"].items()},
                     "conductor_consistency": conductor, "geometric_near_pairs": near_pairs},
         "block_B": residuals, "block_D": {"ladder": lad, "closure": energies.get("closure"), "flags": flags,
                                           "ff_vs_ft": {t: ((w["ff"] - w["ft"]) / w["ft"] if (w["ft"] and w["ff"] is not None) else None)
@@ -1423,9 +1586,23 @@ def render_markdown(report):
         lines.append(f"\nBOOKKEEPING MISS (length): requirements - AssignedLength = {A['length_bookkeeping_miss_um']:+.4f} um")
     export = A.get("exclusion_energy_export") or {}
     lines.append("\nExclusions (length by class" + ("; the per-class ENERGY export read: Excluded:* rows above (DESIGN section 8; classes "
-                 + ", ".join(export.get("classes", [])) + ")" if export.get("present")
+                 + ", ".join(export.get("classes", [])) + "); " + export.get("reading", "") if export.get("present")
                  else "; no per-class energy export in this run: OI-COVERAGE-EXCLUSION-ENERGY, Diagnostics.ExclusionEnergy off") + "): "
                  + "; ".join(f"{x['Class']} {x['Count']} x {x['Length']:.1f} um" for x in A.get("exclusions", [])))
+    if export.get("present") and any(export.get("applied_unprobed_J") or {}):
+        lines.append("UnprobedModels (the export's class of APPLIED patches the gate cannot probe; decision 1123): corrected energy, "
+                     "in no RAW row: " + "; ".join(f"{t} {v:.3e} J" for t, v in export["applied_unprobed_J"].items()))
+    credits = {t: c for t, c in (A.get("scp_owner_credit") or {}).items() if c}
+    if A.get("scp_dropped") or credits:
+        dropped = A.get("scp_dropped") or []
+        lines.append(f"SpatialClusterPriority dropped {len(dropped)} vertex coupon(s), in-box window "
+                     f"{sum(d['in_box_length_um'] for d in dropped):.2f} um, outside {sum(d['outside_length_um'] for d in dropped):.2f} um "
+                     "(the OutsideLength part = the SCP RAW row). F2 OWNER CREDIT (decisions 1124 / 1125 / 1126 (2) / 1128): the Unclaimed "
+                     "remainder credited to the owner clusters by in-box length: "
+                     + ("; ".join(f"{t} {fmt_pct(c.get('share', 0.0))} -> " + ", ".join(
+                         f"{o['model'][-12:]} {o['status']} / {o['class']} {fmt_pct(o['energy'] / A['energy'][t]['W']) if A['energy'][t].get('W') else ''}"
+                         for o in c["owners"]) for t, c in credits.items() if c.get("owners")) or "none (no remainder or no owner)")
+                     + ". PREMISE: " + next((c["premise"] for c in credits.values()), "the owner corrects its in-box region (not separately measured)"))
     if A.get("identification_raw_exclusions"):
         lines.append("Identification-decided RAW exclusions (not in AssignedLength; RAW rows above): "
                      + "; ".join(f"{k} {v:.2f} um" for k, v in A["identification_raw_exclusions"].items()))
@@ -1458,7 +1635,7 @@ def render_markdown(report):
     lines += ["", "## C. PREDICTED ERROR BAND per Type (predicted (thin + library - thick) / thick, pt)"]
     C = report.get("block_C")
     if C:
-        lines.append("| Type | model | bias | H (x widened) | gap r|g| | band | LOO coverage (n) | extensions |")
+        lines.append("| Type | model | bias | H (x widened) | gap (r_other|g| + sum r_c b_c) | band | LOO coverage (n) | extensions |")
         lines.append("|---|---|---|---|---|---|---|---|")
         form = (report.get("block_D") or {}).get("flags", {}).get("form")
         for t, row in C.items():
@@ -1522,7 +1699,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("postpro", nargs="?", help="the run's postpro directory (omit with --preflight)")
     parser.add_argument("--manifest", required=True, help="the preflight manifest surface-response-requirements.json")
-    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v3.json)")
+    parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v5.json)")
     parser.add_argument("--no-bands", action="store_true", help="coverage only (blocks A / B / D; no band, no label)")
     parser.add_argument("--discovery", help="the discovery closure manifest (UnbuildableRequirements keys)")
     parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run directory")
