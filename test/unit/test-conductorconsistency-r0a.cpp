@@ -856,6 +856,87 @@ TEST_CASE_METHOD(
 #endif
 }
 
+// OI-ES-UNPROBED-PORTIONS-RANK-PARTITIONED (decision 1123): on the electrostatic path the
+// unprobed APPLIED patches' raw claims (the exclusion-energy export's UnprobedModels class)
+// are gathered to every rank before they are recorded, as the Maxwell path does; the
+// rank-local list made the export's UnprobedModels / Claimed rows depend on the rank count.
+// The PEC island with the convex library under the surface mortar: the 16 isolated-edge
+// cells are probed, the 4 corner coupons are not (no conductor vertex on the trace mesh),
+// so the record holds the 4 corners' claims on EVERY rank, serial or MPI-2.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SurfaceResponseOperator records the unprobed applied patches' claims on "
+    "every rank (electrostatic, OI-ES-UNPROBED-PORTIONS-RANK-PARTITIONED)",
+    "[surfaceresponseoperator][conductorconsistency][r0a][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto library_path = temp.temp_dir / "fabrication-process-unprobed-convex-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-unprobed-convex-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["Diagnostics"] = {{"ExclusionEnergy", true}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  LaplaceOperator laplace(iodata, meshes);
+  SurfaceResponseOperator response(iodata, laplace);
+  REQUIRE(response.ExclusionEnergyRequested());
+  REQUIRE(response.GetPatchCount() == 20);  // 16 isolated cells + 4 corners
+  const auto statistics = response.GetStatistics();
+  const auto &diagnostics = statistics["Diagnostics"]["ConductorConsistency"];
+  REQUIRE(diagnostics["UnprobedModels"].size() == 1);
+  CHECK(diagnostics["UnprobedModels"][0]["Model"] == "convex-corner-90");
+  // The 4 corner patches, counted on every rank (not the rank's own share).
+  REQUIRE(diagnostics.contains("UnprobedPatches"));
+  CHECK(diagnostics["UnprobedPatches"]["Count"].get<int>() == 4);
+  const auto &record = response.GetUnprobedModelPortionRecord();
+  REQUIRE_FALSE(record.portions.empty());
+  REQUIRE(record.patches.size() == record.portions.size());
+  std::set<std::size_t> unprobed_patches;
+  for (std::size_t i = 0; i < record.portions.size(); i++)
+  {
+    CHECK(record.portions[i].topology == "UnprobedModels");
+    unprobed_patches.insert(record.patches[i].begin(), record.patches[i].end());
+  }
+  CHECK(unprobed_patches.size() == 4);
+  CHECK(record.length > 0.0);
+  CHECK(diagnostics["UnprobedPatches"]["ClaimLength"].get<double>() > 0.0);
+  // The same record on every rank: the portion count and the claimed length (the export
+  // set is partitioned on every rank with this list).
+  double extrema[4] = {static_cast<double>(record.portions.size()), record.length,
+                       -static_cast<double>(record.portions.size()), -record.length};
+  Mpi::GlobalMax(4, extrema, Mpi::World());
+  CHECK(extrema[0] == static_cast<double>(record.portions.size()));
+  CHECK(extrema[1] == record.length);
+  CHECK(-extrema[2] == static_cast<double>(record.portions.size()));
+  CHECK(-extrema[3] == record.length);
+  // The export set = the identification's portions + the record, each named by class.
+  const auto export_set = response.GetExclusionEnergyPortions();
+  CHECK(export_set.size() ==
+        response.GetIdentificationExclusionPortions().size() + record.portions.size());
+#endif
+}
+
 // The MAXWELL path (idfix DESIGN B.3 (g) / SUPERVISOR AMENDMENT 3 C.1; decision 1064): the
 // shorted CPW stub with the one-label 4-edge ParallelEdgeCluster model of its
 // cross-section, collocated (the Maxwell form), under synthetic complex fields. (a) the

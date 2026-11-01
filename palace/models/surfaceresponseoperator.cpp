@@ -27993,9 +27993,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // so the gate skips them: a translational patch without edge probes; a spatial patch
     // whose model is collocated or whose trace mesh has no conductor vertex, the two
     // UnprobedModels reasons above) by their raw claims, for the exclusion-energy export.
+    // OI-ES-UNPROBED-PORTIONS-RANK-PARTITIONED (decision 1123): gathered to every rank (the
+    // claims are replicated) and sorted, as the Maxwell path does; the rank-local list made
+    // the export's UnprobedModels / Claimed rows depend on the rank count.
     if (dimension == 3)
     {
-      std::vector<int> unprobed_patches;
+      std::vector<double> local_unprobed;
       for (std::size_t p = 0; p < applied_patch_count; p++)
       {
         const auto &model = models[patches[p].model];
@@ -28006,9 +28009,17 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 : !patches[p].conductor_probes.empty();
         if (!probed && patches[p].weight > 0.0)
         {
-          unprobed_patches.push_back(patches[p].global_index);
+          local_unprobed.push_back(static_cast<double>(patches[p].global_index));
         }
       }
+      const std::vector<double> gathered = AllgatherRecords(local_unprobed);
+      std::vector<int> unprobed_patches;
+      unprobed_patches.reserve(gathered.size());
+      for (const double value : gathered)
+      {
+        unprobed_patches.push_back(static_cast<int>(std::llround(value)));
+      }
+      std::sort(unprobed_patches.begin(), unprobed_patches.end());
       RecordUnprobedPatchClaims(unprobed_patches);
     }
   }
