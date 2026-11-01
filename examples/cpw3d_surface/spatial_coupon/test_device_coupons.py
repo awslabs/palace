@@ -27,6 +27,7 @@ import case_inputs  # noqa: E402
 import cluster_signature_geometry  # noqa: E402
 import coupon_library  # noqa: E402
 import device_coupons  # noqa: E402
+import local_pieces  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
 import prepare_surface_response_coupons as planner  # noqa: E402
 import register_case  # noqa: E402
 import trace_basis  # noqa: E402
@@ -652,8 +653,24 @@ class DeviceCouponsTest(unittest.TestCase):
             # the exact claims plus the context rows (Context / Chain columns).
             context = signature.get("Context", [])
             conductors = {int(p["Conductor"]) for p in signature["Portions"] + context}
+            # The planned form (decision 1136 (4)): a coupon whose plan view holds a label with >= 2 local metal
+            # pieces is built in the piece form - the mask / mesh labels are its pieces 1..P (Edges[].LocalPiece,
+            # local_pieces.mesh_label), the entry's Conductor labels stay the signature's; otherwise the labels are the
+            # signature's conductors.
+            entry_edges = model["Edges"] + model.get("ContextEdges", [])
+            self.assertEqual({int(e["Conductor"]) for e in entry_edges}, conductors, coupon["Case"])
+            if coupon["LocalPieces"]:
+                self.assertIn("LocalPiecesRule", model)
+                self.assertTrue(model["Name"].endswith(f"-pieces{len(model['ConductorReferences'])}"), coupon["Case"])
+                self.assertEqual(coupon["Model"], model["Name"])
+                mesh_labels = {local_pieces.mesh_label(e) for e in entry_edges}
+                self.assertEqual(mesh_labels, set(range(1, len(model["ConductorReferences"]) + 1)), coupon["Case"])
+                self.assertGreater(len(mesh_labels), len(conductors), coupon["Case"])
+            else:
+                self.assertNotIn("LocalPiecesRule", model)
+                mesh_labels = conductors
             areas = mask_areas(directory / "plan-view-mask.csv")
-            self.assertEqual({conductor for conductor, _ in areas}, conductors, coupon["Case"])
+            self.assertEqual({conductor for conductor, _ in areas}, mesh_labels, coupon["Case"])
             self.assertTrue(all(area > 0.0 for area in areas.values()))
             with open(directory / "plan-view-boundary.csv", newline="") as stream:
                 loops = list(csv.DictReader(stream))
