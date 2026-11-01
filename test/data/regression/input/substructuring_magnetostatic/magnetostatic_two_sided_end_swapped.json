@@ -1,0 +1,18 @@
+{
+  "Problem": { "Type": "Magnetostatic", "Output": "postpro/two_sided_end_swapped" },
+  "Model": { "Mesh": "mesh/film_end_split.msh", "L0": 1.0e-6 },
+  "Domains": { "Materials": [
+    { "Attributes": [1], "Permeability": 1.0 },
+    { "Attributes": [2], "Permeability": 1.0 } ] },
+  "Boundaries": {
+    "PEC": { "Attributes": [3] },
+    "Superconductor": [
+      { "Attributes": [4], "PenetrationDepth": 0.1, "Thickness": 0.2, "TwoSided": true } ],
+    "SurfaceCurrent": [
+      { "Index": 1, "Attributes": [6], "Direction": "+Z" } ] },
+  "Solver": { "Order": 1,
+    "Magnetostatic": { "Save": 0 },
+    "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
+    "Substructuring": { "Region": { "Attributes": [2] }, "Environment": { "Attributes": [1] },
+      "SaveModel": "environment_two_sided_end_swapped.model" } }
+}

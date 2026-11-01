@@ -203,8 +203,8 @@ namespace
 {
 
 // The point p of each DOF from its signature: the coordinates of an H1 DOF, and for a
-// point-tangent DOF u(p).t with the signature (t_b, p_a t_b), p = Q t / |t|^2 with
-// Q_ab = p_a t_b.
+// point-tangent DOF u(p).t with the signature (t_b, p_a t_b) (and a side moment), p = Q t /
+// |t|^2 with Q_ab = p_a t_b.
 std::vector<std::array<double, 3>> SignaturePoints(const std::vector<double> &sig,
                                                    int width)
 {
@@ -273,7 +273,8 @@ std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates,
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width)
 {
-  MFEM_VERIFY(width == 12, "MatchSignatureBasis expects Nédélec signatures!");
+  MFEM_VERIFY(width == 12 || width == 13,
+              "MatchSignatureBasis expects Nédélec signatures!");
   MFEM_VERIFY(current.size() == saved.size(),
               "Saved and current DOF sets of different sizes cannot be matched!");
   const int n = static_cast<int>(current.size() / width);
@@ -328,6 +329,11 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
       if (matched[g0] || done[g0])
       {
         continue;
+      }
+      if (width == 13 && row(current, g0)[12] != 0.0)
+      {
+        ok = false;  // a version of a split DOF matches one to one
+        break;
       }
       std::vector<int> C, Sv;
       for (int g = 0; g < n; g++)
@@ -457,8 +463,10 @@ public:
   explicit SerialRegionMesh(mfem::Mesh &&mesh) : mfem::Mesh(std::move(mesh)) {}
 
   // Shift the attributes above shift back and drop the duplicated boundary elements (for
-  // writing only: the boundary tables are not updated).
-  void PrepareForPrint(int shift)
+  // writing only: the boundary tables are not updated). With a plain attribute (nonzero),
+  // its boundary elements inside the mesh are dropped, and those the submesh generated
+  // (with the next attribute) take it.
+  void PrepareForPrint(int shift, int plain)
   {
     for (int e = 0; e < GetNE(); e++)
     {
@@ -471,6 +479,16 @@ public:
     int nbe = 0;
     for (int be = 0; be < NumOfBdrElements; be++)
     {
+      if (plain > 0 && boundary[be]->GetAttribute() == plain &&
+          GetFaceInformation(GetBdrElementFaceIndex(be)).IsInterior())
+      {
+        FreeElement(boundary[be]);
+        continue;
+      }
+      if (plain > 0 && boundary[be]->GetAttribute() == plain + 1)
+      {
+        boundary[be]->SetAttribute(plain);
+      }
       mfem::Array<int> v;
       boundary[be]->GetVertices(v);
       std::vector<int> key(v.begin(), v.end());
@@ -494,7 +512,8 @@ public:
 void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes,
-                     const std::vector<char> &keep, double length_scale)
+                     const std::vector<char> &keep, double length_scale,
+                     const std::vector<char> &plain_bdr)
 {
   // On a copy of the mesh, the environment elements touching the kept DOFs take shifted
   // attributes for the domain submesh, and get theirs back in the written mesh.
@@ -522,6 +541,21 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
                     [&](int d) { return lm[d >= 0 ? d : -1 - d] != 0.0; }))
     {
       mesh.SetAttribute(e, parent.GetAttribute(e) + shift);
+    }
+  }
+  // The plain boundary elements take the attribute of the boundary faces the submesh
+  // generates (the one after the largest).
+  int plain = std::any_of(plain_bdr.begin(), plain_bdr.end(), [](char c) { return c; });
+  Mpi::GlobalMax(1, &plain, parent.GetComm());
+  if (plain)
+  {
+    plain = (parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0) + 1;
+    for (int be = 0; be < static_cast<int>(plain_bdr.size()); be++)
+    {
+      if (plain_bdr[be])
+      {
+        mesh.SetBdrAttribute(be, plain);
+      }
     }
   }
   mesh.SetAttributes();
@@ -563,6 +597,13 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
         sub.SetAttribute(e, sub.GetAttribute(e) - shift);
       }
     }
+    for (int be = 0; plain && be < sub.GetNBE(); be++)
+    {
+      if (sub.GetBdrAttribute(be) == plain + 1)
+      {
+        sub.SetBdrAttribute(be, plain);
+      }
+    }
     sub.SetAttributes();
     write(sub);
   }
@@ -574,7 +615,7 @@ void WriteRegionMesh(const std::string &path, mfem::ParFiniteElementSpace &fespa
                              : mfem::Mesh());
     if (Mpi::Root(comm))
     {
-      sub.PrepareForPrint(shift);
+      sub.PrepareForPrint(shift, plain);
     }
     write(sub);
   }

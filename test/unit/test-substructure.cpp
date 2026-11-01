@@ -76,6 +76,49 @@ TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]"
   CHECK(match[4]);
 }
 
+TEST_CASE("Versions of split Nédélec DOFs are matched by their sides",
+          "[substructure][Serial]")
+{
+  // The versions of a DOF split by a two-sided film share its 12 moments and have side
+  // moments of opposite signs; a DOF away from the film has none. An orientation flip
+  // negates all 13 columns. Each current version must map to the saved version of its side
+  // (of the same 12 moments, which alone would pair the first one with the wrong side).
+  auto add = [](std::vector<double> &sig, std::array<double, 3> p, std::array<double, 3> t,
+                double side)
+  {
+    sig.insert(sig.end(), t.begin(), t.end());
+    for (int a = 0; a < 3; a++)
+    {
+      for (int b = 0; b < 3; b++)
+      {
+        sig.push_back(p[a] * t[b]);
+      }
+    }
+    sig.push_back(side);
+  };
+  const std::array<double, 3> p = {0.0, 0.3, 0.0}, t = {0.0, 0.1, 0.0}, q = {0.5, 0.2, 0.1},
+                              u = {0.1, 0.0, 0.05};
+  const double side = 2.0e-3;
+  std::vector<double> saved, current;
+  add(saved, p, t, -side);
+  add(saved, p, t, side);
+  add(saved, q, u, 0.0);
+  add(current, p, t, -side);
+  add(current, q, {-u[0], -u[1], -u[2]}, 0.0);
+  add(current, p, {-t[0], -t[1], -t[2]}, -side);
+  const SignatureMap map = MatchSignatureBasis(current, saved, 13);
+  REQUIRE(map.rows.size() == 3);
+  using Entry = std::vector<std::pair<int, double>>;
+  CHECK(map.rows[0] == Entry{{0, 1.0}});
+  CHECK(map.rows[1] == Entry{{2, -1.0}});
+  CHECK(map.rows[2] == Entry{{1, -1.0}});
+
+  // A version whose side moment matches neither saved one is rejected, even though the
+  // combinations of the saved versions reproduce it.
+  current[12] *= 2.0;
+  CHECK_THROWS(MatchSignatureBasis(current, saved, 13));
+}
+
 TEST_CASE("H1 DOFs at the points of saved ones", "[substructure][Serial]")
 {
   // H1 signatures are the DOF coordinates: a DOF matches a saved one at its point, within

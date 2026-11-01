@@ -954,6 +954,27 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
   };
 }
 
+// An online run on the mesh of the region written by an offline run in the same staging
+// directory: the reference diff at the case tolerances, then the outputs of the offline run
+// (in postpro/<offline>) reproduced to rounding.
+palace::test::CustomCheck TestOfflineRunReproduced(const std::string &offline,
+                                                   palace::test::RegressionOptions opts)
+{
+  return [offline, opts](palace::Table &actual, palace::Table &reference,
+                         const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    palace::TableWithCSVFile offline_file(
+        (actual_path.parent_path().parent_path() / offline / actual_path.filename())
+            .string(),
+        /*load_existing_file=*/true);
+    palace::test::RegressionOptions rounding = opts;
+    rounding.rtol = 1.0e-10;
+    rounding.atol = 0.0;
+    palace::test::CompareCSVFiles(actual, offline_file.table, rounding);
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -1455,8 +1476,8 @@ TEST_CASE("substructuring_magnetostatic_two_sided_swapped",
 }
 
 // An online run on the mesh of the region, for a surface-current port standing on a
-// two-sided film of the environment: the mesh holds the whole film, with both its sides.
-// The references are regular simulations.
+// two-sided film of the environment, which the mesh holds as a plain boundary under the
+// port (the environment DOFs are not solved for). The references are regular simulations.
 TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
           "[Serial][Parallel][GPU][Regression]")
 {
@@ -1469,6 +1490,117 @@ TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_port_online_region.json",
                                   "two_sided_port_online_region", opts);
+}
+
+// Two-sided films crossing the interface (λ = 0.1 μm, d = 0.2 μm), whose interface DOFs on
+// them have a version on each side: a flux-loop washer with the hole in the region (in the
+// environment when swapped) and a surface-current port across the interface, the washer as
+// a film without a flux loop driven by that port ("ground") or by a port inside the region
+// ("inner", whose mesh of the region holds no environment element on the film), and a film
+// ending on the interface in the region (in the environment when swapped, "end"). The
+// online runs are on the meshes of the region of their offline runs, which they reproduce.
+// The references are regular simulations; the smallest output is the current-flux mutual
+// of about 4.9e-14 H.
+TEST_CASE("substructuring_magnetostatic_two_sided_cross",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_cross.json", "two_sided_cross",
+                                  opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_cross_swapped",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_cross_swapped.json",
+                                  "two_sided_cross_swapped", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_cross_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_cross.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_cross", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_cross_online_region.json",
+                                  "two_sided_cross_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_ground_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_ground.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_ground", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_ground_online_region.json",
+                                  "two_sided_ground_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_inner_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_inner.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_inner", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_inner_online_region.json",
+                                  "two_sided_inner_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_end_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_end.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_end", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_end_online_region.json",
+                                  "two_sided_end_online_region", opts);
+}
+
+TEST_CASE("substructuring_magnetostatic_two_sided_end_swapped_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_sided_end_swapped.json";
+  opts.custom_checks["terminal-M.csv"] =
+      TestOfflineRunReproduced("two_sided_end_swapped", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_end_swapped_online_region.json",
+                                  "two_sided_end_swapped_online_region", opts);
 }
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface

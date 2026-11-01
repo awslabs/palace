@@ -3,6 +3,7 @@
 
 #include "superconductorsheetoperator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
@@ -339,8 +340,14 @@ void AddElementFaceMass(const mfem::ParMesh &mesh, int e, int i, double coeff,
 std::unique_ptr<mfem::HypreParMatrix>
 SuperconductorSheetOperator::AssembleBrokenSheetMatrix(
     const FiniteElementSpace &nd_fespace, const FiniteElementSpace &broken_nd_fespace,
-    const CrackSides &sides) const
+    const CrackSides &sides, const std::vector<int> *domain_attributes) const
 {
+  auto in_domain = [domain_attributes](int attr)
+  {
+    return !domain_attributes ||
+           std::find(domain_attributes->begin(), domain_attributes->end(), attr) !=
+               domain_attributes->end();
+  };
   MFEM_VERIFY(broken_nd_fespace.IsBroken() && &broken_nd_fespace.Get() == &nd_fespace.Get(),
               "Two-sided superconductor sheets need a view of the ND space broken across "
               "the films!");
@@ -393,7 +400,7 @@ SuperconductorSheetOperator::AssembleBrokenSheetMatrix(
     int num_unknown = 0;
     for (int e = 0; e < mesh.GetNE(); e++)
     {
-      if (!sides.split[e])
+      if (!sides.split[e] || !in_domain(mesh.GetAttribute(e)))
       {
         continue;
       }
@@ -457,6 +464,10 @@ SuperconductorSheetOperator::AssembleBrokenSheetMatrix(
       }
       int e, info;
       mesh.GetBdrElementAdjacentElement(be, e, info);
+      if (!in_domain(mesh.GetAttribute(e)))
+      {
+        continue;
+      }
       const mfem::FiniteElement &fe = *nd_fespace.Get().GetFE(e);
       elmat.SetSize(fe.GetDof());
       elmat = 0.0;
@@ -480,9 +491,24 @@ SuperconductorSheetOperator::AssembleBrokenSheetMatrix(
   // of the unbroken space.
   {
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+    const auto &ceed_bdr_attr = nd_fespace.GetMesh().GetCeedBdrAttributes();
     for (const auto &[attr, ab] : coeffs)
     {
-      fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), ab.second);
+      mfem::Array<int> ceed_attrs;
+      if (auto it = ceed_bdr_attr.find(attr); it != ceed_bdr_attr.end())
+      {
+        for (const auto &[nbr_attr, ceed_attr] : it->second)
+        {
+          if (in_domain(nbr_attr))
+          {
+            ceed_attrs.Append(ceed_attr);
+          }
+        }
+      }
+      if (ceed_attrs.Size() > 0)
+      {
+        fb.AddMaterialProperty(ceed_attrs, ab.second);
+      }
     }
     BilinearForm m(nd_fespace);
     if (!fb.empty())  // A process may have no film boundary elements.

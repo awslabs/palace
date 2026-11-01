@@ -364,10 +364,11 @@ struct SubstructuringSolver::Impl
   FiniteElementSpace parent_space;
   mfem::ParFiniteElementSpace &parent_fes;
   // Magnetostatics with two-sided superconductor films: the parent space broken across the
-  // films, on which the operators and true-DOF vectors act (see SolutionSpace()), and its
-  // maps to the parent true DOFs.
+  // films, on which the operators and true-DOF vectors act (see SolutionSpace()), its maps
+  // to the parent true DOFs, and the parent true DOF of each of its true DOFs.
   std::unique_ptr<FiniteElementSpace> broken;
   std::unique_ptr<mfem::HypreParMatrix> first_version, all_versions;
+  std::vector<int> version_parent;
   int nt;
 
   std::unique_ptr<mfem::HypreParMatrix> A_region, A_region_free;
@@ -494,7 +495,7 @@ struct SubstructuringSolver::Impl
                     new mfem::H1_FECollection(iodata.solver.order, parent.Dimension()))),
       parent_space(mesh, fec.get()), parent_fes(parent_space.Get())
   {
-    std::unique_ptr<mfem::HypreParMatrix> two_sided;
+    std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> two_sided;
     if (magnetostatic)
     {
       two_sided = SetUpBrokenSpace();
@@ -579,6 +580,7 @@ struct SubstructuringSolver::Impl
 
     // A mesh of the region holds fewer environment DOFs than the model was condensed from.
     std::vector<char> cut(nt, 0);
+    double model_eps = 0.0;
     if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
     {
       const SavedHead head = ReadSavedHead(sub.save_model, parent_fes.GetComm());
@@ -591,22 +593,25 @@ struct SubstructuringSolver::Impl
       region_only = !head.env_fp.empty() && head.width > 0 && n_env < head.env_fp[0];
       if (region_only)
       {
+        model_eps = head.regularization;
         MFEM_VERIFY(iodata.model.refinement.max_it == 0,
                     "Adaptive refinement with substructuring needs the full mesh, not the "
                     "mesh of the region!");
         std::vector<char> bdr =
             BoundaryTrueDofs(parent_fes, std::vector<int>(parent.bdr_attributes.begin(),
                                                           parent.bdr_attributes.end()));
-        // The interface DOFs are DOFs of the parent space: the versions of the DOFs of a
-        // two-sided film are interior to its side.
-        const int nt0 = parent_fes.GetTrueVSize();
-        std::vector<int> index(nt0, -1);
+        // The parent DOFs on the boundary with a version on the region only, at the points
+        // of the saved interface DOFs: those versions are interface DOFs (both sides of a
+        // two-sided film crossing Gamma).
+        auto region_side = [&](int t) { return rm[t] && !em[t] && !dir_mark[t]; };
+        std::vector<int> index(parent_fes.GetTrueVSize(), -1);
         int nc = 0;
-        for (int i = 0; i < nt0; i++)
+        for (int t = 0; t < nt; t++)
         {
-          if (bdr[i] && rm[i] && !em[i] && !dir_mark[i])
+          const int t0 = ParentTrueDof(t);
+          if (bdr[t0] && region_side(t) && index[t0] < 0)
           {
-            index[i] = nc++;
+            index[t0] = nc++;
           }
         }
         int off = 0;
@@ -619,9 +624,10 @@ struct SubstructuringSolver::Impl
         }
         const auto match = MatchSignaturePoints(TrueDofSignatures(parent_fes, index, nc),
                                                 head.sig, head.width);
-        for (int i = 0; i < nt0; i++)
+        for (int t = 0; t < nt; t++)
         {
-          cut[i] = (index[i] >= 0) && match[index[i]];
+          const int t0 = ParentTrueDof(t);
+          cut[t] = region_side(t) && (index[t0] >= 0) && match[index[t0]];
         }
       }
     }
@@ -711,8 +717,10 @@ struct SubstructuringSolver::Impl
     }
     if (magnetostatic)
     {
-      SetUpSheets(ra_arr, rm, em, std::move(two_sided));
-      mag_eps = has_sheets ? kMagRegularizationSheets : kMagRegularization;
+      SetUpSheets(ra_arr, std::move(two_sided));
+      mag_eps = (model_eps > 0.0) ? model_eps
+                : has_sheets      ? kMagRegularizationSheets
+                                  : kMagRegularization;
     }
     A_region = AssembleParent(region_eps, magnetostatic, true, &sheet_region);
     if (magnetostatic)
@@ -932,6 +940,9 @@ struct SubstructuringSolver::Impl
     return broken ? *broken : parent_space;
   }
 
+  // The parent true DOF of a true DOF of SolutionSpace() (the DOF it is a version of).
+  int ParentTrueDof(int t) const { return broken ? version_parent[t] : t; }
+
   // A true-DOF vector of SolutionSpace() on the parent space: its first version, the field
   // of one side on the two-sided films (for the output fields).
   const mfem::Vector &FirstVersion(const mfem::Vector &x, mfem::Vector &y) const
@@ -946,9 +957,9 @@ struct SubstructuringSolver::Impl
   }
 
   // Break the parent space across the two-sided superconductor films of the mesh, and
-  // return the two-port terms of the films (null without), assembled as in the native
-  // operator. Collective.
-  std::unique_ptr<mfem::HypreParMatrix> SetUpBrokenSpace()
+  // return the two-port terms of the film faces bounding the region and of those bounding
+  // the environment (null without films), assembled as in the native operator. Collective.
+  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> SetUpBrokenSpace()
   {
     std::vector<config::SuperconductorData> films;
     for (const auto &sc : iodata.boundaries.superconductor)
@@ -976,13 +987,27 @@ struct SubstructuringSolver::Impl
     broken = std::make_unique<FiniteElementSpace>(parent_space, sides);
     first_version = broken->BuildVersionMap(FiniteElementSpace::VersionMap::FIRST);
     all_versions = broken->BuildVersionMap(FiniteElementSpace::VersionMap::ALL);
-    return sheet_op.AssembleBrokenSheetMatrix(parent_space, *broken, sides);
+    version_parent.resize(broken->GetTrueVSize());
+    for (int t = 0; t < parent_fes.GetTrueVSize(); t++)
+    {
+      for (int v = 0; v < broken->GetNumVersions(t); v++)
+      {
+        version_parent[broken->GetVersionTrueDof(t, v)] = t;
+      }
+    }
+    const auto &sub = *iodata.solver.substructuring;
+    return {sheet_op.AssembleBrokenSheetMatrix(parent_space, *broken, sides,
+                                               &sub.region_attributes),
+            sheet_op.AssembleBrokenSheetMatrix(parent_space, *broken, sides,
+                                               &sub.environment_attributes)};
   }
 
   // Mass regularization eps M making the singular magnetostatic curl-curl definite; the
   // energies use the unregularized operator and are stationary, so their error is O(eps^2).
   // With London sheets, the flux-loop and surface-current sources are orthogonal to the
-  // null space of the curl-curl + sheet operator, so a much smaller eps is safe.
+  // null space of the curl-curl + sheet operator, so a much smaller eps is safe. On the
+  // mesh of the region, which may lack the sheets of the environment, eps is that of the
+  // model.
   static constexpr double kMagRegularization = 1.0e-3;
   static constexpr double kMagRegularizationSheets = 1.0e-7;
   // Largest regularization energy of a surface current relative to its magnetic energy
@@ -992,10 +1017,10 @@ struct SubstructuringSolver::Impl
 
   // London superconductor sheets (magnetostatics) of a side: per local boundary element,
   // 1/L_ksq (with the factor for a cracked sheet, whose two sides each carry half) on the
-  // side it belongs to, and the two-port terms of the two-sided films of the side (null
-  // without). A sheet face belongs to the region if it bounds a region element (all its
-  // DOFs are then region or interface DOFs), else to the environment: independent of the
-  // partition and of the region design, and exact either way for a face on Gamma.
+  // side it belongs to, and the two-port terms of the faces of the two-sided films of the
+  // side (null without). A sheet face belongs to the region if it bounds a region element
+  // (all its DOFs are then region or interface DOFs), else to the environment: independent
+  // of the partition and of the region design, and exact either way for a face on Gamma.
   struct Sheets
   {
     std::vector<double> coef;
@@ -1003,9 +1028,8 @@ struct SubstructuringSolver::Impl
   };
   Sheets sheet_region, sheet_env, sheet_all;
   bool has_sheets = false;
-  void SetUpSheets(const mfem::Array<int> &ra, const mfem::Array<int> &rm,
-                   const mfem::Array<int> &em,
-                   std::unique_ptr<mfem::HypreParMatrix> two_sided)
+  void SetUpSheets(const mfem::Array<int> &ra,
+                   std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> two_sided)
   {
     const int nbe = parent.GetNBE();
     sheet_region.coef.assign(nbe, 0.0);
@@ -1059,41 +1083,20 @@ struct SubstructuringSolver::Impl
       count[0]++;
     }
     Mpi::GlobalSum(3, count.data(), parent.GetComm());
-    has_sheets = (count[0] > 0) || two_sided;
+    has_sheets = (count[0] > 0) || two_sided[0];
     MFEM_VERIFY(count[1] == 0,
                 "Substructuring does not support a \"TwoSided\" "
                 "superconductor film between the region and the environment!");
     MFEM_VERIFY(count[2] == 0 || iodata.model.refinement.max_it == 0,
                 "Adaptive refinement with substructuring does not support \"TwoSided\" "
                 "superconductor films in the region!");
-    if (!two_sided)
+    if (!two_sided[0])
     {
       return;
     }
-    // The two-port terms of a film couple the versions of the DOFs of its faces, all on the
-    // side of the film unless it touches Gamma: they split between the sides by DOF.
-    mfem::Vector ones(nt), support(nt), region(nt), env(nt);
-    ones = 1.0;
-    two_sided->AbsMult(1.0, ones, 0.0, support);
-    const double *sp = support.HostRead();
-    double *rp = region.HostWrite(), *ep = env.HostWrite();
-    int touching = 0;
-    for (int i = 0; i < nt; i++)
-    {
-      const bool on_film = (sp[i] > 0.0);
-      touching += on_film && is_gamma[i];
-      rp[i] = (on_film && rm[i]) ? 1.0 : 0.0;
-      ep[i] = (on_film && em[i] && !rm[i]) ? 1.0 : 0.0;
-    }
-    Mpi::GlobalSum(1, &touching, parent.GetComm());
-    MFEM_VERIFY(touching == 0, "Substructuring does not support a \"TwoSided\" "
-                               "superconductor film touching the interface ("
-                                   << touching << " interface DOF(s) on films)!");
-    sheet_region.two_sided = std::make_unique<mfem::HypreParMatrix>(*two_sided);
-    sheet_region.two_sided->ScaleRows(region);
-    sheet_env.two_sided = std::make_unique<mfem::HypreParMatrix>(*two_sided);
-    sheet_env.two_sided->ScaleRows(env);
-    sheet_all.two_sided = std::move(two_sided);
+    sheet_all.two_sided.reset(mfem::Add(1.0, *two_sided[0], 1.0, *two_sided[1]));
+    sheet_region.two_sided = std::move(two_sided[0]);
+    sheet_env.two_sided = std::move(two_sided[1]);
   }
 
   // Sheet masses (both sides, and per side), for the flux-loop sources and energies.
@@ -1495,6 +1498,176 @@ struct SubstructuringSolver::Impl
     return g2t;
   }
 
+  // Whether the interface holds versions of DOFs split by two-sided films crossing Gamma.
+  // Collective.
+  bool InterfaceSplit() const
+  {
+    int split = 0;
+    for (int t = 0; broken && t < nt && !split; t++)
+    {
+      split = is_gamma[t] && broken->GetNumVersions(ParentTrueDof(t)) > 1;
+    }
+    Mpi::GlobalMax(1, &split, parent.GetComm());
+    return split > 0;
+  }
+
+  // Geometric signatures of the interface DOFs (see TrueDofSignatures), replicated, in
+  // global interface order. With width 13 (see InterfaceSplit), the versions of a DOF split
+  // by a two-sided film crossing Gamma, which share its signature, have the side moment
+  // t·Σ_f (c_f - m) × n_f: t the tangent of the DOF (its e_b moments), m the midpoint of
+  // its edge, and f the boundary faces of the region (on Gamma or on the boundary of the
+  // mesh) at the edge on the side of the version, of center c_f and unit normal n_f out of
+  // the region. It is zero for the other DOFs and flips with the DOF orientation, and every
+  // mesh of the region has these faces. Collective.
+  std::vector<double> InterfaceSignatures(int width) const
+  {
+    if (!broken)
+    {
+      return TrueDofSignatures(parent_fes, gamma_global, nG_global);
+    }
+    // The row of an interface DOF is that of its parent DOF, stored at the interface index
+    // of the first of its versions on Gamma.
+    MPI_Comm comm = parent_fes.GetComm();
+    const int w0 = SignatureWidth(parent_fes);
+    std::vector<int> index(parent_fes.GetTrueVSize(), -1), mine(gamma_nloc), row(nG_global);
+    for (int t = 0; t < nt; t++)
+    {
+      if (is_gamma[t])
+      {
+        int &i = index[ParentTrueDof(t)];
+        i = (i < 0) ? gamma_global[t] : i;
+        mine[gamma_global[t] - gamma_off] = i;
+      }
+    }
+    std::vector<int> cnt, disp;
+    RowLayout(1, cnt, disp);
+    MPI_Allgatherv(mine.data(), gamma_nloc, MPI_INT, row.data(), cnt.data(), disp.data(),
+                   MPI_INT, comm);
+    const std::vector<double> sig0 = TrueDofSignatures(parent_fes, index, nG_global);
+    std::vector<double> sig(static_cast<std::size_t>(nG_global) * width, 0.0);
+    for (int g = 0; g < nG_global; g++)
+    {
+      std::copy_n(&sig0[static_cast<std::size_t>(row[g]) * w0], w0,
+                  &sig[static_cast<std::size_t>(g) * width]);
+    }
+    if (width == w0)
+    {
+      return sig;
+    }
+
+    // The sums Σ_f (c_f - m) × n_f of the versions: on the L-vector, from the region
+    // element of each boundary face of the region (with no region element across it, also
+    // on another process), then on the true DOFs.
+    auto bounds_region = [this](int e, int f)
+    {
+      const auto info = parent.GetFaceInformation(f);
+      if (info.IsBoundary())
+      {
+        return true;
+      }
+      const int other =
+          info.IsShared()
+              ? parent.face_nbr_elements[info.element[1].index]->GetAttribute()
+              : parent.GetAttribute((info.element[0].index == e) ? info.element[1].index
+                                                                 : info.element[0].index);
+      return ra_arr.Find(other) < 0;
+    };
+    std::array<mfem::Vector, 3> WL, W;
+    for (auto &v : WL)
+    {
+      v.SetSize(broken->GetVSize());
+      v = 0.0;
+    }
+    mfem::Array<int> faces, orient, fedges, fo, eedges, eo, vdofs, ents;
+    mfem::DofTransformation doftrans;
+    mfem::Vector ce(3), c(3), n(3), m(3);
+    for (int e = 0; e < parent.GetNE(); e++)
+    {
+      if (ra_arr.Find(parent.GetAttribute(e)) < 0)
+      {
+        continue;
+      }
+      const auto geom = parent.GetElementGeometry(e);
+      const int nv = mfem::Geometry::NumVerts[geom];
+      parent.GetElementFaces(e, faces, orient);
+      bool first = true;
+      for (int f : faces)
+      {
+        if (!bounds_region(e, f))
+        {
+          continue;
+        }
+        if (first)
+        {
+          parent.GetElementTransformation(e)->Transform(mfem::Geometries.GetCenter(geom),
+                                                        ce);
+          parent.GetElementEdges(e, eedges, eo);
+          broken->GetElementDofs(e, vdofs, doftrans);
+          fem::GetElementDofEntities(parent_fes, e, ents);
+          first = false;
+        }
+        mfem::ElementTransformation &T = *parent.GetFaceTransformation(f);
+        const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
+        T.SetIntPoint(&ip);
+        T.Transform(ip, c);
+        mfem::CalcOrtho(T.Jacobian(), n);
+        n *= ((c(0) - ce(0)) * n(0) + (c(1) - ce(1)) * n(1) + (c(2) - ce(2)) * n(2) < 0.0)
+                 ? -1.0 / n.Norml2()
+                 : 1.0 / n.Norml2();
+        parent.GetFaceEdges(f, fedges, fo);
+        for (int j = 0; j < vdofs.Size(); j++)
+        {
+          const int b = ents[j] - nv;
+          if (b < 0 || b >= eedges.Size() || fedges.Find(eedges[b]) < 0)
+          {
+            continue;
+          }
+          mfem::ElementTransformation &Te = *parent.GetEdgeTransformation(eedges[b]);
+          Te.Transform(mfem::Geometries.GetCenter(mfem::Geometry::SEGMENT), m);
+          const double d[3] = {c(0) - m(0), c(1) - m(1), c(2) - m(2)};
+          const int l = (vdofs[j] >= 0) ? vdofs[j] : -1 - vdofs[j];
+          WL[0](l) += d[1] * n(2) - d[2] * n(1);
+          WL[1](l) += d[2] * n(0) - d[0] * n(2);
+          WL[2](l) += d[0] * n(1) - d[1] * n(0);
+        }
+      }
+    }
+    const mfem::HypreParMatrix &P = *broken->Dof_TrueDof_Matrix();
+    std::array<const double *, 3> w;
+    for (int k = 0; k < 3; k++)
+    {
+      W[k].SetSize(nt);
+      P.AbsMultTranspose(1.0, WL[k], 0.0, W[k]);
+      w[k] = W[k].HostRead();
+    }
+    std::vector<double> q(nG_global, 0.0);
+    int missing = 0;
+    for (int t = 0; t < nt; t++)
+    {
+      if (is_gamma[t] && broken->GetNumVersions(ParentTrueDof(t)) > 1)
+      {
+        const std::size_t g = gamma_global[t];
+        for (int b = 0; b < 3; b++)
+        {
+          q[g] += sig[g * width + b] * w[b][t];
+        }
+        missing += (w[0][t] == 0.0 && w[1][t] == 0.0 && w[2][t] == 0.0);
+      }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, q.data(), nG_global, MPI_DOUBLE, MPI_SUM, comm);
+    Mpi::GlobalSum(1, &missing, comm);
+    MFEM_VERIFY(missing == 0, "Substructuring found "
+                                  << missing
+                                  << " interface DOF(s) on \"TwoSided\" superconductor "
+                                     "films without a boundary face of the region on their "
+                                     "side!");
+    for (int g = 0; g < nG_global; g++)
+    {
+      sig[static_cast<std::size_t>(g) * width + w0] = q[g];
+    }
+    return sig;
+  }
+
   // Set up the environment interior solver on first use (an online run with a saved model
   // needs it only for environment fields).
   void EnsureEnv()
@@ -1816,8 +1989,8 @@ struct SubstructuringSolver::Impl
   }
 
   // Model-file sections following S_E: [kLengthMagic][Model.Lc of the offline run],
-  // [kEnvFpMagic][environment fingerprint, 5 doubles],
-  // [kSKenMagic][S^K nG x nG] (magnetostatics),
+  // [kEnvFpMagic][environment fingerprint, 5 doubles], [kEpsMagic][the magnetostatic
+  // regularization eps] (magnetostatics), [kSKenMagic][S^K nG x nG] (magnetostatics),
   // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
   // KxK], and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B
   // KxK].
@@ -1825,14 +1998,24 @@ struct SubstructuringSolver::Impl
   static constexpr int kModesMagic = 0x33444f4d;   // "MOD3"
   static constexpr int kEnvFpMagic = 0x33564e45;   // "ENV3"
   static constexpr int kLengthMagic = 0x434e454c;  // "LENC"
+  static constexpr int kEpsMagic = 0x5350454d;     // "MEPS"
 
-  // The interface signatures, reference length (0: not saved) and environment fingerprint
-  // (empty: not saved) of a model, from rank 0; nG < 0 if it cannot be read. Collective.
+  // The width of the interface signatures of a model by their type: 0 none (identical
+  // mesh), 1 H1 coordinates, 2 H(curl) moments, 3 with the side moments of split DOFs.
+  static int SignatureFileWidth(int sig_type)
+  {
+    return (sig_type == 3) ? 13 : (sig_type == 2) ? 12 : (sig_type == 1) ? 3 : 0;
+  }
+
+  // The interface signatures (without the side moments of split DOFs), reference length
+  // (0: not saved), environment fingerprint (empty: not saved) and magnetostatic
+  // regularization (0: not saved) of a model, from rank 0; nG < 0 if it cannot be read.
+  // Collective.
   struct SavedHead
   {
     int nG = -1, width = 0;
     std::vector<double> sig, env_fp;
-    double length = 0.0;
+    double length = 0.0, regularization = 0.0;
   };
   static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm)
   {
@@ -1845,9 +2028,16 @@ struct SubstructuringSolver::Impl
       if (f.read(reinterpret_cast<char *>(&head[0]), sizeof(int)) &&
           f.read(reinterpret_cast<char *>(&sig_type), sizeof(int)))
       {
-        head[1] = (sig_type == 2) ? 12 : (sig_type == 1 ? 3 : 0);
+        const int width = SignatureFileWidth(sig_type);
+        head[1] = std::min(width, 12);
         h.sig.resize(static_cast<std::size_t>(head[0]) * head[1]);
-        f.read(reinterpret_cast<char *>(h.sig.data()), sizeof(double) * h.sig.size());
+        for (int g = 0; g < head[0]; g++)
+        {
+          f.read(reinterpret_cast<char *>(&h.sig[static_cast<std::size_t>(g) * head[1]]),
+                 sizeof(double) * head[1]);
+          f.seekg(static_cast<std::streamoff>(sizeof(double)) * (width - head[1]),
+                  std::ios::cur);
+        }
         f.seekg(static_cast<std::streamoff>(sizeof(double)) * head[0] * head[0],
                 std::ios::cur);
         int magic = 0;
@@ -1862,6 +2052,10 @@ struct SubstructuringSolver::Impl
           h.env_fp.resize(5);
           f.read(reinterpret_cast<char *>(h.env_fp.data()), sizeof(double) * 5);
           head[2] = f ? 1 : 0;
+          if (f.read(reinterpret_cast<char *>(&magic), sizeof(int)) && magic == kEpsMagic)
+          {
+            f.read(reinterpret_cast<char *>(&h.regularization), sizeof(double));
+          }
         }
       }
       else
@@ -1871,6 +2065,7 @@ struct SubstructuringSolver::Impl
     }
     Mpi::Broadcast(3, head, 0, comm);
     Mpi::Broadcast(1, &h.length, 0, comm);
+    Mpi::Broadcast(1, &h.regularization, 0, comm);
     h.nG = head[0];
     h.width = head[1];
     if (h.nG < 0)
@@ -1983,6 +2178,11 @@ struct SubstructuringSolver::Impl
       std::ofstream f(path, std::ios::binary | std::ios::app);
       f.write(reinterpret_cast<const char *>(&kEnvFpMagic), sizeof(int));
       f.write(reinterpret_cast<const char *>(fp.data()), sizeof(double) * fp.size());
+      if (magnetostatic)
+      {
+        f.write(reinterpret_cast<const char *>(&kEpsMagic), sizeof(int));
+        f.write(reinterpret_cast<const char *>(&mag_eps), sizeof(double));
+      }
     }
   }
 
@@ -2024,15 +2224,129 @@ struct SubstructuringSolver::Impl
     return written;
   }
 
+  // The two-sided films of the mesh of the region (see WriteRegionMesh), whose interface
+  // DOFs must have the versions of the full mesh: the films of the region, and the films
+  // given whole (their DOFs are kept). If a written environment element touches an
+  // interface DOF on a film crossing Gamma, the DOFs of the environment film faces at such
+  // DOFs are kept, which writes the environment along every crossing. An interface DOF at
+  // the edge of a film of the region is kept, for the environment to join its sides.
+  // Returns the other film faces of the environment, written as plain boundaries (the
+  // environment DOFs are not solved for). Collective.
+  std::vector<char> RegionFilmClosure(std::vector<char> &keep,
+                                      const std::set<int> &whole) const
+  {
+    // The film faces of the environment (of the films not given whole), and the DOFs of the
+    // film faces of the region.
+    const int nt0 = parent_fes.GetTrueVSize();
+    const auto &P = *parent_fes.Dof_TrueDof_Matrix();
+    auto index = [](int d) { return (d >= 0) ? d : -1 - d; };
+    std::set<int> films;
+    for (const auto &sc : iodata.boundaries.superconductor)
+    {
+      if (sc.two_sided)
+      {
+        films.insert(sc.attributes.begin(), sc.attributes.end());
+      }
+    }
+    std::vector<int> faces;
+    mfem::Vector lr(P.Height()), tr(nt0);
+    lr = 0.0;
+    mfem::Array<int> dofs;
+    for (int be = 0; be < parent.GetNBE(); be++)
+    {
+      const int attr = parent.GetBdrAttribute(be);
+      if (!films.contains(attr))
+      {
+        continue;
+      }
+      int e, info;
+      parent.GetBdrElementAdjacentElement(be, e, info);
+      if (ea_arr.Find(parent.GetAttribute(e)) >= 0)
+      {
+        if (!whole.contains(attr))
+        {
+          faces.push_back(be);
+        }
+        continue;
+      }
+      parent_fes.GetBdrElementDofs(be, dofs);
+      for (int d : dofs)
+      {
+        lr(index(d)) = 1.0;
+      }
+    }
+    P.AbsMultTranspose(1.0, lr, 0.0, tr);
+    // The interface DOFs on a film crossing Gamma, and those at the edge of a film of the
+    // region (kept).
+    std::vector<char> split(nt0, 0), gamma(nt0, 0);
+    for (int t = 0; t < nt; t++)
+    {
+      gamma[ParentTrueDof(t)] = gamma[ParentTrueDof(t)] || is_gamma[t];
+    }
+    const double *r = tr.HostRead();
+    for (int t0 = 0; t0 < nt0; t0++)
+    {
+      split[t0] = gamma[t0] && broken->GetNumVersions(t0) > 1;
+      keep[t0] = keep[t0] || (gamma[t0] && !split[t0] && r[t0] > 0.0);
+    }
+    const auto written = WrittenEnvTrueDofs(keep);
+    int touched = 0;
+    for (int t0 = 0; t0 < nt0 && !touched; t0++)
+    {
+      touched = split[t0] && written[t0];
+    }
+    Mpi::GlobalMax(1, &touched, parent.GetComm());
+    std::vector<char> plain(parent.GetNBE(), 0);
+    for (int be : faces)
+    {
+      plain[be] = 1;
+    }
+    if (!touched)
+    {
+      return plain;
+    }
+    mfem::Vector tk(nt0), lk(P.Height()), lm(P.Height()), tm(nt0);
+    for (int t0 = 0; t0 < nt0; t0++)
+    {
+      tk(t0) = split[t0] ? 1.0 : 0.0;
+    }
+    P.Mult(tk, lk);
+    const double *l = lk.HostRead();
+    lm = 0.0;
+    for (int be : faces)
+    {
+      parent_fes.GetBdrElementDofs(be, dofs);
+      if (std::any_of(dofs.begin(), dofs.end(), [&](int d) { return l[index(d)] != 0.0; }))
+      {
+        plain[be] = 0;
+        for (int d : dofs)
+        {
+          lm(index(d)) = 1.0;
+        }
+      }
+    }
+    P.AbsMultTranspose(1.0, lm, 0.0, tm);
+    const double *m = tm.HostRead();
+    for (int t0 = 0; t0 < nt0; t0++)
+    {
+      keep[t0] = keep[t0] || (m[t0] > 0.0);
+    }
+    return plain;
+  }
+
   // The mesh of the region for online runs: the region, with the environment elements
   // touching the region's Dirichlet DOFs (set on Γ by boundary conditions of the
   // environment) and, in magnetostatics, those of the surface currents and flux loops,
-  // whose excitations need their boundaries, and both sides of the two-sided films these
-  // elements touch. Collective.
+  // whose excitations need their boundaries (the films of the flux loops whole), and the
+  // two-sided films of RegionFilmClosure. Collective.
   void WriteRegionMesh(const std::string &path)
   {
-    std::vector<char> keep(region_dbc.begin(),
-                           region_dbc.begin() + parent_fes.GetTrueVSize());
+    std::vector<char> keep(parent_fes.GetTrueVSize(), 0);
+    for (int t = 0; t < nt; t++)
+    {
+      keep[ParentTrueDof(t)] = keep[ParentTrueDof(t)] || region_dbc[t];
+    }
+    std::set<int> loop_films;
     if (magnetostatic)
     {
       std::vector<int> attrs;
@@ -2052,6 +2366,7 @@ struct SubstructuringSolver::Impl
       {
         attrs.insert(attrs.end(), data.film_attributes.begin(), data.film_attributes.end());
         attrs.insert(attrs.end(), data.hole_attributes.begin(), data.hole_attributes.end());
+        loop_films.insert(data.film_attributes.begin(), data.film_attributes.end());
       }
       const auto mark = BoundaryTrueDofs(parent_fes, attrs);
       for (std::size_t i = 0; i < keep.size(); i++)
@@ -2059,61 +2374,12 @@ struct SubstructuringSolver::Impl
         keep[i] = keep[i] || mark[i];
       }
     }
-    if (broken)
-    {
-      // A two-sided film touched by a written element is written whole, with the elements
-      // touching it, so that none of its faces lies on the boundary of the mesh (until no
-      // further film is touched).
-      std::vector<std::vector<int>> films;  // the true DOFs of each film attribute
-      for (const auto &sc : iodata.boundaries.superconductor)
-      {
-        if (!sc.two_sided)
-        {
-          continue;
-        }
-        for (int a : sc.attributes)
-        {
-          const auto mark = BoundaryTrueDofs(parent_fes, {a});
-          auto &dofs = films.emplace_back();
-          for (std::size_t i = 0; i < mark.size(); i++)
-          {
-            if (mark[i])
-            {
-              dofs.push_back(static_cast<int>(i));
-            }
-          }
-        }
-      }
-      std::vector<int> whole(films.size(), 0);
-      for (bool grown = true; grown;)
-      {
-        const auto written = WrittenEnvTrueDofs(keep);
-        std::vector<int> touched(films.size(), 0);
-        for (std::size_t f = 0; f < films.size(); f++)
-        {
-          touched[f] = !whole[f] && std::any_of(films[f].begin(), films[f].end(),
-                                                [&](int i) { return written[i]; });
-        }
-        Mpi::GlobalMax(static_cast<int>(touched.size()), touched.data(), parent.GetComm());
-        grown = false;
-        for (std::size_t f = 0; f < films.size(); f++)
-        {
-          if (touched[f])
-          {
-            whole[f] = 1;
-            grown = true;
-            for (int i : films[f])
-            {
-              keep[i] = 1;
-            }
-          }
-        }
-      }
-    }
+    const std::vector<char> plain =
+        broken ? RegionFilmClosure(keep, loop_films) : std::vector<char>();
     const auto &sub = *iodata.solver.substructuring;
     palace::WriteRegionMesh(path, parent_fes, sub.region_attributes,
                             sub.environment_attributes, keep,
-                            iodata.units.GetMeshLengthRelativeScale());
+                            iodata.units.GetMeshLengthRelativeScale(), plain);
     Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
   }
 
@@ -2205,7 +2471,7 @@ struct SubstructuringSolver::Impl
         magic = 0;
       }
       MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
-      if (magic == kLengthMagic)
+      if (magic == kLengthMagic || magic == kEpsMagic)
       {
         if (root)
         {
@@ -3056,13 +3322,12 @@ void SubstructuringSolver::CondenseEnvironment()
   impl->S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
 
   // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
-  // current interface after re-meshing or re-partitioning the region (the interface DOFs
-  // are DOFs of the parent space, see SetUpSheets).
-  const int sig_w = SignatureWidth(impl->parent_fes);
-  MFEM_VERIFY(sig_w == (impl->magnetostatic ? 12 : 3),
+  // current interface after re-meshing or re-partitioning the region (with the side moments
+  // of the versions of the DOFs split by two-sided films, see InterfaceSignatures).
+  MFEM_VERIFY(SignatureWidth(impl->parent_fes) == (impl->magnetostatic ? 12 : 3),
               "Unexpected finite element space for the interface signatures!");
-  auto gamma_sig = [&]()
-  { return TrueDofSignatures(impl->parent_fes, impl->gamma_global, nG); };
+  const int sig_w = impl->magnetostatic ? (impl->InterfaceSplit() ? 13 : 12) : 3;
+  auto gamma_sig = [&]() { return impl->InterfaceSignatures(sig_w); };
 
   // Online with a saved model: load S_E (and the model's sections); otherwise materialize
   // S_E, and save it when a path is set.
@@ -3090,7 +3355,7 @@ void SubstructuringSolver::CondenseEnvironment()
                     << nG_file << ") does not match this run (" << nG
                     << "); the interface (Gamma) must be identical between the offline and "
                        "online runs.");
-    int sig_type = 0;  // 0: none (identical mesh), 1: H1 coords, 2: H(curl) edge signature
+    int sig_type = 0;
     if (rank == 0)
     {
       std::ifstream f(model_path, std::ios::binary);
@@ -3098,7 +3363,13 @@ void SubstructuringSolver::CondenseEnvironment()
       f.read(reinterpret_cast<char *>(&sig_type), sizeof(int));
     }
     MPI_Bcast(&sig_type, 1, MPI_INT, 0, comm);
-    const int file_w = (sig_type == 2) ? 12 : (sig_type == 1 ? 3 : 0);
+    const int file_w = Impl::SignatureFileWidth(sig_type);
+    MFEM_VERIFY(file_w == 0 || file_w == sig_w,
+                "The interface of the saved substructuring model "
+                    << ((file_w == 13) ? "is" : "is not")
+                    << " split by \"TwoSided\" superconductor films, unlike in this run; "
+                       "the interface (Gamma) must be identical between the offline and "
+                       "online runs.");
     std::vector<double> saved_sig;
     if (file_w > 0)
     {
@@ -3127,7 +3398,7 @@ void SubstructuringSolver::CondenseEnvironment()
     // DOFs whose basis depends on the face orientation (second-order face DOFs on
     // tetrahedra).
     SignatureMap map;
-    if (sig_type == 2)
+    if (sig_type >= 2)
     {
       map = MatchSignatureBasis(gamma_sig(), saved_sig, file_w);
     }
@@ -3345,7 +3616,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (!model_path.empty())
     {
-      const int sig_type = impl->magnetostatic ? 2 : 1;
+      const int sig_type = impl->magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
       const std::vector<double> sig = gamma_sig();  // collective: all ranks participate
       const std::vector<double> S_full = impl->GatherRows(impl->S_rows, nG);
       int written = 1;
@@ -3383,11 +3654,12 @@ void SubstructuringSolver::CondenseEnvironment()
     if (hodlr_tol > 0.0 && nG > 0)
     {
       // Interface DOF coordinates (replicated) for the clustering: the DOF interpolation
-      // points (H1 nodes, Nedelec edge midpoints).
+      // points (H1 nodes, Nedelec edge midpoints) of the parent DOFs.
       std::vector<double> coords_loc(static_cast<std::size_t>(nG) * 3, 0.0),
           coords(static_cast<std::size_t>(nG) * 3, 0.0);
-      std::vector<double> tdof_xyz(static_cast<std::size_t>(impl->nt) * 3, 0.0);
-      std::vector<char> have(impl->nt, 0);
+      const int nt0 = impl->parent_fes.GetTrueVSize();
+      std::vector<double> tdof_xyz(static_cast<std::size_t>(nt0) * 3, 0.0);
+      std::vector<char> have(nt0, 0);
       mfem::Array<int> edofs;
       mfem::Vector phys;
       for (int e = 0; e < impl->parent_fes.GetNE(); e++)
@@ -3419,7 +3691,7 @@ void SubstructuringSolver::CondenseEnvironment()
           for (int d = 0; d < 3; d++)
           {
             coords_loc[static_cast<std::size_t>(impl->gamma_global[i]) * 3 + d] =
-                tdof_xyz[static_cast<std::size_t>(i) * 3 + d];
+                tdof_xyz[static_cast<std::size_t>(impl->ParentTrueDof(i)) * 3 + d];
           }
         }
       }
