@@ -553,8 +553,11 @@ def write_maxwell_fixture(root, e_mag_over_e_elec=11.5, ladder=False):
     with open(os.path.join(post, "surface-response-model-raw-groups.csv"), "w") as f:
         f.write("label,model,patches,weight length (m)\nm1,1,30,+3.0e-06\n")
     with open(os.path.join(post, "surface-response-loop-remainder-energy.csv"), "w") as f:
+        # the record form (postoperator.cpp:2662-2769): the m-rows, then the binary's `Total` sum row
         f.write("source,evaluation,model,patches,weighted claim length (m),remainder energy[1] (J),remainder energy[2] (J),f (GHz),exc\n")
+        f.write(_wide_row([1.0, 0.0, "m1", 3.0, 2.0e-6, MX_LOOP[1], MX_LOOP[2], 1.0, 1]) + "\n")
         f.write(_wide_row([1.0, 0.0, "Total", 3.0, 2.0e-6, MX_LOOP[1], MX_LOOP[2], 1.0, 1]) + "\n")
+        f.write(_wide_row([1.0, 0.0, "m1", 3.0, 2.0e-6, 3.0 * MX_LOOP[1], 3.0 * MX_LOOP[2], 1.0, 2]) + "\n")
         f.write(_wide_row([1.0, 0.0, "Total", 3.0, 2.0e-6, 3.0 * MX_LOOP[1], 3.0 * MX_LOOP[2], 1.0, 2]) + "\n")
     with open(os.path.join(post, "domain-E.csv"), "w") as f:
         f.write("f (GHz),E_elec (J),E_mag (J),E_cap (J),E_ind (J)\n" + _wide_row([1.0, 1.0e-12, e_mag_over_e_elec * 1.0e-12, 0.0, 0.0]) + "\n")
@@ -874,6 +877,31 @@ class TestCovfixRound(unittest.TestCase):
             self.assertAlmostEqual(e["raw"]["Unclaimed"], RAW_LABELS["unclaimed"][i] - UNCOVERED[i], delta=1e-28)
         self.assertEqual(report["block_A"]["energy_locations"]["Missing"], [{"type": "CurvedEdge", "portions": 2.0, "length_m": 5e-06}])
 
+    def test_total_row_of_the_loop_remainder_csv_is_not_a_class(self):
+        # review d1126 MAJOR-1: the Maxwell loop-remainder CSV's `model` column carries the m-rows and then the binary's `Total`
+        # sum row (postoperator.cpp:2769); the LoopRemainder RAW row = the m-rows once (ctx003-C1 Maxwell read 2 x the Total)
+        post, manifest = write_maxwell_fixture(os.path.join(self.tmp, "follower"))
+        with open(os.path.join(post, "surface-response-loop-remainder-energy.csv"), "w") as f:
+            f.write("source,evaluation,model,patches,weighted claim length (m),remainder energy[1] (J),remainder energy[2] (J),f (GHz),exc\n")
+            for exc, scale in ((1, 1.0), (2, 3.0)):
+                f.write(_wide_row([1.0, 0.0, "m12", 2.0, 1.5e-6, 0.6 * scale * MX_LOOP[1], 0.6 * scale * MX_LOOP[2], 1.0, exc]) + "\n")
+                f.write(_wide_row([1.0, 0.0, "m21", 1.0, 0.5e-6, 0.4 * scale * MX_LOOP[1], 0.4 * scale * MX_LOOP[2], 1.0, exc]) + "\n")
+                f.write(_wide_row([1.0, 0.0, "Total", 3.0, 2.0e-6, scale * MX_LOOP[1], scale * MX_LOOP[2], 1.0, exc]) + "\n")
+                f.write(_wide_row([1.0, 1.0, "Total", 3.0, 2.0e-6, scale * MX_LOOP[1], scale * MX_LOOP[2], 1.0, exc]) + "\n")
+        report = cr.build_report(post, manifest, None, ma_reading="sharp")
+        unclaimed_label = {1: 0.4e-16, 2: 0.8e-16}        # the fixture's `unclaimed` rows of surface-response-model-raw-energy.csv
+        for t, i in (("SA", 1), ("MS", 2)):
+            e = report["block_A"]["energy"][t]
+            self.assertAlmostEqual(e["raw"]["LoopRemainder"], MX_LOOP[i], delta=1e-30)       # head d8db64814e: 2 x MX_LOOP
+            self.assertAlmostEqual(e["raw"]["Unclaimed"], unclaimed_label[i] - MX_LOOP[i], delta=1e-30)
+            self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+        # a clean window writes the Total row alone, with 0 (postoperator.cpp:2664): no LoopRemainder energy
+        with open(os.path.join(post, "surface-response-loop-remainder-energy.csv"), "w") as f:
+            f.write("source,evaluation,model,patches,weighted claim length (m),remainder energy[1] (J),remainder energy[2] (J),f (GHz),exc\n")
+            f.write(_wide_row([1.0, 0.0, "Total", 0.0, 0.0, 0.0, 0.0, 1.0, 1]) + "\n")
+        e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
+        self.assertEqual(e["raw"]["LoopRemainder"], 0.0)
+        self.assertAlmostEqual(e["raw"]["Unclaimed"], unclaimed_label[1], delta=1e-30)
     SCP = [{"Patch": 6, "Feature": 7, "Model": "convex-corner-45deg", "Topology": "convex corner", "WindowLength": 3.8, "OutsideLength": 0.0,
             "Owner": {"Model": "spatialedgecluster_edgecount-3_a5e14f9da16f", "Patch": 0, "Feature": 1}},
            {"Patch": 9, "Feature": 8, "Model": "convex-corner-90deg", "Topology": "convex corner", "WindowLength": 3.8, "OutsideLength": 2.8,

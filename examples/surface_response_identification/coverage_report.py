@@ -501,7 +501,7 @@ RAW_CSV_FILES = {
     "SCP": ("surface-response-spatial-cluster-priority-energy.csv", "spatialclusterpriority raw energy"),
     "ConductorConsistency": ("surface-response-conductor-consistency-energy.csv", "conductorconsistency raw energy"),
 }
-# The binary's sum row in every raw-class CSV (its `type` column).
+# The binary's sum row in every raw-class CSV (its `type` column) and in the Maxwell loop-remainder CSV (its `model` column).
 RAW_CSV_TOTAL_ROW = "Total"
 # The exclusion-energy export's rows in the ENERGY column: Excluded:<class>. Decision 1129: the export's classes are a SECOND,
 # overlapping partition of the within-R energy (the CLASSIFIED edge tree, every segment incl. the exclusion segments) while the
@@ -575,10 +575,14 @@ def raw_class_energies(postpro, interfaces, targets, kind):
                 locations.setdefault(name, []).append({"type": t, "count": r.get("count"),
                                                        "length_m": r.get("length (m)")})
     if kind == "Maxwell":
+        # the loop-remainder CSV's sum row is in its `model` column ("m<idx>" rows, then "Total"; postoperator.cpp:2769): the
+        # same rule as the four raw-class CSVs above (review d1126 MAJOR-1: ctx003-C1 Maxwell read 2 x its loop remainder)
         loops = read_csv(os.path.join(postpro, "surface-response-loop-remainder-energy.csv"))
         if loops is not None:
             acc = {}
             for r in _first_eval_rows(loops):
+                if str(r.get("model")) == RAW_CSV_TOTAL_ROW:
+                    continue
                 _accumulate(acc, _sum_by_type(indexed_columns(r, "remainder energy"), interfaces, targets))
             rows_out["LoopRemainder"] = acc
     exclusion = exclusion_energy_rows(postpro)
