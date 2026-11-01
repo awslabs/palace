@@ -36,12 +36,15 @@ INTERFACE_LOSS = {"SA": 0.002, "MS": 0.0003, "MA": 0.03}
 # between the pieces (the existing multi-conductor form), the mesher's signature / mask / boundary CSVs tagged per piece
 # (Conductor := piece; no .jl change), and the library entry's Edges[] keep the key's Conductor labels and gain
 # LocalPiece; PlanViewBoundary stays the label form (the C++ matches it by string equality). DEFAULT OFF: every output
-# is byte-identical to the one-reference form.
-LOCAL_PIECES_RULE = ("identification fix round R0-b (decisions 1100 / 1136 (2)), the spatial Edges-only form: one conductor "
-                     "reference per metal piece of the coupon's plan view (cluster_signature_geometry.local_pieces_of_arrangement:"
-                     " one piece per metal face of the arrangement of the chain segments and the box, numbered by (Conductor, "
-                     "smallest quantized vertex)); Edges[].Conductor stays the key label (0 re-keys); PlanViewBoundary unchanged;"
-                     " conductor_state_count = pieces - 1")
+# is byte-identical to the one-reference form. The rule has ONE spelling, cluster_signature_geometry.LOCAL_PIECES_RULE
+# (the piece order of decision 1142); the library entry's LocalPiecesRule is that text (local_pieces_rule()).
+
+
+def local_pieces_rule():
+    """cluster_signature_geometry.LOCAL_PIECES_RULE, the one spelling of the spatial piece rule (the coupon.json's
+    Geometry.LocalPiecesRule and the library entry's LocalPiecesRule); imported at call time (that module imports this one)."""
+    import cluster_signature_geometry  # noqa: E402  (imports this module; resolved at call time)
+    return cluster_signature_geometry.LOCAL_PIECES_RULE
 
 
 def local_pieces_coupon(coupon):
@@ -1800,7 +1803,7 @@ def write_library(
             model["ConductorReferences"] = references
         if local_pieces:
             # the Edges above carry the coupon's LocalPiece with the key's Conductor labels
-            model["LocalPiecesRule"] = LOCAL_PIECES_RULE
+            model["LocalPiecesRule"] = local_pieces_rule()
     else:
         raise ValueError(f"Unsupported spatial topology {topology}")
     if "PlanViewBoundary" in geometry:

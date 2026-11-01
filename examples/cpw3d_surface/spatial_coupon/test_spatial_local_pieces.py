@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """U-PIECES-spatial (identification fix round R0-b; decisions 1100 / 1136 (2) / 1140 (1)): the SPATIAL Edges-only
 LocalPiece form. (1) The arrangement rule by value (cluster_signature_geometry.local_pieces_of_arrangement: one piece
-per metal face, the order (Conductor, smallest quantized vertex), the vertex-touch refusal by name); (2) the 18 R0-b
+per metal face, the context-only pieces first then the claim-bearing ones, each by (Conductor, smallest quantized
+vertex) (decision 1142), the vertex-touch refusal by name); (2) the 18 R0-b
 spatial candidates of the v3-j library of record (7 one-label multi-piece + 11 multi-piece-label; the census
 probes/v3j_local_pieces_v1.out) rebuilt from their Signature with the pieces per label of the census, the default form
 untouched; (3) the generator's --local-pieces (one reference per piece, OpenContourPaths, Edges[].LocalPiece with the
@@ -234,7 +235,8 @@ class GeneratorPieceForm(unittest.TestCase):
             self.assertEqual([edge["LocalPiece"] for edge in entry_on["Edges"]][:8], [3, 2, 3, 2, 1, 2, 1, 2])
             self.assertEqual([edge["Conductor"] for edge in entry_on["Edges"]], [edge["Conductor"] for edge in entry_off["Edges"]])
             self.assertEqual(entry_on["PlanViewBoundary"], entry_off["PlanViewBoundary"])   # the label form (string-matched by the C++)
-            self.assertEqual(entry_on["LocalPiecesRule"], __import__("generate_spatial_response").LOCAL_PIECES_RULE)
+            self.assertEqual(entry_on["LocalPiecesRule"], G.LOCAL_PIECES_RULE)   # the one spelling (1142's order)
+            self.assertIn("CONTEXT-ONLY pieces (no claim row) first", entry_on["LocalPiecesRule"])
             self.assertEqual(entry_on["Name"], model["Name"] + "-pieces3")
             contract = json.loads((tmp / "on" / "basis-contract.json").read_text())
             self.assertEqual(contract["ConductorStates"], 2)
