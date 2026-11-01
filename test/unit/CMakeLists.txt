@@ -76,6 +76,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseidentification.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponsesegmentindex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-translationalmortarstrip.cpp
