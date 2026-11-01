@@ -922,7 +922,10 @@ TEST_CASE_METHOD(
   CHECK(record.length > 0.0);
   CHECK(diagnostics["UnprobedPatches"]["ClaimLength"].get<double>() > 0.0);
   // The same record on every rank: the portion count and the claimed length (the export
-  // set is partitioned on every rank with this list).
+  // set is partitioned on every rank with this list). Exact equality is deliberate: after
+  // the gather every rank sums the SAME sorted index list over replicated claims, so the
+  // length is the same ordered sum of the same doubles on every rank (bitwise by
+  // construction; the old rank-local lists gave two different sums, not rounding).
   double extrema[4] = {static_cast<double>(record.portions.size()), record.length,
                        -static_cast<double>(record.portions.size()), -record.length};
   Mpi::GlobalMax(4, extrema, Mpi::World());
