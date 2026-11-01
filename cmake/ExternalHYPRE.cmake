@@ -105,6 +105,25 @@ download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
   8b11d35c29215d462b8e727775e8771d808806ced107e1675082ed80b9ba84fb
 )
 
+# Skip the exchange of a zero initial guess in hybrid Gauss-Seidel relaxation (its
+# off-processor values are known to be zero)
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_relax_zero_guess.diff"
+)
+
+# Multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, for
+# BoomerAMG solves of several right-hand sides with one message per neighbor
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_relax_multicomponent.diff"
+)
+
+# AMS: skip work on a zero initial guess; agglomerate the coarse levels of the auxiliary
+# space BoomerAMG hierarchies onto fewer processes during the solve (same hierarchy and
+# V-cycle), and run the additive Pi-space corrections concurrently
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_ams_redist.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}

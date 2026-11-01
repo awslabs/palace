@@ -237,4 +237,9 @@ RUN apt-get -yqq update && \
     apt-get -yqq install --no-install-recommends libstdc++6 && \
     apt-get -yqq purge --auto-remove -y software-properties-common && \
     rm -rf /var/lib/apt/lists/*
+
+# Open MPI's OFI BTL opens additional EFA domains, which can exhaust the protection domains
+# of the device when many processes per node initialize MPI at once. Internode traffic uses
+# the OFI MTL either way.
+ENV OMPI_MCA_btl=^ofi
 {% endblock %}

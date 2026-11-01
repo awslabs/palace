@@ -172,6 +172,25 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack+openmp", when="+openmp")
         depends_on("strumpack~openmp", when="~openmp")
 
+    # The sparse direct solver versions of the superbuild, with its patches for faster
+    # distributed solves (extern/patch). Kept off the `with` blocks so the Palace variants
+    # are not folded into the patch conditions.
+    depends_on(
+        "strumpack@8.1.0",
+        when="@develop+strumpack",
+        patches=[patch("strumpack-8.1.0.diff", when="@8.1.0")],
+    )
+    depends_on(
+        "superlu-dist@9.3.1",
+        when="@develop+superlu-dist",
+        patches=[patch("superlu-dist-9.3.1.diff", when="@9.3.1")],
+    )
+    # BoomerAMG relaxation without the exchange of a zero initial guess and for several
+    # right-hand sides at once, and AMS solves with the coarse levels of its auxiliary
+    # space hierarchies gathered on fewer processes (the superbuild patches in
+    # extern/patch/hypre).
+    depends_on("hypre", when="@develop", patches=[patch("hypre-3.2.0.diff", when="@3.2.0")])
+
     conflicts("~arpack~slepc", msg="At least one eigenvalue solver is required")
 
     with when("+slepc"):
@@ -358,6 +377,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964",
                 when="@4.10:",
             ),
+            # Rebalancing with a custom partition independent of the message arrival
+            # order (extern/patch/mfem/patch_nc_rebalance_order.diff)
+            patch("mfem-4.10-nc-rebalance-order.diff", when="@4.10:"),
         ],
     )
 

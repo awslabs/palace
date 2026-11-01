@@ -328,6 +328,39 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   ksp_mult_it += ksp->GetNumIterations();
 }
 
+template <OperatorType OperType>
+void BaseKspSolver<OperType>::Mult(const std::vector<const VecType *> &x,
+                                   const std::vector<VecType *> &y) const
+{
+  MFEM_VERIFY(x.size() == y.size(), "Size mismatch for BaseKspSolver::Mult!");
+  const auto *cg = dynamic_cast<const CgSolver<OperType> *>(ksp.get());
+  if (!cg || x.size() < 2)
+  {
+    for (std::size_t k = 0; k < x.size(); k++)
+    {
+      Mult(*x[k], *y[k]);
+    }
+    return;
+  }
+  BlockTimer bt(Timer::KSP, use_timer);
+  std::vector<typename CgSolver<OperType>::SolveInfo> info;
+  cg->MultBatch(x, y, info);
+  for (const auto &solve : info)
+  {
+    const bool converged =
+        solve.converged && (ksp->GetRelTol() > 0.0 || ksp->GetAbsTol() > 0.0);
+    if (!converged)
+    {
+      Mpi::Warning(ksp->GetComm(),
+                   "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = "
+                   "{:.3e})!\n",
+                   solve.final_res / solve.initial_res, solve.initial_res);
+    }
+    ksp_mult++;
+    ksp_mult_it += solve.iterations;
+  }
+}
+
 template class BaseKspSolver<Operator>;
 template class BaseKspSolver<ComplexOperator>;
 

@@ -27,6 +27,9 @@ private:
   // Inverse diagonal scaling of the operator (real-valued for now).
   VecType dinv;
 
+  // Whether the inverse diagonal has zero imaginary part (always true in the real case).
+  bool real_dinv = true;
+
   // Damping factor and scaling factor for maximum eigenvalue.
   double omega, sf_max;
 
@@ -41,6 +44,11 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
+
+  // Access the (real part of the) inverse diagonal scaling when it is real-valued, so that
+  // Krylov solvers can fuse its application with other vector updates. Returns nullptr
+  // otherwise.
+  const Vector *GetRealInverseDiagonal() const;
 };
 
 }  // namespace palace

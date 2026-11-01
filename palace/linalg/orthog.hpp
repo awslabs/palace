@@ -4,10 +4,13 @@
 #ifndef PALACE_LINALG_ORTHOG_HPP
 #define PALACE_LINALG_ORTHOG_HPP
 
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <memory>
+#include <type_traits>
 #include <vector>
+#include "linalg/fusedvector.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
@@ -37,6 +40,37 @@ struct IdentityInnerProduct
   }
 };
 
+namespace internal
+{
+
+// Modified Gram-Schmidt with each column update fused with the inner product for the next
+// column (or the squared norm of the result, if norm2 is given) on the host: same
+// arithmetic and reductions as the unfused loop, one fewer pass over w per column.
+template <typename VecType, typename ScalarType>
+inline void OrthogonalizeColumnMGSFused(MPI_Comm comm, const std::vector<VecType> &V,
+                                        VecType &w, ScalarType *H, std::size_t m,
+                                        ScalarType *norm2)
+{
+  H[0] = LocalDot(w, V[0]);
+  Mpi::GlobalSum(1, &H[0], comm);
+  for (std::size_t j = 0; j + 1 < m; j++)
+  {
+    H[j + 1] = fused::AddDot(-H[j], V[j], w, &V[j + 1]);
+    Mpi::GlobalSum(1, &H[j + 1], comm);
+  }
+  if (norm2)
+  {
+    *norm2 = fused::AddDot(-H[m - 1], V[m - 1], w, nullptr);
+    Mpi::GlobalSum(1, norm2, comm);
+  }
+  else
+  {
+    w.Add(-H[m - 1], V[m - 1]);
+  }
+}
+
+}  // namespace internal
+
 template <typename VecType, typename ScalarType,
           typename InnerProductW = IdentityInnerProduct>
 inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
@@ -44,6 +78,14 @@ inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V,
                                    const InnerProductW &dot_op = {})
 {
   MFEM_ASSERT(m <= V.size(), "Out of bounds number of columns for MGS orthogonalization!");
+  if constexpr (std::is_same_v<InnerProductW, IdentityInnerProduct>)
+  {
+    if (m > 0 && fused::UseHost())
+    {
+      internal::OrthogonalizeColumnMGSFused(comm, V, w, H, m, (ScalarType *)nullptr);
+      return;
+    }
+  }
   for (std::size_t j = 0; j < m; j++)
   {
     // Global inner product: Note order is important for complex vectors.
@@ -143,6 +185,23 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
       OrthogonalizeColumnCGS(comm, V, w, H, m, true, dot_op);
       break;
   }
+}
+
+// Orthogonalize w against the columns of V as OrthogonalizeColumn and return the 2-norm of
+// the result, as Norml2.
+template <typename VecType, typename ScalarType>
+inline double OrthogonalizeColumnAndNorm(Orthogonalization type, MPI_Comm comm,
+                                         const std::vector<VecType> &V, VecType &w,
+                                         ScalarType *H, std::size_t m)
+{
+  if (type == Orthogonalization::MGS && m > 0 && fused::UseHost())
+  {
+    ScalarType norm2;
+    internal::OrthogonalizeColumnMGSFused(comm, V, w, H, m, &norm2);
+    return std::sqrt(std::abs(norm2));
+  }
+  OrthogonalizeColumn(type, comm, V, w, H, m);
+  return Norml2(comm, w);
 }
 
 }  // namespace palace::linalg

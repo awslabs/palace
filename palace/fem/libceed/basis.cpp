@@ -3,9 +3,12 @@
 
 #include "basis.hpp"
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 #include <mfem.hpp>
@@ -307,6 +310,226 @@ void InitCachedBasisFromRule(const mfem::FiniteElement &fe, const mfem::Integrat
                              CeedInt num_comp, Ceed ceed, CeedBasis *basis)
 {
   InitNonTensorBasis(fe, ir, num_comp, ceed, basis, true);
+}
+
+bool InitReducedBasis(const mfem::FiniteElement &fe, bool values, CeedInt num_comp,
+                      Ceed ceed, CeedBasis *basis)
+{
+  // On an affine simplex the basis functions and their derivatives map to polynomials of
+  // degree at most k on the reference element, k = p for the values and p - 1 for the
+  // derivatives. A rule of order 2k integrates products of them exactly. Its weighted point
+  // values are those of polynomials of degree k, so they are represented exactly by their
+  // coefficients in an orthonormal basis of that polynomial space (sampled at the rule
+  // points), and the rule is equivalent to summing the products of these coefficients with
+  // unit weights. With per-element constant geometry factors and coefficients, this gives
+  // the same element integrals with dim(P_k) < Q "quadrature points".
+  // The orthonormal basis is hierarchical: when the values are represented, its first
+  // dim(P_{k-1}) functions span the polynomials of degree k - 1, so the coefficients of
+  // the derivatives on the remaining ones are zero.
+  const auto geom = fe.GetGeomType();
+  const int degree = fe.GetOrder() - (values ? 0 : 1);
+  if (degree < 0)
+  {
+    return false;
+  }
+  auto Polynomials = [geom](int k) -> std::unique_ptr<mfem::FiniteElement>
+  {
+    switch (geom)
+    {
+      case mfem::Geometry::SEGMENT:
+        return std::make_unique<mfem::L2_SegmentElement>(k);
+      case mfem::Geometry::TRIANGLE:
+        return std::make_unique<mfem::L2_TriangleElement>(k);
+      case mfem::Geometry::TETRAHEDRON:
+        return std::make_unique<mfem::L2_TetrahedronElement>(k);
+      default:
+        return nullptr;
+    }
+  };
+  auto poly = Polynomials(degree);
+  if (!poly)
+  {
+    return false;
+  }
+  auto poly_lo = (values && degree > 0) ? Polynomials(degree - 1) : nullptr;
+  const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, 2 * degree);
+  const int Q = ir.GetNPoints();
+  const int dim = fe.GetDim();
+
+  // Orthonormal basis U (Q x n) of the weighted point values of the polynomials of degree k
+  // (modified Gram-Schmidt with reorthogonalization, dropping dependent candidates).
+  // Without a reduction the rule itself (U = I) is used, still with the weights folded into
+  // the basis.
+  const int n = std::min(poly->GetDof(), Q);
+  int n_lo = 0;
+  mfem::DenseMatrix U(Q, n);
+  if (n < Q)
+  {
+    std::vector<double> u(Q);
+    int j = 0;
+    auto Add = [&](const mfem::FiniteElement &candidates)
+    {
+      mfem::Vector shape(candidates.GetDof());
+      for (int c = 0; c < candidates.GetDof() && j < n; c++)
+      {
+        for (int q = 0; q < Q; q++)
+        {
+          const mfem::IntegrationPoint &ip = ir.IntPoint(q);
+          candidates.CalcShape(ip, shape);
+          u[q] = std::sqrt(ip.weight) * shape(c);
+        }
+        double r0 = 0.0;
+        for (int q = 0; q < Q; q++)
+        {
+          r0 += u[q] * u[q];
+        }
+        for (int pass = 0; pass < 2; pass++)
+        {
+          for (int i = 0; i < j; i++)
+          {
+            const double *u_i = U.GetColumn(i);
+            double r = 0.0;
+            for (int q = 0; q < Q; q++)
+            {
+              r += u_i[q] * u[q];
+            }
+            for (int q = 0; q < Q; q++)
+            {
+              u[q] -= r * u_i[q];
+            }
+          }
+        }
+        double r = 0.0;
+        for (int q = 0; q < Q; q++)
+        {
+          r += u[q] * u[q];
+        }
+        if (!(r > 1.0e-16 * r0))
+        {
+          continue;  // In the span of the previous candidates
+        }
+        r = 1.0 / std::sqrt(r);
+        double *u_j = U.GetColumn(j++);
+        for (int q = 0; q < Q; q++)
+        {
+          u_j[q] = r * u[q];
+        }
+      }
+    };
+    if (poly_lo)
+    {
+      Add(*poly_lo);
+      n_lo = j;
+      if (n_lo != poly_lo->GetDof())
+      {
+        return false;
+      }
+    }
+    Add(*poly);
+    if (j != n)
+    {
+      return false;
+    }
+  }
+  else
+  {
+    U = 0.0;
+    for (int q = 0; q < Q; q++)
+    {
+      U(q, q) = 1.0;
+    }
+  }
+
+  // Coefficients of the weighted values and derivatives of the basis functions at the rule
+  // points, in the libCEED layout [component][point][node]. MFEM's Bt and Gt have the same
+  // layout as [node][point][component] in column-major storage. A quantity which must be
+  // exact is verified to be represented to round-off; otherwise there is no reduced basis.
+  // When only derivatives are represented, the values are left as zero.
+  const mfem::DofToQuad &maps = fe.GetDofToQuad(ir, mfem::DofToQuad::FULL);
+  const int P = maps.ndof;
+  MFEM_VERIFY(maps.nqpt == Q, "Unexpected number of quadrature points for reduced basis!");
+  auto Project =
+      [&](const mfem::Array<double> &At, bool exact, std::vector<CeedScalar> &C, int n_nz)
+  {
+    const int qc = At.Size() / (P * Q);
+    C.assign(static_cast<std::size_t>(qc) * n * P, 0.0);
+    if (!exact)
+    {
+      return true;
+    }
+    double a_max = 0.0, r_max = 0.0;
+    std::vector<double> a(Q);
+    for (int c = 0; c < qc; c++)
+    {
+      for (int j = 0; j < P; j++)
+      {
+        for (int q = 0; q < Q; q++)
+        {
+          a[q] = std::sqrt(ir.IntPoint(q).weight) * At[j + P * (q + Q * c)];
+          a_max = std::max(a_max, std::abs(a[q]));
+        }
+        for (int k = 0; k < n; k++)
+        {
+          const double *u_k = U.GetColumn(k);
+          double s = 0.0;
+          for (int q = 0; q < Q; q++)
+          {
+            s += u_k[q] * a[q];
+          }
+          C[(static_cast<std::size_t>(c) * n + k) * P + j] = (k < n_nz) ? s : 0.0;
+        }
+        for (int q = 0; q < Q; q++)
+        {
+          double s = a[q];
+          for (int k = 0; k < n; k++)
+          {
+            s -= U(q, k) * C[(static_cast<std::size_t>(c) * n + k) * P + j];
+          }
+          r_max = std::max(r_max, std::abs(s));
+        }
+      }
+    }
+    return r_max <= 1.0e-13 * a_max;
+  };
+  std::vector<CeedScalar> interp, deriv;
+  if (!Project(maps.Bt, values, interp, n) ||
+      !Project(maps.Gt, true, deriv, n_lo ? n_lo : n))
+  {
+    return false;
+  }
+
+  // The reference coordinates are not used by the operators (any points of the element
+  // have the same geometry factors).
+  std::vector<CeedScalar> q_ref(static_cast<std::size_t>(dim) * n), q_weight(n, 1.0);
+  for (int k = 0; k < n; k++)
+  {
+    const mfem::IntegrationPoint &ip = ir.IntPoint(k);
+    const double x[3] = {ip.x, ip.y, ip.z};
+    for (int d = 0; d < dim; d++)
+    {
+      q_ref[d * n + k] = x[d];
+    }
+  }
+  const auto topo = GetCeedTopology(geom);
+  if (fe.GetMapType() == mfem::FiniteElement::H_DIV)
+  {
+    PalaceCeedCall(ceed,
+                   CeedBasisCreateHdiv(ceed, topo, num_comp, P, n, interp.data(),
+                                       deriv.data(), q_ref.data(), q_weight.data(), basis));
+  }
+  else if (fe.GetMapType() == mfem::FiniteElement::H_CURL)
+  {
+    PalaceCeedCall(ceed, CeedBasisCreateHcurl(ceed, topo, num_comp, P, n, interp.data(),
+                                              deriv.data(), q_ref.data(), q_weight.data(),
+                                              basis));
+  }
+  else
+  {
+    PalaceCeedCall(ceed,
+                   CeedBasisCreateH1(ceed, topo, num_comp, P, n, interp.data(),
+                                     deriv.data(), q_ref.data(), q_weight.data(), basis));
+  }
+  return true;
 }
 
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,

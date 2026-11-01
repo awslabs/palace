@@ -1,0 +1,84 @@
+diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
+index 2d0403e..0df0d38 100644
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -2884,28 +2884,22 @@ void ParNCMesh::RedistributeElements(Array<int> &new_ranks, int target_elements,
+       MPI_Request barrier = MPI_REQUEST_NULL;
+       int done = 0;
+ 
++      // The messages are decoded after all of them have been received, in the order of
++      // the source ranks: elements and nodes are created as a message is decoded, so the
++      // numbering of the new mesh does not depend on the arrival order of the messages.
++      std::map<int, std::string> recv_data;
++
+       while (!done)
+       {
+          int rank, size;
+          while (RebalanceMessage::IProbe(rank, size, MyComm))
+          {
+-            // receive message; note: elements are created as the msg is decoded
+-            msg.Recv(rank, size, MyComm);
++            std::string &buf = recv_data[rank];
++            MFEM_VERIFY(buf.empty(), "Unexpected second message from rank " << rank);
++            buf.resize(size);
++            MPI_Recv(&buf[0], size, MPI_BYTE, rank, VarMessageTag::REBALANCE_VM,
++                     MyComm, MPI_STATUS_IGNORE);
+             nrecv++;
+-
+-            for (int i = 0; i < msg.Size(); i++)
+-            {
+-               const ElementRankAndAttribute &value = msg.values[i];
+-               Element &el = elements[msg.elements[i]];
+-               el.rank = value.rank;
+-               el.attribute = value.attribute;
+-            }
+-
+-            // save the ranks we received from, for later use in RecvRebalanceDofs
+-            if (record_comm)
+-            {
+-               recv_rebalance_dofs[rank].SetNCMesh(this);
+-            }
+          }
+ 
+          if (barrier != MPI_REQUEST_NULL)
+@@ -2924,6 +2918,27 @@ void ParNCMesh::RedistributeElements(Array<int> &new_ranks, int target_elements,
+          }
+       }
+ 
++      for (auto &kv : recv_data)
++      {
++         // note: elements are created as the msg is decoded
++         msg.data.swap(kv.second);
++         msg.DecodeData(kv.first);
++
++         for (int i = 0; i < msg.Size(); i++)
++         {
++            const ElementRankAndAttribute &value = msg.values[i];
++            Element &el = elements[msg.elements[i]];
++            el.rank = value.rank;
++            el.attribute = value.attribute;
++         }
++
++         // save the ranks we received from, for later use in RecvRebalanceDofs
++         if (record_comm)
++         {
++            recv_rebalance_dofs[kv.first].SetNCMesh(this);
++         }
++      }
++
+       Update();
+    }
+ 
+diff --git a/mesh/pncmesh.hpp b/mesh/pncmesh.hpp
+index 8796a9f..ef09a8d 100644
+--- a/mesh/pncmesh.hpp
++++ b/mesh/pncmesh.hpp
+@@ -561,6 +561,8 @@ protected: // implementation
+    public:
+       void AddElement(int elem, int rank, int attribute)
+       { Add(elem, {rank, attribute}); }
++      /// Decode a message whose data was received from processor 'rank'.
++      void DecodeData(int rank) { Decode(rank); }
+       typedef std::map<int, RebalanceMessage> Map;
+    };
+ 

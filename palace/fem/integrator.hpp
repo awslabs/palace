@@ -64,6 +64,10 @@ public:
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
 
+  // Whether the integrand involves the values of the trial and test functions, and not only
+  // their derivatives (gradient, curl, or divergence).
+  virtual bool UsesValues() const { return true; }
+
   // Sorted list of the (libCEED, 1-based) attributes on which the integrator's coefficients
   // are not identically zero, or no value if the integrator may contribute on every
   // attribute. Element contributions from the other attributes are exactly zero, so
@@ -122,6 +126,8 @@ class DiffusionIntegrator : public BilinearFormIntegrator
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
 
+  bool UsesValues() const override { return false; }
+
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
@@ -133,6 +139,8 @@ class CurlCurlIntegrator : public BilinearFormIntegrator
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
 
+  bool UsesValues() const override { return false; }
+
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
@@ -143,6 +151,8 @@ class DivDivIntegrator : public BilinearFormIntegrator
 {
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
+
+  bool UsesValues() const override { return false; }
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,

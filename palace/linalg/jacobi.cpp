@@ -3,7 +3,9 @@
 
 #include "jacobi.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -83,6 +85,25 @@ inline void Apply(const Vector &dinv, const Vector &x, Vector &y)
   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = DI[i] * X[i]; });
 }
 
+// Apply a real-valued diagonal to both parts of a complex vector (the imaginary part of
+// dinv is zero), equivalent to the complex version below.
+inline void ApplyReal(const Vector &dinv, const ComplexVector &x, ComplexVector &y)
+{
+  const bool use_dev = dinv.UseDevice() || x.UseDevice() || y.UseDevice();
+  const int N = dinv.Size();
+  const auto *DI = dinv.Read(use_dev);
+  const auto *XR = x.Real().Read(use_dev);
+  const auto *XI = x.Imag().Read(use_dev);
+  auto *YR = y.Real().Write(use_dev);
+  auto *YI = y.Imag().Write(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        YR[i] = DI[i] * XR[i];
+                        YI[i] = DI[i] * XI[i];
+                      });
+}
+
 template <bool Transpose = false>
 inline void Apply(const ComplexVector &dinv, const ComplexVector &x, ComplexVector &y)
 {
@@ -142,15 +163,41 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
   {
     dinv *= omega;
   }
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    const auto *DII = dinv.Imag().HostRead();
+    real_dinv = std::all_of(DII, DII + dinv.Size(), [](double d) { return d == 0.0; });
+  }
 
   this->height = op.Height();
   this->width = op.Width();
 }
 
 template <OperatorType OperType>
+const Vector *JacobiSmoother<OperType>::GetRealInverseDiagonal() const
+{
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    return real_dinv ? &dinv.Real() : nullptr;
+  }
+  else
+  {
+    return &dinv;
+  }
+}
+
+template <OperatorType OperType>
 void JacobiSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
   MFEM_ASSERT(!this->initial_guess, "JacobiSmoother does not use initial guess!");
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    if (real_dinv)
+    {
+      ApplyReal(dinv.Real(), x, y);
+      return;
+    }
+  }
   Apply(dinv, x, y);
 }
 

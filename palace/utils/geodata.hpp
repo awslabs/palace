@@ -378,6 +378,10 @@ struct MeshEntityCounts
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts = nullptr);
 
+// Complete the writing of the adapted mesh, which RebalanceMesh may perform in the
+// background on the root process.
+void FinishMeshOutput();
+
 // Complete true vertex and edge counts for a nonconforming mesh using distributed
 // lowest-order H1 and ND spaces. This is collective over the mesh communicator and must be
 // called on every rank after RebalanceMesh has populated out_counts for the final mesh.

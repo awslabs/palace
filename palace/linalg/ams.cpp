@@ -230,6 +230,20 @@ void HypreAmsSolver::InitializeSolver()
   }
 }
 
+void HypreAmsSolver::Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const
+{
+#if defined(HYPRE_AMS_ZERO_GUESS_FLAG)
+  // Only valid if hypre_AMSSolve maintains the flag (the relaxation skips the exchange of a
+  // vector flagged as zero).
+  if (!iterative_mode)
+  {
+    x.HypreWrite();
+    hypre_ParVectorSetZeros(x);
+  }
+#endif
+  mfem::HypreSolver::Mult(b, x);
+}
+
 void HypreAmsSolver::SetOperator(const Operator &op)
 {
   // When the operator changes, we need to rebuild the AMS solver but can use the unchanged

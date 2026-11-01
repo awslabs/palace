@@ -104,9 +104,20 @@ list(APPEND SUPERLU_OPTIONS
 string(REPLACE ";" "; " SUPERLU_OPTIONS_PRINT "${SUPERLU_OPTIONS}")
 message(STATUS "SUPERLU_OPTIONS: ${SUPERLU_OPTIONS_PRINT}")
 
-# Fix column permutations
+# Fix column permutations, avoid dense all-to-all exchanges in the symbolic phase, reuse
+# communication patterns and the static schedule across solves and refactorizations, and
+# use larger relaxed supernodes (faster distributed triangular solves)
 set(SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_comm.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_solve_redist.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_comm_tree.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_sched_cache.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_gather_values.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_solve_perm.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_solve_sync.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_solve_agg.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_relax.diff"
 )
 
 include(ExternalProject)
