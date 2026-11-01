@@ -562,6 +562,81 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     self.combine(root / "refusal", *argv)
                 self.assertFalse((root / "refusal" / "process-library.json").exists(), message)
 
+    def test_replace_by_signature_puts_the_piece_form_in_the_one_reference_models_slot(self):
+        """Decision 1103's rule in the assembly (idfix R0-b, decisions 1136 (1) / 1140 (4)): the piece form of a key (another
+        Name, the -pieces<P> suffix, the SAME canonical Signature) REPLACES the base's one-reference model of that Signature
+        in place (--replace-by-signature NEWNAME=<record> + --supersede-decision), recorded under Supersedes with Kind
+        Signature; without the flag the two models of one signature are refused by name (OI-LIBRARY-DUPLICATE-SIGNATURE)
+        and nothing is written; a library never holds two models of one signature."""
+        pec = {"Type": "ParallelEdgeCluster", "Edges": [{"OffsetOverR": o, "GapSide": d, "Conductor": 1}
+                                                       for o, d in zip([0.0, 1.5789474, 3.1578947, 4.7368421], [1, -1, 1, -1])]}
+        other = {"Type": "ParallelEdgeCluster", "Edges": [{"OffsetOverR": 0.0, "GapSide": 1, "Conductor": 1},
+                                                         {"OffsetOverR": 1.0526316, "GapSide": -1, "Conductor": 1}]}
+
+        def stamp(path, signatures):
+            library = PREPARE.load_json(path)
+            for model in library["Models"]:
+                if model["Name"] in signatures:
+                    model["Signature"] = signatures[model["Name"]]
+            PREPARE.write_json(path, library)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.write_library(root / "base" / "process-library.json", "base",
+                                      ["alpha", "parallel-edge-cluster-ff3a5bee4e2d", "omega"])
+            stamp(base, {"parallel-edge-cluster-ff3a5bee4e2d": pec, "omega": other})
+            pieces = self.write_library(root / "pieces" / "process-library.json", "pieces", ["parallel-edge-cluster-0123456789ab-pieces3"])
+            stamp(pieces, {"parallel-edge-cluster-0123456789ab-pieces3": pec})
+            record = root / "pieces3-qualification.json"
+            record.write_text(json.dumps({"Passed": True}) + "\n")
+            decision = "1136 (1): the 2D one-label multi-piece models of v3-j in the piece form -> v3-k-2d"
+            plain = self.combine(root / "plain", base)
+            with self.assertRaisesRegex(ValueError, "OI-LIBRARY-DUPLICATE-SIGNATURE.*parallel-edge-cluster-0123456789ab-pieces3, parallel-edge-cluster-ff3a5bee4e2d"):
+                self.combine(root / "refused", base, pieces)
+            self.assertFalse((root / "refused" / "process-library.json").exists())
+            replaced = self.combine(root / "replaced", "--replace-by-signature", f"parallel-edge-cluster-0123456789ab-pieces3={record}",
+                                    "--supersede-decision", decision, base, pieces)
+            self.assertEqual([model["Name"] for model in replaced["Models"]], ["alpha", "parallel-edge-cluster-0123456789ab-pieces3", "omega"])
+            for before, after in zip(plain["Models"], replaced["Models"]):
+                if before["Name"] != "parallel-edge-cluster-ff3a5bee4e2d":
+                    self.assertEqual(before, after)                     # every other model entry untouched
+                else:
+                    self.assertEqual(after["Signature"], pec)
+                    self.assertEqual(after["CombinedFrom"], {"Path": str(pieces.resolve()), "SHA256": COMBINER.sha256(pieces)})
+                    self.assertEqual(after["FabricatedMatrix"],
+                                     "models/002-parallel-edge-cluster-0123456789ab-pieces3/fabricated-domain-response-matrix.csv")
+                    self.assertEqual((root / "replaced" / after["FabricatedMatrix"]).read_text(),
+                                     "pieces:parallel-edge-cluster-0123456789ab-pieces3:fabricated-domain-response-matrix.csv\n")
+            self.assertEqual(len(replaced["Supersedes"]), 1)
+            entry = replaced["Supersedes"][0]
+            self.assertEqual((entry["Kind"], entry["Name"], entry["NewName"]),
+                             ("Signature", "parallel-edge-cluster-ff3a5bee4e2d", "parallel-edge-cluster-0123456789ab-pieces3"))
+            self.assertEqual(entry["SignatureHash"], __import__("signature_library").signature_hash(pec))
+            self.assertEqual(entry["Decision"], decision)
+            self.assertEqual(entry["Record"], {"Path": str(record.resolve()), "SHA256": COMBINER.sha256(record)})
+            self.assertEqual(entry["Rule"], COMBINER.REPLACE_BY_SIGNATURE_RULE)
+            self.assertNotEqual(entry["BaseModelSHA"], entry["NewModelSHA"])
+            # one model per signature after the replacement, by construction
+            self.assertEqual(len({__import__("signature_library").signature_hash(m["Signature"]) for m in replaced["Models"] if "Signature" in m}), 2)
+            # Refusals (nothing written): a new name no later input supplies, a new model without a Signature, a Signature the
+            # base does not hold, a name the base already holds (--supersede's case), no decision text.
+            unsigned = self.write_library(root / "unsigned" / "process-library.json", "unsigned", ["lonely-pieces2"])
+            foreign = self.write_library(root / "foreign" / "process-library.json", "foreign", ["foreign-pieces2"])
+            stamp(foreign, {"foreign-pieces2": {"Type": "SameConductorGap", "SeparationOverR": 0.5}})
+            same_name = self.write_library(root / "same" / "process-library.json", "same", ["omega"])
+            stamp(same_name, {"omega": other})
+            ruled = ("--supersede-decision", decision)
+            for argv, message in (
+                    (("--replace-by-signature", f"absent={record}", *ruled, base, pieces), "0 later inputs supply"),
+                    (("--replace-by-signature", f"lonely-pieces2={record}", *ruled, base, unsigned), "carries no Signature"),
+                    (("--replace-by-signature", f"foreign-pieces2={record}", *ruled, base, foreign), "holds 0 model"),
+                    (("--replace-by-signature", f"omega={record}", *ruled, base, same_name), "already holds a model 'omega'"),
+                    (("--replace-by-signature", f"parallel-edge-cluster-0123456789ab-pieces3={record}", base, pieces),
+                     "requires --supersede-decision TEXT")):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.combine(root / "refusal", *argv)
+                self.assertFalse((root / "refusal" / "process-library.json").exists(), message)
+
     @unittest.skipUnless(V3B1_LIBRARY.is_file() and (ROUND2_CONCAVE_60 / "process-library.json").is_file()
                          and (ROUND2_CONCAVE_60 / "heldout-qualification.json").is_file(),
                          "the stored s2-r1p9-v3-b1 library and the round-2 concave-60 node records are needed")

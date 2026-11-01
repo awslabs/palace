@@ -7,7 +7,11 @@ model of the same name of one later input, recording the replacement under Super
 mandatory --supersede-decision TEXT (decision 513 (2)); without the flag a repeated model name is
 refused and the output is unchanged. Two models of one canonical Signature (whatever their Names:
 the one-reference and the -pieces form of one key) are refused by name before anything is written
-(OI-LIBRARY-DUPLICATE-SIGNATURE, decisions 1103 / 1126 (5); signature_library.refuse_duplicate_signatures)."""
+(OI-LIBRARY-DUPLICATE-SIGNATURE, decisions 1103 / 1126 (5); signature_library.refuse_duplicate_signatures).
+--replace-by-signature NAME=<record> (idfix R0-b, decisions 1103 / 1136 (1) / 1140 (4)): the model NAME of one
+later input (its piece form, Name <base>-pieces<P>) REPLACES the base library's model carrying the SAME canonical
+Signature, in place (the base slot), under the same mandatory --supersede-decision TEXT; recorded under Supersedes
+with Kind "Signature" - a library never holds two models of one signature."""
 
 import argparse
 import hashlib
@@ -21,7 +25,7 @@ from pathlib import Path
 IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[2] / "surface_response_identification"
 if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
-from signature_library import refuse_duplicate_signatures  # noqa: E402
+from signature_library import refuse_duplicate_signatures, signature_hash  # noqa: E402
 
 
 PATH_FIELDS = (
@@ -109,13 +113,13 @@ def parse_supersede(spec):
 
 
 def supersede_decision(text, supersedes):
-    """The decision text that rules every --supersede replacement (decision 513 (2)): mandatory and
-    non-blank whenever --supersede is given, refused without one."""
+    """The decision text that rules every --supersede / --replace-by-signature replacement (decision 513 (2)):
+    mandatory and non-blank whenever either is given, refused without one."""
     if supersedes and not (isinstance(text, str) and text.strip()):
-        raise ValueError("--supersede requires --supersede-decision TEXT (the decision that rules the replacement, "
-                         "recorded in Supersedes.Decision)")
+        raise ValueError("--supersede / --replace-by-signature requires --supersede-decision TEXT (the decision that rules "
+                         "the replacement, recorded in Supersedes.Decision)")
     if text is not None and not supersedes:
-        raise ValueError("--supersede-decision is given without --supersede")
+        raise ValueError("--supersede-decision is given without --supersede / --replace-by-signature")
     return text.strip() if text else None
 
 
@@ -143,6 +147,54 @@ def apply_supersedes(entries, base_path, supersedes, decision):
         entries[base_slots[0]] = new_entry
         del entries[new_slots[0]]
     return entries, records
+
+
+def apply_signature_replacements(entries, base_path, replacements, decision):
+    """`entries` = [(source path, library, model)] in input order; for every --replace-by-signature NAME the model
+    NAME of exactly one later input (which must carry a Signature) replaces IN PLACE the base library's (the first
+    input's) model carrying the SAME canonical Signature (signature_library.signature_hash: exact equality, no
+    tolerance), so every other model keeps its index and directory and the library never holds two models of one
+    signature (decision 1103; the one-reference model gives way to its piece form, decisions 1136 (1) / 1140 (4)).
+    Refuses a NAME absent from the later inputs or supplied twice, a new model without a Signature, a Signature the
+    base holds in no model or in several, and a NAME the base already holds (that is --supersede's case). Returns
+    (entries, Supersedes records with Kind "Signature")."""
+    records = []
+    for name, record in replacements:
+        new_slots = [i for i, (path, _, model) in enumerate(entries) if path != base_path and model.get("Name") == name]
+        if len(new_slots) != 1:
+            raise ValueError(f"--replace-by-signature {name}: {len(new_slots)} later inputs supply a model {name!r}; exactly one must")
+        if any(path == base_path and model.get("Name") == name for path, _, model in entries):
+            raise ValueError(f"--replace-by-signature {name}: the base library {base_path} already holds a model {name!r} "
+                             "(a replacement by name is --supersede)")
+        new_entry = entries[new_slots[0]]
+        signature = new_entry[2].get("Signature")
+        if signature is None:
+            raise ValueError(f"--replace-by-signature {name}: the model {name!r} carries no Signature")
+        key = signature_hash(signature)
+        base_slots = [i for i, (path, _, model) in enumerate(entries)
+                      if path == base_path and model.get("Signature") is not None and signature_hash(model["Signature"]) == key]
+        if len(base_slots) != 1:
+            raise ValueError(f"--replace-by-signature {name}: the base library {base_path} holds {len(base_slots)} model(s) of "
+                             f"the Signature {key[:12]} of {name!r}; exactly one must")
+        base_entry = entries[base_slots[0]]
+        records.append({"Kind": "Signature", "Name": base_entry[2].get("Name"), "NewName": name, "SignatureHash": key,
+                        "BaseModelSHA": model_sha256(base_entry[2], base_entry[0].parent),
+                        "NewModelSHA": model_sha256(new_entry[2], new_entry[0].parent),
+                        "BaseSource": {"Path": str(base_entry[0]), "SHA256": sha256(base_entry[0])},
+                        "NewSource": {"Path": str(new_entry[0]), "SHA256": sha256(new_entry[0])},
+                        "Record": {"Path": record["Path"], "SHA256": record["SHA256"]}, "Decision": decision,
+                        "Rule": REPLACE_BY_SIGNATURE_RULE})
+        entries[base_slots[0]] = new_entry
+        del entries[new_slots[0]]
+    return entries, records
+
+
+REPLACE_BY_SIGNATURE_RULE = ("--replace-by-signature NAME=<record> (idfix R0-b, decisions 1103 / 1136 (1) / 1140 (4)): the model "
+                             "NAME of exactly one later input replaces IN PLACE the base library's model carrying the SAME canonical "
+                             "Signature (exact equality of the json sort_keys form, signature_library.signature_hash; its matrices "
+                             "copied under the base model's index), recorded under Supersedes with Kind Signature, both Names, both "
+                             "model digests, the stored record and the mandatory --supersede-decision text; a library never holds two "
+                             "models of one signature (the one-reference model gives way to its piece form)")
 
 
 SUPERSEDE_RULE = ("--supersede NAME=<record>: the base library's model NAME is replaced in place by the model of the same "
@@ -204,15 +256,27 @@ def main():
              "stored record (JSON) that rules the replacement; requires --supersede-decision",
     )
     parser.add_argument(
+        "--replace-by-signature",
+        action="append",
+        default=[],
+        metavar="NAME=RECORD",
+        help="replace the base (first) library's model carrying the SAME canonical Signature as the model NAME of "
+             "one later input by that model, in place (idfix R0-b, decisions 1103 / 1136 (1): the one-reference model "
+             "gives way to its -pieces<P> form), recording Supersedes {Kind: Signature, Name, NewName, SignatureHash, "
+             "BaseModelSHA, NewModelSHA, Record, Decision}; RECORD is the stored record (JSON) that rules the "
+             "replacement; requires --supersede-decision",
+    )
+    parser.add_argument(
         "--supersede-decision",
         metavar="TEXT",
-        help="the decision that rules every --supersede replacement (mandatory with --supersede; recorded as "
-             "Supersedes.Decision)",
+        help="the decision that rules every --supersede / --replace-by-signature replacement (mandatory with either; "
+             "recorded as Supersedes.Decision)",
     )
     parser.add_argument("libraries", type=Path, nargs="+")
     args = parser.parse_args()
     supersedes = [parse_supersede(spec) for spec in args.supersede]
-    decision = supersede_decision(args.supersede_decision, supersedes)
+    replacements = [parse_supersede(spec) for spec in args.replace_by_signature]
+    decision = supersede_decision(args.supersede_decision, supersedes + replacements)
 
     destination = args.output.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -264,6 +328,9 @@ def main():
     entries = [(source_path, library, source_model) for source_path, library in loaded for source_model in library["Models"]]
     if supersedes:
         entries, result["Supersedes"] = apply_supersedes(entries, loaded[0][0], supersedes, decision)
+    if replacements:
+        entries, replaced = apply_signature_replacements(entries, loaded[0][0], replacements, decision)
+        result["Supersedes"] = result.get("Supersedes", []) + replaced
     refuse_duplicate_signatures([source_model for _, _, source_model in entries], library=str(destination / "process-library.json"))
     source_digests = {source_path: sha256(source_path) for source_path, _ in loaded}
     for source_path, library, source_model in entries:
