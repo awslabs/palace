@@ -69,9 +69,10 @@ public:
                                      MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi);
 
-  // Add the ω-independent boundary curl-curl coefficient of the second-order absorbing
-  // BC (the μ⁻¹·c₀ normal-projected term that the real-ω stamping scales by 0.5/ω),
-  // scaled by `coeff`. Pulled out so both the real-ω and complex-ω overloads share the
+  // Add the ω-independent boundary curl-curl coefficient of the second-order absorbing BC
+  // (the μ⁻¹·c₀ normal-projected term that the real-ω stamping scales by 0.5/ω), scaled by
+  // `-coeff`: the negative sign of β = μ⁻¹c₀/(2iω) is applied here, so callers pass a
+  // positive scale. Pulled out so both the real-ω and complex-ω overloads share the
   // material-coefficient construction. No-op when order < 2 or there are no farfield
   // attributes.
   void AddExtraSystemBoundaryCurlCurlBdrCoefficients(double coeff,

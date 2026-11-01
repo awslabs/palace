@@ -412,7 +412,8 @@ void IoData::CheckConfiguration()
     // Second-order absorbing (farfield), surface-conductivity, and rational surface
     // impedance boundaries are supported in circuit synthesis: their frequency-dependent
     // contributions are folded into the synthesised pencil via the same auxiliary-state
-    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface
+    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0, with the
+    // sign of β inside the boundary matrix; surface
     // conductivity's iω/Z(ω) and the rational impedance's Robin coefficient s·D(s)/N(s)
     // by a polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
     // Wave ports are supported via an automatic polynomial fit of the modal dispersion,

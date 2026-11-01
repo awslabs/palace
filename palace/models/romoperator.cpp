@@ -577,7 +577,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // Cache the ω-independent boundary masses for the other frequency-dependent BCs so they
   // can be folded into circuit synthesis (projected per basis growth in UpdatePROM, fit
   // in CalculateNormalizedPROMMatrices). On the imaginary slot, matching Mwp_p.
-  //   - 2nd-order farfield ABC: M_ff with full term i·(0.5/ω)·M_ff.
+  //   - 2nd-order farfield ABC: M_ff with full term i·(0.5/ω)·M_ff (M_ff includes the
+  //     negative sign of β).
   //   - Surface conductivity: one boundary mass per active attribute group, term
   //     (i·ω/Z_g(ω))·A_σ_g.
   M_ff_ = space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO,
@@ -1325,8 +1326,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     auto apply_factored_other_A2 = [&]()
     {
       // Factored 2nd-order farfield ABC: A2_ff(ω) = i·(0.5/ω)·M_ff. M_ff_r carries the
-      // boundary mass on the imaginary slot (the i), so scaling by the real scalar 0.5/ω
-      // reproduces the full contribution.
+      // boundary mass on the imaginary slot (the i) and the negative sign of β, so scaling
+      // by the real scalar 0.5/ω reproduces the full contribution.
       if (M_ff_ && M_ff_r.rows() == static_cast<long>(V.size()))
       {
         Ar += std::complex<double>(0.5 / omega, 0.0) * M_ff_r;
@@ -2545,9 +2546,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   // the i). Only meaningful with a nonzero sweep band.
   if (sweep_omega_max > sweep_omega_min)
   {
-    // 2nd-order farfield ABC: i·(0.5/ω)·M_ff. f(ω) = 0.5/ω is EXACTLY a single pole at ω=0
-    // with residue 0.5 — inject it analytically (no polynomial part, no fit), as a frozen
-    // aux block. This is the synthesis analogue of the NLEPS frozen-ABC seed.
+    // 2nd-order farfield ABC: i·(0.5/ω)·M_ff, with the sign of β inside M_ff. f(ω) = 0.5/ω
+    // is EXACTLY a single pole at ω=0 with residue 0.5 — inject it analytically (no
+    // polynomial part, no fit), as a frozen aux block. This is the synthesis analogue of
+    // the NLEPS frozen-ABC seed.
     if (M_ff_ && M_ff_r.rows() == Kr.rows())
     {
       auto blk =
