@@ -1209,7 +1209,7 @@ def plan_local_pieces_form(coupon, matching_radius, parameters=None, one_referen
     the spatial arrangement refusals, lane C's parallel-edge refusals, a library without version-3 Fabrication for a
     version-2 spatial record) FAILS CLOSED: Preparation.Method = Unsupported with the refusal as the Reason (decision
     1145 Q1 (a): the one-reference form of such a coupon is the model class decision 1134 found wrong by tens of
-    percent, so it is never planned silently; --one-reference builds it explicitly)."""
+    percent, so it is never planned silently; --one-reference opts out of the piece form explicitly)."""
     preparation = coupon["Preparation"]
     if one_reference:
         preparation["LocalPieces"] = False
@@ -1222,11 +1222,13 @@ def plan_local_pieces_form(coupon, matching_radius, parameters=None, one_referen
         preparation["LocalPiecesReason"] = f"the pieces are not derivable from this coupon: {error}"
         if preparation["Method"] != "Unsupported":
             # the builder keys (Driver / MeshGenerator / ResponseGenerator) go: the coupon is not built (the
-            # Unsupported shape of preparation(): Method + Reason)
+            # Unsupported shape of preparation(): Method + Reason). The Reason names what --one-reference DOES (opts
+            # out of the piece form), not a promised build: a refusal of the edge signature itself (normalize_parallel_edges)
+            # is raised again by the one-reference builder (confirmation d1140 MINOR-B).
             coupon["Preparation"] = preparation = {
                 "Method": "Unsupported",
                 "Reason": (f"the piece form is the default (decision 1136 (4)) and its pieces are not derivable from "
-                           f"this coupon: {error}; --one-reference builds the one-reference form"),
+                           f"this coupon: {error}; --one-reference opts out of the piece form"),
                 **{key: value for key, value in preparation.items()
                    if key in ("BoundaryLawQualification", "LocalPieces", "LocalPiecesReason")}}
         return preparation
