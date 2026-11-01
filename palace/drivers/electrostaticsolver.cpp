@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -1528,6 +1529,17 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // exclusion is sticky, so the list only grows; empty on a window with 0 exclusions).
     std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
         conductor_consistency_portions;
+    // OI-ES-COMPARATOR-NC-POSTRAW-STALL (decision 1114): the wall time of the response
+    // stages after the raw energies, one line each (a chip-scale run prints nothing between
+    // "Field energy" and the corrected solve otherwise); output text only.
+    const auto post_raw_started = std::chrono::steady_clock::now();
+    auto PostRawStage = [&](const std::string &text)
+    {
+      Mpi::Print(
+          " Response post-raw {} ({:.2f} s)\n", text,
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - post_raw_started)
+              .count());
+    };
     if (response_correction)
     {
       raw_energies = post_op.GetCachedElectrostaticEnergies();
@@ -1548,8 +1560,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       // Geometry fallbacks (USER decision 1000 (b)): the share of the within-R energy the
       // converted sites left raw, on the same raw field (nothing when none fired).
+      PostRawStage("uncovered / domain-boundary raw energies");
       MeasureGeometryFallbacks(idx, raw_energies);
+      PostRawStage("geometry fallbacks");
       MeasureExclusionEnergy(idx, raw_energies);
+      PostRawStage("exclusion energy");
       if (!spatial_cluster_priority_portions.empty())
       {
         // The SpatialClusterPriority raw remainders' within-R energy (decision 922) on the
@@ -1575,6 +1590,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             idx, post_op.GetElectrostaticPartitionedEdgeEnergies(
                      response_correction->GetTargetInterfaces(), model_raw_portions));
       }
+      PostRawStage("spatial-cluster-priority / clipped / model raw energies");
     }
 
     if (response_correction)
@@ -1608,6 +1624,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
         raw_conductor_consistency = post_op.GetElectrostaticUncoveredEdgeEnergies(
             response_correction->GetTargetInterfaces(), conductor_consistency_portions);
+        PostRawStage("conductor-consistency gate + raw energies");
       }
       if (self_consistent_response)
       {
@@ -1744,6 +1761,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         const auto corrected_record = SolveCorrectedField(
             ksp, *K, *system_K, response_config->solve_tol,
             iodata.solver.linear.initial_guess, corrected_rhs, V_corrected[step]);
+        PostRawStage("corrected solve");
         corrected_linear_solves += ksp.NumTotalMult() - solves_before;
         corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
         self_consistent_accepted = self_consistent_accepted && corrected_record.accepted;
