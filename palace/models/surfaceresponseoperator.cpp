@@ -37,6 +37,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponsemirror.hpp"
+#include "models/surfaceresponsesegmentindex.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/enum_string.hpp"
@@ -1372,166 +1373,8 @@ void VerifyParallelOverlap(const EdgeSegment3D &first, const EdgeSegment3D &seco
                   << ", tangent dot " << tangent_dot << ")!");
 }
 
-// Deterministic broad-phase index for nearby segment queries. Exact distance and topology
-// predicates remain at the call sites; this index only removes pairs whose expanded AABBs
-// cannot interact.
-class SegmentBoxIndex
-{
-private:
-  static constexpr std::size_t leaf_size = 16;
-  struct Box
-  {
-    Point3D min{};
-    Point3D max{};
-  };
-  struct Node
-  {
-    Box box;
-    std::size_t begin = 0;
-    std::size_t end = 0;
-    int left = -1;
-    int right = -1;
-    bool IsLeaf() const { return left < 0; }
-  };
-
-  std::vector<Box> boxes;
-  std::vector<std::size_t> indices;
-  std::vector<Node> nodes;
-
-  static bool Intersects(const Box &a, const Box &b)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      if (a.max[d] < b.min[d] || b.max[d] < a.min[d])
-      {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  int Build(std::size_t begin, std::size_t end)
-  {
-    Node node;
-    node.begin = begin;
-    node.end = end;
-    node.box.min.fill(mfem::infinity());
-    node.box.max.fill(-mfem::infinity());
-    for (std::size_t i = begin; i < end; i++)
-    {
-      const auto &box = boxes[indices[i]];
-      for (int d = 0; d < 3; d++)
-      {
-        node.box.min[d] = std::min(node.box.min[d], box.min[d]);
-        node.box.max[d] = std::max(node.box.max[d], box.max[d]);
-      }
-    }
-    const int node_index = static_cast<int>(nodes.size());
-    nodes.push_back(node);
-    if (end - begin <= leaf_size)
-    {
-      return node_index;
-    }
-    int axis = 0;
-    for (int d = 1; d < 3; d++)
-    {
-      if (node.box.max[d] - node.box.min[d] > node.box.max[axis] - node.box.min[axis])
-      {
-        axis = d;
-      }
-    }
-    const std::size_t middle = begin + (end - begin) / 2;
-    std::nth_element(indices.begin() + begin, indices.begin() + middle,
-                     indices.begin() + end,
-                     [&](std::size_t first, std::size_t second)
-                     {
-                       return boxes[first].min[axis] + boxes[first].max[axis] <
-                                  boxes[second].min[axis] + boxes[second].max[axis] ||
-                              (boxes[first].min[axis] + boxes[first].max[axis] ==
-                                   boxes[second].min[axis] + boxes[second].max[axis] &&
-                               first < second);
-                     });
-    nodes[node_index].left = Build(begin, middle);
-    nodes[node_index].right = Build(middle, end);
-    return node_index;
-  }
-
-  void Query(int node_index, const Box &query, std::vector<std::size_t> &matches) const
-  {
-    const auto &node = nodes[node_index];
-    if (!Intersects(node.box, query))
-    {
-      return;
-    }
-    if (node.IsLeaf())
-    {
-      for (std::size_t i = node.begin; i < node.end; i++)
-      {
-        const std::size_t index = indices[i];
-        if (Intersects(boxes[index], query))
-        {
-          matches.push_back(index);
-        }
-      }
-      return;
-    }
-    Query(node.left, query, matches);
-    Query(node.right, query, matches);
-  }
-
-public:
-  explicit SegmentBoxIndex(const std::vector<std::pair<Point3D, Point3D>> &segments)
-    : boxes(segments.size()), indices(segments.size())
-  {
-    MFEM_VERIFY(!segments.empty(), "Cannot build an empty segment proximity index!");
-    for (std::size_t i = 0; i < segments.size(); i++)
-    {
-      for (int d = 0; d < 3; d++)
-      {
-        boxes[i].min[d] = std::min(segments[i].first[d], segments[i].second[d]);
-        boxes[i].max[d] = std::max(segments[i].first[d], segments[i].second[d]);
-      }
-    }
-    std::iota(indices.begin(), indices.end(), 0);
-    nodes.reserve(2 * (segments.size() / leaf_size + 1));
-    Build(0, segments.size());
-  }
-
-  std::vector<std::size_t> Query(const Point3D &p0, const Point3D &p1,
-                                 double distance) const
-  {
-    Box query;
-    for (int d = 0; d < 3; d++)
-    {
-      query.min[d] = std::min(p0[d], p1[d]) - distance;
-      query.max[d] = std::max(p0[d], p1[d]) + distance;
-    }
-    std::vector<std::size_t> matches;
-    Query(0, query, matches);
-    std::sort(matches.begin(), matches.end());
-    return matches;
-  }
-
-  std::vector<std::pair<std::size_t, std::size_t>> CandidatePairs(double distance) const
-  {
-    std::vector<std::pair<std::size_t, std::size_t>> result;
-    for (std::size_t first = 0; first < boxes.size(); first++)
-    {
-      Point3D p0 = boxes[first].min;
-      Point3D p1 = boxes[first].max;
-      for (const std::size_t second : Query(p0, p1, distance))
-      {
-        if (second > first)
-        {
-          result.emplace_back(first, second);
-        }
-      }
-    }
-    std::sort(result.begin(), result.end());
-    result.erase(std::unique(result.begin(), result.end()), result.end());
-    return result;
-  }
-};
+// The segment proximity index SegmentBoxIndex lives in surfaceresponsesegmentindex.hpp
+// (shared with the nearest-sub-segment query of the patch build).
 
 std::vector<std::pair<Point3D, Point3D>>
 SegmentGeometry(const std::vector<EdgeSegment3D> &segments)
@@ -12028,23 +11871,59 @@ FeaturePatchSummary BuildFeaturePatches(
     Point3D point{};
     const EdgeSegment3D *segment = nullptr;
   };
+  // The foot of p on one framed portion: the scan's expression (the parameter clamped to
+  // the portion, the point interpolated on its segment), the distance the nearest-foot
+  // query minimises.
+  auto FootOf = [&](const Point3D &p, const FramedPortion &fp)
+  {
+    const double t =
+        std::clamp(Dot(Subtract(p, fp.segment->p0), fp.segment->tangent), fp.a, fp.b);
+    const Point3D q = Interpolate(*fp.segment, t);
+    return std::make_pair(Distance(p, q), q);
+  };
+  // The broad phase of ClosestFoot (OI-PLACEMENT-PASS-SCALING, decision 1112): one
+  // NearestSubSegmentIndex per side chain, built on the chain's first query and dropped
+  // with the feature (the chains are the feature's locals: the cache is keyed by their
+  // address and cleared at the top of the feature loop, so a reused address never meets a
+  // stale index). A chain of at most kClosestFootScanLimit portions is scanned. Both paths
+  // return the scan's Foot: the first portion attaining the minimum computed distance
+  // (NearestSubSegmentIndex's contract), so the placed patches are bitwise those of the
+  // scan.
+  constexpr std::size_t kClosestFootScanLimit = 32;
+  std::map<const std::vector<FramedPortion> *, NearestSubSegmentIndex> foot_indices;
   auto ClosestFoot = [&](const Point3D &p, const std::vector<FramedPortion> &side)
   {
     Foot best;
-    double best_distance = mfem::infinity();
-    for (const auto &fp : side)
+    if (side.size() <= kClosestFootScanLimit)
     {
-      const double t =
-          std::clamp(Dot(Subtract(p, fp.segment->p0), fp.segment->tangent), fp.a, fp.b);
-      const Point3D q = Interpolate(*fp.segment, t);
-      const double distance = Distance(p, q);
-      if (distance < best_distance)
+      double best_distance = mfem::infinity();
+      for (const auto &fp : side)
       {
-        best_distance = distance;
-        best = {q, fp.segment};
+        const auto [distance, q] = FootOf(p, fp);
+        if (distance < best_distance)
+        {
+          best_distance = distance;
+          best = {q, fp.segment};
+        }
       }
+      MFEM_VERIFY(best.segment, "A paired feature has no partner side!");
+      return best;
     }
-    MFEM_VERIFY(best.segment, "A paired feature has no partner side!");
+    auto index_it = foot_indices.find(&side);
+    if (index_it == foot_indices.end())
+    {
+      std::vector<std::pair<Point3D, Point3D>> pieces;
+      pieces.reserve(side.size());
+      for (const auto &fp : side)
+      {
+        pieces.emplace_back(Interpolate(*fp.segment, fp.a), Interpolate(*fp.segment, fp.b));
+      }
+      index_it = foot_indices.emplace(&side, NearestSubSegmentIndex(pieces)).first;
+    }
+    const std::size_t nearest = index_it->second.Nearest(
+        p, [&](std::size_t i) { return FootOf(p, side[i]).first; });
+    MFEM_VERIFY(nearest < side.size(), "A paired feature has no partner side!");
+    best = {FootOf(p, side[nearest]).second, side[nearest].segment};
     return best;
   };
   // R0-a (idfix DESIGN A.1 (c) / C.3; decisions 1062 / 1064): the conductor-consistency
@@ -12090,6 +11969,7 @@ FeaturePatchSummary BuildFeaturePatches(
 
   for (const auto &feature : identification.features)
   {
+    foot_indices.clear();  // the side chains below are this feature's locals
     double feature_length = 0.0;
     for (const auto &portion : feature.portions)
     {
@@ -28113,9 +27993,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // so the gate skips them: a translational patch without edge probes; a spatial patch
     // whose model is collocated or whose trace mesh has no conductor vertex, the two
     // UnprobedModels reasons above) by their raw claims, for the exclusion-energy export.
+    // OI-ES-UNPROBED-PORTIONS-RANK-PARTITIONED (decision 1123): gathered to every rank (the
+    // claims are replicated) and sorted, as the Maxwell path does; the rank-local list made
+    // the export's UnprobedModels / Claimed rows depend on the rank count.
     if (dimension == 3)
     {
-      std::vector<int> unprobed_patches;
+      std::vector<double> local_unprobed;
       for (std::size_t p = 0; p < applied_patch_count; p++)
       {
         const auto &model = models[patches[p].model];
@@ -28126,9 +28009,17 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 : !patches[p].conductor_probes.empty();
         if (!probed && patches[p].weight > 0.0)
         {
-          unprobed_patches.push_back(patches[p].global_index);
+          local_unprobed.push_back(static_cast<double>(patches[p].global_index));
         }
       }
+      const std::vector<double> gathered = AllgatherRecords(local_unprobed);
+      std::vector<int> unprobed_patches;
+      unprobed_patches.reserve(gathered.size());
+      for (const double value : gathered)
+      {
+        unprobed_patches.push_back(static_cast<int>(std::llround(value)));
+      }
+      std::sort(unprobed_patches.begin(), unprobed_patches.end());
       RecordUnprobedPatchClaims(unprobed_patches);
     }
   }
