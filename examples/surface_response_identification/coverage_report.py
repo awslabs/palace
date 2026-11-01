@@ -82,6 +82,9 @@ HIGH_EXACT_SHARE = 0.95
 CLASS_MATERIAL_SHARE = 0.05
 RAW_CLASS_HIGH_BAR = 0.01
 RAW_CLASS_LOW_BAR = 0.10
+# Decision 1133 (ii): the F2 owner credit rests on an unmeasured premise (the owner cluster corrects its in-box region;
+# decision 1125), so a credit > 1 % of W_t on any Type limits the label to MEDIUM.
+SCP_OWNER_CREDIT_MEDIUM_BAR = 0.01
 CALIBRATED_MIN_WINDOWS = 3
 # The DEPTH rule (DESIGN 1.2): the last ft step > 0.3 pt is not quotable; a step ratio >= 0.7 over the
 # last three solves is not shrinking (DEPTH-UNBOUNDED); the Richardson tail is capped at 3 x the step.
@@ -1353,6 +1356,10 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
                 reasons_not_high.append(f"{t}: RAW {row_name} {fmt_pct(share)} > 1 %")
         if acc["raw_share_total"] > RAW_CLASS_LOW_BAR:
             reasons_low.append(f"{t}: RAW total {fmt_pct(acc['raw_share_total'])} > 10 %")
+        credit_share = (acc.get("scp_owner_credit") or {}).get("share", 0.0)
+        if credit_share > SCP_OWNER_CREDIT_MEDIUM_BAR:
+            reasons_not_high.append(f"{t}: SCP owner credit {fmt_pct(credit_share)} > 1 % of W_t (premise unmeasured; decision 1133): "
+                                    "capped at MEDIUM")
         lad = ladder_types.get(t, {})
         if lad.get("status") == "DEPTH-UNBOUNDED":
             reasons_low.append(f"{t}: DEPTH-UNBOUNDED (step ratio {lad.get('step_ratio')})")

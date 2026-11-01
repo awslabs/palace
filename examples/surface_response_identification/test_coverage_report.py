@@ -931,6 +931,36 @@ class TestCovfixRound(unittest.TestCase):
         self.assertIn("F2 OWNER CREDIT", cr.render_markdown(report))
         self.assertIn("not separately measured", cr.render_markdown(report))
 
+    def test_scp_owner_credit_above_1_pct_caps_the_label_at_medium(self):
+        # decision 1133 (ii): the F2 credit rests on an unmeasured premise; a credit > 1 % of W_t on any Type limits the label
+        # to MEDIUM. A run HIGH on every other rule (Exact 95.9 % with the credit, no RAW row > 1 %, the ladder quotable)...
+        bands = cr.load_bands(write_bands(os.path.join(self.tmp, "bands.json")))
+        zero = {1: 0.0, 2: 0.0, 3: 0.0}
+        labels = {"m1+m2": {1: 8.0e-16, 2: 16.0e-16, 3: 1.6e-16}, "m3": {1: 0.2e-16, 2: 0.4e-16, 3: 0.04e-16},
+                  "unclaimed": {1: 0.8e-16, 2: 1.6e-16, 3: 0.16e-16}}
+        post, manifest = write_fixture(self.tmp, raw_labels=labels, uncovered=zero, scp_dropped=self.SCP)
+        for d in cr.iteration_dirs(post):
+            write_surface_q(d, scale={"iteration01": 0.9, "iteration02": 0.99, "iteration03": 0.998}[os.path.basename(d)])
+        report = cr.build_report(post, manifest, bands, ma_reading="sharp")
+        e = report["block_A"]["energy"]["SA"]
+        self.assertAlmostEqual(e["scp_owner_credit"]["share"], 0.8e-16 / W[1], places=9)        # 8.9 % of W_t credited
+        self.assertGreaterEqual(e["exact_share"], cr.HIGH_EXACT_SHARE)
+        self.assertEqual(report["label"]["reasons_low"], [])
+        self.assertEqual(report["label"]["label"], "MEDIUM", report["label"])                     # head 299adda955: HIGH
+        self.assertEqual([r for r in report["label"]["reasons_not_high"] if "SCP owner credit" not in r], [])
+        self.assertTrue(any(r.startswith("SA: SCP owner credit") and "> 1 % of W_t" in r and "premise unmeasured" in r
+                            for r in report["label"]["reasons_not_high"]), report["label"])
+        self.assertIn("SCP owner credit", cr.render_markdown(report))
+        # ...and the same run with the credit at 0.56 % of W_t (the label sum unchanged) is HIGH
+        shutil.rmtree(self.tmp)
+        small = {"m1+m2": {1: 8.75e-16, 2: 17.5e-16, 3: 1.75e-16}, "m3": labels["m3"], "unclaimed": {1: 0.05e-16, 2: 0.1e-16, 3: 0.01e-16}}
+        post, manifest = write_fixture(self.tmp, raw_labels=small, uncovered=zero, scp_dropped=self.SCP)
+        for d in cr.iteration_dirs(post):
+            write_surface_q(d, scale={"iteration01": 0.9, "iteration02": 0.99, "iteration03": 0.998}[os.path.basename(d)])
+        report = cr.build_report(post, manifest, bands, ma_reading="sharp")
+        self.assertAlmostEqual(report["block_A"]["energy"]["SA"]["scp_owner_credit"]["share"], 0.05e-16 / W[1], places=9)
+        self.assertEqual(report["label"]["label"], "HIGH", report["label"])
+
     def test_f2_no_credit_without_a_drop_or_with_a_negative_remainder(self):
         post, manifest = write_fixture(self.tmp)
         e = cr.build_report(post, manifest, None, ma_reading="sharp")["block_A"]["energy"]["SA"]
