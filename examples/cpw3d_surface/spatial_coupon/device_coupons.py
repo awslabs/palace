@@ -70,6 +70,7 @@ for path in (str(HERE), str(CPW2D)):
 import cluster_signature_geometry  # noqa: E402
 import deterministic_math  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
 import general_mesh_manifest  # noqa: E402
+import local_pieces  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
 import nearkey_predictor  # noqa: E402
 import nearkey_reuse  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
@@ -138,13 +139,14 @@ def shared_mesh_recipe(manifest):
     return paths.pop()
 
 
-def coupon_geometry(coupon, radius, parameters=None):
+def coupon_geometry(coupon, radius, parameters=None, local_pieces=False):
     """The coupon written for the generator. A version-2 record (Geometry.Signature, no
     Edges: the v2 cluster contract) is built in the canonical frame from its signature alone
     (cluster_signature_geometry.cluster_coupon: edge rows from the portions, the plan-view
-    mask from the arrangement of the extended chains); a version-1 record keeps the
+    mask from the arrangement of the extended chains; with `local_pieces` (idfix R0-b) every
+    Edge and facet carries LocalPiece); a version-1 record keeps the
     requirement with the planner's canonical plan-view boundary and mask regularization
-    (prepare_surface_response_coupons.spatial_spec)."""
+    (prepare_surface_response_coupons.spatial_spec) and has no piece form (refused by name)."""
     generated = copy.deepcopy(coupon)
     geometry = generated["Geometry"]
     if coupon["Topology"] == "SpatialEdgeCluster" and "Signature" in geometry and not geometry.get("Edges"):
@@ -152,10 +154,13 @@ def coupon_geometry(coupon, radius, parameters=None):
             raise DeviceAdapterError(f"coupon {coupon['Id']}: the signature geometry needs the process parameters")
         try:
             generated, _ = cluster_signature_geometry.cluster_coupon(
-                generated, radius, parameters["metal_thickness"], parameters["overetch"])
+                generated, radius, parameters["metal_thickness"], parameters["overetch"], local_pieces=local_pieces)
         except cluster_signature_geometry.SignatureGeometryError as error:
             raise DeviceAdapterError(f"coupon {coupon['Id']}: no coupon geometry from its signature: {error}") from error
         return generated
+    if local_pieces:
+        raise DeviceAdapterError(f"coupon {coupon['Id']}: the local-piece form (idfix R0-b) needs a version-2 signature "
+                                 "record (the pieces are the metal faces of the signature's plan-view arrangement)")
     facets = geometry.get("PlanViewFacets", [])
     if not facets:
         raise DeviceAdapterError(f"coupon {coupon['Id']} carries no PlanViewFacets: the Gmsh-only recipe needs the "
@@ -191,6 +196,21 @@ def stamp_signature_model(library_path, coupon, radius, generated=None, mirror_f
     model = library["Models"][0]
     model["Signature"] = geometry["Signature"]
     model["Edges"] = cluster_signature_geometry.model_edges(coupon, radius)
+    built_edges = (generated or {}).get("Geometry", {}).get("Edges") or []
+    if built_edges and "LocalPiece" in built_edges[0]:
+        # The piece form (idfix R0-b): the exact Edges carry the LocalPiece of the generator's claims rows (the first
+        # len(portions) rows, segments[i] <-> rows[i]); the model must have been generated with --local-pieces.
+        if "LocalPiecesRule" not in model:
+            raise DeviceAdapterError(f"{library_path}: the coupon carries LocalPiece but the model was not generated with "
+                                     "--local-pieces")
+        if len(built_edges) < len(model["Edges"]):
+            raise DeviceAdapterError(f"{library_path}: {len(model['Edges'])} model edges for {len(built_edges)} coupon rows")
+        for edge, row in zip(model["Edges"], built_edges):
+            if edge["Conductor"] != row["Conductor"] or row.get("Context"):
+                raise DeviceAdapterError(f"{library_path}: the model edges and the coupon's claims rows disagree")
+            edge["LocalPiece"] = int(row["LocalPiece"])
+    elif "LocalPiecesRule" in model:
+        raise DeviceAdapterError(f"{library_path}: the model was generated with --local-pieces but the coupon carries no LocalPiece")
     if mirror_formed is not None:
         portions = cluster_signature_geometry.portions_from_signature(geometry["Signature"], radius)
         if len(portions) != len(model["Edges"]):
@@ -218,25 +238,36 @@ def generate_spatial_response_default_span_cap():
     return generate_spatial_response.DEFAULT_SUPPORT_SPAN_CAP_OVER_R
 
 
+def local_pieces_model_name(coupon_id, generated):
+    """The piece form's model Name = <Id>-pieces<P> (decision 1101 Q2; local_pieces.local_pieces_model_name)."""
+    count = int(generated["Geometry"]["LocalPieces"])
+    return local_pieces.local_pieces_model_name(coupon_id, list(range(1, count + 1)))
+
+
 def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangulation=DEFAULT_CAP_TRIANGULATION,
                      cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, support_span_cap=None,
-                     mirror_formed=None):
+                     mirror_formed=None, local_pieces_form=False):
     """generate_spatial_response.py --basis-only into `work`; returns the generator command.
     `support_span_cap` (x R) raises the generator's matching-support span bound for this
     coupon alone (--support-span-cap; None = the generator default). `mirror_formed` (the
     validated MirrorFormedContract) stamps the model's real / image split after the generation;
-    the generator itself reads the full signature unchanged."""
+    the generator itself reads the full signature unchanged. `local_pieces_form` (idfix R0-b):
+    the coupon in the piece form (cluster_coupon(local_pieces=True), --local-pieces, the model
+    Name <Id>-pieces<P>)."""
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     coupon_path = work / "coupon.json"
-    generated = coupon_geometry(coupon, radius, parameters)
+    generated = coupon_geometry(coupon, radius, parameters, local_pieces=local_pieces_form)
     coupon_path.write_text(json.dumps(generated, indent=2) + "\n")
+    model_name = local_pieces_model_name(coupon["Id"], generated) if local_pieces_form else coupon["Id"]
     command = [python, str(GENERATOR), str(coupon_path), "--output", str(work), "--radius", str(radius),
                "--metal-thickness", str(parameters["metal_thickness"]), "--overetch-depth", str(parameters["overetch"]),
                "--sidewall-angle", str(parameters["sidewall_angle"]), "--top-rounding", str(parameters["top_radius"]),
                "--trench-rounding", str(parameters["bottom_radius"]), "--ring-size", str(ring_size),
                "--cap-triangulation", cap_triangulation, "--cap-interior-spacing", str(cap_interior_spacing),
-               "--order", "1", "--model-name", coupon["Id"], "--basis-only"]
+               "--order", "1", "--model-name", model_name, "--basis-only"]
+    if local_pieces_form:
+        command.append("--local-pieces")
     if support_span_cap is not None:
         command += ["--support-span-cap", str(support_span_cap)]
     command += [str(item) for item in planner.material_options(parameters)]
@@ -533,7 +564,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                            omit_requirements=(), support_span_caps=(), support_span_cap_reason=None, element_caps=(),
                            element_cap_approval=None, element_cap_reason=None, nearkey_reuse_mode="off",
                            nearkey_fallback_approval=None, nearkey_fallback_stop_records=(), nearkey_rule=None, nearkey_record_roots=(),
-                           mirror_formed="refuse"):
+                           mirror_formed="refuse", one_reference=False):
     """Steps 1-3: the source directories of every spatial coupon of the device under
     output/sources/<case id>; returns the device record (written to output/device-coupons.json).
     `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
@@ -551,7 +582,10 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     whose requirement CARRIES `MirrorFormedContract` is recorded out of scope (refuse, the default)
     or built from its full signature with the validated contract stamped on its entry (admit); a
     requirement flagged `MirrorFormed: true` without a contract is built as the ordinary real coupon
-    (recorded under MirrorFormed.FlagOnly)."""
+    (recorded under MirrorFormed.FlagOnly).
+    `one_reference` (idfix R0-b, decision 1136 (4)): opt out of the planner's piece-form default; otherwise every
+    coupon the plan marks Preparation.LocalPieces is generated in the piece form (generate_sources local_pieces_form:
+    one reference per local metal piece, the model Name <Id>-pieces<P>)."""
     span_caps = requirement_options(support_span_caps, float, "--support-span-cap")
     caps = requirement_options(element_caps, int, "--element-cap")
     if mirror_formed not in MIRROR_FORMED_MODES:
@@ -616,7 +650,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     reported = float(closure_manifest["Library"]["MatchingRadius"])
     if abs(reported - radius) > 1e-9 * radius:
         raise DeviceAdapterError(f"the closure manifest's MatchingRadius {reported} differs from the process library's {radius}")
-    plan = planner.plan_from_manifest(closure, closure_manifest, library_path, library, include_matched=False)
+    plan = planner.plan_from_manifest(closure, closure_manifest, library_path, library, include_matched=False,
+                                      one_reference=one_reference)
     (output / "coupon-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     record = {"Version": 1, "Command": "coupon-library build --device", "Commit": commit,
               "Device": {"Config": str(device_config), "SHA256": sha256(device_config)},
@@ -680,12 +715,18 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                                  "library (recorded, never silent)"})
             continue
         if method != SPATIAL_METHOD:
+            # An Unsupported preparation is built by NO family (its Reason beside names why: a boundary law
+            # unverified, an unknown topology, or a piece form that is not derivable - decision 1145); every other
+            # method is a 2D family built by the planner (confirmation d1140 MINOR-C: one Rule text per case).
+            out_of_scope_rule = (
+                "not a coupon of the Gmsh-only spatial library: Preparation.Method Unsupported, built by no family "
+                "(its Reason beside)" if method == "Unsupported" else
+                f"not a coupon of the Gmsh-only spatial library: built by its own family ({method})")
             record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": method,
                                          "Reason": coupon["Preparation"].get("Reason"),
                                          "DeviceOccurrences": coupon["DeviceOccurrences"],
                                          "DeviceEdgeLength": coupon["DeviceEdgeLength"],
-                                         "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family "
-                                                 f"({method})"})
+                                         "Rule": out_of_scope_rule})
             continue
         contract = None
         flag_only = False
@@ -728,10 +769,11 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                f"approval {allowance.get('Approval')}, MatchedQuanta {allowance.get('MatchedQuanta')})")
         else:
             span_cap_reason = support_span_cap_reason
+        local_pieces_form = planner.coupon_local_pieces(coupon)
         command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size,
                                    cap_triangulation=cap_triangulation, cap_interior_spacing=cap_interior_spacing,
                                    python=python, support_span_cap=None if span_cap is None else span_cap[1],
-                                   mirror_formed=contract)
+                                   mirror_formed=contract, local_pieces_form=local_pieces_form)
         write_process_toml(work / "process.toml", parameters, radius)
         digest, digests = content_hash(work)
         edge_count = int(coupon["Geometry"].get("EdgeCount", len(coupon["Geometry"].get("Edges", []))))
@@ -759,6 +801,10 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                             "DeviceOccurrences": coupon["DeviceOccurrences"], "DeviceEdgeLength": coupon["DeviceEdgeLength"]},
             "Generator": {"Command": command, "RingSize": ring_size, "CapTriangulation": cap_triangulation,
                           "CapInteriorSpacingOverR": cap_interior_spacing,
+                          "LocalPieces": {"Form": local_pieces_form,
+                                          "Reason": coupon["Preparation"].get("LocalPiecesReason"),
+                                          "PiecesPerLabel": coupon["Preparation"].get("PiecesPerLabel"),
+                                          "Rule": planner.LOCAL_PIECES_PLANNER_RULE},
                           "SupportSpanCapOverR": (None if span_cap is None else
                                                   {"Value": span_cap[1], "Prefix": span_cap[0],
                                                    "Default": generate_spatial_response_default_span_cap(),
@@ -824,7 +870,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             status = "written"
         built_model = json.loads((directory / "process-library.json").read_text())["Models"][0]
         contract = json.loads((directory / "basis-contract.json").read_text())
-        record["Coupons"].append({"Case": case_id, "Requirement": coupon["Id"], "EdgeCount": edge_count,
+        record["Coupons"].append({"Case": case_id, "Requirement": coupon["Id"], "Model": built_model["Name"],
+                                  "LocalPieces": local_pieces_form, "EdgeCount": edge_count,
                                   "ContextEdgeCount": int(built_model.get("ContextEdgeCount", 0)),
                                   "SupportBox": built_model.get("SupportBox"),
                                   "Directory": str(directory), "ContentHash": digest, "Status": status,
@@ -1024,6 +1071,11 @@ def add_requirement_option_arguments(parser):
                              "the real / image split (Edges[].Weight 1 / 0); refuse (default) = record it out of scope with Method "
                              f"{MIRROR_FORMED_NOT_ADMITTED_METHOD}; a MirrorFormed: true requirement without a contract is built as "
                              "the ordinary real coupon either way")
+    parser.add_argument("--one-reference", action="store_true",
+                        help="with --device: opt out of the piece-form default (idfix R0-b, decision 1136 (4): a spatial coupon whose "
+                             "plan view holds a label with >= 2 local metal pieces is generated with one reference per piece, "
+                             "generate_spatial_response --local-pieces, Name <Id>-pieces<P>); every coupon in the one-reference "
+                             "form (the ES record form of v3-j)")
 
 
 def requirement_option_kwargs(args):
@@ -1032,7 +1084,8 @@ def requirement_option_kwargs(args):
             "element_cap_reason": args.element_cap_reason, "nearkey_reuse_mode": args.nearkey_reuse,
             "nearkey_fallback_approval": args.nearkey_fallback_approval,
             "nearkey_fallback_stop_records": args.nearkey_fallback_stop_record, "nearkey_rule": args.nearkey_rule,
-            "nearkey_record_roots": args.nearkey_record_root, "mirror_formed": args.mirror_formed}
+            "nearkey_record_roots": args.nearkey_record_root, "mirror_formed": args.mirror_formed,
+            "one_reference": args.one_reference}
 
 
 def main(argv=None):

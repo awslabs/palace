@@ -78,7 +78,12 @@ import hashlib
 import json
 from pathlib import Path
 import tomllib
+import sys
 
+_IDENTIFICATION = str(Path(__file__).resolve().parents[2] / "surface_response_identification")
+if _IDENTIFICATION not in sys.path:
+    sys.path.insert(0, _IDENTIFICATION)
+import local_pieces  # noqa: E402
 from semantic_mesh_contract import (ARC_VERTEX_RULE, BOX_FACE_CUT_END_RULE, CORNER_FREE_RULE, INVARIANT_CORNER_RULE,
                                     boundary_arc_vertices, boundary_semantic_corners,
                                     derive_feature_topology, plan_view_quantum, validate_semantic_contract)
@@ -139,7 +144,9 @@ def process_library_pairs(process_library):
                 for edge in edges)):
         raise ValueError(f"{process_library}: every Models[0].Edges entry must carry InterfaceSlot "
                          f"and Conductor")
-    return {(int(edge["InterfaceSlot"]), int(edge["Conductor"])) for edge in edges}
+    # The piece form (idfix R0-b): the mesh is tagged per LOCAL PIECE (Edges[].LocalPiece), the
+    # Conductor stays the key label; the signature CSV's Conductor column is the mesh label.
+    return {(int(edge["InterfaceSlot"]), local_pieces.mesh_label(edge)) for edge in edges}
 
 
 def slot_conductor_pairs(signature, process_library):

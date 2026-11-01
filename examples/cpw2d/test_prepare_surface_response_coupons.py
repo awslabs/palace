@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -557,6 +558,81 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     (("--supersede", f"concave-corner-60deg={record}", base, round2), "requires --supersede-decision TEXT"),
                     (("--supersede", f"concave-corner-60deg={record}", "--supersede-decision", "  ", base, round2), "requires --supersede-decision TEXT"),
                     (("--supersede-decision", decision, base), "without --supersede")):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.combine(root / "refusal", *argv)
+                self.assertFalse((root / "refusal" / "process-library.json").exists(), message)
+
+    def test_replace_by_signature_puts_the_piece_form_in_the_one_reference_models_slot(self):
+        """Decision 1103's rule in the assembly (idfix R0-b, decisions 1136 (1) / 1140 (4)): the piece form of a key (another
+        Name, the -pieces<P> suffix, the SAME canonical Signature) REPLACES the base's one-reference model of that Signature
+        in place (--replace-by-signature NEWNAME=<record> + --supersede-decision), recorded under Supersedes with Kind
+        Signature; without the flag the two models of one signature are refused by name (OI-LIBRARY-DUPLICATE-SIGNATURE)
+        and nothing is written; a library never holds two models of one signature."""
+        pec = {"Type": "ParallelEdgeCluster", "Edges": [{"OffsetOverR": o, "GapSide": d, "Conductor": 1}
+                                                       for o, d in zip([0.0, 1.5789474, 3.1578947, 4.7368421], [1, -1, 1, -1])]}
+        other = {"Type": "ParallelEdgeCluster", "Edges": [{"OffsetOverR": 0.0, "GapSide": 1, "Conductor": 1},
+                                                         {"OffsetOverR": 1.0526316, "GapSide": -1, "Conductor": 1}]}
+
+        def stamp(path, signatures):
+            library = PREPARE.load_json(path)
+            for model in library["Models"]:
+                if model["Name"] in signatures:
+                    model["Signature"] = signatures[model["Name"]]
+            PREPARE.write_json(path, library)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.write_library(root / "base" / "process-library.json", "base",
+                                      ["alpha", "parallel-edge-cluster-ff3a5bee4e2d", "omega"])
+            stamp(base, {"parallel-edge-cluster-ff3a5bee4e2d": pec, "omega": other})
+            pieces = self.write_library(root / "pieces" / "process-library.json", "pieces", ["parallel-edge-cluster-0123456789ab-pieces3"])
+            stamp(pieces, {"parallel-edge-cluster-0123456789ab-pieces3": pec})
+            record = root / "pieces3-qualification.json"
+            record.write_text(json.dumps({"Passed": True}) + "\n")
+            decision = "1136 (1): the 2D one-label multi-piece models of v3-j in the piece form -> v3-k-2d"
+            plain = self.combine(root / "plain", base)
+            with self.assertRaisesRegex(ValueError, "OI-LIBRARY-DUPLICATE-SIGNATURE.*parallel-edge-cluster-0123456789ab-pieces3, parallel-edge-cluster-ff3a5bee4e2d"):
+                self.combine(root / "refused", base, pieces)
+            self.assertFalse((root / "refused" / "process-library.json").exists())
+            replaced = self.combine(root / "replaced", "--replace-by-signature", f"parallel-edge-cluster-0123456789ab-pieces3={record}",
+                                    "--supersede-decision", decision, base, pieces)
+            self.assertEqual([model["Name"] for model in replaced["Models"]], ["alpha", "parallel-edge-cluster-0123456789ab-pieces3", "omega"])
+            for before, after in zip(plain["Models"], replaced["Models"]):
+                if before["Name"] != "parallel-edge-cluster-ff3a5bee4e2d":
+                    self.assertEqual(before, after)                     # every other model entry untouched
+                else:
+                    self.assertEqual(after["Signature"], pec)
+                    self.assertEqual(after["CombinedFrom"], {"Path": str(pieces.resolve()), "SHA256": COMBINER.sha256(pieces)})
+                    self.assertEqual(after["FabricatedMatrix"],
+                                     "models/002-parallel-edge-cluster-0123456789ab-pieces3/fabricated-domain-response-matrix.csv")
+                    self.assertEqual((root / "replaced" / after["FabricatedMatrix"]).read_text(),
+                                     "pieces:parallel-edge-cluster-0123456789ab-pieces3:fabricated-domain-response-matrix.csv\n")
+            self.assertEqual(len(replaced["Supersedes"]), 1)
+            entry = replaced["Supersedes"][0]
+            self.assertEqual((entry["Kind"], entry["Name"], entry["NewName"]),
+                             ("Signature", "parallel-edge-cluster-ff3a5bee4e2d", "parallel-edge-cluster-0123456789ab-pieces3"))
+            self.assertEqual(entry["SignatureHash"], __import__("signature_library").signature_hash(pec))
+            self.assertEqual(entry["Decision"], decision)
+            self.assertEqual(entry["Record"], {"Path": str(record.resolve()), "SHA256": COMBINER.sha256(record)})
+            self.assertEqual(entry["Rule"], COMBINER.REPLACE_BY_SIGNATURE_RULE)
+            self.assertNotEqual(entry["BaseModelSHA"], entry["NewModelSHA"])
+            # one model per signature after the replacement, by construction
+            self.assertEqual(len({__import__("signature_library").signature_hash(m["Signature"]) for m in replaced["Models"] if "Signature" in m}), 2)
+            # Refusals (nothing written): a new name no later input supplies, a new model without a Signature, a Signature the
+            # base does not hold, a name the base already holds (--supersede's case), no decision text.
+            unsigned = self.write_library(root / "unsigned" / "process-library.json", "unsigned", ["lonely-pieces2"])
+            foreign = self.write_library(root / "foreign" / "process-library.json", "foreign", ["foreign-pieces2"])
+            stamp(foreign, {"foreign-pieces2": {"Type": "SameConductorGap", "SeparationOverR": 0.5}})
+            same_name = self.write_library(root / "same" / "process-library.json", "same", ["omega"])
+            stamp(same_name, {"omega": other})
+            ruled = ("--supersede-decision", decision)
+            for argv, message in (
+                    (("--replace-by-signature", f"absent={record}", *ruled, base, pieces), "0 later inputs supply"),
+                    (("--replace-by-signature", f"lonely-pieces2={record}", *ruled, base, unsigned), "carries no Signature"),
+                    (("--replace-by-signature", f"foreign-pieces2={record}", *ruled, base, foreign), "holds 0 model"),
+                    (("--replace-by-signature", f"omega={record}", *ruled, base, same_name), "already holds a model 'omega'"),
+                    (("--replace-by-signature", f"parallel-edge-cluster-0123456789ab-pieces3={record}", base, pieces),
+                     "requires --supersede-decision TEXT")):
                 with self.assertRaisesRegex(ValueError, message):
                     self.combine(root / "refusal", *argv)
                 self.assertFalse((root / "refusal" / "process-library.json").exists(), message)
@@ -1140,7 +1216,13 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                             {
                                 "Name": "spatial",
                                 "Topology": "SpatialEdgeCluster",
-                                "Edges": [{}, {}],
+                                # the generator writes the coupon's Edges on the model: the match is by
+                                # them (Point / GapDirection / Conductor), never by topology alone
+                                # (OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 / 1137)
+                                "Edges": [
+                                    {"Point": edge["Point"], "GapDirection": edge["GapDirection"], "Conductor": edge["Conductor"]}
+                                    for edge in overlapping_spatial_coupon()["Geometry"]["Edges"]
+                                ],
                             },
                         ],
                     }
@@ -3243,6 +3325,286 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(report["RoundingMinimumCirclePoints"], 24)
         with self.assertRaisesRegex(ValueError, "only 1 elements"):
             PREPARE.process_resolution(parameters, 0.05, 2.0)
+
+
+V3J_MIRROR = (ASSESSMENT / "stage2-20261004" / "v3h" / "stretchfix" / "local" / "library" / "s2-r1p9-v3-j-local"
+              / "process-library-local.json")
+RG7_MANIFEST = (ASSESSMENT / "readiness-20261029" / "idfix" / "regrade" / "rg7" / "manifests"
+                / "item0-stub-driven-requirements-cluster.json")
+
+
+def pec_cluster_requirement(offsets, directions, conductors, digest):
+    return {"Topology": "ParallelEdgeCluster", "Status": "Missing", "Count": 4, "TotalEdgeLength": 40.0,
+            "Geometry": {"EdgeCount": len(offsets),
+                         "Edges": [{"Offset": [o, 0.0], "GapDirection": [float(d), 0.0], "Conductor": c}
+                                   for o, d, c in zip(offsets, directions, conductors)]},
+            "Interfaces": [], "BoundaryCondition": {"Type": "PEC"}, "Hash": digest * 32,
+            "Signature": {"Type": "ParallelEdgeCluster",
+                          "Edges": [{"OffsetOverR": o / 1.9, "GapSide": d, "Conductor": c}
+                                    for o, d, c in zip(offsets, directions, conductors)]},
+            "Instances": 1, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True}
+
+
+class PlannerLocalPiecesDefault(unittest.TestCase):
+    """Decision 1136 (4) (the 1134 result): the planner plans the PIECE form for every coupon whose cross-section / plan
+    view holds a label with >= 2 local metal pieces (Preparation.LocalPieces), the one-reference form otherwise;
+    --one-reference opts every coupon out; the builders read the planned form."""
+
+    def manifest(self):
+        return {"Version": 2, "Library": {"MatchingRadius": 1.9, "Path": "seed.json"},
+                "Requirements": [
+                    pec_cluster_requirement([0.0, 2.0, 4.0, 6.0], [1, -1, 1, -1], [1, 1, 1, 1], "aa"),   # a one-label CPW: 3 pieces
+                    pec_cluster_requirement([0.0, 2.0, 4.0], [1, -1, 1], [1, 2, 2], "bb"),                # two labels, one piece each
+                    pec_cluster_requirement([0.0, 2.0, 4.0, 6.0], [1, -1, 1, -1], [1, 2, 2, 1], "cc"),   # grounds 1 (2 pieces), strip 2 (1)
+                    {"Topology": "SameConductorGap", "Status": "Missing", "Count": 2, "TotalEdgeLength": 3.0,
+                     "Geometry": {"EdgeCount": 2, "Separation": 2.0}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
+                     "Signature": {"Type": "SameConductorGap", "SeparationOverR": 1.0526316}, "Hash": "dd" * 32},
+                    {"Topology": "IsolatedEdge", "Status": "Missing", "Count": 2, "TotalEdgeLength": 3.0, "Geometry": None,
+                     "Interfaces": [], "BoundaryCondition": {"Type": "PEC"}, "Signature": {"Type": "IsolatedEdge"}, "Hash": "ee" * 32},
+                    {"Topology": "ConvexCorner", "Status": "Missing", "Count": 1, "TotalEdgeLength": 1.0,
+                     "Geometry": {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
+                     "Signature": {"Type": "ConvexCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.0}, "Hash": "ff" * 32},
+                ]}
+
+    def test_the_piece_form_is_planned_for_multi_piece_labels_only(self):
+        plan = PREPARE.plan_from_manifest(Path("m.json"), self.manifest(), Path("seed.json"), {}, False)
+        forms = {coupon["Hash"][:2]: coupon["Preparation"] for coupon in plan["Coupons"] if coupon.get("Hash")}
+        self.assertEqual({key: value["LocalPieces"] for key, value in forms.items()},
+                         {"aa": True, "bb": False, "cc": True, "dd": True, "ee": False, "ff": False})
+        self.assertEqual(forms["aa"]["PiecesPerLabel"], {"1": 3})
+        self.assertEqual(forms["bb"]["PiecesPerLabel"], {"1": 1, "2": 1})
+        self.assertEqual(forms["cc"]["PiecesPerLabel"], {"1": 2, "2": 1})
+        self.assertEqual(forms["dd"]["PiecesPerLabel"], {"1": 2})
+        self.assertNotIn("PiecesPerLabel", forms["ee"])          # a class without a piece form
+        self.assertIn("without a piece form", forms["ff"]["LocalPiecesReason"])
+        self.assertEqual(plan["Summary"]["LocalPiecesForm"], 3)
+        self.assertEqual(len(plan["LocalPiecesForm"]["Coupons"]), 3)
+        self.assertFalse(plan["LocalPiecesForm"]["OneReference"])
+        # the builders read the planned form: the CPW's spec / Name are the piece form's, the two-label stack's are not
+        by_hash = {coupon["Hash"][:2]: coupon for coupon in plan["Coupons"] if coupon.get("Hash")}
+        args = SimpleNamespace(matching_radius=1.9, orders=[2], mesh_order=2, basis_size=6, samples=12, coupon_depth=1.0,
+                                     edge_offset_tolerance=1.0e-3, straight_lc_fine=0.01, straight_lc_far=0.5,
+                                     cluster_lc_fine=0.01, cluster_lc_far=0.5, min_process_feature_elements=4,
+                                     cluster_h_factors=[2.0, 1.0])
+        parameters = {"metal_thickness": 0.1, "overetch": 0.05}
+        for key, expected in (("aa", True), ("bb", False), ("cc", True)):
+            edges = PREPARE.normalize_parallel_edges(by_hash[key], 1.9)
+            spec = PREPARE.parallel_cluster_spec(by_hash[key], edges, args, parameters)
+            self.assertEqual("LocalPieces" in spec, expected, key)
+            name = PREPARE.parallel_cluster_model_name(PREPARE.fingerprint(spec), edges, PREPARE.coupon_local_pieces(by_hash[key]))
+            self.assertEqual(name.endswith("-pieces3") or name.endswith("-pieces2"), expected, key)
+        straight = [by_hash["dd"], by_hash["ee"]]
+        self.assertTrue(PREPARE.straight_family_local_pieces(straight))
+        self.assertIn("LocalPieces", PREPARE.straight_spec(straight, args, parameters))
+
+    def test_one_reference_opts_every_coupon_out_and_is_the_pre_1136_plan(self):
+        plan = PREPARE.plan_from_manifest(Path("m.json"), self.manifest(), Path("seed.json"), {}, False, one_reference=True)
+        self.assertTrue(all(coupon["Preparation"]["LocalPieces"] is False for coupon in plan["Coupons"]))
+        self.assertTrue(all("--one-reference" in coupon["Preparation"]["LocalPiecesReason"] for coupon in plan["Coupons"]))
+        self.assertEqual(plan["Summary"]["LocalPiecesForm"], 0)
+        self.assertTrue(plan["LocalPiecesForm"]["OneReference"])
+        # a plan written before the rule (no Preparation.LocalPieces) is read as the one-reference form
+        self.assertFalse(PREPARE.coupon_local_pieces({"Preparation": {"Method": "ParallelClusterCoupon"}}))
+        for coupon in plan["Coupons"]:
+            del coupon["Preparation"]["LocalPieces"]
+        self.assertFalse(PREPARE.straight_family_local_pieces(plan["Coupons"]))
+        self.assertFalse(any(PREPARE.coupon_local_pieces(coupon) for coupon in plan["Coupons"]))
+
+    @unittest.skipUnless(V3J_MIRROR.is_file(), "the v3-j local mirror is needed")
+    def test_spatial_coupons_are_planned_by_their_plan_view_pieces(self):
+        """The 7 one-label multi-piece and 11 two-label multi-piece-label spatial models of v3-j (the R0-b candidate census,
+        probes/v3j_local_pieces_v1.out) are planned in the piece form from their Signature; a one-piece-per-label spatial
+        model is not; a library without Fabrication metadata leaves the spatial pieces not derivable = Unsupported (1145)."""
+        library = json.loads(V3J_MIRROR.read_text())
+        spatial = {model["Name"].split("_")[-1]: model for model in library["Models"] if model.get("Topology") == "SpatialEdgeCluster"}
+        multi = {"e7f44561bbf0", "d19e77e8fe71", "8e2c1b63713b", "4b0d7bf2ad1b", "17ee51c67d9a", "f6d7ca001864", "66217996479f",
+                 "a2f53cd8630e", "e04e3eb5891d", "4388ea4d7f2a", "31b6896dc54d", "7d88636452b7", "5bda1bc70e63", "f813a57b5d43",
+                 "e3190c93a8ea", "09e95b2af0a4", "c983b84ada5c", "a287eb4daef0"}
+        single = {"13c7cc02fd9b", "da0179c64591", "ada4e3c1920d"}
+        requirements = []
+        for key in sorted(multi | single):
+            model = spatial[key]
+            requirements.append({"Topology": "SpatialEdgeCluster", "Status": "Missing", "Count": 1, "TotalEdgeLength": 1.0,
+                                 "Geometry": {"EdgeCount": len(model["Edges"]), "Signature": model["Signature"]},
+                                 "Interfaces": model["Interfaces"], "BoundaryCondition": model.get("BoundaryCondition", {"Type": "PEC"}),
+                                 "Signature": model["Signature"], "Hash": key * 6 + "0" * 4})
+        manifest = {"Version": 2, "Library": {"MatchingRadius": library["MatchingRadius"], "Path": str(V3J_MIRROR)},
+                    "Requirements": requirements}
+        plan = PREPARE.plan_from_manifest(Path("m.json"), manifest, V3J_MIRROR, library, False)
+        forms = {coupon["Hash"][:12]: coupon["Preparation"] for coupon in plan["Coupons"]}
+        self.assertEqual({key for key, form in forms.items() if form["LocalPieces"]}, multi)
+        self.assertEqual(forms["e7f44561bbf0"]["PiecesPerLabel"], {"1": 3})
+        self.assertEqual(forms["4b0d7bf2ad1b"]["PiecesPerLabel"], {"1": 5})
+        self.assertEqual(forms["4388ea4d7f2a"]["PiecesPerLabel"], {"1": 2, "2": 1})
+        self.assertEqual(forms["13c7cc02fd9b"]["PiecesPerLabel"], {"1": 1, "2": 1})
+        self.assertEqual(plan["Summary"]["LocalPiecesForm"], 18)
+        bare = PREPARE.plan_from_manifest(Path("m.json"), manifest, V3J_MIRROR, {"MatchingRadius": 1.9}, False)
+        for coupon in bare["Coupons"]:
+            # decision 1145: no Fabrication = the pieces not derivable = Unsupported by name, never the one-reference form
+            self.assertFalse(coupon["Preparation"]["LocalPieces"])
+            self.assertIn("not derivable", coupon["Preparation"]["LocalPiecesReason"])
+            self.assertEqual(coupon["Preparation"]["Method"], "Unsupported")
+            self.assertIn("version-3 Fabrication", coupon["Preparation"]["Reason"])
+        self.assertEqual(bare["Summary"]["Unsupported"], len(multi | single))
+        self.assertEqual(bare["Summary"]["AutomaticallyPreparatable"], 0)
+
+    FABRICATION = {"MetalThickness": 0.1, "OveretchDepth": 0.05, "SidewallAngleDegrees": 90.0, "TopRoundingRadius": 0.0,
+                   "BottomRoundingRadius": 0.0, "SubstratePermittivity": 11.45, "LengthUnit": "um",
+                   "InterfaceLayers": {"SA": {"Thickness": 0.002, "Permittivity": 4.0}, "MS": {"Thickness": 0.0003, "Permittivity": 11.45},
+                                       "MA": {"Thickness": 0.002, "Permittivity": 10.0}}}
+
+    def hourglass_requirement(self):
+        """A version-2 SpatialEdgeCluster record whose two metal triangles touch at the origin (the hourglass of
+        test_spatial_local_pieces): the one-reference form builds, the piece form is refused by name (decision 1100)."""
+        s = 0.5 ** 0.5
+        def portion(p0, p1, gap):
+            return {"Conductor": 1, "Gap": list(gap), "Interfaces": ["MA", "MS", "SA"], "Law": "{\"Type\":\"PEC\"}",
+                    "P": [*p0, *p1]}
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 4,
+                     "Portions": [portion((-2.0, -2.0), (0.0, 0.0), (s, -s)), portion((0.0, 0.0), (-2.0, 2.0), (s, s)),
+                                  portion((2.0, 2.0), (0.0, 0.0), (-s, s)), portion((0.0, 0.0), (2.0, -2.0), (-s, -s))],
+                     "Vertices": [{"P": [0.0, 0.0], "TurnDegrees": 90.0, "Type": "ConvexCorner"}]}
+        return {"Topology": "SpatialEdgeCluster", "Status": "Missing", "Count": 1, "TotalEdgeLength": 1.0,
+                "Geometry": {"EdgeCount": 4, "Signature": signature}, "Signature": signature, "Hash": "ab" * 32,
+                "Interfaces": [{"Slot": 0, "Type": "MA", "Coupon": 1}, {"Slot": 0, "Type": "MS", "Coupon": 2},
+                               {"Slot": 1, "Type": "MA", "Coupon": 3}, {"Slot": 1, "Type": "MS", "Coupon": 4},
+                               {"Slot": 1, "Type": "SA", "Coupon": 5}],
+                "BoundaryCondition": {"Type": "PEC"}}
+
+    def test_a_non_derivable_piece_form_is_unsupported_unless_one_reference(self):
+        """Decision 1145 Q1 (a) (review d1140 MAJOR-1): a coupon of a class WITH a piece form whose pieces the piece rule
+        refuses by name (the spatial vertex-touch, 1100; lane C's non-cross-section parallel edges) is Unsupported by
+        default - never the one-reference form 1134 found wrong - and the one-reference form under --one-reference."""
+        manifest = {"Version": 2, "Library": {"MatchingRadius": 1.9, "Path": "seed.json"},
+                    "Requirements": [self.hourglass_requirement(),
+                                     pec_cluster_requirement([0.0, 2.0, 4.0], [1, 1, -1], [1, 1, 1], "cd")]}   # gaps 0 / 1 on one side
+        library = {"Version": 3, "MatchingRadius": 1.9, "Fabrication": self.FABRICATION, "Models": []}
+        plan = PREPARE.plan_from_manifest(Path("m.json"), manifest, Path("seed.json"), library, False)
+        by_hash = {coupon["Hash"][:2]: coupon["Preparation"] for coupon in plan["Coupons"]}
+        self.assertEqual(set(by_hash), {"ab", "cd"})
+        for key, refusal in (("ab", "metal pieces touch at a vertex"), ("cd", "both have their gap on the +u side")):
+            form = by_hash[key]
+            self.assertEqual(form["Method"], "Unsupported", key)
+            self.assertIn("not derivable", form["Reason"])
+            self.assertIn(refusal, form["Reason"])
+            self.assertIn("--one-reference", form["Reason"])
+            self.assertFalse(form["LocalPieces"])
+            self.assertIn(refusal, form["LocalPiecesReason"])
+            self.assertFalse({"Driver", "MeshGenerator", "ResponseGenerator"} & set(form))   # not built
+        self.assertEqual(plan["Summary"], {"CouponCount": 2, "LocalPiecesForm": 0, "AutomaticallyPreparatable": 0, "Unsupported": 2})
+        explicit = PREPARE.plan_from_manifest(Path("m.json"), manifest, Path("seed.json"), library, False, one_reference=True)
+        by_hash = {coupon["Hash"][:2]: coupon["Preparation"] for coupon in explicit["Coupons"]}
+        self.assertEqual(by_hash["ab"]["Method"], "SpatialCoupon")
+        self.assertEqual(by_hash["cd"]["Method"], "ParallelClusterCoupon")
+        self.assertTrue(all(form["LocalPieces"] is False and "--one-reference" in form["LocalPiecesReason"] for form in by_hash.values()))
+        self.assertEqual(explicit["Summary"], {"CouponCount": 2, "LocalPiecesForm": 0, "AutomaticallyPreparatable": 2, "Unsupported": 0})
+
+    def test_cli_refuses_the_default_flag_together_with_the_opt_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "m.json"
+            manifest.write_text(json.dumps(self.manifest()))
+            (Path(tmp) / "seed.json").write_text(json.dumps({"Version": 3, "MatchingRadius": 1.9, "Models": []}))
+            result = subprocess.run([sys.executable, str(CPW2D / "prepare_surface_response_coupons.py"), str(manifest), "--output", str(Path(tmp) / "out"),
+                                     "--local-pieces", "--one-reference"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("mutually exclusive", result.stderr)
+            for flags, expected in (([], 3), (["--one-reference"], 0), (["--local-pieces"], 3)):
+                subprocess.run([sys.executable, str(CPW2D / "prepare_surface_response_coupons.py"), str(manifest), "--output", str(Path(tmp) / "out"), *flags],
+                               check=True, capture_output=True, text=True)
+                plan = json.loads((Path(tmp) / "out" / "coupon-plan.json").read_text())
+                self.assertEqual(plan["Summary"]["LocalPiecesForm"], expected, flags)
+
+
+class SkippedCouponNeverStampsASignature(unittest.TestCase):
+    """OI-PLANNER-SKIPPED-SIGNATURE-STAMP (decisions 1117 / 1137; owned by the R0-b lane): RG-7's planner run built ONE
+    PEC coupon with the stub's SpatialEdgeCluster requirement under --skip-methods SpatialCoupon, and the merged library's
+    spatial model spatialedgecluster_edgecount-10_13c7cc02fd9b (v3-j) came out re-stamped with the SKIPPED stub cluster's
+    6-edge Signature (the binary refused the library: VerifySpatialEdgesInSignatureFrame). Two generic rules: a spatial
+    model matches a coupon by its KEY (model_matches_coupon: the same Signature, or the same Edges), never by topology
+    alone; and only the coupons BUILT by the execution stamp the merged library (built_coupons_for_stamping)."""
+
+    def spatial_model(self, name, signature, edges):
+        return {"Name": name, "Topology": "SpatialEdgeCluster", "Signature": signature,
+                "Edges": [{"Point": [float(k), 0.0, 0.0], "GapDirection": [0.0, 1.0, 0.0], "Conductor": 1} for k in range(edges)],
+                "PlanViewBoundary": [{"Conductor": 1, "Segments": []}]}
+
+    def test_a_spatial_model_matches_by_signature_or_edges_never_by_topology(self):
+        own = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 1, 1], "Portions": [{"P": [0, 0, 1, 0]}] * 10}
+        stub = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 2, 2], "Portions": [{"P": [0, 0, 2, 0]}] * 6}
+        model = self.spatial_model("spatialedgecluster_edgecount-10_13c7cc02fd9b", own, 10)
+        skipped = {"Id": "spatialedgecluster_edgecount-6_cd97d9e672ba", "Topology": "SpatialEdgeCluster", "Geometry": {"Signature": stub},
+                   "Signature": stub}
+        self.assertFalse(PREPARE.model_matches_coupon(model, skipped))
+        self.assertTrue(PREPARE.model_matches_coupon(model, {"Id": "own", "Topology": "SpatialEdgeCluster", "Geometry": {}, "Signature": own}))
+        # a version-1 model (no Signature) matches a coupon carrying the same Edges only
+        v1 = {k: v for k, v in model.items() if k != "Signature"}
+        geometry = {"Edges": [{"Point": [float(k), 0.0, 0.0], "GapDirection": [0.0, 1.0, 0.0], "Conductor": 1} for k in range(10)]}
+        self.assertTrue(PREPARE.model_matches_coupon(v1, {"Id": "v1", "Topology": "SpatialEdgeCluster", "Geometry": geometry}))
+        self.assertFalse(PREPARE.model_matches_coupon(v1, skipped))
+        other = copy.deepcopy(geometry)
+        other["Edges"][3]["Conductor"] = 2
+        self.assertFalse(PREPARE.model_matches_coupon(v1, {"Id": "v1b", "Topology": "SpatialEdgeCluster", "Geometry": other}))
+
+    def test_the_rg7_plan_leaves_the_base_spatial_model_as_written(self):
+        own = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 1, 1], "Portions": [{"P": [0, 0, 1, 0]}] * 10}
+        stub = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 2, 2], "Portions": [{"P": [0, 0, 2, 0]}] * 6}
+        pec = {"Type": "ParallelEdgeCluster", "Edges": [{"OffsetOverR": o, "GapSide": d, "Conductor": 1}
+                                                       for o, d in zip([0.0, 1.5789474, 3.1578947, 4.7368421], [1, -1, 1, -1])]}
+        built_coupon = {"Id": "parallel-edge-cluster-a670", "Topology": "ParallelEdgeCluster", "Signature": pec, "Instances": 1,
+                        "Geometry": {"Edges": [{"Offset": [o, 0.0], "GapDirection": [float(d), 0.0], "Conductor": 1}
+                                               for o, d in zip([0.0, 3.0, 6.0, 9.0], [1, -1, 1, -1])]},
+                        "Preparation": {"Method": "ParallelClusterCoupon"}}
+        skipped_coupon = {"Id": "spatialedgecluster_edgecount-6_cd97d9e672ba", "Topology": "SpatialEdgeCluster", "Signature": stub,
+                          "Geometry": {"Signature": stub}, "Preparation": {"Method": "SpatialCoupon"}}
+        plan_coupons = [built_coupon, skipped_coupon]
+        skipped = [{"Ids": [skipped_coupon["Id"]], "Topologies": ["SpatialEdgeCluster"], "Method": "SpatialCoupon",
+                    "Reason": "left to another builder (--skip-methods)"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            models = [self.spatial_model("spatialedgecluster_edgecount-10_13c7cc02fd9b", own, 10),
+                      {"Name": "parallel-edge-cluster-b20f56c8e9fa-pieces3", "Topology": "ParallelEdgeCluster",
+                       "Edges": [{"Offset": o, "GapDirection": d, "Conductor": 1, "LocalPiece": p}
+                                 for o, d, p in zip([0.0, 3.0, 6.0, 9.0], [1, -1, 1, -1], [1, 2, 2, 3])]}]
+            PREPARE.write_json(path, {"Version": 3, "Models": models})
+            # (1) the execution's stamping set = the built coupons; a skipped Id listed as built is refused by name
+            stamping = PREPARE.built_coupons_for_stamping([built_coupon], skipped, [])
+            self.assertEqual([coupon["Id"] for coupon in stamping], [built_coupon["Id"]])
+            with self.assertRaisesRegex(ValueError, "OI-PLANNER-SKIPPED-SIGNATURE-STAMP"):
+                PREPARE.built_coupons_for_stamping(plan_coupons, skipped, [])
+            self.assertEqual(PREPARE.stamp_library_signatures(path, stamping), 1)
+            stamped = {model["Name"]: model for model in PREPARE.load_json(path)["Models"]}
+            self.assertEqual(stamped["spatialedgecluster_edgecount-10_13c7cc02fd9b"]["Signature"], own)   # as written
+            self.assertEqual(stamped["parallel-edge-cluster-b20f56c8e9fa-pieces3"]["Signature"], pec)
+            # (2) even the whole plan (the pre-fix call) cannot re-stamp the spatial model: no match by topology alone
+            PREPARE.write_json(path, {"Version": 3, "Models": models})
+            self.assertEqual(PREPARE.stamp_library_signatures(path, plan_coupons), 1)
+            self.assertEqual(PREPARE.load_json(path)["Models"][0]["Signature"], own)
+
+    @unittest.skipUnless(V3J_MIRROR.is_file() and RG7_MANIFEST.is_file(), "the v3-j mirror and the RG-7 stub manifest are needed")
+    def test_the_rg7_records_reproduce_the_case(self):
+        """The RG-7 records: the stub manifest's two requirements (a670 ParallelEdgeCluster + the stub SpatialEdgeCluster
+        cd97d9e672ba... Hash c06c2f00) planned with the stub cluster Skipped, against v3-j's models: 13c7cc02fd9b and every other
+        v3-j spatial model keep their own Signature (the pre-fix stamping over plan["Coupons"] rewrote 13c7cc02fd9b's)."""
+        manifest = json.loads(RG7_MANIFEST.read_text())
+        library = json.loads(V3J_MIRROR.read_text())
+        plan = PREPARE.plan_from_manifest(RG7_MANIFEST, manifest, V3J_MIRROR, library, False)
+        by_topology = {coupon["Topology"]: coupon for coupon in plan["Coupons"]}
+        self.assertEqual(set(by_topology), {"ParallelEdgeCluster", "SpatialEdgeCluster"})
+        self.assertEqual(by_topology["SpatialEdgeCluster"]["Hash"][:8], "c06c2f00")
+        self.assertTrue(by_topology["ParallelEdgeCluster"]["Preparation"]["LocalPieces"])   # the a670 CPW: the piece form (1136 (4))
+        spatial = [model for model in library["Models"] if model.get("Topology") == "SpatialEdgeCluster"]
+        for model in spatial:
+            self.assertFalse(PREPARE.model_matches_coupon(model, by_topology["SpatialEdgeCluster"]), model["Name"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            before = {model["Name"]: model.get("Signature") for model in spatial}
+            PREPARE.write_json(path, {"Version": 3, "Models": copy.deepcopy(spatial)})
+            skipped = [{"Ids": [by_topology["SpatialEdgeCluster"]["Id"]], "Method": "SpatialCoupon"}]
+            stamping = PREPARE.built_coupons_for_stamping([by_topology["ParallelEdgeCluster"]], skipped, [])
+            self.assertEqual(PREPARE.stamp_library_signatures(path, stamping), 0)
+            self.assertEqual({model["Name"]: model.get("Signature") for model in PREPARE.load_json(path)["Models"]}, before)
+            self.assertEqual(PREPARE.stamp_library_signatures(path, plan["Coupons"]), 0)     # the pre-fix call: no match either
+            self.assertEqual({model["Name"]: model.get("Signature") for model in PREPARE.load_json(path)["Models"]}, before)
 
 
 if __name__ == "__main__":

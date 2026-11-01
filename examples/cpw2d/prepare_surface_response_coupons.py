@@ -319,10 +319,18 @@ def plan_from_manifest(
     library,
     include_matched,
     spatial_mesh=SPATIAL_MESH,
+    one_reference=False,
 ):
+    """`one_reference`: every coupon planned in the one-reference form (the opt-out of the piece-form default,
+    plan_local_pieces_form / LOCAL_PIECES_PLANNER_RULE)."""
     coupons = {}
     signatures = {}
     matching_radius = float(manifest["Library"]["MatchingRadius"])
+    try:
+        parameters = process_parameters(library)
+    except ValueError:
+        parameters = None   # no version-3 Fabrication metadata: a version-2 spatial coupon's pieces are not derivable
+                            # (plan_local_pieces_form: Unsupported by name, decision 1145)
     for requirement in manifest["Requirements"]:
         if not include_matched and requirement.get("Status") != "Missing":
             continue
@@ -396,6 +404,8 @@ def plan_from_manifest(
             coupons[identifier] = coupon
             signatures[identifier] = signature
     coupons = sorted(coupons.values(), key=lambda coupon: coupon["Id"])
+    for coupon in coupons:
+        plan_local_pieces_form(coupon, matching_radius, parameters, one_reference)
     return {
         "Version": 2,
         "SourceManifest": str(manifest_path),
@@ -403,8 +413,11 @@ def plan_from_manifest(
         "Fabrication": library.get("Fabrication"),
         "MatchingRadius": manifest["Library"]["MatchingRadius"],
         "Coupons": coupons,
+        "LocalPiecesForm": {"Rule": LOCAL_PIECES_PLANNER_RULE, "OneReference": bool(one_reference),
+                            "Coupons": [coupon["Id"] for coupon in coupons if coupon_local_pieces(coupon)]},
         "Summary": {
             "CouponCount": len(coupons),
+            "LocalPiecesForm": sum(coupon_local_pieces(coupon) for coupon in coupons),
             "AutomaticallyPreparatable": sum(
                 coupon["Preparation"]["Method"] != "Unsupported"
                 for coupon in coupons
@@ -762,7 +775,40 @@ def model_matches_coupon(model, coupon):
         )
     if coupon["Topology"] == "Junction":
         return list(model.get("ArmAngles", [])) == list(geometry.get("ArmAnglesDegrees", []))
+    if coupon["Topology"] == "SpatialEdgeCluster":
+        # OI-PLANNER-SKIPPED-SIGNATURE-STAMP (decisions 1117 / 1137; RG-7: the merged library re-stamped v3-j's
+        # spatialedgecluster_edgecount-10_13c7cc02fd9b with the SKIPPED stub cluster's 6-edge Signature and the binary
+        # refused the library): a spatial model never matches a coupon by topology alone. A model carrying a Signature
+        # (a version-2 model, the matcher's exact key) matches the coupon of the SAME Signature only; a model without
+        # one matches by its Edges (count, Point, GapDirection, Conductor) against a coupon that carries Edges.
+        if "Signature" in model:
+            return "Signature" in coupon and json.dumps(model["Signature"], sort_keys=True) == json.dumps(
+                coupon["Signature"], sort_keys=True)
+        model_edges = model.get("Edges") or []
+        coupon_edges = geometry.get("Edges") or []
+        if not coupon_edges or len(model_edges) != len(coupon_edges):
+            return False
+        for first, second in zip(model_edges, coupon_edges):
+            if int(first.get("Conductor", 1)) != int(second.get("Conductor", 1)):
+                return False
+            for key in ("Point", "GapDirection"):
+                if len(first.get(key) or []) != 3 or len(second.get(key) or []) != 3 or not all(
+                        close(a, b) for a, b in zip(first[key], second[key])):
+                    return False
+        return True
     return True
+
+
+def built_coupons_for_stamping(built, skipped, failures):
+    """The coupons that may stamp the merged library (stamp_library_signatures): the ones built by this execution, with
+    every Skipped / failed Id refused by name should one appear (a contract check: a skipped requirement never stamps a
+    library model; OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 / 1137)."""
+    excluded = {identifier for entry in list(skipped) + list(failures) for identifier in entry.get("Ids", [])}
+    offending = sorted(coupon["Id"] for coupon in built if coupon["Id"] in excluded)
+    if offending:
+        raise ValueError(f"skipped / failed coupon(s) {offending} were listed as built: a skipped requirement never stamps "
+                         "a library model (OI-PLANNER-SKIPPED-SIGNATURE-STAMP)")
+    return list(built)
 
 
 def stamp_library_signatures(path, coupons):
@@ -771,6 +817,9 @@ def stamp_library_signatures(path, coupons):
     SpatialEdgeCluster, within the signature tolerance otherwise) and the coupon's group
     statistics; a model matching several signature coupons is a contract error (fail
     closed), a model matching none (a version-1 coupon, a base library) is left as written.
+    `coupons` = the coupons BUILT by this execution (execute: never a Skipped, Unsupported or
+    failed coupon; OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 / 1137: a skipped
+    requirement never stamps a library model).
     Two models carrying one Signature after the stamping (a base model and this run's model of
     one key; OI-LIBRARY-DUPLICATE-SIGNATURE, decisions 1103 / 1126 (5)) are refused by name
     BEFORE the library is written: a library holds at most one model per signature."""
@@ -1042,8 +1091,11 @@ def straight_coupon_directory(root, coupon):
     return root / "coupons" / topology / f"w{slug(width)}um"
 
 
-def straight_spec(coupons, args, parameters):
-    """The straight-edge planner cache spec (its fingerprint names the cache root)."""
+def straight_spec(coupons, args, parameters, local_pieces=None):
+    """The straight-edge planner cache spec (its fingerprint names the cache root); `local_pieces` None = the
+    family's planned form (straight_family_local_pieces)."""
+    if local_pieces is None:
+        local_pieces = straight_family_local_pieces(coupons)
     resolution = process_resolution(
         parameters, args.straight_lc_fine, args.min_process_feature_elements
     )
@@ -1077,27 +1129,132 @@ def straight_spec(coupons, args, parameters):
             (STRAIGHT_BUILDER, STRAIGHT_QUALIFIER, Path(__file__))
         ),
     }
-    add_local_pieces_form(spec, args)
+    add_local_pieces_form(spec, local_pieces)
     return spec
 
 
-def parallel_cluster_model_name(key, edges, args):
+def parallel_cluster_model_name(key, edges, local_pieces):
     """parallel-edge-cluster-<key[:12]>; the piece form carries the -pieces<P> suffix (local_pieces_model_name)."""
     name = f"parallel-edge-cluster-{key[:12]}"
-    if getattr(args, "local_pieces", False):
+    if local_pieces:
         pieces = local_pieces_module.local_pieces_of_parallel_edges(
             [edge["Offset"] for edge in edges], [edge["GapDirection"] for edge in edges])
         name = local_pieces_module.local_pieces_model_name(name, pieces)
     return name
 
 
-def add_local_pieces_form(spec, args):
+def add_local_pieces_form(spec, local_pieces):
     """R0-b (DESIGN A.3 (b); review d1099 MAJOR-1): the piece-labelled form of a cross-section is not its one-reference
-    form, so the planner cache key must carry the form; the key is added ONLY when --local-pieces is on so that every
-    default spec (and its cache root) stays byte-identical."""
-    if getattr(args, "local_pieces", False):
+    form, so the planner cache key must carry the form; the key is added ONLY in the piece form so that every
+    one-reference spec (and its cache root) stays byte-identical."""
+    if local_pieces:
         spec["LocalPieces"] = True
     return spec
+
+
+# THE PLANNER DEFAULT (decision 1136 (4); the 1134 result: a one-reference same-conductor CPW coupon is wrong by
+# -57 / -25 / -38 % under a strip-vs-ground field, the three-piece coupon within 1 pt): every coupon whose
+# cross-section / plan view holds a LABEL with >= 2 local metal pieces (a one-label multi-piece or a multi-piece-label
+# class: ParallelEdgeCluster by local_pieces_of_parallel_edges, SameConductorGap (its two sides), SpatialEdgeCluster
+# by cluster_signature_geometry.local_pieces_of_arrangement) is PLANNED in the piece form (Preparation.LocalPieces
+# true, read by the builders here and by device_coupons); a class with one piece per label keeps the one-reference
+# form (identical outputs). --one-reference opts every coupon out (the ES record form of v3-j, decisions 994 / 1136 (1)).
+# A coupon of a class WITH a piece form whose pieces are NOT derivable (the refusals by name of the piece rules, or no
+# version-3 Fabrication for a version-2 spatial record) is Unsupported, never the one-reference form silently (1145).
+LOCAL_PIECES_PLANNER_RULE = ("decision 1136 (4): the piece form (--local-pieces) is the DEFAULT for every coupon whose "
+                             "cross-section or plan view holds a conductor label with >= 2 local metal pieces "
+                             "(ParallelEdgeCluster / SameConductorGap / SpatialEdgeCluster); one piece per label = the "
+                             "one-reference form; a piece form that is not derivable = Unsupported (decision 1145); "
+                             "--one-reference opts out (the ES record form)")
+
+
+def local_pieces_per_label(coupon, matching_radius, parameters=None):
+    """{label: piece count} of a coupon's cross-section / plan view, or None for a class without a piece form
+    (IsolatedEdge, strips, DifferentConductorGap, corners, curved, Endpoint / Junction, a version-1 spatial record).
+    ValueError when the class has a piece form that is not derivable from this coupon (fail closed, by name)."""
+    topology = coupon["Topology"]
+    if topology == "SameConductorGap":
+        return {1: 2}
+    if topology == "ParallelEdgeCluster":
+        edges = normalize_parallel_edges(coupon, matching_radius)
+        pieces = local_pieces_module.local_pieces_of_parallel_edges(
+            [edge["Offset"] for edge in edges], [edge["GapDirection"] for edge in edges])
+        per_label = {}
+        for edge, piece in zip(edges, pieces):
+            per_label.setdefault(int(edge["Conductor"]), set()).add(piece)
+        return {label: len(found) for label, found in sorted(per_label.items())}
+    geometry = coupon.get("Geometry") or {}
+    if topology == "SpatialEdgeCluster" and "Signature" in geometry and not geometry.get("Edges"):
+        if parameters is None:
+            raise ValueError("the spatial pieces need the process parameters (version-3 Fabrication metadata)")
+        if str(SPATIAL_ROOT) not in sys.path:
+            sys.path.insert(0, str(SPATIAL_ROOT))
+        import cluster_signature_geometry  # noqa: E402  (imports this module; resolved at call time)
+        try:
+            built, _ = cluster_signature_geometry.cluster_coupon(
+                copy.deepcopy(coupon), matching_radius, parameters["metal_thickness"], parameters["overetch"],
+                local_pieces=True)
+        except cluster_signature_geometry.SignatureGeometryError as error:
+            raise ValueError(str(error)) from error
+        per_label = {}
+        for row in built["Geometry"]["Edges"]:
+            per_label.setdefault(int(row["Conductor"]), set()).add(int(row["LocalPiece"]))
+        return {label: len(found) for label, found in sorted(per_label.items())}
+    return None
+
+
+def plan_local_pieces_form(coupon, matching_radius, parameters=None, one_reference=False):
+    """Stamps coupon["Preparation"] with LocalPieces (bool), LocalPiecesReason and PiecesPerLabel (the rule above).
+    A class WITH a piece form whose pieces are not derivable from this coupon (local_pieces_per_label's ValueError:
+    the spatial arrangement refusals, lane C's parallel-edge refusals, a library without version-3 Fabrication for a
+    version-2 spatial record) FAILS CLOSED: Preparation.Method = Unsupported with the refusal as the Reason (decision
+    1145 Q1 (a): the one-reference form of such a coupon is the model class decision 1134 found wrong by tens of
+    percent, so it is never planned silently; --one-reference opts out of the piece form explicitly)."""
+    preparation = coupon["Preparation"]
+    if one_reference:
+        preparation["LocalPieces"] = False
+        preparation["LocalPiecesReason"] = "--one-reference: the one-reference form on every coupon (the ES record form)"
+        return preparation
+    try:
+        per_label = local_pieces_per_label(coupon, matching_radius, parameters)
+    except ValueError as error:
+        preparation["LocalPieces"] = False
+        preparation["LocalPiecesReason"] = f"the pieces are not derivable from this coupon: {error}"
+        if preparation["Method"] != "Unsupported":
+            # the builder keys (Driver / MeshGenerator / ResponseGenerator) go: the coupon is not built (the
+            # Unsupported shape of preparation(): Method + Reason). The Reason names what --one-reference DOES (opts
+            # out of the piece form), not a promised build: a refusal of the edge signature itself (normalize_parallel_edges)
+            # is raised again by the one-reference builder (confirmation d1140 MINOR-B).
+            coupon["Preparation"] = preparation = {
+                "Method": "Unsupported",
+                "Reason": (f"the piece form is the default (decision 1136 (4)) and its pieces are not derivable from "
+                           f"this coupon: {error}; --one-reference opts out of the piece form"),
+                **{key: value for key, value in preparation.items()
+                   if key in ("BoundaryLawQualification", "LocalPieces", "LocalPiecesReason")}}
+        return preparation
+    if per_label is None:
+        preparation["LocalPieces"] = False
+        preparation["LocalPiecesReason"] = f"{coupon['Topology']}: a class without a piece form (one piece per label)"
+        return preparation
+    preparation["PiecesPerLabel"] = {str(label): count for label, count in per_label.items()}
+    multi = sorted(label for label, count in per_label.items() if count >= 2)
+    preparation["LocalPieces"] = bool(multi)
+    preparation["LocalPiecesReason"] = (
+        f"label(s) {multi} hold >= 2 local metal pieces: the piece form ({LOCAL_PIECES_PLANNER_RULE})" if multi
+        else "one local metal piece per label: the one-reference form")
+    return preparation
+
+
+def coupon_local_pieces(coupon):
+    """The planned form of a coupon (plan_local_pieces_form); a plan written before the rule carries none = the
+    one-reference form."""
+    return bool((coupon.get("Preparation") or {}).get("LocalPieces", False))
+
+
+def straight_family_local_pieces(coupons):
+    """The straight family is built by one builder call: its --local-pieces (the SameConductorGap's two sides) is on
+    when any SameConductorGap coupon of the family is planned in the piece form."""
+    return any(coupon["Topology"] == "SameConductorGap" and coupon_local_pieces(coupon) for coupon in coupons)
 
 
 # The held-out escalation rule (decisions 1116 / 1126 (6) / 1128 Q3; the evidence: RG-7's one-reference 3 / 3 / 3 coupon
@@ -1212,7 +1369,8 @@ def build_straight(coupons, args, parameters, cache):
         for topology in PAIRED_TOPOLOGIES
     }
     isolated = any(coupon["Topology"] == "IsolatedEdge" for coupon in coupons)
-    spec = straight_spec(coupons, args, parameters)
+    local_pieces = straight_family_local_pieces(coupons)
+    spec = straight_spec(coupons, args, parameters, local_pieces)
     key = fingerprint(spec)
     root = cache / f"straight-{key}"
     qualification_path = root / "qualification.json"
@@ -1290,7 +1448,7 @@ def build_straight(coupons, args, parameters, cache):
             command.extend(["--julia-project", args.julia_project])
         if not isolated:
             command.append("--skip-isolated")
-        if getattr(args, "local_pieces", False):
+        if local_pieces:
             command.append("--local-pieces")
         for topology, option in PAIRED_TOPOLOGIES.items():
             command.append(f"--{option}")
@@ -1504,8 +1662,11 @@ def generate_parallel_cluster_meshes(
     return mesh_root, meshes
 
 
-def parallel_cluster_spec(coupon, edges, args, parameters):
-    """The parallel-edge-cluster planner cache spec (its fingerprint names the cache root and the model Name)."""
+def parallel_cluster_spec(coupon, edges, args, parameters, local_pieces=None):
+    """The parallel-edge-cluster planner cache spec (its fingerprint names the cache root and the model Name);
+    `local_pieces` None = the coupon's planned form (coupon_local_pieces)."""
+    if local_pieces is None:
+        local_pieces = coupon_local_pieces(coupon)
     resolution = process_resolution(
         parameters, args.cluster_lc_fine, args.min_process_feature_elements
     )
@@ -1542,14 +1703,15 @@ def parallel_cluster_spec(coupon, edges, args, parameters):
             )
         ),
     }
-    add_local_pieces_form(spec, args)
+    add_local_pieces_form(spec, local_pieces)
     return spec
 
 
 def build_parallel_cluster(coupon, args, parameters, cache):
     require_verified_boundary_conditions(coupon)
     edges = normalize_parallel_edges(coupon, args.matching_radius)
-    spec = parallel_cluster_spec(coupon, edges, args, parameters)
+    local_pieces = coupon_local_pieces(coupon)
+    spec = parallel_cluster_spec(coupon, edges, args, parameters, local_pieces)
     key = fingerprint(spec)
     root = cache / f"parallel-cluster-{key}"
     qualification_path = root / "qualification.json"
@@ -1583,7 +1745,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
-    json_signature, csv_signature = write_cluster_signature(root, edges, getattr(args, "local_pieces", False))
+    json_signature, csv_signature = write_cluster_signature(root, edges, local_pieces)
     _, meshes = generate_parallel_cluster_meshes(
         root, csv_signature, args, parameters, spec, 1.0
     )
@@ -1624,11 +1786,11 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             args.coupon_depth,
             "--edge-offset-tolerance",
             args.edge_offset_tolerance,
-            *(["--local-pieces"] if getattr(args, "local_pieces", False) else []),
+            *(["--local-pieces"] if local_pieces else []),
             "--library-name",
             f"{args.name}-parallel-cluster-p{final_order}",
             "--model-name",
-            parallel_cluster_model_name(key, edges, args),
+            parallel_cluster_model_name(key, edges, local_pieces),
             *material_options(parameters),
         ]
     )
@@ -2710,11 +2872,16 @@ def execute(plan, library_path, args):
         for coupon in unsupported
     ]
 
+    # The coupons whose builder produced a library in THIS execution: the only ones that stamp
+    # a Signature on the merged library (OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 /
+    # 1137: never a Skipped, Unsupported or failed coupon).
+    built = []
+
     def evaluate(task):
         coupons, method, builder = task
         try:
             generated, qualification = builder()
-            return generated, qualification, None
+            return generated, qualification, None, coupons
         except Exception as error:
             failure = {
                 "Ids": [coupon["Id"] for coupon in coupons],
@@ -2724,10 +2891,10 @@ def execute(plan, library_path, args):
                 "Method": method,
                 "Reason": f"{type(error).__name__}: {error}",
             }
-            return None, None, failure
+            return None, None, failure, coupons
 
     def collect(result):
-        generated, qualification, failure = result
+        generated, qualification, failure, coupons = result
         if failure:
             failures.append(failure)
             print(
@@ -2741,6 +2908,7 @@ def execute(plan, library_path, args):
             return
         if generated is not None:
             libraries.append(generated)
+            built.extend(coupons)
         qualifications.append(qualification)
 
     # Build the straight-edge family first. Besides normally being inexpensive, this
@@ -2819,7 +2987,7 @@ def execute(plan, library_path, args):
     probe_study_only = getattr(args, "probe_study_only", False)
     stamped = 0
     if not probe_study_only and (destination / "process-library.json").is_file():
-        stamped = stamp_library_signatures(destination / "process-library.json", plan["Coupons"])
+        stamped = stamp_library_signatures(destination / "process-library.json", built_coupons_for_stamping(built, skipped, failures))
     geometry_complete = not failures and not probe_study_only
     probe_study_complete = not failures and probe_study_only
     qualification_manifest = {
@@ -3036,11 +3204,17 @@ def parse_args():
     parser.add_argument("--coupon-depth", type=float, default=1055.0)
     parser.add_argument("--edge-offset-tolerance", type=float, default=1.0e-3)
     parser.add_argument("--local-pieces", action="store_true",
-                        help="R0-b, the generator side (identification fix round DESIGN A.3 (b); decisions 1064 (4) / 1096 (8)): the 2D "
-                             "coupons' conductor labels are their LOCAL metal pieces (one reference per piece; the parallel-cluster "
+                        help="R0-b (identification fix round DESIGN A.3 (b); decisions 1064 (4) / 1096 (8) / 1136 (4)): the piece form - a "
+                             "coupon's conductor labels are its LOCAL metal pieces (one reference per piece; the parallel-cluster "
                              "signature CSV and the same-conductor-gap mesher carry Conductor := piece; Edges[].LocalPiece / LocalPieces "
-                             "on the library entries; the straight / parallel-cluster cache keys carry the form and the PEC model Name "
-                             "the -pieces<P> suffix). Default OFF: every output byte-identical to the one-reference form")
+                             "on the library entries; the straight / parallel-cluster cache keys carry the form and the model Name "
+                             "the -pieces<P> suffix). THE DEFAULT since decision 1136 (4) for every coupon whose cross-section / plan "
+                             "view holds a label with >= 2 pieces (Preparation.LocalPieces in the plan): this flag is the explicit NAME "
+                             "of that default and has NO effect beyond refusing --one-reference (kept for command-line compatibility "
+                             "with the records; decision 1145 Q2)")
+    parser.add_argument("--one-reference", action="store_true",
+                        help="opt out of the piece-form default (decision 1136 (4)): every coupon in the one-reference form (the ES "
+                             "record form of v3-j; every output byte-identical to the pre-1136 planner)")
     parser.add_argument("--max-heldout-error", type=float, default=10.0)
     parser.add_argument("--no-heldout-escalation", action="store_true",
                         help=f"switch the held-out escalation rule OFF ({HELDOUT_ESCALATION_RULE}; default ON for "
@@ -3060,6 +3234,8 @@ def parse_args():
     args.orders = sorted(set(args.orders))
     if args.coverage_only and args.probe_study_only:
         parser.error("--coverage-only and --probe-study-only are mutually exclusive")
+    if args.local_pieces and args.one_reference:
+        parser.error("--local-pieces (the default form) and --one-reference (the opt-out) are mutually exclusive")
     if args.execute and args.palace is None:
         parser.error("--palace is required with --execute")
     if args.ranks <= 0:
@@ -3183,6 +3359,7 @@ def main():
         library,
         args.include_matched,
         spatial_mesh_path(args),
+        one_reference=args.one_reference,
     )
     args.output.mkdir(parents=True, exist_ok=True)
     destination = args.output / "coupon-plan.json"

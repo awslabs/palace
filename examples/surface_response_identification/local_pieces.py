@@ -89,3 +89,10 @@ def metal_intervals_by_piece(offsets, gap_directions, pieces, radius):
         lo, hi = out.get(p, (left, right))
         out[p] = (min(lo, left), max(hi, right))
     return out
+
+
+def mesh_label(edge):
+    """The label the coupon MESH and configs carry for a library entry's edge (Edges[] / ContextEdges[]): its LocalPiece
+    in the piece form (R0-b: the mesher tags the metal per piece), its Conductor (the key label) otherwise. The consumers
+    that compare the entry with the mesher's CSVs / the coupon configs read this, never Conductor alone."""
+    return int(edge["LocalPiece"]) if edge.get("LocalPiece") is not None else int(edge["Conductor"])

@@ -46,6 +46,7 @@ for path in (str(HERE), str(TOOLS)):
         sys.path.insert(0, path)
 import cluster_signature_geometry  # noqa: E402
 import generate_spatial_response as producer  # noqa: E402
+import local_pieces  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
 from general_mesh_manifest import FABRICATED_CASE_KEY, case_kind  # noqa: E402
 import trace_basis  # noqa: E402
 from mixed_mesh import SHELL_LABEL_STRIDE  # noqa: E402
@@ -207,11 +208,14 @@ def regenerate_traces(basis, labels, out_dir):
 
 def local_edges(model, frame):
     """The model's edges with ProcessNormal in the mesh frame (frame @ canonical, -0.0
-    normalized to 0.0), the slot / conductor unchanged: what make_config reads."""
+    normalized to 0.0), the slot unchanged and Conductor = the MESH label (local_pieces.mesh_label:
+    the LocalPiece of a piece-form model, idfix R0-b, else the Conductor): what make_config reads
+    (the coupon mesh and its trace-vertices labels are tagged per piece)."""
     edges = []
     for edge in model["Edges"]:
         normal = frame @ np.asarray(edge["ProcessNormal"], dtype=float)
-        edges.append({**edge, "ProcessNormal": [float(value) + 0.0 for value in normal]})
+        edges.append({**edge, "ProcessNormal": [float(value) + 0.0 for value in normal],
+                      "Conductor": local_pieces.mesh_label(edge)})
     return edges
 
 
