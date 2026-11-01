@@ -149,7 +149,8 @@ public:
 
   std::size_t Size() const { return boxes.size(); }
 
-  // The root box (every segment's box) and the largest coordinate magnitude in it.
+  // The root box (the union of every segment's box); the coordinate scale a nearest query
+  // needs is NearestSubSegmentIndex::scale, read from the segments in its constructor.
   const Point3D &Min() const { return nodes.front().box.min; }
   const Point3D &Max() const { return nodes.front().box.max; }
 
