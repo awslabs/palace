@@ -276,6 +276,39 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "corner field ThinMatrix is None.*no thin matrices"):
                     COMBINER.main()
 
+    def test_combiner_refuses_two_models_of_one_signature_before_writing(self):
+        """OI-LIBRARY-DUPLICATE-SIGNATURE (decisions 1103 / 1126 (5) / 1128 Q4): two models of one canonical Signature under
+        DIFFERENT Names (the one-reference and the -pieces3 form of one key; the Edges differ, the Signature does not) are
+        refused by name before any model directory is written; the same Signature under one Name is the name refusal."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            signature = {"Type": "ParallelEdgeCluster", "Edges": [{"Conductor": 1, "GapSide": 1, "OffsetOverR": 0.0},
+                                                                  {"Conductor": 1, "GapSide": -1, "OffsetOverR": 1.05}]}
+            first = self.write_library(root / "a" / "process-library.json", "one-reference", ["parallel-edge-cluster-9c177156962b"])
+            second = self.write_library(root / "b" / "process-library.json", "pieces", ["parallel-edge-cluster-9c177156962b-pieces3"])
+            for path, pieces in ((first, False), (second, True)):
+                library = PREPARE.load_json(path)
+                # the same Signature with its keys in another order (the canonical form sorts keys; the Edges ORDER is the key's)
+                library["Models"][0]["Signature"] = {k: signature[k] for k in (("Edges", "Type") if pieces else ("Type", "Edges"))}
+                if pieces:
+                    library["Models"][0]["LocalPiecesRule"] = "LocalPiecesOfParallelEdges"
+                path.write_text(json.dumps(library, indent=2) + "\n")
+            output = root / "combined"
+            with mock.patch.object(sys, "argv", ["combine_process_libraries.py", "--output", str(output), str(first), str(second)]):
+                with self.assertRaisesRegex(ValueError, "OI-LIBRARY-DUPLICATE-SIGNATURE.*parallel-edge-cluster-9c177156962b, "
+                                                        "parallel-edge-cluster-9c177156962b-pieces3") as refused:
+                    COMBINER.main()
+            self.assertEqual(type(refused.exception).__name__, "DuplicateSignatureError")
+            self.assertFalse((output / "process-library.json").exists())
+            self.assertEqual(sorted(p.name for p in output.iterdir()), [])     # refused before the first model directory
+            # the two forms in SEPARATE libraries stay loadable (the 1103 rule of record)
+            self.combine(root / "only-first", first)
+            self.combine(root / "only-second", second)
+            # a Signature-less model never collides on the signature (its Name is the only key)
+            third = self.write_library(root / "c" / "process-library.json", "corners", ["convex-corner-45deg", "convex-corner-90deg"])
+            self.assertEqual([m["Name"] for m in self.combine(root / "with-corners", first, third)["Models"]],
+                             ["parallel-edge-cluster-9c177156962b", "convex-corner-45deg", "convex-corner-90deg"])
+
     def test_corner_radius_interpolation_qualification(self):
         metadata = {
             "MatchingRadius": 2.0,
@@ -1268,6 +1301,27 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             # match ignores the law; a second law on one geometry is the usual cause).
             with self.assertRaisesRegex(ValueError, r"matches 2 version-2 coupon signatures.*Impedance"):
                 PREPARE.stamp_library_signatures(path, plan["Coupons"] + [duplicate])
+
+    def test_stamp_library_signatures_refuses_two_models_of_one_signature_before_writing(self):
+        """OI-LIBRARY-DUPLICATE-SIGNATURE (decisions 1103 / 1126 (5) / 1128 Q4) at the planner's merge: a base model already
+        carrying the coupon's Signature and this run's model of the same key (another Name: the -pieces3 form; both match the
+        coupon's geometry) would both carry one Signature after the stamping -> refused by name, the file left as written."""
+        signature = {"Type": "SameConductorStrip", "SeparationOverR": 1.0526316,
+                     "Edges": [{"OffsetOverR": 0.0, "GapSide": -1, "Conductor": 1}, {"OffsetOverR": 1.0526316, "GapSide": 1, "Conductor": 1}]}
+        coupon = {"Id": "strip-2um", "Topology": "SameConductorStrip", "Geometry": {"EdgeCount": 2, "Separation": 2.0000008},
+                  "Signature": signature, "Instances": 8}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            models = [{"Name": "same-conductor-strip-2um", "Topology": "SameConductorStrip", "Separation": 2.0000008, "Signature": signature},
+                      {"Name": "same-conductor-strip-2um-pieces2", "Topology": "SameConductorStrip", "Separation": 2.0000008,
+                       "LocalPiecesRule": "LocalPiecesOfParallelEdges"}]
+            PREPARE.write_json(path, {"Version": 3, "Models": models})
+            before = path.read_text()
+            with self.assertRaisesRegex(ValueError, "OI-LIBRARY-DUPLICATE-SIGNATURE.*same-conductor-strip-2um, same-conductor-strip-2um-pieces2"):
+                PREPARE.stamp_library_signatures(path, [coupon])
+            self.assertEqual(path.read_text(), before)       # fail closed before the write
+            PREPARE.write_json(path, {"Version": 3, "Models": models[1:]})
+            self.assertEqual(PREPARE.stamp_library_signatures(path, [coupon]), 1)      # one model per signature: stamped
 
     def test_parallel_cluster_mesh_failure_prevents_full_response_solves(self):
         coupon = {

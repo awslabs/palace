@@ -21,6 +21,7 @@ IDENTIFICATION_TOOLS = ROOT.parent / "surface_response_identification"
 if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
 import local_pieces as local_pieces_module  # noqa: E402
+from signature_library import refuse_duplicate_signatures  # noqa: E402
 
 STRAIGHT_BUILDER = ROOT / "build_surface_process_library.py"
 STRAIGHT_QUALIFIER = ROOT / "qualify_surface_response.py"
@@ -769,7 +770,10 @@ def stamp_library_signatures(path, coupons):
     carries that coupon's canonical Signature (the matcher's key: exact for a
     SpatialEdgeCluster, within the signature tolerance otherwise) and the coupon's group
     statistics; a model matching several signature coupons is a contract error (fail
-    closed), a model matching none (a version-1 coupon, a base library) is left as written."""
+    closed), a model matching none (a version-1 coupon, a base library) is left as written.
+    Two models carrying one Signature after the stamping (a base model and this run's model of
+    one key; OI-LIBRARY-DUPLICATE-SIGNATURE, decisions 1103 / 1126 (5)) are refused by name
+    BEFORE the library is written: a library holds at most one model per signature."""
     library = load_json(path)
     stamped = 0
     for model in library.get("Models", []):
@@ -796,6 +800,7 @@ def stamp_library_signatures(path, coupons):
             if key in coupon:
                 model[key] = coupon[key]
         stamped += 1
+    refuse_duplicate_signatures(library.get("Models", []), library=str(path))
     write_json(path, library)
     return stamped
 

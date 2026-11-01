@@ -5,7 +5,9 @@
 --supersede NAME=<record> (decision 505 Q1) replaces the base (first) library's model NAME by the
 model of the same name of one later input, recording the replacement under Supersedes with the
 mandatory --supersede-decision TEXT (decision 513 (2)); without the flag a repeated model name is
-refused and the output is unchanged."""
+refused and the output is unchanged. Two models of one canonical Signature (whatever their Names:
+the one-reference and the -pieces form of one key) are refused by name before anything is written
+(OI-LIBRARY-DUPLICATE-SIGNATURE, decisions 1103 / 1126 (5); signature_library.refuse_duplicate_signatures)."""
 
 import argparse
 import hashlib
@@ -13,7 +15,13 @@ import json
 import math
 import re
 import shutil
+import sys
 from pathlib import Path
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[2] / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from signature_library import refuse_duplicate_signatures  # noqa: E402
 
 
 PATH_FIELDS = (
@@ -256,6 +264,7 @@ def main():
     entries = [(source_path, library, source_model) for source_path, library in loaded for source_model in library["Models"]]
     if supersedes:
         entries, result["Supersedes"] = apply_supersedes(entries, loaded[0][0], supersedes, decision)
+    refuse_duplicate_signatures([source_model for _, _, source_model in entries], library=str(destination / "process-library.json"))
     source_digests = {source_path: sha256(source_path) for source_path, _ in loaded}
     for source_path, library, source_model in entries:
         source_root = source_path.parent
