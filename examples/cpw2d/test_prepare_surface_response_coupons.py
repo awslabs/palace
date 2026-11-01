@@ -3378,5 +3378,97 @@ class PlannerLocalPiecesDefault(unittest.TestCase):
                 self.assertEqual(plan["Summary"]["LocalPiecesForm"], expected, flags)
 
 
+class SkippedCouponNeverStampsASignature(unittest.TestCase):
+    """OI-PLANNER-SKIPPED-SIGNATURE-STAMP (decisions 1117 / 1137; owned by the R0-b lane): RG-7's planner run built ONE
+    PEC coupon with the stub's SpatialEdgeCluster requirement under --skip-methods SpatialCoupon, and the merged library's
+    spatial model spatialedgecluster_edgecount-10_13c7cc02fd9b (v3-j) came out re-stamped with the SKIPPED stub cluster's
+    6-edge Signature (the binary refused the library: VerifySpatialEdgesInSignatureFrame). Two generic rules: a spatial
+    model matches a coupon by its KEY (model_matches_coupon: the same Signature, or the same Edges), never by topology
+    alone; and only the coupons BUILT by the execution stamp the merged library (built_coupons_for_stamping)."""
+
+    def spatial_model(self, name, signature, edges):
+        return {"Name": name, "Topology": "SpatialEdgeCluster", "Signature": signature,
+                "Edges": [{"Point": [float(k), 0.0, 0.0], "GapDirection": [0.0, 1.0, 0.0], "Conductor": 1} for k in range(edges)],
+                "PlanViewBoundary": [{"Conductor": 1, "Segments": []}]}
+
+    def test_a_spatial_model_matches_by_signature_or_edges_never_by_topology(self):
+        own = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 1, 1], "Portions": [{"P": [0, 0, 1, 0]}] * 10}
+        stub = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 2, 2], "Portions": [{"P": [0, 0, 2, 0]}] * 6}
+        model = self.spatial_model("spatialedgecluster_edgecount-10_13c7cc02fd9b", own, 10)
+        skipped = {"Id": "spatialedgecluster_edgecount-6_cd97d9e672ba", "Topology": "SpatialEdgeCluster", "Geometry": {"Signature": stub},
+                   "Signature": stub}
+        self.assertFalse(PREPARE.model_matches_coupon(model, skipped))
+        self.assertTrue(PREPARE.model_matches_coupon(model, {"Id": "own", "Topology": "SpatialEdgeCluster", "Geometry": {}, "Signature": own}))
+        # a version-1 model (no Signature) matches a coupon carrying the same Edges only
+        v1 = {k: v for k, v in model.items() if k != "Signature"}
+        geometry = {"Edges": [{"Point": [float(k), 0.0, 0.0], "GapDirection": [0.0, 1.0, 0.0], "Conductor": 1} for k in range(10)]}
+        self.assertTrue(PREPARE.model_matches_coupon(v1, {"Id": "v1", "Topology": "SpatialEdgeCluster", "Geometry": geometry}))
+        self.assertFalse(PREPARE.model_matches_coupon(v1, skipped))
+        other = copy.deepcopy(geometry)
+        other["Edges"][3]["Conductor"] = 2
+        self.assertFalse(PREPARE.model_matches_coupon(v1, {"Id": "v1b", "Topology": "SpatialEdgeCluster", "Geometry": other}))
+
+    def test_the_rg7_plan_leaves_the_base_spatial_model_as_written(self):
+        own = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 1, 1], "Portions": [{"P": [0, 0, 1, 0]}] * 10}
+        stub = {"Type": "SpatialEdgeCluster", "Box": [0, 0, 2, 2], "Portions": [{"P": [0, 0, 2, 0]}] * 6}
+        pec = {"Type": "ParallelEdgeCluster", "Edges": [{"OffsetOverR": o, "GapSide": d, "Conductor": 1}
+                                                       for o, d in zip([0.0, 1.5789474, 3.1578947, 4.7368421], [1, -1, 1, -1])]}
+        built_coupon = {"Id": "parallel-edge-cluster-a670", "Topology": "ParallelEdgeCluster", "Signature": pec, "Instances": 1,
+                        "Geometry": {"Edges": [{"Offset": [o, 0.0], "GapDirection": [float(d), 0.0], "Conductor": 1}
+                                               for o, d in zip([0.0, 3.0, 6.0, 9.0], [1, -1, 1, -1])]},
+                        "Preparation": {"Method": "ParallelClusterCoupon"}}
+        skipped_coupon = {"Id": "spatialedgecluster_edgecount-6_cd97d9e672ba", "Topology": "SpatialEdgeCluster", "Signature": stub,
+                          "Geometry": {"Signature": stub}, "Preparation": {"Method": "SpatialCoupon"}}
+        plan_coupons = [built_coupon, skipped_coupon]
+        skipped = [{"Ids": [skipped_coupon["Id"]], "Topologies": ["SpatialEdgeCluster"], "Method": "SpatialCoupon",
+                    "Reason": "left to another builder (--skip-methods)"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            models = [self.spatial_model("spatialedgecluster_edgecount-10_13c7cc02fd9b", own, 10),
+                      {"Name": "parallel-edge-cluster-b20f56c8e9fa-pieces3", "Topology": "ParallelEdgeCluster",
+                       "Edges": [{"Offset": o, "GapDirection": d, "Conductor": 1, "LocalPiece": p}
+                                 for o, d, p in zip([0.0, 3.0, 6.0, 9.0], [1, -1, 1, -1], [1, 2, 2, 3])]}]
+            PREPARE.write_json(path, {"Version": 3, "Models": models})
+            # (1) the execution's stamping set = the built coupons; a skipped Id listed as built is refused by name
+            stamping = PREPARE.built_coupons_for_stamping([built_coupon], skipped, [])
+            self.assertEqual([coupon["Id"] for coupon in stamping], [built_coupon["Id"]])
+            with self.assertRaisesRegex(ValueError, "OI-PLANNER-SKIPPED-SIGNATURE-STAMP"):
+                PREPARE.built_coupons_for_stamping(plan_coupons, skipped, [])
+            self.assertEqual(PREPARE.stamp_library_signatures(path, stamping), 1)
+            stamped = {model["Name"]: model for model in PREPARE.load_json(path)["Models"]}
+            self.assertEqual(stamped["spatialedgecluster_edgecount-10_13c7cc02fd9b"]["Signature"], own)   # as written
+            self.assertEqual(stamped["parallel-edge-cluster-b20f56c8e9fa-pieces3"]["Signature"], pec)
+            # (2) even the whole plan (the pre-fix call) cannot re-stamp the spatial model: no match by topology alone
+            PREPARE.write_json(path, {"Version": 3, "Models": models})
+            self.assertEqual(PREPARE.stamp_library_signatures(path, plan_coupons), 1)
+            self.assertEqual(PREPARE.load_json(path)["Models"][0]["Signature"], own)
+
+    @unittest.skipUnless(V3J_MIRROR.is_file() and RG7_MANIFEST.is_file(), "the v3-j mirror and the RG-7 stub manifest are needed")
+    def test_the_rg7_records_reproduce_the_case(self):
+        """The RG-7 records: the stub manifest's two requirements (a670 ParallelEdgeCluster + the stub SpatialEdgeCluster
+        cd97d9e672ba... Hash c06c2f00) planned with the stub cluster Skipped, against v3-j's models: 13c7cc02fd9b and every other
+        v3-j spatial model keep their own Signature (the pre-fix stamping over plan["Coupons"] rewrote 13c7cc02fd9b's)."""
+        manifest = json.loads(RG7_MANIFEST.read_text())
+        library = json.loads(V3J_MIRROR.read_text())
+        plan = PREPARE.plan_from_manifest(RG7_MANIFEST, manifest, V3J_MIRROR, library, False)
+        by_topology = {coupon["Topology"]: coupon for coupon in plan["Coupons"]}
+        self.assertEqual(set(by_topology), {"ParallelEdgeCluster", "SpatialEdgeCluster"})
+        self.assertEqual(by_topology["SpatialEdgeCluster"]["Hash"][:8], "c06c2f00")
+        self.assertTrue(by_topology["ParallelEdgeCluster"]["Preparation"]["LocalPieces"])   # the a670 CPW: the piece form (1136 (4))
+        spatial = [model for model in library["Models"] if model.get("Topology") == "SpatialEdgeCluster"]
+        for model in spatial:
+            self.assertFalse(PREPARE.model_matches_coupon(model, by_topology["SpatialEdgeCluster"]), model["Name"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            before = {model["Name"]: model.get("Signature") for model in spatial}
+            PREPARE.write_json(path, {"Version": 3, "Models": copy.deepcopy(spatial)})
+            skipped = [{"Ids": [by_topology["SpatialEdgeCluster"]["Id"]], "Method": "SpatialCoupon"}]
+            stamping = PREPARE.built_coupons_for_stamping([by_topology["ParallelEdgeCluster"]], skipped, [])
+            self.assertEqual(PREPARE.stamp_library_signatures(path, stamping), 0)
+            self.assertEqual({model["Name"]: model.get("Signature") for model in PREPARE.load_json(path)["Models"]}, before)
+            self.assertEqual(PREPARE.stamp_library_signatures(path, plan["Coupons"]), 0)     # the pre-fix call: no match either
+            self.assertEqual({model["Name"]: model.get("Signature") for model in PREPARE.load_json(path)["Models"]}, before)
+
+
 if __name__ == "__main__":
     unittest.main()

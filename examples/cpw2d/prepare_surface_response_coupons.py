@@ -774,7 +774,40 @@ def model_matches_coupon(model, coupon):
         )
     if coupon["Topology"] == "Junction":
         return list(model.get("ArmAngles", [])) == list(geometry.get("ArmAnglesDegrees", []))
+    if coupon["Topology"] == "SpatialEdgeCluster":
+        # OI-PLANNER-SKIPPED-SIGNATURE-STAMP (decisions 1117 / 1137; RG-7: the merged library re-stamped v3-j's
+        # spatialedgecluster_edgecount-10_13c7cc02fd9b with the SKIPPED stub cluster's 6-edge Signature and the binary
+        # refused the library): a spatial model never matches a coupon by topology alone. A model carrying a Signature
+        # (a version-2 model, the matcher's exact key) matches the coupon of the SAME Signature only; a model without
+        # one matches by its Edges (count, Point, GapDirection, Conductor) against a coupon that carries Edges.
+        if "Signature" in model:
+            return "Signature" in coupon and json.dumps(model["Signature"], sort_keys=True) == json.dumps(
+                coupon["Signature"], sort_keys=True)
+        model_edges = model.get("Edges") or []
+        coupon_edges = geometry.get("Edges") or []
+        if not coupon_edges or len(model_edges) != len(coupon_edges):
+            return False
+        for first, second in zip(model_edges, coupon_edges):
+            if int(first.get("Conductor", 1)) != int(second.get("Conductor", 1)):
+                return False
+            for key in ("Point", "GapDirection"):
+                if len(first.get(key) or []) != 3 or len(second.get(key) or []) != 3 or not all(
+                        close(a, b) for a, b in zip(first[key], second[key])):
+                    return False
+        return True
     return True
+
+
+def built_coupons_for_stamping(built, skipped, failures):
+    """The coupons that may stamp the merged library (stamp_library_signatures): the ones built by this execution, with
+    every Skipped / failed Id refused by name should one appear (a contract check: a skipped requirement never stamps a
+    library model; OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 / 1137)."""
+    excluded = {identifier for entry in list(skipped) + list(failures) for identifier in entry.get("Ids", [])}
+    offending = sorted(coupon["Id"] for coupon in built if coupon["Id"] in excluded)
+    if offending:
+        raise ValueError(f"skipped / failed coupon(s) {offending} were listed as built: a skipped requirement never stamps "
+                         "a library model (OI-PLANNER-SKIPPED-SIGNATURE-STAMP)")
+    return list(built)
 
 
 def stamp_library_signatures(path, coupons):
@@ -783,6 +816,9 @@ def stamp_library_signatures(path, coupons):
     SpatialEdgeCluster, within the signature tolerance otherwise) and the coupon's group
     statistics; a model matching several signature coupons is a contract error (fail
     closed), a model matching none (a version-1 coupon, a base library) is left as written.
+    `coupons` = the coupons BUILT by this execution (execute: never a Skipped, Unsupported or
+    failed coupon; OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 / 1137: a skipped
+    requirement never stamps a library model).
     Two models carrying one Signature after the stamping (a base model and this run's model of
     one key; OI-LIBRARY-DUPLICATE-SIGNATURE, decisions 1103 / 1126 (5)) are refused by name
     BEFORE the library is written: a library holds at most one model per signature."""
@@ -2816,11 +2852,16 @@ def execute(plan, library_path, args):
         for coupon in unsupported
     ]
 
+    # The coupons whose builder produced a library in THIS execution: the only ones that stamp
+    # a Signature on the merged library (OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 /
+    # 1137: never a Skipped, Unsupported or failed coupon).
+    built = []
+
     def evaluate(task):
         coupons, method, builder = task
         try:
             generated, qualification = builder()
-            return generated, qualification, None
+            return generated, qualification, None, coupons
         except Exception as error:
             failure = {
                 "Ids": [coupon["Id"] for coupon in coupons],
@@ -2830,10 +2871,10 @@ def execute(plan, library_path, args):
                 "Method": method,
                 "Reason": f"{type(error).__name__}: {error}",
             }
-            return None, None, failure
+            return None, None, failure, coupons
 
     def collect(result):
-        generated, qualification, failure = result
+        generated, qualification, failure, coupons = result
         if failure:
             failures.append(failure)
             print(
@@ -2847,6 +2888,7 @@ def execute(plan, library_path, args):
             return
         if generated is not None:
             libraries.append(generated)
+            built.extend(coupons)
         qualifications.append(qualification)
 
     # Build the straight-edge family first. Besides normally being inexpensive, this
@@ -2925,7 +2967,7 @@ def execute(plan, library_path, args):
     probe_study_only = getattr(args, "probe_study_only", False)
     stamped = 0
     if not probe_study_only and (destination / "process-library.json").is_file():
-        stamped = stamp_library_signatures(destination / "process-library.json", plan["Coupons"])
+        stamped = stamp_library_signatures(destination / "process-library.json", built_coupons_for_stamping(built, skipped, failures))
     geometry_complete = not failures and not probe_study_only
     probe_study_complete = not failures and probe_study_only
     qualification_manifest = {
