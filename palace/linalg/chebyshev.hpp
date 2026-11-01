@@ -19,6 +19,11 @@ namespace palace
 // Reference: Phillips and Fischer, Optimal Chebyshev smoothers and one-sided V-cycles,
 //            arXiv:2210.03179v1 (2022).
 //
+// If a maximum polynomial order larger than the order is given, the order is raised to it
+// at setup when the operator is nearly positive semi-definite. Higher orders reduce the
+// iteration count for such operators but amplify the error components with negative
+// eigenvalues of indefinite ones (for example K - ω² M at large ω h).
+//
 template <OperatorType OperType>
 class ChebyshevSmoother : public Solver<OperType>
 {
@@ -28,8 +33,9 @@ private:
   // MPI communicator associated with the solver operator and vectors.
   MPI_Comm comm;
 
-  // Number of smoother iterations and polynomial order.
-  const int pc_it, order;
+  // Number of smoother iterations, polynomial order, and range of the polynomial order.
+  const int pc_it, min_order, max_order;
+  int order;
 
   // System matrix (not owned).
   const OperType *A;
@@ -44,9 +50,16 @@ private:
   mutable VecType d, r;
 
 public:
-  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
+  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
+                    int max_poly_order = 0);
 
   void SetOperator(const OperType &op) override;
+
+  // Polynomial order in use (chosen during SetOperator when a maximum order is given).
+  int GetOrder() const { return order; }
+
+  // Set the polynomial order, for example to match the order chosen by another smoother.
+  void SetOrder(int poly_order);
 
   void Mult(const VecType &x, VecType &y) const override
   {

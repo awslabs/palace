@@ -12,6 +12,8 @@
 #include "fem/brokenspace.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/conformingprolongation.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -34,11 +36,20 @@ private:
   // Members for constructing libCEED operators. active_restr caches the single shared
   // lossy-domain or active-boundary subset for each geometry type.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
+  mutable ceed::CeedObjectMap<CeedBasis> reduced_basis, reduced_deriv_basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, active_restr, interp_restr,
       interp_range_restr;
+  mutable ceed::CeedObjectMap<CeedElemRestriction> part_restr[2], part_active_restr[2];
 
   // Temporary storage for operator applications.
   mutable ComplexVector tx, lx, ly;
+
+  // Prolongation operator prepared for faster products on the host (when the prolongation
+  // is a HypreParMatrix), see PrepareProlongation.
+  mutable bool prolongation_prepared = false;
+  mutable std::unique_ptr<hypre::HypreProlongation> fast_prolongation;
+  mutable std::unique_ptr<ConformingProlongation> fast_conforming_prolongation;
+  void PrepareProlongation(const Operator *P) const;
 
   // Members for discrete interpolators from an auxiliary space to a primal space.
   mutable const FiniteElementSpace *aux_fespace;
@@ -160,7 +171,16 @@ public:
 
   const Operator *GetProlongationMatrix() const
   {
-    return broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+    const Operator *P = broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+    if (!prolongation_prepared)
+    {
+      PrepareProlongation(P);
+    }
+    if (fast_conforming_prolongation)
+    {
+      return fast_conforming_prolongation.get();
+    }
+    return fast_prolongation ? fast_prolongation.get() : P;
   }
 
   // The prolongation as a HypreParMatrix, and the global offsets of the L-DOFs and of the
@@ -257,6 +277,11 @@ public:
 
   // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
+
+  // Return the basis object from ceed::InitReducedBasis for affine elements of the given
+  // geometry type, representing the values and derivatives (values = true) or only the
+  // derivatives of the basis functions, or nullptr if there is none.
+  CeedBasis GetCeedReducedBasis(Ceed ceed, mfem::Geometry::Type geom, bool values) const;
 
   // Return the element restriction object for the full element index list or the shared
   // active subset of the given geometry factor data.

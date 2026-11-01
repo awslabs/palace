@@ -515,6 +515,11 @@ that, the interpolation suggests the next sample from an error indicator that ca
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
 PROM basis.
 
+The HDM solve at a selected frequency starts from the PROM solution there when
+[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear)
+is enabled (the default), so fewer linear solver iterations are needed as the PROM
+improves.
+
 ### Convergence criterion
 
 At a proposed sample frequency ``f^*``, *Palace* compares the HDM solution against the PROM

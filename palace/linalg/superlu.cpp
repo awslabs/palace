@@ -62,7 +62,18 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool 
       solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
       break;
     case SymbolicFactorization::PARMETIS:
-      solver.SetColumnPermutation(mfem::superlu::PARMETIS);
+      // SuperLU_DIST does not support ParMETIS (parallel symbolic factorization) with a 3D
+      // process grid: process layer 0 returns early and the other layers hang.
+      if (solver.npdep_ > 1)
+      {
+        Mpi::Warning(comm, "SuperLU_DIST does not support ParMETIS ordering with a 3D "
+                           "process grid, using METIS instead!\n");
+        solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
+      }
+      else
+      {
+        solver.SetColumnPermutation(mfem::superlu::PARMETIS);
+      }
       break;
     case SymbolicFactorization::AMD:
     case SymbolicFactorization::RCM:

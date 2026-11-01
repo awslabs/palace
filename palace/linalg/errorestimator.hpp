@@ -54,6 +54,9 @@ public:
                 bool use_mg);
 
   void Mult(const VecType &x, VecType &y) const;
+
+  // Projections of several fluxes, with the linear solves performed at once.
+  void Mult(const std::vector<const VecType *> &x, const std::vector<VecType *> &y) const;
 };
 
 // Forward declarations for friend access.
@@ -98,6 +101,11 @@ public:
   // and fold into an existing indicator. The indicators are nondimensionalized using the
   // total field energy.
   void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const;
+
+  // Same as AddErrorIndicator for each of several fields E[k] with energies Et[k], in
+  // order, with the flux recoveries of the fields computed together.
+  void AddErrorIndicators(const std::vector<const VecType *> &E,
+                          const std::vector<double> &Et, ErrorIndicator &indicator) const;
 };
 
 // Class used for computing curl flux error estimate, η_K = || μ⁻¹ Bₕ - H ||_K where H
@@ -137,6 +145,11 @@ public:
   // dofs, and fold into an existing indicator. The indicators are nondimensionalized using
   // the total field energy.
   void AddErrorIndicator(const VecType &B, double Et, ErrorIndicator &indicator) const;
+
+  // Same as AddErrorIndicator for each of several fields B[k] with energies Et[k], in
+  // order, with the flux recoveries of the fields computed together.
+  void AddErrorIndicators(const std::vector<const VecType *> &B,
+                          const std::vector<double> &Et, ErrorIndicator &indicator) const;
 };
 
 // Class used for computing sum of the gradient flux and curl flux error estimates for 3D,

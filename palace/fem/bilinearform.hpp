@@ -35,9 +35,14 @@ protected:
   // their coefficients are identically zero (see SkipZeroCoefficientElements).
   bool skip_zero_coeff_elems = false;
 
+  // With use_reduced_bases, integrators on affine simplex elements of a square form use the
+  // bases from FiniteElementSpace::GetCeedReducedBasis when they have fewer points. The
+  // integrals are the same up to round-off, since the coefficients are constant on each
+  // element.
   std::unique_ptr<ceed::Operator> PartialAssemble(const FiniteElementSpace &trial_fespace,
                                                   const FiniteElementSpace &test_fespace,
-                                                  bool skip_zero_coeff_elems) const;
+                                                  bool skip_zero_coeff_elems,
+                                                  bool use_reduced_bases = true) const;
 
 public:
   // Order above which to use partial assembly vs. full.
@@ -85,10 +90,10 @@ public:
   {
     // Full assembly keeps the explicit zeros of the zero-coefficient elements, so that the
     // sparsity pattern does not depend on the coefficient values.
-    constexpr bool skip_zero_coeff_elems = false;
-    return FullAssemble(
-        *PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems),
-        skip_zeros, false);
+    constexpr bool skip_zero_coeff_elems = false, use_reduced_bases = false;
+    return FullAssemble(*PartialAssemble(GetTrialSpace(), GetTestSpace(),
+                                         skip_zero_coeff_elems, use_reduced_bases),
+                        skip_zeros, false);
   }
 
   static std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(const ceed::Operator &op,

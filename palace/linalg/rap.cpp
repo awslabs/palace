@@ -4,12 +4,57 @@
 #include "rap.hpp"
 
 #include <array>
+#include <typeinfo>
 
 #include "fem/bilinearform.hpp"
+#include "fem/libceed/operator.hpp"
 #include "linalg/hypre.hpp"
 
 namespace palace
 {
+
+namespace
+{
+
+// Apply the prolongation (or its transpose) of a space to the real and imaginary parts of a
+// complex vector, at once when possible.
+void ProlongationMult(const FiniteElementSpace &fespace, const Vector &xr, const Vector &xi,
+                      Vector &yr, Vector &yi)
+{
+  const Operator *P = fespace.GetProlongationMatrix();
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    fP->Mult(xr, xi, yr, yi);
+    return;
+  }
+  if (const auto *cP = dynamic_cast<const ConformingProlongation *>(P))
+  {
+    cP->Mult(xr, xi, yr, yi);
+    return;
+  }
+  P->Mult(xr, yr);
+  P->Mult(xi, yi);
+}
+
+void ProlongationMultTranspose(const FiniteElementSpace &fespace, const Vector &xr,
+                               const Vector &xi, Vector &yr, Vector &yi)
+{
+  const Operator *P = fespace.GetProlongationMatrix();
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    fP->MultTranspose(xr, xi, yr, yi);
+    return;
+  }
+  if (const auto *cP = dynamic_cast<const ConformingProlongation *>(P))
+  {
+    cP->MultTranspose(xr, xi, yr, yi);
+    return;
+  }
+  P->MultTranspose(xr, yr);
+  P->MultTranspose(xi, yi);
+}
+
+}  // namespace
 
 namespace
 {
@@ -33,6 +78,17 @@ ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
     diag_policy(DiagonalPolicy::DIAG_ONE), RAP(nullptr)
 {
   MFEM_VERIFY(A, "Cannot construct ParOperator from an empty matrix!");
+  // Owned square libCEED operators may apply small simplex leaves through their element
+  // matrices (CPU only, decided by the operator).
+  if (auto *ceed_A = dynamic_cast<ceed::Operator *>(data_A.get()))
+  {
+    if (&trial_fespace == &test_fespace &&
+        (typeid(*ceed_A) == typeid(ceed::Operator) ||
+         typeid(*ceed_A) == typeid(ceed::SymmetricOperator)))
+    {
+      ceed_A->UseElementAssembly();
+    }
+  }
 }
 
 ParOperator::ParOperator(std::unique_ptr<Operator> &&A,
@@ -215,7 +271,12 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
 
   // Parallel assemble and eliminate essential true dofs.
   const Operator *P = test_fespace.GetProlongationMatrix();
-  if (const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P))
+  const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P);
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    hP = &fP->GetMatrix();
+  }
+  if (hP)
   {
     hP->AbsMultTranspose(1.0, lx, 0.0, diag);
   }
@@ -287,6 +348,91 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
   if (B)
   {
     B->Mult(1.0, x, 1.0, y);
+  }
+}
+
+void ParOperator::MultBatch(int n, const Vector &x, Vector &y) const
+{
+  MFEM_ASSERT(x.Size() == n * width && y.Size() == n * height,
+              "Incompatible dimensions for ParOperator::MultBatch!");
+  const auto *ceed_A = dynamic_cast<const ceed::Operator *>(A);
+  if (n == 1 || RAP || !ceed_A)
+  {
+    for (int k = 0; k < n; k++)
+    {
+      const Vector xk(const_cast<Vector &>(x), k * width, width);
+      Vector yk(y, k * height, height);
+      Mult(xk, yk);
+    }
+    return;
+  }
+
+  // Prolongation of all vectors (with the essential true dofs zeroed as in Mult), local
+  // operator, restriction.
+  const int lw = trial_fespace.GetVSize(), lh = test_fespace.GetVSize();
+  batch_lx.SetSize(n * lw);
+  batch_ly.SetSize(n * lh);
+  const Vector *tx = &x;
+  if (dbc_tdof_list.Size())
+  {
+    batch_tx = x;
+    for (int k = 0; k < n; k++)
+    {
+      Vector txk(batch_tx, k * width, width);
+      linalg::SetSubVector(txk, dbc_tdof_list, 0.0);
+    }
+    tx = &batch_tx;
+  }
+  const auto *P = trial_fespace.GetProlongationMatrix();
+  if (const auto *hP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    hP->MultBatch(n, *tx, batch_lx);
+  }
+  else
+  {
+    for (int k = 0; k < n; k++)
+    {
+      const Vector txk(const_cast<Vector &>(*tx), k * width, width);
+      Vector lxk(batch_lx, k * lw, lw);
+      P->Mult(txk, lxk);
+    }
+  }
+  ceed_A->MultBatch(n, batch_lx, batch_ly);
+  const auto *hPt = use_R ? nullptr
+                          : dynamic_cast<const hypre::HypreProlongation *>(
+                                test_fespace.GetProlongationMatrix());
+  if (hPt)
+  {
+    hPt->MultTransposeBatch(n, batch_ly, y);
+  }
+  else
+  {
+    for (int k = 0; k < n; k++)
+    {
+      const Vector lyk(batch_ly, k * lh, lh);
+      Vector yk(y, k * height, height);
+      RestrictionMatrixMult(lyk, yk);
+    }
+  }
+  for (int k = 0; k < n; k++)
+  {
+    const Vector xk(const_cast<Vector &>(x), k * width, width);
+    Vector yk(y, k * height, height);
+    if (dbc_tdof_list.Size())
+    {
+      if (diag_policy == DiagonalPolicy::DIAG_ONE)
+      {
+        linalg::SetSubVector(yk, dbc_tdof_list, xk);
+      }
+      else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
+      {
+        linalg::SetSubVector(yk, dbc_tdof_list, 0.0);
+      }
+    }
+    if (B)
+    {
+      B->Mult(1.0, xk, 1.0, yk);
+    }
   }
 }
 
@@ -559,13 +705,11 @@ void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
     auto &tx = trial_fespace.GetTVector<ComplexVector>();
     tx = x;
     linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
+    ProlongationMult(trial_fespace, tx.Real(), tx.Imag(), lx.Real(), lx.Imag());
   }
   else
   {
-    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    ProlongationMult(trial_fespace, x.Real(), x.Imag(), lx.Real(), lx.Imag());
   }
 
   // Apply the operator on the L-vector.
@@ -607,8 +751,7 @@ void ComplexParOperator::MultTranspose(const ComplexVector &x, ComplexVector &y)
   // Apply the operator on the L-vector.
   A->MultTranspose(ly, lx);
 
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), y.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), y.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), y.Real(), y.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -645,8 +788,7 @@ void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
   // Apply the operator on the L-vector.
   A->MultHermitianTranspose(ly, lx);
 
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), y.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), y.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), y.Real(), y.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -673,13 +815,11 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
     auto &tx = trial_fespace.GetTVector<ComplexVector>();
     tx = x;
     linalg::SetSubVector(tx, dbc_tdof_list, 0.0);
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(tx.Imag(), lx.Imag());
+    ProlongationMult(trial_fespace, tx.Real(), tx.Imag(), lx.Real(), lx.Imag());
   }
   else
   {
-    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
-    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+    ProlongationMult(trial_fespace, x.Real(), x.Imag(), lx.Real(), lx.Imag());
   }
 
   // Apply the operator on the L-vector.
@@ -725,8 +865,7 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
   A->MultTranspose(ly, lx);
 
   auto &tx = trial_fespace.GetTVector<ComplexVector>();
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), tx.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), tx.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), tx.Real(), tx.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -765,8 +904,7 @@ void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, Compl
   A->MultHermitianTranspose(ly, lx);
 
   auto &tx = trial_fespace.GetTVector<ComplexVector>();
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), tx.Real());
-  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), tx.Imag());
+  ProlongationMultTranspose(trial_fespace, lx.Real(), lx.Imag(), tx.Real(), tx.Imag());
   if (dbc_tdof_list.Size())
   {
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
@@ -786,8 +924,7 @@ void ComplexParOperator::RestrictionMatrixMult(const ComplexVector &ly,
 {
   if (!use_R)
   {
-    test_fespace.GetProlongationMatrix()->MultTranspose(ly.Real(), ty.Real());
-    test_fespace.GetProlongationMatrix()->MultTranspose(ly.Imag(), ty.Imag());
+    ProlongationMultTranspose(test_fespace, ly.Real(), ly.Imag(), ty.Real(), ty.Imag());
   }
   else
   {
@@ -801,8 +938,7 @@ void ComplexParOperator::RestrictionMatrixMultTranspose(const ComplexVector &ty,
 {
   if (!use_R)
   {
-    test_fespace.GetProlongationMatrix()->Mult(ty.Real(), ly.Real());
-    test_fespace.GetProlongationMatrix()->Mult(ty.Imag(), ly.Imag());
+    ProlongationMult(test_fespace, ty.Real(), ty.Imag(), ly.Real(), ly.Imag());
   }
   else
   {

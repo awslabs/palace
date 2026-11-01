@@ -423,6 +423,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Pass 2: postprocess in canonical step order so output is independent of solve order.
   std::vector<double> domain_energy(n_step);
+  std::vector<Vector> B_step(n_step);
   for (int step = 0; step < n_step; step++)
   {
     Curl.Mult(A[step], B);
@@ -488,7 +489,17 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             ? std::next(curlcurl_op.GetSurfaceCurrentOp().begin(), step)->first
             : std::next(flux_excitations.begin(), step - n_current_steps)->first;
     domain_energy[step] = post_op.MeasureAndPrintAll(step, A[step], B, terminal_idx);
-    estimator.AddErrorIndicator(B, domain_energy[step], indicator);
+    B_step[step] = B;
+  }
+
+  // Error estimation, with the flux recoveries for all excitations computed together.
+  {
+    std::vector<const Vector *> B_ptr(n_step);
+    for (int step = 0; step < n_step; step++)
+    {
+      B_ptr[step] = &B_step[step];
+    }
+    estimator.AddErrorIndicators(B_ptr, domain_energy, indicator);
   }
 
   // Postprocess the inductance matrix from the computed field solutions, or the stored

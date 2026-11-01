@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-1-0",
+  "$id": "urn:palace:schema:4-1-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2943,7 +2943,7 @@
       "properties": {
         "Type": {
           "$ref": "#/$defs/LinearSolverType",
-          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects the solver based on the problem type and available sparse direct solvers."
+          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects BoomerAMG for electrostatic problems, AMS for magnetostatic and transient problems, and otherwise the first available sparse direct solver among STRUMPACK, SuperLU_DIST, and MUMPS (AMS if none is available)."
         },
         "KSPType": {
           "$ref": "#/$defs/KrylovSolver",
@@ -2974,7 +2974,7 @@
         },
         "InitialGuess": {
           "type": "boolean",
-          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
+          "description": "Use the previous solution as an initial guess for the iterative solver. Adaptive frequency sweeps instead start each sampled solve from the reduced-order model solution at that frequency. If omitted, Palace enables this for driven simulations, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "MGMaxLevels": {
@@ -3010,7 +3010,7 @@
         },
         "MGSmoothOrder": {
           "type": "integer",
-          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`.",
+          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`, except when [`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"` and the solution order is 2: then, order 8 is used on multigrid levels whose shifted operator is estimated at setup to be nearly positive semi-definite.",
           "exclusiveMinimum": 0
         },
         "MGSmoothEigScaleMax": {
@@ -3126,6 +3126,11 @@
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
         },
+        "AMSSmoothIts": {
+          "type": "integer",
+          "description": "Number of smoothing sweeps on the Nédélec space in each AMS iteration when AMS is the coarse solver of geometric multigrid (`\"MGMaxLevels\"` > 1). If omitted, Palace uses 8 when [`\"AMSSingularOperator\"`](@ref config-solver-linear-amssingularoperator) is enabled (magnetostatic simulations by default) and [`\"MGSmoothIts\"`](@ref config-solver-linear-mgsmoothits) otherwise.",
+          "exclusiveMinimum": 0
+        },
         "DivFreeTol": {
           "type": "number",
           "description": "Relative tolerance for divergence-free cleaning used in the eigenmode simulation type. Ignored when a nonzero Floquet wave vector is specified or when a nonzero [LondonDepth](@ref config-domains-materials-londondepth) is used.",
@@ -3140,9 +3145,8 @@
         },
         "EstimatorTol": {
           "type": "number",
-          "description": "Relative tolerance for the flux projection solve used in the error estimate calculation.",
-          "minimum": 0.0,
-          "default": 1e-06
+          "description": "Relative tolerance for the flux projection solve used in the error estimate calculation. If omitted, Palace uses 1e-6 when the error estimate drives adaptive mesh refinement ([`/Model/Refinement/MaxIts`](@ref config-model-refinement-maxits) > 0) and 1e-4 otherwise.",
+          "minimum": 0.0
         },
         "EstimatorMaxIts": {
           "type": "integer",

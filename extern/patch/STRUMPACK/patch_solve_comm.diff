@@ -1,0 +1,627 @@
+diff --git a/src/misc/MPIWrapper.hpp b/src/misc/MPIWrapper.hpp
+index 067a5197..6784827a 100644
+--- a/src/misc/MPIWrapper.hpp
++++ b/src/misc/MPIWrapper.hpp
+@@ -594,18 +594,33 @@ namespace strumpack {
+       for (int p=0; p<size(); p++)
+         rsize += rcnts[p];
+       std::vector<T,A> rbuf(rsize);
+-      MPI_Alltoallv
+-        (sbuf, scnts, sdispls, mpi_type<T>(),
+-         rbuf.data(), rcnts, rdispls, mpi_type<T>(), comm_);
++      all_to_allv(sbuf, scnts, sdispls, rbuf.data(), rcnts, rdispls);
+       return rbuf;
+     }
+ 
+     template<typename T> void
+     all_to_allv(const T* sbuf, int* scnts, int* sdispls,
+                 T* rbuf, int* rcnts, int* rdispls) const {
+-      MPI_Alltoallv
+-        (sbuf, scnts, sdispls, mpi_type<T>(),
+-         rbuf, rcnts, rdispls, mpi_type<T>(), comm_);
++      // Equivalent to MPI_Alltoallv, but only exchanges the non-empty
++      // messages (the counts are known on both sides). The
++      // communication pattern is typically sparse, while
++      // MPI_Alltoallv implementations take O(P) steps.
++      auto P = size();
++      int r = rank(), nreqs = 0;
++      std::unique_ptr<MPI_Request[]> reqs(new MPI_Request[2*P]);
++      for (int p=0; p<P; p++) {
++        auto src = (r + p) % P;
++        if (rcnts[src])
++          MPI_Irecv(rbuf + rdispls[src], rcnts[src], mpi_type<T>(), src, 0,
++                    comm_, reqs.get()+nreqs++);
++      }
++      for (int p=0; p<P; p++) {
++        auto dst = (r + p) % P;
++        if (scnts[dst])
++          MPI_Isend(sbuf + sdispls[dst], scnts[dst], mpi_type<T>(), dst, 0,
++                    comm_, reqs.get()+nreqs++);
++      }
++      MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
+     }
+ 
+     /**
+@@ -631,6 +646,19 @@ namespace strumpack {
+       all_to_all_v(sbuf, rbuf, pbuf, mpi_type<T>());
+     }
+ 
++    /**
++     * Same as above, but the receive sizes are taken from rsizes if
++     * rsizes.size() == size(). Otherwise they are computed (with an
++     * MPI_Alltoall) and stored in rsizes, so they can be reused when
++     * the same communication pattern is repeated (all ranks should
++     * have the same cache state).
++     */
++    template<typename T, typename A=std::allocator<T>> void
++    all_to_all_v(std::vector<std::vector<T>>& sbuf, std::vector<T,A>& rbuf,
++                 std::vector<T*>& pbuf, std::vector<int>& rsizes) const {
++      all_to_all_v(sbuf, rbuf, pbuf, mpi_type<T>(), &rsizes);
++    }
++
+     /**
+      * Perform an MPI_Alltoallv. Each rank sends sbuf[i] to process
+      * i. The results are received in a single contiguous vector which
+@@ -671,7 +699,8 @@ namespace strumpack {
+      */
+     template<typename T, typename A=std::allocator<T>> void
+     all_to_all_v(std::vector<std::vector<T>>& sbuf, std::vector<T,A>& rbuf,
+-                 std::vector<T*>& pbuf, const MPI_Datatype Ttype) const {
++                 std::vector<T*>& pbuf, const MPI_Datatype Ttype,
++                 std::vector<int>* rsizes_cache=nullptr) const {
+       assert(sbuf.size() == std::size_t(size()));
+       auto P = size();
+       std::unique_ptr<int[]> iwork(new int[4*P]);
+@@ -688,8 +717,13 @@ namespace strumpack {
+         }
+         ssizes[p] = sbuf[p].size();
+       }
+-      MPI_Alltoall
+-        (ssizes, 1, mpi_type<int>(), rsizes, 1, mpi_type<int>(), comm_);
++      if (rsizes_cache && rsizes_cache->size() == std::size_t(P))
++        std::copy(rsizes_cache->begin(), rsizes_cache->end(), rsizes);
++      else {
++        MPI_Alltoall
++          (ssizes, 1, mpi_type<int>(), rsizes, 1, mpi_type<int>(), comm_);
++        if (rsizes_cache) rsizes_cache->assign(rsizes, rsizes+P);
++      }
+       std::size_t totssize = std::accumulate(ssizes, ssizes+P, std::size_t(0)),
+         totrsize = std::accumulate(rsizes, rsizes+P, std::size_t(0));
+ #if 1
+@@ -715,19 +749,26 @@ namespace strumpack {
+         std::unique_ptr<MPI_Request[]> reqs(new MPI_Request[2*P]);
+         std::size_t displ = 0;
+         pbuf.resize(P);
+-        int r = rank();
++        int r = rank(), nreqs = 0;
++        // Only post messages that carry data: the sizes are known on
++        // both sides after the MPI_Alltoall above, so empty messages
++        // are skipped (avoids O(P^2) zero-byte messages on large
++        // communicators).
+         for (int p=0; p<P; p++) {
+           auto dst = (r + p) % P;
+           pbuf[dst] = rbuf.data() + displ;
+-          MPI_Irecv(pbuf[dst], rsizes[dst], Ttype, dst, 0, comm_, reqs.get()+dst);
++          if (rsizes[dst])
++            MPI_Irecv(pbuf[dst], rsizes[dst], Ttype, dst, 0, comm_,
++                      reqs.get()+nreqs++);
+           displ += rsizes[dst];
+         }
+         for (int p=0; p<P; p++) {
+           auto dst = (r + p) % P;
+-          MPI_Isend
+-            (sbuf[dst].data(), ssizes[dst], Ttype, dst, 0, comm_, reqs.get()+P+dst);
++          if (ssizes[dst])
++            MPI_Isend(sbuf[dst].data(), ssizes[dst], Ttype, dst, 0, comm_,
++                      reqs.get()+nreqs++);
+         }
+-        MPI_Waitall(2*P, reqs.get(), MPI_STATUSES_IGNORE);
++        MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
+         std::vector<std::vector<T>>().swap(sbuf);
+       } else {
+         std::unique_ptr<T[]> sendbuf_(new T[totssize]);
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 48f5aedd..4d9b77ce 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -247,6 +247,20 @@ namespace strumpack {
+     integer_t lo = dist[rank_];
+     integer_t m = dist[rank_+1] - lo, n = x.cols();
+ 
++    // The redistribution of the right-hand side to/from the
++    // elimination tree layout only depends on the tree, the row
++    // distribution and the number of right-hand sides. The first
++    // solve with a given number of right-hand sides exchanges
++    // (row,col,value) triplets and records the pattern. Subsequent
++    // solves only exchange the values.
++    auto& sp = solve_perm_[n];
++    if (sp.ready && sp.m == m) {
++      multifrontal_solve_dist_cached(x, sp);
++      return;
++    }
++    sp = SolvePerm();
++    sp.m = m;
++
+     std::unique_ptr<int[]> iwork(new int[4*P_]);
+     auto ibuf = iwork.get();
+     auto scnts = ibuf;
+@@ -256,6 +270,8 @@ namespace strumpack {
+ 
+     using Triplet = Triplet<scalar_t,integer_t>;
+     std::vector<Triplet> sbuf(m*n);
++    sp.in_src_r.resize(m*n);
++    sp.in_src_c.resize(m*n);
+     std::fill(scnts, scnts+P_, 0);
+     if (n == 1)
+       for (integer_t r=0; r<m; r++)
+@@ -278,21 +294,32 @@ namespace strumpack {
+       pp[p] = sdispls[p] = sdispls[p-1] + scnts[p-1];
+     if (n == 1) {
+       const auto perm = nd_.perm().data() + lo;
+-      for (integer_t r=0; r<m; r++)
+-        sbuf[pp[row_owner_[r]]++] = {perm[r], 0, x(r,0)};
++      for (integer_t r=0; r<m; r++) {
++        auto k = pp[row_owner_[r]]++;
++        sbuf[k] = {perm[r], 0, x(r,0)};
++        sp.in_src_r[k] = r;
++        sp.in_src_c[k] = 0;
++      }
+     } else {
+       for (integer_t r=0; r<m; r++) {
+         auto destr = row_owner_[r];
+         auto permr = nd_.perm()[r+lo];
+         int pf = row_pfront_[permr];
+         if (pf < 0)
+-          for (integer_t c=0; c<n; c++)
+-            sbuf[pp[destr]++] = {permr, c, x(r,c)};
++          for (integer_t c=0; c<n; c++) {
++            auto k = pp[destr]++;
++            sbuf[k] = {permr, c, x(r,c)};
++            sp.in_src_r[k] = r;
++            sp.in_src_c[k] = c;
++          }
+         else {
+           auto& f = all_pfronts_[pf];
+-          for (integer_t c=0; c<n; c++)
+-            sbuf[pp[destr+((c/B)%f.pcols)*f.prows]++] =
+-              {permr, c, x(r,c)};
++          for (integer_t c=0; c<n; c++) {
++            auto k = pp[destr+((c/B)%f.pcols)*f.prows]++;
++            sbuf[k] = {permr, c, x(r,c)};
++            sp.in_src_r[k] = r;
++            sp.in_src_c[k] = c;
++          }
+         }
+       }
+     }
+@@ -300,6 +327,10 @@ namespace strumpack {
+     rdispls[0] = 0;
+     for (int p=1; p<P_; p++)
+       rdispls[p] = rdispls[p-1] + rcnts[p-1];
++    sp.scnts.assign(scnts, scnts+P_);
++    sp.sdispls.assign(sdispls, sdispls+P_);
++    sp.rcnts.assign(rcnts, rcnts+P_);
++    sp.rdispls.assign(rdispls, rdispls+P_);
+ 
+     auto rbuf = comm_.all_to_allv
+       (sbuf.data(), scnts, sdispls, rcnts, rdispls);
+@@ -313,16 +344,24 @@ namespace strumpack {
+       xdist[f] = DistM_t
+         (local_pfronts_[f].grid, local_pfronts_[f].dim_sep(), n);
+     auto rsize = rbuf.size();
++    sp.in_dst_f.resize(rsize);
++    sp.in_dst_off.resize(rsize);
+ #pragma omp parallel for
+     for (std::size_t i=0; i<rsize; i++) {
+       integer_t r = rbuf[i].r, c = rbuf[i].c;
+-      if (r >= local_range_.first && r < local_range_.second)
+-        Xloc(r, c) = rbuf[i].v;
+-      else {
++      if (r >= local_range_.first && r < local_range_.second) {
++        auto& xrc = Xloc(r, c);
++        xrc = rbuf[i].v;
++        sp.in_dst_f[i] = -1;
++        sp.in_dst_off[i] = &xrc - xloc.data();
++      } else {
+         for (std::size_t f=0; f<local_pfronts_.size(); f++)
+           if (r >= local_pfronts_[f].sep_begin &&
+               r < local_pfronts_[f].sep_end) {
+-            xdist[f].global(r - local_pfronts_[f].sep_begin, c) = rbuf[i].v;
++            auto& xrc = xdist[f].global(r - local_pfronts_[f].sep_begin, c);
++            xrc = rbuf[i].v;
++            sp.in_dst_f[i] = f;
++            sp.in_dst_off[i] = &xrc - xdist[f].data();
+             break;
+           }
+       }
+@@ -336,12 +375,19 @@ namespace strumpack {
+     sdispls = ibuf + 3*P_;
+     for (int p=0; p<P_; p++)
+       pp[p] = sdispls[p];
++    sp.out_src_f.resize(rsize);
++    sp.out_src_off.resize(rsize);
+     for (integer_t r=local_range_.first; r<local_range_.second; r++) {
+       auto dest = std::upper_bound
+         (dist.begin(), dist.end(), nd_.iperm()[r])-dist.begin()-1;
+       auto permgr = nd_.iperm()[r];
+-      for (integer_t c=0; c<n; c++)
+-        rbuf[pp[dest]++] = {permgr, c, Xloc(r,c)};
++      for (integer_t c=0; c<n; c++) {
++        auto k = pp[dest]++;
++        auto& xrc = Xloc(r,c);
++        rbuf[k] = {permgr, c, xrc};
++        sp.out_src_f[k] = -1;
++        sp.out_src_off[k] = &xrc - xloc.data();
++      }
+     }
+     for (std::size_t i=0; i<local_pfronts_.size(); i++) {
+       if (xdist[i].lcols() == 0) continue;
+@@ -350,20 +396,69 @@ namespace strumpack {
+         auto permgr = nd_.iperm()[xdist[i].rowl2g(r) + slo];
+         auto dest = std::upper_bound
+           (dist.begin(), dist.end(), permgr)-dist.begin()-1;
+-        for (int c=0; c<xdist[i].lcols(); c++)
+-          rbuf[pp[dest]++] = {permgr, xdist[i].coll2g(c), xdist[i](r,c)};
++        for (int c=0; c<xdist[i].lcols(); c++) {
++          auto k = pp[dest]++;
++          auto& xrc = xdist[i](r,c);
++          rbuf[k] = {permgr, xdist[i].coll2g(c), xrc};
++          sp.out_src_f[k] = i;
++          sp.out_src_off[k] = &xrc - xdist[i].data();
++        }
+       }
+     }
+     comm_.all_to_allv
+       (rbuf.data(), scnts, sdispls, sbuf.data(), rcnts, rdispls);
+ 
++    sp.out_dst_r.resize(std::size_t(m)*n);
++    sp.out_dst_c.resize(std::size_t(m)*n);
+ #pragma omp parallel for
+-    for (std::size_t i=0; i<std::size_t(m)*n; i++)
++    for (std::size_t i=0; i<std::size_t(m)*n; i++) {
+       x(sbuf[i].r-lo,sbuf[i].c) = sbuf[i].v;
++      sp.out_dst_r[i] = sbuf[i].r-lo;
++      sp.out_dst_c[i] = sbuf[i].c;
++    }
++    sp.ready = true;
+ 
+     Triplet::free_mpi_type();
+   }
+ 
++  template<typename scalar_t,typename integer_t> void
++  EliminationTreeMPIDist<scalar_t,integer_t>::multifrontal_solve_dist_cached
++  (DenseM_t& x, const SolvePerm& sp) {
++    auto n = x.cols();
++    std::vector<scalar_t> sval(sp.in_src_r.size()), rval(sp.in_dst_f.size());
++    for (std::size_t k=0; k<sval.size(); k++)
++      sval[k] = x(sp.in_src_r[k], sp.in_src_c[k]);
++    comm_.all_to_allv
++      (sval.data(), const_cast<int*>(sp.scnts.data()),
++       const_cast<int*>(sp.sdispls.data()), rval.data(),
++       const_cast<int*>(sp.rcnts.data()), const_cast<int*>(sp.rdispls.data()));
++
++    DenseM_t xloc(local_range_.second - local_range_.first, n);
++    DenseMW_t Xloc
++      (Aprop_.size(), n, xloc.data()-local_range_.first, xloc.ld());
++    std::vector<DistM_t> xdist(local_pfronts_.size());
++    for (std::size_t f=0; f<local_pfronts_.size(); f++)
++      xdist[f] = DistM_t
++        (local_pfronts_[f].grid, local_pfronts_[f].dim_sep(), n);
++    for (std::size_t i=0; i<rval.size(); i++) {
++      auto f = sp.in_dst_f[i];
++      (f < 0 ? xloc.data() : xdist[f].data())[sp.in_dst_off[i]] = rval[i];
++    }
++
++    this->root_->multifrontal_solve(Xloc, xdist.data());
++
++    for (std::size_t k=0; k<rval.size(); k++) {
++      auto f = sp.out_src_f[k];
++      rval[k] = (f < 0 ? xloc.data() : xdist[f].data())[sp.out_src_off[k]];
++    }
++    comm_.all_to_allv
++      (rval.data(), const_cast<int*>(sp.rcnts.data()),
++       const_cast<int*>(sp.rdispls.data()), sval.data(),
++       const_cast<int*>(sp.scnts.data()), const_cast<int*>(sp.sdispls.data()));
++    for (std::size_t i=0; i<sval.size(); i++)
++      x(sp.out_dst_r[i], sp.out_dst_c[i]) = sval[i];
++  }
++
+   template<typename integer_t, typename It>
+   void merge_if_larger(const It u0, const It u1,
+                        std::vector<integer_t>& out,
+diff --git a/src/sparse/EliminationTreeMPIDist.hpp b/src/sparse/EliminationTreeMPIDist.hpp
+index 74b58b03..6fb3d086 100644
+--- a/src/sparse/EliminationTreeMPIDist.hpp
++++ b/src/sparse/EliminationTreeMPIDist.hpp
+@@ -30,6 +30,7 @@
+ #define ELIMINATION_TREE_MPI_DIST_HPP
+ 
+ #include <cstddef>
++#include <map>
+ 
+ #include "EliminationTreeMPI.hpp"
+ #include "PropMapSparseMatrix.hpp"
+@@ -104,6 +105,32 @@ namespace strumpack {
+     std::vector<int> row_pfront_;
+     void find_row_front(const CSRMPI_t& A);
+ 
++    /**
++     * Communication pattern for the redistribution of the
++     * right-hand side to/from the tree layout in
++     * multifrontal_solve_dist, per number of right-hand sides.
++     */
++    struct SolvePerm {
++      bool ready = false;
++      integer_t m = 0;
++      std::vector<int> scnts, sdispls, rcnts, rdispls;
++      // source (row,col) in x of each value sent to the tree layout
++      std::vector<integer_t> in_src_r;
++      std::vector<int> in_src_c;
++      // destination of each value received in the tree layout:
++      // local front index (-1: local subtree) and offset
++      std::vector<int> in_dst_f;
++      std::vector<std::size_t> in_dst_off;
++      // source of each value sent back, same encoding as in_dst_*
++      std::vector<int> out_src_f;
++      std::vector<std::size_t> out_src_off;
++      // destination (row,col) in x of each value received back
++      std::vector<integer_t> out_dst_r;
++      std::vector<int> out_dst_c;
++    };
++    std::map<int,SolvePerm> solve_perm_;
++    void multifrontal_solve_dist_cached(DenseM_t& x, const SolvePerm& sp);
++
+     struct ParallelFront {
+       ParallelFront() {}
+       ParallelFront
+diff --git a/src/sparse/fronts/Front.cpp b/src/sparse/fronts/Front.cpp
+index f84008cd..5e4ff033 100644
+--- a/src/sparse/fronts/Front.cpp
++++ b/src/sparse/fronts/Front.cpp
+@@ -154,8 +154,12 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> inline void
+   Front<scalar_t,integer_t>::extend_add_b
+   (DenseM_t& b, DenseM_t& bupd, const DenseM_t& CB, const F_t* pa) const {
+-    std::size_t upd2sep;
+-    auto I = upd_to_parent(pa, upd2sep);
++    if (upd2pa_.size() != std::size_t(dim_upd()) || upd2pa_parent_ != pa) {
++      upd2pa_ = upd_to_parent(pa, upd2pa_sep_);
++      upd2pa_parent_ = pa;
++    }
++    const auto upd2sep = upd2pa_sep_;
++    const auto& I = upd2pa_;
+     for (std::size_t c=0; c<b.cols(); c++) {
+       for (std::size_t r=0; r<upd2sep; r++)
+         b(I[r]+pa->sep_begin_, c) += CB(r, c);
+@@ -178,8 +182,12 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> void
+   Front<scalar_t,integer_t>::extract_b
+   (const DenseM_t& y, const DenseM_t& yupd, DenseM_t& CB, const F_t* pa) const {
+-    std::size_t upd2sep;
+-    auto I = upd_to_parent(pa, upd2sep);
++    if (upd2pa_.size() != std::size_t(dim_upd()) || upd2pa_parent_ != pa) {
++      upd2pa_ = upd_to_parent(pa, upd2pa_sep_);
++      upd2pa_parent_ = pa;
++    }
++    const auto upd2sep = upd2pa_sep_;
++    const auto& I = upd2pa_;
+     for (std::size_t c=0; c<y.cols(); c++) {
+       for (std::size_t r=0; r<upd2sep; r++)
+         CB(r,c) = y(I[r]+pa->sep_begin_, c);
+diff --git a/src/sparse/fronts/Front.hpp b/src/sparse/fronts/Front.hpp
+index 16c08b61..ec06e407 100644
+--- a/src/sparse/fronts/Front.hpp
++++ b/src/sparse/fronts/Front.hpp
+@@ -440,6 +440,11 @@ namespace strumpack {
+     std::vector<integer_t> upd_;
+     std::unique_ptr<F_t> lchild_, rchild_;
+ 
++    // cached result of upd_to_parent, used in the solve phase
++    mutable std::vector<std::size_t> upd2pa_;
++    mutable std::size_t upd2pa_sep_ = 0;
++    mutable const F_t* upd2pa_parent_ = nullptr;
++
+     virtual long long node_factor_nonzeros() const {
+       return dense_node_factor_nonzeros();
+     }
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index 3c009f6f..59a0e68b 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -28,6 +28,7 @@
+  */
+ #include <fstream>
+ 
++#include <numeric>
+ #include "FrontDenseMPI.hpp"
+ #include "FrontBLRMPI.hpp"
+ #include "ExtendAdd.hpp"
+@@ -150,6 +151,7 @@ namespace strumpack {
+   FrontDenseMPI<scalar_t,integer_t>::partial_factorization
+   (const SPOptions<scalar_t>& opts) {
+     ReturnCode err_code = ReturnCode::SUCCESS;
++    laswp_plan_ = LaswpPlan(); // pivots change with every factorization
+     if (!this->dim_sep() || !grid()->active())
+       return err_code;
+     TaskTimer pf("FrontDenseMPI_factor");
+@@ -305,6 +307,103 @@ namespace strumpack {
+   }
+ #endif
+ 
++  template<typename scalar_t,typename integer_t> void
++  FrontDenseMPI<scalar_t,integer_t>::laswp_fwd(DistM_t& b) const {
++    // Same result as b.laswp(piv, true): the sequence of row swaps is
++    // composed into a permutation once, then applied with a single
++    // exchange between the process rows of each process column.
++    auto& lp = laswp_plan_;
++    const int nprows = grid()->nprows(), prow = grid()->prow(),
++      pcol = grid()->pcol();
++    const auto& comm = grid()->Comm_active();
++    if (!lp.ready) {
++      const int ds = this->dim_sep(), lr = F11_.lrows();
++      // gather the (global) pivots of all process rows (process column 0)
++      std::vector<int> mine;
++      if (pcol == 0)
++        for (int i=0; i<lr; i++) {
++          mine.push_back(F11_.rowl2g(i));
++          mine.push_back(piv[i]-1);
++        }
++      int cnt = mine.size(), P = comm.size();
++      std::vector<int> cnts(P), displs(P);
++      MPI_Allgather(&cnt, 1, MPI_INT, cnts.data(), 1, MPI_INT, comm.comm());
++      int tot = 0;
++      for (int p=0; p<P; p++) { displs[p] = tot; tot += cnts[p]; }
++      std::vector<int> all(tot);
++      MPI_Allgatherv(mine.data(), cnt, MPI_INT, all.data(), cnts.data(),
++                     displs.data(), MPI_INT, comm.comm());
++      std::vector<int> gpiv(ds);
++      std::iota(gpiv.begin(), gpiv.end(), 0);
++      for (int t=0; t<tot; t+=2) gpiv[all[t]] = all[t+1];
++      // b_new(k) = b_old(src[k])
++      std::vector<int> src(ds);
++      std::iota(src.begin(), src.end(), 0);
++      for (int k=0; k<ds; k++) std::swap(src[k], src[gpiv[k]]);
++      std::vector<int> spos(nprows, -1), rpos(nprows, -1);
++      for (int k=0; k<ds; k++) {
++        int pd = F11_.rowg2p(k), ps = F11_.rowg2p(src[k]);
++        if (pd == prow && ps == prow) {
++          if (src[k] != k)
++            lp.loc.emplace_back(F11_.rowg2l(k), F11_.rowg2l(src[k]));
++        } else if (pd == prow) {
++          if (rpos[ps] < 0) {
++            rpos[ps] = lp.rprow.size(); lp.rprow.push_back(ps);
++            lp.ridx.emplace_back();
++          }
++          lp.ridx[rpos[ps]].push_back(F11_.rowg2l(k));
++        } else if (ps == prow) {
++          if (spos[pd] < 0) {
++            spos[pd] = lp.sprow.size(); lp.sprow.push_back(pd);
++            lp.sidx.emplace_back();
++          }
++          lp.sidx[spos[pd]].push_back(F11_.rowg2l(src[k]));
++        }
++      }
++      lp.ready = true;
++    }
++    const int lc = b.lcols();
++    if (!lc) return;
++    const int tag = 7357;
++    std::vector<std::vector<scalar_t>> sbuf(lp.sprow.size()),
++      rbuf(lp.rprow.size());
++    std::vector<MPI_Request> reqs(lp.sprow.size() + lp.rprow.size());
++    int nr = 0;
++    for (std::size_t q=0; q<lp.rprow.size(); q++) {
++      rbuf[q].resize(lp.ridx[q].size() * lc);
++      MPI_Irecv(rbuf[q].data(), rbuf[q].size(), mpi_type<scalar_t>(),
++                lp.rprow[q] + pcol * nprows, tag, comm.comm(), &reqs[nr++]);
++    }
++    for (std::size_t q=0; q<lp.sprow.size(); q++) {
++      auto& sb = sbuf[q];
++      const auto& I = lp.sidx[q];
++      sb.resize(I.size() * lc);
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<I.size(); t++)
++          sb[t + c*I.size()] = b(I[t], c);
++      MPI_Isend(sb.data(), sb.size(), mpi_type<scalar_t>(),
++                lp.sprow[q] + pcol * nprows, tag, comm.comm(), &reqs[nr++]);
++    }
++    if (!lp.loc.empty()) {
++      std::vector<scalar_t> tmp(lp.loc.size() * lc);
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<lp.loc.size(); t++)
++          tmp[t + c*lp.loc.size()] = b(lp.loc[t].second, c);
++      // all sends are packed already, safe to overwrite b
++      MPI_Waitall(nr, reqs.data(), MPI_STATUSES_IGNORE);
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<lp.loc.size(); t++)
++          b(lp.loc[t].first, c) = tmp[t + c*lp.loc.size()];
++    } else
++      MPI_Waitall(nr, reqs.data(), MPI_STATUSES_IGNORE);
++    for (std::size_t q=0; q<lp.rprow.size(); q++) {
++      const auto& I = lp.ridx[q];
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<I.size(); t++)
++          b(I[t], c) = rbuf[q][t + c*I.size()];
++    }
++  }
++
+   template<typename scalar_t,typename integer_t> void
+   FrontDenseMPI<scalar_t,integer_t>::fwd_solve_phase2
+   (const DistM_t& F11, const DistM_t& F12, const DistM_t& F21,
+@@ -335,7 +434,7 @@ namespace strumpack {
+     }
+ #else
+     if (this->dim_sep()) {
+-      b.laswp(piv, true);
++      laswp_fwd(b);
+       if (b.cols() == 1) {
+         trsv(UpLo::L, Trans::N, Diag::U, F11, b);
+         if (this->dim_upd())
+diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
+index fcea4670..22d896f8 100644
+--- a/src/sparse/fronts/FrontDenseMPI.hpp
++++ b/src/sparse/fronts/FrontDenseMPI.hpp
+@@ -127,6 +127,18 @@ namespace strumpack {
+     DistM_t F11_, F12_, F21_, F22_;
+     std::vector<int> piv;
+ 
++    // Cached communication plan to apply the row interchanges (piv)
++    // to the right-hand side in the forward solve.
++    struct LaswpPlan {
++      bool ready = false;
++      std::vector<int> sprow, rprow;          // peer process rows
++      std::vector<std::vector<int>> sidx;     // local rows to send
++      std::vector<std::vector<int>> ridx;     // local rows to receive
++      std::vector<std::pair<int,int>> loc;    // local (dst,src) rows
++    };
++    mutable LaswpPlan laswp_plan_;
++    void laswp_fwd(DistM_t& b) const;
++
+     void build_front(const SpMat_t& A);
+     ReturnCode partial_factorization(const SPOptions<scalar_t>& opts);
+ 
+diff --git a/src/sparse/fronts/FrontMPI.cpp b/src/sparse/fronts/FrontMPI.cpp
+index e0946332..600779e5 100644
+--- a/src/sparse/fronts/FrontMPI.cpp
++++ b/src/sparse/fronts/FrontMPI.cpp
+@@ -188,7 +188,7 @@ namespace strumpack {
+       rchild_->extend_add_column_copy_to_buffers(CBr, seqCBr, sbuf, this);
+     std::vector<scalar_t,NoInit<scalar_t>> rbuf;
+     std::vector<scalar_t*> pbuf;
+-    Comm().all_to_all_v(sbuf, rbuf, pbuf);
++    Comm().all_to_all_v(sbuf, rbuf, pbuf, ea_b_rsizes_[b.cols()]);
+     for (auto& ch : {lchild_.get(), rchild_.get()})
+       if (ch) ch->extend_add_column_copy_from_buffers
+                 (b, bupd, pbuf.data()+master(ch), this);
+@@ -213,7 +213,7 @@ namespace strumpack {
+                 (b, bupd, master(ch), sbuf, this);
+     std::vector<scalar_t,NoInit<scalar_t>> rbuf;
+     std::vector<scalar_t*> pbuf;
+-    Comm().all_to_all_v(sbuf, rbuf, pbuf);
++    Comm().all_to_all_v(sbuf, rbuf, pbuf, ex_b_rsizes_[b.cols()]);
+     if (visit(lchild_))
+       lchild_->extract_column_copy_from_buffers(b, CBl, seqCBl, pbuf, this);
+     if (visit(rchild_))
+diff --git a/src/sparse/fronts/FrontMPI.hpp b/src/sparse/fronts/FrontMPI.hpp
+index c8779a71..b1ea13f1 100644
+--- a/src/sparse/fronts/FrontMPI.hpp
++++ b/src/sparse/fronts/FrontMPI.hpp
+@@ -31,6 +31,7 @@
+ 
+ #include "Front.hpp"
+ 
++#include <map>
+ #include "misc/MPIWrapper.hpp"
+ #include "dense/DistributedMatrix.hpp"
+ 
+@@ -155,6 +156,10 @@ namespace strumpack {
+   protected:
+     BLACSGrid blacs_grid_;     // 2D processor grid
+ 
++    // receive sizes for the extend_add_b/extract_b exchanges, per
++    // number of right-hand sides, reused for repeated solves
++    mutable std::map<int,std::vector<int>> ea_b_rsizes_, ex_b_rsizes_;
++
+     virtual long long node_factor_nonzeros() const override;
+ 
+     using F_t::lchild_;

@@ -50,6 +50,9 @@ private:
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
   Vector &GetTestLVector() const;
 
+  // Workspace for MultBatch.
+  mutable Vector batch_tx, batch_lx, batch_ly;
+
   ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
               const FiniteElementSpace &trial_fespace,
               const FiniteElementSpace &test_fespace, bool test_restrict);
@@ -122,6 +125,11 @@ public:
   void AssembleDiagonal(Vector &diag) const override;
 
   void Mult(const Vector &x, Vector &y) const override;
+
+  // Products for n vectors stored one after the other in x and y (n * width and n * height
+  // entries), each with the same operations as Mult. The prolongations and the local
+  // libCEED operator are applied to all vectors at once where supported.
+  void MultBatch(int n, const Vector &x, Vector &y) const;
 
   void MultTranspose(const Vector &x, Vector &y) const override;
 

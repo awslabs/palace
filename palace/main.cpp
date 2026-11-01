@@ -1,19 +1,27 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <mpi.h>
+#if defined(__linux__)
+#include <unistd.h>
+#include <sys/prctl.h>
+#endif
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "driver.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
+#include "utils/affinity.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/iodata.hpp"
@@ -164,18 +172,71 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Devic
   Mpi::Barrier(comm);
 }
 
+#if defined(__linux__) && defined(__GLIBC__)
+// Restart the process with glibc's malloc using transparent huge pages for its memory
+// (when the kernel only enables them on request): fewer page faults and TLB misses for the
+// large arrays (vectors, operators, sparse factors), with a small increase in memory. glibc
+// reads its tunables only at startup, so this happens before anything else, once. Set
+// PALACE_DISABLE_THP to opt out.
+static void EnableTransparentHugePages(char *argv[])
+{
+  constexpr const char *guard = "PALACE_THP_REEXEC";
+  const char *disable = std::getenv("PALACE_DISABLE_THP");
+  if (std::getenv(guard) || (disable && *disable && std::string_view(disable) != "0"))
+  {
+    return;
+  }
+  setenv(guard, "1", 1);
+#if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 35)
+  std::ifstream thp("/sys/kernel/mm/transparent_hugepage/enabled");
+  std::string mode((std::istreambuf_iterator<char>(thp)), std::istreambuf_iterator<char>());
+  if (mode.find("[madvise]") == std::string::npos)
+  {
+    return;
+  }
+  std::string tunables = std::getenv("GLIBC_TUNABLES") ? std::getenv("GLIBC_TUNABLES") : "";
+  if (tunables.find("glibc.malloc.hugetlb") != std::string::npos)
+  {
+    return;
+  }
+  tunables += (tunables.empty() ? "" : ":") + std::string("glibc.malloc.hugetlb=1");
+  setenv("GLIBC_TUNABLES", tunables.c_str(), 1);
+  setenv(guard, "2", 1);          // Marks the restarted process
+  execv("/proc/self/exe", argv);  // Only returns on failure, then continue as is
+  setenv(guard, "1", 1);
+#endif
+}
+#endif
+
 int main(int argc, char *argv[])
 {
+#if defined(__linux__) && defined(__GLIBC__)
+  EnableTransparentHugePages(argv);
+  // Keep transparent huge pages off while MPI initializes its network resources (memory
+  // registration, buffer pools), as without the tunable.
+  const char *thp_reexec = std::getenv("PALACE_THP_REEXEC");
+  const bool thp_init_guard = thp_reexec && std::string_view(thp_reexec) == "2" &&
+                              prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0) == 0;
+#endif
+
   // Initialize MPI.
 #if defined(MFEM_USE_STRUMPACK) && \
     (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
+  utils::SpreadPackedProcessBinding();
   Mpi::Init(argc, argv);
+#if defined(__linux__) && defined(__GLIBC__)
+  if (thp_init_guard)
+  {
+    prctl(PR_SET_THP_DISABLE, 0, 0, 0, 0);
+  }
+#endif
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
+  utils::CheckProcessBinding(world_comm);
 
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);

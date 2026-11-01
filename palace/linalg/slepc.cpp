@@ -943,6 +943,7 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
   PalacePetscCall(ToPetscVec(v, v0, 0, 2));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+  has_initial_space = true;
 }
 
 void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
@@ -1980,7 +1981,10 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
 
     ctx->y1.AXPBYPCZ(ctx->gamma / ctx->sigma, ctx->y2, -ctx->gamma / ctx->sigma, ctx->x1,
                      0.0);
-    if (ctx->opProj)
+    // With an initial space which satisfies the divergence-free constraint, the first block
+    // x1 of the basis vectors is a combination of projected vectors, and so is y1 up to
+    // round-off: only a random initial space requires projecting it.
+    if (ctx->opProj && !ctx->HasInitialSpace())
     {
       // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
       ctx->opProj->Mult(ctx->y1);

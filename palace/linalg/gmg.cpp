@@ -17,7 +17,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
     int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
-    bool cheby_4th_kind)
+    bool cheby_4th_kind, int cheby_max_order)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
     R(P.size() + 1), use_timer(false)
@@ -43,15 +43,15 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
       const int cheby_smooth_it = 1;
       B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
           comm, *(*G)[l], smooth_it, cheby_smooth_it, cheby_order, cheby_sf_max,
-          cheby_sf_min, cheby_4th_kind);
+          cheby_sf_min, cheby_4th_kind, cheby_max_order);
     }
     else
     {
       const int cheby_smooth_it = smooth_it;
       if (cheby_4th_kind)
       {
-        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it,
-                                                             cheby_order, cheby_sf_max);
+        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(
+            comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_max_order);
       }
       else
       {

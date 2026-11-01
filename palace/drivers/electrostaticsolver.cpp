@@ -45,6 +45,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Vector RHS(Grad.Width()), E(Grad.Height());
   std::vector<Vector> V(n_step);
 
+  // Fields and energies of the terminal solutions, for the error estimation.
+  std::vector<Vector> E_step(n_step);
+  std::vector<double> energy_step(n_step);
+
   // Initialize structures for storing and reducing the results of error estimation.
   GradFluxErrorEstimator estimator(
       laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
@@ -79,14 +83,23 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Grad.AddMult(V[step], E, -1.0);
 
     // Measurement and printing.
-    auto total_domain_energy = post_op.MeasureAndPrintAll(step, V[step], E, idx);
-
-    // Calculate and record the error indicators.
-    Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, total_domain_energy, indicator);
+    energy_step[step] = post_op.MeasureAndPrintAll(step, V[step], E, idx);
+    E_step[step] = E;
 
     // Next terminal.
     step++;
+  }
+
+  // Calculate and record the error indicators, with the flux recoveries for all terminals
+  // computed together.
+  Mpi::Print("\nUpdating solution error estimates\n");
+  {
+    std::vector<const Vector *> E_ptr(n_step);
+    for (int i = 0; i < n_step; i++)
+    {
+      E_ptr[i] = &E_step[i];
+    }
+    estimator.AddErrorIndicators(E_ptr, energy_step, indicator);
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.

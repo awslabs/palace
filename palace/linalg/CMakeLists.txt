@@ -12,12 +12,14 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/blockprecond.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/conformingprolongation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/cudss.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/divfree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/floquetcorrection.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/fusedvector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gmg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/hcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/hypre.cpp
@@ -34,6 +36,15 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
 )
+
+# The fused vector kernels spell out every fused multiply-add explicitly and must not
+# contract the remaining products, to match the arithmetic of the separate operations.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/fusedvector.cpp
+    TARGET_DIRECTORY ${LIB_TARGET_NAME}
+    PROPERTIES COMPILE_OPTIONS "-ffp-contract=off"
+  )
+endif()
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE

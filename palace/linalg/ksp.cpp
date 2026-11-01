@@ -148,7 +148,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                                 "and auxiliary spaces for construction!");
       pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
           linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
-          coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, linear.mg_smooth_it,
+          coarse_solver ? linear.ams_max_it : linear.mg_cycle_it,
+          coarse_solver ? linear.ams_smooth_it : linear.mg_smooth_it,
           linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen, print);
       break;
     case LinearSolver::BOOMER_AMG:
@@ -220,14 +221,16 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
         return std::make_unique<GeometricMultigridSolver<OperType>>(
             comm, std::move(pc), fespaces.GetProlongationOperators(), &G,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
-            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
+            linear.mg_smooth_order_max);
       }
       else
       {
         return std::make_unique<GeometricMultigridSolver<OperType>>(
             comm, std::move(pc), fespaces.GetProlongationOperators(), nullptr,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
-            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
+            linear.mg_smooth_order_max);
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
@@ -326,6 +329,39 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   }
   ksp_mult++;
   ksp_mult_it += ksp->GetNumIterations();
+}
+
+template <OperatorType OperType>
+void BaseKspSolver<OperType>::Mult(const std::vector<const VecType *> &x,
+                                   const std::vector<VecType *> &y) const
+{
+  MFEM_VERIFY(x.size() == y.size(), "Size mismatch for BaseKspSolver::Mult!");
+  const auto *cg = dynamic_cast<const CgSolver<OperType> *>(ksp.get());
+  if (!cg || x.size() < 2)
+  {
+    for (std::size_t k = 0; k < x.size(); k++)
+    {
+      Mult(*x[k], *y[k]);
+    }
+    return;
+  }
+  BlockTimer bt(Timer::KSP, use_timer);
+  std::vector<typename CgSolver<OperType>::SolveInfo> info;
+  cg->MultBatch(x, y, info);
+  for (const auto &solve : info)
+  {
+    const bool converged =
+        solve.converged && (ksp->GetRelTol() > 0.0 || ksp->GetAbsTol() > 0.0);
+    if (!converged)
+    {
+      Mpi::Warning(ksp->GetComm(),
+                   "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = "
+                   "{:.3e})!\n",
+                   solve.final_res / solve.initial_res, solve.initial_res);
+    }
+    ksp_mult++;
+    ksp_mult_it += solve.iterations;
+  }
 }
 
 template class BaseKspSolver<Operator>;

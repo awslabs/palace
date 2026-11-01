@@ -146,6 +146,21 @@ public:
   CgSolver(MPI_Comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
 
   void Mult(const VecType &b, VecType &x) const override;
+
+  // Convergence information of one solve of MultBatch.
+  struct SolveInfo
+  {
+    bool converged;
+    double initial_res, final_res;
+    int iterations;
+  };
+
+  // Solves A x[k] = b[k] for several right-hand sides, each with the same operations as
+  // Mult. The iterations of the unconverged solves run in lockstep, with one operator
+  // product for all of them (see ParOperator::MultBatch). Afterwards, the accessors for the
+  // previous solve refer to the last right-hand side.
+  void MultBatch(const std::vector<const VecType *> &b, const std::vector<VecType *> &x,
+                 std::vector<SolveInfo> &info) const;
 };
 
 // Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
