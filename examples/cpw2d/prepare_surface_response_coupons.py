@@ -329,7 +329,8 @@ def plan_from_manifest(
     try:
         parameters = process_parameters(library)
     except ValueError:
-        parameters = None   # no version-3 Fabrication metadata: the spatial pieces are not derivable (recorded per coupon)
+        parameters = None   # no version-3 Fabrication metadata: a version-2 spatial coupon's pieces are not derivable
+                            # (plan_local_pieces_form: Unsupported by name, decision 1145)
     for requirement in manifest["Requirements"]:
         if not include_matched and requirement.get("Status") != "Missing":
             continue
@@ -1158,10 +1159,13 @@ def add_local_pieces_form(spec, local_pieces):
 # by cluster_signature_geometry.local_pieces_of_arrangement) is PLANNED in the piece form (Preparation.LocalPieces
 # true, read by the builders here and by device_coupons); a class with one piece per label keeps the one-reference
 # form (identical outputs). --one-reference opts every coupon out (the ES record form of v3-j, decisions 994 / 1136 (1)).
+# A coupon of a class WITH a piece form whose pieces are NOT derivable (the refusals by name of the piece rules, or no
+# version-3 Fabrication for a version-2 spatial record) is Unsupported, never the one-reference form silently (1145).
 LOCAL_PIECES_PLANNER_RULE = ("decision 1136 (4): the piece form (--local-pieces) is the DEFAULT for every coupon whose "
                              "cross-section or plan view holds a conductor label with >= 2 local metal pieces "
                              "(ParallelEdgeCluster / SameConductorGap / SpatialEdgeCluster); one piece per label = the "
-                             "one-reference form; --one-reference opts out (the ES record form)")
+                             "one-reference form; a piece form that is not derivable = Unsupported (decision 1145); "
+                             "--one-reference opts out (the ES record form)")
 
 
 def local_pieces_per_label(coupon, matching_radius, parameters=None):
@@ -1200,7 +1204,12 @@ def local_pieces_per_label(coupon, matching_radius, parameters=None):
 
 
 def plan_local_pieces_form(coupon, matching_radius, parameters=None, one_reference=False):
-    """Stamps coupon["Preparation"] with LocalPieces (bool), LocalPiecesReason and PiecesPerLabel (the rule above)."""
+    """Stamps coupon["Preparation"] with LocalPieces (bool), LocalPiecesReason and PiecesPerLabel (the rule above).
+    A class WITH a piece form whose pieces are not derivable from this coupon (local_pieces_per_label's ValueError:
+    the spatial arrangement refusals, lane C's parallel-edge refusals, a library without version-3 Fabrication for a
+    version-2 spatial record) FAILS CLOSED: Preparation.Method = Unsupported with the refusal as the Reason (decision
+    1145 Q1 (a): the one-reference form of such a coupon is the model class decision 1134 found wrong by tens of
+    percent, so it is never planned silently; --one-reference builds it explicitly)."""
     preparation = coupon["Preparation"]
     if one_reference:
         preparation["LocalPieces"] = False
@@ -1211,6 +1220,15 @@ def plan_local_pieces_form(coupon, matching_radius, parameters=None, one_referen
     except ValueError as error:
         preparation["LocalPieces"] = False
         preparation["LocalPiecesReason"] = f"the pieces are not derivable from this coupon: {error}"
+        if preparation["Method"] != "Unsupported":
+            # the builder keys (Driver / MeshGenerator / ResponseGenerator) go: the coupon is not built (the
+            # Unsupported shape of preparation(): Method + Reason)
+            coupon["Preparation"] = preparation = {
+                "Method": "Unsupported",
+                "Reason": (f"the piece form is the default (decision 1136 (4)) and its pieces are not derivable from "
+                           f"this coupon: {error}; --one-reference builds the one-reference form"),
+                **{key: value for key, value in preparation.items()
+                   if key in ("BoundaryLawQualification", "LocalPieces", "LocalPiecesReason")}}
         return preparation
     if per_label is None:
         preparation["LocalPieces"] = False

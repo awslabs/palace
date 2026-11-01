@@ -3414,7 +3414,7 @@ class PlannerLocalPiecesDefault(unittest.TestCase):
     def test_spatial_coupons_are_planned_by_their_plan_view_pieces(self):
         """The 7 one-label multi-piece and 11 two-label multi-piece-label spatial models of v3-j (the R0-b candidate census,
         probes/v3j_local_pieces_v1.out) are planned in the piece form from their Signature; a one-piece-per-label spatial
-        model is not; a library without Fabrication metadata leaves the spatial pieces not derivable (recorded)."""
+        model is not; a library without Fabrication metadata leaves the spatial pieces not derivable = Unsupported (1145)."""
         library = json.loads(V3J_MIRROR.read_text())
         spatial = {model["Name"].split("_")[-1]: model for model in library["Models"] if model.get("Topology") == "SpatialEdgeCluster"}
         multi = {"e7f44561bbf0", "d19e77e8fe71", "8e2c1b63713b", "4b0d7bf2ad1b", "17ee51c67d9a", "f6d7ca001864", "66217996479f",
@@ -3440,8 +3440,64 @@ class PlannerLocalPiecesDefault(unittest.TestCase):
         self.assertEqual(plan["Summary"]["LocalPiecesForm"], 18)
         bare = PREPARE.plan_from_manifest(Path("m.json"), manifest, V3J_MIRROR, {"MatchingRadius": 1.9}, False)
         for coupon in bare["Coupons"]:
+            # decision 1145: no Fabrication = the pieces not derivable = Unsupported by name, never the one-reference form
             self.assertFalse(coupon["Preparation"]["LocalPieces"])
             self.assertIn("not derivable", coupon["Preparation"]["LocalPiecesReason"])
+            self.assertEqual(coupon["Preparation"]["Method"], "Unsupported")
+            self.assertIn("version-3 Fabrication", coupon["Preparation"]["Reason"])
+        self.assertEqual(bare["Summary"]["Unsupported"], len(multi | single))
+        self.assertEqual(bare["Summary"]["AutomaticallyPreparatable"], 0)
+
+    FABRICATION = {"MetalThickness": 0.1, "OveretchDepth": 0.05, "SidewallAngleDegrees": 90.0, "TopRoundingRadius": 0.0,
+                   "BottomRoundingRadius": 0.0, "SubstratePermittivity": 11.45, "LengthUnit": "um",
+                   "InterfaceLayers": {"SA": {"Thickness": 0.002, "Permittivity": 4.0}, "MS": {"Thickness": 0.0003, "Permittivity": 11.45},
+                                       "MA": {"Thickness": 0.002, "Permittivity": 10.0}}}
+
+    def hourglass_requirement(self):
+        """A version-2 SpatialEdgeCluster record whose two metal triangles touch at the origin (the hourglass of
+        test_spatial_local_pieces): the one-reference form builds, the piece form is refused by name (decision 1100)."""
+        s = 0.5 ** 0.5
+        def portion(p0, p1, gap):
+            return {"Conductor": 1, "Gap": list(gap), "Interfaces": ["MA", "MS", "SA"], "Law": "{\"Type\":\"PEC\"}",
+                    "P": [*p0, *p1]}
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 4,
+                     "Portions": [portion((-2.0, -2.0), (0.0, 0.0), (s, -s)), portion((0.0, 0.0), (-2.0, 2.0), (s, s)),
+                                  portion((2.0, 2.0), (0.0, 0.0), (-s, s)), portion((0.0, 0.0), (2.0, -2.0), (-s, -s))],
+                     "Vertices": [{"P": [0.0, 0.0], "TurnDegrees": 90.0, "Type": "ConvexCorner"}]}
+        return {"Topology": "SpatialEdgeCluster", "Status": "Missing", "Count": 1, "TotalEdgeLength": 1.0,
+                "Geometry": {"EdgeCount": 4, "Signature": signature}, "Signature": signature, "Hash": "ab" * 32,
+                "Interfaces": [{"Slot": 0, "Type": "MA", "Coupon": 1}, {"Slot": 0, "Type": "MS", "Coupon": 2},
+                               {"Slot": 1, "Type": "MA", "Coupon": 3}, {"Slot": 1, "Type": "MS", "Coupon": 4},
+                               {"Slot": 1, "Type": "SA", "Coupon": 5}],
+                "BoundaryCondition": {"Type": "PEC"}}
+
+    def test_a_non_derivable_piece_form_is_unsupported_unless_one_reference(self):
+        """Decision 1145 Q1 (a) (review d1140 MAJOR-1): a coupon of a class WITH a piece form whose pieces the piece rule
+        refuses by name (the spatial vertex-touch, 1100; lane C's non-cross-section parallel edges) is Unsupported by
+        default - never the one-reference form 1134 found wrong - and the one-reference form under --one-reference."""
+        manifest = {"Version": 2, "Library": {"MatchingRadius": 1.9, "Path": "seed.json"},
+                    "Requirements": [self.hourglass_requirement(),
+                                     pec_cluster_requirement([0.0, 2.0, 4.0], [1, 1, -1], [1, 1, 1], "cd")]}   # gaps 0 / 1 on one side
+        library = {"Version": 3, "MatchingRadius": 1.9, "Fabrication": self.FABRICATION, "Models": []}
+        plan = PREPARE.plan_from_manifest(Path("m.json"), manifest, Path("seed.json"), library, False)
+        by_hash = {coupon["Hash"][:2]: coupon["Preparation"] for coupon in plan["Coupons"]}
+        self.assertEqual(set(by_hash), {"ab", "cd"})
+        for key, refusal in (("ab", "metal pieces touch at a vertex"), ("cd", "both have their gap on the +u side")):
+            form = by_hash[key]
+            self.assertEqual(form["Method"], "Unsupported", key)
+            self.assertIn("not derivable", form["Reason"])
+            self.assertIn(refusal, form["Reason"])
+            self.assertIn("--one-reference", form["Reason"])
+            self.assertFalse(form["LocalPieces"])
+            self.assertIn(refusal, form["LocalPiecesReason"])
+            self.assertFalse({"Driver", "MeshGenerator", "ResponseGenerator"} & set(form))   # not built
+        self.assertEqual(plan["Summary"], {"CouponCount": 2, "LocalPiecesForm": 0, "AutomaticallyPreparatable": 0, "Unsupported": 2})
+        explicit = PREPARE.plan_from_manifest(Path("m.json"), manifest, Path("seed.json"), library, False, one_reference=True)
+        by_hash = {coupon["Hash"][:2]: coupon["Preparation"] for coupon in explicit["Coupons"]}
+        self.assertEqual(by_hash["ab"]["Method"], "SpatialCoupon")
+        self.assertEqual(by_hash["cd"]["Method"], "ParallelClusterCoupon")
+        self.assertTrue(all(form["LocalPieces"] is False and "--one-reference" in form["LocalPiecesReason"] for form in by_hash.values()))
+        self.assertEqual(explicit["Summary"], {"CouponCount": 2, "LocalPiecesForm": 0, "AutomaticallyPreparatable": 2, "Unsupported": 0})
 
     def test_cli_refuses_the_default_flag_together_with_the_opt_out(self):
         with tempfile.TemporaryDirectory() as tmp:
