@@ -3607,5 +3607,161 @@ class SkippedCouponNeverStampsASignature(unittest.TestCase):
             self.assertEqual({model["Name"]: model.get("Signature") for model in PREPARE.load_json(path)["Models"]}, before)
 
 
+TWIN_OFFSETS_4 = [0.0, 2.0000008, 3.9999997, 6.0000005]          # v3-j ff3a5bee4e2d / 799fccf7b589 (the 2 / 2 / 2 um CPW)
+TWIN_OFFSETS_3 = [0.0, 2.0000008, 3.9999997]                     # v3-j e4c250357351 / bf97438bcd9d
+
+
+def pec_cluster_model(name, offsets, directions, conductors, **extra):
+    return {"Name": name, "Topology": "ParallelEdgeCluster",
+            "Edges": [{"Offset": o, "GapDirection": d, "Conductor": c} for o, d, c in zip(offsets, directions, conductors)],
+            **extra}
+
+
+def pec_cluster_coupon(identifier, offsets, directions, conductors, digest, law=None):
+    coupon = {"Id": identifier, **pec_cluster_requirement(offsets, directions, conductors, digest)}
+    if law is not None:
+        coupon["BoundaryCondition"] = law
+    return coupon
+
+
+class LabelAwareStampMatcher(unittest.TestCase):
+    """OI-PLANNER-STAMP-LABEL-BLIND (decisions 1146 / 1147 (d) / 1148; the R0-b cluster lane's stamp step): model_matches_coupon
+    compared a ParallelEdgeCluster's Offsets + GapDirections only, never Edges[].Conductor, at both stamp sites. v3-j holds
+    two geometry twins that differ in the labels only: ff3a5bee4e2d (1,1,1,1) / 799fccf7b589 (1,2,2,1) at 0 / 2.0000008 /
+    3.9999997 / 6.0000005 um and e4c250357351 (1,1,2) / bf97438bcd9d (1,1,1) at 0 / 2.0000008 / 3.9999997 um, so a plan holding
+    both twin coupons made the stamp ambiguous, and a plan holding one twin's coupon over a base holding the other twin
+    re-stamped the base model silently. ONE label-aware matcher serves both sites; >= 2 candidates fail by name."""
+
+    CONDUCTIVITY = {"Type": "Conductivity", "Conductivity": 5.8e7, "Permeability": 1.0, "Thickness": 2.0e-7, "External": False}
+
+    def twin_pairs(self):
+        d4 = [1, -1, 1, -1]
+        d3 = [-1, 1, -1]
+        return [
+            (pec_cluster_model("parallel-edge-cluster-ff3a5bee4e2d-pieces3", TWIN_OFFSETS_4, d4, [1, 1, 1, 1]),
+             pec_cluster_model("parallel-edge-cluster-799fccf7b589", TWIN_OFFSETS_4, d4, [1, 2, 2, 1]),
+             pec_cluster_coupon("pec4_f43855f20324", TWIN_OFFSETS_4, d4, [1, 1, 1, 1], "f4"),
+             pec_cluster_coupon("pec4_52bf974324b2", TWIN_OFFSETS_4, d4, [1, 2, 2, 1], "52", self.CONDUCTIVITY)),
+            (pec_cluster_model("parallel-edge-cluster-bf97438bcd9d-pieces3", TWIN_OFFSETS_3, d3, [1, 1, 1]),
+             pec_cluster_model("parallel-edge-cluster-e4c250357351", TWIN_OFFSETS_3, d3, [1, 1, 2]),
+             pec_cluster_coupon("pec3_475cf24e121f", TWIN_OFFSETS_3, d3, [1, 1, 1], "47"),
+             pec_cluster_coupon("pec3_e4c250357351", TWIN_OFFSETS_3, d3, [1, 1, 2], "e4", self.CONDUCTIVITY)),
+        ]
+
+    def test_both_v3j_twin_pairs_stamp_unambiguously_at_both_sites(self):
+        for one_label, two_label, one_coupon, two_coupon in self.twin_pairs():
+            with self.subTest(pair=one_label["Name"]):
+                self.assertTrue(PREPARE.model_matches_coupon(one_label, one_coupon))
+                self.assertTrue(PREPARE.model_matches_coupon(two_label, two_coupon))
+                self.assertFalse(PREPARE.model_matches_coupon(one_label, two_coupon))      # the label-blind match said True
+                self.assertFalse(PREPARE.model_matches_coupon(two_label, one_coupon))
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "process-library.json"
+                    PREPARE.write_json(path, {"Version": 3, "Models": [one_label, two_label]})
+                    self.assertEqual(PREPARE.stamp_library_signatures(path, [two_coupon, one_coupon]), 2)
+                    PREPARE.stamp_library_boundary_conditions(path, [two_coupon, one_coupon])
+                    stamped = {model["Name"]: model for model in PREPARE.load_json(path)["Models"]}
+                    self.assertEqual(stamped[one_label["Name"]]["Signature"], one_coupon["Signature"])
+                    self.assertEqual(stamped[two_label["Name"]]["Signature"], two_coupon["Signature"])
+                    self.assertEqual(stamped[one_label["Name"]]["BoundaryCondition"], {"Type": "PEC"})
+                    self.assertEqual(stamped[two_label["Name"]]["BoundaryCondition"], self.CONDUCTIVITY)
+                    self.assertFalse(any("-bc-" in name for name in stamped))
+
+    def test_one_twin_coupon_never_restamps_the_other_twin_base_model(self):
+        """Effect (ii) of the record: a plan holding bf97's coupon over a base holding e4c2 (its own Signature) stamps the new
+        bf97 piece model only; e4c2 keeps its Signature (pre-fix: re-stamped, then refused as a duplicate signature)."""
+        one_label, two_label, one_coupon, two_coupon = self.twin_pairs()[1]
+        two_label["Signature"] = copy.deepcopy(two_coupon["Signature"])
+        two_label["Instances"] = 7
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            PREPARE.write_json(path, {"Version": 3, "Models": [two_label, one_label]})
+            self.assertEqual(PREPARE.stamp_library_signatures(path, [one_coupon]), 1)
+            stamped = {model["Name"]: model for model in PREPARE.load_json(path)["Models"]}
+            self.assertEqual(stamped[two_label["Name"]]["Signature"], two_coupon["Signature"])
+            self.assertEqual(stamped[two_label["Name"]]["Instances"], 7)
+            self.assertEqual(stamped[one_label["Name"]]["Signature"], one_coupon["Signature"])
+
+    def test_zero_based_coupon_labels_read_as_their_canonical_model_labels(self):
+        """normalize_parallel_edges shifts a 0-based coupon row to one-based: the matcher reads (0,1,1,0) as (1,2,2,1)."""
+        _, two_label, _, two_coupon = self.twin_pairs()[0]
+        zero_based = copy.deepcopy(two_coupon)
+        for edge, label in zip(zero_based["Geometry"]["Edges"], [0, 1, 1, 0]):
+            edge["Conductor"] = label
+        self.assertEqual(PREPARE.canonical_conductor_labels([0, 1, 1, 0]), (1, 2, 2, 1))
+        self.assertEqual(PREPARE.canonical_conductor_labels([2, 1, 1, 2]), (1, 2, 2, 1))
+        self.assertTrue(PREPARE.model_matches_coupon(two_label, zero_based))
+
+    def test_an_ambiguous_library_fails_by_name_at_both_sites(self):
+        """Two coupons of ONE geometry AND ONE label pattern (two Ids / two Signatures) still match one model after the label-aware
+        fix: refused by name at both sites, each candidate listed with its labels and law; the file is left as written."""
+        one_label, _, one_coupon, _ = self.twin_pairs()[0]
+        other = copy.deepcopy(one_coupon)
+        other["Id"] = "pec4_duplicate_key"
+        other["Signature"] = {**one_coupon["Signature"], "Type": "ParallelEdgeCluster", "Edges": one_coupon["Signature"]["Edges"][::-1]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            PREPARE.write_json(path, {"Version": 3, "Models": [one_label]})
+            before = path.read_text()
+            pattern = (r"model parallel-edge-cluster-ff3a5bee4e2d-pieces3 matches 2 version-2 coupon signatures \(an ambiguous stamp; "
+                       r"OI-PLANNER-STAMP-LABEL-BLIND, decision 1148\): pec4_duplicate_key \(Conductor labels \(1, 1, 1, 1\); "
+                       r"BoundaryCondition \{\"Type\": \"PEC\"\}\), pec4_f43855f20324 \(Conductor labels \(1, 1, 1, 1\);")
+            with self.assertRaisesRegex(ValueError, pattern):
+                PREPARE.stamp_library_signatures(path, [one_coupon, other])
+            self.assertEqual(path.read_text(), before)
+            with self.assertRaisesRegex(ValueError, r"matches 2 coupons \(an ambiguous stamp.*pec4_duplicate_key.*pec4_f43855f20324"):
+                PREPARE.stamp_library_boundary_conditions(path, [one_coupon, other])
+            self.assertEqual(path.read_text(), before)
+
+    def test_two_laws_on_one_geometry_are_refused_at_the_boundary_condition_site(self):
+        """Decision 1148: a response model is computed for ONE boundary law; two laws on one geometry + labels are two coupons /
+        two keys, never '-bc-<digest>' variants of one model (the former branch is gone)."""
+        pec = {"Id": "scg-2um-pec", "Topology": "SameConductorGap", "Geometry": {"EdgeCount": 2, "Separation": 2.0000008},
+               "BoundaryCondition": {"Type": "PEC"}}
+        lossy = {**copy.deepcopy(pec), "Id": "scg-2um-conductivity", "BoundaryCondition": self.CONDUCTIVITY}
+        model = {"Name": "same-conductor-gap-2um-pieces2", "Topology": "SameConductorGap", "Separation": 2.0000008, "LocalPieces": 2}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            PREPARE.write_json(path, {"Version": 3, "Models": [model]})
+            before = path.read_text()
+            with self.assertRaisesRegex(ValueError, r"same-conductor-gap-2um-pieces2 matches 2 coupons .*scg-2um-conductivity "
+                                                    r"\(Conductor labels \(1, 1\); BoundaryCondition \{\"Conductivity\".*scg-2um-pec \("):
+                PREPARE.stamp_library_boundary_conditions(path, [pec, lossy])
+            self.assertEqual(path.read_text(), before)
+            PREPARE.stamp_library_boundary_conditions(path, [lossy])
+            stamped = PREPARE.load_json(path)["Models"]
+            self.assertEqual([m["Name"] for m in stamped], ["same-conductor-gap-2um-pieces2"])
+            self.assertEqual(stamped[0]["BoundaryCondition"], self.CONDUCTIVITY)
+            self.assertEqual(stamped[0]["BoundaryLawQualification"]["Status"], "Unqualified")
+
+    def test_paired_topologies_match_by_separation_and_labels(self):
+        """SCG by Separation + its labels: a model without Edges carries the paired topology's pattern (SCG / SCS (1,1); DCG
+        (1,2)) or its Signature's; a coupon's labels come from its Signature's Edges when its Geometry has none."""
+        signature = {"Type": "SameConductorGap", "SeparationOverR": 1.052632,
+                     "Edges": [{"OffsetOverR": 0.0, "GapSide": 1, "Conductor": 1}, {"OffsetOverR": 1.052632, "GapSide": -1, "Conductor": 1}]}
+        coupon = {"Id": "scg-2um", "Topology": "SameConductorGap", "Geometry": {"EdgeCount": 2, "Separation": 2.0000008},
+                  "Signature": signature}
+        bare = {"Name": "same-conductor-gap-2um", "Topology": "SameConductorGap", "Separation": 2.0000008}
+        self.assertEqual(PREPARE.conductor_labels(bare, "SameConductorGap", name="m"), (1, 1))
+        self.assertEqual(PREPARE.conductor_labels(coupon, "SameConductorGap", name="c"), (1, 1))
+        self.assertEqual(PREPARE.conductor_labels({"Topology": "DifferentConductorGap"}, "DifferentConductorGap", name="m"), (1, 2))
+        self.assertTrue(PREPARE.model_matches_coupon(bare, coupon))
+        self.assertTrue(PREPARE.model_matches_coupon({**bare, "Signature": signature}, coupon))
+        self.assertFalse(PREPARE.model_matches_coupon({**bare, "Separation": 3.0}, coupon))
+        mislabelled = copy.deepcopy(coupon)
+        mislabelled["Signature"]["Edges"][1]["Conductor"] = 2
+        self.assertFalse(PREPARE.model_matches_coupon(bare, mislabelled))
+
+    def test_an_edge_without_a_conductor_label_is_refused_by_name(self):
+        one_label, _, one_coupon, _ = self.twin_pairs()[0]
+        del one_label["Edges"][2]["Conductor"]
+        with self.assertRaisesRegex(ValueError, r"model parallel-edge-cluster-ff3a5bee4e2d-pieces3: a ParallelEdgeCluster edge carries no Conductor"):
+            PREPARE.model_matches_coupon(one_label, one_coupon)
+        one_label, _, one_coupon, _ = self.twin_pairs()[0]
+        del one_coupon["Geometry"]["Edges"][0]["Conductor"]
+        with self.assertRaisesRegex(ValueError, r"coupon pec4_f43855f20324: a ParallelEdgeCluster edge carries no Conductor"):
+            PREPARE.model_matches_coupon(one_label, one_coupon)
+
+
 if __name__ == "__main__":
     unittest.main()

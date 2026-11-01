@@ -741,17 +741,60 @@ def unclassified_plan_view_boundary(boundary):
     ]
 
 
+PAIRED_CONDUCTOR_LABELS = {
+    "SameConductorGap": (1, 1),
+    "DifferentConductorGap": (1, 2),
+    "SameConductorStrip": (1, 1),
+}
+
+
+def canonical_conductor_labels(labels):
+    """One-based Conductor labels in order of first appearance (normalize_parallel_edges' canonical form; a 0-based
+    coupon row reads the same as its 1-based model)."""
+    labels = [int(label) for label in labels]
+    order = []
+    for label in labels:
+        if label not in order:
+            order.append(label)
+    return tuple(order.index(label) + 1 for label in labels)
+
+
+def conductor_labels(entry, topology, *, name):
+    """The per-edge Conductor labels of a model or a coupon (OI-PLANNER-STAMP-LABEL-BLIND, decisions 1146 / 1147 (d) / 1148):
+    its own Edges (a model's Edges / a coupon's Geometry.Edges), else its Signature's Edges, else the paired topology's
+    fixed pattern; an edge without a Conductor is refused by name (the generator and normalize_parallel_edges require it)."""
+    for edges in (entry.get("Edges"), (entry.get("Geometry") or {}).get("Edges"), (entry.get("Signature") or {}).get("Edges")):
+        if not edges:
+            continue
+        if any(not isinstance(edge, dict) or edge.get("Conductor") is None for edge in edges):
+            raise ValueError(f"{name}: a {topology} edge carries no Conductor label (the label-aware stamp needs every label)")
+        return canonical_conductor_labels(edge["Conductor"] for edge in edges)
+    if topology in PAIRED_CONDUCTOR_LABELS:
+        return PAIRED_CONDUCTOR_LABELS[topology]
+    raise ValueError(f"{name}: a {topology} entry states no Conductor labels (the label-aware stamp needs them)")
+
+
 def model_matches_coupon(model, coupon):
+    """THE label-aware matcher of the two stamp sites (stamp_library_signatures / stamp_library_boundary_conditions;
+    OI-PLANNER-STAMP-LABEL-BLIND, decisions 1146 / 1147 (d) / 1148): a ParallelEdgeCluster matches by Offsets (1e-9),
+    GapDirections AND the per-edge Conductor labels; a paired topology by Separation AND its labels. v3-j's geometry twins
+    ff3a5bee4e2d (1,1,1,1) / 799fccf7b589 (1,2,2,1) and e4c250357351 (1,1,2) / bf97438bcd9d (1,1,1) share their offsets and
+    differ in the labels only: the Offsets-only match made the stamp ambiguous or re-stamped a base model silently."""
     if model.get("Topology") != coupon["Topology"]:
         return False
     geometry = coupon.get("Geometry") or {}
+    topology = coupon["Topology"]
 
     def close(a, b):
         return math.isclose(float(a), float(b), rel_tol=1.0e-9, abs_tol=1.0e-9)
 
-    if coupon["Topology"] in PAIRED_TOPOLOGIES:
-        return close(model.get("Separation", math.nan), geometry["Separation"])
-    if coupon["Topology"] == "ParallelEdgeCluster":
+    def labels_agree():
+        return conductor_labels(model, topology, name=f"model {model.get('Name')}") == conductor_labels(
+            coupon, topology, name=f"coupon {coupon.get('Id')}")
+
+    if topology in PAIRED_TOPOLOGIES:
+        return close(model.get("Separation", math.nan), geometry["Separation"]) and labels_agree()
+    if topology == "ParallelEdgeCluster":
         model_edges = model.get("Edges") or []
         coupon_edges = geometry.get("Edges") or []
         if len(model_edges) != len(coupon_edges):
@@ -761,8 +804,8 @@ def model_matches_coupon(model, coupon):
             direction = second["GapDirection"][0] if isinstance(second["GapDirection"], list) else second["GapDirection"]
             if not close(first["Offset"], offset) or int(round(float(first["GapDirection"]))) != int(round(float(direction))):
                 return False
-        return True
-    if coupon["Topology"] in CORNER_TOPOLOGIES:
+        return labels_agree()
+    if topology in CORNER_TOPOLOGIES:
         model_connectivity = (model.get("TraceBasis") or {}).get("ConnectivityAngleDegrees")
         coupon_connectivity = geometry.get("ConnectivityAngleDegrees")
         if (model_connectivity is None) != (coupon_connectivity is None) or (
@@ -773,9 +816,9 @@ def model_matches_coupon(model, coupon):
         return close(model.get("Angle", math.nan), geometry["AngleDegrees"]) and close(
             model.get("CornerRadius", 0.0), geometry.get("CornerRadius", 0.0)
         )
-    if coupon["Topology"] == "Junction":
+    if topology == "Junction":
         return list(model.get("ArmAngles", [])) == list(geometry.get("ArmAnglesDegrees", []))
-    if coupon["Topology"] == "SpatialEdgeCluster":
+    if topology == "SpatialEdgeCluster":
         # OI-PLANNER-SKIPPED-SIGNATURE-STAMP (decisions 1117 / 1137; RG-7: the merged library re-stamped v3-j's
         # spatialedgecluster_edgecount-10_13c7cc02fd9b with the SKIPPED stub cluster's 6-edge Signature and the binary
         # refused the library): a spatial model never matches a coupon by topology alone. A model carrying a Signature
@@ -811,6 +854,34 @@ def built_coupons_for_stamping(built, skipped, failures):
     return list(built)
 
 
+def matching_coupon_or_none(model, coupons, *, what):
+    """The ONE coupon a library model corresponds to under model_matches_coupon, None when none matches; two or more
+    matching coupons are an AMBIGUOUS stamp, refused by name with each candidate's Id, labels and law (decision 1148: never
+    a silent pick, at either stamp site). Two laws on one geometry + labels are two coupons / two keys (the Law is part of
+    the Signature) and are refused here too: a response model is computed for ONE boundary law. `what` names the
+    candidates in the refusal ('version-2 coupon signatures' / 'coupons')."""
+    matches = [coupon for coupon in coupons if model_matches_coupon(model, coupon)]
+    if len(matches) > 1:
+        topology = model.get("Topology")
+
+        def labels_text(coupon):
+            if topology in PAIRED_TOPOLOGIES or topology == "ParallelEdgeCluster":
+                labels = conductor_labels(coupon, topology, name=f"coupon {coupon.get('Id')}")
+                return f"Conductor labels {labels}; "
+            return ""
+
+        raise ValueError(
+            f"model {model.get('Name')} matches {len(matches)} {what} (an ambiguous stamp; OI-PLANNER-STAMP-LABEL-BLIND, "
+            "decision 1148): "
+            + ", ".join(
+                f"{coupon.get('Id')} ({labels_text(coupon)}BoundaryCondition "
+                f"{json.dumps(coupon.get('BoundaryCondition') or {'Type': 'PEC'}, sort_keys=True)})"
+                for coupon in sorted(matches, key=lambda c: str(c.get("Id")))
+            )
+        )
+    return matches[0] if matches else None
+
+
 def stamp_library_signatures(path, coupons):
     """Every model of a written library that corresponds to exactly one version-2 coupon
     carries that coupon's canonical Signature (the matcher's key: exact for a
@@ -826,24 +897,10 @@ def stamp_library_signatures(path, coupons):
     library = load_json(path)
     stamped = 0
     for model in library.get("Models", []):
-        matches = [
-            coupon for coupon in coupons if "Signature" in coupon and model_matches_coupon(model, coupon)
-        ]
-        signatures = {json.dumps(coupon["Signature"], sort_keys=True) for coupon in matches}
-        if len(signatures) > 1:
-            # model_matches_coupon compares the geometry only (the boundary law is stamped
-            # per coupon by stamp_library_boundary_conditions): name each coupon's law so
-            # that two coupons of one geometry under different laws are read as the cause.
-            raise ValueError(
-                f"model {model.get('Name')} matches {len(signatures)} version-2 coupon signatures: "
-                + ", ".join(
-                    f"{coupon['Id']} (BoundaryCondition {json.dumps(coupon.get('BoundaryCondition') or {'Type': 'PEC'}, sort_keys=True)})"
-                    for coupon in sorted(matches, key=lambda c: c["Id"])
-                )
-            )
-        if not matches:
+        coupon = matching_coupon_or_none(model, [coupon for coupon in coupons if "Signature" in coupon],
+                                         what="version-2 coupon signatures")
+        if coupon is None:
             continue
-        coupon = matches[0]
         model["Signature"] = copy.deepcopy(coupon["Signature"])
         for key in ("Instances", "DistinctSignatures", "ParameterSpread"):
             if key in coupon:
@@ -855,64 +912,43 @@ def stamp_library_signatures(path, coupons):
 
 
 def stamp_library_boundary_conditions(path, coupons):
+    """Every model of a written library that corresponds to exactly ONE coupon (model_matches_coupon, label-aware) carries
+    that coupon's verified boundary law (per edge for a SpatialEdgeCluster) and its BoundaryLawQualification; a model matching
+    none is left as written; a model matching two or more coupons is refused by name (decision 1148; the former per-law
+    '-bc-<digest>' variants of one model are gone: a response model is computed for ONE boundary law)."""
     library = load_json(path)
-    models = []
     for model in library.get("Models", []):
-        matches = [
-            coupon for coupon in coupons if model_matches_coupon(model, coupon)
-        ]
-        if not matches:
-            models.append(model)
+        coupon = matching_coupon_or_none(model, coupons, what="coupons")
+        if coupon is None:
             continue
-        unique = {}
-        for coupon in matches:
-            require_verified_boundary_conditions(coupon)
-            signature = json.dumps(
-                coupon_boundary_conditions(coupon),
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            unique.setdefault(signature, coupon)
-        for coupon in unique.values():
-            stamped = copy.deepcopy(model)
-            if coupon["Topology"] == "SpatialEdgeCluster":
-                source_edges = coupon["Geometry"].get("Edges", [])
-                target_edges = stamped.get("Edges", [])
-                if len(source_edges) != len(target_edges):
-                    raise ValueError(
-                        f"{coupon['Id']} does not match its generated spatial model"
-                    )
-                for source, target in zip(source_edges, target_edges):
-                    target["BoundaryCondition"] = verified_boundary_condition(
-                        source.get(
-                            "BoundaryCondition", coupon["BoundaryCondition"]
-                        )
-                    )
-                stamped.pop("BoundaryCondition", None)
-            else:
-                stamped["BoundaryCondition"] = verified_boundary_condition(
-                    coupon["BoundaryCondition"]
+        require_verified_boundary_conditions(coupon)
+        if coupon["Topology"] == "SpatialEdgeCluster":
+            source_edges = coupon["Geometry"].get("Edges", [])
+            target_edges = model.get("Edges", [])
+            if len(source_edges) != len(target_edges):
+                raise ValueError(
+                    f"{coupon['Id']} does not match its generated spatial model"
                 )
-            if uses_finite_impedance(coupon):
-                stamped["BoundaryLawQualification"] = {
-                    "Version": 1,
-                    "Status": "Unqualified",
-                    "Calibration": "QuasiElectrostatic",
-                    "FrequencyUniversal": False,
-                }
-            else:
-                stamped.pop("BoundaryLawQualification", None)
-            if len(unique) > 1:
-                digest = hashlib.sha256(
-                    json.dumps(
-                        coupon_boundary_conditions(coupon),
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode()
-                ).hexdigest()[:8]
-                stamped["Name"] = f"{stamped['Name']}-bc-{digest}"
-            models.append(stamped)
-    library["Models"] = models
+            for source, target in zip(source_edges, target_edges):
+                target["BoundaryCondition"] = verified_boundary_condition(
+                    source.get(
+                        "BoundaryCondition", coupon["BoundaryCondition"]
+                    )
+                )
+            model.pop("BoundaryCondition", None)
+        else:
+            model["BoundaryCondition"] = verified_boundary_condition(
+                coupon["BoundaryCondition"]
+            )
+        if uses_finite_impedance(coupon):
+            model["BoundaryLawQualification"] = {
+                "Version": 1,
+                "Status": "Unqualified",
+                "Calibration": "QuasiElectrostatic",
+                "FrequencyUniversal": False,
+            }
+        else:
+            model.pop("BoundaryLawQualification", None)
     write_json(path, library)
 
 
