@@ -26,6 +26,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import cluster_signature_geometry as G  # noqa: E402
+import device_coupons  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
 
 ASSESSMENT = Path(os.environ.get("COUPON_ASSESSMENT_ROOT", "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913"))
@@ -248,6 +249,32 @@ class GeneratorPieceForm(unittest.TestCase):
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("carries no positive LocalPiece", refused.stderr)
             self.assertEqual(json.loads((tmp / "refused" / "generation-failure.json").read_text())["Stage"], "SpatialGeometry")
+
+    def test_device_path_stamps_the_exact_edges_with_their_pieces(self):
+        library, spatial = v3j_spatial_models()
+        radius, parameters = float(library["MatchingRadius"]), planner.process_parameters(library)
+        model = spatial["66217996479f"]                     # 4 claims, 2 pieces
+        coupon = {"Id": model["Name"], **record_of(model)}
+        with tempfile.TemporaryDirectory(prefix="spatial-device-") as tmp:
+            for form in (False, True):
+                work = Path(tmp) / ("pieces" if form else "one")
+                device_coupons.generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=16, local_pieces_form=form)
+                entry = json.loads((work / "process-library.json").read_text())["Models"][0]
+                self.assertEqual(entry["Signature"], model["Signature"])
+                self.assertEqual(len(entry["Edges"]), 4)                                     # the exact claims
+                self.assertEqual([e["Point"] for e in entry["Edges"]], [e["Point"] for e in model["Edges"]])
+                if form:
+                    self.assertEqual(entry["Name"], model["Name"] + "-pieces2")
+                    self.assertEqual([e["LocalPiece"] for e in entry["Edges"]], [1, 2, 2, 1])
+                    self.assertEqual(len(entry["ConductorReferences"]), 2)
+                    self.assertIn("LocalPiecesRule", entry)
+                else:
+                    self.assertEqual(entry["Name"], model["Name"])
+                    self.assertNotIn("LocalPiece", json.dumps(entry))
+                    self.assertEqual(entry["Reference"], model["Reference"])
+            with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "version-2 signature record"):
+                device_coupons.coupon_geometry({"Id": "v1", "Topology": "SpatialEdgeCluster",
+                                                "Geometry": {"Edges": [{}], "PlanViewFacets": []}}, radius, parameters, local_pieces=True)
 
 
 def piece_form_models(models, radius, fab, keys):

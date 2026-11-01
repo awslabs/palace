@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -3243,6 +3244,138 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(report["RoundingMinimumCirclePoints"], 24)
         with self.assertRaisesRegex(ValueError, "only 1 elements"):
             PREPARE.process_resolution(parameters, 0.05, 2.0)
+
+
+V3J_MIRROR = (ASSESSMENT / "stage2-20261004" / "v3h" / "stretchfix" / "local" / "library" / "s2-r1p9-v3-j-local"
+              / "process-library-local.json")
+RG7_MANIFEST = (ASSESSMENT / "readiness-20261029" / "idfix" / "regrade" / "rg7" / "manifests"
+                / "item0-stub-driven-requirements-cluster.json")
+
+
+def pec_cluster_requirement(offsets, directions, conductors, digest):
+    return {"Topology": "ParallelEdgeCluster", "Status": "Missing", "Count": 4, "TotalEdgeLength": 40.0,
+            "Geometry": {"EdgeCount": len(offsets),
+                         "Edges": [{"Offset": [o, 0.0], "GapDirection": [float(d), 0.0], "Conductor": c}
+                                   for o, d, c in zip(offsets, directions, conductors)]},
+            "Interfaces": [], "BoundaryCondition": {"Type": "PEC"}, "Hash": digest * 32,
+            "Signature": {"Type": "ParallelEdgeCluster",
+                          "Edges": [{"OffsetOverR": o / 1.9, "GapSide": d, "Conductor": c}
+                                    for o, d, c in zip(offsets, directions, conductors)]},
+            "Instances": 1, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True}
+
+
+class PlannerLocalPiecesDefault(unittest.TestCase):
+    """Decision 1136 (4) (the 1134 result): the planner plans the PIECE form for every coupon whose cross-section / plan
+    view holds a label with >= 2 local metal pieces (Preparation.LocalPieces), the one-reference form otherwise;
+    --one-reference opts every coupon out; the builders read the planned form."""
+
+    def manifest(self):
+        return {"Version": 2, "Library": {"MatchingRadius": 1.9, "Path": "seed.json"},
+                "Requirements": [
+                    pec_cluster_requirement([0.0, 2.0, 4.0, 6.0], [1, -1, 1, -1], [1, 1, 1, 1], "aa"),   # a one-label CPW: 3 pieces
+                    pec_cluster_requirement([0.0, 2.0, 4.0], [1, -1, 1], [1, 2, 2], "bb"),                # two labels, one piece each
+                    pec_cluster_requirement([0.0, 2.0, 4.0, 6.0], [1, -1, 1, -1], [1, 2, 2, 1], "cc"),   # grounds 1 (2 pieces), strip 2 (1)
+                    {"Topology": "SameConductorGap", "Status": "Missing", "Count": 2, "TotalEdgeLength": 3.0,
+                     "Geometry": {"EdgeCount": 2, "Separation": 2.0}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
+                     "Signature": {"Type": "SameConductorGap", "SeparationOverR": 1.0526316}, "Hash": "dd" * 32},
+                    {"Topology": "IsolatedEdge", "Status": "Missing", "Count": 2, "TotalEdgeLength": 3.0, "Geometry": None,
+                     "Interfaces": [], "BoundaryCondition": {"Type": "PEC"}, "Signature": {"Type": "IsolatedEdge"}, "Hash": "ee" * 32},
+                    {"Topology": "ConvexCorner", "Status": "Missing", "Count": 1, "TotalEdgeLength": 1.0,
+                     "Geometry": {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
+                     "Signature": {"Type": "ConvexCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.0}, "Hash": "ff" * 32},
+                ]}
+
+    def test_the_piece_form_is_planned_for_multi_piece_labels_only(self):
+        plan = PREPARE.plan_from_manifest(Path("m.json"), self.manifest(), Path("seed.json"), {}, False)
+        forms = {coupon["Hash"][:2]: coupon["Preparation"] for coupon in plan["Coupons"] if coupon.get("Hash")}
+        self.assertEqual({key: value["LocalPieces"] for key, value in forms.items()},
+                         {"aa": True, "bb": False, "cc": True, "dd": True, "ee": False, "ff": False})
+        self.assertEqual(forms["aa"]["PiecesPerLabel"], {"1": 3})
+        self.assertEqual(forms["bb"]["PiecesPerLabel"], {"1": 1, "2": 1})
+        self.assertEqual(forms["cc"]["PiecesPerLabel"], {"1": 2, "2": 1})
+        self.assertEqual(forms["dd"]["PiecesPerLabel"], {"1": 2})
+        self.assertNotIn("PiecesPerLabel", forms["ee"])          # a class without a piece form
+        self.assertIn("without a piece form", forms["ff"]["LocalPiecesReason"])
+        self.assertEqual(plan["Summary"]["LocalPiecesForm"], 3)
+        self.assertEqual(len(plan["LocalPiecesForm"]["Coupons"]), 3)
+        self.assertFalse(plan["LocalPiecesForm"]["OneReference"])
+        # the builders read the planned form: the CPW's spec / Name are the piece form's, the two-label stack's are not
+        by_hash = {coupon["Hash"][:2]: coupon for coupon in plan["Coupons"] if coupon.get("Hash")}
+        args = SimpleNamespace(matching_radius=1.9, orders=[2], mesh_order=2, basis_size=6, samples=12, coupon_depth=1.0,
+                                     edge_offset_tolerance=1.0e-3, straight_lc_fine=0.01, straight_lc_far=0.5,
+                                     cluster_lc_fine=0.01, cluster_lc_far=0.5, min_process_feature_elements=4,
+                                     cluster_h_factors=[2.0, 1.0])
+        parameters = {"metal_thickness": 0.1, "overetch": 0.05}
+        for key, expected in (("aa", True), ("bb", False), ("cc", True)):
+            edges = PREPARE.normalize_parallel_edges(by_hash[key], 1.9)
+            spec = PREPARE.parallel_cluster_spec(by_hash[key], edges, args, parameters)
+            self.assertEqual("LocalPieces" in spec, expected, key)
+            name = PREPARE.parallel_cluster_model_name(PREPARE.fingerprint(spec), edges, PREPARE.coupon_local_pieces(by_hash[key]))
+            self.assertEqual(name.endswith("-pieces3") or name.endswith("-pieces2"), expected, key)
+        straight = [by_hash["dd"], by_hash["ee"]]
+        self.assertTrue(PREPARE.straight_family_local_pieces(straight))
+        self.assertIn("LocalPieces", PREPARE.straight_spec(straight, args, parameters))
+
+    def test_one_reference_opts_every_coupon_out_and_is_the_pre_1136_plan(self):
+        plan = PREPARE.plan_from_manifest(Path("m.json"), self.manifest(), Path("seed.json"), {}, False, one_reference=True)
+        self.assertTrue(all(coupon["Preparation"]["LocalPieces"] is False for coupon in plan["Coupons"]))
+        self.assertTrue(all("--one-reference" in coupon["Preparation"]["LocalPiecesReason"] for coupon in plan["Coupons"]))
+        self.assertEqual(plan["Summary"]["LocalPiecesForm"], 0)
+        self.assertTrue(plan["LocalPiecesForm"]["OneReference"])
+        # a plan written before the rule (no Preparation.LocalPieces) is read as the one-reference form
+        self.assertFalse(PREPARE.coupon_local_pieces({"Preparation": {"Method": "ParallelClusterCoupon"}}))
+        for coupon in plan["Coupons"]:
+            del coupon["Preparation"]["LocalPieces"]
+        self.assertFalse(PREPARE.straight_family_local_pieces(plan["Coupons"]))
+        self.assertFalse(any(PREPARE.coupon_local_pieces(coupon) for coupon in plan["Coupons"]))
+
+    @unittest.skipUnless(V3J_MIRROR.is_file(), "the v3-j local mirror is needed")
+    def test_spatial_coupons_are_planned_by_their_plan_view_pieces(self):
+        """The 7 one-label multi-piece and 11 two-label multi-piece-label spatial models of v3-j (the R0-b candidate census,
+        probes/v3j_local_pieces_v1.out) are planned in the piece form from their Signature; a one-piece-per-label spatial
+        model is not; a library without Fabrication metadata leaves the spatial pieces not derivable (recorded)."""
+        library = json.loads(V3J_MIRROR.read_text())
+        spatial = {model["Name"].split("_")[-1]: model for model in library["Models"] if model.get("Topology") == "SpatialEdgeCluster"}
+        multi = {"e7f44561bbf0", "d19e77e8fe71", "8e2c1b63713b", "4b0d7bf2ad1b", "17ee51c67d9a", "f6d7ca001864", "66217996479f",
+                 "a2f53cd8630e", "e04e3eb5891d", "4388ea4d7f2a", "31b6896dc54d", "7d88636452b7", "5bda1bc70e63", "f813a57b5d43",
+                 "e3190c93a8ea", "09e95b2af0a4", "c983b84ada5c", "a287eb4daef0"}
+        single = {"13c7cc02fd9b", "da0179c64591", "ada4e3c1920d"}
+        requirements = []
+        for key in sorted(multi | single):
+            model = spatial[key]
+            requirements.append({"Topology": "SpatialEdgeCluster", "Status": "Missing", "Count": 1, "TotalEdgeLength": 1.0,
+                                 "Geometry": {"EdgeCount": len(model["Edges"]), "Signature": model["Signature"]},
+                                 "Interfaces": model["Interfaces"], "BoundaryCondition": model.get("BoundaryCondition", {"Type": "PEC"}),
+                                 "Signature": model["Signature"], "Hash": key * 6 + "0" * 4})
+        manifest = {"Version": 2, "Library": {"MatchingRadius": library["MatchingRadius"], "Path": str(V3J_MIRROR)},
+                    "Requirements": requirements}
+        plan = PREPARE.plan_from_manifest(Path("m.json"), manifest, V3J_MIRROR, library, False)
+        forms = {coupon["Hash"][:12]: coupon["Preparation"] for coupon in plan["Coupons"]}
+        self.assertEqual({key for key, form in forms.items() if form["LocalPieces"]}, multi)
+        self.assertEqual(forms["e7f44561bbf0"]["PiecesPerLabel"], {"1": 3})
+        self.assertEqual(forms["4b0d7bf2ad1b"]["PiecesPerLabel"], {"1": 5})
+        self.assertEqual(forms["4388ea4d7f2a"]["PiecesPerLabel"], {"1": 2, "2": 1})
+        self.assertEqual(forms["13c7cc02fd9b"]["PiecesPerLabel"], {"1": 1, "2": 1})
+        self.assertEqual(plan["Summary"]["LocalPiecesForm"], 18)
+        bare = PREPARE.plan_from_manifest(Path("m.json"), manifest, V3J_MIRROR, {"MatchingRadius": 1.9}, False)
+        for coupon in bare["Coupons"]:
+            self.assertFalse(coupon["Preparation"]["LocalPieces"])
+            self.assertIn("not derivable", coupon["Preparation"]["LocalPiecesReason"])
+
+    def test_cli_refuses_the_default_flag_together_with_the_opt_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "m.json"
+            manifest.write_text(json.dumps(self.manifest()))
+            (Path(tmp) / "seed.json").write_text(json.dumps({"Version": 3, "MatchingRadius": 1.9, "Models": []}))
+            result = subprocess.run([sys.executable, str(CPW2D / "prepare_surface_response_coupons.py"), str(manifest), "--output", str(Path(tmp) / "out"),
+                                     "--local-pieces", "--one-reference"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("mutually exclusive", result.stderr)
+            for flags, expected in (([], 3), (["--one-reference"], 0), (["--local-pieces"], 3)):
+                subprocess.run([sys.executable, str(CPW2D / "prepare_surface_response_coupons.py"), str(manifest), "--output", str(Path(tmp) / "out"), *flags],
+                               check=True, capture_output=True, text=True)
+                plan = json.loads((Path(tmp) / "out" / "coupon-plan.json").read_text())
+                self.assertEqual(plan["Summary"]["LocalPiecesForm"], expected, flags)
 
 
 if __name__ == "__main__":

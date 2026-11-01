@@ -212,32 +212,46 @@ def planner_args(**overrides):
 
 class PlannerCacheForm(unittest.TestCase):
     """Review d1099 MAJOR-1 / MINOR-3 (decision 1101): the planner's straight / parallel-cluster cache keys carry the
-    --local-pieces form (no silent reuse of the other form's library from one cache root), the default spec has no such
-    key, and the piece form's model Name carries the -pieces<P> suffix."""
+    piece form (no silent reuse of the other form's library from one cache root), the one-reference spec has no such
+    key, and the piece form's model Name carries the -pieces<P> suffix. Since decision 1136 (4) the form is PLANNED per
+    coupon (Preparation.LocalPieces, test_prepare_surface_response_coupons.PlannerLocalPiecesDefault): the specs read
+    the planned form (or an explicit bool), not a CLI flag."""
 
     PARAMETERS = {"metal_thickness": 0.1, "overetch": 0.05}
-    CLUSTER = {"Id": "pec", "Topology": "ParallelEdgeCluster", "BoundaryCondition": "Verified",
+    CLUSTER = {"Id": "pec", "Topology": "ParallelEdgeCluster", "BoundaryCondition": "Verified", "Preparation": {},
                "Geometry": {"Edges": [{"Offset": o, "GapDirection": d, "Conductor": 1}
                                       for o, d in zip([0.0, 2.0, 4.0, 6.0], [1, -1, 1, -1])]}}
-    STRAIGHT = [{"Id": "gap", "Topology": "SameConductorGap", "BoundaryCondition": "Verified", "Geometry": {"Separation": 2.0}},
-                {"Id": "iso", "Topology": "IsolatedEdge", "BoundaryCondition": "Verified", "Geometry": {}}]
+    STRAIGHT = [{"Id": "gap", "Topology": "SameConductorGap", "BoundaryCondition": "Verified", "Geometry": {"Separation": 2.0},
+                 "Preparation": {}},
+                {"Id": "iso", "Topology": "IsolatedEdge", "BoundaryCondition": "Verified", "Geometry": {}, "Preparation": {}}]
 
-    def test_cache_specs_key_on_the_form_and_the_default_is_unchanged(self):
+    def test_cache_specs_key_on_the_form_and_the_one_reference_spec_is_unchanged(self):
         edges = PLANNER.normalize_parallel_edges(self.CLUSTER, 1.9)
-        absent, off, on = planner_args(), planner_args(local_pieces=False), planner_args(local_pieces=True)
-        for spec_of in (lambda a: PLANNER.parallel_cluster_spec(self.CLUSTER, edges, a, self.PARAMETERS),
-                        lambda a: PLANNER.straight_spec(self.STRAIGHT, a, self.PARAMETERS)):
-            spec_absent, spec_off, spec_on = spec_of(absent), spec_of(off), spec_of(on)
-            self.assertEqual(spec_absent, spec_off)                       # the default spec: the flag absent == off
-            self.assertNotIn("LocalPieces", spec_absent)
+        args = planner_args()
+        for spec_of in (lambda form: PLANNER.parallel_cluster_spec(self.CLUSTER, edges, args, self.PARAMETERS, form),
+                        lambda form: PLANNER.straight_spec(self.STRAIGHT, args, self.PARAMETERS, form)):
+            spec_unplanned, spec_off, spec_on = spec_of(None), spec_of(False), spec_of(True)
+            self.assertEqual(spec_unplanned, spec_off)                    # a plan without the form = the one-reference form
+            self.assertNotIn("LocalPieces", spec_off)
             self.assertEqual(spec_on.pop("LocalPieces"), True)           # the form is the ONLY difference
             self.assertEqual(spec_on, spec_off)
             spec_on["LocalPieces"] = True
             self.assertNotEqual(PLANNER.fingerprint(spec_on), PLANNER.fingerprint(spec_off))   # distinct cache roots
-        key = PLANNER.fingerprint(PLANNER.parallel_cluster_spec(self.CLUSTER, edges, off, self.PARAMETERS))
-        self.assertEqual(PLANNER.parallel_cluster_model_name(key, edges, off), f"parallel-edge-cluster-{key[:12]}")
-        key_on = PLANNER.fingerprint(PLANNER.parallel_cluster_spec(self.CLUSTER, edges, on, self.PARAMETERS))
-        self.assertEqual(PLANNER.parallel_cluster_model_name(key_on, edges, on), f"parallel-edge-cluster-{key_on[:12]}-pieces3")
+        # the planned form (decision 1136 (4)): the one-label CPW (3 pieces) and the gap are planned in the piece form
+        planned = json.loads(json.dumps(self.CLUSTER))
+        PLANNER.plan_local_pieces_form(planned, 1.9)
+        self.assertTrue(PLANNER.coupon_local_pieces(planned))
+        self.assertIn("LocalPieces", PLANNER.parallel_cluster_spec(planned, edges, args, self.PARAMETERS))
+        straight = json.loads(json.dumps(self.STRAIGHT))
+        for coupon in straight:
+            PLANNER.plan_local_pieces_form(coupon, 1.9)
+        self.assertEqual([PLANNER.coupon_local_pieces(c) for c in straight], [True, False])
+        self.assertTrue(PLANNER.straight_family_local_pieces(straight))
+        self.assertIn("LocalPieces", PLANNER.straight_spec(straight, args, self.PARAMETERS))
+        key = PLANNER.fingerprint(PLANNER.parallel_cluster_spec(self.CLUSTER, edges, args, self.PARAMETERS, False))
+        self.assertEqual(PLANNER.parallel_cluster_model_name(key, edges, False), f"parallel-edge-cluster-{key[:12]}")
+        key_on = PLANNER.fingerprint(PLANNER.parallel_cluster_spec(self.CLUSTER, edges, args, self.PARAMETERS, True))
+        self.assertEqual(PLANNER.parallel_cluster_model_name(key_on, edges, True), f"parallel-edge-cluster-{key_on[:12]}-pieces3")
 
     def test_piece_form_model_name(self):
         self.assertEqual(lp.local_pieces_model_name("parallel-edge-cluster-abc", [1, 2, 2, 3]), "parallel-edge-cluster-abc-pieces3")

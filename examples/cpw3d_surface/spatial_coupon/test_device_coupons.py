@@ -134,8 +134,11 @@ class DeviceBasisDefaultTest(unittest.TestCase):
                           "element_caps": ["5ed91f8890c0=16000000"], "element_cap_approval": "supervisor",
                           "element_cap_reason": "12-13 M elements", "nearkey_reuse_mode": "off", "nearkey_fallback_approval": None,
                           "nearkey_fallback_stop_records": [], "nearkey_rule": None, "nearkey_record_roots": [],
-                          "mirror_formed": "refuse"})
+                          "mirror_formed": "refuse", "one_reference": False})
         self.assertEqual(parser.parse_args(common).support_span_cap, [])
+        self.assertTrue(device_coupons.requirement_option_kwargs(parser.parse_args(common + ["--one-reference"]))["one_reference"])
+        with self.assertRaises(SystemExit):   # the opt-out applies to the --device coupons only
+            coupon_library.main(["build", "--manifest", "m.json", "--one-reference"])
         with self.assertRaises(SystemExit):
             coupon_library.main(["build", "--manifest", "m.json", "--element-cap", "5ed91f8890c0=16000000"])
         # the near-key reuse options (decision 428) are --device options too: refused without --device
