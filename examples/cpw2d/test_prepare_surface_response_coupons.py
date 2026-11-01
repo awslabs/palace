@@ -1216,7 +1216,13 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                             {
                                 "Name": "spatial",
                                 "Topology": "SpatialEdgeCluster",
-                                "Edges": [{}, {}],
+                                # the generator writes the coupon's Edges on the model: the match is by
+                                # them (Point / GapDirection / Conductor), never by topology alone
+                                # (OI-PLANNER-SKIPPED-SIGNATURE-STAMP, decisions 1117 / 1137)
+                                "Edges": [
+                                    {"Point": edge["Point"], "GapDirection": edge["GapDirection"], "Conductor": edge["Conductor"]}
+                                    for edge in overlapping_spatial_coupon()["Geometry"]["Edges"]
+                                ],
                             },
                         ],
                     }
