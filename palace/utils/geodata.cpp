@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -18,6 +20,7 @@
 #include <unordered_set>
 #include <utility>
 #include <Eigen/Dense>
+#include <parmetis.h>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/interpolator.hpp"
@@ -2673,6 +2676,218 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
+// Hilbert curve index of a point with dim coordinates of b bits each (Skilling,
+// "Programming the Hilbert curve", AIP Conf. Proc. 707, 2004).
+std::uint64_t HilbertIndex(std::array<std::uint32_t, 3> X, int dim, int b)
+{
+  const std::uint32_t M = 1u << (b - 1);
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    const std::uint32_t P = Q - 1;
+    for (int i = 0; i < dim; i++)
+    {
+      if (X[i] & Q)
+      {
+        X[0] ^= P;
+      }
+      else
+      {
+        const std::uint32_t t = (X[0] ^ X[i]) & P;
+        X[0] ^= t;
+        X[i] ^= t;
+      }
+    }
+  }
+  for (int i = 1; i < dim; i++)
+  {
+    X[i] ^= X[i - 1];
+  }
+  std::uint32_t t = 0;
+  for (std::uint32_t Q = M; Q > 1; Q >>= 1)
+  {
+    if (X[dim - 1] & Q)
+    {
+      t ^= Q - 1;
+    }
+  }
+  for (int i = 0; i < dim; i++)
+  {
+    X[i] ^= t;
+  }
+  std::uint64_t key = 0;
+  for (int j = b - 1; j >= 0; j--)
+  {
+    for (int i = 0; i < dim; i++)
+    {
+      key = (key << 1) | ((X[i] >> j) & 1u);
+    }
+  }
+  return key;
+}
+
+// Graph partition of the elements of a nonconforming parallel mesh with ParMETIS, on the
+// distributed element face-adjacency graph (including nonconforming master/slave faces).
+// The parts are then numbered along a Hilbert curve through their centroids, so that
+// consecutive ranks (and in particular the ranks sharing a node) hold neighboring
+// subdomains. MFEM's default rebalancing splits the refinement-tree leaf sequence into
+// equal chunks instead, which follows the element order of the input mesh and can produce
+// fragmented subdomains with many neighbors (and thus expensive halo exchanges). Returns
+// false if ParMETIS fails.
+bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
+                                           mfem::Array<int> &partitioning)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const int ne = mesh.GetNE(), dim = mesh.SpaceDimension();
+  std::vector<idx_t> vtxdist(size + 1, 0);
+  {
+    long long ne_ll = ne;
+    std::vector<long long> counts(size);
+    MPI_Allgather(&ne_ll, 1, MPI_LONG_LONG, counts.data(), 1, MPI_LONG_LONG, comm);
+    for (int i = 0; i < size; i++)
+    {
+      vtxdist[i + 1] = vtxdist[i] + static_cast<idx_t>(counts[i]);
+    }
+    if (*std::min_element(counts.begin(), counts.end()) == 0)
+    {
+      return false;  // ParMETIS requires a nonempty graph on every process
+    }
+  }
+
+  // Global indices of face-neighbor elements, communicated with a piecewise constant field.
+  mesh.ExchangeFaceNbrData();
+  mfem::L2_FECollection fec(0, mesh.Dimension());
+  mfem::ParFiniteElementSpace fes(&mesh, &fec);
+  mfem::ParGridFunction gid(&fes);
+  mfem::Array<int> vdofs;
+  for (int e = 0; e < ne; e++)
+  {
+    fes.GetElementVDofs(e, vdofs);
+    gid(vdofs[0]) = static_cast<double>(vtxdist[rank] + e);
+  }
+  gid.ExchangeFaceNbrData();
+  const mfem::Vector &nbr_gid = gid.FaceNbrData();
+
+  // Element adjacency through all conforming, slave, shared, and ghost slave faces.
+  std::vector<std::vector<idx_t>> adj(ne);
+  for (int f = 0; f < mesh.GetNumFacesWithGhost(); f++)
+  {
+    const auto info = mesh.GetFaceInformation(f);
+    const int e1 = info.element[0].index, e2 = info.element[1].index;
+    if (e1 < 0 || e1 >= ne || e2 < 0)
+    {
+      continue;
+    }
+    if (info.element[1].location == mfem::Mesh::ElementLocation::Local)
+    {
+      adj[e1].push_back(vtxdist[rank] + e2);
+      adj[e2].push_back(vtxdist[rank] + e1);
+    }
+    else if (info.element[1].location == mfem::Mesh::ElementLocation::FaceNbr)
+    {
+      fes.GetFaceNbrElementVDofs(e2, vdofs);
+      adj[e1].push_back(static_cast<idx_t>(nbr_gid(vdofs[0])));
+    }
+  }
+  std::vector<idx_t> xadj(ne + 1, 0), adjncy;
+  for (int e = 0; e < ne; e++)
+  {
+    auto &a = adj[e];
+    std::sort(a.begin(), a.end());
+    a.erase(std::unique(a.begin(), a.end()), a.end());
+    xadj[e + 1] = xadj[e] + static_cast<idx_t>(a.size());
+  }
+  adjncy.reserve(std::max(xadj[ne], idx_t(1)));
+  for (int e = 0; e < ne; e++)
+  {
+    adjncy.insert(adjncy.end(), adj[e].begin(), adj[e].end());
+    std::vector<idx_t>().swap(adj[e]);
+  }
+  if (adjncy.empty())
+  {
+    adjncy.push_back(0);  // ParMETIS dereferences the array
+  }
+
+  idx_t wgtflag = 0, numflag = 0, ncon = 1, nparts = size, edgecut = 0;
+  std::vector<real_t> tpwgts(size, static_cast<real_t>(1.0 / size));
+  real_t ubvec = 1.02;
+  idx_t options[3] = {1, 0, 1};  // User options, no output, fixed seed
+  std::vector<idx_t> part(std::max(ne, 1), rank);
+  int ok =
+      (ParMETIS_V3_PartKway(vtxdist.data(), xadj.data(), adjncy.data(), nullptr, nullptr,
+                            &wgtflag, &numflag, &ncon, &nparts, tpwgts.data(), &ubvec,
+                            options, &edgecut, part.data(), &comm) == METIS_OK);
+  Mpi::GlobalMin(1, &ok, comm);
+  if (!ok)
+  {
+    return false;
+  }
+
+  // Number the parts along a Hilbert curve through the part centroids.
+  std::vector<double> xc(static_cast<std::size_t>(size) * dim, 0.0), cnt(size, 0.0);
+  mfem::Array<int> verts;
+  for (int e = 0; e < ne; e++)
+  {
+    mesh.GetElementVertices(e, verts);
+    for (int i = 0; i < verts.Size(); i++)
+    {
+      const double *v = mesh.GetVertex(verts[i]);
+      for (int d = 0; d < dim; d++)
+      {
+        xc[part[e] * dim + d] += v[d] / verts.Size();
+      }
+    }
+    cnt[part[e]] += 1.0;
+  }
+  MPI_Allreduce(MPI_IN_PLACE, xc.data(), static_cast<int>(xc.size()), MPI_DOUBLE, MPI_SUM,
+                comm);
+  MPI_Allreduce(MPI_IN_PLACE, cnt.data(), size, MPI_DOUBLE, MPI_SUM, comm);
+  if (std::find(cnt.begin(), cnt.end(), 0.0) != cnt.end())
+  {
+    return false;  // Do not leave a process without elements
+  }
+  std::array<double, 3> lo, hi;
+  lo.fill(mfem::infinity());
+  hi.fill(-mfem::infinity());
+  for (int p = 0; p < size; p++)
+  {
+    for (int d = 0; d < dim; d++)
+    {
+      xc[p * dim + d] /= cnt[p];
+      lo[d] = std::min(lo[d], xc[p * dim + d]);
+      hi[d] = std::max(hi[d], xc[p * dim + d]);
+    }
+  }
+  const int b = (dim == 3) ? 21 : 31;
+  const double nb = std::ldexp(1.0, b);
+  std::vector<std::uint64_t> key(size, 0);
+  for (int p = 0; p < size; p++)
+  {
+    std::array<std::uint32_t, 3> X = {0, 0, 0};
+    for (int d = 0; d < dim; d++)
+    {
+      const double len = hi[d] - lo[d];
+      const double t = (len > 0.0) ? (xc[p * dim + d] - lo[d]) / len : 0.0;
+      X[d] = static_cast<std::uint32_t>(std::clamp(std::floor(t * nb), 0.0, nb - 1.0));
+    }
+    key[p] = HilbertIndex(X, dim, b);
+  }
+  std::vector<int> order(size), new_part(size);
+  std::iota(order.begin(), order.end(), 0);
+  std::stable_sort(order.begin(), order.end(),
+                   [&key](int i, int j) { return key[i] < key[j]; });
+  for (int i = 0; i < size; i++)
+  {
+    new_part[order[i]] = i;
+  }
+  partitioning.SetSize(ne);
+  for (int e = 0; e < ne; e++)
+  {
+    partitioning[e] = new_part[part[e]];
+  }
+  return true;
+}
+
 }  // namespace
 
 void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
@@ -2784,7 +2999,15 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   {
     if (mesh->Nonconforming())
     {
-      mesh->Rebalance();
+      mfem::Array<int> partitioning;
+      if (GetNonconformingRebalancePartitioning(*mesh, partitioning))
+      {
+        mesh->Rebalance(partitioning);
+      }
+      else
+      {
+        mesh->Rebalance();
+      }
     }
     else
     {
