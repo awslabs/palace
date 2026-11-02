@@ -2943,7 +2943,7 @@
       "properties": {
         "Type": {
           "$ref": "#/$defs/LinearSolverType",
-          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects the solver based on the problem type and available sparse direct solvers."
+          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects BoomerAMG for electrostatic problems, AMS for magnetostatic and transient problems, and otherwise the first available sparse direct solver among STRUMPACK, SuperLU_DIST, and MUMPS (AMS if none is available)."
         },
         "KSPType": {
           "$ref": "#/$defs/KrylovSolver",
