@@ -374,6 +374,212 @@ index 74b58b03..6fb3d086 100644
      struct ParallelFront {
        ParallelFront() {}
        ParallelFront
+diff --git a/src/sparse/fronts/Front.cpp b/src/sparse/fronts/Front.cpp
+index f84008cd..5e4ff033 100644
+--- a/src/sparse/fronts/Front.cpp
++++ b/src/sparse/fronts/Front.cpp
+@@ -154,8 +154,12 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> inline void
+   Front<scalar_t,integer_t>::extend_add_b
+   (DenseM_t& b, DenseM_t& bupd, const DenseM_t& CB, const F_t* pa) const {
+-    std::size_t upd2sep;
+-    auto I = upd_to_parent(pa, upd2sep);
++    if (upd2pa_.size() != std::size_t(dim_upd()) || upd2pa_parent_ != pa) {
++      upd2pa_ = upd_to_parent(pa, upd2pa_sep_);
++      upd2pa_parent_ = pa;
++    }
++    const auto upd2sep = upd2pa_sep_;
++    const auto& I = upd2pa_;
+     for (std::size_t c=0; c<b.cols(); c++) {
+       for (std::size_t r=0; r<upd2sep; r++)
+         b(I[r]+pa->sep_begin_, c) += CB(r, c);
+@@ -178,8 +182,12 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> void
+   Front<scalar_t,integer_t>::extract_b
+   (const DenseM_t& y, const DenseM_t& yupd, DenseM_t& CB, const F_t* pa) const {
+-    std::size_t upd2sep;
+-    auto I = upd_to_parent(pa, upd2sep);
++    if (upd2pa_.size() != std::size_t(dim_upd()) || upd2pa_parent_ != pa) {
++      upd2pa_ = upd_to_parent(pa, upd2pa_sep_);
++      upd2pa_parent_ = pa;
++    }
++    const auto upd2sep = upd2pa_sep_;
++    const auto& I = upd2pa_;
+     for (std::size_t c=0; c<y.cols(); c++) {
+       for (std::size_t r=0; r<upd2sep; r++)
+         CB(r,c) = y(I[r]+pa->sep_begin_, c);
+diff --git a/src/sparse/fronts/Front.hpp b/src/sparse/fronts/Front.hpp
+index 16c08b61..ec06e407 100644
+--- a/src/sparse/fronts/Front.hpp
++++ b/src/sparse/fronts/Front.hpp
+@@ -440,6 +440,11 @@ namespace strumpack {
+     std::vector<integer_t> upd_;
+     std::unique_ptr<F_t> lchild_, rchild_;
+ 
++    // cached result of upd_to_parent, used in the solve phase
++    mutable std::vector<std::size_t> upd2pa_;
++    mutable std::size_t upd2pa_sep_ = 0;
++    mutable const F_t* upd2pa_parent_ = nullptr;
++
+     virtual long long node_factor_nonzeros() const {
+       return dense_node_factor_nonzeros();
+     }
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index 3c009f6f..59a0e68b 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -28,6 +28,7 @@
+  */
+ #include <fstream>
+ 
++#include <numeric>
+ #include "FrontDenseMPI.hpp"
+ #include "FrontBLRMPI.hpp"
+ #include "ExtendAdd.hpp"
+@@ -150,6 +151,7 @@ namespace strumpack {
+   FrontDenseMPI<scalar_t,integer_t>::partial_factorization
+   (const SPOptions<scalar_t>& opts) {
+     ReturnCode err_code = ReturnCode::SUCCESS;
++    laswp_plan_ = LaswpPlan(); // pivots change with every factorization
+     if (!this->dim_sep() || !grid()->active())
+       return err_code;
+     TaskTimer pf("FrontDenseMPI_factor");
+@@ -305,6 +307,103 @@ namespace strumpack {
+   }
+ #endif
+ 
++  template<typename scalar_t,typename integer_t> void
++  FrontDenseMPI<scalar_t,integer_t>::laswp_fwd(DistM_t& b) const {
++    // Same result as b.laswp(piv, true): the sequence of row swaps is
++    // composed into a permutation once, then applied with a single
++    // exchange between the process rows of each process column.
++    auto& lp = laswp_plan_;
++    const int nprows = grid()->nprows(), prow = grid()->prow(),
++      pcol = grid()->pcol();
++    const auto& comm = grid()->Comm_active();
++    if (!lp.ready) {
++      const int ds = this->dim_sep(), lr = F11_.lrows();
++      // gather the (global) pivots of all process rows (process column 0)
++      std::vector<int> mine;
++      if (pcol == 0)
++        for (int i=0; i<lr; i++) {
++          mine.push_back(F11_.rowl2g(i));
++          mine.push_back(piv[i]-1);
++        }
++      int cnt = mine.size(), P = comm.size();
++      std::vector<int> cnts(P), displs(P);
++      MPI_Allgather(&cnt, 1, MPI_INT, cnts.data(), 1, MPI_INT, comm.comm());
++      int tot = 0;
++      for (int p=0; p<P; p++) { displs[p] = tot; tot += cnts[p]; }
++      std::vector<int> all(tot);
++      MPI_Allgatherv(mine.data(), cnt, MPI_INT, all.data(), cnts.data(),
++                     displs.data(), MPI_INT, comm.comm());
++      std::vector<int> gpiv(ds);
++      std::iota(gpiv.begin(), gpiv.end(), 0);
++      for (int t=0; t<tot; t+=2) gpiv[all[t]] = all[t+1];
++      // b_new(k) = b_old(src[k])
++      std::vector<int> src(ds);
++      std::iota(src.begin(), src.end(), 0);
++      for (int k=0; k<ds; k++) std::swap(src[k], src[gpiv[k]]);
++      std::vector<int> spos(nprows, -1), rpos(nprows, -1);
++      for (int k=0; k<ds; k++) {
++        int pd = F11_.rowg2p(k), ps = F11_.rowg2p(src[k]);
++        if (pd == prow && ps == prow) {
++          if (src[k] != k)
++            lp.loc.emplace_back(F11_.rowg2l(k), F11_.rowg2l(src[k]));
++        } else if (pd == prow) {
++          if (rpos[ps] < 0) {
++            rpos[ps] = lp.rprow.size(); lp.rprow.push_back(ps);
++            lp.ridx.emplace_back();
++          }
++          lp.ridx[rpos[ps]].push_back(F11_.rowg2l(k));
++        } else if (ps == prow) {
++          if (spos[pd] < 0) {
++            spos[pd] = lp.sprow.size(); lp.sprow.push_back(pd);
++            lp.sidx.emplace_back();
++          }
++          lp.sidx[spos[pd]].push_back(F11_.rowg2l(src[k]));
++        }
++      }
++      lp.ready = true;
++    }
++    const int lc = b.lcols();
++    if (!lc) return;
++    const int tag = 7357;
++    std::vector<std::vector<scalar_t>> sbuf(lp.sprow.size()),
++      rbuf(lp.rprow.size());
++    std::vector<MPI_Request> reqs(lp.sprow.size() + lp.rprow.size());
++    int nr = 0;
++    for (std::size_t q=0; q<lp.rprow.size(); q++) {
++      rbuf[q].resize(lp.ridx[q].size() * lc);
++      MPI_Irecv(rbuf[q].data(), rbuf[q].size(), mpi_type<scalar_t>(),
++                lp.rprow[q] + pcol * nprows, tag, comm.comm(), &reqs[nr++]);
++    }
++    for (std::size_t q=0; q<lp.sprow.size(); q++) {
++      auto& sb = sbuf[q];
++      const auto& I = lp.sidx[q];
++      sb.resize(I.size() * lc);
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<I.size(); t++)
++          sb[t + c*I.size()] = b(I[t], c);
++      MPI_Isend(sb.data(), sb.size(), mpi_type<scalar_t>(),
++                lp.sprow[q] + pcol * nprows, tag, comm.comm(), &reqs[nr++]);
++    }
++    if (!lp.loc.empty()) {
++      std::vector<scalar_t> tmp(lp.loc.size() * lc);
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<lp.loc.size(); t++)
++          tmp[t + c*lp.loc.size()] = b(lp.loc[t].second, c);
++      // all sends are packed already, safe to overwrite b
++      MPI_Waitall(nr, reqs.data(), MPI_STATUSES_IGNORE);
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<lp.loc.size(); t++)
++          b(lp.loc[t].first, c) = tmp[t + c*lp.loc.size()];
++    } else
++      MPI_Waitall(nr, reqs.data(), MPI_STATUSES_IGNORE);
++    for (std::size_t q=0; q<lp.rprow.size(); q++) {
++      const auto& I = lp.ridx[q];
++      for (int c=0; c<lc; c++)
++        for (std::size_t t=0; t<I.size(); t++)
++          b(I[t], c) = rbuf[q][t + c*I.size()];
++    }
++  }
++
+   template<typename scalar_t,typename integer_t> void
+   FrontDenseMPI<scalar_t,integer_t>::fwd_solve_phase2
+   (const DistM_t& F11, const DistM_t& F12, const DistM_t& F21,
+@@ -335,7 +434,7 @@ namespace strumpack {
+     }
+ #else
+     if (this->dim_sep()) {
+-      b.laswp(piv, true);
++      laswp_fwd(b);
+       if (b.cols() == 1) {
+         trsv(UpLo::L, Trans::N, Diag::U, F11, b);
+         if (this->dim_upd())
+diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
+index fcea4670..22d896f8 100644
+--- a/src/sparse/fronts/FrontDenseMPI.hpp
++++ b/src/sparse/fronts/FrontDenseMPI.hpp
+@@ -127,6 +127,18 @@ namespace strumpack {
+     DistM_t F11_, F12_, F21_, F22_;
+     std::vector<int> piv;
+ 
++    // Cached communication plan to apply the row interchanges (piv)
++    // to the right-hand side in the forward solve.
++    struct LaswpPlan {
++      bool ready = false;
++      std::vector<int> sprow, rprow;          // peer process rows
++      std::vector<std::vector<int>> sidx;     // local rows to send
++      std::vector<std::vector<int>> ridx;     // local rows to receive
++      std::vector<std::pair<int,int>> loc;    // local (dst,src) rows
++    };
++    mutable LaswpPlan laswp_plan_;
++    void laswp_fwd(DistM_t& b) const;
++
+     void build_front(const SpMat_t& A);
+     ReturnCode partial_factorization(const SPOptions<scalar_t>& opts);
+ 
 diff --git a/src/sparse/fronts/FrontMPI.cpp b/src/sparse/fronts/FrontMPI.cpp
 index e0946332..600779e5 100644
 --- a/src/sparse/fronts/FrontMPI.cpp
