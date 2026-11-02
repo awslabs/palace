@@ -273,10 +273,11 @@ list(APPEND STRUMPACK_OPTIONS
 string(REPLACE ";" "; " STRUMPACK_OPTIONS_PRINT "${STRUMPACK_OPTIONS}")
 message(STATUS "STRUMPACK_OPTIONS: ${STRUMPACK_OPTIONS_PRINT}")
 
-# Fix build
+# Fix build, reduce communication overhead in the distributed solve phase
 set(STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_build.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_gpu_init.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_solve_comm.diff"
 )
 
 include(ExternalProject)

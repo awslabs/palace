@@ -1,0 +1,211 @@
+diff --git a/src/misc/MPIWrapper.hpp b/src/misc/MPIWrapper.hpp
+index 067a5197..6784827a 100644
+--- a/src/misc/MPIWrapper.hpp
++++ b/src/misc/MPIWrapper.hpp
+@@ -594,18 +594,33 @@ namespace strumpack {
+       for (int p=0; p<size(); p++)
+         rsize += rcnts[p];
+       std::vector<T,A> rbuf(rsize);
+-      MPI_Alltoallv
+-        (sbuf, scnts, sdispls, mpi_type<T>(),
+-         rbuf.data(), rcnts, rdispls, mpi_type<T>(), comm_);
++      all_to_allv(sbuf, scnts, sdispls, rbuf.data(), rcnts, rdispls);
+       return rbuf;
+     }
+ 
+     template<typename T> void
+     all_to_allv(const T* sbuf, int* scnts, int* sdispls,
+                 T* rbuf, int* rcnts, int* rdispls) const {
+-      MPI_Alltoallv
+-        (sbuf, scnts, sdispls, mpi_type<T>(),
+-         rbuf, rcnts, rdispls, mpi_type<T>(), comm_);
++      // Equivalent to MPI_Alltoallv, but only exchanges the non-empty
++      // messages (the counts are known on both sides). The
++      // communication pattern is typically sparse, while
++      // MPI_Alltoallv implementations take O(P) steps.
++      auto P = size();
++      int r = rank(), nreqs = 0;
++      std::unique_ptr<MPI_Request[]> reqs(new MPI_Request[2*P]);
++      for (int p=0; p<P; p++) {
++        auto src = (r + p) % P;
++        if (rcnts[src])
++          MPI_Irecv(rbuf + rdispls[src], rcnts[src], mpi_type<T>(), src, 0,
++                    comm_, reqs.get()+nreqs++);
++      }
++      for (int p=0; p<P; p++) {
++        auto dst = (r + p) % P;
++        if (scnts[dst])
++          MPI_Isend(sbuf + sdispls[dst], scnts[dst], mpi_type<T>(), dst, 0,
++                    comm_, reqs.get()+nreqs++);
++      }
++      MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
+     }
+ 
+     /**
+@@ -631,6 +646,19 @@ namespace strumpack {
+       all_to_all_v(sbuf, rbuf, pbuf, mpi_type<T>());
+     }
+ 
++    /**
++     * Same as above, but the receive sizes are taken from rsizes if
++     * rsizes.size() == size(). Otherwise they are computed (with an
++     * MPI_Alltoall) and stored in rsizes, so they can be reused when
++     * the same communication pattern is repeated (all ranks should
++     * have the same cache state).
++     */
++    template<typename T, typename A=std::allocator<T>> void
++    all_to_all_v(std::vector<std::vector<T>>& sbuf, std::vector<T,A>& rbuf,
++                 std::vector<T*>& pbuf, std::vector<int>& rsizes) const {
++      all_to_all_v(sbuf, rbuf, pbuf, mpi_type<T>(), &rsizes);
++    }
++
+     /**
+      * Perform an MPI_Alltoallv. Each rank sends sbuf[i] to process
+      * i. The results are received in a single contiguous vector which
+@@ -671,7 +699,8 @@ namespace strumpack {
+      */
+     template<typename T, typename A=std::allocator<T>> void
+     all_to_all_v(std::vector<std::vector<T>>& sbuf, std::vector<T,A>& rbuf,
+-                 std::vector<T*>& pbuf, const MPI_Datatype Ttype) const {
++                 std::vector<T*>& pbuf, const MPI_Datatype Ttype,
++                 std::vector<int>* rsizes_cache=nullptr) const {
+       assert(sbuf.size() == std::size_t(size()));
+       auto P = size();
+       std::unique_ptr<int[]> iwork(new int[4*P]);
+@@ -688,8 +717,13 @@ namespace strumpack {
+         }
+         ssizes[p] = sbuf[p].size();
+       }
+-      MPI_Alltoall
+-        (ssizes, 1, mpi_type<int>(), rsizes, 1, mpi_type<int>(), comm_);
++      if (rsizes_cache && rsizes_cache->size() == std::size_t(P))
++        std::copy(rsizes_cache->begin(), rsizes_cache->end(), rsizes);
++      else {
++        MPI_Alltoall
++          (ssizes, 1, mpi_type<int>(), rsizes, 1, mpi_type<int>(), comm_);
++        if (rsizes_cache) rsizes_cache->assign(rsizes, rsizes+P);
++      }
+       std::size_t totssize = std::accumulate(ssizes, ssizes+P, std::size_t(0)),
+         totrsize = std::accumulate(rsizes, rsizes+P, std::size_t(0));
+ #if 1
+@@ -715,19 +749,26 @@ namespace strumpack {
+         std::unique_ptr<MPI_Request[]> reqs(new MPI_Request[2*P]);
+         std::size_t displ = 0;
+         pbuf.resize(P);
+-        int r = rank();
++        int r = rank(), nreqs = 0;
++        // Only post messages that carry data: the sizes are known on
++        // both sides after the MPI_Alltoall above, so empty messages
++        // are skipped (avoids O(P^2) zero-byte messages on large
++        // communicators).
+         for (int p=0; p<P; p++) {
+           auto dst = (r + p) % P;
+           pbuf[dst] = rbuf.data() + displ;
+-          MPI_Irecv(pbuf[dst], rsizes[dst], Ttype, dst, 0, comm_, reqs.get()+dst);
++          if (rsizes[dst])
++            MPI_Irecv(pbuf[dst], rsizes[dst], Ttype, dst, 0, comm_,
++                      reqs.get()+nreqs++);
+           displ += rsizes[dst];
+         }
+         for (int p=0; p<P; p++) {
+           auto dst = (r + p) % P;
+-          MPI_Isend
+-            (sbuf[dst].data(), ssizes[dst], Ttype, dst, 0, comm_, reqs.get()+P+dst);
++          if (ssizes[dst])
++            MPI_Isend(sbuf[dst].data(), ssizes[dst], Ttype, dst, 0, comm_,
++                      reqs.get()+nreqs++);
+         }
+-        MPI_Waitall(2*P, reqs.get(), MPI_STATUSES_IGNORE);
++        MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
+         std::vector<std::vector<T>>().swap(sbuf);
+       } else {
+         std::unique_ptr<T[]> sendbuf_(new T[totssize]);
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 48f5aedd..0a912d98 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -296,7 +296,13 @@ namespace strumpack {
+         }
+       }
+     }
+-    comm_.all_to_all(scnts, 1, rcnts);
++    auto& rc = solve_rcnts_[n];
++    if (rc.size() == std::size_t(P_))
++      std::copy(rc.begin(), rc.end(), rcnts);
++    else {
++      comm_.all_to_all(scnts, 1, rcnts);
++      rc.assign(rcnts, rcnts+P_);
++    }
+     rdispls[0] = 0;
+     for (int p=1; p<P_; p++)
+       rdispls[p] = rdispls[p-1] + rcnts[p-1];
+diff --git a/src/sparse/EliminationTreeMPIDist.hpp b/src/sparse/EliminationTreeMPIDist.hpp
+index 74b58b03..1e77a392 100644
+--- a/src/sparse/EliminationTreeMPIDist.hpp
++++ b/src/sparse/EliminationTreeMPIDist.hpp
+@@ -30,6 +30,7 @@
+ #define ELIMINATION_TREE_MPI_DIST_HPP
+ 
+ #include <cstddef>
++#include <map>
+ 
+ #include "EliminationTreeMPI.hpp"
+ #include "PropMapSparseMatrix.hpp"
+@@ -104,6 +105,12 @@ namespace strumpack {
+     std::vector<int> row_pfront_;
+     void find_row_front(const CSRMPI_t& A);
+ 
++    /**
++     * receive counts for the redistribution of the right-hand side
++     * in multifrontal_solve_dist, per number of right-hand sides
++     */
++    std::map<int,std::vector<int>> solve_rcnts_;
++
+     struct ParallelFront {
+       ParallelFront() {}
+       ParallelFront
+diff --git a/src/sparse/fronts/FrontMPI.cpp b/src/sparse/fronts/FrontMPI.cpp
+index e0946332..600779e5 100644
+--- a/src/sparse/fronts/FrontMPI.cpp
++++ b/src/sparse/fronts/FrontMPI.cpp
+@@ -188,7 +188,7 @@ namespace strumpack {
+       rchild_->extend_add_column_copy_to_buffers(CBr, seqCBr, sbuf, this);
+     std::vector<scalar_t,NoInit<scalar_t>> rbuf;
+     std::vector<scalar_t*> pbuf;
+-    Comm().all_to_all_v(sbuf, rbuf, pbuf);
++    Comm().all_to_all_v(sbuf, rbuf, pbuf, ea_b_rsizes_[b.cols()]);
+     for (auto& ch : {lchild_.get(), rchild_.get()})
+       if (ch) ch->extend_add_column_copy_from_buffers
+                 (b, bupd, pbuf.data()+master(ch), this);
+@@ -213,7 +213,7 @@ namespace strumpack {
+                 (b, bupd, master(ch), sbuf, this);
+     std::vector<scalar_t,NoInit<scalar_t>> rbuf;
+     std::vector<scalar_t*> pbuf;
+-    Comm().all_to_all_v(sbuf, rbuf, pbuf);
++    Comm().all_to_all_v(sbuf, rbuf, pbuf, ex_b_rsizes_[b.cols()]);
+     if (visit(lchild_))
+       lchild_->extract_column_copy_from_buffers(b, CBl, seqCBl, pbuf, this);
+     if (visit(rchild_))
+diff --git a/src/sparse/fronts/FrontMPI.hpp b/src/sparse/fronts/FrontMPI.hpp
+index c8779a71..b1ea13f1 100644
+--- a/src/sparse/fronts/FrontMPI.hpp
++++ b/src/sparse/fronts/FrontMPI.hpp
+@@ -31,6 +31,7 @@
+ 
+ #include "Front.hpp"
+ 
++#include <map>
+ #include "misc/MPIWrapper.hpp"
+ #include "dense/DistributedMatrix.hpp"
+ 
+@@ -155,6 +156,10 @@ namespace strumpack {
+   protected:
+     BLACSGrid blacs_grid_;     // 2D processor grid
+ 
++    // receive sizes for the extend_add_b/extract_b exchanges, per
++    // number of right-hand sides, reused for repeated solves
++    mutable std::map<int,std::vector<int>> ea_b_rsizes_, ex_b_rsizes_;
++
+     virtual long long node_factor_nonzeros() const override;
+ 
+     using F_t::lchild_;
