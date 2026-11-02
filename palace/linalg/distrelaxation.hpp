@@ -52,7 +52,7 @@ private:
 public:
   DistRelaxationSmoother(MPI_Comm comm, const Operator &G, int smooth_it,
                          int cheby_smooth_it, int cheby_order, double cheby_sf_max,
-                         double cheby_sf_min, bool cheby_4th_kind);
+                         double cheby_sf_min, bool cheby_4th_kind, int cheby_max_order = 0);
 
   void SetOperator(const OperType &op) override
   {

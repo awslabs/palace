@@ -487,6 +487,18 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964
 )
 
+# Decode the element messages of a rebalance with a custom partition in the order of the
+# source ranks, so the rebalanced mesh does not depend on the arrival order of the messages
+list(APPEND MFEM_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_nc_rebalance_order.diff"
+)
+
+# SuperLU_DIST >= 9 3D process grid: free the factors on all process layers and use the
+# 2D rank to zero the factors for SamePattern_SameRowPerm
+list(APPEND MFEM_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_superlu_3d.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(mfem
   DEPENDS           ${MFEM_DEPENDENCIES}

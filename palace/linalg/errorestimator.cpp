@@ -73,9 +73,10 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   std::unique_ptr<Solver<OperType>> pc;
   if (!use_mg)
   {
-    // Use eigenvalue estimate to compute optimal Jacobi damping parameter.
+    // The CG iterates do not depend on a scaling of the preconditioner, so no damping (and
+    // no eigenvalue estimate for it) is needed.
     pc = std::make_unique<JacobiSmoother<OperType>>(fespaces.GetFinestFESpace().GetComm(),
-                                                    0.0);
+                                                    1.0);
   }
   else
   {
@@ -204,20 +205,37 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
   ksp->Mult(rhs, y);
 }
 
+template <typename VecType>
+void FluxProjector<VecType>::Mult(const std::vector<const VecType *> &x,
+                                  const std::vector<VecType *> &y) const
+{
+  BlockTimer bt(Timer::SOLVE_ESTIMATOR);
+  MFEM_VERIFY(x.size() == y.size(), "Invalid number of vectors for FluxProjector::Mult!");
+  std::vector<VecType> b(x.size());
+  std::vector<const VecType *> pb(x.size());
+  for (std::size_t k = 0; k < x.size(); k++)
+  {
+    MFEM_ASSERT(x[k]->Size() == Flux->Width() && y[k]->Size() == rhs.Size(),
+                "Invalid vector dimensions for FluxProjector::Mult!");
+    b[k].SetSize(rhs.Size());
+    b[k].UseDevice(true);
+    Flux->Mult(*x[k], b[k]);
+    pb[k] = &b[k];
+  }
+  ksp->Mult(pb, y);
+}
+
 namespace
 {
 
+// Integrate the error estimates of each element for the discontinuous flux F and its
+// recovery G (true dofs), using the grid functions F_gf and G_gf.
 template <typename VecType>
-Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecType &G_gf,
-                             const FiniteElementSpace &fespace,
-                             const FiniteElementSpace &smooth_fespace,
-                             const FluxProjector<VecType> &projector,
-                             const ceed::Operator &integ_op)
+Vector IntegrateErrorEstimates(const VecType &F, VecType &F_gf, const VecType &G,
+                               VecType &G_gf, const FiniteElementSpace &fespace,
+                               const FiniteElementSpace &smooth_fespace,
+                               const ceed::Operator &integ_op)
 {
-  // Compute the projection of the discontinuous flux onto the smooth finite element space
-  // (recovery) and populate the corresponding grid functions.
-  BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(F, G);
   if constexpr (std::is_same_v<VecType, ComplexVector>)
   {
     fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
@@ -301,6 +319,57 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   }
 
   return estimates;
+}
+
+template <typename VecType>
+Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecType &G_gf,
+                             const FiniteElementSpace &fespace,
+                             const FiniteElementSpace &smooth_fespace,
+                             const FluxProjector<VecType> &projector,
+                             const ceed::Operator &integ_op)
+{
+  // Compute the projection of the discontinuous flux onto the smooth finite element space
+  // (recovery) and populate the corresponding grid functions.
+  BlockTimer bt(Timer::ESTIMATION);
+  projector.Mult(F, G);
+  return IntegrateErrorEstimates(F, F_gf, G, G_gf, fespace, smooth_fespace, integ_op);
+}
+
+// Add the error indicators of several fluxes F[k] with energies Et[k] in order, as
+// ComputeErrorEstimates followed by the energy normalization for each, with the flux
+// recoveries of up to a fixed number of fluxes computed at once.
+template <typename VecType>
+void AddErrorEstimates(const std::vector<const VecType *> &F, const std::vector<double> &Et,
+                       VecType &F_gf, VecType &G_gf, int smooth_size,
+                       const FiniteElementSpace &fespace,
+                       const FiniteElementSpace &smooth_fespace,
+                       const FluxProjector<VecType> &projector,
+                       const ceed::Operator &integ_op, ErrorIndicator &indicator)
+{
+  MFEM_VERIFY(F.size() == Et.size(), "Invalid number of energies for error estimation!");
+  BlockTimer bt(Timer::ESTIMATION);
+  constexpr std::size_t max_batch = 8;
+  for (std::size_t k0 = 0; k0 < F.size(); k0 += max_batch)
+  {
+    const std::size_t nk = std::min(max_batch, F.size() - k0);
+    std::vector<VecType> G(nk);
+    std::vector<VecType *> pG(nk);
+    for (std::size_t k = 0; k < nk; k++)
+    {
+      G[k].SetSize(smooth_size);
+      G[k].UseDevice(true);
+      pG[k] = &G[k];
+    }
+    const std::vector<const VecType *> pF(F.begin() + k0, F.begin() + k0 + nk);
+    projector.Mult(pF, pG);
+    for (std::size_t k = 0; k < nk; k++)
+    {
+      auto estimates = IntegrateErrorEstimates(*F[k0 + k], F_gf, G[k], G_gf, fespace,
+                                               smooth_fespace, integ_op);
+      linalg::Sqrt(estimates, (Et[k0 + k] > 0.0) ? 0.5 / Et[k0 + k] : 1.0);
+      indicator.AddIndicator(estimates);
+    }
+  }
 }
 
 }  // namespace
@@ -428,6 +497,15 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
       ComputeErrorEstimates(E, E_gf, D, D_gf, nd_fespace, rt_fespace, projector, integ_op);
   linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(estimates);
+}
+
+template <typename VecType>
+void GradFluxErrorEstimator<VecType>::AddErrorIndicators(
+    const std::vector<const VecType *> &E, const std::vector<double> &Et,
+    ErrorIndicator &indicator) const
+{
+  AddErrorEstimates(E, Et, E_gf, D_gf, D.Size(), nd_fespace, rt_fespace, projector,
+                    integ_op, indicator);
 }
 
 template <typename VecType>
@@ -565,6 +643,15 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double
       ComputeErrorEstimates(B, B_gf, H, H_gf, rt_fespace, nd_fespace, projector, integ_op);
   linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(estimates);
+}
+
+template <typename VecType>
+void CurlFluxErrorEstimator<VecType>::AddErrorIndicators(
+    const std::vector<const VecType *> &B, const std::vector<double> &Et,
+    ErrorIndicator &indicator) const
+{
+  AddErrorEstimates(B, Et, B_gf, H_gf, H.Size(), rt_fespace, nd_fespace, projector,
+                    integ_op, indicator);
 }
 
 template <typename VecType>

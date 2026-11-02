@@ -1,0 +1,1670 @@
+diff --git a/SRC/complex16/pzdistribute3d.c b/SRC/complex16/pzdistribute3d.c
+index 97770481..29fa0a6f 100644
+--- a/SRC/complex16/pzdistribute3d.c
++++ b/SRC/complex16/pzdistribute3d.c
+@@ -354,6 +354,21 @@ pzdistribute3d(superlu_dist_options_t *options, int_t n, SuperMatrix *A,
+ 			    }
+ 			} /* for bnnz ... */
+ 		    } /* for jj ... */
++		} else { /* No L block column on this grid (superGridMap[jb] ==
++			    NOT_IN_GRID): clear the SPA entries set above, like the
++			    first-time distribution does. Otherwise they leak into
++			    the L blocks of the next block columns. */
++		    for (j = fsupc, dense_col = dense; j < FstBlockC(jb+1); ++j) {
++			for (i = xa[j]; i < xa[j+1]; ++i) {
++			    irow = asub[i];
++			    gb = BlockNum( irow );
++			    if ( myrow == PROW( gb, grid ) && gb >= jb ) {
++				lb = LBi( gb, grid );
++				dense_col[ilsum[lb] + irow - FstBlockC( gb )] = zero;
++			    }
++			}
++			dense_col += ldaspa;
++		    }
+ 		} /* if index ... */
+ #if ( PROFlevel>=1 )
+ 		t_l += SuperLU_timer_() - t;
+diff --git a/SRC/complex16/pzgssvx3d.c b/SRC/complex16/pzgssvx3d.c
+index 3453b511..cc7d9635 100755
+--- a/SRC/complex16/pzgssvx3d.c
++++ b/SRC/complex16/pzgssvx3d.c
+@@ -867,6 +867,21 @@ void pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((doublecomplex *) As->nzval)[idx]), count, SuperLU_MPI_DOUBLE_COMPLEX, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -959,12 +974,15 @@ void pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		zinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    zinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		zLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(zLUValSubBuf_t));
+ 		zLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;
+diff --git a/SRC/complex16/pzutil.c b/SRC/complex16/pzutil.c
+index 2a7e3fef..0f09b6a6 100755
+--- a/SRC/complex16/pzutil.c
++++ b/SRC/complex16/pzutil.c
+@@ -771,7 +771,13 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     if ( !(ptr_to_ibuf = SUPERLU_MALLOC(2*procs * sizeof(int))) )
+         ABORT("Malloc fails for ptr_to_ibuf[].");
+     gstrs_comm->ptr_to_ibuf = ptr_to_ibuf;
+-    gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
++        gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
++    gstrs_comm->B_to_X_recv_idx = NULL;
++    gstrs_comm->X_to_B_recv_idx = NULL;
++    gstrs_comm->perm_cache = NULL;
++    gstrs_comm->comm_L = MPI_COMM_NULL;
++    gstrs_comm->b2x_agg = NULL;
++
+ 
+     return 0;
+ } /* PZGSTRS_INIT */
+diff --git a/SRC/complex16/znrformat_loc3d.c b/SRC/complex16/znrformat_loc3d.c
+index 75a4ff53..60f96e58 100755
+--- a/SRC/complex16/znrformat_loc3d.c
++++ b/SRC/complex16/znrformat_loc3d.c
+@@ -834,8 +834,9 @@ int zScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -1039,6 +1040,28 @@ int zScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    int r = 0;
++	    for (p = 0; p < num_procs_to_send; ++p) {
++		if (gpures) {
++#ifdef GPU_ACC
++		    zdevice_matcopy_wrap(send_count_list[p], nrhs, B1 + nrhs * r,
++					 send_count_list[p], B2d + r, A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in zScatter_B3d().");
++#endif
++		} else {
++		    matCopy(send_count_list[p], nrhs, B1 + nrhs * r, send_count_list[p],
++			    B2d + r, A2d->m_loc);
++		}
++		r += send_count_list[p];
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+ 	/* Post irecv first */
+@@ -1103,6 +1126,7 @@ int zScatter_B3d(superlu_dist_options_t *options,
+     } /* else Z-major */
+ 
+     // B <- colMajor(Btmp)
++    if (rankorder == 1) {
+     if (gpures) {
+ #ifdef GPU_ACC
+ 	zdevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+@@ -1112,6 +1136,23 @@ int zScatter_B3d(superlu_dist_options_t *options,
+     } else {
+     matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+     }
++    } else { /* Z-major: one (recv_count x nrhs) block per source */
++	int *recv_count_list = A3d->recv_count_list;
++	for (i = 0, j = 0; j < A3d->num_procs_to_recv; ++j) {
++	    if (gpures) {
++#ifdef GPU_ACC
++		zdevice_matcopy_wrap(recv_count_list[j], nrhs, B + i, ldb,
++				     Btmp + nrhs * i, recv_count_list[j]);
++#else
++		ABORT("GPURES requires GPU_ACC in zScatter_B3d().");
++#endif
++	    } else {
++		matCopy(recv_count_list[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++			recv_count_list[j]);
++	    }
++	    i += recv_count_list[j];
++	}
++    }
+ 
+     /* free storage */
+     if (gpures) {
+diff --git a/SRC/double/dnrformat_loc3d.c b/SRC/double/dnrformat_loc3d.c
+index 3730e728..596858a0 100755
+--- a/SRC/double/dnrformat_loc3d.c
++++ b/SRC/double/dnrformat_loc3d.c
+@@ -835,8 +835,9 @@ int dScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -1040,6 +1041,28 @@ int dScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    int r = 0;
++	    for (p = 0; p < num_procs_to_send; ++p) {
++		if (gpures) {
++#ifdef GPU_ACC
++		    ddevice_matcopy_wrap(send_count_list[p], nrhs, B1 + nrhs * r,
++					 send_count_list[p], B2d + r, A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in dScatter_B3d().");
++#endif
++		} else {
++		    matCopy(send_count_list[p], nrhs, B1 + nrhs * r, send_count_list[p],
++			    B2d + r, A2d->m_loc);
++		}
++		r += send_count_list[p];
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+ 	/* Post irecv first */
+@@ -1104,6 +1127,7 @@ int dScatter_B3d(superlu_dist_options_t *options,
+     } /* else Z-major */
+ 
+     // B <- colMajor(Btmp)
++    if (rankorder == 1) {
+     if (gpures) {
+ #ifdef GPU_ACC
+ 	ddevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+@@ -1113,6 +1137,23 @@ int dScatter_B3d(superlu_dist_options_t *options,
+     } else {
+     matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+     }
++    } else { /* Z-major: one (recv_count x nrhs) block per source */
++	int *recv_count_list = A3d->recv_count_list;
++	for (i = 0, j = 0; j < A3d->num_procs_to_recv; ++j) {
++	    if (gpures) {
++#ifdef GPU_ACC
++		ddevice_matcopy_wrap(recv_count_list[j], nrhs, B + i, ldb,
++				     Btmp + nrhs * i, recv_count_list[j]);
++#else
++		ABORT("GPURES requires GPU_ACC in dScatter_B3d().");
++#endif
++	    } else {
++		matCopy(recv_count_list[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++			recv_count_list[j]);
++	    }
++	    i += recv_count_list[j];
++	}
++    }
+ 
+     /* free storage */
+     if (gpures) {
+diff --git a/SRC/double/dstatic_schedule.c b/SRC/double/dstatic_schedule.c
+index 844e385e..9d586351 100755
+--- a/SRC/double/dstatic_schedule.c
++++ b/SRC/double/dstatic_schedule.c
+@@ -25,6 +25,7 @@ at the top-level directory.
+  * </pre>
+  */
+ 
++#include <string.h>
+ #include "superlu_ddefs.h"
+ 
+ #ifdef ISORT
+@@ -399,7 +400,28 @@ dstatic_schedule(superlu_dist_options_t * options, int m, int n,
+ 
+         /* communication */
+         MPI_Alltoall (sendcnts, 1, MPI_INT, recvcnts, 1, MPI_INT, grid->comm);
+-        MPI_Alltoall (srows, nrbp1, MPI_INT, rrows, nrbp1, MPI_INT, grid->comm);
++        /* srows[p*nrbp1:(p+1)*nrbp1] is zero if sendcnts[p] == 0, so only
++           exchange the rows of the dense MPI_Alltoall which are nonzero
++           (point-to-point, empty messages skipped). */
++        {
++            int nreq = 0, nprocs = Pr * Pc;
++            MPI_Request *reqs;
++            if (!(reqs = SUPERLU_MALLOC (2 * nprocs * sizeof (MPI_Request))))
++                ABORT ("Malloc fails for reqs[].");
++            for (p = 0; p < nprocs; p++) {
++                if (recvcnts[p])
++                    MPI_Irecv (&rrows[p * nrbp1], nrbp1, MPI_INT, p, 0,
++                               grid->comm, &reqs[nreq++]);
++                else
++                    memset (&rrows[p * nrbp1], 0, nrbp1 * sizeof (int));
++            }
++            for (p = 0; p < nprocs; p++)
++                if (sendcnts[p])
++                    MPI_Isend (&srows[p * nrbp1], nrbp1, MPI_INT, p, 0,
++                               grid->comm, &reqs[nreq++]);
++            MPI_Waitall (nreq, reqs, MPI_STATUSES_IGNORE);
++            SUPERLU_FREE (reqs);
++        }
+ 
+ 	log_memory( -(nblocks * iword), stat );  /* blocks[] to be freed soon */
+ 
+@@ -414,8 +436,23 @@ dstatic_schedule(superlu_dist_options_t * options, int m, int n,
+         if (!(blockr = intMalloc_dist (nblocks))) ABORT ("Malloc fails for blockr[].");
+ 	log_memory( nblocks * iword, stat );
+ 
+-        MPI_Alltoallv (blocks, sendcnts, sdispls, mpi_int_t, blockr, recvcnts,
+-                       rdispls, mpi_int_t, grid->comm);
++        /* MPI_Alltoallv with point-to-point messages (empty ones skipped). */
++        {
++            int nreq = 0, nprocs = Pr * Pc;
++            MPI_Request *reqs;
++            if (!(reqs = SUPERLU_MALLOC (2 * nprocs * sizeof (MPI_Request))))
++                ABORT ("Malloc fails for reqs[].");
++            for (p = 0; p < nprocs; p++)
++                if (recvcnts[p])
++                    MPI_Irecv (&blockr[rdispls[p]], recvcnts[p], mpi_int_t, p, 1,
++                               grid->comm, &reqs[nreq++]);
++            for (p = 0; p < nprocs; p++)
++                if (sendcnts[p])
++                    MPI_Isend (&blocks[sdispls[p]], sendcnts[p], mpi_int_t, p, 1,
++                               grid->comm, &reqs[nreq++]);
++            MPI_Waitall (nreq, reqs, MPI_STATUSES_IGNORE);
++            SUPERLU_FREE (reqs);
++        }
+ 
+         SUPERLU_FREE (blocks); /* memory logged before */
+ 
+diff --git a/SRC/double/pddistribute3d.c b/SRC/double/pddistribute3d.c
+index a1e3a4f8..4b3a24d0 100644
+--- a/SRC/double/pddistribute3d.c
++++ b/SRC/double/pddistribute3d.c
+@@ -1687,6 +1687,21 @@ pddistribute3d(superlu_dist_options_t *options, int_t n, SuperMatrix *A,
+ 			    }
+ 			} /* for bnnz ... */
+ 		    } /* for jj ... */
++		} else { /* No L block column on this grid (superGridMap[jb] ==
++			    NOT_IN_GRID): clear the SPA entries set above, like the
++			    first-time distribution does. Otherwise they leak into
++			    the L blocks of the next block columns. */
++		    for (j = fsupc, dense_col = dense; j < FstBlockC(jb+1); ++j) {
++			for (i = xa[j]; i < xa[j+1]; ++i) {
++			    irow = asub[i];
++			    gb = BlockNum( irow );
++			    if ( myrow == PROW( gb, grid ) && gb >= jb ) {
++				lb = LBi( gb, grid );
++				dense_col[ilsum[lb] + irow - FstBlockC( gb )] = zero;
++			    }
++			}
++			dense_col += ldaspa;
++		    }
+ 		} /* if index ... */
+ #if ( PROFlevel>=1 )
+ 		t_l += SuperLU_timer_() - t;
+diff --git a/SRC/double/pdgssvx.c b/SRC/double/pdgssvx.c
+index 613b1898..47977a34 100755
+--- a/SRC/double/pdgssvx.c
++++ b/SRC/double/pdgssvx.c
+@@ -790,7 +790,8 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+              (parSymbFact == NO || options->RowPerm != NO) ) {
+              /* Performs serial symbolic factorzation and/or MC64 */
+ 
+-            need_value = (options->RowPerm == LargeDiag_MC64);
++            /* Values are only needed by MC64, which runs on process 0. */
++            need_value = (options->RowPerm == LargeDiag_MC64) ? 2 : 0;
+ 
+             pdCompRow_loc_to_CompCol_global(need_value, A, grid, &GA);
+ 
+@@ -1770,9 +1771,10 @@ if ( options->GPURES == YES ){
+ 
+ #endif
+ 	}else{
+-		pdPermute_Dense_Matrix(fst_row, m_loc, SOLVEstruct->row_to_proc,
++		pdPermute_Dense_Matrix_cached(fst_row, m_loc, SOLVEstruct->row_to_proc,
+ 					SOLVEstruct->inv_perm_c,
+-					X, ldx, B, ldb, nrhs, grid);
++					X, ldx, B, ldb, nrhs, grid,
++					SOLVEstruct->gstrs_comm);
+ #if ( DEBUGlevel>=2 )
+ 		printf("\n (%d) .. After pdPermute_Dense_Matrix(): b =\n", iam);
+ 		for (i = 0; i < m_loc; ++i)
+diff --git a/SRC/double/pdgssvx3d.c b/SRC/double/pdgssvx3d.c
+index cae8ec5d..c43786a3 100755
+--- a/SRC/double/pdgssvx3d.c
++++ b/SRC/double/pdgssvx3d.c
+@@ -868,6 +868,21 @@ void pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((double *) As->nzval)[idx]), count, MPI_DOUBLE, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -960,12 +975,15 @@ void pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		dinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    dinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		dLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(dLUValSubBuf_t));
+ 		dLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;
+diff --git a/SRC/double/pdgstrf.c b/SRC/double/pdgstrf.c
+index 6032d467..21b776aa 100755
+--- a/SRC/double/pdgstrf.c
++++ b/SRC/double/pdgstrf.c
+@@ -607,8 +607,23 @@ pdgstrf(superlu_dist_options_t * options, int m, int n, double anorm,
+     perm_c_supno = SUPERLU_MALLOC (2 * nsupers * sizeof (int_t));
+     iperm_c_supno = perm_c_supno + nsupers;
+ 
+-    dstatic_schedule(options, m, n, LUstruct, grid, stat,
+-		    perm_c_supno, iperm_c_supno, info);
++    /* The schedule only depends on the structure of L and U: reuse the one of
++       the previous factorization when the pattern and permutations are kept. */
++    if ( options->Fact == SamePattern_SameRowPerm && Llu->sched_perm_c_supno
++         && Llu->sched_nsupers == nsupers ) {
++        memcpy(perm_c_supno, Llu->sched_perm_c_supno,
++               2 * nsupers * sizeof (int_t));
++    } else {
++        dstatic_schedule(options, m, n, LUstruct, grid, stat,
++		        perm_c_supno, iperm_c_supno, info);
++        if ( Llu->sched_perm_c_supno ) SUPERLU_FREE(Llu->sched_perm_c_supno);
++        Llu->sched_perm_c_supno = SUPERLU_MALLOC (2 * nsupers * sizeof (int_t));
++        if ( Llu->sched_perm_c_supno ) {
++            memcpy(Llu->sched_perm_c_supno, perm_c_supno,
++                   2 * nsupers * sizeof (int_t));
++            Llu->sched_nsupers = nsupers;
++        }
++    }
+ 
+ #if ( DEBUGlevel >= 2 )
+     PrintInt10("schedule:perm_c_supno", nsupers, perm_c_supno);
+diff --git a/SRC/double/pdgstrs.c b/SRC/double/pdgstrs.c
+index 602c59b8..fc6dc0d4 100755
+--- a/SRC/double/pdgstrs.c
++++ b/SRC/double/pdgstrs.c
+@@ -421,6 +421,279 @@ dreadMM_dist_intoL_CSR(FILE *fp, int_t *m, int_t *n, int_t *nonz,
+  * </pre>
+  */
+ 
++/* Set up the node-aware B-to-X exchange (collective over grid->comm). It is
++   only enabled when the processes of each node have consecutive ranks and
++   there is more than one node. */
++static pxb2x_agg_t *
++b2x_agg_setup(gridinfo_t *grid, dSOLVEstruct_t *SOLVEstruct, int *SendCnt,
++              int *x2bRecvCnt)
++{
++    pxb2x_agg_t *a;
++    MPI_Comm ncomm;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int lsize, lrank, leader, r, q, n, ok = 1, ndiag, *lead, *cnt, *allcnt;
++    int_t *diag = SOLVEstruct->diag_procs;
++
++    if ( !(a = (pxb2x_agg_t *) SUPERLU_MALLOC(sizeof(pxb2x_agg_t))) )
++        ABORT("Malloc fails for b2x_agg.");
++    a->enabled = 0;
++    MPI_Comm_split_type(grid->comm, MPI_COMM_TYPE_SHARED, iam, MPI_INFO_NULL, &ncomm);
++    MPI_Comm_size(ncomm, &lsize);
++    MPI_Comm_rank(ncomm, &lrank);
++    MPI_Allreduce(&iam, &leader, 1, MPI_INT, MPI_MIN, ncomm);
++    if ( !(lead = SUPERLU_MALLOC(procs * sizeof(int))) ) ABORT("Malloc fails for lead[].");
++    MPI_Allgather(&leader, 1, MPI_INT, lead, 1, MPI_INT, grid->comm);
++    /* Each node must be a block of consecutive ranks. */
++    for (r = 0, n = 0; r < procs; ++r) {
++        if ( lead[r] == r ) ++n;
++        else if ( r == 0 || lead[r] != lead[r-1] ) ok = 0;
++    }
++    ndiag = SOLVEstruct->num_diag_procs;
++    if ( !ok || n < 2 ) {
++        SUPERLU_FREE(lead);
++        MPI_Comm_free(&ncomm);
++        return a;
++    }
++    a->enabled = 1;
++    a->nnodes = n;
++    if ( !(a->node_lo = SUPERLU_MALLOC((2*n + ndiag + 1) * sizeof(int))) )
++        ABORT("Malloc fails for b2x_agg arrays.");
++    a->node_cnt = a->node_lo + n;
++    a->agg_of_q = a->node_cnt + n;
++    for (r = 0, n = -1; r < procs; ++r) {
++        if ( lead[r] == r ) { ++n; a->node_lo[n] = r; a->node_cnt[n] = 0; }
++        ++a->node_cnt[n];
++        if ( r == iam ) a->mynode = n;
++    }
++    /* Node of each diagonal process, my index among them. */
++    a->my_q = -1;
++    a->nagg = 0;
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], nd;
++        if ( d == iam ) a->my_q = q;
++        for (nd = 0; nd < a->nnodes; ++nd)
++            if ( d >= a->node_lo[nd] && d < a->node_lo[nd] + a->node_cnt[nd] ) break;
++        if ( nd == a->mynode ) a->agg_of_q[q] = -1;
++        else {
++            a->agg_of_q[q] = a->node_lo[a->mynode] + q % a->node_cnt[a->mynode];
++            if ( a->agg_of_q[q] == iam ) ++a->nagg;
++        }
++    }
++    /* Rows sent by each process of the node to each diagonal process. */
++    if ( !(cnt = SUPERLU_MALLOC(2 * (ndiag + 1) * (lsize + 1) * sizeof(int))) )
++        ABORT("Malloc fails for cnt[].");
++    allcnt = cnt + 2*ndiag + 2;
++    /* B-to-X rows sent to, and X-to-B rows received from, each diagonal process. */
++    for (q = 0; q < ndiag; ++q) {
++        cnt[2*q] = SendCnt[diag[q]];
++        cnt[2*q + 1] = x2bRecvCnt[diag[q]];
++    }
++    MPI_Allgather(cnt, 2*ndiag, MPI_INT, allcnt, 2*ndiag, MPI_INT, ncomm);
++    if ( a->nagg ) {
++        int k = 0, ls;
++        if ( !(a->agg_q = SUPERLU_MALLOC(a->nagg * sizeof(int))) )
++            ABORT("Malloc fails for agg_q[].");
++        if ( !(a->agg_tot = intMalloc_dist(a->nagg * (2*lsize + 1))) )
++            ABORT("Malloc fails for agg_tot[].");
++        a->agg_cnt = a->agg_tot + a->nagg;
++        a->agg_off = a->agg_cnt + a->nagg * lsize;
++        if ( !(a->x2b_tot = intMalloc_dist(a->nagg * (2*lsize + 1))) )
++            ABORT("Malloc fails for x2b_tot[].");
++        a->x2b_cnt = a->x2b_tot + a->nagg;
++        a->x2b_off = a->x2b_cnt + a->nagg * lsize;
++        for (q = 0; q < ndiag; ++q) {
++            if ( a->agg_of_q[q] != iam ) continue;
++            a->agg_q[k] = q;
++            a->agg_tot[k] = a->x2b_tot[k] = 0;
++            for (ls = 0; ls < lsize; ++ls) {
++                a->agg_cnt[k*lsize + ls] = allcnt[ls*2*ndiag + 2*q];
++                a->agg_off[k*lsize + ls] = a->agg_tot[k];
++                a->agg_tot[k] += allcnt[ls*2*ndiag + 2*q];
++                a->x2b_cnt[k*lsize + ls] = allcnt[ls*2*ndiag + 2*q + 1];
++                a->x2b_off[k*lsize + ls] = a->x2b_tot[k];
++                a->x2b_tot[k] += allcnt[ls*2*ndiag + 2*q + 1];
++            }
++            ++k;
++        }
++    }
++    SUPERLU_FREE(cnt);
++    SUPERLU_FREE(lead);
++    MPI_Comm_free(&ncomm);
++    return a;
++}
++
++/* Node-aware exchange of the B-to-X values (row indices already known):
++   send_dbuf[] holds the values packed by destination as in the direct
++   exchange, recv_dbuf[] receives them in the same layout. */
++static void
++b2x_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, dSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 double *send_dbuf, double *recv_dbuf)
++{
++    const int tag_direct = 1, tag_fwd = 3, tag_agg = 100;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nagg_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    double *aggbuf = NULL;
++    MPI_Request *reqs, *agg_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    agg_reqs = reqs + procs + 2*ndiag + 2;
++
++    /* Stage 1 receives of an aggregator. */
++    for (k = 0; k < a->nagg; ++k) tot += a->agg_tot[k];
++    if ( tot && !(aggbuf = doubleMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->agg_cnt[k*lsize + s];
++            if ( c && lo + s != iam )
++                MPI_Irecv(&aggbuf[(tot + a->agg_off[k*lsize + s]) * nrhs], c * nrhs,
++                          MPI_DOUBLE, lo + s, tag_agg + q, grid->comm, &agg_reqs[nagg_req++]);
++        }
++        tot += a->agg_tot[k];
++    }
++    /* Receives of a diagonal process: directly from its own node, one
++       forwarded message from each other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( RecvCnt[s] )
++                        MPI_Irecv(&recv_dbuf[rdispls[s] * (size_t)nrhs], RecvCnt[s] * nrhs,
++                                  MPI_DOUBLE, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = rdispls[nlo + ncnt - 1] + RecvCnt[nlo + ncnt - 1] - rdispls[nlo];
++                if ( c )
++                    MPI_Irecv(&recv_dbuf[rdispls[nlo] * (size_t)nrhs], c * nrhs, MPI_DOUBLE,
++                              nlo + a->my_q % ncnt, tag_fwd, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Sends. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = SendCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Isend(&send_dbuf[sdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, ag,
++                      tag_agg + q, grid->comm, &reqs[nreq++]);
++        else { /* I am the aggregator: copy my own rows. */
++            int_t off = 0;
++            for (k = 0; k < a->nagg && a->agg_q[k] != q; ++k) off += a->agg_tot[k];
++            off += a->agg_off[k*lsize + (iam - lo)];
++            for (i = 0; i < c * nrhs; ++i)
++                aggbuf[off * nrhs + i] = send_dbuf[sdispls[d] * (size_t)nrhs + i];
++        }
++    }
++    /* Stage 2: forward the gathered rows. */
++    if ( nagg_req ) MPI_Waitall(nagg_req, agg_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        q = a->agg_q[k];
++        if ( a->agg_tot[k] )
++            MPI_Isend(&aggbuf[tot * nrhs], a->agg_tot[k] * nrhs, MPI_DOUBLE, diag[q],
++                      tag_fwd, grid->comm, &reqs[nreq++]);
++        tot += a->agg_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
++/* Node-aware exchange of the X-to-B values (row indices already known): a
++   diagonal process sends the rows for the processes of another node in one
++   message to its aggregator there, which scatters them. send_dbuf[] and
++   recv_dbuf[] have the layout of the direct exchange. */
++static void
++x2b_agg_exchange(pxb2x_agg_t *a, gridinfo_t *grid, dSOLVEstruct_t *SOLVEstruct,
++                 int nrhs, int *SendCnt, int *sdispls, int *RecvCnt, int *rdispls,
++                 double *send_dbuf, double *recv_dbuf)
++{
++    const int tag_direct = 1, tag_blk = 5, tag_fwd = 100 + grid->nprow * grid->npcol;
++    int procs = grid->nprow * grid->npcol, iam = grid->iam;
++    int ndiag = SOLVEstruct->num_diag_procs, q, k, s, nd, nreq = 0, nblk_req = 0;
++    int lo = a->node_lo[a->mynode], lsize = a->node_cnt[a->mynode];
++    int_t *diag = SOLVEstruct->diag_procs, tot = 0, i;
++    double *aggbuf = NULL;
++    MPI_Request *reqs, *blk_reqs;
++
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((procs + 2*ndiag + 2 + lsize*a->nagg + a->nagg + 1)
++                                                 * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    blk_reqs = reqs + procs + 2*ndiag + 2 + lsize*a->nagg;
++
++    /* Aggregator: receive the block of each diagonal process I serve. */
++    for (k = 0; k < a->nagg; ++k) tot += a->x2b_tot[k];
++    if ( tot && !(aggbuf = doubleMalloc_dist(tot * (size_t)nrhs)) )
++        ABORT("Malloc fails for aggbuf[].");
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        if ( a->x2b_tot[k] )
++            MPI_Irecv(&aggbuf[tot * nrhs], a->x2b_tot[k] * nrhs, MPI_DOUBLE,
++                      diag[a->agg_q[k]], tag_blk, grid->comm, &blk_reqs[nblk_req++]);
++        tot += a->x2b_tot[k];
++    }
++    /* Receiver: from the diagonal processes of my node directly, from the
++       aggregators of my node for the others. */
++    for (q = 0; q < ndiag; ++q) {
++        int d = diag[q], ag = a->agg_of_q[q];
++        int_t c = RecvCnt[d];
++        if ( !c ) continue;
++        if ( ag < 0 )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, d,
++                      tag_direct, grid->comm, &reqs[nreq++]);
++        else if ( ag != iam )
++            MPI_Irecv(&recv_dbuf[rdispls[d] * (size_t)nrhs], c * nrhs, MPI_DOUBLE, ag,
++                      tag_fwd + q, grid->comm, &reqs[nreq++]);
++    }
++    /* Diagonal process: direct sends on my node, one block per other node. */
++    if ( a->my_q >= 0 ) {
++        for (nd = 0; nd < a->nnodes; ++nd) {
++            int nlo = a->node_lo[nd], ncnt = a->node_cnt[nd];
++            if ( nd == a->mynode ) {
++                for (s = nlo; s < nlo + ncnt; ++s)
++                    if ( SendCnt[s] )
++                        MPI_Isend(&send_dbuf[sdispls[s] * (size_t)nrhs], SendCnt[s] * nrhs,
++                                  MPI_DOUBLE, s, tag_direct, grid->comm, &reqs[nreq++]);
++            } else {
++                int_t c = sdispls[nlo + ncnt - 1] + SendCnt[nlo + ncnt - 1] - sdispls[nlo];
++                if ( c )
++                    MPI_Isend(&send_dbuf[sdispls[nlo] * (size_t)nrhs], c * nrhs, MPI_DOUBLE,
++                              nlo + a->my_q % ncnt, tag_blk, grid->comm, &reqs[nreq++]);
++            }
++        }
++    }
++    /* Aggregator: scatter the blocks to the processes of my node. */
++    if ( nblk_req ) MPI_Waitall(nblk_req, blk_reqs, MPI_STATUSES_IGNORE);
++    for (k = 0, tot = 0; k < a->nagg; ++k) {
++        int d;
++        q = a->agg_q[k];
++        d = diag[q];
++        for (s = 0; s < lsize; ++s) {
++            int_t c = a->x2b_cnt[k*lsize + s];
++            double *src = &aggbuf[(tot + a->x2b_off[k*lsize + s]) * nrhs];
++            if ( !c ) continue;
++            if ( lo + s == iam ) {
++                for (i = 0; i < c * nrhs; ++i)
++                    recv_dbuf[rdispls[d] * (size_t)nrhs + i] = src[i];
++            } else
++                MPI_Isend(src, c * nrhs, MPI_DOUBLE, lo + s, tag_fwd + q, grid->comm,
++                          &reqs[nreq++]);
++        }
++        tot += a->x2b_tot[k];
++    }
++    if ( nreq ) MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    if ( aggbuf ) SUPERLU_FREE(aggbuf);
++    SUPERLU_FREE(reqs);
++}
++
+ int_t
+ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+                       int_t fst_row, int_t *ilsum, double *x,
+@@ -442,6 +715,8 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 	MPI_Status status, *status_send, *status_recv;
+ 	int Nreq_recv, Nreq_send, pp, pps, ppr;
+ 	double t;
++	int_t *cached = NULL, nrecv_tot;
++
+ #if ( DEBUGlevel>=1 )
+     CHECK_MALLOC(grid->iam, "Enter pdReDistribute_B_to_X()");
+ #endif
+@@ -504,9 +779,16 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 	}else{
+ 		k = sdispls[procs-1] + SendCnt[procs-1]; /* Total number of sends */
+ 		l = rdispls[procs-1] + RecvCnt[procs-1]; /* Total number of receives */
+-		if ( !(send_ibuf = intMalloc_dist(k + l)) )
+-			ABORT("Malloc fails for send_ibuf[].");
+-		recv_ibuf = send_ibuf + k;
++		nrecv_tot = l;
++		cached = gstrs_comm->B_to_X_recv_idx;
++		if ( cached ) { /* Row indices known from a previous solve. */
++			send_ibuf = NULL;
++			recv_ibuf = cached;
++		} else {
++			if ( !(send_ibuf = intMalloc_dist(k + l)) )
++				ABORT("Malloc fails for send_ibuf[].");
++			recv_ibuf = send_ibuf + k;
++		}
+ 		if ( !(send_dbuf = doubleMalloc_dist((k + l)* (size_t)nrhs)) )
+ 			ABORT("Malloc fails for send_dbuf[].");
+ 		recv_dbuf = send_dbuf + k * nrhs;
+@@ -530,9 +812,11 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 			irow = perm_c[perm_r[l]]; /* Row number in Pc*Pr*B */
+ 		gbi = BlockNum( irow );
+ 		p = PNUM( PROW(gbi,grid), PCOL(gbi,grid), grid ); /* Diagonal process */
+-		k = ptr_to_ibuf[p];
+-		send_ibuf[k] = irow;
+-		++ptr_to_ibuf[p];
++		if ( !cached ) {
++			k = ptr_to_ibuf[p];
++			send_ibuf[k] = irow;
++			++ptr_to_ibuf[p];
++		}
+ 
+ 		k = ptr_to_dbuf[p];
+ 		RHS_ITERATE(j) { /* RHS is stored in row major in the buffer. */
+@@ -565,12 +849,11 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 		MPI_Wait(&req_d,&status);
+ 	#endif
+ #endif
+-	MPI_Barrier( grid->comm );
+ 
+ 
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+-	for (pp=0;pp<procs;pp++){
++	for (pp=0;pp<procs && !cached;pp++){
+ 		pps = grid->iam+1+pp;
+ 		if(pps>=procs)pps-=procs;
+ 		if(pps<0)pps+=procs;
+@@ -595,6 +878,13 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 
+ 
++	if ( cached && !gstrs_comm->b2x_agg )
++		gstrs_comm->b2x_agg = b2x_agg_setup(grid, SOLVEstruct, SendCnt,
++						     gstrs_comm->X_to_B_SendCnt + 2*procs);
++	if ( cached && gstrs_comm->b2x_agg->enabled ) {
++		b2x_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -618,6 +908,7 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 
+ 
+ 		/* ------------------------------------------------------------
+@@ -649,7 +940,13 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 		// t = SuperLU_timer_() - t;
+ 		// printf(".. copy to x time\t%8.4f\n", t);
+ 
+-		SUPERLU_FREE(send_ibuf);
++		if ( !cached ) { /* Save the received row indices for later solves
++				    (allocated on every process, also if empty). */
++			if ( !(gstrs_comm->B_to_X_recv_idx = intMalloc_dist(SUPERLU_MAX(nrecv_tot, 1))) )
++				ABORT("Malloc fails for B_to_X_recv_idx[].");
++			for (i = 0; i < nrecv_tot; ++i) gstrs_comm->B_to_X_recv_idx[i] = recv_ibuf[i];
++			SUPERLU_FREE(send_ibuf);
++		}
+ 		SUPERLU_FREE(send_dbuf);
+ 		SUPERLU_FREE(req_send);
+ 		SUPERLU_FREE(req_recv);
+@@ -700,6 +997,8 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	MPI_Request req_i, req_d, *req_send, *req_recv;
+ 	MPI_Status status, *status_send, *status_recv;
+ 	int Nreq_recv, Nreq_send, pp,pps,ppr;
++	int_t *cached = NULL, nrecv_tot;
++
+ 
+ #if ( DEBUGlevel>=1 )
+     CHECK_MALLOC(grid->iam, "Enter pdReDistribute_X_to_B()");
+@@ -758,9 +1057,16 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	}else{
+ 		k = sdispls[procs-1] + SendCnt[procs-1]; /* Total number of sends */
+ 		l = rdispls[procs-1] + RecvCnt[procs-1]; /* Total number of receives */
+-		if ( !(send_ibuf = intMalloc_dist(k + l)) )
+-			ABORT("Malloc fails for send_ibuf[].");
+-		recv_ibuf = send_ibuf + k;
++		nrecv_tot = l;
++		cached = gstrs_comm->X_to_B_recv_idx;
++		if ( cached ) { /* Row indices known from a previous solve. */
++			send_ibuf = NULL;
++			recv_ibuf = cached;
++		} else {
++			if ( !(send_ibuf = intMalloc_dist(k + l)) )
++				ABORT("Malloc fails for send_ibuf[].");
++			recv_ibuf = send_ibuf + k;
++		}
+ 		if ( !(send_dbuf = doubleMalloc_dist((k + l)*nrhs)) )
+ 			ABORT("Malloc fails for send_dbuf[].");
+ 		if ( !(req_send = (MPI_Request*) SUPERLU_MALLOC(procs*sizeof(MPI_Request))) )
+@@ -793,13 +1099,15 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 				ii = irow;
+ 	#endif
+ 				q = row_to_proc[ii];
+-				jj = ptr_to_ibuf[q];
+-				send_ibuf[jj] = ii;
++				if ( !cached ) {
++					jj = ptr_to_ibuf[q];
++					send_ibuf[jj] = ii;
++				}
+ 				jj = ptr_to_dbuf[q];
+ 				RHS_ITERATE(j) { /* RHS stored in row major in buffer. */
+ 					send_dbuf[jj++] = x[l + i + j*knsupc];
+ 				}
+-				++ptr_to_ibuf[q];
++				if ( !cached ) ++ptr_to_ibuf[q];
+ 				ptr_to_dbuf[q] += nrhs;
+ 				++irow;
+ 			}
+@@ -828,10 +1136,9 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	#endif
+ #endif
+ 
+-	MPI_Barrier( grid->comm );
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+-	for (pp=0;pp<procs;pp++){
++	for (pp=0;pp<procs && !cached;pp++){
+ 		pps = grid->iam+1+pp;
+ 		if(pps>=procs)pps-=procs;
+ 		if(pps<0)pps+=procs;
+@@ -855,6 +1162,10 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
+ 	// MPI_Barrier( grid->comm );
+ 
++	if ( cached && gstrs_comm->b2x_agg && gstrs_comm->b2x_agg->enabled ) {
++		x2b_agg_exchange(gstrs_comm->b2x_agg, grid, SOLVEstruct, nrhs, SendCnt, sdispls,
++				 RecvCnt, rdispls, send_dbuf, recv_dbuf);
++	} else {
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs;pp++){
+@@ -879,6 +1190,7 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 
+ 	if(Nreq_send>0)MPI_Waitall(Nreq_send,req_send,status_send);
+ 	if(Nreq_recv>0)MPI_Waitall(Nreq_recv,req_recv,status_recv);
++	}
+ 	// MPI_Barrier( grid->comm );
+ 
+ 
+@@ -893,7 +1205,13 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 		}
+ 		}
+ 
+-    SUPERLU_FREE(send_ibuf);
++    if ( !cached ) { /* Save the received row indices for later solves
++			(allocated on every process, also if empty). */
++	if ( !(gstrs_comm->X_to_B_recv_idx = intMalloc_dist(SUPERLU_MAX(nrecv_tot, 1))) )
++	    ABORT("Malloc fails for X_to_B_recv_idx[].");
++	for (i = 0; i < nrecv_tot; ++i) gstrs_comm->X_to_B_recv_idx[i] = recv_ibuf[i];
++	SUPERLU_FREE(send_ibuf);
++    }
+     SUPERLU_FREE(send_dbuf);
+ 	SUPERLU_FREE(req_send);
+ 	SUPERLU_FREE(req_recv);
+@@ -1196,6 +1514,7 @@ pdgstrs(superlu_dist_options_t *options, int_t n,
+     int  nfrecv = 0; /* Count of total messages to be recv'd. */
+     int  nbrecv = 0; /* Count of total messages to be recv'd. */
+     int  nleaf = 0, nroot = 0;
++    MPI_Comm comm_L;
+     int  nleaftmp = 0, nroottmp = 0;
+     int_t  msgsize;
+         /*-- Counts used for U-solve --*/
+@@ -1346,7 +1665,6 @@ pdgstrs(superlu_dist_options_t *options, int_t n,
+     }
+ #endif
+ 
+-    MPI_Barrier( grid->comm );
+     t1_sol = SuperLU_timer_();
+     t = SuperLU_timer_();
+ 
+@@ -1566,11 +1884,25 @@ if ( options->GPURES == YES ) {
+ 	}
+     }
+ 
++	/* ---------------------------------------------------------
++	   The L-solve messages use their own communicator: a process that
++	   finished its L-solve can start the U-solve (whose receives match any
++	   tag on grid->comm) without a barrier in between.
++	   --------------------------------------------------------- */
++	if ( SOLVEstruct->gstrs_comm->comm_L == MPI_COMM_NULL )
++	    MPI_Comm_dup(grid->comm, &SOLVEstruct->gstrs_comm->comm_L);
++	comm_L = SOLVEstruct->gstrs_comm->comm_L;
++	for (lk = 0; lk < CEILING( nsupers, grid->npcol ); ++lk)
++	    if ( LBtree_ptr[lk].empty_ == NO ) LBtree_ptr[lk].comm_ = comm_L;
++	for (lk = 0; lk < CEILING( nsupers, grid->nprow ); ++lk)
++	    if ( LRtree_ptr[lk].empty_ == NO ) LRtree_ptr[lk].comm_ = comm_L;
++
+ 	/* ---------------------------------------------------------
+ 	   Initialize the async Bcast trees on all processes.
+ 	   --------------------------------------------------------- */
+ 	nsupers_j = CEILING( nsupers, grid->npcol ); /* Number of local block columns */
+ 
++
+ 	nbtree = 0;
+ 	for (lk=0;lk<nsupers_j;++lk){
+ 		if(LBtree_ptr[lk].empty_==NO){
+@@ -2315,7 +2647,7 @@ t1 = SuperLU_timer_();
+ 
+ 			/* Receive a message. */
+ 			MPI_Recv( recvbuf0, maxrecvsz, MPI_DOUBLE,
+-				MPI_ANY_SOURCE, MPI_ANY_TAG, grid->comm, &status );
++				MPI_ANY_SOURCE, MPI_ANY_TAG, comm_L, &status );
+ 			// MPI_Irecv(recvbuf0,maxrecvsz,MPI_DOUBLE,MPI_ANY_SOURCE,MPI_ANY_TAG,grid->comm,&req);
+ 			// ready=0;
+ 			// while(ready==0){
+@@ -2519,7 +2851,6 @@ t1 = SuperLU_timer_();
+ 				// deallocate requests here
+ 			}
+ 		}
+-		MPI_Barrier( grid->comm );
+ 
+ 	}  /* end CPU trisolve */
+ #if ( PROFlevel>=1 )
+diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
+index a6626ef2..63370fb2 100755
+--- a/SRC/double/pdutil.c
++++ b/SRC/double/pdutil.c
+@@ -33,7 +33,8 @@ at the top-level directory.
+  */
+ int pdCompRow_loc_to_CompCol_global
+ (
+- int_t need_value, /* Input. Whether need to gather numerical values */
++ int_t need_value, /* Input. Whether need to gather numerical values
++                      (2: on process 0 only) */
+  SuperMatrix *A,   /* Input. Distributed matrix in NRformat_loc format. */
+  gridinfo_t *grid, /* Input */
+  SuperMatrix *GA   /* Output */
+@@ -124,8 +125,37 @@ int pdCompRow_loc_to_CompCol_global
+ 	rdispls[i] = i * (n_loc + 1);
+ 	j += n_locs[i]; /* First column of next block in colptr_loc[] */
+     }
+-    MPI_Alltoallv(colptr_send, sendcnts, sdispls, mpi_int_t,
+-		  colptr_blk, recvcnts, rdispls, mpi_int_t, grid->comm);
++    /* Only the blocks with nonzeros need to be exchanged: the column
++       pointers of an empty block are all equal (their differences, the
++       column counts, are all zero). The number of nonzeros per block is
++       exchanged first and empty blocks are zero-filled on the receiver. */
++    {
++        int *nnzcnts, nreq = 0;
++        MPI_Request *reqs;
++        if ( !(nnzcnts = SUPERLU_MALLOC(2*procs * sizeof(int))) )
++            ABORT("Malloc fails for nnzcnts[].");
++        if ( !(reqs = SUPERLU_MALLOC(2*procs * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        for (i = 0; i < procs; ++i)
++            nnzcnts[i] = (colptr_loc[fst_rows[i] + n_locs[i]] -
++                          colptr_loc[fst_rows[i]]) > 0;
++        MPI_Alltoall(nnzcnts, 1, MPI_INT, nnzcnts + procs, 1, MPI_INT,
++                     grid->comm);
++        for (i = 0; i < procs; ++i) {
++            if ( nnzcnts[procs + i] )
++                MPI_Irecv(&colptr_blk[rdispls[i]], recvcnts[i], mpi_int_t, i, 0,
++                          grid->comm, &reqs[nreq++]);
++            else
++                for (j = 0; j < recvcnts[i]; ++j) colptr_blk[rdispls[i] + j] = 0;
++        }
++        for (i = 0; i < procs; ++i)
++            if ( nnzcnts[i] )
++                MPI_Isend(&colptr_send[sdispls[i]], sendcnts[i], mpi_int_t, i, 0,
++                          grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        SUPERLU_FREE(reqs);
++        SUPERLU_FREE(nnzcnts);
++    }
+ 
+     /* Adjust colptr_blk[] so that they contain the local indices of the
+        column pointers in the receive buffer. */
+@@ -161,15 +191,42 @@ int pdCompRow_loc_to_CompCol_global
+     if ( !(rowind_recv = (int_t *) intMalloc_dist(2*k)) )
+         ABORT("Malloc fails for rowind_recv[]");
+     rowind_buf = rowind_recv + k;
+-    MPI_Alltoallv(rowind_loc, sendcnts, sdispls, mpi_int_t,
+-		  rowind_recv, recvcnts, rdispls, mpi_int_t, grid->comm);
++    {
++        int nreq = 0;
++        MPI_Request *reqs;
++        if ( !(reqs = SUPERLU_MALLOC(2*procs * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        for (i = 0; i < procs; ++i)
++            if ( recvcnts[i] )
++                MPI_Irecv(&rowind_recv[rdispls[i]], recvcnts[i], mpi_int_t, i, 1,
++                          grid->comm, &reqs[nreq++]);
++        for (i = 0; i < procs; ++i)
++            if ( sendcnts[i] )
++                MPI_Isend(&rowind_loc[sdispls[i]], sendcnts[i], mpi_int_t, i, 1,
++                          grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        SUPERLU_FREE(reqs);
++    }
+     if ( need_value ) {
+         if ( !(a_recv = (double *) doubleMalloc_dist(2*k)) )
+ 	    ABORT("Malloc fails for rowind_recv[]");
+ 	a_buf = a_recv + k;
+-	MPI_Alltoallv(a_loc, sendcnts, sdispls, MPI_DOUBLE,
+-                      a_recv, recvcnts, rdispls, MPI_DOUBLE,
+-                      grid->comm);
++    {
++        int nreq = 0;
++        MPI_Request *reqs;
++        if ( !(reqs = SUPERLU_MALLOC(2*procs * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        for (i = 0; i < procs; ++i)
++            if ( recvcnts[i] )
++                MPI_Irecv(&a_recv[rdispls[i]], recvcnts[i], MPI_DOUBLE, i, 2,
++                          grid->comm, &reqs[nreq++]);
++        for (i = 0; i < procs; ++i)
++            if ( sendcnts[i] )
++                MPI_Isend(&a_loc[sdispls[i]], sendcnts[i], MPI_DOUBLE, i, 2,
++                          grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        SUPERLU_FREE(reqs);
++    }
+     }
+ 
+     /* Reset colptr_loc[] to point to the n_loc global columns. */
+@@ -242,7 +299,15 @@ int pdCompRow_loc_to_CompCol_global
+     it = nnz_loc;
+     MPI_Allgatherv(rowind_buf, it, mpi_int_t, GAstore->rowind,
+ 		   itemp_32, rdispls, mpi_int_t, grid->comm);
+-    if ( need_value ) {
++    if ( need_value == 2 ) {
++      /* The numerical values are only needed on process 0 (MC64). */
++      GAstore->nzval = NULL;
++      if ( !grid->iam &&
++           !(GAstore->nzval = (double *) doubleMalloc_dist (nnz)) )
++          ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
++      MPI_Gatherv(a_buf, it, MPI_DOUBLE, GAstore->nzval,
++		  itemp_32, rdispls, MPI_DOUBLE, 0, grid->comm);
++    } else if ( need_value ) {
+       if ( !(GAstore->nzval = (double *) doubleMalloc_dist (nnz)) )
+           ABORT ("SUPERLU_MALLOC fails for GAstore->rnzval[]");
+       MPI_Allgatherv(a_buf, it, MPI_DOUBLE, GAstore->nzval,
+@@ -403,6 +468,127 @@ int pdPermute_Dense_Matrix
+     return 0;
+ } /* pdPermute_Dense_Matrix */
+ 
++/*! \brief Same as pdPermute_Dense_Matrix(), but the communication pattern
++ * (partner processes, counts and received row indices) only depends on perm[]
++ * and row_to_proc[]: it is computed by the first call and saved in gstrs_comm,
++ * and the numerical values are then exchanged point to point with the
++ * processes that share entries only (no dense all-to-all collectives).
++ */
++int pdPermute_Dense_Matrix_cached
++(
++ int_t fst_row,
++ int_t m_loc,
++ int_t row_to_proc[],
++ int perm[],
++ double X[], int ldx,
++ double B[], int ldb,
++ int nrhs,
++ gridinfo_t *grid,
++ pxgstrs_comm_t *gstrs_comm
++)
++{
++    const int tag = 24;
++    pxperm_cache_t *c = gstrs_comm->perm_cache;
++    int_t i, j, k, l;
++    int p, q, procs = grid->nprow * grid->npcol, iam = grid->iam, nreq;
++    double *send_dbuf, *recv_dbuf;
++    MPI_Request *reqs;
++
++    if ( !c ) {
++        int *sendcnts, *recvcnts, *ptr;
++        int_t *send_ibuf, *recv_ibuf;
++        if ( !(c = (pxperm_cache_t *) SUPERLU_MALLOC(sizeof(pxperm_cache_t))) )
++            ABORT("Malloc fails for perm_cache.");
++        if ( !(sendcnts = SUPERLU_MALLOC(3*procs * sizeof(int))) )
++            ABORT("Malloc fails for sendcnts[].");
++        recvcnts = sendcnts + procs;
++        ptr = recvcnts + procs;
++        for (p = 0; p < procs; ++p) sendcnts[p] = 0;
++        for (i = fst_row; i < fst_row + m_loc; ++i) ++sendcnts[row_to_proc[perm[i]]];
++        MPI_Alltoall(sendcnts, 1, MPI_INT, recvcnts, 1, MPI_INT, grid->comm);
++        c->nsend = c->nrecv = 0;
++        for (p = 0; p < procs; ++p) {
++            if ( sendcnts[p] ) ++c->nsend;
++            if ( recvcnts[p] ) ++c->nrecv;
++        }
++        /* One allocation for the six partner arrays. */
++        if ( !(c->send_proc = SUPERLU_MALLOC(3*(c->nsend + c->nrecv + 2) * sizeof(int))) )
++            ABORT("Malloc fails for perm_cache arrays.");
++        c->send_cnt = c->send_proc + c->nsend + 1;
++        c->send_displ = c->send_cnt + c->nsend + 1;
++        c->recv_proc = c->send_displ + c->nsend + 1;
++        c->recv_cnt = c->recv_proc + c->nrecv + 1;
++        c->recv_displ = c->recv_cnt + c->nrecv + 1;
++        for (p = 0, q = 0, k = 0; p < procs; ++p) {
++            ptr[p] = k;
++            if ( sendcnts[p] ) {
++                c->send_proc[q] = p; c->send_cnt[q] = sendcnts[p];
++                c->send_displ[q] = k; k += sendcnts[p]; ++q;
++            }
++        }
++        for (p = 0, q = 0, l = 0; p < procs; ++p) {
++            if ( recvcnts[p] ) {
++                c->recv_proc[q] = p; c->recv_cnt[q] = recvcnts[p];
++                c->recv_displ[q] = l; l += recvcnts[p]; ++q;
++            }
++        }
++        c->nrecvtot = l;
++        if ( !(c->send_pos = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for perm_cache positions.");
++        c->recv_row = c->send_pos + m_loc;
++        if ( !(send_ibuf = intMalloc_dist(m_loc + l + 1)) )
++            ABORT("Malloc fails for send_ibuf[].");
++        recv_ibuf = send_ibuf + m_loc;
++        for (i = fst_row; i < fst_row + m_loc; ++i) {
++            j = perm[i];
++            p = row_to_proc[j];
++            c->send_pos[i - fst_row] = ptr[p];
++            send_ibuf[ptr[p]++] = j;
++        }
++        if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        nreq = 0;
++        for (q = 0; q < c->nrecv; ++q)
++            MPI_Irecv(&recv_ibuf[c->recv_displ[q]], c->recv_cnt[q], mpi_int_t,
++                      c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++        for (q = 0; q < c->nsend; ++q)
++            MPI_Isend(&send_ibuf[c->send_displ[q]], c->send_cnt[q], mpi_int_t,
++                      c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        for (i = 0; i < l; ++i) c->recv_row[i] = recv_ibuf[i] - fst_row;
++        SUPERLU_FREE(reqs);
++        SUPERLU_FREE(send_ibuf);
++        SUPERLU_FREE(sendcnts);
++        gstrs_comm->perm_cache = c;
++    }
++
++    /* Exchange the numerical values (RHS stored in row major in the buffers). */
++    if ( !(send_dbuf = doubleMalloc_dist((m_loc + c->nrecvtot + 1) * (size_t)nrhs)) )
++        ABORT("Malloc fails for send_dbuf[].");
++    recv_dbuf = send_dbuf + m_loc * (size_t)nrhs;
++    for (i = 0; i < m_loc; ++i) {
++        l = c->send_pos[i] * nrhs;
++        for (k = 0; k < nrhs; ++k) send_dbuf[l + k] = X[i + k*ldx];
++    }
++    if ( !(reqs = (MPI_Request *) SUPERLU_MALLOC((c->nsend + c->nrecv + 1) * sizeof(MPI_Request))) )
++        ABORT("Malloc fails for reqs[].");
++    nreq = 0;
++    for (q = 0; q < c->nrecv; ++q)
++        MPI_Irecv(&recv_dbuf[c->recv_displ[q] * (size_t)nrhs], c->recv_cnt[q] * nrhs,
++                  MPI_DOUBLE, c->recv_proc[q], tag, grid->comm, &reqs[nreq++]);
++    for (q = 0; q < c->nsend; ++q)
++        MPI_Isend(&send_dbuf[c->send_displ[q] * (size_t)nrhs], c->send_cnt[q] * nrhs,
++                  MPI_DOUBLE, c->send_proc[q], tag, grid->comm, &reqs[nreq++]);
++    MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++    for (i = 0, l = 0; i < c->nrecvtot; ++i) {
++        j = c->recv_row[i];
++        for (k = 0; k < nrhs; ++k) B[j + k*ldb] = recv_dbuf[l++];
++    }
++    SUPERLU_FREE(reqs);
++    SUPERLU_FREE(send_dbuf);
++    return 0;
++} /* pdPermute_Dense_Matrix_cached */
++
+ 
+ /*! \brief Allocate storage in LUstruct */
+ void dLUstructInit(const int_t n, dLUstruct_t *LUstruct)
+@@ -416,6 +602,8 @@ void dLUstructInit(const int_t n, dLUstruct_t *LUstruct)
+ 	   SUPERLU_MALLOC(sizeof(dLocalLU_t))) )
+ 	ABORT("Malloc fails for LocalLU_t.");
+     LUstruct->Llu->inv = 0;
++    LUstruct->Llu->sched_perm_c_supno = NULL;
++    LUstruct->Llu->sched_nsupers = 0;
+     LUstruct->dt = 'd';
+     LUstruct->trf3Dpart = NULL;
+ }
+@@ -431,6 +619,8 @@ void dLUstructFree(dLUstruct_t *LUstruct)
+ 
+     SUPERLU_FREE(LUstruct->etree);
+     SUPERLU_FREE(LUstruct->Glu_persist);
++    if ( LUstruct->Llu->sched_perm_c_supno )
++        SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
+     SUPERLU_FREE(LUstruct->Llu);
+     dDestroy_trf3Dpartition(LUstruct->trf3Dpart);
+ 
+@@ -455,6 +645,12 @@ dDestroy_LU(int_t n, gridinfo_t *grid, dLUstruct_t *LUstruct)
+ 
+     dDestroy_Tree(n, grid, LUstruct);
+ 
++    if ( Llu->sched_perm_c_supno ) {
++        SUPERLU_FREE(Llu->sched_perm_c_supno);
++        Llu->sched_perm_c_supno = NULL;
++        Llu->sched_nsupers = 0;
++    }
++
+     nsupers = Glu_persist->supno[n-1] + 1;
+ 
+     /* Following are free'd in distribution routines */
+@@ -773,7 +969,13 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     if ( !(ptr_to_ibuf = SUPERLU_MALLOC(2*procs * sizeof(int))) )
+         ABORT("Malloc fails for ptr_to_ibuf[].");
+     gstrs_comm->ptr_to_ibuf = ptr_to_ibuf;
+-    gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
++        gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
++    gstrs_comm->B_to_X_recv_idx = NULL;
++    gstrs_comm->X_to_B_recv_idx = NULL;
++    gstrs_comm->perm_cache = NULL;
++    gstrs_comm->comm_L = MPI_COMM_NULL;
++    gstrs_comm->b2x_agg = NULL;
++
+ 
+     return 0;
+ } /* PDGSTRS_INIT */
+diff --git a/SRC/include/superlu_ddefs.h b/SRC/include/superlu_ddefs.h
+index 102dc5dc..01a51541 100755
+--- a/SRC/include/superlu_ddefs.h
++++ b/SRC/include/superlu_ddefs.h
+@@ -313,6 +313,10 @@ typedef struct {
+     gridinfo_t *d_grid;
+ #endif
+ 
++    /* Static schedule of the last factorization (perm_c_supno followed by
++       iperm_c_supno), reused by SamePattern_SameRowPerm refactorizations. */
++    int_t *sched_perm_c_supno;
++    int_t sched_nsupers;
+ } dLocalLU_t;
+ 
+ typedef struct
+@@ -606,6 +610,9 @@ extern void    pdgsequ (SuperMatrix *, double *, double *, double *,
+ extern double  pdlangs (char *, SuperMatrix *, gridinfo_t *);
+ extern void    pdlaqgs (SuperMatrix *, double *, double *, double,
+ 			double, double, char *);
++extern int     pdPermute_Dense_Matrix_cached(int_t, int_t, int_t [], int perm[],
++				      double X[], int ldx, double B[], int ldb,
++				      int nrhs, gridinfo_t *, pxgstrs_comm_t *);
+ extern int     pdPermute_Dense_Matrix(int_t, int_t, int_t [], int perm[],
+ 				      double [], int, double [], int, int,
+ 				      gridinfo_t *);
+diff --git a/SRC/include/superlu_defs.h b/SRC/include/superlu_defs.h
+index 18e09b2c..40a2355f 100755
+--- a/SRC/include/superlu_defs.h
++++ b/SRC/include/superlu_defs.h
+@@ -535,10 +535,61 @@ typedef struct {
+     int_t  x2b, b2x;
+     int_t  *send_ibuf2;
+     int_t  *recv_ibuf2;
+-    void   *send_dbuf2;
++        void   *send_dbuf2;
+     void   *recv_dbuf2;
++
++    /* Received row indices of the B-to-X and X-to-B redistributions, saved
++       by the first solve after pXgstrs_init(): they only depend on the
++       permutations, the supernode partition and the row distribution of B,
++       so later solves exchange the numerical values only. */
++    int_t  *B_to_X_recv_idx;
++    int_t  *X_to_B_recv_idx;
++
++    /* Communication pattern of the final permutation B <= Pc'*X of the
++       solution (see pdPermute_Dense_Matrix_cached()), built by the first
++       solve. */
++    struct pxperm_cache *perm_cache;
++
++    /* Communicator of the L-solve messages (a duplicate of grid->comm, created
++       by the first solve), so that the L- and U-solves need no barrier. */
++    MPI_Comm comm_L;
++
++    /* Node-aware two-stage B-to-X exchange (see pdReDistribute_B_to_X()). */
++    struct pxb2x_agg *b2x_agg;
+ } pxgstrs_comm_t;
+ 
++/* In the B-to-X redistribution every process sends a few rows to each
++   diagonal process, so a diagonal process receives one message from nearly
++   every process. With the node-aware exchange, the rows destined for a
++   diagonal process on another node are first gathered by one process of the
++   sending node ("aggregator"), which forwards them in a single message. */
++typedef struct pxb2x_agg {
++    int    enabled;
++    int    nnodes, mynode;
++    int    *node_lo, *node_cnt;   /* first rank and size of each node */
++    int    *agg_of_q;             /* per diagonal process: my aggregator, -1 if same node */
++    int    my_q;                  /* my index in diag_procs[], -1 if not diagonal */
++    int    nagg;                  /* number of diagonal processes I aggregate for */
++    int    *agg_q;                /* their indices in diag_procs[] */
++    int_t  *agg_tot;              /* rows forwarded to each of them */
++    int_t  *agg_cnt, *agg_off;    /* nagg x node size: rows from each node process */
++    /* Same for the X-to-B exchange (the aggregator scatters to its node). */
++    int_t  *x2b_tot, *x2b_cnt, *x2b_off;
++} pxb2x_agg_t;
++
++extern void pxb2x_agg_free(pxb2x_agg_t *);
++
++typedef struct pxperm_cache {
++    int    nsend, nrecv;       /* number of partner processes */
++    int    *send_proc, *send_cnt, *send_displ;  /* rows sent to each partner */
++    int    *recv_proc, *recv_cnt, *recv_displ;  /* rows received from each partner */
++    int_t  *send_pos;          /* position in the send buffer of each local row */
++    int_t  *recv_row;          /* local row of each received entry */
++    int_t  nrecvtot;
++} pxperm_cache_t;
++
++extern void pxperm_cache_free(pxperm_cache_t *);
++
+ /*
+  *-- This contains the options used to control the solution process.
+  *
+diff --git a/SRC/prec-independent/comm_tree.c b/SRC/prec-independent/comm_tree.c
+index 29110b7e..79d4bdf4 100755
+--- a/SRC/prec-independent/comm_tree.c
++++ b/SRC/prec-independent/comm_tree.c
+@@ -2,6 +2,15 @@
+ #include "dcomplex.h"
+ #include "superlu_defs.h"
+ 
++/* getenv() is a linear scan of the environment: query it once, not for
++   every message forwarded in the triangular solves. */
++static int comm_tree_mpi_wait(void)
++{
++    static int flag = -1;
++    if (flag < 0) flag = (getenv("COMM_TREE_MPI_WAIT") != NULL);
++    return flag;
++}
++
+ 	void C_BcTree_Create_nv(C_Tree* tree, MPI_Comm comm, int* ranks, int rank_cnt, int msgSize, char precision, int* needrecv){
+ 		assert(msgSize>0);
+ 
+@@ -155,7 +164,7 @@
+           int error_code = MPI_Isend( localBuffer, msgSize, tree->type_, 
+               iProc, tree->tag_,tree->comm_, &tree->sendRequests_[idxRecv] );
+ 			  
+-			  if(getenv("COMM_TREE_MPI_WAIT"))
++			  if(comm_tree_mpi_wait())
+ 			  	  MPI_Wait(&tree->sendRequests_[idxRecv],&status) ; 
+ 			  else
+ 				  MPI_Test(&tree->sendRequests_[idxRecv],&flag,&status) ; 
+@@ -315,7 +324,7 @@ void C_RdTree_Create_nv(C_Tree* tree, MPI_Comm comm, int* ranks, int rank_cnt, i
+ 			  int error_code = MPI_Isend(localBuffer, msgSize, Tree->type_, 
+ 				  iProc, Tree->tag_,Tree->comm_, &Tree->sendRequests_[0] );
+ 					
+-					if(getenv("COMM_TREE_MPI_WAIT"))
++					if(comm_tree_mpi_wait())
+ 						MPI_Wait(&Tree->sendRequests_[0],&status) ; 
+ 					else
+ 						MPI_Test(&Tree->sendRequests_[0],&flag,&status) ; 					  
+diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
+index 5e212639..0d9f9b9a 100755
+--- a/SRC/prec-independent/util.c
++++ b/SRC/prec-independent/util.c
+@@ -231,7 +231,8 @@ void set_default_options_dist(superlu_dist_options_t *options)
+     options->ILU_level = SLU_EMPTY;
+     options->UserDefineSupernode = NO; /* detect supernodes internally */
+     options->superlu_maxsup = 256;
+-    options->superlu_relax = 30;
++    options->superlu_relax = 200; /* was 30: larger relaxed supernodes cut the number of
++                                       messages in the distributed triangular solves */
+     strcpy(options->superlu_rankorder, "Z"); 
+     strcpy(options->superlu_lbs, "GD");
+     options->superlu_acc_offload = 1;
+@@ -326,10 +327,39 @@ void pxgstrs_finalize(pxgstrs_comm_t *gstrs_comm)
+ {
+     SUPERLU_FREE(gstrs_comm->B_to_X_SendCnt);
+     SUPERLU_FREE(gstrs_comm->X_to_B_SendCnt);
+-    SUPERLU_FREE(gstrs_comm->ptr_to_ibuf);
++        SUPERLU_FREE(gstrs_comm->ptr_to_ibuf);
++    if ( gstrs_comm->B_to_X_recv_idx ) SUPERLU_FREE(gstrs_comm->B_to_X_recv_idx);
++    if ( gstrs_comm->X_to_B_recv_idx ) SUPERLU_FREE(gstrs_comm->X_to_B_recv_idx);
++    if ( gstrs_comm->perm_cache ) pxperm_cache_free(gstrs_comm->perm_cache);
++    if ( gstrs_comm->b2x_agg ) pxb2x_agg_free(gstrs_comm->b2x_agg);
++    if ( gstrs_comm->comm_L != MPI_COMM_NULL ) {
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&gstrs_comm->comm_L);
++    }
+     SUPERLU_FREE(gstrs_comm);
+ }
+ 
++void pxb2x_agg_free(pxb2x_agg_t *a)
++{
++    if ( a->enabled ) {
++        SUPERLU_FREE(a->node_lo); /* also holds node_cnt[] and agg_of_q[] */
++        if ( a->nagg ) {
++            SUPERLU_FREE(a->agg_q);
++            SUPERLU_FREE(a->agg_tot);
++            SUPERLU_FREE(a->x2b_tot);
++        }
++    }
++    SUPERLU_FREE(a);
++}
++
++void pxperm_cache_free(pxperm_cache_t *c)
++{
++    SUPERLU_FREE(c->send_proc);
++    SUPERLU_FREE(c->send_pos);
++    SUPERLU_FREE(c);
++}
++
+ /*! \brief Diagnostic print of segment info after panel_dfs().
+  */
+ void print_panel_seg_dist(int_t n, int_t w, int_t jcol, int_t nseg,
+diff --git a/SRC/single/psdistribute3d.c b/SRC/single/psdistribute3d.c
+index c214297f..b3292f30 100644
+--- a/SRC/single/psdistribute3d.c
++++ b/SRC/single/psdistribute3d.c
+@@ -355,6 +355,21 @@ psdistribute3d(superlu_dist_options_t *options, int_t n, SuperMatrix *A,
+ 			    }
+ 			} /* for bnnz ... */
+ 		    } /* for jj ... */
++		} else { /* No L block column on this grid (superGridMap[jb] ==
++			    NOT_IN_GRID): clear the SPA entries set above, like the
++			    first-time distribution does. Otherwise they leak into
++			    the L blocks of the next block columns. */
++		    for (j = fsupc, dense_col = dense; j < FstBlockC(jb+1); ++j) {
++			for (i = xa[j]; i < xa[j+1]; ++i) {
++			    irow = asub[i];
++			    gb = BlockNum( irow );
++			    if ( myrow == PROW( gb, grid ) && gb >= jb ) {
++				lb = LBi( gb, grid );
++				dense_col[ilsum[lb] + irow - FstBlockC( gb )] = zero;
++			    }
++			}
++			dense_col += ldaspa;
++		    }
+ 		} /* if index ... */
+ #if ( PROFlevel>=1 )
+ 		t_l += SuperLU_timer_() - t;
+diff --git a/SRC/single/psgssvx3d.c b/SRC/single/psgssvx3d.c
+index 377c762b..cf51a389 100755
+--- a/SRC/single/psgssvx3d.c
++++ b/SRC/single/psgssvx3d.c
+@@ -868,6 +868,21 @@ void psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((float *) As->nzval)[idx]), count, MPI_FLOAT, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -960,12 +975,15 @@ void psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		sLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(sLUValSubBuf_t));
+ 		sLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;
+diff --git a/SRC/single/psgssvx3d_d2.c b/SRC/single/psgssvx3d_d2.c
+index d001226e..198cc17c 100755
+--- a/SRC/single/psgssvx3d_d2.c
++++ b/SRC/single/psgssvx3d_d2.c
+@@ -877,6 +877,21 @@ void psgssvx3d_d2(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((float *) As->nzval)[idx]), count, MPI_FLOAT, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -969,12 +984,15 @@ void psgssvx3d_d2(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		sLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(sLUValSubBuf_t));
+ 		sLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;
+diff --git a/SRC/single/psutil.c b/SRC/single/psutil.c
+index 79f03b6d..3be3f1aa 100755
+--- a/SRC/single/psutil.c
++++ b/SRC/single/psutil.c
+@@ -772,7 +772,13 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     if ( !(ptr_to_ibuf = SUPERLU_MALLOC(2*procs * sizeof(int))) )
+         ABORT("Malloc fails for ptr_to_ibuf[].");
+     gstrs_comm->ptr_to_ibuf = ptr_to_ibuf;
+-    gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
++        gstrs_comm->ptr_to_dbuf = ptr_to_ibuf + procs;
++    gstrs_comm->B_to_X_recv_idx = NULL;
++    gstrs_comm->X_to_B_recv_idx = NULL;
++    gstrs_comm->perm_cache = NULL;
++    gstrs_comm->comm_L = MPI_COMM_NULL;
++    gstrs_comm->b2x_agg = NULL;
++
+ 
+     return 0;
+ } /* PSGSTRS_INIT */
+diff --git a/SRC/single/snrformat_loc3d.c b/SRC/single/snrformat_loc3d.c
+index ebb14cb2..3e4e558c 100755
+--- a/SRC/single/snrformat_loc3d.c
++++ b/SRC/single/snrformat_loc3d.c
+@@ -835,8 +835,9 @@ int sScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -1040,6 +1041,28 @@ int sScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    int r = 0;
++	    for (p = 0; p < num_procs_to_send; ++p) {
++		if (gpures) {
++#ifdef GPU_ACC
++		    sdevice_matcopy_wrap(send_count_list[p], nrhs, B1 + nrhs * r,
++					 send_count_list[p], B2d + r, A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in sScatter_B3d().");
++#endif
++		} else {
++		    matCopy(send_count_list[p], nrhs, B1 + nrhs * r, send_count_list[p],
++			    B2d + r, A2d->m_loc);
++		}
++		r += send_count_list[p];
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+ 	/* Post irecv first */
+@@ -1104,6 +1127,7 @@ int sScatter_B3d(superlu_dist_options_t *options,
+     } /* else Z-major */
+ 
+     // B <- colMajor(Btmp)
++    if (rankorder == 1) {
+     if (gpures) {
+ #ifdef GPU_ACC
+ 	sdevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+@@ -1113,6 +1137,23 @@ int sScatter_B3d(superlu_dist_options_t *options,
+     } else {
+     matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+     }
++    } else { /* Z-major: one (recv_count x nrhs) block per source */
++	int *recv_count_list = A3d->recv_count_list;
++	for (i = 0, j = 0; j < A3d->num_procs_to_recv; ++j) {
++	    if (gpures) {
++#ifdef GPU_ACC
++		sdevice_matcopy_wrap(recv_count_list[j], nrhs, B + i, ldb,
++				     Btmp + nrhs * i, recv_count_list[j]);
++#else
++		ABORT("GPURES requires GPU_ACC in sScatter_B3d().");
++#endif
++	    } else {
++		matCopy(recv_count_list[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++			recv_count_list[j]);
++	    }
++	    i += recv_count_list[j];
++	}
++    }
+ 
+     /* free storage */
+     if (gpures) {

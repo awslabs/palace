@@ -75,6 +75,10 @@ public:
   void SetOperators(const OperType &op, const OperType &pc_op);
 
   void Mult(const VecType &x, VecType &y) const;
+
+  // Solves for several right-hand sides x[k], at once with a CG solver (see
+  // CgSolver::MultBatch) and otherwise one after the other.
+  void Mult(const std::vector<const VecType *> &x, const std::vector<VecType *> &y) const;
 };
 
 using KspSolver = BaseKspSolver<Operator>;

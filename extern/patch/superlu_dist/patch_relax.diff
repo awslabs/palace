@@ -1,0 +1,14 @@
+diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
+index 0cf85849..7d3fe487 100755
+--- a/SRC/prec-independent/util.c
++++ b/SRC/prec-independent/util.c
+@@ -231,7 +231,8 @@ void set_default_options_dist(superlu_dist_options_t *options)
+     options->ILU_level = SLU_EMPTY;
+     options->UserDefineSupernode = NO; /* detect supernodes internally */
+     options->superlu_maxsup = 256;
+-    options->superlu_relax = 30;
++    options->superlu_relax = 200; /* was 30: larger relaxed supernodes cut the number of
++                                       messages in the distributed triangular solves */
+     strcpy(options->superlu_rankorder, "Z"); 
+     strcpy(options->superlu_lbs, "GD");
+     options->superlu_acc_offload = 1;

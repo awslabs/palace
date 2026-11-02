@@ -593,7 +593,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
             std::make_unique<HypreAmsSolver>(
                 bmo->GetNDSpaceHierarchy().GetFESpaceAtLevel(0),
                 bmo->GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(0), linear.ams_max_it,
-                linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,
+                linear.ams_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,
                 linear.amg_agg_coarsen, print),
             true, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);

@@ -28,7 +28,7 @@ void BilinearForm::AssembleQuadratureData()
 std::unique_ptr<ceed::Operator>
 BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
                               const FiniteElementSpace &test_fespace,
-                              bool skip_zero_coeff_elems) const
+                              bool skip_zero_coeff_elems, bool use_reduced_bases) const
 {
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
@@ -112,22 +112,70 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         {
           const auto &integ = integs[i];
           const auto subset = subsets[i];
-          if (!subset ||
-              (*subset == ceed::CeedElementSubset::Active && data.active_indices.empty()))
+          if (!subset)
           {
             continue;
           }
-          CeedElemRestriction trial_restr =
-              trial_fespace.GetCeedElemRestriction(ceed, geom, data, *subset);
-          CeedElemRestriction test_restr =
-              test_fespace.GetCeedElemRestriction(ceed, geom, data, *subset);
+          // Assemble the integrator over the elements of the given geometry data (the full
+          // list or a part of it), with the given bases and geometry factors.
+          auto AddSubOperator = [&](const ceed::CeedGeomFactorData &elem_data,
+                                    CeedBasis integ_trial_basis, CeedBasis integ_test_basis,
+                                    const ceed::CeedGeomFactorData &integ_data)
+          {
+            if (*subset == ceed::CeedElementSubset::Active &&
+                elem_data.active_indices.empty())
+            {
+              return;
+            }
+            CeedElemRestriction trial_restr =
+                trial_fespace.GetCeedElemRestriction(ceed, geom, elem_data, *subset);
+            CeedElemRestriction test_restr =
+                test_fespace.GetCeedElemRestriction(ceed, geom, elem_data, *subset);
+            CeedOperator sub_op;
+            integ->SetMapTypes(trial_map_type, test_map_type);
+            integ->Assemble(ceed, trial_restr, test_restr, integ_trial_basis,
+                            integ_test_basis, integ_data.geom_data,
+                            integ_data.GetGeomDataRestriction(*subset), &sub_op);
+            // Sub-operator owned by ceed::Operator.
+            op->AddSubOperator(sub_op);
+          };
 
-          CeedOperator sub_op;
-          integ->SetMapTypes(trial_map_type, test_map_type);
-          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
-          // Sub-operator owned by ceed::Operator.
-          op->AddSubOperator(sub_op);
+          // Integrals over affine simplices can use a reduced basis with fewer points and
+          // the corresponding geometry factors (on curved meshes, separately from the other
+          // elements). This is limited to the domain integrators of vector finite element
+          // spaces: H1 and boundary operators on CPUs are mostly applied through their
+          // element matrices, which do not depend on the points.
+          if (use_reduced_bases && &trial_fespace == &test_fespace && !use_bdr &&
+              (trial_map_type == mfem::FiniteElement::H_CURL ||
+               trial_map_type == mfem::FiniteElement::H_DIV) &&
+              (data.affine_geom_data || !data.parts.empty()))
+          {
+            CeedBasis reduced_basis =
+                trial_fespace.GetCeedReducedBasis(ceed, geom, integ->UsesValues());
+            CeedInt num_qpts, num_reduced_qpts = 0;
+            PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(trial_basis, &num_qpts));
+            if (reduced_basis)
+            {
+              PalaceCeedCall(
+                  ceed, CeedBasisGetNumQuadraturePoints(reduced_basis, &num_reduced_qpts));
+            }
+            if (reduced_basis && num_reduced_qpts < num_qpts)
+            {
+              const auto &affine = data.parts.empty() ? data : data.parts[0];
+              const auto *reduced_data =
+                  mesh.GetCeedAffineGeomFactorData(ceed, geom, affine, num_reduced_qpts);
+              if (reduced_data)
+              {
+                AddSubOperator(affine, reduced_basis, reduced_basis, *reduced_data);
+                if (!data.parts.empty())
+                {
+                  AddSubOperator(data.parts[1], trial_basis, test_basis, data.parts[1]);
+                }
+                continue;
+              }
+            }
+          }
+          AddSubOperator(data, trial_basis, test_basis, data);
         }
       }
     }
@@ -169,6 +217,22 @@ bool UseFullAssembly(const FiniteElementSpace &fespace, int pa_order_threshold)
   return UseFullAssembly(fespace, fespace, pa_order_threshold);
 }
 
+bool HasAffineGeometryData(const Mesh &mesh)
+{
+  // Whether operators on the mesh may use reduced bases for some elements.
+  for (Ceed ceed : ceed::internal::GetCeedObjects())
+  {
+    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
+    {
+      if (data.affine_geom_data || !data.parts.empty())
+      {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 std::unique_ptr<Operator> BilinearForm::Assemble(bool skip_zeros) const
@@ -205,12 +269,16 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
     skip_zero_coeff_elems =
         !UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold);
   }
+  // Levels on the same mesh share the quadrature data of the first of them, unless the
+  // operators use reduced bases, whose points depend on the level.
   std::vector<std::unique_ptr<ceed::Operator>> pa_ops;
   pa_ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
-    if (l > l0 && &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
-                      &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
+    if (l > l0 &&
+        &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
+            &fespaces.GetFESpaceAtLevel(l - 1).GetMesh() &&
+        !HasAffineGeometryData(fespaces.GetFESpaceAtLevel(l).GetMesh()))
     {
       pa_ops.push_back(
           ceed::CeedOperatorCoarsen(*pa_ops.back(), fespaces.GetFESpaceAtLevel(l)));

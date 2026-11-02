@@ -1,0 +1,146 @@
+diff --git a/SRC/complex16/pzutil.c b/SRC/complex16/pzutil.c
+index fceee3da..b0455486 100755
+--- a/SRC/complex16/pzutil.c
++++ b/SRC/complex16/pzutil.c
+@@ -775,6 +775,7 @@ pzgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
+     gstrs_comm->perm_cache = NULL;
++    gstrs_comm->comm_L = MPI_COMM_NULL;
+ 
+ 
+     return 0;
+diff --git a/SRC/double/pdgstrs.c b/SRC/double/pdgstrs.c
+index 8227acb8..f34ca1dd 100755
+--- a/SRC/double/pdgstrs.c
++++ b/SRC/double/pdgstrs.c
+@@ -576,7 +576,6 @@ pdReDistribute_B_to_X(double *B, int_t m_loc, int nrhs, int_t ldb,
+ 		MPI_Wait(&req_d,&status);
+ 	#endif
+ #endif
+-	MPI_Barrier( grid->comm );
+ 
+ 
+ 	Nreq_send=0;
+@@ -856,7 +855,6 @@ pdReDistribute_X_to_B(int_t n, double *B, int_t m_loc, int_t ldb, int_t fst_row,
+ 	#endif
+ #endif
+ 
+-	MPI_Barrier( grid->comm );
+ 	Nreq_send=0;
+ 	Nreq_recv=0;
+ 	for (pp=0;pp<procs && !cached;pp++){
+@@ -1230,6 +1228,7 @@ pdgstrs(superlu_dist_options_t *options, int_t n,
+     int  nfrecv = 0; /* Count of total messages to be recv'd. */
+     int  nbrecv = 0; /* Count of total messages to be recv'd. */
+     int  nleaf = 0, nroot = 0;
++    MPI_Comm comm_L;
+     int  nleaftmp = 0, nroottmp = 0;
+     int_t  msgsize;
+         /*-- Counts used for U-solve --*/
+@@ -1380,7 +1379,6 @@ pdgstrs(superlu_dist_options_t *options, int_t n,
+     }
+ #endif
+ 
+-    MPI_Barrier( grid->comm );
+     t1_sol = SuperLU_timer_();
+     t = SuperLU_timer_();
+ 
+@@ -1600,11 +1598,25 @@ if ( options->GPURES == YES ) {
+ 	}
+     }
+ 
++	/* ---------------------------------------------------------
++	   The L-solve messages use their own communicator: a process that
++	   finished its L-solve can start the U-solve (whose receives match any
++	   tag on grid->comm) without a barrier in between.
++	   --------------------------------------------------------- */
++	if ( SOLVEstruct->gstrs_comm->comm_L == MPI_COMM_NULL )
++	    MPI_Comm_dup(grid->comm, &SOLVEstruct->gstrs_comm->comm_L);
++	comm_L = SOLVEstruct->gstrs_comm->comm_L;
++	for (lk = 0; lk < CEILING( nsupers, grid->npcol ); ++lk)
++	    if ( LBtree_ptr[lk].empty_ == NO ) LBtree_ptr[lk].comm_ = comm_L;
++	for (lk = 0; lk < CEILING( nsupers, grid->nprow ); ++lk)
++	    if ( LRtree_ptr[lk].empty_ == NO ) LRtree_ptr[lk].comm_ = comm_L;
++
+ 	/* ---------------------------------------------------------
+ 	   Initialize the async Bcast trees on all processes.
+ 	   --------------------------------------------------------- */
+ 	nsupers_j = CEILING( nsupers, grid->npcol ); /* Number of local block columns */
+ 
++
+ 	nbtree = 0;
+ 	for (lk=0;lk<nsupers_j;++lk){
+ 		if(LBtree_ptr[lk].empty_==NO){
+@@ -2349,7 +2361,7 @@ t1 = SuperLU_timer_();
+ 
+ 			/* Receive a message. */
+ 			MPI_Recv( recvbuf0, maxrecvsz, MPI_DOUBLE,
+-				MPI_ANY_SOURCE, MPI_ANY_TAG, grid->comm, &status );
++				MPI_ANY_SOURCE, MPI_ANY_TAG, comm_L, &status );
+ 			// MPI_Irecv(recvbuf0,maxrecvsz,MPI_DOUBLE,MPI_ANY_SOURCE,MPI_ANY_TAG,grid->comm,&req);
+ 			// ready=0;
+ 			// while(ready==0){
+@@ -2553,7 +2565,6 @@ t1 = SuperLU_timer_();
+ 				// deallocate requests here
+ 			}
+ 		}
+-		MPI_Barrier( grid->comm );
+ 
+ 	}  /* end CPU trisolve */
+ #if ( PROFlevel>=1 )
+diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
+index c11fb5bc..9d102288 100755
+--- a/SRC/double/pdutil.c
++++ b/SRC/double/pdutil.c
+@@ -973,6 +973,7 @@ pdgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
+     gstrs_comm->perm_cache = NULL;
++    gstrs_comm->comm_L = MPI_COMM_NULL;
+ 
+ 
+     return 0;
+diff --git a/SRC/include/superlu_defs.h b/SRC/include/superlu_defs.h
+index 0122d1f0..3d45af8e 100755
+--- a/SRC/include/superlu_defs.h
++++ b/SRC/include/superlu_defs.h
+@@ -549,6 +549,10 @@ typedef struct {
+        solution (see pdPermute_Dense_Matrix_cached()), built by the first
+        solve. */
+     struct pxperm_cache *perm_cache;
++
++    /* Communicator of the L-solve messages (a duplicate of grid->comm, created
++       by the first solve), so that the L- and U-solves need no barrier. */
++    MPI_Comm comm_L;
+ } pxgstrs_comm_t;
+ 
+ typedef struct pxperm_cache {
+diff --git a/SRC/prec-independent/util.c b/SRC/prec-independent/util.c
+index e4c1de69..0cf85849 100755
+--- a/SRC/prec-independent/util.c
++++ b/SRC/prec-independent/util.c
+@@ -330,6 +330,11 @@ void pxgstrs_finalize(pxgstrs_comm_t *gstrs_comm)
+     if ( gstrs_comm->B_to_X_recv_idx ) SUPERLU_FREE(gstrs_comm->B_to_X_recv_idx);
+     if ( gstrs_comm->X_to_B_recv_idx ) SUPERLU_FREE(gstrs_comm->X_to_B_recv_idx);
+     if ( gstrs_comm->perm_cache ) pxperm_cache_free(gstrs_comm->perm_cache);
++    if ( gstrs_comm->comm_L != MPI_COMM_NULL ) {
++        int finalized;
++        MPI_Finalized(&finalized);
++        if ( !finalized ) MPI_Comm_free(&gstrs_comm->comm_L);
++    }
+     SUPERLU_FREE(gstrs_comm);
+ }
+ 
+diff --git a/SRC/single/psutil.c b/SRC/single/psutil.c
+index 9a5ac5e3..38466548 100755
+--- a/SRC/single/psutil.c
++++ b/SRC/single/psutil.c
+@@ -776,6 +776,7 @@ psgstrs_init(int_t n, int_t m_loc, int_t nrhs, int_t fst_row,
+     gstrs_comm->B_to_X_recv_idx = NULL;
+     gstrs_comm->X_to_B_recv_idx = NULL;
+     gstrs_comm->perm_cache = NULL;
++    gstrs_comm->comm_L = MPI_COMM_NULL;
+ 
+ 
+     return 0;

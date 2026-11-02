@@ -1,0 +1,80 @@
+diff --git a/SRC/double/pdgstrf.c b/SRC/double/pdgstrf.c
+index 6032d467..21b776aa 100755
+--- a/SRC/double/pdgstrf.c
++++ b/SRC/double/pdgstrf.c
+@@ -607,8 +607,23 @@ pdgstrf(superlu_dist_options_t * options, int m, int n, double anorm,
+     perm_c_supno = SUPERLU_MALLOC (2 * nsupers * sizeof (int_t));
+     iperm_c_supno = perm_c_supno + nsupers;
+ 
+-    dstatic_schedule(options, m, n, LUstruct, grid, stat,
+-		    perm_c_supno, iperm_c_supno, info);
++    /* The schedule only depends on the structure of L and U: reuse the one of
++       the previous factorization when the pattern and permutations are kept. */
++    if ( options->Fact == SamePattern_SameRowPerm && Llu->sched_perm_c_supno
++         && Llu->sched_nsupers == nsupers ) {
++        memcpy(perm_c_supno, Llu->sched_perm_c_supno,
++               2 * nsupers * sizeof (int_t));
++    } else {
++        dstatic_schedule(options, m, n, LUstruct, grid, stat,
++		        perm_c_supno, iperm_c_supno, info);
++        if ( Llu->sched_perm_c_supno ) SUPERLU_FREE(Llu->sched_perm_c_supno);
++        Llu->sched_perm_c_supno = SUPERLU_MALLOC (2 * nsupers * sizeof (int_t));
++        if ( Llu->sched_perm_c_supno ) {
++            memcpy(Llu->sched_perm_c_supno, perm_c_supno,
++                   2 * nsupers * sizeof (int_t));
++            Llu->sched_nsupers = nsupers;
++        }
++    }
+ 
+ #if ( DEBUGlevel >= 2 )
+     PrintInt10("schedule:perm_c_supno", nsupers, perm_c_supno);
+diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
+index e109b94e..e9279918 100755
+--- a/SRC/double/pdutil.c
++++ b/SRC/double/pdutil.c
+@@ -472,6 +472,8 @@ void dLUstructInit(const int_t n, dLUstruct_t *LUstruct)
+ 	   SUPERLU_MALLOC(sizeof(dLocalLU_t))) )
+ 	ABORT("Malloc fails for LocalLU_t.");
+     LUstruct->Llu->inv = 0;
++    LUstruct->Llu->sched_perm_c_supno = NULL;
++    LUstruct->Llu->sched_nsupers = 0;
+     LUstruct->dt = 'd';
+     LUstruct->trf3Dpart = NULL;
+ }
+@@ -487,6 +489,8 @@ void dLUstructFree(dLUstruct_t *LUstruct)
+ 
+     SUPERLU_FREE(LUstruct->etree);
+     SUPERLU_FREE(LUstruct->Glu_persist);
++    if ( LUstruct->Llu->sched_perm_c_supno )
++        SUPERLU_FREE(LUstruct->Llu->sched_perm_c_supno);
+     SUPERLU_FREE(LUstruct->Llu);
+     dDestroy_trf3Dpartition(LUstruct->trf3Dpart);
+ 
+@@ -511,6 +515,12 @@ dDestroy_LU(int_t n, gridinfo_t *grid, dLUstruct_t *LUstruct)
+ 
+     dDestroy_Tree(n, grid, LUstruct);
+ 
++    if ( Llu->sched_perm_c_supno ) {
++        SUPERLU_FREE(Llu->sched_perm_c_supno);
++        Llu->sched_perm_c_supno = NULL;
++        Llu->sched_nsupers = 0;
++    }
++
+     nsupers = Glu_persist->supno[n-1] + 1;
+ 
+     /* Following are free'd in distribution routines */
+diff --git a/SRC/include/superlu_ddefs.h b/SRC/include/superlu_ddefs.h
+index 102dc5dc..263dfe9e 100755
+--- a/SRC/include/superlu_ddefs.h
++++ b/SRC/include/superlu_ddefs.h
+@@ -313,6 +313,10 @@ typedef struct {
+     gridinfo_t *d_grid;
+ #endif
+ 
++    /* Static schedule of the last factorization (perm_c_supno followed by
++       iperm_c_supno), reused by SamePattern_SameRowPerm refactorizations. */
++    int_t *sched_perm_c_supno;
++    int_t sched_nsupers;
+ } dLocalLU_t;
+ 
+ typedef struct

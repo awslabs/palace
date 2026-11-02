@@ -1973,6 +1973,69 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
   RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, false, order, true);
 }
 
+TEST_CASE("libCEED Reduced Bases", "[libCEED][Serial][Parallel]")
+{
+  // Domain integrators of H(curl) and H(div) spaces on affine simplices use bases with
+  // fewer points than the default quadrature (also on the affine elements of a curved
+  // mesh). The partially assembled operators agree with the fully assembled ones, which use
+  // the default quadrature, to rounding.
+  auto mesh_file = GENERATE("fichera-tet.mesh", "fichera-mixed-p2.mesh");
+  auto order = GENERATE(1, 2, 3, 4);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath(mesh_file), 0, false);
+  const int dim = mesh.Dimension();
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = false;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  INFO("Mesh: " << mesh_file << ", order: " << order);
+
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto TestReducedBases = [&](BilinearForm &a)
+  {
+    a.AssembleQuadratureData();
+    auto op = a.PartialAssemble();
+    auto mat = a.FullAssemble(false);
+    Vector x(op->Width()), y(op->Height()), y_ref(op->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    linalg::SetRandom(comm, x);
+    op->Mult(x, y);
+    mat->Mult(x, y_ref);
+    y -= y_ref;
+    REQUIRE(linalg::Norml2(comm, y) <= 1.0e-12 * linalg::Norml2(comm, y_ref));
+  };
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), rt_fespace(mesh, &rt_fec);
+  SECTION("Curl-Curl + Mass Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+    TestReducedBases(a);
+  }
+  SECTION("Curl-Curl Integrator")
+  {
+    BilinearForm a(nd_fespace);
+    a.AddDomainIntegrator<CurlCurlIntegrator>(MQ);
+    TestReducedBases(a);
+  }
+  SECTION("H(div) Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<VectorFEMassIntegrator>(MQ);
+    TestReducedBases(a);
+  }
+  SECTION("Div-Div + Mass Integrator")
+  {
+    BilinearForm a(rt_fespace);
+    a.AddDomainIntegrator<DivDivMassIntegrator>(Q, MQ);
+    TestReducedBases(a);
+  }
+}
+
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
 // configures when running on CPU, including the boundary terms contributed by absorbing and
 // impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
@@ -2520,14 +2583,13 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  // Volume and boundary leaves without an imaginary partner are packed (or element
+  // assembled) as well, so the fine and H1 auxiliary operators all use the fast path.
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
+  REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  if (!partial_lossy)
-  {
-    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
-  }
+  REQUIRE(!IsOriginalComplexWrapper(local));
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
@@ -2602,7 +2664,7 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   }
 }
 
-TEST_CASE("libCEED packed complex unsupported input fallbacks",
+TEST_CASE("libCEED packed complex input fallbacks",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
   if (!PackedTestBackend())
@@ -2659,7 +2721,10 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
     ref_imag.reset();
   }
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  REQUIRE(IsOriginalComplexWrapper(*actual));
+  // Non-tensor H1 bases and real-only inputs are element assembled or packed;
+  // tensor-product bases, dof multiplicity, and unassembled vector quadrature data keep the
+  // original action.
+  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
 }

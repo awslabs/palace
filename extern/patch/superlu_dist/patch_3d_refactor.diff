@@ -1,0 +1,266 @@
+diff --git a/SRC/complex16/pzdistribute3d.c b/SRC/complex16/pzdistribute3d.c
+index 97770481..29fa0a6f 100644
+--- a/SRC/complex16/pzdistribute3d.c
++++ b/SRC/complex16/pzdistribute3d.c
+@@ -354,6 +354,21 @@ pzdistribute3d(superlu_dist_options_t *options, int_t n, SuperMatrix *A,
+ 			    }
+ 			} /* for bnnz ... */
+ 		    } /* for jj ... */
++		} else { /* No L block column on this grid (superGridMap[jb] ==
++			    NOT_IN_GRID): clear the SPA entries set above, like the
++			    first-time distribution does. Otherwise they leak into
++			    the L blocks of the next block columns. */
++		    for (j = fsupc, dense_col = dense; j < FstBlockC(jb+1); ++j) {
++			for (i = xa[j]; i < xa[j+1]; ++i) {
++			    irow = asub[i];
++			    gb = BlockNum( irow );
++			    if ( myrow == PROW( gb, grid ) && gb >= jb ) {
++				lb = LBi( gb, grid );
++				dense_col[ilsum[lb] + irow - FstBlockC( gb )] = zero;
++			    }
++			}
++			dense_col += ldaspa;
++		    }
+ 		} /* if index ... */
+ #if ( PROFlevel>=1 )
+ 		t_l += SuperLU_timer_() - t;
+diff --git a/SRC/complex16/pzgssvx3d.c b/SRC/complex16/pzgssvx3d.c
+index 3453b511..cc7d9635 100755
+--- a/SRC/complex16/pzgssvx3d.c
++++ b/SRC/complex16/pzgssvx3d.c
+@@ -867,6 +867,21 @@ void pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((doublecomplex *) As->nzval)[idx]), count, SuperLU_MPI_DOUBLE_COMPLEX, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -959,12 +974,15 @@ void pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		zinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    zinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		zLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(zLUValSubBuf_t));
+ 		zLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;
+diff --git a/SRC/double/pddistribute3d.c b/SRC/double/pddistribute3d.c
+index a1e3a4f8..4b3a24d0 100644
+--- a/SRC/double/pddistribute3d.c
++++ b/SRC/double/pddistribute3d.c
+@@ -1687,6 +1687,21 @@ pddistribute3d(superlu_dist_options_t *options, int_t n, SuperMatrix *A,
+ 			    }
+ 			} /* for bnnz ... */
+ 		    } /* for jj ... */
++		} else { /* No L block column on this grid (superGridMap[jb] ==
++			    NOT_IN_GRID): clear the SPA entries set above, like the
++			    first-time distribution does. Otherwise they leak into
++			    the L blocks of the next block columns. */
++		    for (j = fsupc, dense_col = dense; j < FstBlockC(jb+1); ++j) {
++			for (i = xa[j]; i < xa[j+1]; ++i) {
++			    irow = asub[i];
++			    gb = BlockNum( irow );
++			    if ( myrow == PROW( gb, grid ) && gb >= jb ) {
++				lb = LBi( gb, grid );
++				dense_col[ilsum[lb] + irow - FstBlockC( gb )] = zero;
++			    }
++			}
++			dense_col += ldaspa;
++		    }
+ 		} /* if index ... */
+ #if ( PROFlevel>=1 )
+ 		t_l += SuperLU_timer_() - t;
+diff --git a/SRC/double/pdgssvx3d.c b/SRC/double/pdgssvx3d.c
+index cae8ec5d..c43786a3 100755
+--- a/SRC/double/pdgssvx3d.c
++++ b/SRC/double/pdgssvx3d.c
+@@ -868,6 +868,21 @@ void pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((double *) As->nzval)[idx]), count, MPI_DOUBLE, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -960,12 +975,15 @@ void pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		dinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    dinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		dLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(dLUValSubBuf_t));
+ 		dLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;
+diff --git a/SRC/single/psdistribute3d.c b/SRC/single/psdistribute3d.c
+index c214297f..b3292f30 100644
+--- a/SRC/single/psdistribute3d.c
++++ b/SRC/single/psdistribute3d.c
+@@ -355,6 +355,21 @@ psdistribute3d(superlu_dist_options_t *options, int_t n, SuperMatrix *A,
+ 			    }
+ 			} /* for bnnz ... */
+ 		    } /* for jj ... */
++		} else { /* No L block column on this grid (superGridMap[jb] ==
++			    NOT_IN_GRID): clear the SPA entries set above, like the
++			    first-time distribution does. Otherwise they leak into
++			    the L blocks of the next block columns. */
++		    for (j = fsupc, dense_col = dense; j < FstBlockC(jb+1); ++j) {
++			for (i = xa[j]; i < xa[j+1]; ++i) {
++			    irow = asub[i];
++			    gb = BlockNum( irow );
++			    if ( myrow == PROW( gb, grid ) && gb >= jb ) {
++				lb = LBi( gb, grid );
++				dense_col[ilsum[lb] + irow - FstBlockC( gb )] = zero;
++			    }
++			}
++			dense_col += ldaspa;
++		    }
+ 		} /* if index ... */
+ #if ( PROFlevel>=1 )
+ 		t_l += SuperLU_timer_() - t;
+diff --git a/SRC/single/psgssvx3d.c b/SRC/single/psgssvx3d.c
+index 377c762b..cf51a389 100755
+--- a/SRC/single/psgssvx3d.c
++++ b/SRC/single/psgssvx3d.c
+@@ -868,6 +868,21 @@ void psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((float *) As->nzval)[idx]), count, MPI_FLOAT, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -960,12 +975,15 @@ void psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		sLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(sLUValSubBuf_t));
+ 		sLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;
+diff --git a/SRC/single/psgssvx3d_d2.c b/SRC/single/psgssvx3d_d2.c
+index d001226e..198cc17c 100755
+--- a/SRC/single/psgssvx3d_d2.c
++++ b/SRC/single/psgssvx3d_d2.c
+@@ -877,6 +877,21 @@ void psgssvx3d_d2(superlu_dist_options_t *options, SuperMatrix *A,
+     MPI_Bcast(&rowequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+     MPI_Bcast(&colequ, 1, MPI_INT, 0, grid3d->zscp.comm);
+ 
++    /* With Fact == SamePattern_SameRowPerm, grid-0 has scaled its copy of A
++       with the previous R and C, but dbcastPermutedSparseA() below is skipped
++       and the other grids distribute their own copy into L and U: send them
++       the scaled values (the copies have the same structure). */
++    if (Fact == SamePattern_SameRowPerm && Equil &&
++        ScalePermstruct->DiagScale != NOEQUIL) {
++	NRformat_loc *As = (NRformat_loc *) A->Store;
++	int_t chunk = 100000000;
++	for (int_t idx = 0; idx < As->nnz_loc; idx += chunk) {
++	    int count = (int) SUPERLU_MIN(chunk, As->nnz_loc - idx);
++	    MPI_Bcast(&(((float *) As->nzval)[idx]), count, MPI_FLOAT, 0,
++		      grid3d->zscp.comm);
++	}
++    }
++
+     /* Now all processes in 3D grid participate */
+ 
+     /* Broadcast Permuted A and symbolic factorization data from 2d to 3d grid */
+@@ -969,12 +984,15 @@ void psgssvx3d_d2(superlu_dist_options_t *options, SuperMatrix *A,
+ 
+ 	    }
+ 
+-	    if (Fact != SamePattern_SameRowPerm) {
+-		// checkDist3DLUStruct(LUstruct, grid3d);
+-		// zeros out the Supernodes that are not owned by the grid
+-		sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
+-					trf3Dpartition->sForests, LUstruct, grid3d);
++	    // checkDist3DLUStruct(LUstruct, grid3d);
++	    /* Zero out the supernodes that are not owned by this grid. Also needed
++	       for SamePattern_SameRowPerm: the distribution routine above has
++	       refilled L and U with the entries of A on all grids, and the
++	       ancestor reduction of the 3D factorization sums the grids. */
++	    sinit3DLUstructForest(trf3Dpartition->myTreeIdxs, trf3Dpartition->myZeroTrIdxs,
++				    trf3Dpartition->sForests, LUstruct, grid3d);
+ 
++	    if (Fact != SamePattern_SameRowPerm) {
+ 		sLUValSubBuf_t *LUvsb = SUPERLU_MALLOC(sizeof(sLUValSubBuf_t));
+ 		sLluBufInit(LUvsb, LUstruct);
+ 		trf3Dpartition->LUvsb = LUvsb;

@@ -38,6 +38,21 @@ protected:
   Vector dof_multiplicity;
   mutable Vector temp;
 
+  // Operators for MultBatch, by number of vectors (created on first use).
+  struct Batch;
+  mutable std::vector<std::unique_ptr<Batch>> batch;
+  const Batch *GetBatch(int n) const;
+
+public:
+  // Element matrices of leaves applied in place of their partial assembly in forward
+  // applications on CPUs, see UseElementAssembly.
+  struct ElementAssembly;
+  const ElementAssembly *GetElementAssembly() const { return ea.get(); }
+
+protected:
+  std::unique_ptr<ElementAssembly> ea;
+  void ElementAssemblyMult(const Vector &x, Vector &y, bool add) const;
+
 public:
   Operator(int h, int w);
   ~Operator() override;
@@ -54,11 +69,23 @@ public:
 
   void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = std::move(mult); }
 
+  // For forward applications on a CPU, apply the dense element matrices of small simplex
+  // leaves instead of their partial assembly when that is cheaper for the given number of
+  // right hand sides per application. Transposes, diagonal and full assembly keep using the
+  // partially assembled leaves. Requires a finalized square operator with a single CEED
+  // context. Returns whether any leaf is element assembled.
+  bool UseElementAssembly(int num_rhs = 1);
+
   bool HasDofMultiplicity() const { return dof_multiplicity.Size() > 0; }
 
   void AssembleDiagonal(Vector &diag) const override;
 
   void Mult(const Vector &x, Vector &y) const override;
+
+  // Products y_k = A x_k for n vectors stored one after the other in x and y (n * width and
+  // n * height entries), each with the same operations as Mult. On CPUs, operators whose
+  // leaves are all H(curl) or H(div) mass actions apply them to all vectors at once.
+  void MultBatch(int n, const Vector &x, Vector &y) const;
 
   void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
 
