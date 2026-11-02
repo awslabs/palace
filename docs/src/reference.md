@@ -2202,6 +2202,30 @@ hybrid solve, Palace independently refines the raw and corrected interpolated po
 seeds with the full nonlinear operators. SLP uses the corrected mass in its nonlinear
 operator directly.
 
+!!! warning "Caveat OI-MAXWELL-SC-ELECTRIC-ONLY: electric-only self-consistent correction"
+
+    Both self-consistent operators above add ONLY the electric (capacitive) defect of the
+    finite-thickness metal: the term ``-\omega^2 P^T(S_{fabricated}-S_{thin})P`` is the
+    ELECTROSTATIC coupon domain response, ``S = 2 Q_{domain}`` of the section
+    *Self-consistent thin-metal response correction* above, scaled by ``\omega^2`` and
+    added to the thin Maxwell operator (the driven solver's `corrected_A` in
+    `palace/drivers/drivensolver.cpp`, lines 229-233, and the eigensolver's `corrected_A`
+    in `palace/drivers/eigensolver.cpp`, line 612, both built from the one `response_mass`
+    operator). No magnetic (inductive) defect of the finite-thickness metal is modelled
+    anywhere on this path: neither the exclusion of the magnetic field from the metal
+    volume, nor the redistribution of the surface current at the thick edges, nor any
+    kinetic inductance enters the corrected stiffness or mass. Consequently the corrected
+    FREQUENCIES / eigenvalues (`f corrected (GHz)` of the eigenmode output) and the port
+    quantities of the self-consistent driven and eigenmode solves are NOT validated and can
+    be biased: a quasi-TEM estimate, not yet confirmed against a thick-metal Maxwell
+    reference, finds that the sidewall capacitance added in the vacuum gap comes with a
+    comparable decrease of the line inductance, so the true frequency shift can even have
+    the OPPOSITE sign of the electric-only correction. The fixed-trace interface
+    participations of `surface-Q-corrected.csv`, normalised by the electric energy, remain
+    the result of record and are much less affected by the omission. A correction carrying
+    the magnetic defect is under design; until it lands, treat the self-consistent Maxwell
+    frequencies and port quantities as diagnostics, not as results.
+
 Boundary modes also report raw, fixed-trace, and fixed-flux results only. Their correction
 uses the transverse field ``\bm{E}_t`` and is intended for quasi-TEM modes whose
 longitudinal electric-field contribution is negligible. Palace does not solve a second
@@ -2222,7 +2246,10 @@ are reported separately. A failed trace-closure gate therefore invalidates the t
 postprocessing-only estimates, but does not by itself invalidate a self-consistent
 result. Electrostatic correction has the same distinction: the fixed-trace/fixed-flux
 spread is diagnostic of the postprocessed thin field, while the separately reported
-corrected solution is globally self-consistent.
+corrected solution is globally self-consistent. On the Maxwell path, a passing
+`self-consistent confidence pass` certifies the coupling and the contour diagnostics only;
+it does not lift the electric-only caveat above (OI-MAXWELL-SC-ELECTRIC-ONLY) on the
+corrected frequencies and port quantities.
 
 | Column                                         | Meaning                                                                                                                       | Current limit                 |
 |:---------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------- |:----------------------------- |
