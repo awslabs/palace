@@ -1,3 +1,809 @@
+diff --git a/src/dense/CMakeLists.txt b/src/dense/CMakeLists.txt
+index 84a15980..7d8fdf22 100644
+--- a/src/dense/CMakeLists.txt
++++ b/src/dense/CMakeLists.txt
+@@ -32,6 +32,7 @@ if(STRUMPACK_USE_MPI)
+     ${CMAKE_CURRENT_LIST_DIR}/DistributedVector.hpp
+     ${CMAKE_CURRENT_LIST_DIR}/DistributedMatrix.hpp
+     ${CMAKE_CURRENT_LIST_DIR}/DistributedMatrix.cpp
++    ${CMAKE_CURRENT_LIST_DIR}/DistTrsmNarrow.hpp
+     ${CMAKE_CURRENT_LIST_DIR}/ScaLAPACKWrapper.hpp)
+ 
+   install(FILES
+diff --git a/src/dense/DistTrsmNarrow.hpp b/src/dense/DistTrsmNarrow.hpp
+new file mode 100644
+index 00000000..02b7e438
+--- /dev/null
++++ b/src/dense/DistTrsmNarrow.hpp
+@@ -0,0 +1,788 @@
++// Distributed triangular solve with a narrow right-hand side, op(A) X = B with
++// SIDE = L and TRANS = N, A an m x m block-cyclic matrix (square nb x nb
++// blocks, source process (0,0)) and B an m x n block-cyclic matrix with the
++// same row blocking and n <= nb, i.e., B lives in process column 0.
++//
++// The local computations are exactly those of the PBLAS routine
++// PDTRSM (PB_CptrsmB + PB_Cptrsm, lookahead variant): the same BLAS calls on
++// the same data in the same order, so the result is bitwise identical. Only
++// the communication differs: BLACS point-to-point and ring broadcasts are
++// replaced by direct MPI messages on contiguous buffers, and the final
++// row-wise combine of the solution (a sum with exact zeros) is replaced by
++// sending each solved block to process column 0.
++#ifndef STRUMPACK_DIST_TRSM_NARROW_HPP
++#define STRUMPACK_DIST_TRSM_NARROW_HPP
++
++#include <mpi.h>
++#include <vector>
++#include <algorithm>
++#include <deque>
++#include <map>
++
++#include "BLASLAPACKWrapper.hpp"
++#include "ScaLAPACKWrapper.hpp"
++
++
++namespace strumpack {
++  namespace trsmnarrow {
++
++
++    // block-cyclic index helpers, same as the PBLAS tools
++    inline int numroc(int N, int I, int INB, int NB, int PROC, int SRCPROC,
++                      int NPROCS) {
++      int ilocblk, mydist, nblocks;
++      if (SRCPROC == -1 || NPROCS == 1) return N;
++      if ((INB -= I) <= 0) {
++        nblocks = (-INB) / NB + 1;
++        SRCPROC += nblocks;
++        SRCPROC -= (SRCPROC / NPROCS) * NPROCS;
++        INB += nblocks * NB;
++      }
++      if (PROC == SRCPROC) {
++        if (N <= INB) return N;
++        nblocks = (N - INB) / NB + 1;
++        if (nblocks < NPROCS) return INB;
++        ilocblk = nblocks / NPROCS;
++        return (nblocks - ilocblk * NPROCS) ? INB + ilocblk * NB :
++          N + (ilocblk - nblocks) * NB;
++      } else {
++        if (N <= INB) return 0;
++        nblocks = (N - INB) / NB + 1;
++        if ((mydist = PROC - SRCPROC) < 0) mydist += NPROCS;
++        if (nblocks < NPROCS)
++          return (mydist < nblocks) ? NB : ((mydist > nblocks) ? 0 :
++                                            N - INB + NB * (1 - nblocks));
++        ilocblk = nblocks / NPROCS;
++        mydist -= nblocks - ilocblk * NPROCS;
++        return (mydist < 0) ? (ilocblk + 1) * NB :
++          ((mydist > 0) ? ilocblk * NB :
++           N - INB + NB * (ilocblk - nblocks + 1));
++      }
++    }
++    inline int indxg2p(int IG, int INB, int NB, int, int SRCPROC,
++                       int NPROCS) {
++      if (IG < INB || SRCPROC == -1 || NPROCS == 1) return SRCPROC;
++      int p = SRCPROC + 1 + (IG - INB) / NB;
++      return p - (p / NPROCS) * NPROCS;
++    }
++    inline int firstnb(int N, int I, int INB, int NB) {
++      int inbt = ((INB -= I) <= 0 ? ((-INB) / NB + 1) * NB + INB : INB);
++      return std::min(inbt, N);
++    }
++    inline int lastnb(int N, int I, int INB, int NB) {
++      int lnbt = I + N - INB;
++      if (lnbt > 0) {
++        lnbt = lnbt - NB * ((NB + lnbt - 1) / NB - 1);
++        return std::min(lnbt, N);
++      }
++      return N;
++    }
++    inline bool span(int N, int I, int INB, int NB, int SRCPROC,
++                     int NPROCS) {
++      return (SRCPROC >= 0) &&
++        ((NPROCS > 1) &&
++         ((I < INB) ? (I + N > INB) :
++          (I + N > INB + ((I - INB) / NB + 1) * NB)));
++    }
++    inline void g2l1(int I, int imb, int mb, int src, int NP, int ME,
++                     int& II, int& P) {
++      // one dimension of PB_Cinfog2l
++      P = src;
++      if (P == -1 || NP == 1) { II = I; return; }
++      if (I < imb) { II = (ME == P ? I : 0); return; }
++      int nblocks, ilocblk, mydist;
++      if (ME == src) {
++        nblocks = (I - imb) / mb + 1;
++        P += nblocks; P -= (P / NP) * NP;
++        if (nblocks < NP) II = imb;
++        else {
++          ilocblk = nblocks / NP;
++          if (ilocblk * NP >= nblocks)
++            II = (ME == P) ? I + (ilocblk - nblocks) * mb :
++              imb + (ilocblk - 1) * mb;
++          else II = imb + ilocblk * mb;
++        }
++      } else {
++        nblocks = (I -= imb) / mb + 1;
++        P += nblocks; P -= (P / NP) * NP;
++        if ((mydist = ME - src) < 0) mydist += NP;
++        if (nblocks < NP) {
++          mydist -= nblocks;
++          II = (mydist < 0) ? mb : ((ME == P) ? I + (1 - nblocks) * mb : 0);
++        } else {
++          ilocblk = nblocks / NP;
++          mydist -= nblocks - ilocblk * NP;
++          II = (mydist < 0) ? (ilocblk + 1) * mb :
++            ((ME == P) ? (ilocblk - nblocks + 1) * mb + I : ilocblk * mb);
++        }
++      }
++    }
++    // logical block size of the PBLAS (PILAENV), which sets the size of the
++    // diagonal blocks PB_CptrsmB hands to PB_Cptrsm (2 * nb * lcm(P, Q))
++    constexpr int pblas_nb = 32;
++
++    inline int gcd(int a, int b) { while (b) { int t = a % b; a = b; b = t; } return a; }
++    inline int lcm(int a, int b) { return a / gcd(a, b) * b; }
++
++    struct Grid {
++      int nprow, npcol, myrow, mycol, ctxt;
++      MPI_Comm comm; // ranks in column-major grid order
++      int rank(int r, int c) const { return r + c * nprow; }
++    };
++
++    // descriptor of the (square) matrix A as used by PB_Cptrsm (Ad0)
++    struct Desc { int imb, inb, mb, nb, rsrc, csrc, lld; };
++
++    // true iff PDTRSM (SIDE = L, TRANS = N, A and B with nb x nb blocks
++    // starting in process (0,0)) uses PB_CptrsmB, which Solver reproduces
++    inline bool applicable(int M, int N, int nb, int nprow, int npcol) {
++      if (N > nb || M <= 0 || N <= 0) return false;
++      auto dnroc = [](int n, int b, int p) {
++        return (double)((((n + b - 1) / b) + p - 1) / p) * (double)b;
++      };
++      double tmp1 = dnroc(M, nb, nprow), tmp4 = dnroc(N, nb, npcol);
++      double ABestR = (double)M *
++        ((npcol == 1 ? 0. : tmp1 / 2.) + (nprow == 1 ? 0. : tmp4));
++      double Best = (double)N *
++        ((double)((M + nb - 1) / nb) * (double)nb * (nprow == 1 ? 0. : 1.) +
++         (npcol == 1 ? 0. : 1.));
++      bool ChooseAB = (ABestR <= 2.0 * Best);
++      return !ChooseAB;
++    }
++
++    // copies of the blocks of A used by the window chains (see
++    // Solver::cptrsm_fanin), valid until A changes
++    struct Cache {
++      std::map<std::pair<int,long long>, std::vector<double>> L;
++      bool built = false;
++    };
++
++    class Solver {
++    public:
++      Solver(const Grid& g, bool upper, bool unit)
++        : g_(g), upper_(upper), unit_(unit) {}
++
++      // B is overwritten with the solution (process column 0 only)
++      void solve(int m, int n, int nb, const double* A, int lda,
++                 double* B, int ldb) {
++        const int nprow = g_.nprow, npcol = g_.npcol,
++          myrow = g_.myrow, mycol = g_.mycol;
++        const int An = m, nbb = n;
++        // sub(A) descriptor (PB_Cdescribe with IA = JA = 0)
++        const int Aimb1 = firstnb(An, 0, nb, nb), Ainb1 = firstnb(An, 0, nb, nb);
++        Desc Ad0{Aimb1, Ainb1, nb, nb, 0, 0, lda};
++        const int Amb = nb, Anb = nb, Arow = 0, Acol = 0, Ald = lda;
++        const int Anp = numroc(An, 0, Aimb1, Amb, myrow, Arow, nprow);
++        const int Anq = numroc(An, 0, Ainb1, Anb, mycol, Acol, npcol);
++        // WBC (PB_CInOutV2, column vector, reuse of B in process column 0)
++        double* WBC = nullptr; int WBCld = 1; bool WBCsum = false;
++        std::vector<double> wbc;
++        if (span(An, 0, Ainb1, Anb, Acol, npcol)) {
++          WBCsum = (npcol > 1);
++          // the data of B is wanted in the process column owning column
++          // Astart of A (the last one for the backward solve)
++          const int Acoldst = indxg2p(upper_ ? An - 1 : 0, Ainb1, Anb,
++                                      Acol, Acol, npcol);
++          if (mycol == 0) {
++            WBCld = ldb;
++            if (Anp > 0) {
++              WBC = B;
++              if (Acoldst != 0) {
++                isend(B, Anp, nbb, ldb, g_.rank(myrow, Acoldst), tag_b0);
++                zero(Anp, nbb, B, ldb);
++              }
++            }
++          } else {
++            WBCld = std::max(1, Anp);
++            if (Anp > 0) {
++              wbc.assign(std::size_t(Anp) * nbb, 0.); WBC = wbc.data();
++              if (mycol == Acoldst)
++                recv(WBC, Anp, nbb, WBCld, g_.rank(myrow, 0), tag_b0);
++            }
++          }
++        } else {
++          WBCld = ldb;
++          if (mycol == 0 && Anp > 0) WBC = B;
++        }
++        // WBR (PB_COutV, row vector, zero initialized)
++        bool WBRsum = false;
++        std::vector<double> wbr;
++        double* WBR = nullptr; const int WBRld = std::max(1, nbb);
++        if (nprow == 1 || span(An, 0, Aimb1, Amb, Arow, nprow)) {
++          WBRsum = (nprow > 1);
++          if (Anq > 0) { wbr.assign(std::size_t(nbb) * Anq, 0.); WBR = wbr.data(); }
++        } else {
++          if (myrow == Arow && Anq > 0) {
++            wbr.assign(std::size_t(nbb) * Anq, 0.); WBR = wbr.data();
++          }
++        }
++        wbc_sum_ = WBCsum;
++        if (!cache_) fanin_ = false;
++        if (fanin_ && !cache_->built) {
++          build_lcache(An, nb, A, lda);
++          cache_->built = true;
++        }
++        const int Alcmb = 2 * pblas_nb * lcm(nprow, npcol);
++        const double* Aptr = (Anp > 0 && Anq > 0) ? A : nullptr;
++        auto Ap = [&](int i, int j) { return Aptr + i + std::size_t(j) * Ald; };
++        auto gemmNT = [&](int M, int K, const double* a, const double* br,
++                          double* c) {
++          blas::gemm('N', 'T', M, nbb, K, -1., a, Ald, br, WBRld, 1., c, WBCld);
++        };
++        auto pad = [&](int M, double* c) {
++          for (int j=0; j<nbb; j++)
++            std::fill(c + std::size_t(j)*WBCld, c + std::size_t(j)*WBCld + M, 0.);
++        };
++        if (!upper_) {
++          for (int k=0; k<An; k+=Alcmb) {
++            int ktmp = An - k, kb = std::min(ktmp, Alcmb);
++            int Akp = numroc(k, 0, Aimb1, Amb, myrow, Arow, nprow);
++            int Akq = numroc(k, 0, Ainb1, Anb, mycol, Acol, npcol);
++            cptrsm(WBRsum, kb, nbb, Aptr, k, k, Ad0,
++                   WBC ? WBC + Akp : nullptr, WBCld,
++                   WBR ? WBR + std::size_t(Akq) * WBRld : nullptr, WBRld);
++            Akp = numroc(k+kb, 0, Aimb1, Amb, myrow, Arow, nprow);
++            int Anp0 = Anp - Akp;
++            if (Anp0 > 0) {
++              int Anq0 = numroc(kb, k, Ainb1, Anb, mycol, Acol, npcol);
++              double* wbr = WBR ? WBR + std::size_t(Akq) * WBRld : nullptr;
++              if (WBCsum) {
++                int kbnext = std::min(ktmp - kb, Alcmb);
++                ktmp = numroc(kbnext, k+kb, Aimb1, Amb, myrow, Arow, nprow);
++                Anp0 -= ktmp;
++                if (ktmp > 0) {
++                  if (Anq0 > 0) gemmNT(ktmp, Anq0, Ap(Akp, Akq), wbr, WBC + Akp);
++                  int Asrc = indxg2p(k+kb, Ainb1, Anb, Acol, Acol, npcol);
++                  scalapack::gsum2d(g_.ctxt, 'R', ' ', ktmp, nbb, WBC + Akp, WBCld, myrow, Asrc);
++                  if (mycol != Asrc) pad(ktmp, WBC + Akp);
++                }
++                if (Anp0 > 0 && Anq0 > 0)
++                  gemmNT(Anp0, Anq0, Ap(Akp+ktmp, Akq), wbr, WBC + Akp + ktmp);
++              } else if (Anq0 > 0)
++                gemmNT(Anp0, Anq0, Ap(Akp, Akq), wbr, WBC + Akp);
++            }
++          }
++        } else {
++          const int Astart = An - 1;
++          for (int k=(Astart / Alcmb) * Alcmb; k>=0; k-=Alcmb) {
++            int ktmp = An - k, kb = std::min(ktmp, Alcmb);
++            int Akp = numroc(k, 0, Aimb1, Amb, myrow, Arow, nprow);
++            int Akq = numroc(k, 0, Ainb1, Anb, mycol, Acol, npcol);
++            cptrsm(WBRsum, kb, nbb, Aptr, k, k, Ad0,
++                   WBC ? WBC + Akp : nullptr, WBCld,
++                   WBR ? WBR + std::size_t(Akq) * WBRld : nullptr, WBRld);
++            if (Akp > 0) {
++              int Anq0 = numroc(kb, k, Ainb1, Anb, mycol, Acol, npcol);
++              double* wbr = WBR ? WBR + std::size_t(Akq) * WBRld : nullptr;
++              if (WBCsum) {
++                int kbprev = std::min(k, Alcmb);
++                ktmp = numroc(kbprev, k - kbprev, Aimb1, Amb, myrow, Arow, nprow);
++                Akp -= ktmp;
++                if (ktmp > 0) {
++                  if (Anq0 > 0) gemmNT(ktmp, Anq0, Ap(Akp, Akq), wbr, WBC + Akp);
++                  int Asrc = indxg2p(k-1, Ainb1, Anb, Acol, Acol, npcol);
++                  scalapack::gsum2d(g_.ctxt, 'R', ' ', ktmp, nbb, WBC + Akp, WBCld, myrow, Asrc);
++                  if (mycol != Asrc) pad(ktmp, WBC + Akp);
++                }
++                if (Akp > 0 && Anq0 > 0)
++                  gemmNT(Akp, Anq0, Ap(0, Akq), wbr, WBC);
++              } else if (Anq0 > 0)
++                gemmNT(Akp, Anq0, Ap(0, Akq), wbr, WBC);
++            }
++          }
++        }
++        // the final combine of WBC over process rows: only the column
++        // owning a diagonal block holds nonzeros for its rows, so process
++        // column 0 receives the solved blocks it does not own (0 + x, like
++        // the sum with exact zeros)
++        if (WBCsum && mycol == 0 && Anp > 0) {
++          const int nblk = (An + nb - 1) / nb;
++          std::vector<double> tmp;
++          for (int t=0; t<nblk; t++) {
++            int b = upper_ ? nblk - 1 - t : t;
++            if (b % nprow != myrow || b % npcol == 0) continue;
++            int kb = std::min(nb, An - b * nb), off = (b / nprow) * nb;
++            tmp.resize(std::size_t(kb) * nbb);
++            MPI_Recv(tmp.data(), tmp.size(), MPI_DOUBLE,
++                     g_.rank(myrow, b % npcol), tag_x, g_.comm, MPI_STATUS_IGNORE);
++            for (int j=0; j<nbb; j++)
++              for (int i=0; i<kb; i++)
++                B[off + i + std::size_t(j)*ldb] += tmp[i + std::size_t(j)*kb];
++          }
++        }
++        wait_all();
++      }
++
++    private:
++      Grid g_;
++      bool upper_, unit_;
++
++      bool wbc_sum_ = false;
++      std::deque<std::vector<double>> sbufs_;
++      std::vector<MPI_Request> sreqs_;
++      static const int tag_win = 7361, tag_bc = 7362, tag_x = 7363, tag_b0 = 7364,
++        tag_own = 7365, tag_x2 = 7366, tag_l = 7367;
++
++      void isend(const double* a, int m, int n, int lda, int dest, int tag) {
++        sbufs_.emplace_back(std::size_t(m) * n);
++        auto& b = sbufs_.back();
++        for (int j=0; j<n; j++)
++          std::copy(a + std::size_t(j)*lda, a + std::size_t(j)*lda + m,
++                    b.data() + std::size_t(j)*m);
++        sreqs_.emplace_back();
++        MPI_Isend(b.data(), b.size(), MPI_DOUBLE, dest, tag, g_.comm,
++                  &sreqs_.back());
++      }
++      void recv(double* a, int m, int n, int lda, int src, int tag) {
++        if (lda == m || n == 1)
++          MPI_Recv(a, m*n, MPI_DOUBLE, src, tag, g_.comm, MPI_STATUS_IGNORE);
++        else {
++          std::vector<double> b(std::size_t(m) * n);
++          MPI_Recv(b.data(), b.size(), MPI_DOUBLE, src, tag, g_.comm,
++                   MPI_STATUS_IGNORE);
++          for (int j=0; j<n; j++)
++            std::copy(b.data() + std::size_t(j)*m, b.data() + std::size_t(j+1)*m,
++                      a + std::size_t(j)*lda);
++        }
++      }
++      void wait_all() {
++        if (!sreqs_.empty())
++          MPI_Waitall(sreqs_.size(), sreqs_.data(), MPI_STATUSES_IGNORE);
++        sreqs_.clear();
++        sbufs_.clear();
++      }
++      // broadcast of the Nb x kb row piece BR along the process column
++      void bsend(int Nb, int kb, const double* BR, int LDBR) {
++        const int myrow = g_.myrow, mycol = g_.mycol, P = g_.nprow;
++        sbufs_.emplace_back(std::size_t(Nb) * kb);
++        auto& b = sbufs_.back();
++        for (int j=0; j<kb; j++)
++          std::copy(BR + std::size_t(j)*LDBR, BR + std::size_t(j)*LDBR + Nb,
++                    b.data() + std::size_t(j)*Nb);
++        for (int d=1; d<P; d++) {
++          int r = upper_ ? (myrow - d + P) % P : (myrow + d) % P;
++          sreqs_.emplace_back();
++          MPI_Isend(b.data(), b.size(), MPI_DOUBLE, g_.rank(r, mycol), tag_bc,
++                    g_.comm, &sreqs_.back());
++        }
++      }
++      void brecv(int Nb, int kb, double* BR, int LDBR, int srow) {
++        recv(BR, Nb, kb, LDBR, g_.rank(srow, g_.mycol), tag_bc);
++      }
++      void tadd(int M, int N, const double* BC, int LDBC, double* BR, int LDBR) {
++        // BR(N x M) := BC(M x N)^T  (PBLAS mmtadd with alpha 1, beta 0)
++        for (int j=0; j<N; j++)
++          for (int i=0; i<M; i++)
++            BR[j + std::size_t(i)*LDBR] = BC[i + std::size_t(j)*LDBC];
++      }
++      void add(int M, int N, const double* W, int LDW, double* B, int LDB) {
++        // PBLAS mmadd with alpha = beta = 1: daxpy per column
++        for (int j=0; j<N; j++)
++          blas::axpy(M, 1., const_cast<double*>(W + std::size_t(j)*LDW), 1,
++                     B + std::size_t(j)*LDB, 1);
++      }
++      void zero(int M, int N, double* B, int LDB) {
++        for (int j=0; j<N; j++)
++          std::fill(B + std::size_t(j)*LDB, B + std::size_t(j)*LDB + M, 0.);
++      }
++
++      // PB_Cptrsm, Left + No transpose, ALPHA = 1
++      void cptrsm(bool FBCAST, int M, int N, const double* Abase, int IA,
++                  int JA, const Desc& d, double* BC, int LDBC, double* BR,
++                  int LDBR) {
++        if (M <= 0 || N <= 0) return;
++        const int nprow = g_.nprow, npcol = g_.npcol,
++          myrow = g_.myrow, mycol = g_.mycol;
++        const char diag = unit_ ? 'U' : 'N';
++        const char uplo = upper_ ? 'U' : 'L';
++        int Na = M, Nb = N, Aii, Ajj, Arow, Acol;
++        g2l1(IA, d.imb, d.mb, d.rsrc, nprow, myrow, Aii, Arow);
++        g2l1(JA, d.inb, d.nb, d.csrc, npcol, mycol, Ajj, Acol);
++        const int Amb = d.mb, Anb = d.nb, Ald = d.lld;
++        const int Aimb1 = firstnb(Na, IA, d.imb, Amb);
++        int Anp = numroc(Na, 0, Aimb1, Amb, myrow, Arow, nprow);
++        const bool Ais1Row = !span(Na, 0, Aimb1, Amb, Arow, nprow);
++        const int Ainb1 = firstnb(Na, JA, d.inb, Anb);
++        int Anq = numroc(Na, 0, Ainb1, Anb, mycol, Acol, npcol);
++        const bool Ais1Col = !span(Na, 0, Ainb1, Anb, Acol, npcol);
++        // offsets (in elements) instead of pointers
++        const std::ptrdiff_t A0 = Aii + std::ptrdiff_t(Ajj) * Ald;
++        if (Ais1Row && Ais1Col) {
++          if (Anq > 0) {
++            if (Anp > 0) {
++              blas::trsm('L', uplo, 'N', diag, M, N, 1., Abase + A0, Ald, BC, LDBC);
++              tadd(M, N, BC, LDBC, BR, LDBR);
++              note_solved(Acol, BC, M, N, LDBC, 0);
++            }
++            if (Arow >= 0 && FBCAST) {
++              if (myrow == Arow) bsend(N, M, BR, LDBR);
++              else brecv(N, M, BR, LDBR, Arow);
++            }
++          }
++          return;
++        }
++        if (Anq <= 0 || (Ais1Row && (Arow >= 0 && !FBCAST && myrow != Arow)))
++          return;
++        if (fanin_ && !Ais1Row && !Ais1Col && Arow >= 0 && Acol >= 0 &&
++            npcol <= nprow &&
++            Aimb1 == Amb && Ainb1 == Anb && Amb == Anb) {
++          cptrsm_fanin(M, N, Abase, IA, A0, Arow, Acol, Anp, Ald, Amb,
++                       BC, LDBC, BR, LDBR);
++          return;
++        }
++        const bool bcst = (!Ais1Row) || (Ais1Row && Arow >= 0 && FBCAST);
++        const bool AisRowRep = (Arow < 0 || nprow == 1);
++        // A, Aprev, BC, Bprev, BR, Bd, Bdprev as offsets
++        std::ptrdiff_t A = A0, Aprev, Bc = 0, Bprev, Br = 0, Bd = 0, Bdprev;
++        if (!upper_) {
++          const int n1 = (std::max(npcol, 2) - 1) * Anb;
++          std::vector<double> work(std::size_t(Nb) * std::max(1, std::min(n1, Anp)));
++          Aprev = A; Bprev = Bc; Bdprev = Br; int Anpprev = Anp;
++          int mb1 = Aimb1, nb1 = Ainb1, rocprev = Acol;
++          int kb, tmp1, tmp2;
++          tmp1 = Na - (kb = std::min(mb1, nb1)); tmp2 = n1 + nb1 - kb;
++          const int Asrc = Arow;
++          int n1p = numroc(std::min(tmp1, tmp2), kb, Aimb1, Amb, myrow, Asrc, nprow);
++          int n1pprev = 0, kbprev = 0, k = 0; bool ChangeRoc = false;
++          while (kb > 0) {
++            if (n1pprev > 0) {
++              if ((Ais1Col || mycol == rocprev) && kbprev > 0)
++                blas::gemm('N', 'T', n1pprev, Nb, kbprev, -1., Abase + Aprev, Ald, BR + Bdprev, LDBR, 1., BC + Bprev, LDBC);
++              if (!Ais1Col && ChangeRoc) {
++                if (mycol == rocprev)
++                  isend(BC + Bprev, n1pprev, Nb, LDBC, g_.rank(myrow, Acol), tag_win);
++                else if (mycol == Acol) {
++                  recv(work.data(), n1pprev, Nb, n1pprev, g_.rank(myrow, rocprev), tag_win);
++                  add(n1pprev, Nb, work.data(), n1pprev, BC + Bprev, LDBC);
++                }
++              }
++            }
++            if (Ais1Col || mycol == Acol) {
++              if (AisRowRep || myrow == Arow) {
++                blas::trsm('L', uplo, 'N', diag, kb, Nb, 1., Abase + A, Ald, BC + Bc, LDBC);
++                tadd(kb, Nb, BC + Bc, LDBC, BR + Br, LDBR);
++              }
++              if (bcst) {
++                if (myrow == Arow) bsend(Nb, kb, BR + Br, LDBR);
++                else brecv(Nb, kb, BR + Br, LDBR, Arow);
++              }
++              if (AisRowRep || myrow == Arow)
++                note_solved(Acol, BC + Bc, kb, Nb, LDBC, 0);
++            } else {
++              if (!Ais1Col && (AisRowRep || myrow == Arow))
++                zero(kb, Nb, BC + Bc, LDBC);
++            }
++            if ((Ais1Col || mycol == rocprev) && kbprev > 0) {
++              if ((tmp1 = Anpprev - n1pprev) > 0)
++                blas::gemm('N', 'T', tmp1, Nb, kbprev, -1., Abase + Aprev + n1pprev, Ald, BR + Bdprev, LDBR, 1., BC + Bprev + n1pprev, LDBC);
++              Aprev += std::ptrdiff_t(Ald) * kbprev;
++            }
++            if (Ais1Col || mycol == Acol) {
++              A += std::ptrdiff_t(Ald) * kb; Bdprev = Bd = Br;
++              Br += std::ptrdiff_t(LDBR) * kb;
++            }
++            if (AisRowRep || myrow == Arow) {
++              Bprev = (Bc += kb); A += kb; Aprev += kb; Anpprev = (Anp -= kb);
++            }
++            n1pprev = n1p; rocprev = Acol; kbprev = kb; k += kb; Na -= kb;
++            mb1 -= kb;
++            if (mb1 == 0) {
++              if (!Ais1Row && Arow >= 0) Arow = (Arow == nprow-1) ? 0 : Arow+1;
++              mb1 = std::min(Amb, Na);
++            }
++            nb1 -= kb;
++            ChangeRoc = (nb1 == 0);
++            if (ChangeRoc) {
++              if (!Ais1Col && Acol >= 0) Acol = (Acol == npcol-1) ? 0 : Acol+1;
++              nb1 = std::min(Anb, Na);
++            }
++            tmp1 = Na - (kb = std::min(mb1, nb1)); tmp2 = n1 + nb1 - kb;
++            n1p = numroc(std::min(tmp2, tmp1), k + kb, Aimb1, Amb, myrow, Asrc, nprow);
++          }
++        } else {
++          int nlast = (npcol - 1) * Anb;
++          int n1 = std::max(nlast, Anb);
++          nlast += Ainb1;
++          const int n1last = n1 - Anb + std::max(Ainb1, Anb);
++          std::vector<double> work(std::size_t(Nb) * std::max(1, std::min(n1last, Anp)));
++          int tmp1 = Na - 1;
++          int Alrow = indxg2p(tmp1, Aimb1, Amb, Arow, Arow, nprow);
++          int Alcol = indxg2p(tmp1, Ainb1, Anb, Acol, Acol, npcol);
++          int rocprev = Alcol, Anpprev = Anp;
++          Bprev = Bc; Bdprev = Br;
++          Aprev = A = A0 + std::ptrdiff_t(Anq) * Ald;
++          int mb1 = lastnb(Na, 0, Aimb1, Amb);
++          int nb1 = lastnb(Na, 0, Ainb1, Anb);
++          int kb;
++          tmp1 = Na - (kb = std::min(mb1, nb1));
++          n1 = ((Ais1Col || (Na - nb1 < nlast)) ? n1last : n1);
++          int tmp2 = n1 + nb1 - kb; tmp1 -= (tmp2 = std::min(tmp1, tmp2));
++          const int Asrc = Arow;
++          int n1p = numroc(tmp2, std::max(0, tmp1), Aimb1, Amb, myrow, Asrc, nprow);
++          int n1pprev = 0, kbprev = 0, k = 0; bool ChangeRoc = false;
++          while (Na > 0) {
++            if (Ais1Col || mycol == Alcol) {
++              A -= std::ptrdiff_t(Ald) * kb; Anq -= kb;
++              Bd = Br + std::ptrdiff_t(Anq) * LDBR;
++            }
++            if (Arow < 0 || myrow == Alrow) { Anp -= kb; }
++            if (n1pprev > 0) {
++              if ((Ais1Col || mycol == rocprev) && kbprev > 0) {
++                std::ptrdiff_t t = Anpprev - n1pprev;
++                blas::gemm('N', 'T', n1pprev, Nb, kbprev, -1., Abase + Aprev + t, Ald, BR + Bdprev, LDBR, 1., BC + Bprev + t, LDBC);
++              }
++              if (!Ais1Col && ChangeRoc) {
++                if (mycol == rocprev)
++                  isend(BC + Bprev + (Anpprev - n1pprev), n1pprev, Nb, LDBC,
++                        g_.rank(myrow, Alcol), tag_win);
++                else if (mycol == Alcol) {
++                  recv(work.data(), n1pprev, Nb, n1pprev, g_.rank(myrow, rocprev), tag_win);
++                  add(n1pprev, Nb, work.data(), n1pprev,
++                      BC + Bprev + (Anpprev - n1pprev), LDBC);
++                }
++              }
++            }
++            if (Ais1Col || mycol == Alcol) {
++              if (AisRowRep || myrow == Alrow) {
++                blas::trsm('L', uplo, 'N', diag, kb, Nb, 1., Abase + A + Anp, Ald, BC + Bc + Anp, LDBC);
++                tadd(kb, Nb, BC + Bc + Anp, LDBC,
++                     BR + Br + std::ptrdiff_t(Anq) * LDBR, LDBR);
++              }
++              if (bcst) {
++                if (myrow == Alrow)
++                  bsend(Nb, kb, BR + Br + std::ptrdiff_t(Anq) * LDBR, LDBR);
++                else brecv(Nb, kb, BR + Br + std::ptrdiff_t(Anq) * LDBR, LDBR, Alrow);
++              }
++              if (AisRowRep || myrow == Alrow)
++                note_solved(Alcol, BC + Bc + Anp, kb, Nb, LDBC, 0);
++            } else {
++              if (!Ais1Col && (AisRowRep || myrow == Alrow))
++                zero(kb, Nb, BC + Bc + Anp, LDBC);
++            }
++            if ((Ais1Col || mycol == rocprev) && kbprev > 0) {
++              if ((tmp1 = Anpprev - n1pprev) > 0)
++                blas::gemm('N', 'T', tmp1, Nb, kbprev, -1., Abase + Aprev, Ald, BR + Bdprev, LDBR, 1., BC + Bprev, LDBC);
++            }
++            if (Ais1Col || mycol == Alcol) { Bdprev = Bd; Aprev = A; }
++            if (AisRowRep || myrow == Alrow) { Anpprev -= kb; }
++            n1pprev = n1p; rocprev = Alcol; kbprev = kb; k += kb; Na -= kb;
++            mb1 -= kb;
++            if (mb1 == 0) {
++              if (!Ais1Row && Alrow >= 0) Alrow = (Alrow == 0) ? nprow-1 : Alrow-1;
++              mb1 = (Na > Aimb1 ? Amb : Aimb1);
++            }
++            nb1 -= kb;
++            ChangeRoc = (nb1 == 0);
++            if (ChangeRoc) {
++              if (!Ais1Col && Alcol >= 0) Alcol = (Alcol == 0) ? npcol-1 : Alcol-1;
++              nb1 = (Na > Ainb1 ? Anb : Ainb1);
++            }
++            tmp1 = Na - (kb = std::min(mb1, nb1));
++            n1 = ((Ais1Col || (Na - nb1 < nlast)) ? n1last : n1);
++            tmp2 = n1 + nb1 - kb; tmp1 -= (tmp2 = std::min(tmp1, tmp2));
++            n1p = numroc(tmp2, std::max(0, tmp1), Aimb1, Amb, myrow, Asrc, nprow);
++          }
++        }
++      }
++
++    public:
++      bool fanin_ = true;
++      // copies of the off-diagonal blocks used by the chains, per logical
++      // block start IA and block pair (i, j) -> nb x nb (ld kb_i)
++      Cache* cache_ = nullptr;
++    private:
++      // Same arithmetic as the lookahead loop of PB_Cptrsm (general case,
++      // A spanning several process rows and columns, aligned square blocks),
++      // reorganized so that the window ("partial update") of each diagonal
++      // block is accumulated by the process owning that diagonal block:
++      // the original sends the partially updated window from column to
++      // column (1 hop) after the column received the solution piece (1
++      // hop). Here the owner of block i receives the partial sums of every
++      // column of its window early ("own" values, final before they are
++      // needed) and applies the window updates itself with copies of the
++      // corresponding blocks of A, in the same order and with the same
++      // BLAS calls: one hop per diagonal block on the critical path.
++      void cptrsm_fanin(int M, int N, const double* Abase, int IA,
++                        std::ptrdiff_t A0, int Arow, int Acol, int Anp,
++                        int Ald, int nb, double* BC, int LDBC, double* BR,
++                        int LDBR) {
++        const int nprow = g_.nprow, npcol = g_.npcol,
++          myrow = g_.myrow, mycol = g_.mycol;
++        const char diag = unit_ ? 'U' : 'N';
++        const char uplo = upper_ ? 'U' : 'L';
++        const int nbl = (M + nb - 1) / nb, Pc = npcol;
++        auto blk = [&](int q) { return upper_ ? nbl - 1 - q : q; };
++        auto kbs = [&](int t) { return std::min(nb, M - t * nb); };
++        auto rowof = [&](int t) { return (Arow + t) % nprow; };
++        auto colof = [&](int t) { return (Acol + t) % npcol; };
++        const int t0 = (myrow - Arow + nprow) % nprow,
++          u0 = (mycol - Acol + npcol) % npcol;
++        // local row offset (rel. to BC / A0 rows) of my block t, local col
++        // offset of my block column t
++        auto lrow = [&](int t) { return ((t - t0) / nprow) * nb; };
++        auto lcol = [&](int t) { return ((t - u0) / npcol) * nb; };
++        auto Aat = [&](int t, int u) {
++          return Abase + A0 + lrow(t) + std::ptrdiff_t(lcol(u)) * Ald; };
++        auto BRat = [&](int u) { return BR + std::ptrdiff_t(lcol(u)) * LDBR; };
++        auto BCat = [&](int t) { return BC + lrow(t); };
++        // the step at which block t is solved
++        auto stepof = [&](int t) { return upper_ ? nbl - 1 - t : t; };
++        auto key = [&](int i, int j) {
++          return std::make_pair(IA, (long long)i * nbl + j); };
++        // accumulated window of my pending diagonal block
++        std::vector<double> V, own, xr;
++        for (int q=0; q<nbl; q++) {
++          const int t = blk(q), r = rowof(t), c = colof(t), kb = kbs(t);
++          // (1) own partial sums of my column for the block of my row in
++          // the next Pc-1 steps, final now (their last update from this
++          // column was a finish update of an earlier step)
++          if (mycol == c)
++            for (int d=1; d<Pc && q+d<nbl; d++) {
++              int i = blk(q + d);
++              if (rowof(i) == myrow) {
++                isend(BCat(i), kbs(i), N, LDBC, g_.rank(myrow, colof(i)), tag_own);
++                break;
++              }
++            }
++          // (2) window update with the previous step's solution for my
++          // diagonal block, if it is in that window
++          if (q > 0)
++            for (int e=0; e<Pc-1 && q+e<nbl; e++) {
++              int i = blk(q + e);
++              if (rowof(i) != myrow || colof(i) != mycol) continue;
++              const int qp = q - 1, j = blk(qp), kbi = kbs(i), kbj = kbs(j);
++              xr.resize(std::size_t(N) * kbj);
++              // x_j comes from its owner for the next block, else forwarded
++              // by the process of my row in column colof(j)
++              recv(xr.data(), N, kbj, N, e == 0 ? g_.rank(rowof(j), colof(j))
++                   : g_.rank(myrow, colof(j)), tag_x2);
++              own.resize(std::size_t(kbi) * N);
++              recv(own.data(), kbi, N, kbi, g_.rank(myrow, colof(j)), tag_own);
++              const int ldv = LDBC;
++              if (qp == std::max(0, stepof(i) - Pc + 1)) {
++                V.resize(std::size_t(ldv) * (N - 1) + kbi);
++                for (int cc=0; cc<N; cc++)
++                  std::copy(own.data() + std::size_t(cc)*kbi, own.data() + std::size_t(cc+1)*kbi,
++                            V.data() + std::size_t(cc)*ldv);
++              } else add(kbi, N, own.data(), kbi, V.data(), ldv);
++              auto& L = cache_->L[key(i, j)];
++              const int ldl = Ald;
++              blas::gemm('N', 'T', kbi, N, kbj, -1., L.data(), ldl, xr.data(), N,
++                         1., V.data(), ldv);
++              break;
++            }
++          // (3) diagonal block
++          if (myrow == r && mycol == c) {
++            if (q > 0) add(kb, N, V.data(), LDBC, BCat(t), LDBC);
++            blas::trsm('L', uplo, 'N', diag, kb, N, 1., Aat(t, t), Ald, BCat(t), LDBC);
++            tadd(kb, N, BCat(t), LDBC, BRat(t), LDBR);
++            const double* x = BRat(t);
++            if (q + 1 < nbl) {
++              int i = blk(q + 1);
++              isend(x, N, kb, LDBR, g_.rank(rowof(i), colof(i)), tag_x2);
++            }
++            bsend(N, kb, x, LDBR);
++            note_solved(c, BCat(t), kb, N, LDBC, 0);
++          } else if (mycol == c) {
++            brecv(N, kb, BRat(t), LDBR, r);
++            // forward to the owner of the block of my row in the window
++            for (int d=2; d<Pc && q+d<nbl; d++) {
++              int i = blk(q + d);
++              if (rowof(i) == myrow) {
++                isend(BRat(t), N, kb, LDBR, g_.rank(myrow, colof(i)), tag_x2);
++                break;
++              }
++            }
++          } else if (myrow == r)
++            zero(kb, N, BCat(t), LDBC);
++          // (4) finish update with the previous step's solution
++          if (q > 0 && mycol == colof(blk(q-1)) && Anp > 0) {
++            const int j = blk(q-1), kbj = kbs(j);
++            int off = -1, Mf = 0;
++            if (!upper_) {
++              // my blocks t' >= j + Pc
++              int tf = j + Pc;
++              if (tf < nbl) {
++                int rem = (tf - t0) % nprow; if (rem < 0) rem += nprow;
++                if (rem) tf += nprow - rem;
++                if (tf < nbl) { off = lrow(tf); Mf = Anp - off; }
++              }
++            } else {
++              // my blocks t' <= j - Pc
++              int tl = j - Pc;
++              if (tl >= 0) {
++                int rem = (tl - t0) % nprow; if (rem < 0) rem += nprow;
++                tl -= rem;
++                if (tl >= 0) { off = 0; Mf = lrow(tl) + kbs(tl); }
++              }
++            }
++            if (Mf > 0)
++              blas::gemm('N', 'T', Mf, N, kbj, -1.,
++                         Abase + A0 + off + std::ptrdiff_t(lcol(j)) * Ald, Ald,
++                         BRat(j), LDBR, 1., BC + off, LDBC);
++          }
++        }
++      }
++
++      // copies of A(i, j) for the window chains of all logical blocks, built
++      // by all processes of the grid (once per factorization)
++      void build_lcache(int An, int nb, const double* A, int lda) {
++        const int nprow = g_.nprow, npcol = g_.npcol,
++          myrow = g_.myrow, mycol = g_.mycol, Pc = npcol;
++        if (!(nprow > 1 && npcol > 1 && npcol <= nprow)) return;
++        const int Alcmb = 2 * pblas_nb * lcm(nprow, npcol);
++        const int Aimb1 = firstnb(An, 0, nb, nb);
++        if (Aimb1 != nb) return;
++        Desc d{Aimb1, Aimb1, nb, nb, 0, 0, lda};
++        for (int k=0; k<An; k+=Alcmb) {
++          const int M = std::min(An - k, Alcmb), nbl = (M + nb - 1) / nb;
++          int Aii, Ajj, Arow, Acol;
++          g2l1(k, d.imb, d.mb, d.rsrc, nprow, myrow, Aii, Arow);
++          g2l1(k, d.inb, d.nb, d.csrc, npcol, mycol, Ajj, Acol);
++          if (!span(M, 0, nb, nb, Arow, nprow) || !span(M, 0, nb, nb, Acol, npcol))
++            continue;
++          auto blk = [&](int q) { return upper_ ? nbl - 1 - q : q; };
++          auto stepof = [&](int t) { return upper_ ? nbl - 1 - t : t; };
++          auto kbs = [&](int t) { return std::min(nb, M - t * nb); };
++          auto rowof = [&](int t) { return (Arow + t) % nprow; };
++          auto colof = [&](int t) { return (Acol + t) % npcol; };
++          const int t0 = (myrow - Arow + nprow) % nprow,
++            u0 = (mycol - Acol + npcol) % npcol;
++          auto lrow = [&](int t) { return ((t - t0) / nprow) * nb; };
++          auto lcol = [&](int t) { return ((t - u0) / npcol) * nb; };
++          const std::ptrdiff_t A0 = Aii + std::ptrdiff_t(Ajj) * lda;
++          for (int u=u0; u<nbl; u+=npcol) {
++            int qj = stepof(u);
++            for (int dd=1; dd<Pc && qj+dd<nbl; dd++) {
++              int i = blk(qj + dd);
++              if (rowof(i) != myrow) continue;
++              isend(A + A0 + lrow(i) + std::ptrdiff_t(lcol(u)) * lda, kbs(i),
++                    kbs(u), lda, g_.rank(myrow, colof(i)), tag_l);
++            }
++          }
++          for (int t=t0; t<nbl; t+=nprow)
++            if (colof(t) == mycol) {
++              int q = stepof(t);
++              for (int qq=std::max(0, q-Pc+1); qq<q; qq++) {
++                int j = blk(qq);
++                auto& L = cache_->L[std::make_pair(k, (long long)t * nbl + j)];
++                L.resize(std::size_t(lda) * (kbs(j) - 1) + kbs(t));
++                recv(L.data(), kbs(t), kbs(j), lda,
++                     g_.rank(myrow, colof(j)), tag_l);
++              }
++            }
++          wait_all();
++        }
++      }
++
++      // a solved diagonal block in a process column other than 0 is sent to
++      // process column 0 (replaces the final combine)
++      void note_solved(int col, const double* x, int kb, int Nb, int ld, int) {
++        if (wbc_sum_ && col != 0) isend(x, kb, Nb, ld, g_.rank(g_.myrow, 0), tag_x);
++      }
++    };
++
++  } // end namespace trsmnarrow
++} // end namespace strumpack
++
++#endif // STRUMPACK_DIST_TRSM_NARROW_HPP
 diff --git a/src/misc/MPIWrapper.hpp b/src/misc/MPIWrapper.hpp
 index 067a5197..935420cc 100644
 --- a/src/misc/MPIWrapper.hpp
@@ -435,26 +1241,34 @@ index 16c08b61..ec06e407 100644
        return dense_node_factor_nonzeros();
      }
 diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
-index 3c009f6f..aba2ccec 100644
+index 3c009f6f..ce00ae7a 100644
 --- a/src/sparse/fronts/FrontDenseMPI.cpp
 +++ b/src/sparse/fronts/FrontDenseMPI.cpp
-@@ -28,6 +28,7 @@
+@@ -28,9 +28,13 @@
   */
  #include <fstream>
  
 +#include <numeric>
++#include <type_traits>
++#include <memory>
  #include "FrontDenseMPI.hpp"
  #include "FrontBLRMPI.hpp"
  #include "ExtendAdd.hpp"
-@@ -150,6 +151,7 @@ namespace strumpack {
++#include "dense/DistTrsmNarrow.hpp"
+ #include "BLR/BLRExtendAdd.hpp"
+ 
+ namespace strumpack {
+@@ -150,6 +154,9 @@ namespace strumpack {
    FrontDenseMPI<scalar_t,integer_t>::partial_factorization
    (const SPOptions<scalar_t>& opts) {
      ReturnCode err_code = ReturnCode::SUCCESS;
 +    laswp_plan_ = LaswpPlan(); // pivots change with every factorization
++    trsm_cache_[0].reset();
++    trsm_cache_[1].reset();
      if (!this->dim_sep() || !grid()->active())
        return err_code;
      TaskTimer pf("FrontDenseMPI_factor");
-@@ -305,6 +307,107 @@ namespace strumpack {
+@@ -305,6 +312,135 @@ namespace strumpack {
    }
  #endif
  
@@ -559,10 +1373,38 @@ index 3c009f6f..aba2ccec 100644
 +    }
 +  }
 +
++  // PDTRSM for the narrow right-hand sides of the solve phase: same
++  // result, fewer and cheaper messages (see dense/DistTrsmNarrow.hpp)
++  template<typename scalar_t> static bool
++  trsm_narrow(UpLo ul, Diag d, const DistributedMatrix<scalar_t>& A,
++              DistributedMatrix<scalar_t>& B,
++              std::shared_ptr<trsmnarrow::Cache>* cache) {
++    if constexpr (std::is_same<scalar_t,double>::value) {
++      const auto g = A.grid();
++      const int m = B.rows(), n = B.cols(), nb = B.MB();
++      if (!g || !g->active() || A.rows() != m || A.cols() != m || n < 1 ||
++          A.ctxt() != B.ctxt() || A.I() != 1 || A.J() != 1 ||
++          B.I() != 1 || B.J() != 1 || A.MB() != nb || A.NB() != nb ||
++          B.NB() != nb || A.desc()[6] || A.desc()[7] || B.desc()[6] ||
++          B.desc()[7] ||
++          !trsmnarrow::applicable(m, n, nb, g->nprows(), g->npcols()))
++        return false;
++      trsmnarrow::Grid tg{g->nprows(), g->npcols(), g->prow(), g->pcol(),
++                          g->ctxt(), g->Comm_active().comm()};
++      trsmnarrow::Solver s(tg, ul == UpLo::U, d == Diag::U);
++      if (cache) {
++        if (!*cache) *cache = std::make_shared<trsmnarrow::Cache>();
++        s.cache_ = cache->get();
++      }
++      s.solve(m, n, nb, A.data(), A.desc()[8], B.data(), B.desc()[8]);
++      return true;
++    } else return false;
++  }
++
    template<typename scalar_t,typename integer_t> void
    FrontDenseMPI<scalar_t,integer_t>::fwd_solve_phase2
    (const DistM_t& F11, const DistM_t& F12, const DistM_t& F21,
-@@ -335,7 +438,7 @@ namespace strumpack {
+@@ -335,13 +471,15 @@ namespace strumpack {
      }
  #else
      if (this->dim_sep()) {
@@ -571,7 +1413,27 @@ index 3c009f6f..aba2ccec 100644
        if (b.cols() == 1) {
          trsv(UpLo::L, Trans::N, Diag::U, F11, b);
          if (this->dim_upd())
-@@ -510,6 +613,7 @@ namespace strumpack {
+           gemv(Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
+       } else {
+-        trsm(Side::L, UpLo::L, Trans::N, Diag::U, scalar_t(1.), F11, b);
++        if (!trsm_narrow(UpLo::L, Diag::U, F11, b,
++                         &F11 == &F11_ ? &trsm_cache_[0] : nullptr))
++          trsm(Side::L, UpLo::L, Trans::N, Diag::U, scalar_t(1.), F11, b);
+         if (this->dim_upd())
+           gemm(Trans::N, Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
+       }
+@@ -410,7 +548,9 @@ namespace strumpack {
+       } else {
+         if (this->dim_upd())
+           gemm(Trans::N, Trans::N, scalar_t(-1.), F12, yupd, scalar_t(1.), y);
+-        trsm(Side::L, UpLo::U, Trans::N, Diag::N, scalar_t(1.), F11, y);
++        if (!trsm_narrow(UpLo::U, Diag::N, F11, y,
++                         &F11 == &F11_ ? &trsm_cache_[1] : nullptr))
++          trsm(Side::L, UpLo::U, Trans::N, Diag::N, scalar_t(1.), F11, y);
+       }
+     }
+ #endif
+@@ -510,6 +650,7 @@ namespace strumpack {
    FrontDenseMPI<scalar_t,integer_t>::delete_factors() {
      if (visit(lchild_)) lchild_->delete_factors();
      if (visit(rchild_)) rchild_->delete_factors();
@@ -580,10 +1442,18 @@ index 3c009f6f..aba2ccec 100644
      F12_ = DistM_t();
      F21_ = DistM_t();
 diff --git a/src/sparse/fronts/FrontDenseMPI.hpp b/src/sparse/fronts/FrontDenseMPI.hpp
-index fcea4670..22d896f8 100644
+index fcea4670..03e81a0e 100644
 --- a/src/sparse/fronts/FrontDenseMPI.hpp
 +++ b/src/sparse/fronts/FrontDenseMPI.hpp
-@@ -127,6 +127,18 @@ namespace strumpack {
+@@ -44,6 +44,7 @@ namespace strumpack {
+   namespace BLR {
+     template<typename scalar_t> class BLRMatrixMPI;
+   }
++  namespace trsmnarrow { struct Cache; }
+ 
+   template<typename scalar_t,typename integer_t>
+   class FrontDenseMPI : public FrontMPI<scalar_t,integer_t> {
+@@ -127,6 +128,22 @@ namespace strumpack {
      DistM_t F11_, F12_, F21_, F22_;
      std::vector<int> piv;
  
@@ -597,6 +1467,10 @@ index fcea4670..22d896f8 100644
 +      std::vector<std::pair<int,int>> loc;    // local (dst,src) rows
 +    };
 +    mutable LaswpPlan laswp_plan_;
++
++    // Copies of blocks of F11 used by the triangular solves with narrow
++    // right-hand sides (lower, upper), rebuilt after each factorization.
++    mutable std::shared_ptr<trsmnarrow::Cache> trsm_cache_[2];
 +    void laswp_fwd(DistM_t& b) const;
 +
      void build_front(const SpMat_t& A);
