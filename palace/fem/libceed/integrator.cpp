@@ -548,6 +548,61 @@ void AssembleCeedInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
   PalaceCeedCall(ceed, CeedOperatorCheckReady(*op_t));
 }
 
+void AssembleCeedShapeIntegrator(const CeedQFunctionInfo &info, void *ctx,
+                                 std::size_t ctx_size, Ceed ceed, CeedVector u,
+                                 CeedVector w, CeedElemRestriction restr, CeedBasis basis,
+                                 CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                                 CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                                 CeedOperator *op)
+{
+  MFEM_VERIFY(!info.assemble_q_data,
+              "Shape derivative integrators do not support quadrature data assembly!");
+
+  // Create the QFunction that defines the action of the operator.
+  CeedQFunction apply_qf;
+  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.apply_qf,
+                                                   info.apply_qf_path.c_str(), &apply_qf));
+
+  CeedQFunctionContext apply_ctx;
+  PalaceCeedCall(ceed, CeedQFunctionContextCreate(ceed, &apply_ctx));
+  PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
+                                                   CEED_COPY_VALUES, ctx_size, ctx));
+  PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
+  PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+
+  // Inputs/outputs. "Trial" and "test" operations are those for u and w.
+  {
+    CeedInt geom_data_size;
+    PalaceCeedCall(ceed,
+                   CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
+    PalaceCeedCall(
+        ceed, CeedQFunctionAddInput(apply_qf, "geom_data", geom_data_size, CEED_EVAL_NONE));
+  }
+  AddQFunctionActiveInputs(info.trial_ops, ceed, basis, apply_qf, "u");
+  AddQFunctionActiveInputs(info.test_ops, ceed, basis, apply_qf, "w");
+  {
+    CeedInt num_comp, q_comp;
+    PalaceCeedCall(ceed, CeedBasisGetNumComponents(mesh_basis, &num_comp));
+    PalaceCeedCall(
+        ceed, CeedBasisGetNumQuadratureComponents(mesh_basis, CEED_EVAL_GRAD, &q_comp));
+    PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "grad_x", num_comp * q_comp,
+                                                CEED_EVAL_GRAD));
+  }
+
+  // Create the operator.
+  PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
+  PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
+
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "geom_data", geom_data_restr,
+                                            CEED_BASIS_NONE, geom_data));
+  AddOperatorActiveInputFields(info.trial_ops, ceed, restr, basis, *op, "u", u);
+  AddOperatorActiveInputFields(info.test_ops, ceed, restr, basis, *op, "w", w);
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "grad_x", mesh_restr, mesh_basis,
+                                            CEED_VECTOR_ACTIVE));
+
+  PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
+}
+
 void AssembleCeedElementErrorIntegrator(
     const CeedQFunctionInfo &info, void *ctx, std::size_t ctx_size, Ceed ceed,
     CeedVector input1, CeedVector input2, CeedElemRestriction input1_restr,
