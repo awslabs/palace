@@ -4,14 +4,18 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/sensitivityexport.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -92,12 +96,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  PostprocessTerminals(post_op, laplace_op.GetSources(), V);
+  const auto C = PostprocessTerminals(post_op, laplace_op.GetSources(), V);
+  if (!iodata.sensitivity.empty())
+  {
+    PostprocessSensitivities(laplace_op, laplace_op.GetSources(), V, C);
+  }
   post_op.MeasureFinalize(indicator);
   return {indicator, laplace_op.GlobalTrueVSize()};
 }
 
-void ElectrostaticSolver::PostprocessTerminals(
+mfem::DenseMatrix ElectrostaticSolver::PostprocessTerminals(
     PostOperator<ProblemType::ELECTROSTATIC> &post_op,
     const std::map<int, mfem::Array<int>> &terminal_sources,
     const std::vector<Vector> &V) const
@@ -142,7 +150,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   // Only root writes to disk (every process has full matrices).
   if (!root)
   {
-    return;
+    return C;
   }
   using VT = Units::ValueType;
 
@@ -188,6 +196,79 @@ void ElectrostaticSolver::PostprocessTerminals(
     }
     terminal_V.WriteFullTableTrunc();
   }
+  return C;
+}
+
+void ElectrostaticSolver::PostprocessSensitivities(
+    const LaplaceOperator &laplace_op,
+    const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
+    const mfem::DenseMatrix &C) const
+{
+  // Each C_ij = V_jᵀ K V_i is stationary with respect to the free DOFs of the solutions,
+  // which solve K V = 0 there, so its derivatives are those of the form at fixed V_i and
+  // V_j: no adjoint solve is needed.
+  const auto &sensitivity = iodata.sensitivity;
+  Mpi::Print("\nComputing the sensitivities of {:d} objective{}\n",
+             sensitivity.objectives.size(), (sensitivity.objectives.size() > 1) ? "s" : "");
+  std::map<int, int> step;
+  for (const auto &[idx, data] : terminal_sources)
+  {
+    step.emplace(idx, static_cast<int>(step.size()));
+  }
+  SensitivityExport output(iodata, laplace_op.GetMesh());
+  std::unique_ptr<ShapeDerivativeOperator> dK;
+  if (output.HasShape())
+  {
+    dK = laplace_op.GetStiffnessShapeDerivative();
+  }
+  std::vector<std::unique_ptr<Operator>> K_mat;
+  if (sensitivity.material_properties)
+  {
+    for (const auto &material : iodata.domains.materials)
+    {
+      K_mat.push_back(laplace_op.GetStiffness(material.attributes));
+    }
+  }
+
+  const auto &h1_fespace = laplace_op.GetH1Space();
+  Vector u_l(h1_fespace.GetVSize()), w_l(h1_fespace.GetVSize()), y_l(h1_fespace.GetVSize()),
+      g;
+  u_l.UseDevice(true);
+  w_l.UseDevice(true);
+  y_l.UseDevice(true);
+  const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
+  for (const auto &[idx, data] : sensitivity.objectives)
+  {
+    const int i = step.at(data.terminals[0]), j = step.at(data.terminals[1]);
+    nlohmann::json entry = {{"Index", idx},
+                            {"Type", ToString(data.type)},
+                            {"Terminals", data.terminals},
+                            {"Value", C(i, j) * F},
+                            {"Unit", "F"}};
+    if (!K_mat.empty())
+    {
+      // The derivative with respect to a relative change of the permittivity of a material
+      // is its share of the form.
+      h1_fespace.GetProlongationMatrix()->Mult(V[i], u_l);
+      h1_fespace.GetProlongationMatrix()->Mult(V[j], w_l);
+      auto materials = nlohmann::json::array();
+      for (std::size_t m = 0; m < K_mat.size(); m++)
+      {
+        K_mat[m]->Mult(u_l, y_l);
+        materials.push_back(
+            {{"Index", m + 1},
+             {"Attributes", iodata.domains.materials[m].attributes},
+             {"Permittivity", linalg::Dot<Vector>(laplace_op.GetComm(), w_l, y_l) * F}});
+      }
+      entry["MaterialProperties"] = materials;
+    }
+    if (dK)
+    {
+      dK->Mult(V[i], V[j], g);
+    }
+    output.AddObjective(std::move(entry), dK ? &g : nullptr, F);
+  }
+  output.Write(post_dir / "sensitivity");
 }
 
 }  // namespace palace
