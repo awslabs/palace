@@ -1404,6 +1404,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.ams_singular_op == 0);
     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_smooth_it == 1);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
@@ -1419,6 +1420,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
+    CHECK(j_linear["AMSSmoothIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
   }
 
@@ -1453,6 +1455,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
     CHECK(iodata.solver.linear.ams_singular_op == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_smooth_it == 8);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
@@ -1460,6 +1463,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["AMSSmoothIts"].get<int>() == 8);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
     CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
   }
@@ -1687,6 +1691,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.ams_smooth_it == l1.ams_smooth_it);
     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
     CHECK(l2.reorder_reuse == l1.reorder_reuse);
     CHECK(l2.pc_side == l1.pc_side);
