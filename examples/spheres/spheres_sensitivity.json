@@ -1,0 +1,88 @@
+{
+  "Problem":
+  {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "postpro/spheres_sensitivity",
+    "OutputFormats":
+    {
+      "Paraview": false,
+      "GridFunction": false
+    }
+  },
+  "Model":
+  {
+    "Mesh": "mesh/spheres.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Ground":
+    {
+      "Attributes": [2]
+    },
+    "Terminal":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3]  // Sphere A
+      },
+      {
+        "Index": 2,
+        "Attributes": [4]  // Sphere B
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Electrostatic":
+    {
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  },
+  "Sensitivity":
+  {
+    "Objectives":
+    [
+      {
+        "Index": 1,
+        "Type": "Capacitance",
+        "Terminals": [1, 1]
+      },
+      {
+        "Index": 2,
+        "Type": "Capacitance",
+        "Terminals": [1, 2]
+      },
+      {
+        "Index": 3,
+        "Type": "Capacitance",
+        "Terminals": [2, 2]
+      }
+    ],
+    "Shape":
+    {
+      "BoundaryTags": true
+    },
+    "MaterialProperties": true
+  }
+}

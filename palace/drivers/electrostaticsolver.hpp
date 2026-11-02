@@ -16,6 +16,7 @@ namespace mfem
 
 template <typename T>
 class Array;
+class DenseMatrix;
 
 }  // namespace mfem
 
@@ -23,6 +24,7 @@ namespace palace
 {
 
 class ErrorIndicator;
+class LaplaceOperator;
 class Mesh;
 template <ProblemType>
 class PostOperator;
@@ -33,9 +35,17 @@ class PostOperator;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
-                            const std::map<int, mfem::Array<int>> &terminal_sources,
-                            const std::vector<Vector> &V) const;
+  // Compute and write the capacitance matrix, returned in nondimensional units.
+  mfem::DenseMatrix
+  PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
+                       const std::map<int, mfem::Array<int>> &terminal_sources,
+                       const std::vector<Vector> &V) const;
+
+  // Compute and write the derivatives of the capacitances of the configured objectives.
+  void PostprocessSensitivities(const LaplaceOperator &laplace_op,
+                                const std::map<int, mfem::Array<int>> &terminal_sources,
+                                const std::vector<Vector> &V,
+                                const mfem::DenseMatrix &C) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
