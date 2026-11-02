@@ -1644,6 +1644,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   london_pc_shift = linear.value("LondonPCShift", london_pc_shift);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
   ams_max_it = linear.value("AMSMaxIts", ams_max_it);
+  ams_smooth_it = linear.value("AMSSmoothIts", ams_smooth_it);
 
   // Other linear solver options.
   divfree_tol = linear.value("DivFreeTol", divfree_tol);

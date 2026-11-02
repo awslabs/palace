@@ -95,6 +95,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"LondonPCShift", linear.london_pc_shift},
                 {"AMGAggressiveCoarsening", static_cast<bool>(linear.amg_agg_coarsen)},
                 {"AMSMaxIts", linear.ams_max_it},
+                {"AMSSmoothIts", linear.ams_smooth_it},
                 {"DivFreeTol", linear.divfree_tol},
                 {"DivFreeMaxIts", linear.divfree_max_it},
                 {"EstimatorTol", linear.estimator_tol},
