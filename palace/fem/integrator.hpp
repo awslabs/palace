@@ -303,6 +303,60 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
+// Base class for libCEED-based integrators of the derivative of a bilinear form a(u, w)
+// with respect to the positions of the mesh nodes, for given fields u and w. Each has the
+// coefficient of the integrator whose form it differentiates.
+class ShapeDerivativeIntegrator
+{
+protected:
+  const MaterialPropertyCoefficient *Q;
+  bool transpose;
+
+public:
+  ShapeDerivativeIntegrator(const MaterialPropertyCoefficient *Q = nullptr,
+                            const bool transpose = false)
+    : Q(Q), transpose(transpose)
+  {
+  }
+  ShapeDerivativeIntegrator(const MaterialPropertyCoefficient &Q,
+                            const bool transpose = false)
+    : Q(&Q), transpose(transpose)
+  {
+  }
+  virtual ~ShapeDerivativeIntegrator() = default;
+
+  virtual void Assemble(Ceed ceed, CeedElemRestriction restr, CeedBasis basis, CeedVector u,
+                        CeedVector w, CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                        CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                        CeedOperator *op) const = 0;
+};
+
+// Integrator for the shape derivative of a(u, v) = (Q grad u, grad v) for H1 elements
+// (DiffusionIntegrator).
+class DiffusionShapeIntegrator : public ShapeDerivativeIntegrator
+{
+public:
+  using ShapeDerivativeIntegrator::ShapeDerivativeIntegrator;
+
+  void Assemble(Ceed ceed, CeedElemRestriction restr, CeedBasis basis, CeedVector u,
+                CeedVector w, CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                CeedOperator *op) const override;
+};
+
+// Integrator for the shape derivative of a(u, v) = (Q u, v) for scalar H1 elements, on
+// domain or boundary elements (MassIntegrator).
+class MassShapeIntegrator : public ShapeDerivativeIntegrator
+{
+public:
+  using ShapeDerivativeIntegrator::ShapeDerivativeIntegrator;
+
+  void Assemble(Ceed ceed, CeedElemRestriction restr, CeedBasis basis, CeedVector u,
+                CeedVector w, CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                CeedOperator *op) const override;
+};
+
 // Base class for all discrete interpolators.
 class DiscreteInterpolator
 {
