@@ -70,24 +70,13 @@ PlaneWaveOperator::PlaneWaveOperator(const std::map<int, config::PlaneWaveData> 
   }
 }
 
-const Vector &
-PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fespace) const
+void PlaneWaveOperator::GetLocalTotalFieldMarker(int idx,
+                                                 const mfem::ParFiniteElementSpace &fes,
+                                                 mfem::Array<int> &lmark) const
 {
-  if (auto it = tf_markers.find(idx);
-      it != tf_markers.end() && it->second.Size() == nd_fespace.GetTrueVSize())
-  {
-    return it->second;
-  }
-  // Mark the local dofs of the elements in the total-field region, then combine the marks
-  // of the processes sharing each dof with a boolean OR and restrict to the true dofs, as
-  // for essential dofs: a true dof belongs to the closure of the region if any element of
-  // the region contains it. P^T is not used, since for Nédélec spaces with face dofs on
-  // shared triangles it contains the face orientation transformations, so that it does
-  // not map a 0/1 marker to a 0/1 marker.
   const auto &src = sources.at(idx);
-  const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
   const mfem::ParMesh &mesh = *fes.GetParMesh();
-  mfem::Array<int> lmark(fes.GetVSize()), tmark_bool;
+  lmark.SetSize(fes.GetVSize());
   lmark = 0;
   mfem::Array<int> vdofs;
   for (int e = 0; e < mesh.GetNE(); e++)
@@ -103,6 +92,25 @@ PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fes
     }
   }
   fes.Synchronize(lmark);
+}
+
+const Vector &
+PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fespace) const
+{
+  if (auto it = tf_markers.find(idx);
+      it != tf_markers.end() && it->second.Size() == nd_fespace.GetTrueVSize())
+  {
+    return it->second;
+  }
+  // Mark the local dofs of the elements in the total-field region, then combine the marks
+  // of the processes sharing each dof with a boolean OR and restrict to the true dofs, as
+  // for essential dofs: a true dof belongs to the closure of the region if any element of
+  // the region contains it. P^T is not used, since for Nédélec spaces with face dofs on
+  // shared triangles it contains the face orientation transformations, so that it does
+  // not map a 0/1 marker to a 0/1 marker.
+  const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
+  mfem::Array<int> lmark, tmark_bool;
+  GetLocalTotalFieldMarker(idx, fes, lmark);
   fes.GetRestrictionMatrix()->BooleanMult(lmark, tmark_bool);
   Vector &tmark = tf_markers[idx];
   tmark.SetSize(fes.GetTrueVSize());
@@ -216,6 +224,35 @@ bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const Complex
     }
   }
   return true;
+}
+
+bool PlaneWaveOperator::TouchesTotalField(int idx, const FiniteElementSpace &nd_fespace,
+                                          const mfem::Array<int> &bdr_attr_marker) const
+{
+  const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
+  const mfem::ParMesh &mesh = *fes.GetParMesh();
+  mfem::Array<int> lmark, vdofs;
+  GetLocalTotalFieldMarker(idx, fes, lmark);
+  bool touches = false;
+  for (int i = 0; i < mesh.GetNBE() && !touches; i++)
+  {
+    const int attr = mesh.GetBdrAttribute(i);
+    if (attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
+    {
+      continue;
+    }
+    fes.GetBdrElementVDofs(i, vdofs);
+    for (int d : vdofs)
+    {
+      if (lmark[d >= 0 ? d : -1 - d])
+      {
+        touches = true;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalOr(1, &touches, fes.GetComm());
+  return touches;
 }
 
 }  // namespace palace
