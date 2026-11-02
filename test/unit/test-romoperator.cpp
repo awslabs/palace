@@ -840,6 +840,78 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
 }
 
+// With initial guesses, SolveHDM starts the Krylov solver from the given vector. A guess
+// which already solves the system comes back unchanged and would add no new direction to
+// the PROM basis, so SolveHDM then solves again from zero.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SolveHDM-ExactInitialGuess",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  const bool initial_guess = GENERATE(true, false);
+
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {{"Type", "Default"},
+                                    {"KSPType", "GMRES"},
+                                    {"MaxIts", 200},
+                                    {"Tol", 1.0e-8},
+                                    {"InitialGuess", initial_guess}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  const auto &ksp = prom_op.GetLinearSolver();
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega = sample_f[sample_f.size() / 2];
+
+  ComplexVector u(space_op.GetNDSpace().GetTrueVSize()),
+      v(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  v.UseDevice(true);
+
+  // A zero initial guess is solved once.
+  u = 0.0;
+  int num_mult = ksp.NumTotalMult();
+  prom_op.SolveHDM(1, omega, u);
+  CHECK(ksp.NumTotalMult() == num_mult + 1);
+  const double norm_u = linalg::Norml2(world_comm, u);
+  REQUIRE(norm_u > 0.0);
+
+  // Starting from the solution, the solver returns it unchanged and the system is solved
+  // again from zero (without initial guesses, the guess is ignored).
+  v = u;
+  num_mult = ksp.NumTotalMult();
+  prom_op.SolveHDM(1, omega, v);
+  CHECK(ksp.NumTotalMult() == num_mult + (initial_guess ? 2 : 1));
+  linalg::AXPY(-1.0, u, v);
+  CHECK(linalg::Norml2(world_comm, v) <= 1.0e-12 * norm_u);
+}
+
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
 // without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
 // flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,

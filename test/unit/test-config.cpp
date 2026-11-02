@@ -1586,6 +1586,38 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["ColumnOrdering"].get<std::string>() == "Default");
   }
 
+  SECTION("Driven resolves InitialGuess to true for uniform and adaptive sweeps")
+  {
+    auto make_config = [](bool adaptive)
+    {
+      json driven = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}};
+      if (adaptive)
+      {
+        driven["AdaptiveTol"] = 1.0e-3;
+      }
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                  {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
+                  {"Solver", {{"Driven", driven}}}};
+    };
+    for (bool adaptive : {false, true})
+    {
+      INFO("adaptive = " << adaptive);
+      json config = make_config(adaptive);
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.initial_guess == 1);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["InitialGuess"].get<int>() == 1);
+
+      // An explicit false is kept.
+      config = make_config(adaptive);
+      config["Solver"]["Linear"] = {{"InitialGuess", false}};
+      IoData iodata_off(config, false);
+      CHECK(iodata_off.solver.linear.initial_guess == 0);
+    }
+  }
+
   SECTION("Transient resolves Type DEFAULT to GeneralizedAlpha")
   {
     json config = {
