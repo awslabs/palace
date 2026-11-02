@@ -48,26 +48,39 @@ using PalaceSensitivity, Test, LinearAlgebra, Random
         @test objective(s, 2).unit == "F"
         @test objective(s, 1).spec["Terminals"] == [25, 25]
         @test s.boundary == boundary
-        @test s.metadata["PalaceVersion"] == "test"
+        @test s.metadata == Dict("PalaceVersion" => "test")
         @test_throws KeyError objective(s, 3)
         @test sprint(show, s) ==
               "SensitivityExport(Electrostatic, 57 points, objectives [1, 2])"
-        # Truncated binaries and other formats or versions are rejected.
+
+        # Invalid exports are rejected.
+        write(joinpath(dir, "boundary.bin"), fill(Int64(5), n + 1))
+        @test_throws r"not a boundary file" read_sensitivity(dir)
         write(joinpath(dir, "points.bin"), zeros(10))
-        @test_throws ErrorException read_sensitivity(dir)
+        @test_throws r"expected 1368" read_sensitivity(dir)
         other = mktempdir()
         write(joinpath(other, "sensitivity.json"), "{\"Format\": \"Other\"}")
-        @test_throws ErrorException read_sensitivity(other)
-        write(
-            joinpath(other, "sensitivity.json"),
-            "{\"Format\": \"PalaceSensitivity\", \"Version\": 2}"
+        @test_throws r"not a PalaceSensitivity file" read_sensitivity(other)
+        write(joinpath(other, "sensitivity.json"), "{\"Format\": \"PalaceSensitivity\"}")
+        @test_throws r"version nothing" read_sensitivity(other)
+
+        # So are objectives and metadata that would overwrite each other or the format's
+        # entries.
+        o = (index=1, type="Capacitance", value=0.0, gradient=G1)
+        w(; kwargs...) = write_sensitivity(
+            mktempdir();
+            problem_type="Electrostatic",
+            length_unit=1e-6,
+            points=X,
+            kwargs...
         )
-        @test_throws ErrorException read_sensitivity(other)
+        @test_throws ArgumentError w(objectives=[o, o])
+        @test_throws ArgumentError w(objectives=[merge(o, (spec=Dict("Value" => 1),))])
+        @test_throws ArgumentError w(objectives=[o], metadata=Dict("Version" => 2))
     end
 
     @testset "Contraction with design velocities" begin
-        # A functional that is linear in the node positions, J(X) = Σ wₖ ⋅ xₖ, has gradient
-        # wₖ, and its derivative along an affine velocity V(x) = A x + b is Σ wₖ ⋅ (A xₖ + b).
+        # J(X) = Σ wₖ ⋅ xₖ has gradient wₖ and derivative Σ wₖ ⋅ V(xₖ) along any velocity V.
         n = 200
         X = randn(rng, 3, n)
         W = randn(rng, 3, n)
@@ -86,8 +99,7 @@ using PalaceSensitivity, Test, LinearAlgebra, Random
         @test derivative(s, 7, V) ≈ dot(W, A * X .+ b)
         @test jacobian(s, (a=V, b=U)) ≈ [dot(W, A * X .+ b) dot(W, 2X)]
         @test jacobian(s, [V, U]) ≈ jacobian(s, (a=V, b=U))
-        # The same export in mm, contracted with velocities in μm: the points are converted
-        # to μm, and the velocity lengths back to mm.
+        # The same export in mm, with velocities in μm.
         dirmm = mktempdir()
         write_sensitivity(
             dirmm;

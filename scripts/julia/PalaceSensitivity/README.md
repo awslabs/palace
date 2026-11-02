@@ -5,60 +5,47 @@ SPDX-License-Identifier: Apache-2.0
 
 # PalaceSensitivity.jl
 
-Read the sensitivity export of a *Palace* run, and contract it with design velocities.
+Read a *Palace* sensitivity export and contract its gradients with design velocities, giving
+derivatives with respect to design parameters: `dJ/dp = Σₖ gₖ ⋅ V(xₖ)`, where `gₖ` is the
+gradient of objective `J` at node `xₖ` and `V` is how the geometry moves with the parameter
+`p` (for example from `DeviceLayout.SolidModels.design_velocities`).
 
-A run with a `"Sensitivity"` configuration writes, for each objective (for example an
-entry of the capacitance matrix, an eigenfrequency or an S-parameter), its value and its
-gradient with respect to the positions of the mesh nodes in an export region. Contracting
-that gradient with a design velocity `V`, which says how the geometry moves with a design
-parameter `p`, gives the derivative `dJ/dp = Σₖ gₖ ⋅ V(xₖ)`. Design velocities come from the
-layout tool, for example `DeviceLayout.SolidModels.design_velocities`; this package needs no
-knowledge of the geometry.
+```julia
+using PalaceSensitivity
+s = read_sensitivity("postpro/sensitivity")
+objective(s, 1).value          # the value of objective 1
+J = jacobian(s, velocities)    # objectives × parameters
+```
 
-| Function                                             | Purpose                                                      |
-|:---------------------------------------------------- |:------------------------------------------------------------ |
-| `read_sensitivity(dir)`                              | read the export in `<Problem.Output>/sensitivity`            |
-| `objective(s, index)`                                | an objective's type, configuration, value, unit and gradient |
-| `jacobian(s, velocities)`, `derivative(s, index, V)` | `dJ/dp` for design velocities `V`                            |
-| `write_sensitivity(dir; ...)`                        | write the format, for tests and other tools                  |
+`velocities` is a collection, such as a `NamedTuple`, of callables mapping a `3 × N` matrix
+of points to a `3 × N` matrix of velocities, with lengths in μm by default.
+`derivative(s, index, V)` gives one derivative, and `write_sensitivity` writes the format.
 
 ## Installation
-
-The package lives in the *Palace* repository and is not registered. Add it to an
-environment with
 
 ```julia
 using Pkg
 Pkg.add(url="https://github.com/awslabs/palace", subdir="scripts/julia/PalaceSensitivity")
 ```
 
-or, from a clone of the repository, `Pkg.develop(path="scripts/julia/PalaceSensitivity")`.
-
-## Usage
-
-```julia
-using PalaceSensitivity
-s = read_sensitivity("postpro/sensitivity")
-objective(s, 1).value                # the value of objective 1
-J = jacobian(s, velocities)          # objectives × parameters
-```
-
-`velocities` is a collection of design velocities: callables mapping a `3 × N` matrix of
-points to a `3 × N` matrix of velocities, with lengths in μm by default
-(`velocity_length_unit`). For a `NamedTuple` of velocities, the columns follow its keys.
-
 ## Format (version 1)
 
-| File                      | Content                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-|:------------------------- |:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sensitivity.json`        | `"Format": "PalaceSensitivity"`, `"Version": 1`, `"ProblemType"`, `"LengthUnit"` (the mesh unit `Model.L0`, in m), `"NumPoints"`, `"Points"`, `"ByteOrder": "LittleEndian"`, and `"Objectives"`: for each, `"Index"`, `"Type"`, its configuration (for example `"Terminals"`), `"Value"`, `"Unit"` and `"Gradient"` (the file name). Optional: `"Boundary"`, `"Region"`, `"PalaceVersion"`, `"MeshFingerprint"`, and scalar sensitivities in `"Materials"` and `"LumpedElements"`. |
-| `points.bin`              | N × 3 Float64, row-major: the positions of the exported nodes, in mesh units                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `gradient-<index>.bin`    | N × 3 Float64 per objective: the gradient with respect to the node positions, in the objective's unit per mesh unit                                                                                                                                                                                                                                                                                                                                                                |
-| `boundary.bin` (optional) | N + 1 Int64 offsets (0-based, compressed sparse rows), then the Int32 boundary attributes of each point; −1 marks the interface of a substructuring region                                                                                                                                                                                                                                                                                                                         |
+| File                      | Content                                                                                                    |
+|:------------------------- |:---------------------------------------------------------------------------------------------------------- |
+| `sensitivity.json`        | metadata, below                                                                                            |
+| `points.bin`              | N × 3 Float64, row-major: the node positions, in mesh units                                                |
+| `gradient-<index>.bin`    | N × 3 Float64 per objective: its gradient, in its unit per mesh unit                                       |
+| `boundary.bin` (optional) | N + 1 Int64 offsets, then the Int32 boundary attributes of each point; −1 marks a substructuring interface |
 
-Each node of the export region appears once. The set of points does not depend on *Palace*'s
-partition, but their order does: a gradient is a covector at its points, and is only ever
-contracted with velocities evaluated at the same points, never interpolated.
+`sensitivity.json` holds `"Format": "PalaceSensitivity"`, `"Version": 1`, `"ProblemType"`,
+`"LengthUnit"` (the mesh unit, `Model.L0`, in m), `"NumPoints"`, `"Points"`,
+`"ByteOrder": "LittleEndian"`, the optional `"Boundary"`, and `"Objectives"`. Each objective
+has `"Index"`, `"Type"`, `"Value"`, `"Unit"`, `"Gradient"` (the file name) and the rest of
+its configuration, for example `"Terminals"`. Other entries, such as `"PalaceVersion"` or
+material sensitivities, are read as metadata.
+
+Each node of the export region appears once. Their order depends on *Palace*'s partition, so
+a gradient is only contracted with velocities evaluated at its own points.
 
 ## Tests
 
