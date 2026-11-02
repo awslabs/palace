@@ -13,7 +13,7 @@ module PalaceSensitivity
 using LinearAlgebra
 import JSON
 
-export read_sensitivity, write_sensitivity, objective, derivative, jacobian
+export read_sensitivity, write_sensitivity, objective, derivative, jacobian, check_velocity
 
 const FORMAT = "PalaceSensitivity"
 const FORMAT_VERSION = 1
@@ -104,11 +104,11 @@ function read_sensitivity(dir::AbstractString)
     byte_order = get(meta, "ByteOrder", "LittleEndian")
     byte_order == "LittleEndian" || error("Unsupported byte order $byte_order in $path")
     n = Int(meta["NumPoints"])
-    points = _read_vectors(joinpath(dir, meta["Points"]), n)
+    points = _read_vectors(dir, get(meta, "Points", nothing), n)
     objectives = Objective[]
     for o in meta["Objectives"]
         spec = Dict{String, Any}(String(k) => v for (k, v) in o if !(k in OBJECTIVE_KEYS))
-        gradient = _read_vectors(joinpath(dir, o["Gradient"]), n)
+        gradient = _read_vectors(dir, get(o, "Gradient", nothing), n)
         push!(
             objectives,
             Objective(
@@ -135,8 +135,14 @@ function read_sensitivity(dir::AbstractString)
     )
 end
 
-# N × 3 row-major Float64 is 3 × N column-major.
-function _read_vectors(path, n)
+# N × 3 row-major Float64 is 3 × N column-major. Exports without node gradients have no
+# files and no points.
+function _read_vectors(dir, file, n)
+    if isnothing(file)
+        n == 0 || error("Missing points or gradient file in the export in $dir")
+        return zeros(3, 0)
+    end
+    path = joinpath(dir, file)
     filesize(path) == 24n ||
         error("$path has $(filesize(path)) bytes, expected $(24n) for $n points")
     v = Vector{Float64}(undef, 3n)
@@ -175,7 +181,8 @@ Write a sensitivity export to `dir`, for tests and other tools.
 `points` is a `3 × N` matrix in mesh units, and `length_unit` the mesh unit in meters. Each
 objective is an [`Objective`](@ref) or a `NamedTuple` with its fields (`unit` and `spec` are
 optional). `boundary` lists the boundary attributes of each point, and `metadata` adds
-entries to `sensitivity.json`.
+entries to `sensitivity.json`. Without points (a `3 × 0` matrix), no gradients are written,
+as by *Palace* without `"Shape"`.
 """
 function write_sensitivity(
     dir::AbstractString;
@@ -192,7 +199,7 @@ function write_sensitivity(
         throw(ArgumentError("metadata must not contain the entries $EXPORT_KEYS"))
     mkpath(dir)
     n = size(points, 2)
-    _write_vectors(joinpath(dir, "points.bin"), points)
+    n > 0 && _write_vectors(joinpath(dir, "points.bin"), points)
     entries = Any[]
     for o in objectives
         size(o.gradient) == (3, n) ||
@@ -200,15 +207,16 @@ function write_sensitivity(
         spec = hasproperty(o, :spec) ? o.spec : Dict{String, Any}()
         any(k -> String(k) in OBJECTIVE_KEYS, keys(spec)) &&
             throw(ArgumentError("spec must not contain the entries $OBJECTIVE_KEYS"))
-        file = "gradient-$(o.index).bin"
-        _write_vectors(joinpath(dir, file), o.gradient)
         entry = Dict{String, Any}(
             "Index" => o.index,
             "Type" => o.type,
             "Value" => o.value,
-            "Unit" => hasproperty(o, :unit) ? o.unit : "",
-            "Gradient" => file
+            "Unit" => hasproperty(o, :unit) ? o.unit : ""
         )
+        if n > 0
+            entry["Gradient"] = "gradient-$(o.index).bin"
+            _write_vectors(joinpath(dir, entry["Gradient"]), o.gradient)
+        end
         push!(entries, merge(entry, spec))
     end
     meta = Dict{String, Any}(
@@ -217,10 +225,10 @@ function write_sensitivity(
         "ProblemType" => problem_type,
         "LengthUnit" => length_unit,
         "NumPoints" => n,
-        "Points" => "points.bin",
         "ByteOrder" => "LittleEndian",
         "Objectives" => entries
     )
+    n > 0 && (meta["Points"] = "points.bin")
     if !isnothing(boundary)
         length(boundary) == n || throw(
             DimensionMismatch("boundary has $(length(boundary)) entries, expected $n")
@@ -288,6 +296,57 @@ function derivative(
     velocity_length_unit=1e-6
 )
     return only(jacobian(s, (velocity,); objectives=(index,), velocity_length_unit))
+end
+
+"""
+    check_velocity(s::SensitivityExport, velocity; fixed=(), rigid=(), rtol=1e-8,
+                   velocity_length_unit=1e-6)
+
+Check that `velocity` is admissible for the export `s`, from the boundary attributes of its
+points: it must vanish on the nodes of each attribute in `fixed`, such as boundaries that do
+not move, and move the nodes of each attribute in `rigid` rigidly, such as ports and lumped
+elements, whose impedances depend on their size. Violations larger than `rtol` times the
+largest velocity throw an error naming the attribute.
+"""
+function check_velocity(
+    s::SensitivityExport,
+    velocity;
+    fixed=(),
+    rigid=(),
+    rtol=1e-8,
+    velocity_length_unit=1e-6
+)
+    isnothing(s.boundary) &&
+        error("The export has no boundary attributes: set \"BoundaryTags\" in \"Shape\"")
+    scale = s.length_unit / velocity_length_unit
+    X = s.points .* scale
+    V = velocity(X)
+    size(V) == size(X) || throw(
+        DimensionMismatch("velocity returned size $(size(V)) for $(size(X, 2)) points")
+    )
+    tol = rtol * maximum(norm, eachcol(V); init=0.0)
+    nodes(attr) = [k for (k, b) in enumerate(s.boundary) if attr in b]
+    for attr in fixed
+        violation = maximum(k -> norm(V[:, k]), nodes(attr); init=0.0)
+        violation <= tol ||
+            error("The velocity does not vanish on boundary attribute $attr")
+    end
+    for attr in rigid
+        # Residual of the least-squares rigid motion t + ω × x of the nodes.
+        k = nodes(attr)
+        Q = X[:, k] .- sum(X[:, k]; dims=2) / max(length(k), 1)
+        A = zeros(3length(k), 6)
+        for (j, q) in enumerate(eachcol(Q))
+            A[(3j - 2):(3j), 1:3] = I(3)
+            A[(3j - 2):(3j), 4:6] = [0 q[3] -q[2]; -q[3] 0 q[1]; q[2] -q[1] 0]
+        end
+        b = vec(V[:, k])
+        r = isempty(k) ? b : b - A * (A \ b)
+        violation = maximum(norm, eachcol(reshape(r, 3, :)); init=0.0)
+        violation <= tol ||
+            error("The velocity does not move boundary attribute $attr rigidly")
+    end
+    return nothing
 end
 
 end # module
