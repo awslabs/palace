@@ -19,7 +19,9 @@ J = jacobian(s, velocities)    # objectives × parameters
 
 `velocities` is a collection, such as a `NamedTuple`, of callables mapping a `3 × N` matrix
 of points to a `3 × N` matrix of velocities, with lengths in μm by default.
-`derivative(s, index, V)` gives one derivative, and `write_sensitivity` writes the format.
+`derivative(s, index, V)` gives one derivative, `check_velocity(s, V; fixed, rigid)` checks
+that a velocity vanishes or is rigid on the given boundary attributes, and
+`write_sensitivity` writes the format.
 
 ## Installation
 
@@ -39,13 +41,21 @@ Pkg.add(url="https://github.com/awslabs/palace", subdir="scripts/julia/PalaceSen
 
 `sensitivity.json` holds `"Format": "PalaceSensitivity"`, `"Version": 1`, `"ProblemType"`,
 `"LengthUnit"` (the mesh unit, `Model.L0`, in m), `"NumPoints"`, `"Points"`,
-`"ByteOrder": "LittleEndian"`, the optional `"Boundary"`, and `"Objectives"`. Each objective
-has `"Index"`, `"Type"`, `"Value"`, `"Unit"`, `"Gradient"` (the file name) and the rest of
-its configuration, for example `"Terminals"`. Other entries, such as `"PalaceVersion"` or
-material sensitivities, are read as metadata.
+`"ByteOrder": "LittleEndian"`, the optional `"Boundary"` and `"Region"` (the configured
+export region), and `"Objectives"`. Each objective has `"Index"`, `"Type"`, `"Value"`,
+`"Unit"`, `"Gradient"` (the file name) and the rest of its configuration, for example
+`"Terminals"`, and the optional `"MaterialProperties"`: for each material, its `"Index"` in
+`Domains.Materials`, its `"Attributes"`, and the derivatives with respect to a relative
+change of its properties, such as `"Permittivity"` (ε ∂J/∂ε, in the objective's unit).
+Without `"Shape"` in the configuration, there are no points and no gradient files. Other
+entries are read as metadata.
 
-Each node of the export region appears once. Their order depends on *Palace*'s partition, so
-a gradient is only contracted with velocities evaluated at its own points.
+The points are the nodes of the mesh *Palace* solves on, each once, in an order that depends
+on the partition: a gradient is only contracted with velocities evaluated at its own points.
+These are the nodes of the input mesh, except where *Palace* refines it or, for high-order
+Gmsh meshes, re-interpolates the nodes onto its own basis. There, morphing the input mesh by
+`V` moves the nodes by the interpolant of `V`, and the contraction agrees with finite
+differences of morphed input meshes to the interpolation error of `V`.
 
 ## Tests
 
