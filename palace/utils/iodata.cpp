@@ -728,6 +728,14 @@ void IoData::CheckConfiguration()
   {
     solver.linear.ams_max_it = solver.order;
   }
+  if (solver.linear.ams_smooth_it < 0)
+  {
+    // For singular curl-curl operators, the outer iteration count depends strongly on the
+    // smoothing on the coarse Nedelec space, which is cheap compared to the auxiliary
+    // space corrections.
+    solver.linear.ams_smooth_it =
+        solver.linear.ams_singular_op ? 8 : solver.linear.mg_smooth_it;
+  }
   if (solver.linear.mg_cycle_it < 0)
   {
     if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) &&
