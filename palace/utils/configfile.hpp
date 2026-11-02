@@ -1150,6 +1150,10 @@ public:
   // Order of polynomial smoothing for geometric multigrid.
   int mg_smooth_order = -1;
 
+  // Maximum order of polynomial smoothing for geometric multigrid. If larger than
+  // mg_smooth_order, it is used on levels whose operator is nearly positive semi-definite.
+  int mg_smooth_order_max = -1;
+
   // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
   // geometric multigrid.
   double mg_smooth_sf_max = 1.0;
@@ -1217,14 +1221,19 @@ public:
   // Maximum number of iterations of the AMS solver.
   int ams_max_it = -1;
 
+  // Number of smoothing sweeps on the Nedelec space in each AMS iteration, when AMS is the
+  // coarse solver of geometric multigrid.
+  int ams_smooth_it = -1;
+
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 1000;
 
-  // Relative tolerance for solving linear systems in the error estimator.
-  double estimator_tol = 1.0e-6;
+  // Relative tolerance for solving linear systems in the error estimator. If negative, it
+  // depends on whether the error estimate drives adaptive mesh refinement.
+  double estimator_tol = -1.0;
 
   // Maximum number of iterations for solving linear systems in the error estimator.
   int estimator_max_it = 10000;

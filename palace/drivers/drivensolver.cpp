@@ -314,6 +314,34 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
 
+  // Solve the HDM at a sample frequency and return the relative error of the PROM there.
+  // With initial guesses enabled, the HDM solve starts from the PROM solution (zero while
+  // the reduced basis is empty). A solution (nearly) unchanged from the PROM one would add
+  // no new direction to the PROM basis, so then the HDM is solved again from zero.
+  const bool initial_guess = iodata.solver.linear.initial_guess;
+  constexpr double min_guess_error = 1.0e-10;
+  auto SolveHDMSample = [&](int excitation_idx, double omega)
+  {
+    const auto comm = space_op.GetComm();
+    if (initial_guess)
+    {
+      prom_op.SolvePROM(excitation_idx, omega, Eh);
+      E = Eh;
+      prom_op.SolveHDM(excitation_idx, omega, E);
+      linalg::AXPY(-1.0, E, Eh);
+      const double error = linalg::Norml2(comm, Eh) / linalg::Norml2(comm, E);
+      if (error >= min_guess_error)
+      {
+        return error;
+      }
+      E = 0.0;
+    }
+    prom_op.SolveHDM(excitation_idx, omega, E);
+    prom_op.SolvePROM(excitation_idx, omega, Eh);
+    linalg::AXPY(-1.0, E, Eh);
+    return linalg::Norml2(comm, Eh) / linalg::Norml2(comm, E);
+  };
+
   // Loop excitations to add to PROM.
   //
   // Restart should not really be used for adaptive sweeps, but must work. Construct PROM in
@@ -334,11 +362,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     for (auto i : iodata.solver.driven.prom_indices)
     {
       auto omega = omega_sample[i];
-      prom_op.SolveHDM(excitation_idx, omega, E);
-      prom_op.SolvePROM(excitation_idx, omega, Eh);
-      linalg::AXPY(-1.0, E, Eh);
-      max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
-                           linalg::Norml2(space_op.GetComm(), E));
+      max_errors.push_back(SolveHDMSample(excitation_idx, omega));
       UpdatePROM(excitation_idx, omega, counter_rom_sample);
       counter_rom_sample++;
     }
@@ -361,12 +385,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       double omega_star = prom_op.FindMaxError(excitation_idx)[0];
 
       // Sample HDM and add solution to basis.
-      prom_op.SolveHDM(excitation_idx, omega_star, E);
-      prom_op.SolvePROM(excitation_idx, omega_star, Eh);
-      linalg::AXPY(-1.0, E, Eh);
-
-      max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
-                           linalg::Norml2(space_op.GetComm(), E));
+      max_errors.push_back(SolveHDMSample(excitation_idx, omega_star));
       memory = max_errors.back() < offline_tol ? memory + 1 : 0;
 
       Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "

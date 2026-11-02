@@ -44,6 +44,28 @@ where `<MPI_RUN>` is the MPI launcher command, `[OPTIONS]` is a list of command 
 passed to the MPI launcher, and `<ARCH>` is the machine architecture (`x86_64` or
 `arm64`).
 
+On Linux, *Palace* tunes two process settings at startup, each of which can be disabled by
+setting an environment variable for all MPI processes:
+
+  - When the kernel enables transparent huge pages only on request (`madvise` mode) and the
+    C library is glibc 2.35 or newer, *Palace* restarts itself once with the glibc tunable
+    `glibc.malloc.hugetlb=1`, so that its heap memory uses transparent huge pages. Set
+    `PALACE_DISABLE_THP` to disable this.
+  - When the MPI launcher binds the processes of a node to its first cores, one core each,
+    and this leaves the NUMA domains of the node unevenly loaded, the processes are rebound
+    to spread them evenly across the NUMA domains (as with `--map-by numa` for Open MPI).
+    Set `PALACE_DISABLE_REBIND` to disable this.
+
+The AMS preconditioner gathers the coarse levels of its auxiliary space multigrid
+hierarchies onto fewer processes during the solve, and computes its auxiliary space
+corrections concurrently. Set the environment variable `HYPRE_AMG_REDIST=0` for all MPI
+processes to disable this.
+
+With Open MPI on AWS Elastic Fabric Adapter (EFA) networks, exclude the OFI BTL (Open MPI
+option `--mca btl ^ofi`, or `OMPI_MCA_btl=^ofi` in the environment): it opens additional
+network domains, which can make the MPI initialization fail intermittently when many
+processes per node are launched. The *Palace* containers set this by default.
+
 ## Singularity/Apptainer
 
 Assuming *Palace* was built using Singularity/Apptainer to `palace.sif`, running:

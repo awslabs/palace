@@ -1387,6 +1387,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.ams_singular_op == 0);
     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_smooth_it == 1);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
@@ -1402,6 +1403,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
+    CHECK(j_linear["AMSSmoothIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
   }
 
@@ -1436,6 +1438,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
     CHECK(iodata.solver.linear.ams_singular_op == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_smooth_it == 8);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
@@ -1443,6 +1446,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["AMSSmoothIts"].get<int>() == 8);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
     CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
   }
@@ -1532,6 +1536,44 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     config = IoData::ConcretizeDefaults(iodata, config);
     CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() == 10);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 5);
+  }
+
+  SECTION("mg_smooth_order is adaptive for second-order eigenmode problems")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 2}, {"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata1(config, false);
+    CHECK(iodata1.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata1.solver.linear.mg_smooth_order_max == 8);
+
+    // The order is chosen at runtime, so the resolved config leaves it unspecified.
+    json resolved = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK_FALSE(resolved["Solver"]["Linear"].contains("MGSmoothOrder"));
+    IoData iodata2(resolved, false);
+    CHECK(iodata2.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata2.solver.linear.mg_smooth_order_max == 8);
+
+    // An explicit order is used as is.
+    config["Solver"]["Linear"]["MGSmoothOrder"] = 4;
+    IoData iodata3(config, false);
+    CHECK(iodata3.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata3.solver.linear.mg_smooth_order_max == 4);
+
+    // Other problem types and orders use a fixed order.
+    config["Solver"]["Linear"].erase("MGSmoothOrder");
+    config["Solver"]["Order"] = 3;
+    IoData iodata4(config, false);
+    CHECK(iodata4.solver.linear.mg_smooth_order == 6);
+    CHECK(iodata4.solver.linear.mg_smooth_order_max == 6);
+    config["Problem"]["Type"] = "Electrostatic";
+    config["Solver"]["Order"] = 2;
+    IoData iodata5(config, false);
+    CHECK(iodata5.solver.linear.mg_smooth_order == 4);
+    CHECK(iodata5.solver.linear.mg_smooth_order_max == 4);
   }
 
   SECTION("max_size defaults to max_it")
@@ -1670,6 +1712,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.ams_smooth_it == l1.ams_smooth_it);
     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
     CHECK(l2.reorder_reuse == l1.reorder_reuse);
     CHECK(l2.pc_side == l1.pc_side);

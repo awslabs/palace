@@ -305,6 +305,10 @@ private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
 
+  // Whether an initial space was set, which satisfies the divergence-free constraint when a
+  // projector is used.
+  bool has_initial_space = false;
+
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
                             ComplexVector &r) const override;
@@ -313,6 +317,8 @@ protected:
 
 public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
+
+  bool HasInitialSpace() const { return has_initial_space; }
 
   using SlepcEigenvalueSolver::SetOperators;
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,

@@ -1,0 +1,160 @@
+diff --git a/SRC/double/dstatic_schedule.c b/SRC/double/dstatic_schedule.c
+index 844e385e..9d586351 100755
+--- a/SRC/double/dstatic_schedule.c
++++ b/SRC/double/dstatic_schedule.c
+@@ -25,6 +25,7 @@ at the top-level directory.
+  * </pre>
+  */
+ 
++#include <string.h>
+ #include "superlu_ddefs.h"
+ 
+ #ifdef ISORT
+@@ -399,7 +400,28 @@ dstatic_schedule(superlu_dist_options_t * options, int m, int n,
+ 
+         /* communication */
+         MPI_Alltoall (sendcnts, 1, MPI_INT, recvcnts, 1, MPI_INT, grid->comm);
+-        MPI_Alltoall (srows, nrbp1, MPI_INT, rrows, nrbp1, MPI_INT, grid->comm);
++        /* srows[p*nrbp1:(p+1)*nrbp1] is zero if sendcnts[p] == 0, so only
++           exchange the rows of the dense MPI_Alltoall which are nonzero
++           (point-to-point, empty messages skipped). */
++        {
++            int nreq = 0, nprocs = Pr * Pc;
++            MPI_Request *reqs;
++            if (!(reqs = SUPERLU_MALLOC (2 * nprocs * sizeof (MPI_Request))))
++                ABORT ("Malloc fails for reqs[].");
++            for (p = 0; p < nprocs; p++) {
++                if (recvcnts[p])
++                    MPI_Irecv (&rrows[p * nrbp1], nrbp1, MPI_INT, p, 0,
++                               grid->comm, &reqs[nreq++]);
++                else
++                    memset (&rrows[p * nrbp1], 0, nrbp1 * sizeof (int));
++            }
++            for (p = 0; p < nprocs; p++)
++                if (sendcnts[p])
++                    MPI_Isend (&srows[p * nrbp1], nrbp1, MPI_INT, p, 0,
++                               grid->comm, &reqs[nreq++]);
++            MPI_Waitall (nreq, reqs, MPI_STATUSES_IGNORE);
++            SUPERLU_FREE (reqs);
++        }
+ 
+ 	log_memory( -(nblocks * iword), stat );  /* blocks[] to be freed soon */
+ 
+@@ -414,8 +436,23 @@ dstatic_schedule(superlu_dist_options_t * options, int m, int n,
+         if (!(blockr = intMalloc_dist (nblocks))) ABORT ("Malloc fails for blockr[].");
+ 	log_memory( nblocks * iword, stat );
+ 
+-        MPI_Alltoallv (blocks, sendcnts, sdispls, mpi_int_t, blockr, recvcnts,
+-                       rdispls, mpi_int_t, grid->comm);
++        /* MPI_Alltoallv with point-to-point messages (empty ones skipped). */
++        {
++            int nreq = 0, nprocs = Pr * Pc;
++            MPI_Request *reqs;
++            if (!(reqs = SUPERLU_MALLOC (2 * nprocs * sizeof (MPI_Request))))
++                ABORT ("Malloc fails for reqs[].");
++            for (p = 0; p < nprocs; p++)
++                if (recvcnts[p])
++                    MPI_Irecv (&blockr[rdispls[p]], recvcnts[p], mpi_int_t, p, 1,
++                               grid->comm, &reqs[nreq++]);
++            for (p = 0; p < nprocs; p++)
++                if (sendcnts[p])
++                    MPI_Isend (&blocks[sdispls[p]], sendcnts[p], mpi_int_t, p, 1,
++                               grid->comm, &reqs[nreq++]);
++            MPI_Waitall (nreq, reqs, MPI_STATUSES_IGNORE);
++            SUPERLU_FREE (reqs);
++        }
+ 
+         SUPERLU_FREE (blocks); /* memory logged before */
+ 
+diff --git a/SRC/double/pdutil.c b/SRC/double/pdutil.c
+index a6626ef2..5b50bfbd 100755
+--- a/SRC/double/pdutil.c
++++ b/SRC/double/pdutil.c
+@@ -124,8 +124,37 @@ int pdCompRow_loc_to_CompCol_global
+ 	rdispls[i] = i * (n_loc + 1);
+ 	j += n_locs[i]; /* First column of next block in colptr_loc[] */
+     }
+-    MPI_Alltoallv(colptr_send, sendcnts, sdispls, mpi_int_t,
+-		  colptr_blk, recvcnts, rdispls, mpi_int_t, grid->comm);
++    /* Only the blocks with nonzeros need to be exchanged: the column
++       pointers of an empty block are all equal (their differences, the
++       column counts, are all zero). The number of nonzeros per block is
++       exchanged first and empty blocks are zero-filled on the receiver. */
++    {
++        int *nnzcnts, nreq = 0;
++        MPI_Request *reqs;
++        if ( !(nnzcnts = SUPERLU_MALLOC(2*procs * sizeof(int))) )
++            ABORT("Malloc fails for nnzcnts[].");
++        if ( !(reqs = SUPERLU_MALLOC(2*procs * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        for (i = 0; i < procs; ++i)
++            nnzcnts[i] = (colptr_loc[fst_rows[i] + n_locs[i]] -
++                          colptr_loc[fst_rows[i]]) > 0;
++        MPI_Alltoall(nnzcnts, 1, MPI_INT, nnzcnts + procs, 1, MPI_INT,
++                     grid->comm);
++        for (i = 0; i < procs; ++i) {
++            if ( nnzcnts[procs + i] )
++                MPI_Irecv(&colptr_blk[rdispls[i]], recvcnts[i], mpi_int_t, i, 0,
++                          grid->comm, &reqs[nreq++]);
++            else
++                for (j = 0; j < recvcnts[i]; ++j) colptr_blk[rdispls[i] + j] = 0;
++        }
++        for (i = 0; i < procs; ++i)
++            if ( nnzcnts[i] )
++                MPI_Isend(&colptr_send[sdispls[i]], sendcnts[i], mpi_int_t, i, 0,
++                          grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        SUPERLU_FREE(reqs);
++        SUPERLU_FREE(nnzcnts);
++    }
+ 
+     /* Adjust colptr_blk[] so that they contain the local indices of the
+        column pointers in the receive buffer. */
+@@ -161,15 +190,42 @@ int pdCompRow_loc_to_CompCol_global
+     if ( !(rowind_recv = (int_t *) intMalloc_dist(2*k)) )
+         ABORT("Malloc fails for rowind_recv[]");
+     rowind_buf = rowind_recv + k;
+-    MPI_Alltoallv(rowind_loc, sendcnts, sdispls, mpi_int_t,
+-		  rowind_recv, recvcnts, rdispls, mpi_int_t, grid->comm);
++    {
++        int nreq = 0;
++        MPI_Request *reqs;
++        if ( !(reqs = SUPERLU_MALLOC(2*procs * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        for (i = 0; i < procs; ++i)
++            if ( recvcnts[i] )
++                MPI_Irecv(&rowind_recv[rdispls[i]], recvcnts[i], mpi_int_t, i, 1,
++                          grid->comm, &reqs[nreq++]);
++        for (i = 0; i < procs; ++i)
++            if ( sendcnts[i] )
++                MPI_Isend(&rowind_loc[sdispls[i]], sendcnts[i], mpi_int_t, i, 1,
++                          grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        SUPERLU_FREE(reqs);
++    }
+     if ( need_value ) {
+         if ( !(a_recv = (double *) doubleMalloc_dist(2*k)) )
+ 	    ABORT("Malloc fails for rowind_recv[]");
+ 	a_buf = a_recv + k;
+-	MPI_Alltoallv(a_loc, sendcnts, sdispls, MPI_DOUBLE,
+-                      a_recv, recvcnts, rdispls, MPI_DOUBLE,
+-                      grid->comm);
++    {
++        int nreq = 0;
++        MPI_Request *reqs;
++        if ( !(reqs = SUPERLU_MALLOC(2*procs * sizeof(MPI_Request))) )
++            ABORT("Malloc fails for reqs[].");
++        for (i = 0; i < procs; ++i)
++            if ( recvcnts[i] )
++                MPI_Irecv(&a_recv[rdispls[i]], recvcnts[i], MPI_DOUBLE, i, 2,
++                          grid->comm, &reqs[nreq++]);
++        for (i = 0; i < procs; ++i)
++            if ( sendcnts[i] )
++                MPI_Isend(&a_loc[sdispls[i]], sendcnts[i], MPI_DOUBLE, i, 2,
++                          grid->comm, &reqs[nreq++]);
++        MPI_Waitall(nreq, reqs, MPI_STATUSES_IGNORE);
++        SUPERLU_FREE(reqs);
++    }
+     }
+ 
+     /* Reset colptr_loc[] to point to the n_loc global columns. */

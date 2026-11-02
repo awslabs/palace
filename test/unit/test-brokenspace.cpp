@@ -25,6 +25,7 @@
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -41,6 +42,17 @@ namespace
 constexpr int crack_attr = 7;
 constexpr double x_crack = 0.5;
 constexpr double x_sheet = 0.25;  // Second interior boundary, for tests with two of them
+
+// The HypreParMatrix of a prolongation, also when it is applied with
+// hypre::HypreProlongation.
+const mfem::HypreParMatrix *GetHypreParMatrix(const Operator *P)
+{
+  if (const auto *fP = dynamic_cast<const hypre::HypreProlongation *>(P))
+  {
+    return &fP->GetMatrix();
+  }
+  return dynamic_cast<const mfem::HypreParMatrix *>(P);
+}
 
 // Unit cube mesh of hexahedra for x < x_crack and pyramids for x > x_crack (each hexahedron
 // split into six pyramids with their apex at its center).
@@ -1051,15 +1063,14 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
     // vectors are valid before the products (only on the host, or only on the device with
     // stale contents).
     const Operator &P = *fespace.GetProlongationMatrix();
-    const auto *bP = dynamic_cast<const mfem::HypreParMatrix *>(&P);
+    const auto *bP = GetHypreParMatrix(&P);
     REQUIRE(bP);
     CHECK(bP == fespace.Dof_TrueDof_Matrix());
     CHECK(bP->GetGlobalNumRows() == fespace.GlobalVSize());
     CHECK(bP->GetGlobalNumCols() == fespace.GlobalTrueVSize());
     if (nonconforming)
     {
-      CHECK(dynamic_cast<const mfem::HypreParMatrix *>(
-                base_fespace.GetProlongationMatrix()) != nullptr);
+      CHECK(GetHypreParMatrix(base_fespace.GetProlongationMatrix()) != nullptr);
     }
     std::mt19937 gen(Mpi::Rank(comm) + 1);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);

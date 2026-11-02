@@ -8,7 +8,10 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include "linalg/fusedvector.hpp"
+#include "linalg/jacobi.hpp"
 #include "linalg/orthog.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/timer.hpp"
 
@@ -353,6 +356,20 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   z.UseDevice(true);
   p.UseDevice(true);
 
+  // On the host, the solution and residual updates are fused into a single pass over
+  // memory, which also applies the preconditioner and computes the following inner product
+  // when the preconditioner is a Jacobi smoother with real-valued diagonal (same
+  // arithmetic).
+  const bool fused = linalg::fused::UseHost();
+  const Vector *dinv = nullptr;
+  if (fused && B)
+  {
+    if (const auto *jacobi = dynamic_cast<const JacobiSmoother<OperType> *>(B))
+    {
+      dinv = jacobi->GetRealInverseDiagonal();
+    }
+  }
+
   // Initialize.
   if (this->initial_guess)
   {
@@ -427,19 +444,33 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
                 "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
     alpha = beta / denom;
 
-    x.Add(alpha, p);
-    r.Add(-alpha, z);
-
     beta_prev = beta;
-    if (B)
+    if (fused && dinv)
     {
-      ApplyB(B, r, z, this->use_timer);
+      beta = linalg::fused::CgUpdate(alpha, p, x, r, z, dinv);
+      Mpi::GlobalSum(1, &beta, comm);
     }
     else
     {
-      z = r;
+      if (fused)
+      {
+        linalg::fused::CgUpdate(alpha, p, x, r, z, nullptr);
+      }
+      else
+      {
+        x.Add(alpha, p);
+        r.Add(-alpha, z);
+      }
+      if (B)
+      {
+        ApplyB(B, r, z, this->use_timer);
+      }
+      else
+      {
+        z = r;
+      }
+      beta = linalg::Dot(comm, z, r);
     }
-    beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);
@@ -465,6 +496,270 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   final_res = res;
   final_it = it;
+}
+
+template <OperatorType OperType>
+void CgSolver<OperType>::MultBatch(const std::vector<const VecType *> &b,
+                                   const std::vector<VecType *> &x,
+                                   std::vector<SolveInfo> &info) const
+{
+  MFEM_VERIFY(b.size() == x.size(), "Size mismatch for CgSolver::MultBatch!");
+  const int nrhs = static_cast<int>(b.size());
+  info.resize(nrhs);
+  // The operator products are batched for real-valued ParOperator.
+  const ParOperator *par_A = nullptr;
+  if constexpr (std::is_same_v<OperType, Operator>)
+  {
+    par_A = dynamic_cast<const ParOperator *>(A);
+  }
+  if (nrhs < 2 || !par_A || print_opts.iterations || !linalg::fused::UseHost())
+  {
+    for (int k = 0; k < nrhs; k++)
+    {
+      Mult(*b[k], *x[k]);
+      info[k] = {converged, initial_res, final_res, final_it};
+    }
+    return;
+  }
+  MFEM_VERIFY(A, "Operator must be set for CgSolver::MultBatch!");
+  const int n = A->Height();
+  MFEM_ASSERT(A->Width() == n, "Size mismatch for CgSolver::MultBatch!");
+  // On the host (see Mult), the updates use the fused kernels, which also apply the
+  // preconditioner when it is a Jacobi smoother with real-valued diagonal.
+  const Vector *dinv = nullptr;
+  if (B)
+  {
+    if (const auto *jacobi = dynamic_cast<const JacobiSmoother<OperType> *>(B))
+    {
+      dinv = jacobi->GetRealInverseDiagonal();
+    }
+  }
+
+  // The search directions and operator products of the unconverged solves occupy the
+  // first slots of contiguous storage, for the batched operator product. Slot s holds the
+  // solve slot[s].
+  constexpr int nparts = std::is_same_v<OperType, ComplexOperator> ? 2 : 1;
+  Vector P(nparts * nrhs * n), Z(nparts * nrhs * n);
+  P.UseDevice(true);
+  Z.UseDevice(true);
+  std::vector<VecType> R(nrhs);
+  std::vector<int> slot(nrhs);
+  std::vector<ScalarType> beta(nrhs), beta_prev(nrhs, 0.0), dots(nrhs);
+  std::vector<RealType> res(nrhs), res0(nrhs), eps(nrhs);
+  std::vector<int> its(nrhs, 0);
+  std::vector<bool> conv(nrhs, false);
+  auto Ps = [&](int s) { return VecType(P, nparts * s * n, n); };
+  auto Zs = [&](int s) { return VecType(Z, nparts * s * n, n); };
+  // The global reductions are performed one value at a time, as by Mult: the order of the
+  // summation of a reduction may depend on its size.
+  auto GlobalSum = [&](int count, ScalarType *data)
+  {
+    for (int i = 0; i < count; i++)
+    {
+      Mpi::GlobalSum(1, data + i, comm);
+    }
+  };
+
+  // Initialize.
+  for (int k = 0; k < nrhs; k++)
+  {
+    slot[k] = k;
+    R[k].SetSize(n);
+    R[k].UseDevice(true);
+  }
+  if (this->initial_guess)
+  {
+    for (int k = 0; k < nrhs; k++)
+    {
+      auto pk = Ps(k);
+      pk = *x[k];
+    }
+    par_A->MultBatch(nrhs, P, Z);
+    for (int k = 0; k < nrhs; k++)
+    {
+      const auto zk = Zs(k);
+      R[k] = zk;
+      linalg::AXPBY(1.0, *b[k], -1.0, R[k]);
+    }
+  }
+  else
+  {
+    for (int k = 0; k < nrhs; k++)
+    {
+      R[k] = *b[k];
+      *x[k] = 0.0;
+    }
+  }
+  for (int k = 0; k < nrhs; k++)
+  {
+    auto zk = Zs(k);
+    if (B)
+    {
+      ApplyB(B, R[k], zk, this->use_timer);
+    }
+    else
+    {
+      zk = R[k];
+    }
+    beta[k] = linalg::LocalDot(zk, R[k]);
+  }
+  GlobalSum(nrhs, beta.data());
+  for (int k = 0; k < nrhs; k++)
+  {
+    CheckDot(beta[k], "PCG preconditioner is not positive definite: (Br, r) = ");
+    res[k] = std::sqrt(std::abs(beta[k]));
+  }
+  if (this->initial_guess)
+  {
+    for (int k = 0; k < nrhs; k++)
+    {
+      if (B)
+      {
+        auto pk = Ps(k);
+        ApplyB(B, *b[k], pk, this->use_timer);
+        dots[k] = linalg::LocalDot(pk, *b[k]);
+      }
+      else
+      {
+        dots[k] = linalg::LocalDot(*b[k], *b[k]);
+      }
+    }
+    GlobalSum(nrhs, dots.data());
+    for (int k = 0; k < nrhs; k++)
+    {
+      CheckDot(dots[k], "PCG preconditioner is not positive definite: (Bb, b) = ");
+      res0[k] = std::sqrt(std::abs(dots[k]));
+    }
+  }
+  else
+  {
+    res0 = res;
+  }
+  for (int k = 0; k < nrhs; k++)
+  {
+    eps[k] = std::max(rel_tol * res0[k], abs_tol);
+    conv[k] = (res[k] <= eps[k]);
+  }
+
+  // Moves the solves in slots [0, m) which have converged out of the active slots.
+  int m = nrhs;
+  auto Compact = [&]()
+  {
+    for (int s = 0; s < m;)
+    {
+      if (!conv[slot[s]])
+      {
+        s++;
+        continue;
+      }
+      if (s != m - 1)
+      {
+        // Copy the data (assigning from a temporary view would only rebind the view).
+        auto ps = Ps(s), zs = Zs(s);
+        const auto pl = Ps(m - 1), zl = Zs(m - 1);
+        ps = pl;
+        zs = zl;
+        std::swap(slot[s], slot[m - 1]);
+      }
+      m--;
+    }
+  };
+  Compact();
+
+  // Begin iterations.
+  int it = 0;
+  for (; it < max_it && m > 0; it++)
+  {
+    for (int s = 0; s < m; s++)
+    {
+      const int k = slot[s];
+      auto ps = Ps(s), zs = Zs(s);
+      if (!it)
+      {
+        ps = zs;
+      }
+      else
+      {
+        linalg::AXPBY(ScalarType(1.0), zs, beta[k] / beta_prev[k], ps);
+      }
+    }
+
+    {
+      Vector Pm(P, 0, nparts * m * n), Zm(Z, 0, nparts * m * n);
+      par_A->MultBatch(m, Pm, Zm);
+    }
+    for (int s = 0; s < m; s++)
+    {
+      auto ps = Ps(s), zs = Zs(s);
+      dots[s] = linalg::LocalDot(zs, ps);
+    }
+    GlobalSum(m, dots.data());
+
+    for (int s = 0; s < m; s++)
+    {
+      const int k = slot[s];
+      auto ps = Ps(s), zs = Zs(s);
+      const ScalarType denom = dots[s];
+      CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = ");
+      MFEM_VERIFY(denom != 0.0,
+                  "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
+      const ScalarType alpha = beta[k] / denom;
+      beta_prev[k] = beta[k];
+      if (dinv)
+      {
+        dots[s] = linalg::fused::CgUpdate(alpha, ps, *x[k], R[k], zs, dinv);
+      }
+      else
+      {
+        linalg::fused::CgUpdate(alpha, ps, *x[k], R[k], zs, nullptr);
+        if (B)
+        {
+          ApplyB(B, R[k], zs, this->use_timer);
+        }
+        else
+        {
+          zs = R[k];
+        }
+        dots[s] = linalg::LocalDot(zs, R[k]);
+      }
+    }
+    GlobalSum(m, dots.data());
+
+    for (int s = 0; s < m; s++)
+    {
+      const int k = slot[s];
+      beta[k] = dots[s];
+      CheckDot(beta[k], "PCG preconditioner is not positive definite: (Br, r) = ");
+      res[k] = std::sqrt(std::abs(beta[k]));
+      conv[k] = (res[k] <= eps[k]);
+      its[k] = it + 1;
+    }
+    Compact();
+  }
+
+  for (int k = 0; k < nrhs; k++)
+  {
+    if (print_opts.summary || (print_opts.warnings && eps[k] > 0.0 && !conv[k]))
+    {
+      Mpi::Print(comm, "{}PCG solver {} in {:d} iteration{}", std::string(tab_width, ' '),
+                 conv[k] ? "converged" : "did NOT converge", its[k],
+                 (its[k] == 1) ? "" : "s");
+      if (its[k] > 0)
+      {
+        Mpi::Print(comm, " (avg. reduction factor: {:.3e})\n",
+                   std::pow(res[k] / res0[k], 1.0 / its[k]));
+      }
+      else
+      {
+        Mpi::Print(comm, "\n");
+      }
+    }
+    info[k] = {conv[k], res0[k], res[k], its[k]};
+  }
+  converged = conv[nrhs - 1];
+  initial_res = res0[nrhs - 1];
+  final_res = res[nrhs - 1];
+  final_it = its[nrhs - 1];
 }
 
 template <OperatorType OperType>
@@ -609,8 +904,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
+      Hj[j + 1] = linalg::OrthogonalizeColumnAndNorm(gs_orthog, comm, V, w, Hj, j + 1);
       w *= 1.0 / Hj[j + 1];
 
       for (int k = 0; k < j; k++)
@@ -788,8 +1082,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
+      Hj[j + 1] = linalg::OrthogonalizeColumnAndNorm(gs_orthog, comm, V, w, Hj, j + 1);
       w *= 1.0 / Hj[j + 1];
 
       for (int k = 0; k < j; k++)

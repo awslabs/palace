@@ -1,0 +1,231 @@
+diff --git a/SRC/complex16/znrformat_loc3d.c b/SRC/complex16/znrformat_loc3d.c
+index 75a4ff53..60f96e58 100755
+--- a/SRC/complex16/znrformat_loc3d.c
++++ b/SRC/complex16/znrformat_loc3d.c
+@@ -834,8 +834,9 @@ int zScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -1039,6 +1040,28 @@ int zScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    int r = 0;
++	    for (p = 0; p < num_procs_to_send; ++p) {
++		if (gpures) {
++#ifdef GPU_ACC
++		    zdevice_matcopy_wrap(send_count_list[p], nrhs, B1 + nrhs * r,
++					 send_count_list[p], B2d + r, A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in zScatter_B3d().");
++#endif
++		} else {
++		    matCopy(send_count_list[p], nrhs, B1 + nrhs * r, send_count_list[p],
++			    B2d + r, A2d->m_loc);
++		}
++		r += send_count_list[p];
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+ 	/* Post irecv first */
+@@ -1103,6 +1126,7 @@ int zScatter_B3d(superlu_dist_options_t *options,
+     } /* else Z-major */
+ 
+     // B <- colMajor(Btmp)
++    if (rankorder == 1) {
+     if (gpures) {
+ #ifdef GPU_ACC
+ 	zdevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+@@ -1112,6 +1136,23 @@ int zScatter_B3d(superlu_dist_options_t *options,
+     } else {
+     matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+     }
++    } else { /* Z-major: one (recv_count x nrhs) block per source */
++	int *recv_count_list = A3d->recv_count_list;
++	for (i = 0, j = 0; j < A3d->num_procs_to_recv; ++j) {
++	    if (gpures) {
++#ifdef GPU_ACC
++		zdevice_matcopy_wrap(recv_count_list[j], nrhs, B + i, ldb,
++				     Btmp + nrhs * i, recv_count_list[j]);
++#else
++		ABORT("GPURES requires GPU_ACC in zScatter_B3d().");
++#endif
++	    } else {
++		matCopy(recv_count_list[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++			recv_count_list[j]);
++	    }
++	    i += recv_count_list[j];
++	}
++    }
+ 
+     /* free storage */
+     if (gpures) {
+diff --git a/SRC/double/dnrformat_loc3d.c b/SRC/double/dnrformat_loc3d.c
+index 3730e728..596858a0 100755
+--- a/SRC/double/dnrformat_loc3d.c
++++ b/SRC/double/dnrformat_loc3d.c
+@@ -835,8 +835,9 @@ int dScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -1040,6 +1041,28 @@ int dScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    int r = 0;
++	    for (p = 0; p < num_procs_to_send; ++p) {
++		if (gpures) {
++#ifdef GPU_ACC
++		    ddevice_matcopy_wrap(send_count_list[p], nrhs, B1 + nrhs * r,
++					 send_count_list[p], B2d + r, A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in dScatter_B3d().");
++#endif
++		} else {
++		    matCopy(send_count_list[p], nrhs, B1 + nrhs * r, send_count_list[p],
++			    B2d + r, A2d->m_loc);
++		}
++		r += send_count_list[p];
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+ 	/* Post irecv first */
+@@ -1104,6 +1127,7 @@ int dScatter_B3d(superlu_dist_options_t *options,
+     } /* else Z-major */
+ 
+     // B <- colMajor(Btmp)
++    if (rankorder == 1) {
+     if (gpures) {
+ #ifdef GPU_ACC
+ 	ddevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+@@ -1113,6 +1137,23 @@ int dScatter_B3d(superlu_dist_options_t *options,
+     } else {
+     matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+     }
++    } else { /* Z-major: one (recv_count x nrhs) block per source */
++	int *recv_count_list = A3d->recv_count_list;
++	for (i = 0, j = 0; j < A3d->num_procs_to_recv; ++j) {
++	    if (gpures) {
++#ifdef GPU_ACC
++		ddevice_matcopy_wrap(recv_count_list[j], nrhs, B + i, ldb,
++				     Btmp + nrhs * i, recv_count_list[j]);
++#else
++		ABORT("GPURES requires GPU_ACC in dScatter_B3d().");
++#endif
++	    } else {
++		matCopy(recv_count_list[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++			recv_count_list[j]);
++	    }
++	    i += recv_count_list[j];
++	}
++    }
+ 
+     /* free storage */
+     if (gpures) {
+diff --git a/SRC/single/snrformat_loc3d.c b/SRC/single/snrformat_loc3d.c
+index ebb14cb2..3e4e558c 100755
+--- a/SRC/single/snrformat_loc3d.c
++++ b/SRC/single/snrformat_loc3d.c
+@@ -835,8 +835,9 @@ int sScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -1040,6 +1041,28 @@ int sScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    int r = 0;
++	    for (p = 0; p < num_procs_to_send; ++p) {
++		if (gpures) {
++#ifdef GPU_ACC
++		    sdevice_matcopy_wrap(send_count_list[p], nrhs, B1 + nrhs * r,
++					 send_count_list[p], B2d + r, A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in sScatter_B3d().");
++#endif
++		} else {
++		    matCopy(send_count_list[p], nrhs, B1 + nrhs * r, send_count_list[p],
++			    B2d + r, A2d->m_loc);
++		}
++		r += send_count_list[p];
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+ 	/* Post irecv first */
+@@ -1104,6 +1127,7 @@ int sScatter_B3d(superlu_dist_options_t *options,
+     } /* else Z-major */
+ 
+     // B <- colMajor(Btmp)
++    if (rankorder == 1) {
+     if (gpures) {
+ #ifdef GPU_ACC
+ 	sdevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+@@ -1113,6 +1137,23 @@ int sScatter_B3d(superlu_dist_options_t *options,
+     } else {
+     matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
+     }
++    } else { /* Z-major: one (recv_count x nrhs) block per source */
++	int *recv_count_list = A3d->recv_count_list;
++	for (i = 0, j = 0; j < A3d->num_procs_to_recv; ++j) {
++	    if (gpures) {
++#ifdef GPU_ACC
++		sdevice_matcopy_wrap(recv_count_list[j], nrhs, B + i, ldb,
++				     Btmp + nrhs * i, recv_count_list[j]);
++#else
++		ABORT("GPURES requires GPU_ACC in sScatter_B3d().");
++#endif
++	    } else {
++		matCopy(recv_count_list[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++			recv_count_list[j]);
++	    }
++	    i += recv_count_list[j];
++	}
++    }
+ 
+     /* free storage */
+     if (gpures) {

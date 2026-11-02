@@ -374,6 +374,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     SaveAdaptationIteration(it + 1);
   }
 
+  // Complete the background write of the last adapted mesh, if any.
+  mesh::FinishMeshOutput();
+
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"
              " Max. iterations = {:d}, tol. = {:.3e}{}\n",

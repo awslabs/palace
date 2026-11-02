@@ -571,10 +571,10 @@ void IoData::CheckConfiguration()
     else
     {
       // Prefer sparse direct solver for frequency domain problems if available.
-#if defined(MFEM_USE_SUPERLU)
-      solver.linear.type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
+#if defined(MFEM_USE_STRUMPACK)
       solver.linear.type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+      solver.linear.type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_MUMPS)
       solver.linear.type = LinearSolver::MUMPS;
 #else
@@ -609,13 +609,12 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.initial_guess < 0)
   {
-    if ((problem.type == ProblemType::DRIVEN && solver.driven.adaptive_tol <= 0.0) ||
-        problem.type == ProblemType::TRANSIENT ||
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::TRANSIENT ||
         problem.type == ProblemType::ELECTROSTATIC ||
         problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // Default true only driven simulations without adaptive frequency sweep, transient
-      // simulations, electrostatics, or magnetostatics.
+      // Default true for driven (adaptive frequency sweeps start each HDM solve from the
+      // PROM solution), transient, electrostatic, and magnetostatic simulations.
       solver.linear.initial_guess = 1;
     }
     else
@@ -681,7 +680,17 @@ void IoData::CheckConfiguration()
   if (solver.linear.mg_smooth_order < 0)
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
+
+    // For second-order eigenmode problems, use a higher smoothing order on multigrid
+    // levels where the shifted operator turns out to be nearly positive semi-definite.
+    if (solver.order == 2 && solver.linear.mg_smooth_cheby_4th &&
+        problem.type == ProblemType::EIGENMODE)
+    {
+      solver.linear.mg_smooth_order_max = 8;
+    }
   }
+  solver.linear.mg_smooth_order_max =
+      std::max(solver.linear.mg_smooth_order_max, solver.linear.mg_smooth_order);
   // A FilmAttributes boundary not declared a Superconductor is the λ→0 London limit:
   // register it as a sheet with small effective L_ksq = λ⊥ = pec_lperp. The sheet
   // inductance is L_ksq = λ·coth(d/λ); take λ = pec_lperp in its thick-film limit d ≫ λ
@@ -728,6 +737,14 @@ void IoData::CheckConfiguration()
   {
     solver.linear.ams_max_it = solver.order;
   }
+  if (solver.linear.ams_smooth_it < 0)
+  {
+    // For singular curl-curl operators, the outer iteration count depends strongly on the
+    // smoothing on the coarse Nedelec space, which is cheap compared to the auxiliary
+    // space corrections.
+    solver.linear.ams_smooth_it =
+        solver.linear.ams_singular_op ? 8 : solver.linear.mg_smooth_it;
+  }
   if (solver.linear.mg_cycle_it < 0)
   {
     if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) &&
@@ -741,6 +758,12 @@ void IoData::CheckConfiguration()
     {
       solver.linear.mg_cycle_it = 1;
     }
+  }
+  if (solver.linear.estimator_tol < 0.0)
+  {
+    // The flux recovery for the error estimate is solved more accurately when the estimate
+    // drives adaptive mesh refinement than when it is only reported.
+    solver.linear.estimator_tol = (model.refinement.max_it > 0) ? 1.0e-6 : 1.0e-4;
   }
   if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
       solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&

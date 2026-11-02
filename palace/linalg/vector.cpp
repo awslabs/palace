@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <random>
 #include <mfem/general/forall.hpp>
+#include "linalg/fusedvector.hpp"
 #include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
 
@@ -673,6 +674,11 @@ double LocalDot(const Vector &x, const Vector &y)
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
+  if (fused::UseHost())
+  {
+    // Single pass over the data, same result.
+    return fused::LocalDot(x, y);
+  }
   if (&x == &y)
   {
     return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
