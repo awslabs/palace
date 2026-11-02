@@ -30,7 +30,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     or as a thin film with `"ThinFilm": true`, with a warning when this does not match
     the boundary condition of the simulation. Results are written to `surface-Q.csv`.
     SchemaVer 4-1-0.
-
   - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
     `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
     `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly

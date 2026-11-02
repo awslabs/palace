@@ -808,8 +808,7 @@ where ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m`` is the total energy of the mode 
 material properties, not on the surface resistance: it is the surface resistance analog of
 the inverse participation ratio ``1/p_j`` of dielectric loss, and like ``1/Q``, ``1/G`` adds
 over surfaces, ``1/Q_m = \sum_j R_{s,j}/G_{mj}``. For a vacuum cavity it reduces to the
-classical geometric factor ``G = \omega\mu_0\int_\Omega|\bm{H}|^2\,dV /
-\oint_{\Gamma}|\bm{n}\times\bm{H}|^2\,dS``, which is independent of the size of the
+classical geometric factor ``G = \omega\mu_0\int_\Omega|\bm{H}|^2\,dV / \oint_{\Gamma}|\bm{n}\times\bm{H}|^2\,dS``, which is independent of the size of the
 cavity [[13]](#References).
 
 For driven simulations, the geometric factor at each frequency uses the time-averaged
@@ -826,16 +825,19 @@ isolated resonance. The energy stored in the surface inductance of impedance bou
 as the kinetic inductance of superconducting films, is not included in
 ``\mathcal{E}^{mag}``, which underestimates the driven geometric factor by the kinetic
 inductance fraction. For eigenmodes, the electric energy ``\mathcal{E}^{elec}_m`` accounts
-for the total stored energy of the mode including it. The dissipated power ``P_j`` is also reported, along with its fraction
-``P_j/P^{inc}`` of the incident power of the excitation for excitations by ports, each of
-which delivers ``1\text{ W}`` of time-averaged incident power. When the dissipated power is
-not small compared to the other losses of a resonance, for example in an undercoupled
-resonator, the first-order estimate of ``P_j`` from a simulation with perfect conductors
-differs from the power dissipated with the actual surface resistance, which reduces the
-field amplitude at resonance. In this case, the surface resistance should also be included
-in the simulation as an [impedance boundary](guide/boundaries.md#Impedance-boundary) for a
-self-consistent dissipated power. The geometric factor, a ratio of quantities quadratic in
-the fields, is not affected.
+for the total stored energy of the mode including it.
+
+The dissipated power ``P_j`` is also reported for driven simulations, along with its
+fraction ``P_j/P^{inc}`` of the incident power of the excitation for excitations by ports,
+each of which delivers ``1\text{ W}`` of time-averaged incident power. When the dissipated
+power is not small compared to the other losses of a resonance, for example in an
+undercoupled resonator, the first-order estimate of ``P_j`` from a simulation with perfect
+conductors differs from the power dissipated with the actual surface resistance, which
+reduces the field amplitude at resonance. In this case, the surface resistance should also
+be included in the simulation as an
+[impedance boundary](guide/boundaries.md#Impedance-boundary) for a self-consistent
+dissipated power. The geometric factor, a ratio of quantities quadratic in the fields, is
+not affected.
 
 On an interior boundary, the conductor surfaces on the two sides of the boundary are by
 default independent (a conductor much thicker than the skin or penetration depth), and the
@@ -843,16 +845,22 @@ integrand is the sum ``|\bm{n}\times\bm{H}_1|^2 + |\bm{n}\times\bm{H}_2|^2`` of 
 contributions of the two faces. For a film much thinner than the skin or penetration depth,
 the loss is determined by the total sheet current, with integrand
 ``|\bm{n}\times(\bm{H}_1-\bm{H}_2)|^2``, and ``R_{s,j}`` is the sheet resistance of the film.
-The loss model should match the model of the boundary condition in the simulation (see
+For the same resistance, the thin film loss ranges from zero, when the currents on the two
+faces are opposite (for example, the eddy currents of an isolated conductor in a tangential
+magnetic field), to twice the loss of independent faces, when the currents are equal. The
+loss model should match the model of the boundary condition in the simulation (see
 [Interior boundaries](guide/boundaries.md#Interior-boundaries)):
 
-  - A perfect electric conductor sheet has independent fields on its two sides, and either
-    model can be used, depending on the thickness of the metal it represents.
+  - A perfect electric conductor sheet has independent fields on its two sides, and the
+    model is chosen by the thickness of the metal it represents. Conductors much thicker
+    than the skin depth, such as enclosure walls and printed circuit board copper, are
+    independent faces.
   - An impedance boundary which is not cracked is a thin film in the simulation, with a
     single tangential electric field and the sheet current given by the jump in the
     tangential magnetic field, and should use the thin film model with the sheet resistance
-    of the film. In this case, ``P_j`` is the power dissipated in the film by the
-    simulation itself if the sheet impedance includes the same resistance. A conductivity
+    of the film. In this case, if the sheet impedance includes the same resistance, ``P_j``
+    is the power dissipated in the film by the simulation itself, up to the discretization
+    error discussed below. A conductivity
     boundary which is not cracked shares the sheet current equally between its two faces,
     corresponding to the thin film model with half the surface resistance of the conductor.
   - The faces of a cracked boundary are independent surfaces in the simulation, and
@@ -872,10 +880,27 @@ approximation to the surface resistance only.
 
 This model assumes a local surface impedance relation on the conductor. The surface integral
 is evaluated from the magnetic field at the boundary, which converges more slowly with mesh
-refinement than the eigenfrequencies. At the edges of infinitely thin conducting sheets, the
-surface current density has an integrable singularity but its square does not, such that
-the computed loss of a sheet grows logarithmically with mesh refinement near its edges. As
-for interface dielectric loss on such sheets, the results should be checked for convergence.
+refinement than the eigenfrequencies, and is particularly sensitive to the singularities of
+the fields at the edges and corners of conductors:
+
+  - At the edges of infinitely thin conducting sheets, the surface current density parallel
+    to the edge diverges as ``r^{-1/2}`` with the distance ``r`` to the edge, such that the
+    integral of its square is not finite. The computed loss of a sheet with edges grows
+    logarithmically with the refinement of the mesh near its edges and does not converge:
+    the physical loss at the edges is determined by the thickness and the shape of the
+    edges of the conductor. The same holds for the power dissipated by an impedance
+    boundary on such a sheet in a simulation, for example as measured by the quality factor
+    of an eigenmode, which is a different discretization of the same divergent quantity.
+    The two generally differ by factors of order one at practical mesh resolutions, and
+    neither is a converged reference. Conductors whose loss is concentrated at their edges
+    should be modeled with their thickness.
+  - At the edges and corners of conductors with a finite thickness, the loss is finite but
+    converges slowly with the refinement of the mesh near the edges. The loss computed by
+    the conductor loss postprocessing typically converges from below, and the power
+    dissipated by an impedance boundary in a simulation from above, such that the two
+    bracket the converged value.
+  - Surfaces without edges, and modes without a significant current near the edges,
+    converge with the accuracy of the fields at the boundary.
 
 ## Electrostatic Simulations
 
