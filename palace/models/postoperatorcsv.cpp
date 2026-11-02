@@ -148,6 +148,12 @@ Measurement Measurement::Dimensionalize(const Units &units,
   // The far field r E_∞ is a field times a distance, i.e. a voltage.
   measurement_cache.farfield.E_field = units.Dimensionalize<Units::ValueType::VOLTAGE>(
       nondim_measurement_cache.farfield.E_field);
+  measurement_cache.farfield.E0 =
+      units.Dimensionalize<Units::ValueType::FIELD_E>(nondim_measurement_cache.farfield.E0);
+  measurement_cache.farfield.thetaphi_back =
+      nondim_measurement_cache.farfield.thetaphi_back;  // NONE
+  measurement_cache.farfield.E_back = units.Dimensionalize<Units::ValueType::VOLTAGE>(
+      nondim_measurement_cache.farfield.E_back);
 
   // Mode analysis data: stored nondimensional, dimensionalize here.
   measurement_cache.mode_data = nondim_measurement_cache.mode_data;
@@ -300,6 +306,12 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::VOLTAGE>(
       dim_measurement_cache.farfield.E_field);
+  measurement_cache.farfield.E0 =
+      units.Nondimensionalize<Units::ValueType::FIELD_E>(dim_measurement_cache.farfield.E0);
+  measurement_cache.farfield.thetaphi_back =
+      dim_measurement_cache.farfield.thetaphi_back;  // NONE
+  measurement_cache.farfield.E_back = units.Nondimensionalize<Units::ValueType::VOLTAGE>(
+      dim_measurement_cache.farfield.E_back);
 
   // Mode analysis data: inverse of the conversion in Dimensionalize.
   measurement_cache.mode_data = dim_measurement_cache.mode_data;
@@ -909,6 +921,125 @@ void PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
     }
   }
   WriteTable(*farfield_E);
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeFarFieldRCS(
+    const SpaceOperator &fem_op, const SurfacePostOperator &surf_post_op)
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  const auto &plane_wave_op = fem_op.GetPlaneWaveOp();
+  if (plane_wave_op.Empty() || surf_post_op.farfield.attr_list.Size() == 0)
+  {
+    return;
+  }
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    if (std::ranges::none_of(plane_wave_op, [ex_idx](const auto &src)
+                             { return static_cast<std::size_t>(src.first) == ex_idx; }))
+    {
+      Mpi::Warning("Excitation {:d} has no plane wave: the radar cross section is only "
+                   "written when all excitations are plane waves!\n",
+                   ex_idx);
+      return;
+    }
+  }
+
+  // Bistatic radar cross section in the far-field directions, with the same rows as
+  // farfield-rE.csv.
+  if (surf_post_op.farfield.size() > 0)
+  {
+    farfield_rcs = TableWithCSVFile(post_dir / "farfield-rcs.csv", reload_table);
+    Table t;  // Define table locally first due to potential reload.
+    t.reserve(static_cast<int>(surf_post_op.farfield.size() * ex_idx_v_all.size()), 7);
+    t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+    {
+      Column ex_col("exc", "exc", 0, PrecIndexCol(solver_t), {}, "");
+      ex_col.print_as_int = true;
+      t.insert(std::move(ex_col));
+    }
+    t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+    t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
+    t.insert("sigma", "sigma (m²)");
+    t.insert("sigma_theta", "sigma_theta (m²)");
+    t.insert("sigma_phi", "sigma_phi (m²)");
+    MoveTableValidateReload(*farfield_rcs, std::move(t), surf_post_op.farfield.size());
+  }
+
+  // Monostatic radar cross section of each plane wave, co- and cross-polarized with
+  // respect to the incident polarization.
+  rcs_monostatic = TableWithCSVFile(post_dir / "rcs-monostatic.csv", reload_table);
+  Table t;  // Define table locally first due to potential reload.
+  t.reserve(nr_expected_measurement_rows, 1 + 3 * ex_idx_v_all.size());
+  t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
+    t.insert(fmt::format("sigma_{}", ex_idx), fmt::format("sigma{} (m²)", ex_label),
+             ex_idx);
+    t.insert(fmt::format("sigma_co_{}", ex_idx), fmt::format("sigma_co{} (m²)", ex_label),
+             ex_idx);
+    t.insert(fmt::format("sigma_cross_{}", ex_idx),
+             fmt::format("sigma_cross{} (m²)", ex_label), ex_idx);
+  }
+  MoveTableValidateReload(*rcs_monostatic, std::move(t));
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintFarFieldRCS(const SpaceOperator &fem_op)
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  if (!farfield_rcs && !rcs_monostatic)
+  {
+    return;
+  }
+  // sigma = 4 pi |r E_s|² / |E_0|² in the far zone, for the scattered field E_s of the
+  // incident plane wave of amplitude E_0.
+  const auto &ff = measurement_cache.farfield;
+  MFEM_VERIFY(ff.E0 > 0.0, "Missing plane wave amplitude for the radar cross section of "
+                           "excitation "
+                               << m_ex_idx << "!");
+  const double scale = 4.0 * std::numbers::pi / (ff.E0 * ff.E0);
+  auto Project = [](const std::array<std::complex<double>, 3> &E, const double(&u)[3])
+  { return std::norm(E[0] * u[0] + E[1] * u[1] + E[2] * u[2]); };
+
+  if (farfield_rcs)
+  {
+    for (std::size_t i = 0; i < ff.thetaphis.size(); i++)
+    {
+      const auto &[theta, phi] = ff.thetaphis[i];
+      const double st = std::sin(theta), ct = std::cos(theta);
+      const double sp = std::sin(phi), cp = std::cos(phi);
+      const double theta_hat[3] = {ct * cp, ct * sp, -st};
+      const double phi_hat[3] = {-sp, cp, 0.0};
+      const double sigma_theta = scale * Project(ff.E_field[i], theta_hat);
+      const double sigma_phi = scale * Project(ff.E_field[i], phi_hat);
+      farfield_rcs->table["idx"] << row_idx_v;
+      farfield_rcs->table["exc"] << static_cast<double>(m_ex_idx);
+      farfield_rcs->table["theta"] << 180 / std::numbers::pi * theta;
+      farfield_rcs->table["phi"] << 180 / std::numbers::pi * phi;
+      farfield_rcs->table["sigma"] << sigma_theta + sigma_phi;
+      farfield_rcs->table["sigma_theta"] << sigma_theta;
+      farfield_rcs->table["sigma_phi"] << sigma_phi;
+    }
+    WriteTable(*farfield_rcs);
+  }
+
+  if (rcs_monostatic)
+  {
+    const auto &src = fem_op.GetPlaneWaveOp().GetSource(static_cast<int>(m_ex_idx));
+    const double p[3] = {src.polarization(0), src.polarization(1), src.polarization(2)};
+    const double q[3] = {src.direction(1) * p[2] - src.direction(2) * p[1],
+                         src.direction(2) * p[0] - src.direction(0) * p[2],
+                         src.direction(0) * p[1] - src.direction(1) * p[0]};
+    const double sigma_co = scale * Project(ff.E_back, p);
+    const double sigma_cross = scale * Project(ff.E_back, q);
+    CheckAppendIndex(rcs_monostatic->table["idx"], row_idx_v, row_i);
+    rcs_monostatic->table[fmt::format("sigma_{}", m_ex_idx)] << sigma_co + sigma_cross;
+    rcs_monostatic->table[fmt::format("sigma_co_{}", m_ex_idx)] << sigma_co;
+    rcs_monostatic->table[fmt::format("sigma_cross_{}", m_ex_idx)] << sigma_cross;
+    WriteTable(*rcs_monostatic);
+  }
 }
 
 template <ProblemType solver_t>
@@ -1907,6 +2038,10 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   {
     InitializeFarFieldE(post_op.surf_post_op);
   }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    InitializeFarFieldRCS(*post_op.fem_op, post_op.surf_post_op);
+  }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
     InitializeEig();
@@ -1986,6 +2121,10 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
   {
     PrintFarFieldE(post_op.surf_post_op);
+  }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    PrintFarFieldRCS(*post_op.fem_op);
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {

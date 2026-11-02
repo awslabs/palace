@@ -57,6 +57,11 @@ private:
 
   const Vector &GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fespace) const;
 
+  // Marker of the local (vector) dofs of the closure of the total-field region, combined
+  // across the processes sharing each dof.
+  void GetLocalTotalFieldMarker(int idx, const mfem::ParFiniteElementSpace &fes,
+                                mfem::Array<int> &lmark) const;
+
 public:
   PlaneWaveOperator(const std::map<int, config::PlaneWaveData> &plane_wave,
                     const Units &units, const mfem::ParMesh &mesh);
@@ -71,6 +76,14 @@ public:
   // true if a plane wave contributed.
   bool AddExcitationVector(int idx, double omega, const ComplexOperator &A,
                            const FiniteElementSpace &nd_fespace, ComplexVector &RHS) const;
+
+  // Whether the boundary elements with the given attributes (marker) carry any dof of the
+  // closure of the total-field region of the plane wave with the given index, on any
+  // process. There the solution is the total field, not the scattered field.
+  bool TouchesTotalField(int idx, const FiniteElementSpace &nd_fespace,
+                         const mfem::Array<int> &bdr_attr_marker) const;
+
+  const PlaneWaveSource &GetSource(int idx) const { return sources.at(idx); }
 };
 
 }  // namespace palace

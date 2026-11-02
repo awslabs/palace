@@ -198,6 +198,36 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     }
   }
 
+  // Radar cross section of the plane wave excitations: the far-field surface must lie in
+  // the scattered-field region, and the far field is also evaluated in the backscattering
+  // direction -k̂ of each plane wave.
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    const auto &plane_wave_op = fem_op->GetPlaneWaveOp();
+    const auto &farfield_attrs = surf_post_op.farfield.attr_list;
+    if (!plane_wave_op.Empty() && farfield_attrs.Size() > 0)
+    {
+      const auto &mesh = *fem_op->GetNDSpace().Get().GetParMesh();
+      const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+      const auto marker = mesh::AttrToMarker(bdr_attr_max, farfield_attrs);
+      for (const auto &[idx, src] : plane_wave_op)
+      {
+        MFEM_VERIFY(!plane_wave_op.TouchesTotalField(idx, fem_op->GetNDSpace(), marker),
+                    "The far-field surface touches the total-field region of plane wave "
+                        << idx
+                        << ": it must lie entirely in the scattered-field region, outside "
+                           "of the elements of the total-field attributes!");
+        const double theta = std::acos(std::clamp(-src.direction(2), -1.0, 1.0));
+        double phi = std::atan2(-src.direction(1), -src.direction(0));
+        if (phi < 0.0)
+        {
+          phi += 2.0 * std::numbers::pi;
+        }
+        farfield_back.emplace(idx, std::make_pair(theta, phi));
+      }
+    }
+  }
+
   // Prepare for saving fields
   enable_paraview_output = problem.output_formats.paraview;
   enable_gridfunction_output = problem.output_formats.gridfunction;
@@ -2201,10 +2231,37 @@ void PostOperator<solver_t>::MeasureFarField() const
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
     measurement_cache.farfield.thetaphis = surf_post_op.farfield.thetaphis;
+    if (farfield_back.empty())
+    {
+      // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
+      measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
+          measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
+      return;
+    }
 
-    // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
-    measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-        measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
+    // Evaluate the backscattering directions of all plane waves together with the
+    // far-field directions, so that the set of directions (and the assembled far-field
+    // functional) does not change with the excitation.
+    const std::size_t n = surf_post_op.farfield.size();
+    auto thetaphis = surf_post_op.farfield.thetaphis;
+    for (const auto &[idx, thetaphi] : farfield_back)
+    {
+      thetaphis.push_back(thetaphi);
+    }
+    auto rE = surf_post_op.GetFarFieldrE(thetaphis, *E, *B, measurement_cache.freq);
+    std::size_t i = n;
+    for (const auto &[idx, thetaphi] : farfield_back)
+    {
+      if (idx == measurement_cache.ex_idx)
+      {
+        measurement_cache.farfield.E0 = fem_op->GetPlaneWaveOp().GetSource(idx).amplitude;
+        measurement_cache.farfield.thetaphi_back = thetaphi;
+        measurement_cache.farfield.E_back = rE[i];
+      }
+      i++;
+    }
+    rE.resize(n);
+    measurement_cache.farfield.E_field = std::move(rE);
   }
 }
 
