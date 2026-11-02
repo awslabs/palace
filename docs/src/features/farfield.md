@@ -137,3 +137,39 @@ This type of output can be processed by several different packages and
 languages. For instance, see the [antenna example](../examples/antenna.md) for
 an example of a [Julia](https://julialang.org/) script that plots antenna
 patterns.
+
+## Radar cross section
+
+When every excitation of a driven simulation is an incident plane wave
+([`config["Domains"]["PlaneWave"]`](../config/reference.md#config-domains)),
+the far field is the scattered field of the plane wave, and *Palace* also writes
+its radar cross section
+
+```math
+\sigma(\theta, \phi) = 4 \pi \frac{|r \mathbf{E}_s(\mathbf{r}_0)|^2}{|E_0|^2}
+```
+
+where ``E_0`` is the amplitude of the incident electric field. The far-field
+surface must lie in the scattered-field region, outside of the elements of the
+total-field attributes of every plane wave: *Palace* stops with an error
+otherwise.
+
+`farfield-rcs.csv` has the same rows as `farfield-rE.csv` (when
+`"ThetaPhis"` or `"NSample"` give any direction), with the columns:
+
+  - `f (GHz)`, `exc`, `theta (deg.)`, `phi (deg.)` : As in `farfield-rE.csv`
+  - `sigma (m²)` : Bistatic radar cross section, ``\sigma = \sigma_\theta + \sigma_\phi``
+  - `sigma_theta (m²)`, `sigma_phi (m²)` : Contributions of the ``\hat{\theta}`` and
+    ``\hat{\phi}`` components of the far field
+
+`rcs-monostatic.csv` has one row per frequency, with the radar cross section in
+the backscattering direction ``-\hat{\mathbf{k}}`` of each plane wave (added
+automatically to the far-field directions, also without `"ThetaPhis"`):
+
+  - `sigma[i] (m²)` : Monostatic radar cross section of excitation `i`
+  - `sigma_co[i] (m²)`, `sigma_cross[i] (m²)` : Contributions of the far field
+    components along the incident polarization ``\hat{\mathbf{p}}`` and along
+    ``\hat{\mathbf{k}} \times \hat{\mathbf{p}}``
+
+The excitation suffix `[i]` is omitted for a single excitation. In decibels
+relative to one square meter, ``\sigma_\mathrm{dBsm} = 10 \log_{10}(\sigma / 1\,\mathrm{m}^2)``.
