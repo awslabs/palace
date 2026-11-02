@@ -105,6 +105,12 @@ download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
   8b11d35c29215d462b8e727775e8771d808806ced107e1675082ed80b9ba84fb
 )
 
+# Skip the exchange of a zero initial guess in hybrid Gauss-Seidel relaxation (its
+# off-processor values are known to be zero)
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/patch_relax_zero_guess.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}
