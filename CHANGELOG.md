@@ -63,9 +63,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     magnetostatic solution space is broken across the film, so the mesh is not cracked.
     Requires a 3D mesh and an interior film. SchemaVer 4-1-0.
     [PR 992](https://github.com/awslabs/palace/pull/992).
-  - Added `scripts/julia/PalaceSensitivity`, a Julia package that reads sensitivity exports
-    and contracts their gradients with design velocities, for example from DeviceLayout.jl,
-    giving derivatives with respect to design parameters.
+  - Added shape and material sensitivities to electrostatic simulations. The `"Sensitivity"`
+    section requests the derivatives of entries of the capacitance matrix with respect to
+    the positions of the mesh nodes in a region and to the permittivity of each material,
+    written to the `sensitivity` folder of the output, with no extra solve. Contracted with
+    design velocities, for example from DeviceLayout.jl, the node gradients give the
+    derivatives with respect to design parameters. The Julia package
+    `scripts/julia/PalaceSensitivity` reads the export. SchemaVer 4-2-0.
 
 #### Interface Changes
 
