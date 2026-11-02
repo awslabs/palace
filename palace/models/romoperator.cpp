@@ -77,6 +77,10 @@ constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 1.0e-6;
 // residue norm (a far pole's residue can be O(10-100)×W via near-cancellation with the poly
 // part).
 constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
+// Tolerance on the surface participation computed from an exported interface capacitance
+// matrix against the interface energy evaluated on the prolonged field (they agree up to
+// roundoff, as the matrix is the exact projection of the same quadrature).
+constexpr double INTERFACE_ENERGY_CHECK_TOL = 1.0e-10;
 // Index of `target` in `labels`, or -1 when absent. Used to address rows of the
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
@@ -2097,49 +2101,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   using mat_t = Eigen::MatrixXcd;
   NormalizedMatrices out;
 
-  // Port-row/column scaling. The port block of the synthesised admittance matrices is
-  // independent of HDM solutions; for HDM rows we leave v_conc = 1 (orth_R(j,j) can be
-  // tiny for nearly degenerate vectors and would make the matrices ill-conditioned).
-  // Lumped ports come first in the basis (real-valued, in order); wave-port basis
-  // vectors follow (real and imag parts each count separately, see
-  // AddWavePortModesForSynthesis → UpdatePROM).
-  Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(GetReducedDimension());
-
-  // Only ports with include_in_synthesis contribute a basis row, so the number of leading
-  // lumped-port rows is NumSynthesisPortModes(), NOT the total number of lumped ports.
-  const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
-  MFEM_ASSERT(n_port_modes <= GetReducedDimension(),
-              "More lumped port modes than PROM basis vectors; basis is inconsistent!");
-  // Wave-port basis vectors come right after the lumped-port rows; count how many were
-  // actually added (real + imaginary parts each count separately, see
-  // AddWavePortModesForSynthesis → UpdatePROM).
-  long n_waveport_rows = 0;
-  for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
-  {
-    if (v_node_label[j].starts_with("waveport_"))
-    {
-      n_waveport_rows++;
-    }
-    else
-    {
-      break;
-    }
-  }
-  // The scan above assumes the wave-port rows form one contiguous block directly after
-  // the lumped-port rows (AddWavePortModesForSynthesis runs immediately after
-  // AddLumpedPortModesForSynthesis, before any HDM sample). Verify no waveport_ label
-  // appears later, which would mean the block was split and undercounted. Row existence is
-  // independent of Active: an inactive included port is still an unloaded synthesis node.
-  for (long j = n_port_modes + n_waveport_rows; j < static_cast<long>(v_node_label.size());
-       j++)
-  {
-    MFEM_VERIFY(v_node_label[j].rfind("waveport_", 0) != 0,
-                "Wave-port basis rows are not contiguous after the lumped-port rows!");
-  }
-  for (long j = 0; j < n_port_modes + n_waveport_rows; j++)
-  {
-    v_conc[j] = orth_R(j, j);
-  }
+  // Port-row/column scaling (see GetSynthesisPortScaling).
+  const Eigen::VectorXd v_conc = GetSynthesisPortScaling();
 
   // Wave-port dispersion handling. Online, SolvePROM assembles
   //   Ar(ω) = Kr + iω Cr − ω² Mr + Σₚ kₙ,ₚ(ω)·Mp_r,
@@ -2937,7 +2900,8 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
   out.WriteFullTableTrunc();
 }
 
-void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
+void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir,
+                                    const InterfaceEnergyForms *interface_forms) const
 {
   BlockTimer bt0(Timer::POSTPRO);
   Mpi::Print(" Printing PROM Matrices to disk.\n");
@@ -2964,6 +2928,94 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
                                          fmin_GHz, fmax_GHz);
   ComputeEigenvalueEstimateErrors(units, eigs);
+
+  // Interface capacitance matrices, C_Γ = 2 u_F D (Vᵀ B V) D for the interface energy form
+  // B, with the port-row scaling D and capacitance unit u_F of the synthesized capacitance
+  // matrix C = u_F D Mr D: for the synthesized coordinates y of a field, ½ yᴴ C_Γ y is its
+  // interface energy just as ½ yᴴ C y is its electric energy, so yᴴ C_Γ y / yᴴ C y is its
+  // surface participation ratio. Auxiliary states have zero rows and columns. The forms
+  // are checked on the synthesized eigenvectors against the direct evaluation of the
+  // interface energy of their prolongation (collective).
+  std::map<int, Eigen::MatrixXd> interface_C;
+  if (interface_forms && !interface_forms->B.empty())
+  {
+    const long n = static_cast<long>(V.size());
+    const long na = matrices.C->rows();
+    const Eigen::VectorXd d = GetSynthesisPortScaling();
+    const double unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+    for (const auto &[idx, B] : interface_forms->B)
+    {
+      MFEM_VERIFY(B.rows() == n && B.cols() == n,
+                  "Interface energy form " << idx << " does not match the PROM basis!");
+      // Symmetrize exactly (the scaled entries d_i B_ij d_j round differently from d_j B_ji
+      // d_i).
+      const Eigen::MatrixXd C_b = (2.0 * unit_farad) * d.asDiagonal() * B * d.asDiagonal();
+      Eigen::MatrixXd C_i = Eigen::MatrixXd::Zero(na, na);
+      C_i.topLeftCorner(n, n) = 0.5 * (C_b + C_b.transpose());
+      interface_C.emplace(idx, std::move(C_i));
+    }
+
+    // Check zᴴ B z = U(u) for the prolongation u = V z of the reduced-basis coordinates
+    // z = D y of each synthesized eigenvector, in units of its surface participation
+    // p = U(u) / (½ zᴴ Mr z), and report the largest participation found among them.
+    std::map<int, double> max_dev, max_p;
+    if (interface_forms->energy)
+    {
+      ComplexVector u(K->Width());
+      u.UseDevice(true);
+      for (const auto &est : eigs)
+      {
+        const Eigen::VectorXcd z =
+            d.cast<std::complex<double>>().cwiseProduct(est.eigvec.head(n));
+        if (z.norm() == 0.0)
+        {
+          continue;  // Pure auxiliary-state root
+        }
+        u = 0.0;
+        for (long j = 0; j < n; j++)
+        {
+          linalg::AXPY(z(j).real(), V[j], u.Real());
+          linalg::AXPY(z(j).imag(), V[j], u.Imag());
+        }
+        const auto energy = interface_forms->energy(u);
+        const double energy_elec = 0.5 * (z.adjoint() * Mr.real() * z)(0).real();
+        if (!(energy_elec > 0.0))
+        {
+          continue;
+        }
+        for (const auto &[idx, B] : interface_forms->B)
+        {
+          const double U_matrix = (z.adjoint() * B * z)(0).real();
+          const double U_direct = energy.at(idx);
+          max_dev[idx] =
+              std::max(max_dev[idx], std::abs(U_matrix - U_direct) / energy_elec);
+          max_p[idx] = std::max(max_p[idx], U_direct / energy_elec);
+        }
+      }
+    }
+    for (const auto &[idx, B] : interface_forms->B)
+    {
+      if (max_dev.contains(idx))
+      {
+        Mpi::Print(
+            " Interface dielectric {:d}: rom-interface-{:d}-C.csv, max. participation "
+            "{:.3e} over {:d} synthesized eigenvectors (max. deviation from the "
+            "interface energy {:.3e})\n",
+            idx, idx, max_p[idx], eigs.size(), max_dev[idx]);
+        if (max_dev[idx] > INTERFACE_ENERGY_CHECK_TOL)
+        {
+          Mpi::Warning("The participation of the synthesized eigenvectors in interface "
+                       "dielectric {:d} from its exported matrix deviates by {:.3e} from "
+                       "their interface energy!\n",
+                       idx, max_dev[idx]);
+        }
+      }
+      else
+      {
+        Mpi::Print(" Interface dielectric {:d}: rom-interface-{:d}-C.csv\n", idx, idx);
+      }
+    }
+  }
 
   // Synthesized port realization Y_syn(ω) y = G(ω) a, b = H(ω) y - a, so
   // S(ω) = H(ω) Y_syn(ω)⁻¹ G(ω) - I. Each map column is √y_ref times the port's coupling
@@ -3003,18 +3055,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     const long nr = static_cast<long>(V.size());
     const long na = matrices.L_inv->rows();
     Eigen::VectorXd d = Eigen::VectorXd::Ones(na);
-    const long n_lumped = static_cast<long>(NumSynthesisPortModes());
-    long n_wave = 0;
-    for (long j = n_lumped; j < static_cast<long>(v_node_label.size()) &&
-                            v_node_label[j].starts_with("waveport_");
-         j++)
-    {
-      n_wave++;
-    }
-    for (long j = 0; j < n_lumped + n_wave; j++)
-    {
-      d(j) = orth_R(j, j);
-    }
+    d.head(nr) = GetSynthesisPortScaling();
     const double unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
     const double unit_henry_inv =
         1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
@@ -3230,6 +3271,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   {
     print_if_nonzero(resistance_R_inv->real(), "rom-Rinv-re.csv", labels);
     print_if_nonzero(resistance_R_inv->imag(), "rom-Rinv-im.csv", labels);
+  }
+  for (const auto &[idx, C_i] : interface_C)
+  {
+    // Written even when zero (an interface which the basis fields do not reach).
+    print_table(C_i, fmt::format("rom-interface-{:d}-C.csv", idx), labels);
   }
 
   // Port-load matrices decompose the legacy loaded rom-* matrices into selectable
@@ -3455,6 +3501,54 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
   return modes;
 }
 
+Eigen::VectorXd RomOperator::GetSynthesisPortScaling() const
+{
+  // Port-row/column scaling of the synthesized matrices. The port block of the synthesised
+  // admittance matrices is independent of HDM solutions; for HDM rows we leave v_conc = 1
+  // (orth_R(j,j) can be tiny for nearly degenerate vectors and would make the matrices
+  // ill-conditioned). Lumped ports come first in the basis (real-valued, in order);
+  // wave-port basis vectors follow (real and imag parts each count separately, see
+  // AddWavePortModesForSynthesis → UpdatePROM).
+  Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(GetReducedDimension());
+
+  // Only ports with include_in_synthesis contribute a basis row, so the number of leading
+  // lumped-port rows is NumSynthesisPortModes(), NOT the total number of lumped ports.
+  const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
+  MFEM_ASSERT(n_port_modes <= GetReducedDimension(),
+              "More lumped port modes than PROM basis vectors; basis is inconsistent!");
+  // Wave-port basis vectors come right after the lumped-port rows; count how many were
+  // actually added (real + imaginary parts each count separately, see
+  // AddWavePortModesForSynthesis → UpdatePROM).
+  long n_waveport_rows = 0;
+  for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
+  {
+    if (v_node_label[j].starts_with("waveport_"))
+    {
+      n_waveport_rows++;
+    }
+    else
+    {
+      break;
+    }
+  }
+  // The scan above assumes the wave-port rows form one contiguous block directly after
+  // the lumped-port rows (AddWavePortModesForSynthesis runs immediately after
+  // AddLumpedPortModesForSynthesis, before any HDM sample). Verify no waveport_ label
+  // appears later, which would mean the block was split and undercounted. Row existence is
+  // independent of Active: an inactive included port is still an unloaded synthesis node.
+  for (long j = n_port_modes + n_waveport_rows; j < static_cast<long>(v_node_label.size());
+       j++)
+  {
+    MFEM_VERIFY(v_node_label[j].rfind("waveport_", 0) != 0,
+                "Wave-port basis rows are not contiguous after the lumped-port rows!");
+  }
+  for (long j = 0; j < n_port_modes + n_waveport_rows; j++)
+  {
+    v_conc[j] = orth_R(j, j);
+  }
+  return v_conc;
+}
+
 void RomOperator::ComputeEigenvalueEstimateErrors(
     const Units &units, std::vector<EigenvalueEstimate> &estimates) const
 {
@@ -3485,26 +3579,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   // v_conc(j) = orth_R(j,j) on the port rows and 1 elsewhere). An eigenvector y of the
   // synthesized pencil therefore corresponds to reduced-basis coordinates
   // y_reduced = v_conc ∘ y.
-  Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(static_cast<long>(n_basis));
-  {
-    const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
-    long n_waveport_rows = 0;
-    for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
-    {
-      if (v_node_label[j].starts_with("waveport_"))
-      {
-        n_waveport_rows++;
-      }
-      else
-      {
-        break;
-      }
-    }
-    for (long j = 0; j < n_port_modes + n_waveport_rows; j++)
-    {
-      v_conc[j] = orth_R(j, j);
-    }
-  }
+  const Eigen::VectorXd v_conc = GetSynthesisPortScaling();
 
   // Spectral norms of the ω-independent operators (SLEPc/ARPACK use these for backward
   // scaling too). Computed once.
